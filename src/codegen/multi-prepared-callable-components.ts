@@ -5,28 +5,24 @@
 // only its frozen graph and the already-built source overlay plans.
 
 import type { MultiTypedAST } from "../checker/index.js";
-import { compileIrPathFunctions, type IrIntegrationReport } from "../ir/integration.js";
+import { compilePreparedProgramComponent } from "../ir/integration.js";
 import type {
   IrDirectCallLoweringPlan,
   IrImportedCallLoweringPlan,
   IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
-import type {
-  IrProgramCallableBindingGraph,
-  IrProgramCallableBindingRecord,
-  IrProgramCallableUse,
-} from "../ir/program-callable-bindings.js";
+import type { IrProgramCallableBindingGraph, IrProgramCallableUse } from "../ir/program-callable-bindings.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import { buildIrLegacyUnitProjection, type IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrClosureSignature, IrFuncRef, IrType } from "../ir/nodes.js";
-import { planProgramAbiModuleCallableAlias } from "./program-abi-planning.js";
 import type { IrSelection } from "../ir/select.js";
 import { ts } from "../ts-api.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayPlan } from "./index.js";
 import type { MultiPreparedProgramCallableComponent } from "./multi-prepared-program.js";
+import { describePreparedModuleCallableAliases } from "./program-abi-module-callable-alias-planning.js";
 
 export interface MultiPreparedCallableCandidate {
   readonly sourceFile: ts.SourceFile;
@@ -46,7 +42,6 @@ export interface MultiPreparedCallableComponentPlanningInput {
   readonly candidatePlans: ReadonlyMap<ts.SourceFile, IrOverlayPlan>;
   readonly graph: IrProgramCallableBindingGraph;
   readonly recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>;
-  readonly attempted: Set<IrUnitId>;
   readonly aggregateProgramCallableUse: (
     graph: IrProgramCallableBindingGraph,
     recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingGraph["records"][number]>,
@@ -54,113 +49,14 @@ export interface MultiPreparedCallableComponentPlanningInput {
     ownerUnitId: IrUnitId,
     callPlan: IrImportedCallLoweringPlan,
   ) => IrProgramCallableUse | undefined;
-  readonly recordMultiPreparedCallableAggregateFailure: (
-    ctx: CodegenContext,
-    report: IrIntegrationReport,
-    originalNameBySyntheticName: ReadonlyMap<string, string>,
-  ) => void;
   readonly rewriteAggregateCallableRef: (ref: IrFuncRef, namesByUnitId: ReadonlyMap<IrUnitId, string>) => IrFuncRef;
-}
-
-function planAggregateModuleCallableAliases(
-  ctx: CodegenContext,
-  group: readonly MultiPreparedCallableCandidate[],
-  graph: IrProgramCallableBindingGraph,
-  recordsByBindingId: ReadonlyMap<IrBindingId, IrProgramCallableBindingRecord>,
-): ReadonlySet<IrBindingId> {
-  const sourceCallables = ctx.programAbiSourceCallables;
-  if (!sourceCallables) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "resolve",
-      "cross-source callable component requires the canonical source callable registry",
-    );
-  }
-  const groupUnitIds = new Set(group.map((candidate) => candidate.unitId));
-  sourceCallables.planUnits([...groupUnitIds]);
-
-  const aliasesById = new Map<IrBindingId, IrProgramCallableBindingRecord>();
-  for (const use of graph.uses) {
-    if (!groupUnitIds.has(use.ownerUnitId) || !groupUnitIds.has(use.targetUnitId)) continue;
-    let record = recordsByBindingId.get(use.bindingId);
-    const visited = new Set<IrBindingId>();
-    while (record && record.kind !== "source") {
-      if (visited.has(record.bindingId)) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          `callable component encountered an alias cycle at ${record.bindingId}`,
-        );
-      }
-      visited.add(record.bindingId);
-      if (record.targetUnitId !== use.targetUnitId) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          `callable alias ${record.bindingId} changed canonical target from ${use.targetUnitId} to ${record.targetUnitId}`,
-        );
-      }
-      aliasesById.set(record.bindingId, record);
-      record = recordsByBindingId.get(record.targetBindingId);
-    }
-    if (!record || record.kind !== "source" || record.targetUnitId !== use.targetUnitId) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `callable alias ${use.bindingId} has no exact source target for ${use.targetUnitId}`,
-      );
-    }
-  }
-
-  const signatureForUnit = (unitId: IrUnitId) => {
-    const func = sourceCallables.functionForUnit(unitId);
-    const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
-    if (!func || !signature || signature.kind !== "func") {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `callable alias target ${unitId} has no exact source callable signature`,
-      );
-    }
-    return signature;
-  };
-  const planned = new Set<IrBindingId>();
-  const visiting = new Set<IrBindingId>();
-  const planAlias = (record: IrProgramCallableBindingRecord): void => {
-    if (planned.has(record.bindingId)) return;
-    if (visiting.has(record.bindingId)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `callable component encountered an alias cycle at ${record.bindingId}`,
-      );
-    }
-    visiting.add(record.bindingId);
-    const target = recordsByBindingId.get(record.targetBindingId);
-    if (!target) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `callable alias ${record.bindingId} targets missing graph binding ${record.targetBindingId}`,
-      );
-    }
-    if (target.kind !== "source") planAlias(target);
-    planProgramAbiModuleCallableAlias(ctx, {
-      record,
-      aliasOf: record.targetBindingId,
-      signature: signatureForUnit(record.targetUnitId),
-    });
-    visiting.delete(record.bindingId);
-    planned.add(record.bindingId);
-  };
-  for (const record of aliasesById.values()) planAlias(record);
-  return new Set(planned);
+  readonly assertPreflightCurrent: () => void;
 }
 
 export function prepareMultiPreparedCallableGroup(
   input: MultiPreparedCallableComponentPlanningInput,
 ): MultiPreparedProgramCallableComponent | undefined {
-  const { group, groupIndex, candidatePlans, graph, recordsByBindingId, attempted } = input;
+  const { group, groupIndex, candidatePlans, graph, recordsByBindingId } = input;
 
   let preparedComponent: MultiPreparedProgramCallableComponent | undefined;
   for (const candidateGroup of [group]) {
@@ -181,15 +77,15 @@ export function prepareMultiPreparedCallableGroup(
     if (!valid) continue;
 
     const namesByUnitId = new Map<IrUnitId, string>();
-    const originalNameBySyntheticName = new Map<string, string>();
+    const syntheticNames = new Set<string>();
     for (const [unitIndex, candidate] of group.entries()) {
       const syntheticName = `__ir_m1a_${groupIndex}_${unitIndex}_${candidate.legacyName}`;
-      if (input.ctx.funcMap.has(syntheticName) || originalNameBySyntheticName.has(syntheticName)) {
+      if (input.ctx.funcMap.has(syntheticName) || syntheticNames.has(syntheticName)) {
         valid = false;
         break;
       }
       namesByUnitId.set(candidate.unitId, syntheticName);
-      originalNameBySyntheticName.set(syntheticName, candidate.legacyName);
+      syntheticNames.add(syntheticName);
     }
     if (!valid) continue;
 
@@ -278,14 +174,49 @@ export function prepareMultiPreparedCallableGroup(
     const integrationSourceFiles = input.multiAst.sourceFiles.filter((sourceFile) =>
       group.some((candidate) => candidate.sourceFile === sourceFile),
     );
-    const moduleAliasBindingIds = planAggregateModuleCallableAliases(input.ctx, group, graph, recordsByBindingId);
-    const preparedBindingIdsByTerminalUnitId = new Map<IrUnitId, ReadonlySet<IrBindingId>>([
-      [group[0]!.unitId, moduleAliasBindingIds],
-    ]);
-    for (const candidate of group) attempted.add(candidate.unitId);
-    input.ctx.irProgramCallableAttemptedUnitIds = attempted;
+    const declinedGroup = process.env.JS2WASM_TEST_DECLINE_MULTI_PREPARED_CALLABLE_COMPONENT;
+    if (declinedGroup !== undefined) {
+      if (!/^\d+$/.test(declinedGroup)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `invalid callable component decline selector ${JSON.stringify(declinedGroup)}`,
+        );
+      }
+      if (Number(declinedGroup) === groupIndex) continue;
+    }
+    const session = input.ctx.programAbiSession;
+    const sourceCallables = input.ctx.programAbiSourceCallables;
+    if (
+      !session ||
+      !sourceCallables ||
+      sourceCallables.session !== session ||
+      sourceCallables.identityContext !== input.identityContext
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "cross-source callable component requires one exact source-callable ABI registry",
+      );
+    }
+    // Source roots are the direct-owned allocator authority and remain valid
+    // when this aggregate later declines. Only their module aliases are held
+    // in the opaque, component-local descriptor below.
+    sourceCallables.planUnits(group.map(({ unitId }) => unitId));
+    const moduleCallableAliases = describePreparedModuleCallableAliases({
+      session,
+      graph,
+      terminalUnitIds: group.map(({ unitId }) => unitId),
+    });
+    if (!moduleCallableAliases) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "cross-source callable component produced no exact module-alias descriptor",
+      );
+    }
 
-    const report = compileIrPathFunctions(
+    const result = compilePreparedProgramComponent(
       input.ctx,
       group[0]!.sourceFile,
       aggregateSelection,
@@ -293,30 +224,68 @@ export function prepareMultiPreparedCallableGroup(
       undefined,
       loweringPlans,
       {
-        sealPreparedComponents: true,
         integrationSourceFiles,
-        atomicComponent: true,
-        preparedBindingIdsByTerminalUnitId,
+        preparedModuleCallableAliasDescriptor: moduleCallableAliases,
       },
     );
-    if (report.errors.length > 0) {
-      if ((report.compiledArtifactEvidence?.length ?? 0) !== 0 || report.compiled.length !== 0) {
+    const { report, pendingReceipt } = result;
+    const terminalFailures = (report.terminalEvidence ?? []).filter((evidence) => evidence.kind === "failed");
+    const invariantFailure = [
+      ...report.errors,
+      ...terminalFailures.flatMap((evidence) => [evidence.error, ...(evidence.errors ?? [])]),
+    ].find(({ outcome }) => outcome.kind === "invariant");
+    if (invariantFailure?.outcome.kind === "invariant") {
+      pendingReceipt?.abort();
+      throw new IrInvariantError(
+        invariantFailure.outcome.code,
+        invariantFailure.outcome.stage,
+        invariantFailure.outcome.detail,
+        invariantFailure.outcome.cause,
+      );
+    }
+    if (report.errors.length > 0 || terminalFailures.length > 0) {
+      const failedUnitIds = terminalFailures.map(({ unitId }) => unitId);
+      const terminalPublicErrors = terminalFailures.flatMap(({ diagnosticVisibility, errors }) =>
+        diagnosticVisibility === "report" ? [...(errors ?? [])] : [],
+      );
+      if (
+        pendingReceipt !== undefined ||
+        (report.compiledArtifactEvidence?.length ?? 0) !== 0 ||
+        report.compiled.length !== 0 ||
+        (report.terminalEvidence?.length ?? 0) !== group.length ||
+        (report.terminalCompiledOwners?.length ?? 0) !== 0 ||
+        (report.syntheticCompiledArtifacts?.length ?? 0) !== 0 ||
+        (report.preparedCountedStringAppendReceipts?.length ?? 0) !== 0 ||
+        report.errors.length !== terminalPublicErrors.length ||
+        report.errors.some((error, index) => error !== terminalPublicErrors[index]) ||
+        new Set(report.errors).size !== report.errors.length ||
+        terminalFailures.length !== group.length ||
+        new Set(failedUnitIds).size !== group.length ||
+        !group.every(({ unitId }) => failedUnitIds.includes(unitId)) ||
+        terminalFailures.some(({ error, errors }) =>
+          [error, ...(errors ?? [])].some(({ outcome }) => outcome.kind !== "unsupported"),
+        )
+      ) {
+        pendingReceipt?.abort();
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "patch",
-          "atomic callable component reported both a failure and an installed artifact",
+          "atomic callable component reported a non-exact failure population or pending artifact",
         );
       }
-      input.recordMultiPreparedCallableAggregateFailure(input.ctx, report, originalNameBySyntheticName);
       continue;
     }
 
     const artifacts = report.compiledArtifactEvidence ?? [];
     const terminalEvidence = report.terminalEvidence ?? [];
-    const componentId = artifacts[0]?.preparedComponentId;
+    const componentId = pendingReceipt?.preparedComponentId;
     const expectedSyntheticNames = new Set(namesByUnitId.values());
     const reportIsExact =
       componentId !== undefined &&
+      pendingReceipt !== undefined &&
+      pendingReceipt.report === report &&
+      pendingReceipt.terminalUnitIds.length === group.length &&
+      pendingReceipt.terminalUnitIds.every((unitId, index) => unitId === group[index]?.unitId) &&
       report.compiled.length === group.length &&
       new Set(report.compiled).size === group.length &&
       [...expectedSyntheticNames].every((name) => report.compiled.includes(name)) &&
@@ -325,6 +294,8 @@ export function prepareMultiPreparedCallableGroup(
       [...expectedSyntheticNames].every((name) => report.terminalCompiledOwners?.includes(name)) &&
       report.errors.length === 0 &&
       artifacts.length === group.length &&
+      new Set(artifacts.map(({ artifactUnitId }) => artifactUnitId)).size === group.length &&
+      group.every(({ unitId }) => artifacts.some(({ artifactUnitId }) => artifactUnitId === unitId)) &&
       artifacts.every(
         (artifact) =>
           artifact.artifactUnitId === artifact.terminalOwnerUnitId &&
@@ -333,14 +304,19 @@ export function prepareMultiPreparedCallableGroup(
           artifact.preparedComponentId === componentId,
       ) &&
       terminalEvidence.length === group.length &&
+      new Set(terminalEvidence.map(({ unitId }) => unitId)).size === group.length &&
+      group.every(({ unitId }) => terminalEvidence.some((evidence) => evidence.unitId === unitId)) &&
       terminalEvidence.every(
         (evidence) =>
           evidence.kind === "patched" &&
           groupUnitIds.has(evidence.unitId) &&
           evidence.legacyName === namesByUnitId.get(evidence.unitId) &&
           evidence.preparedComponentId === componentId,
-      );
+      ) &&
+      (report.syntheticCompiledArtifacts?.length ?? 0) === 0 &&
+      (report.preparedCountedStringAppendReceipts?.length ?? 0) === 0;
     if (!reportIsExact) {
+      pendingReceipt?.abort();
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "patch",
@@ -349,36 +325,27 @@ export function prepareMultiPreparedCallableGroup(
     }
 
     const preparedComponentId = componentId;
+    const populationMutation = process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_CALLABLE_COMPONENT_POPULATION;
+    if (populationMutation !== undefined && !/^\d+$/.test(populationMutation)) {
+      pendingReceipt.abort();
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `invalid callable component population mutation ${JSON.stringify(populationMutation)}`,
+      );
+    }
+    const publishedGroup = Number(populationMutation) === groupIndex ? group.slice(0, -1) : group;
     preparedComponent = {
       preparedComponentId,
-      units: group.map((candidate) => ({
+      units: publishedGroup.map((candidate) => ({
         sourceFile: candidate.sourceFile,
         sourceId: candidate.sourceId,
         unitId: candidate.unitId,
         legacyName: candidate.legacyName,
         declaration: candidate.declaration,
       })),
-      assertCurrent: () => {
-        const sourceCallables = input.ctx.programAbiSourceCallables;
-        if (!sourceCallables) {
-          throw new IrInvariantError(
-            "selection-preparation-mismatch",
-            "patch",
-            `prepared callable component ${preparedComponentId} lost its source callable registry`,
-          );
-        }
-        for (const candidate of group) {
-          const current = input.ctx.irUnitFuncMap.get(candidate.unitId);
-          const observed = sourceCallables.functionForUnit(candidate.unitId);
-          if (!current || observed !== current || current.name !== candidate.legacyName || current.body.length === 0) {
-            throw new IrInvariantError(
-              "selection-preparation-mismatch",
-              "patch",
-              `prepared callable component ${preparedComponentId} lost exact unit ${candidate.unitId}`,
-            );
-          }
-        }
-      },
+      pendingReceipt,
+      assertPreflightCurrent: input.assertPreflightCurrent,
     };
   }
   return preparedComponent;

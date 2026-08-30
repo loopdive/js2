@@ -315,6 +315,15 @@ export function isValidatedPlatformCapabilityImport(
   ) {
     return false;
   }
+  // A public module import name is not authority: a malformed or repeated
+  // descriptor can share the same `(module, name)` spelling as the
+  // compiler-owned provider entry.  Count every descriptor kind in the
+  // finished import section before authenticating the candidate, and require
+  // the sole occurrence to be the exact index under review.
+  const matchingImportIndexes = mod.imports.flatMap((candidate, index) =>
+    candidate.module === entry.module && candidate.name === entry.name ? [index] : [],
+  );
+  if (matchingImportIndexes.length !== 1 || matchingImportIndexes[0] !== importIndex) return false;
   const actual: CapabilityImportRequirement = {
     module: entry.module,
     name: entry.name,

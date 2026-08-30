@@ -135,7 +135,7 @@ function emitMemoizedNestedFnClosure(
     // local directly would otherwise snapshot its initial null value. Keep the
     // lazy timing (important when the function captures later initializers),
     // but fill the binding immediately before this closure copies it.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     // (#2029 family A) Cross-fctx capture sourcing. `cap.outerLocalIdx` is a
     // slot in the function that DECLARED the nested fn; when this
     // materialization runs inside a DIFFERENT function (an object-literal
@@ -638,19 +638,25 @@ export function materializeHoistedFunctionValueBinding(
   ctx: CodegenContext,
   fctx: FunctionContext,
   name: string,
+  reemitForImmutableCapture = false,
 ): boolean {
+  const alreadyMaterialized = fctx.materializedHoistedFunctionValueBindings?.has(name) === true;
   if (
     !fctx.hoistedFunctionValueBindings?.has(name) ||
     fctx.liftedCaptureNames?.has(name) ||
-    fctx.materializedHoistedFunctionValueBindings?.has(name) ||
+    (alreadyMaterialized && !reemitForImmutableCapture) ||
     fctx.materializingHoistedFunctionValueBindings?.has(name)
   ) {
-    return (
-      fctx.materializedHoistedFunctionValueBindings?.has(name) ||
-      fctx.materializingHoistedFunctionValueBindings?.has(name) ||
-      false
-    );
+    return alreadyMaterialized || fctx.materializingHoistedFunctionValueBindings?.has(name) || false;
   }
+
+  // Compilation visits both conditional arms, while only one arm runs. A
+  // sibling Function value emitted in the first arm therefore does not
+  // dominate a closure constructed in the second arm. Immutable captures may
+  // safely re-emit the materializer here: capture-carrying declarations reuse
+  // their per-activation memo and capture-free declarations reuse their module
+  // singleton, so this publishes the same Function object without changing
+  // assignment semantics. Mutable captures keep the one-site behavior above.
 
   const localIdx = fctx.localMap.get(name);
   const funcIdx = ctx.funcMap.get(name);

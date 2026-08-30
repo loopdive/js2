@@ -3635,3 +3635,90 @@ on this corpus, not that no program can produce one. Items 1–3 of the resume
 checkpoint (`LegacyAbiAdapter` routing, exports as ABI aliases, session
 notification from allocator replacement / dead-type elimination / compaction)
 are untouched, and R1 acceptance still requires the red suite above to clear.
+
+## 2026-08-30 C36 implementation lock — fail-closed vec export provenance
+
+This Sol-authored checkpoint is grounded on protected `origin/main`
+`c243892c7f3a757bdecf6215626b08586ce72c58`. PRs #5210 and #5233 are already
+merged; their startup-policy and source-qualified vec-export work is not a
+pending task and must not be reimplemented. No open PR, assignment, or parallel
+Claude lane owns the three files below.
+
+### Current false-pass
+
+`finalizeVecHostBridgeExports(...)` authenticates each compiler-owned export
+descriptor against the exact allocator object before rebasing its public Wasm
+index. Its descriptors still cross the dual handle regime: a live absolute
+index is resolved against the final live import prefix, while a value at or
+above `STABLE_FUNC_BASE` is an allocator-stable handle resolved through
+`definedFuncAt(...)`. The current truthiness check conflates a valid stable
+handle (whose raw subtraction is intentionally outside `mod.functions`) with
+an invalid live index. A live index exactly one past the defined-function
+population therefore returns `undefined`, bypasses the ownership error, and is
+silently rewritten to the expected allocator slot. That is a fail-open
+provenance repair: malformed state becomes valid output at the freeze boundary.
+
+The same function already contains the correct disabled-host-bridge invariant:
+standalone/WASI must remove every recorded compiler-owned vec descriptor, and a
+single survivor is fatal. Its focused mutation table does not exercise that
+branch, so a later deletion of the guard could pass all current tests. The
+function comment still describes the operation as a generic late-import
+"rebase" even though the post-#5233 authority is the captured descriptor and
+allocator identity; update the wording to name the authentication/freeze
+boundary without changing behavior.
+
+### Exact repair and ownership
+
+Own only:
+
+- `plan/issues/3520-ir-r1-source-qualified-identity-program-abi.md`;
+- `src/codegen/vec-access-exports.ts`; and
+- `tests/issue-3520-vec-support-callable-abi.test.ts`.
+
+Resolve the observed allocator through two explicit, non-overlapping regimes:
+for `entry.desc.index < STABLE_FUNC_BASE`, use the existing final live-import
+prefix and direct `mod.functions[currentPosition]` lookup; for a stable handle,
+use `definedFuncAt(...)`. Then apply one unconditional object-identity
+assertion: `currentAllocation !== allocation.func` is fatal whether the
+observed value is another function or `undefined`. Do not choose the stable
+resolver merely because a live lookup is out of range, clamp the index, infer
+ownership from an export name, consult `funcMap`, or repair a malformed
+descriptor before the assertion. Preserve the subsequent assignment as a
+position-only rebase for an already-authenticated descriptor.
+
+Extend the existing table-driven mutation test with an exact live-regime
+out-of-range case whose index is
+`live function-import count + module.functions.length` and is asserted below
+`STABLE_FUNC_BASE`. It must reach `finalizeVecHostBridgeExports(...)` and fail
+with the same different-allocator invariant as an in-range retarget, proving
+`undefined` cannot bypass the guard while genuine stable descriptors still
+resolve. Add a separate disabled-policy mutation that starts
+from a real generated host-bridge descriptor, changes only the policy to
+disabled, retains that exact descriptor in `mod.exports`, and requires the
+existing survivor invariant. The test must restore any captured context state
+even when an assertion fails.
+
+Do not replace the existing semantic corpus anti-vacuity
+`corpusOwnedFunctions > 0` with the historical raw `24` count. The plan's
+current-main drift record deliberately rejects brittle corpus-number pins; C36
+closes the concrete descriptor false-pass and records the remaining denominator
+decision without pretending to finish R1.
+
+### Boundaries and acceptance
+
+This slice changes no normal output, callable allocation, export naming,
+standalone/WASI stripping policy, Program-ABI schema, legacy fallback, or route
+selection. It is file-disjoint from queued #5275, open #5218/#5238/#5269, and
+the dirty shared #3521/#4617 checkout. Larger `LegacyAbiAdapter`, ABI-driven
+export publication, allocator-replacement notification, and red-suite work
+remain separate R1 continuations after their active dependencies land.
+
+Acceptance requires the focused vec support callable-ABI suite, TypeScript
+typecheck, formatting/lint, IR fallback and issue-integrity controls, plus the
+LOC and function regrowth ratchets immediately before every commit. Run every
+heavy command only when the one-minute load is finite, non-negative, and
+strictly below `logical cores - 2`. Let the complete precommit and prepush hooks
+run without bypass. No baseline, LOC, function-size, binary-size, or hook
+exception is authorized. A Luna implementation remains draft until an
+independent Sol review approves the exact pushed SHA; any later push invalidates
+that approval.

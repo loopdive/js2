@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-29
+updated: 2026-08-30
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -22,7 +22,7 @@ horizon: xl
 complexity: XL
 es_edition: n/a
 lane: ir-retirement-r2
-model: gpt-5.6-luna
+model: gpt-5.6-terra
 related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 loc-budget-allow:
   - src/ir/propagate.ts
@@ -39,6 +39,7 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/builder.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/codegen/ir-prepared-free-functions.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts
   - src/codegen/program-abi-fnctor-producer.ts
@@ -2873,3 +2874,41 @@ checkpoint: `d9e2327de0f2a57e3cc612b218f7fa77d940133a8da8a041f14c1312a240958d`.
 
 This tracker stays `in-progress`. Nothing here satisfies R2 compile-once, and no
 runtime replay was performed.
+
+## 2026-08-30 — fast typed-scalar pre-body admission
+
+Status: implemented as a bounded production checkpoint; the broader R2 tracker
+remains `in-progress`.
+
+Model: `gpt-5.6-terra` implementation worker, reviewed and completed by the
+owning Codex session.
+
+The blanket fast-mode rejection in
+`selectR2PreparedOwnerComponents` is narrowed to one fail-closed contract.
+Only an exact top-level function claim with required identifier parameters,
+explicit `number`/`boolean` parameter annotations, and an explicit
+`number`/`boolean`/`void` return may prepare before direct emission. The syntax
+projection must match the final IR override position by position (`number` →
+`f64`, `boolean` → `i32`, `void` → no result), and that override must still
+match the already allocated Program ABI slot exactly.
+
+Generics, async/generator declarations, defaults, rest/optional parameters,
+destructuring, inferred/JSDoc-only positions, strings, vectors, dynamic values,
+and every reference carrier remain on the established direct/post-direct
+route. All existing body-shape, nested-executable, poison-pill, activation,
+function-value, component-closure, and slot-parity guards remain in force.
+
+Focused coverage poisons the direct emitter for a fast numeric leaf and for a
+mixed numeric/boolean component. Both now report one IR body, zero legacy
+bodies, `irFirstSkipped`, and a prepared component identity while preserving
+the `8_000_000_000` result above the i32 range. A route-off poison control proves
+the direct path is still live, and a fast default-parameter negative remains
+direct and fails under the same poison.
+
+The changed-root CI gate also exposed three assertions already stale on
+current `main`. Their coverage is retained rather than suppressed: function
+value identity now pins the exact GC/standalone binary deltas (`0` / `119`
+bytes), the independent `directOnly` scalar owner proves compile-once beside a
+blocked function-value component, and the module-init boundary poisons the
+scalar callee's direct body while proving that the module initializer itself
+remains direct.

@@ -12,6 +12,11 @@ feasibility: hard
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-29
+loc-budget-allow:
+  # 2026-08-30: +10 runtime.ts lines from this PR's init-window static-dispatch
+  # wrap; main's post-#5258 baseline refresh reset the ceiling under this
+  # stacked branch, stranding the PR's own growth.
+  - src/runtime.ts
 ---
 
 # #5203 — init-window dynamic static-method dispatch (closure/`_wrapForHost` facet)

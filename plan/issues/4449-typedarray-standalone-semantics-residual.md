@@ -4,7 +4,7 @@ title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflec
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-27
+updated: 2026-08-30
 priority: high
 horizon: l
 feasibility: hard
@@ -269,3 +269,33 @@ the 52/55 control floor; its three failures are the pre-existing Float64
 `slice`/`subarray` custom-constructor receiver and invocation-argument rows.
 Draft PR #5022 must remain draft and this issue remains in progress until a
 future checkpoint reaches standalone 55/55 and host 55/55 with zero nonpasses.
+
+## 2026-08-30 detached-buffer compile-timeout handoff
+
+The full ES2015 diagnostic on detached source
+`1f1004f3df195cc5f9e804efcbb2896d3871ca37` finished all 16 shards. A separate
+runner-completeness defect (#5215) dropped 19 non-TypedArray verdicts from shard
+10, so the preserved dispatch artifact contains 11,685 unique rows rather than
+the selected 11,704: 8,974 pass, 2,258 fail, 447 compile errors, six compile
+timeouts, and no skips. Every recorded timeout is in this issue's existing
+detached-buffer family:
+
+- `test/built-ins/TypedArray/prototype/byteLength/detached-buffer.js`;
+- `test/built-ins/TypedArray/prototype/lastIndexOf/detached-buffer.js`;
+- `test/built-ins/TypedArray/prototype/findIndex/predicate-may-detach-buffer.js`;
+- `test/built-ins/TypedArray/prototype/every/callbackfn-detachbuffer.js`;
+- `test/built-ins/TypedArray/prototype/indexOf/detached-buffer.js`;
+- `test/built-ins/TypedArray/prototype/buffer/detached-buffer.js`.
+
+The first two timings were observed while an accidental competing focused-test
+pool was being terminated; the later four occurred with the census alone and
+make the shared detached-buffer compile path the primary diagnosis. None of
+the 19 missing #5215 rows is a TypedArray path, so the six-row list is exact for
+the emitted artifact. This remains dispatch evidence, not a final regression
+count.
+
+The census has released the global two-worker lock. The current validation
+lanes remain capped at one worker each; when one returns, a Luna Max handoff on
+this existing markdown issue must rerun each path alone with one bounded
+compiler worker, record whether compilation or strict rerun stalls, and fix the
+shared lowering rather than increasing retry budgets.
