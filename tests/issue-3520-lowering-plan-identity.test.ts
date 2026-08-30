@@ -565,8 +565,35 @@ describe("#3520 lowering-plan owner identity", () => {
     const b = duplicate.byName.get("/repo/b.ts")!;
     const duplicateOwner = namedFunction(a, "owner");
     const duplicateOwnerId = duplicate.identityContext.unitIdByDeclaration.get(duplicateOwner)!;
+    const localTarget = namedFunction(a, "target");
+    const localTargetId = duplicate.identityContext.unitIdByDeclaration.get(localTarget)!;
     const foreignTarget = namedFunction(b, "target");
     const foreignTargetId = duplicate.identityContext.unitIdByDeclaration.get(foreignTarget)!;
+    const duplicateCall = firstDescendant(duplicateOwner, ts.isCallExpression);
+    if (!ts.isIdentifier(duplicateCall.expression)) throw new Error("expected an identifier call");
+    expect(duplicate.resolver.resolveTopLevelFunctionValueTarget(duplicateCall.expression)).toMatchObject({
+      targetUnitId: localTargetId,
+      legacyProjection: "ambiguous",
+    });
+    const localPlans = collectIrDirectCallLoweringPlansByIdentity(duplicateOwner, duplicateOwnerId, {
+      identityContext: duplicate.identityContext,
+      resolver: duplicate.resolver,
+      activeOwnerUnitIds: new Set(duplicate.identityContext.terminalByUnitId.keys()),
+      signaturesByUnitId: new Map([[localTargetId, NUMBER_SIGNATURE]]),
+      targetsByLegacyName: new Map([
+        [
+          "target",
+          {
+            target: irUnitFuncRef({ unitId: localTargetId, name: "target" }),
+            signature: NUMBER_SIGNATURE,
+          },
+        ],
+      ]),
+    });
+    expect(localPlans.size).toBe(1);
+    expect([...localPlans.values()][0]).toMatchObject({
+      target: { binding: { kind: "unit", unitId: localTargetId }, name: "target" },
+    });
     expect(() =>
       collectIrDirectCallLoweringPlansByIdentity(duplicateOwner, duplicateOwnerId, {
         identityContext: duplicate.identityContext,
@@ -583,7 +610,7 @@ describe("#3520 lowering-plan owner identity", () => {
           ],
         ]),
       }),
-    ).toThrow("cannot cross the legacy-name projection unambiguously");
+    ).toThrow("disagrees with its retained source identity");
 
     const imported = checkedIdentityFixture(
       {

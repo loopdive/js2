@@ -10939,6 +10939,160 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-30T03:29:53.129Z",
+      "sourceRevision": "a62aacba5ccc154f6fc378235aaaeeb4a7204231",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 417579.35293262807,
+            "dynamic": 0.1318580030348527
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 642.2486326564957,
+            "dynamic": 0.2041954425542507
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.786435937062297,
+            "dynamic": 0.14597230125711824
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-30T07:11:08.430Z",
+      "sourceRevision": "3e89b5f95318b45fd69c9cf8209da84a7a06351a",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 282627.8643891409,
+            "dynamic": 0.12452000577787528
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 688.2560871188396,
+            "dynamic": 0.19773196066018278
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.98985492826831,
+            "dynamic": 0.1449259034623536
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-30T09:04:27.871Z",
+      "sourceRevision": "b916fae2a360988cbe9f26c090ddcd9158d461d4",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 363108.7281692855,
+            "dynamic": 0.09825561683252483
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 641.3710722893402,
+            "dynamic": 0.20628967117154762
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.809218436233774,
+            "dynamic": 0.1439765506277127
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-30T10:58:26.558Z",
+      "sourceRevision": "01fb67624e2f645b7e92dd9f8e47478e3face9ba",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 332758.04295982025,
+            "dynamic": 0.12524162676886139
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 637.4781479418527,
+            "dynamic": 0.20590238451828782
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 16.98871538643748,
+            "dynamic": 0.14582421283143365
+          }
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-30T12:59:52.711Z",
+      "sourceRevision": "77ac45d08afd350e60875c401d75e56c8f50f631",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {},
+          "standalone": {
+            "static": 364648.0464297498,
+            "dynamic": 0.096969494472945
+          }
+        },
+        "cookie": {
+          "jsHost": {},
+          "standalone": {
+            "static": 891.9319969322846,
+            "dynamic": 0.20918442668410678
+          }
+        },
+        "clsx": {
+          "jsHost": {},
+          "standalone": {
+            "static": 14.479968457691264
+          }
+        }
+      }
     }
   ]
 }

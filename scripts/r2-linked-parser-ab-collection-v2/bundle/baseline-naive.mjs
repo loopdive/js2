@@ -108,7 +108,7 @@ function naiveWatCarriers(child, failures) {
     return;
   }
   for (const [name, observed] of Object.entries(carriers)) {
-    const recomputed = sha256(canonicalWatText(observed));
+    const recomputed = sha256(canonicalWatText(name, observed));
     if (observed.sha256 !== recomputed || manifest[name] !== recomputed) {
       failures.add("wat/hash-mismatch", key, `carrier ${name} hash is not self-consistent`);
     }
