@@ -1607,7 +1607,20 @@ function compileIdentifierCore(
       // retain the lib.dom ambient declaration for that dependency, so the
       // read used to fall through to the unresolvable-name path even though
       // the host supplies globalThis.crypto.
-      name === "crypto") &&
+      name === "crypto" ||
+      // (#5206) `Intl` is an ambient NAMESPACE (`declare namespace Intl` in
+      // lib.es5.d.ts), not a `declare var`, so none of the value-shaped arms
+      // above claim it and every read fell to the `ref.null.extern` graceful
+      // default — `Intl.DateTimeFormat` then threw "Cannot access property on
+      // null or undefined". That is the eighth @js-temporal/polyfill
+      // module-init blocker (#4628): the bundle's very first Intl statement is
+      // a top-level `ct = Intl.DateTimeFormat`. The JS host owns a full,
+      // ICU-backed `Intl`, and `__get_globalThis`/`__extern_get` are IMPORTS
+      // (unlike the module's own exports), so this resolves inside the wasm
+      // `start` section as well as after it. Standalone/WASI keep the null
+      // default: there is no host Intl there, and a compiled shim for it is a
+      // separate, much larger gap.
+      name === "Intl") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)

@@ -44,6 +44,12 @@ import {
   _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import {
+  classDispatchExportName,
+  INIT_MARSHAL_HELPER_NAMES,
+  marshalExports,
+  type MarshalExportSource,
+} from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
@@ -554,10 +560,7 @@ const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
   typeof BigUint64Array === "function" ? BigUint64Array : undefined,
 ];
 
-function _compiledTypedArrayMirror(
-  carrier: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): ArrayBufferView | undefined {
+function _compiledTypedArrayMirror(carrier: any, callbackState?: MarshalExportSource): ArrayBufferView | undefined {
   if (!_canBeWeakKey(carrier)) return undefined;
   const kind = _compiledTypedArrayKinds.get(carrier);
   if (kind === undefined) return undefined;
@@ -567,7 +570,7 @@ function _compiledTypedArrayMirror(
     // mirror since the previous sync, preserve those edits until the explicit
     // mirror→Wasm unwrap path replays them.
     if (!vecMirrorElementsChanged(cached)) {
-      const exports = callbackState?.getExports();
+      const exports = marshalExports(callbackState);
       const vecLen = exports?.__vec_len as ((vec: any) => number) | undefined;
       const vecGet = exports?.__vec_get as ((vec: any, index: number) => any) | undefined;
       if (typeof vecLen === "function" && typeof vecGet === "function") {
@@ -695,10 +698,16 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
 function _marshalHostConstructArg(
   a: any,
   exports: Record<string, Function> | undefined,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
+  callbackState?: MarshalExportSource,
   hostCallee?: any,
 ): any {
-  const buf = _compiledAbToHostBuffer(a, exports);
+  // (#5193) During the wasm start section `exports` is undefined for the whole
+  // of module init, so EVERY probe below failed and the loud refusal at the end
+  // fired on a perfectly ordinary `new Float64Array(new ArrayBuffer(8))` written
+  // at module top level (jsbi's `__kBitConversionBuffer`, the Temporal blocker).
+  // Fall back to the helpers the module registered on itself at init entry.
+  const eff = marshalExports(callbackState, exports);
+  const buf = _compiledAbToHostBuffer(a, eff);
   if (buf !== undefined) return buf;
   if (a != null && typeof a === "object" && _isWasmStruct(a)) {
     const mat = _materializeIterable(a, callbackState);
@@ -709,7 +718,7 @@ function _marshalHostConstructArg(
     // fine; preserve its length/index properties instead of treating the
     // opaque backing struct as an unmarshalable value.
     if (_isHostTypedArrayCtor(hostCallee)) {
-      const mirror = _wrapForHost(a, exports);
+      const mirror = _wrapForHost(a, eff);
       if (mirror !== a && typeof mirror.length === "number") return mirror;
     }
     // (#3335) Refuse loudly: the arg is a compiled struct NONE of the
@@ -1965,7 +1974,15 @@ function _wrapWasmClosureUnknownArity(
     if (cached) return cached as (...args: any[]) => any;
   }
   if (!callbackState) return null;
-  const exports = callbackState.getExports();
+  // (#5203) During module init `getExports()` is undefined for the whole start
+  // section, so this returned null and every init-window closure — notably a
+  // STATIC method read off a class value (`JSBI.__clz30(t)`) — presented as a
+  // non-callable raw struct ("clz is not a function"). Fall back to the
+  // funcrefs the module registered on itself (#5193/#5202 channel), which now
+  // carries the `__call_fn_*` family. Those are the SAME function objects the
+  // export view yields later, so the snapshot captured below stays correct
+  // once instantiation returns.
+  const exports = marshalExports(callbackState);
   if (!exports) return null;
   let maxArity = -1;
   for (let arity = 0; arity <= 4; arity++) {
@@ -2363,7 +2380,9 @@ function _maybeWrapCallableUnknownArity(
   if (typeof val === "function") return val;
   if (typeof val !== "object") return val;
   if (!callbackState) return val;
-  const exports = callbackState.getExports();
+  // (#5203) Same init-window fallback as `_wrapWasmClosureUnknownArity` — the
+  // `__is_closure` discriminator this needs is an export too.
+  const exports = marshalExports(callbackState);
   if (!exports) return val;
   // (#4618) A registered class ctor VALUE (class expression) presents as the
   // constructible class mirror on every crossing path, not the plain
@@ -3056,10 +3075,7 @@ function _arrayFromNonIterableSource(
   }
 }
 
-function _materializeIterable(
-  iter: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): any {
+function _materializeIterable(iter: any, callbackState?: MarshalExportSource): any {
   if (iter == null) return iter;
   if (_nativeIsArray(iter)) return iter;
   if (typeof iter !== "object") return iter;
@@ -3068,7 +3084,10 @@ function _materializeIterable(
   // objects are opaque", aborting the host call. `_isWasmStruct`
   // handles the throw internally and returns true for opaque structs.
   if (_isWasmStruct(iter)) {
-    const exports = callbackState?.getExports();
+    // (#5193) Start-section fallback: during module init `getExports()` is
+    // still undefined, so this returned the raw struct and every host callee
+    // saw a non-array-like.
+    const exports = marshalExports(callbackState);
     if (!exports) return iter;
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
@@ -3237,6 +3256,51 @@ function _convertIterableForHost(
     }
   }
   return obj;
+}
+
+/**
+ * (#5205) Decode ONE compiled `[key, value]` pair into something the engine's
+ * `AddEntriesFromIterable` (§7.1.19) can index with `Get(entry, "0"/"1")`.
+ *
+ * Deliberately SHALLOW, unlike `_convertIterableForHost` above: only the pair
+ * container is rebuilt, and the two slots stay the exact values the module
+ * handed over. A deep conversion would replace a compiled array VALUE with a
+ * fresh JS copy, severing both object identity (`fromEntries([[k, a]]).k === a`)
+ * and live mutation, neither of which this call site has any reason to break.
+ *
+ * Handles both physical pair shapes: a homogeneous vec (`__vec_get`) and a
+ * heterogeneous TUPLE struct whose fields are `_0`, `_1` (`__struct_field_names`
+ * + `__sget_*`). Anything else falls back to the live-mirror proxy
+ * `__object_assign` uses, and a non-struct passes straight through.
+ */
+function _decodeCompiledPair(entry: any, exports: Record<string, Function> | undefined): any {
+  if (entry == null || typeof entry !== "object" || !_isWasmStruct(entry) || !exports) return entry;
+  const vecLen = exports.__vec_len;
+  const vecGet = exports.__vec_get;
+  if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(entry, exports)) {
+    const len = vecLen(entry) as number;
+    if (typeof len === "number" && len >= 0) {
+      const out: any[] = new Array(len);
+      for (let i = 0; i < len; i++) out[i] = vecGet(entry, i);
+      return out;
+    }
+  }
+  const fieldNames = exports.__struct_field_names;
+  if (typeof fieldNames === "function") {
+    const names = fieldNames(entry) as string | null;
+    if (typeof names === "string" && names.length > 0) {
+      const parts = names.split(",");
+      if (parts.every((part) => /^_\d+$/.test(part))) {
+        const out: any[] = new Array(parts.length);
+        for (let i = 0; i < parts.length; i++) {
+          const getter = exports[`__sget_${parts[i]}`];
+          out[i] = typeof getter === "function" ? getter(entry) : undefined;
+        }
+        return out;
+      }
+    }
+  }
+  return _wrapForHost(entry, exports);
 }
 
 function _getSidecar(obj: object): Record<string | symbol, any> {
@@ -5473,6 +5537,25 @@ function _safeGet(
   // Check sidecar for properties set via __extern_set on non-WasmGC objects
   const sc = _sidecarGet(obj, key);
   if (sc !== undefined) return sc;
+  // (#5204) A compiled member of an EXTERNREF-BACKED class. Its instance is a
+  // real host object, so the `_isWasmStruct(obj)` block above — which is where
+  // `_resolveClassMember` was consulted — never runs for it, and a plain
+  // property READ of a `get g()` on `class D extends Array` answered
+  // `undefined` (→ NaN through the reader's `__unbox_number`). A METHOD call
+  // never hit this because `__extern_method_call`'s not-a-function tail
+  // consults the same resolver on its own.
+  //
+  // Placed AFTER the native read and the sidecar so nothing that already
+  // resolved changes precedence; the resolver itself answers only for
+  // registered compiled instances, so every other host object is untouched.
+  //
+  // Reads the #5193/#5202/#5203 start-export channel rather than bare
+  // `getExports()`, so the same read works DURING module init — `__call_get_*`
+  // and `__class_call_*` are both registered there.
+  {
+    const member = _resolveClassMember(obj, key, marshalExports(callbackState));
+    if (member !== _MISS) return member;
+  }
   // For JS Symbols, also check the Wasm "@@name" equivalent
   if (typeof key === "symbol") {
     const wasmKey = _symbolToWasm.get(key);
@@ -13900,7 +13983,14 @@ assert._isSameValue = isSameValue;
             const resolvedClassMethod = _invokeClassMethod(
               _unwrapForHost(obj),
               method,
-              exports,
+              // (#5202) During module init `exports` is undefined for the whole
+              // start section, so the resolver bailed on its first line and a
+              // top-level `inst.m()` threw "m is not a function" while the
+              // identical call after init returned. Fall back to the funcrefs
+              // the module registered on itself — the same channel #5193 uses
+              // for marshalling probes, and the same function objects the
+              // export view yields later.
+              marshalExports(callbackState, exports),
               wrappedObj,
               wrappedArgs,
             );
@@ -14388,7 +14478,22 @@ assert._isSameValue = isSameValue;
           return Object.assign(target as object, ...wrappedSources);
         };
       // Object.fromEntries(iterable) — create object from entries (#965)
-      if (name === "__object_fromEntries") return (iterable: any): any => Object.fromEntries(iterable);
+      // (#5205) The host `Object.fromEntries` needs `@@iterator` on the source
+      // (§7.4.4 GetIterator) and indexed "0"/"1" reads on each entry (§7.1.19
+      // AddEntriesFromIterable). An opaque WasmGC vec answers neither: the
+      // source threw "object is not iterable", and a compiled entry pair would
+      // have read `undefined`. Marshal BOTH levels, then hand the normalised
+      // entries to the native implementation so ToPropertyKey /
+      // CreateDataPropertyOrThrow stay the engine's. `marshalExports` (not
+      // `getExports`) because the failing call is at module init, where the
+      // real exports do not exist yet — #5193's start-export channel.
+      if (name === "__object_fromEntries")
+        return (iterable: any): any => {
+          const src = _materializeIterable(iterable, callbackState);
+          if (!_nativeIsArray(src)) return Object.fromEntries(src);
+          const exports = marshalExports(callbackState);
+          return Object.fromEntries(src.map((entry: any) => _decodeCompiledPair(entry, exports)));
+        };
       // Object.getOwnPropertyDescriptors(obj) — all own descriptors (#965)
       // (#1629 S1) For WasmGC structs, enumerate own keys and read each
       // descriptor through the same canonical path as the single-key
@@ -14701,6 +14806,37 @@ assert._isSameValue = isSameValue;
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
       }
+      // (#5193) __register_init_export(id, fn) — the module hands the host its
+      // own marshalling helpers as `ref.func` values from the top of
+      // `__module_init`, i.e. from INSIDE the wasm `start` section, where
+      // `instance.exports` does not exist yet. A funcref crossing into JS
+      // materializes as the identical function object the export later yields,
+      // so this is a pure timing shim, not a second ABI. Unknown ids are
+      // ignored so an older runtime tolerates a newer module.
+      if (name === "__register_init_export")
+        return (id: number, fn: any): void => {
+          const helperName = INIT_MARSHAL_HELPER_NAMES[id];
+          if (helperName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(helperName, fn);
+        };
+      // (#5202) __register_init_class_export(namesCsv, index, fn) — the method-
+      // dispatch facet of the same window. The class-method dispatch surface is
+      // one export per (class, method, arity), so unlike the six fixed #5193
+      // helpers it cannot use a positional id ABI. The module registers ONE
+      // pooled CSV of names and indexes into it, which keeps the added
+      // `string_constants` imports at one per module rather than one per name.
+      // An out-of-range index is ignored so an older runtime tolerates a newer
+      // module.
+      if (name === "__register_init_class_export")
+        return (namesCsv: any, index: number, fn: any): void => {
+          const exportName = classDispatchExportName(namesCsv, index);
+          if (exportName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(exportName, fn);
+        };
       // (#1732 S1) __construct(callee, argsArray) — runtime [[Construct]] for a
       // `new f(...)` whose callee value cannot be proven constructable at
       // compile time (e.g. `var f = String.prototype.indexOf; new f`). Per
