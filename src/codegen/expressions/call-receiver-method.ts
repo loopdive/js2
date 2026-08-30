@@ -66,6 +66,7 @@ import {
   ensureTaDynCopyWithinHelper,
   ensureTaDynFillHelper,
   ensureTaDynReverseHelper,
+  ensureTaDynSetHelper,
   ensureTaFromArrayLikeHelper,
   isDataViewAccessor,
   usesNativeDataViewProvider,
@@ -3939,12 +3940,19 @@ export function compileReceiverMethodCall(
         // (slice-1 fill path is byte-identical — same helper funcIdx/arity).
         // Helpers mint defined functions only (no imports — post-flush safe).
         let taFillIdx: number | undefined;
-        if (ctx.moduleUsesDynTaView && arity <= 3) {
-          if (methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
-          else if (methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
-          else if (methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
+        let taSetIdx: number | undefined;
+        if (ctx.moduleUsesDynTaView) {
+          if (methodName === "set") taSetIdx = ensureTaDynSetHelper(ctx);
+          else if (arity <= 3 && methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
+          else if (arity <= 3 && methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
+          else if (arity <= 3 && methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
         }
-        if (taFillIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {
+        const taDynMethodIdx = taSetIdx ?? taFillIdx;
+        if (taDynMethodIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {
+          // The set helper self-registers the canonical object readers and
+          // coercion substrate. Reconcile any late-import shifts before the
+          // outer call site captures its receiver/argument instructions.
+          flushLateImportShifts(ctx, fctx);
           const dynIdx = ctx.taDynViewTypeIdx;
           const recvT = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
           if (recvT && recvT.kind !== "externref") {
@@ -3964,11 +3972,22 @@ export function compileReceiverMethodCall(
             argLocals.push(aLocal);
           }
           const thenArm: Instr[] = [{ op: "local.get", index: recvLocal }];
+          // `set` consumes only source + offset, but all supplied arguments
+          // have already been evaluated into locals above. Keep the same
+          // five-parameter native helper ABI as the other dyn-view mutators;
+          // the unused slot is deliberately padded so extra arguments retain
+          // their evaluation/abrupt-completion behavior without being read by
+          // the native set implementation.
+          const helperArgCount = methodName === "set" ? 2 : 3;
           for (let a = 0; a < 3; a++) {
-            thenArm.push(a < argLocals.length ? { op: "local.get", index: argLocals[a]! } : { op: "ref.null.extern" });
+            thenArm.push(
+              a < helperArgCount && a < argLocals.length
+                ? { op: "local.get", index: argLocals[a]! }
+                : { op: "ref.null.extern" },
+            );
           }
           thenArm.push({ op: "i32.const", value: arity });
-          thenArm.push({ op: "call", funcIdx: taFillIdx });
+          thenArm.push({ op: "call", funcIdx: taDynMethodIdx });
           const elseArm: Instr[] = [{ op: "local.get", index: recvLocal }];
           for (const aLocal of argLocals) elseArm.push({ op: "local.get", index: aLocal });
           elseArm.push({ op: "call", funcIdx: dispatchIdx });
