@@ -50,6 +50,8 @@ import {
   marshalExports,
   type MarshalExportSource,
 } from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
+import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
+import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
@@ -1935,7 +1937,7 @@ function _wrapWasmClosure(
     }
     byArity.set(arity, wrapped);
     _wasmClosureWrapperTargets.set(wrapped, closure as object);
-    _recordMirrorOwner(wrapped, callbackState?.getExports()); // (#5222)
+    _linkedProviderMirrors.recordMirrorOwner(wrapped, callbackState?.getExports()); // (#5222)
   }
   return wrapped;
 }
@@ -2147,7 +2149,7 @@ function _wrapWasmClosureUnknownArity(
   if (closure != null && typeof closure === "object") {
     _wasmClosureDynamicWrapperCache.set(closure, wrapped);
     _wasmClosureWrapperTargets.set(wrapped, closure);
-    _recordMirrorOwner(wrapped, callbackState?.getExports()); // (#5222)
+    _linkedProviderMirrors.recordMirrorOwner(wrapped, callbackState?.getExports()); // (#5222)
     // (#4618) Surface the closure's OWN sidecar props on the bridge as live
     // non-enumerable accessors (jest's mock fn: `.mock` / `.mockRestore` /
     // `.mockImplementation`). Without this, a spy stored on a host object
@@ -2405,10 +2407,7 @@ export function wrapLinkedProviderValue(value: any, providerExports: Record<stri
   // mirror is minted, so every mirror created underneath — including the nested
   // ones the proxy's get-trap mints lazily — is recognisable as foreign when the
   // CONSUMER module later reads through it.
-  if (_canBeWeakKey(providerExports)) {
-    _linkedProviderExportSets.add(providerExports);
-    _anyLinkedProviderRegistered = true;
-  }
+  _linkedProviderMirrors.registerProviderExports(providerExports);
   if (value == null || (typeof value !== "object" && typeof value !== "function")) return value;
   const callable = _maybeWrapCallableUnknownArity(value, { getExports: () => providerExports });
   return callable !== value ? callable : _wrapForHost(value, providerExports);
@@ -3266,51 +3265,6 @@ function _convertIterableForHost(
     }
   }
   return obj;
-}
-
-/**
- * (#5205) Decode ONE compiled `[key, value]` pair into something the engine's
- * `AddEntriesFromIterable` (§7.1.19) can index with `Get(entry, "0"/"1")`.
- *
- * Deliberately SHALLOW, unlike `_convertIterableForHost` above: only the pair
- * container is rebuilt, and the two slots stay the exact values the module
- * handed over. A deep conversion would replace a compiled array VALUE with a
- * fresh JS copy, severing both object identity (`fromEntries([[k, a]]).k === a`)
- * and live mutation, neither of which this call site has any reason to break.
- *
- * Handles both physical pair shapes: a homogeneous vec (`__vec_get`) and a
- * heterogeneous TUPLE struct whose fields are `_0`, `_1` (`__struct_field_names`
- * + `__sget_*`). Anything else falls back to the live-mirror proxy
- * `__object_assign` uses, and a non-struct passes straight through.
- */
-function _decodeCompiledPair(entry: any, exports: Record<string, Function> | undefined): any {
-  if (entry == null || typeof entry !== "object" || !_isWasmStruct(entry) || !exports) return entry;
-  const vecLen = exports.__vec_len;
-  const vecGet = exports.__vec_get;
-  if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(entry, exports)) {
-    const len = vecLen(entry) as number;
-    if (typeof len === "number" && len >= 0) {
-      const out: any[] = new Array(len);
-      for (let i = 0; i < len; i++) out[i] = vecGet(entry, i);
-      return out;
-    }
-  }
-  const fieldNames = exports.__struct_field_names;
-  if (typeof fieldNames === "function") {
-    const names = fieldNames(entry) as string | null;
-    if (typeof names === "string" && names.length > 0) {
-      const parts = names.split(",");
-      if (parts.every((part) => /^_\d+$/.test(part))) {
-        const out: any[] = new Array(parts.length);
-        for (let i = 0; i < parts.length; i++) {
-          const getter = exports[`__sget_${parts[i]}`];
-          out[i] = typeof getter === "function" ? getter(entry) : undefined;
-        }
-        return out;
-      }
-    }
-  }
-  return _wrapForHost(entry, exports);
 }
 
 function _getSidecar(obj: object): Record<string | symbol, any> {
@@ -6065,64 +6019,7 @@ const _nativePromiseHostCache = new WeakMap<object, Promise<unknown>>();
 // blind to its receiver's physical fields.
 const _hostProxyExportSlots = new WeakMap<object, { current: Record<string, Function> | undefined }>();
 
-/**
- * (#5222) Cross-module boundary bookkeeping for the #2527 package linker.
- *
- * A host mirror minted by `_wrapForHost` / `_wrapCallableForHost` / the closure
- * bridges is only meaningful together with the EXPORTS of the module that minted
- * it: every field read behind it goes through that module's `__sget_*` /
- * `__struct_field_names` / `__call_fn_*` helpers. The raw WasmGC struct on its
- * own carries no such decoder.
- *
- * That is fine inside one module, where the exit-boundary un-marshal (#4611,
- * `_unwrapForHost`) deliberately strips the mirror back to the raw struct so
- * private-field `ref.cast` dispatch keeps working. It is NOT fine across a
- * LINKED PROVIDER boundary: the consumer module's helpers cannot decode a
- * provider-owned struct, so an un-marshalled provider value arrives inside the
- * consumer as an opaque object with zero readable members.
- *
- * These two maps let `_unwrapForHost` tell the two cases apart:
- *  - `_linkedProviderExportSets` — exports objects that belong to a separately
- *    compiled provider instance (registered by `wrapLinkedProviderValue`). Empty
- *    for every non-linked program, so the guard below is inert there.
- *  - `_hostMirrorOwnerExports` — the exports a given mirror was minted against,
- *    recorded once at mint time (never refreshed, unlike the export SLOT).
- */
-const _linkedProviderExportSets = new WeakSet<object>();
-const _hostMirrorOwnerExports = new WeakMap<object, Record<string, Function>>();
-/**
- * Fast opt-out. `__extern_get` is one of the hottest host helpers there is
- * (#3903 measured 10k calls per `run()` on `mixed/csv-parse`), so the guard
- * below must cost nothing at all in the overwhelmingly common single-module
- * case. No provider linked ⇒ no cross-module mirror can exist ⇒ skip entirely.
- */
-let _anyLinkedProviderRegistered = false;
-
-/** (#5222) Remember which module's exports a host mirror was minted against. */
-function _recordMirrorOwner(mirror: unknown, exports: Record<string, Function> | undefined): void {
-  if (exports === undefined || !_canBeWeakKey(mirror)) return;
-  if (!_hostMirrorOwnerExports.has(mirror as object)) {
-    _hostMirrorOwnerExports.set(mirror as object, exports);
-  }
-}
-
-/**
- * (#5222) Is `mirror` owned by a DIFFERENT module than the one now reading it,
- * where at least one of the two is a separately compiled linked provider?
- *
- * Deliberately narrow: it answers `false` whenever no provider is linked at all,
- * so the single-module lane keeps the exact #4611 un-marshal behaviour. The
- * reader's exports are resolved LAST — only once the mirror is known to have a
- * recorded owner — so the common path never pays for `getExports()`.
- */
-function _isForeignModuleMirror(mirror: unknown, reader: MarshalExportSource | undefined): boolean {
-  if (!_anyLinkedProviderRegistered || reader === undefined || !_canBeWeakKey(mirror)) return false;
-  const owner = _hostMirrorOwnerExports.get(mirror as object);
-  if (owner === undefined) return false;
-  const currentExports = marshalExports(reader);
-  if (currentExports === undefined || owner === currentExports) return false;
-  return _linkedProviderExportSets.has(owner) || _linkedProviderExportSets.has(currentExports);
-}
+const _linkedProviderMirrors = createLinkedProviderMirrorOwnership(_canBeWeakKey);
 
 // (#2671) RegExp.lastIndex value-preserving slot. §22.2.7.2 RegExpBuiltinExec
 // reads lastIndex as `ToLength(? Get(R, "lastIndex"))`; the setter stores the
@@ -7883,7 +7780,7 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
   const proxy = new Proxy(target, handler);
   _hostProxyCache.set(vec, proxy);
   _hostProxyReverse.set(proxy, vec);
-  _recordMirrorOwner(proxy, readExports()); // (#5222)
+  _linkedProviderMirrors.recordMirrorOwner(proxy, readExports()); // (#5222)
   return proxy;
 }
 
@@ -8549,13 +8446,13 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
     const mirror = _makeClassCtorMirrorForHost(obj, proxy, exports);
     _hostProxyCache.set(obj, mirror);
     _hostProxyReverse.set(mirror, obj);
-    _recordMirrorOwner(mirror, exports); // (#5222)
-    _recordMirrorOwner(proxy, exports);
+    _linkedProviderMirrors.recordMirrorOwner(mirror, exports); // (#5222)
+    _linkedProviderMirrors.recordMirrorOwner(proxy, exports);
     return mirror;
   }
   _hostProxyCache.set(obj, proxy);
   _hostProxyReverse.set(proxy, obj);
-  _recordMirrorOwner(proxy, exports); // (#5222)
+  _linkedProviderMirrors.recordMirrorOwner(proxy, exports); // (#5222)
   return proxy;
 }
 
@@ -8762,7 +8659,7 @@ function _unwrapForHost(v: any, reader?: MarshalExportSource): any {
   // (#5222) A mirror minted by a DIFFERENT module across the #2527 linked
   // provider seam must survive intact: the consumer has no decoder for the
   // provider's raw struct, so un-marshalling it here erases every member.
-  if (_isForeignModuleMirror(v, reader)) return v;
+  if (_linkedProviderMirrors.isForeignModuleMirror(v, reader)) return v;
   const orig = _hostProxyReverse.get(v);
   if (orig !== undefined) return orig;
   return typeof v === "function" ? (_wasmClosureWrapperTargets.get(v) ?? v) : v;
@@ -8962,7 +8859,7 @@ function _wrapCallableForHost(
   const proxy = new Proxy(fnTarget, handler);
   _hostCallableCache.set(closure, proxy);
   _hostProxyReverse.set(proxy, closure); // so _unwrapForHost round-trips
-  _recordMirrorOwner(proxy, callbackState?.getExports()); // (#5222)
+  _linkedProviderMirrors.recordMirrorOwner(proxy, callbackState?.getExports()); // (#5222)
   wsh.recordCallableOwner(proxy, callbackState);
   // The same closure can cross the boundary as this constructible proxy and as
   // a dynamic wasmClosureDynamicBridge. Canonicalize both representations to
@@ -11052,12 +10949,9 @@ function resolveImport(
             // the keyed-collection arm above, `wrapLinkedProviderValue`):
             // callable bridge first, host facade otherwise.
             //
-            // HOT PATH: this shim is the DOM lane's, and the added work is
-            // entirely inside `hasStructArg`. The DOM benchmarks pass strings
-            // and host `MockElement` handles, never WasmGC structs, so they
-            // take the untouched `callArgs = args` path — and the fixed-arity
-            // wrappers below still short-circuit before `invokeMethod` runs at
-            // all. A NON-closure struct argument keeps exactly its previous
+            // HOT PATH: the added work stays inside `hasStructArg`; the DOM
+            // benchmarks never take it, and fixed-arity wrappers bypass this
+            // function. A NON-closure struct argument keeps exactly its previous
             // `_wrapForHost` result: `_maybeWrapCallableUnknownArity` asks the
             // module's own `__is_closure` discriminator and returns the value
             // unchanged for anything else.
@@ -14696,7 +14590,9 @@ assert._isSameValue = isSameValue;
           const src = _materializeIterable(iterable, callbackState);
           if (!_nativeIsArray(src)) return Object.fromEntries(src);
           const exports = marshalExports(callbackState);
-          return Object.fromEntries(src.map((entry: any) => _decodeCompiledPair(entry, exports)));
+          return Object.fromEntries(
+            src.map((entry: any) => decodeCompiledEntryPair(entry, exports, _isWasmStruct, _isWasmVec, _wrapForHost)),
+          );
         };
       // Object.getOwnPropertyDescriptors(obj) — all own descriptors (#965)
       // (#1629 S1) For WasmGC structs, enumerate own keys and read each
