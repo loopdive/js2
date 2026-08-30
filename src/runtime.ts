@@ -5451,7 +5451,16 @@ function _safeGet(
     // Registered class prototypes and class objects intentionally hide their
     // physical instance fields, so keep their existing allowlist semantics.
     if (typeof key === "string" && !_prototypeMethodNames.has(obj) && !_staticMethodNames.has(obj)) {
-      const fieldExports = callbackState?.getExports();
+      // (#5209) MARSHALLING read — the fifth facet of the #5193 init window.
+      // `__sget_*` and `__struct_field_names` are already handed to the runtime
+      // from inside the start section (#5205 registers the STRUCT-READ family),
+      // but this probe still asked `getExports()`, which is `undefined` for the
+      // whole of module init. A field read off an `any`-typed receiver at init —
+      // `arr.filter((x) => x.code)`, where the callback parameter has no static
+      // type — therefore answered `undefined` SILENTLY: the predicate went
+      // false, `filter` returned `[]`, and the Temporal era table came back
+      // empty instead of throwing.
+      const fieldExports = marshalExports(callbackState);
       if (_structHasOwnFieldName(obj, key, fieldExports)) {
         const getter = fieldExports?.[`__sget_${key}`];
         if (typeof getter === "function") return _restoreF64Undefined(getter(obj));
@@ -7537,14 +7546,51 @@ function _vecDefineOwnProperty(
   return true;
 }
 
+/**
+ * (#5209) Get-or-create the ONE live export slot for a struct-backed host view.
+ *
+ * Views are cached for the lifetime of the struct but the export object is not
+ * available for the whole of module init (see `init-marshal-registry.ts`), so a
+ * view must never capture the export set it was born with. Sharing the slot via
+ * `_hostProxyExportSlots` also means the refresh `_wrapForHost` already performs
+ * on a cache hit upgrades every view of that struct at once.
+ *
+ * Created BEFORE any view is built and cached, so a view materialized during
+ * module init from the partial, `ref.func`-registered helper set upgrades itself
+ * as soon as a later wrap of the same struct carries the real exports.
+ */
+function _exportSlotFor(
+  obj: object,
+  exports: Record<string, Function> | undefined,
+): { current: Record<string, Function> | undefined } {
+  const existing = _hostProxyExportSlots.get(obj);
+  if (existing) {
+    if (exports !== undefined) existing.current = exports;
+    return existing;
+  }
+  const slot = { current: exports };
+  _hostProxyExportSlots.set(obj, slot);
+  return slot;
+}
+
 // Present a WasmGC vec through a live real-array Proxy (#2801).
-function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
+//
+// (#5209) Exports arrive through a LIVE SLOT, never a captured snapshot. The
+// view is cached for the lifetime of the vec, so a view built during module
+// init — where the only readable exports are the six `ref.func` marshalling
+// helpers the module registers on itself (#5193) — would otherwise stay stuck
+// with that partial set forever, even after `setInstance` publishes the real
+// export object. `_wrapForHost` owns the slot and refreshes it on every later
+// wrap of the same struct.
+function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Function> | undefined }): any {
   const cached = _hostProxyCache.get(vec);
   if (cached) return cached;
-  const lenFn = exports.__vec_len as ((v: any) => number) | undefined;
-  const getFn = exports.__vec_get as ((v: any, i: number) => any) | undefined;
+  const readExports = (): Record<string, Function> | undefined => exportSlot.current;
+  const exports0 = exportSlot.current;
+  const lenFn = exports0?.__vec_len as ((v: any) => number) | undefined;
+  const getFn = exports0?.__vec_get as ((v: any, i: number) => any) | undefined;
   const mappedArguments = _argumentsObjects.has(vec);
-  const vecState = { getExports: () => exports };
+  const vecState = { getExports: readExports };
   // Defensive: if the read exports are missing, fall back to the generic
   // object proxy rather than producing a broken array view.
   if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
@@ -7563,16 +7609,16 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
   };
   const elemAt = (i: number): any => {
     try {
-      return _wrapForHost(getFn(vec, i), exports);
+      return _wrapForHost(getFn(vec, i), readExports());
     } catch {
       return undefined;
     }
   };
-  const rawDesc = (key: string): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, exports);
+  const rawDesc = (key: string): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, readExports());
   const hostDesc = (key: string): PropertyDescriptor | undefined => {
     const desc = rawDesc(key);
     if (!desc) return undefined;
-    if ("value" in desc) desc.value = _wrapForHost(desc.value, exports);
+    if ("value" in desc) desc.value = _wrapForHost(desc.value, readExports());
     return desc;
   };
   const materializeNonConfigurable = (key: string, desc: PropertyDescriptor | undefined): void => {
@@ -7616,9 +7662,9 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       // during instantiation) could not be callable-wrapped at write time —
       // wrap at read time, when the exports exist. Mirrors
       // `__extern_method_call`'s wrapHostValue.
-      const callable = _maybeWrapCallableUnknownArity(val, { getExports: () => exports });
+      const callable = _maybeWrapCallableUnknownArity(val, { getExports: readExports });
       if (callable !== val) return { hit: true, value: callable };
-      return { hit: true, value: _wrapForHost(val, exports) };
+      return { hit: true, value: _wrapForHost(val, readExports()) };
     }
     return { hit: true, value: val };
   };
@@ -7700,7 +7746,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         if (!desc || desc.configurable === false) return desc === undefined;
         markDeleted(key);
         try {
-          const setElem = exports.__vec_set_elem as ((v: any, i: number, x: any) => number) | undefined;
+          const setElem = readExports()?.__vec_set_elem as ((v: any, i: number, x: any) => number) | undefined;
           const idx = _asArrayIndex(key);
           if (idx !== undefined && typeof setElem === "function") setElem(vec, idx, undefined);
         } catch {
@@ -7721,7 +7767,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         const next = Number(value);
         const uint32 = next >>> 0;
         if (next !== uint32) throw new RangeError("Invalid array length");
-        const setLen = exports.__vec_set_len as ((v: any, n: number) => number) | undefined;
+        const setLen = readExports()?.__vec_set_len as ((v: any, n: number) => number) | undefined;
         return typeof setLen === "function" && setLen(vec, uint32) === 1;
       }
       if (typeof key === "string" && _asArrayIndex(key) !== undefined) {
@@ -7734,9 +7780,9 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
           }
           if (desc?.writable === false) return false;
         }
-        return _trySetWasmVecElement(vec, key, value, exports);
+        return _trySetWasmVecElement(vec, key, value, readExports());
       }
-      _safeSet(vec, key, value, exports);
+      _safeSet(vec, key, value, readExports());
       return true;
     },
   };
@@ -7840,6 +7886,8 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
     return cached;
   }
 
+  const exportSlot = _exportSlotFor(obj, exports); // (#5209) live, shared, refreshed
+
   // (#2801) A WasmGC vec must present to the host as a real JS array, not a
   // generic object proxy (which marshalled as `{}`). Detect via the positive
   // `__is_vec` discriminator and route to the array-backed view. Done before
@@ -7849,7 +7897,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
     try {
       const isVecFn = exports.__is_vec as ((v: any) => number) | undefined;
       if (typeof isVecFn === "function" && isVecFn(obj) === 1) {
-        const vecView = _wrapVecForHost(obj, exports);
+        const vecView = _wrapVecForHost(obj, exportSlot);
         if (vecView !== undefined) return vecView;
       }
     } catch {
@@ -7879,8 +7927,6 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   }
 
   const target: Record<string | symbol, any> = Object.create(null);
-  const exportSlot = { current: exports };
-  _hostProxyExportSlots.set(obj, exportSlot);
   const currentExports = (): Record<string, Function> | undefined => exportSlot.current;
 
   // (#1627) Resolution precedence lives in the module-level `_resolveHostField`
@@ -13895,10 +13941,20 @@ assert._isSameValue = isSameValue;
           const primitive = wsh.tryPrimitiveStringMethod(obj, method, args, _isWasmStruct, _reflectApply);
           if (primitive !== undefined) return primitive === wsh.PRIMITIVE_STRING_UNDEFINED ? undefined : primitive;
           const exports = callbackState?.getExports();
+          // (#5209) MARSHALLING-ONLY export view. `exports` stays the strict
+          // post-instantiation set because most arms below read it as "init has
+          // finished"; wrapping a compiled value into its host facade is a
+          // marshalling question, so it may also use the `ref.func` helpers the
+          // module registered on itself during its start section (#5193). Without
+          // this, a vec reaching a dynamic method call from `__module_init` —
+          // e.g. an array-literal constructor argument threaded through a derived
+          // ctor chain, then `t.filter(cb)` — got the GENERIC object proxy, which
+          // has no `filter`, and the dispatcher threw "filter is not a function".
+          const marshalExp = marshalExports(callbackState, exports);
           const wrapHostValue = (v: any): any => {
             if (!_isWasmStruct(v)) return v;
             const callable = _maybeWrapCallableUnknownArity(v, callbackState);
-            return callable !== v ? callable : _wrapForHost(v, exports);
+            return callable !== v ? callable : _wrapForHost(v, marshalExp);
           };
           const wrappedObj = wrapHostValue(obj);
           const wrappedArgs = (args ?? []).map(wrapHostValue);
@@ -14083,7 +14139,10 @@ assert._isSameValue = isSameValue;
                 const wrapperTarget = _wasmClosureWrapperTargets.get(rawVec);
                 if (wrapperTarget) rawVec = wrapperTarget;
               }
-              if (_isWasmStruct(rawVec) && exports) {
+              // (#5209) marshalling path — see `marshalExp` above; `__is_vec`,
+              // `__vec_len` and `__vec_get` are all init-registered helpers, so
+              // this arm works during the start section too.
+              if (_isWasmStruct(rawVec) && marshalExp) {
                 // (#2794) Read-only, primitive-returning Array methods on an
                 // opaque vec receiver (e.g. acorn `declareName`'s
                 // `scope.lexical.indexOf(name)`). `__vec_mut_supported` gates only
@@ -14092,10 +14151,10 @@ assert._isSameValue = isSameValue;
                 // materialize to a real JS array and apply the native method.
                 if (
                   _VEC_PRIMITIVE_READ_METHODS.has(method) &&
-                  typeof exports.__vec_len === "function" &&
-                  typeof exports.__vec_get === "function"
+                  typeof marshalExp.__vec_len === "function" &&
+                  typeof marshalExp.__vec_get === "function"
                 ) {
-                  const isVecFn = exports.__is_vec as ((v: any) => number) | undefined;
+                  const isVecFn = marshalExp.__is_vec as ((v: any) => number) | undefined;
                   let isVec = false;
                   try {
                     isVec = typeof isVecFn === "function" && isVecFn(rawVec) === 1;
@@ -14103,9 +14162,9 @@ assert._isSameValue = isSameValue;
                     isVec = false;
                   }
                   if (isVec) {
-                    const len = (exports.__vec_len as (v: any) => number)(rawVec);
+                    const len = (marshalExp.__vec_len as (v: any) => number)(rawVec);
                     if (typeof len === "number" && len >= 0) {
-                      const getFn = exports.__vec_get as (v: any, i: number) => any;
+                      const getFn = marshalExp.__vec_get as (v: any, i: number) => any;
                       const arr = new Array(len);
                       for (let i = 0; i < len; i++) arr[i] = wrapHostValue(getFn(rawVec, i));
                       const nativeFn = (Array.prototype as Record<string, any>)[method];
@@ -16644,7 +16703,7 @@ assert._isSameValue = isSameValue;
             argumentDescriptors !== undefined &&
             [...argumentDescriptors.keys()].some((key) => typeof key === "string" && _asArrayIndex(key) !== undefined);
           if (needsIndexedDescriptorView) {
-            const view = _wrapVecForHost(obj, exports);
+            const view = _wrapVecForHost(obj, _exportSlotFor(obj, exports));
             if (view !== undefined) return view;
           }
           // A compiler-created TypedArray and an ordinary Array share the same
