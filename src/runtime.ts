@@ -45,10 +45,11 @@ import {
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import {
+  classDispatchExportName,
   INIT_MARSHAL_HELPER_NAMES,
   marshalExports,
   type MarshalExportSource,
-} from "./runtime/init-marshal-registry.js"; // (#5193)
+} from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
@@ -13908,7 +13909,14 @@ assert._isSameValue = isSameValue;
             const resolvedClassMethod = _invokeClassMethod(
               _unwrapForHost(obj),
               method,
-              exports,
+              // (#5202) During module init `exports` is undefined for the whole
+              // start section, so the resolver bailed on its first line and a
+              // top-level `inst.m()` threw "m is not a function" while the
+              // identical call after init returned. Fall back to the funcrefs
+              // the module registered on itself — the same channel #5193 uses
+              // for marshalling probes, and the same function objects the
+              // export view yields later.
+              marshalExports(callbackState, exports),
               wrappedObj,
               wrappedArgs,
             );
@@ -14723,6 +14731,22 @@ assert._isSameValue = isSameValue;
           (
             callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
           )?.registerStartExport?.(helperName, fn);
+        };
+      // (#5202) __register_init_class_export(namesCsv, index, fn) — the method-
+      // dispatch facet of the same window. The class-method dispatch surface is
+      // one export per (class, method, arity), so unlike the six fixed #5193
+      // helpers it cannot use a positional id ABI. The module registers ONE
+      // pooled CSV of names and indexes into it, which keeps the added
+      // `string_constants` imports at one per module rather than one per name.
+      // An out-of-range index is ignored so an older runtime tolerates a newer
+      // module.
+      if (name === "__register_init_class_export")
+        return (namesCsv: any, index: number, fn: any): void => {
+          const exportName = classDispatchExportName(namesCsv, index);
+          if (exportName === undefined) return;
+          (
+            callbackState as { registerStartExport?: (n: string, f: Function) => void } | undefined
+          )?.registerStartExport?.(exportName, fn);
         };
       // (#1732 S1) __construct(callee, argsArray) — runtime [[Construct]] for a
       // `new f(...)` whose callee value cannot be proven constructable at
