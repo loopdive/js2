@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ts } from "../ts-api.js";
-import type { IrUnitId } from "../ir/identity.js";
+import { ts } from "../ts-api.js";
+import type { IrSourceId, IrUnitId } from "../ir/identity.js";
 import type {
   IrIntegrationCompiledArtifactEvidence,
   IrIntegrationError,
@@ -11,6 +11,8 @@ import type {
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
+import type { IrDirectFunctionBodyReceiptAudit } from "./legacy-body-audit.js";
+import { hasDeclareModifier, hasExportModifier } from "./ast-modifiers.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 import { buildIrIntegrationOwnerProjection, collectIrPreparedSelectionUnitIds } from "./ir-overlay-identity.js";
 
@@ -42,6 +44,11 @@ export interface ReconcileIrOverlayOutcomesInput {
   readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly preparationFailuresByUnitId: ReadonlyMap<IrUnitId, IrPreparationFailure>;
   readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
+  /**
+   * Exact direct-AST body receipts for the public production route. Omitted
+   * only for internal callers that did not opt into the physical route audit.
+   */
+  readonly directFunctionBodyReceiptAudit?: IrDirectFunctionBodyReceiptAudit;
   readonly report: IrIntegrationReport;
   readonly existingOutcomes: readonly IrObservedOutcome[];
   readonly target: IrObservedOutcome["target"];
@@ -61,10 +68,15 @@ export interface IrSkippedBodySlotViolation {
 export type IrSkippedFunctionSlotViolation = IrSkippedBodySlotViolation;
 
 function invariant(
-  code: "duplicate-unit-outcome" | "selection-preparation-mismatch",
+  code: "body-emission-evidence" | "duplicate-unit-outcome" | "selection-preparation-mismatch",
   detail: string,
 ): IrPreparationFailure {
-  return { kind: "invariant", code, stage: code === "duplicate-unit-outcome" ? "patch" : "resolve", detail };
+  return {
+    kind: "invariant",
+    code,
+    stage: code === "selection-preparation-mismatch" ? "resolve" : "patch",
+    detail,
+  };
 }
 
 function collectObservedIrUnits(
@@ -91,6 +103,244 @@ function collectObservedIrUnits(
       legacyBodyAvailable: unit.legacyBodyAvailable,
       ...(unit.directFailure ? { directFailure: unit.directFailure } : {}),
     }));
+}
+
+interface IrFunctionBodyEmissionAccounting {
+  readonly prepareAttempts: 1;
+  readonly directBodyEmissions: number;
+  readonly irBodyEmissions: number;
+  readonly legacyBodyEmitted: boolean;
+  readonly irBodyEmitted: boolean;
+  readonly receiptFailure?: IrPreparationFailure;
+}
+
+interface R2FreeFunctionPopulation {
+  readonly sourceId: ObservedIrUnit["sourceId"];
+  readonly unitIds: ReadonlySet<IrUnitId>;
+}
+
+interface R2FreeFunctionPopulationIndex {
+  readonly unitIdsBySourceId: ReadonlyMap<IrSourceId, ReadonlySet<IrUnitId>>;
+}
+
+const r2FreeFunctionPopulationIndexByContext = new WeakMap<IrPlanningIdentityContext, R2FreeFunctionPopulationIndex>();
+
+interface ValidatedDirectFunctionBodyReceipts {
+  readonly countsByUnitId: ReadonlyMap<IrUnitId, number>;
+  readonly failuresByUnitId: ReadonlyMap<IrUnitId, IrPreparationFailure>;
+  readonly sourceFailure?: IrPreparationFailure;
+}
+
+interface IndexedIrTerminalPatchReceipts {
+  readonly countsByUnitId: ReadonlyMap<IrUnitId, number>;
+}
+
+/** Build the exact physically emitted R2 denominator once for the graph. */
+function indexR2FreeFunctionPopulations(identityContext: IrPlanningIdentityContext): R2FreeFunctionPopulationIndex {
+  const cached = r2FreeFunctionPopulationIndexByContext.get(identityContext);
+  if (cached) return cached;
+
+  const unitIdsBySourceId = new Map<IrSourceId, ReadonlySet<IrUnitId>>();
+  for (const [sourceId, sourceFile] of identityContext.sourceFileBySourceId) {
+    const unitIds = new Set<IrUnitId>();
+    if (!sourceFile.isDeclarationFile) {
+      const lastNamedBody = new Map<string, ts.FunctionDeclaration>();
+      for (const statement of sourceFile.statements) {
+        if (ts.isFunctionDeclaration(statement) && statement.name && statement.body && !hasDeclareModifier(statement)) {
+          lastNamedBody.set(statement.name.text, statement);
+        }
+      }
+      for (const statement of sourceFile.statements) {
+        if (
+          !ts.isFunctionDeclaration(statement) ||
+          !statement.body ||
+          hasDeclareModifier(statement) ||
+          (statement.name ? lastNamedBody.get(statement.name.text) !== statement : !hasExportModifier(statement))
+        ) {
+          continue;
+        }
+        const unitId = identityContext.unitIdByDeclaration.get(statement);
+        if (unitId === undefined) {
+          throw new Error(`physical R2 declaration in ${sourceFile.fileName} has no authoritative inventory identity`);
+        }
+        const unit = identityContext.unitByUnitId.get(unitId);
+        if (!unit || unit.sourceId !== sourceId || identityContext.declarationByUnitId.get(unitId) !== statement) {
+          throw new Error(`physical R2 declaration ${unitId} does not match its authoritative source identity`);
+        }
+        if (unit.terminal && unit.kind === "top-level-function" && unit.observedKind === "function") {
+          unitIds.add(unit.id);
+        }
+      }
+    }
+    unitIdsBySourceId.set(sourceId, unitIds);
+  }
+  const indexed = { unitIdsBySourceId };
+  r2FreeFunctionPopulationIndexByContext.set(identityContext, indexed);
+  return indexed;
+}
+
+/** The bounded R2 population is source-local, public, physical free-function terminals only. */
+function collectR2FreeFunctionUnitIds(
+  sourceFile: ts.SourceFile,
+  identityContext: IrPlanningIdentityContext,
+): R2FreeFunctionPopulation {
+  const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
+  if (!sourceId || identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+    throw new Error(
+      `IR function-body accounting source ${sourceFile.fileName} is outside the authoritative planning context`,
+    );
+  }
+  const indexed = indexR2FreeFunctionPopulations(identityContext);
+  const unitIds = indexed.unitIdsBySourceId.get(sourceId);
+  if (!unitIds) {
+    throw new Error(`IR function-body accounting source ${sourceId} has no indexed R2 population`);
+  }
+  return {
+    sourceId,
+    unitIds,
+  };
+}
+
+function bodyEmissionInvariant(detail: string): IrPreparationFailure {
+  return invariant("body-emission-evidence", detail);
+}
+
+/** Validate and index the direct receipt census once for one source. */
+function validateDirectFunctionBodyReceipts(input: {
+  readonly audit: IrDirectFunctionBodyReceiptAudit;
+  readonly population: R2FreeFunctionPopulation;
+}): ValidatedDirectFunctionBodyReceipts {
+  const countsByUnitId = new Map(input.audit.countsByUnitId);
+  const failuresByUnitId = new Map<IrUnitId, IrPreparationFailure>();
+  let sourceFailure: IrPreparationFailure | undefined;
+  const failSource = (detail: string): void => {
+    sourceFailure ??= bodyEmissionInvariant(detail);
+  };
+  const failUnit = (unitId: IrUnitId, detail: string): void => {
+    failuresByUnitId.set(unitId, bodyEmissionInvariant(detail));
+  };
+
+  const { audit, population } = input;
+  if (audit.sourceId !== population.sourceId) {
+    failSource(
+      `direct function-body receipt source ${audit.sourceId} does not match the local R2 source ${population.sourceId}`,
+    );
+  }
+  if (audit.unattributedViolation) {
+    failSource(
+      `unattributed direct function-body receipt violation [${audit.unattributedViolation.code}]: ` +
+        audit.unattributedViolation.detail,
+    );
+  }
+  for (const [receiptUnitId, count] of countsByUnitId) {
+    if (!population.unitIds.has(receiptUnitId)) {
+      failSource(
+        `direct function-body receipt ${receiptUnitId} is outside the local top-level free-function population`,
+      );
+      continue;
+    }
+    if (!Number.isSafeInteger(count) || count <= 0 || count > 1) {
+      failUnit(receiptUnitId, `direct function-body receipt ${receiptUnitId} has impossible count ${count}`);
+    }
+  }
+  for (const violation of audit.violations) {
+    const detail = `direct function-body receipt violation [${violation.code}]${
+      violation.unitId === undefined ? "" : ` for ${violation.unitId}`
+    }: ${violation.detail}`;
+    if (violation.unitId === undefined || !population.unitIds.has(violation.unitId)) failSource(detail);
+    else failUnit(violation.unitId, detail);
+  }
+  return {
+    countsByUnitId,
+    failuresByUnitId,
+    ...(sourceFailure ? { sourceFailure } : {}),
+  };
+}
+
+/** Index exact terminal patch receipts once; class/module evidence stays out of R2. */
+function indexR2IrTerminalPatchReceipts(
+  report: IrIntegrationReport,
+  r2FreeFunctionUnitIds: ReadonlySet<IrUnitId>,
+): IndexedIrTerminalPatchReceipts {
+  const countsByUnitId = new Map<IrUnitId, number>();
+  for (const evidence of report.terminalEvidence ?? []) {
+    if (evidence.kind !== "patched" || !r2FreeFunctionUnitIds.has(evidence.unitId)) continue;
+    countsByUnitId.set(evidence.unitId, (countsByUnitId.get(evidence.unitId) ?? 0) + 1);
+  }
+  return { countsByUnitId };
+}
+
+/**
+ * Reconcile the two physical body emitters for one R2 terminal. The direct
+ * count comes only from the AST dispatcher receipt; the IR count comes only
+ * from exact terminal patch events, never from selector or name telemetry.
+ */
+function reconcileR2FunctionBodyEmissionAccounting(input: {
+  readonly directReceipts: ValidatedDirectFunctionBodyReceipts;
+  readonly irPatchReceipts: IndexedIrTerminalPatchReceipts;
+  readonly unit: ObservedIrUnit;
+}): IrFunctionBodyEmissionAccounting {
+  const directBodyEmissions = input.directReceipts.countsByUnitId.get(input.unit.unitId) ?? 0;
+  const irBodyEmissions = input.irPatchReceipts.countsByUnitId.get(input.unit.unitId) ?? 0;
+  const receiptFailure =
+    input.directReceipts.failuresByUnitId.get(input.unit.unitId) ??
+    input.directReceipts.sourceFailure ??
+    (!Number.isSafeInteger(irBodyEmissions) || irBodyEmissions < 0 || irBodyEmissions > 1
+      ? bodyEmissionInvariant(`IR terminal patch receipt ${input.unit.unitId} has impossible count ${irBodyEmissions}`)
+      : undefined);
+  return {
+    prepareAttempts: 1,
+    directBodyEmissions,
+    irBodyEmissions,
+    legacyBodyEmitted: directBodyEmissions === 1,
+    irBodyEmitted: irBodyEmissions === 1,
+    ...(receiptFailure ? { receiptFailure } : {}),
+  };
+}
+
+function functionBodyAccountingFailure(input: {
+  readonly unit: ObservedIrUnit;
+  readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly accounting: IrFunctionBodyEmissionAccounting;
+  readonly outcome: IrObservedOutcome;
+}): IrPreparationFailure | undefined {
+  if (input.accounting.receiptFailure) return input.accounting.receiptFailure;
+  if (input.skippedBodyUnitIds.has(input.unit.unitId) && input.accounting.directBodyEmissions !== 0) {
+    return bodyEmissionInvariant(
+      `${input.unit.unitId} recorded ${input.accounting.directBodyEmissions} direct body receipts after an exact skip receipt`,
+    );
+  }
+  if (input.outcome.kind === "emitted" && input.accounting.irBodyEmissions !== 1) {
+    return bodyEmissionInvariant(
+      `${input.unit.unitId} emitted without exactly one terminal IR patch receipt (observed ${input.accounting.irBodyEmissions})`,
+    );
+  }
+  if (
+    input.outcome.kind === "emitted" &&
+    !input.skippedBodyUnitIds.has(input.unit.unitId) &&
+    input.accounting.directBodyEmissions !== 1
+  ) {
+    return bodyEmissionInvariant(
+      `${input.unit.unitId} patched after the direct route without exactly one direct body receipt (observed ${input.accounting.directBodyEmissions})`,
+    );
+  }
+  if (input.outcome.kind === "unsupported" && input.accounting.directBodyEmissions !== 1) {
+    return bodyEmissionInvariant(
+      `${input.unit.unitId} fell back to direct emission without exactly one direct body receipt (observed ${input.accounting.directBodyEmissions})`,
+    );
+  }
+  if (input.outcome.kind === "unsupported" && input.accounting.irBodyEmissions !== 0) {
+    return bodyEmissionInvariant(
+      `${input.unit.unitId} fell back to direct emission with ${input.accounting.irBodyEmissions} terminal IR patch receipts`,
+    );
+  }
+  if (input.outcome.kind === "invariant" && input.accounting.directBodyEmissions !== 0) {
+    return bodyEmissionInvariant(
+      `${input.unit.unitId} reached an R2 invariant after ${input.accounting.directBodyEmissions} direct body receipts; ` +
+        "a fatal prepared owner may retain only zero or one exact IR patch receipt",
+    );
+  }
+  return undefined;
 }
 
 /** Audit the complete integration sidecar before outcome precedence can hide corruption. */
@@ -428,6 +678,16 @@ function observedFailure(
   } as IrObservedOutcome;
 }
 
+function sameInvariantFailure(outcome: IrObservedOutcome, failure: IrPreparationFailure): boolean {
+  return (
+    outcome.kind === "invariant" &&
+    failure.kind === "invariant" &&
+    outcome.code === failure.code &&
+    outcome.stage === failure.stage &&
+    outcome.detail === failure.detail
+  );
+}
+
 export function buildWholeSourceFailureOutcomes(input: {
   readonly sourceFile: ts.SourceFile;
   readonly identityContext: IrPlanningIdentityContext;
@@ -498,6 +758,19 @@ function selectionFailure(
 export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInput): ReconciledIrOverlayOutcomes {
   const initialUnitIds = collectIrPreparedSelectionUnitIds(input.identityPlan, input.initialSelection);
   const preparedUnitIds = collectIrPreparedSelectionUnitIds(input.identityPlan, input.preparedSelection);
+  const r2FreeFunctionPopulation = input.directFunctionBodyReceiptAudit
+    ? collectR2FreeFunctionUnitIds(input.sourceFile, input.identityPlan.identityContext)
+    : undefined;
+  const directReceipts =
+    input.directFunctionBodyReceiptAudit && r2FreeFunctionPopulation
+      ? validateDirectFunctionBodyReceipts({
+          audit: input.directFunctionBodyReceiptAudit,
+          population: r2FreeFunctionPopulation,
+        })
+      : undefined;
+  const irPatchReceipts = r2FreeFunctionPopulation
+    ? indexR2IrTerminalPatchReceipts(input.report, r2FreeFunctionPopulation.unitIds)
+    : undefined;
   const activeOwners = buildIrIntegrationOwnerProjection(input.identityPlan, input.preparedSelection);
   const audit = auditIrIntegrationTerminalEvidence({
     sourceFile: input.sourceFile,
@@ -518,7 +791,19 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
   const diagnostics: string[] = [];
 
   for (const unit of collectObservedIrUnits(input.sourceFile, input.identityPlan.identityContext)) {
-    const legacyBodyEmitted = unit.legacyBodyAvailable && !input.skippedBodyUnitIds.has(unit.unitId);
+    const bodyAccounting =
+      directReceipts && irPatchReceipts && r2FreeFunctionPopulation?.unitIds.has(unit.unitId)
+        ? reconcileR2FunctionBodyEmissionAccounting({
+            directReceipts,
+            irPatchReceipts,
+            unit,
+          })
+        : undefined;
+    // R2 function rows derive compatibility booleans from exact production
+    // receipts. Class/member and module-init rows retain their established
+    // dispatcher-specific accounting until their own bounded migrations.
+    const legacyBodyEmitted =
+      bodyAccounting?.legacyBodyEmitted ?? (unit.legacyBodyAvailable && !input.skippedBodyUnitIds.has(unit.unitId));
     const base = {
       key: unit.key,
       sourceId: unit.sourceId,
@@ -531,8 +816,15 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
       column: unit.column,
       backend: "wasmgc" as const,
       target: input.target,
+      ...(bodyAccounting
+        ? {
+            prepareAttempts: bodyAccounting.prepareAttempts,
+            directBodyEmissions: bodyAccounting.directBodyEmissions,
+            irBodyEmissions: bodyAccounting.irBodyEmissions,
+          }
+        : {}),
       legacyBodyEmitted,
-      irBodyEmitted: false,
+      irBodyEmitted: bodyAccounting?.irBodyEmitted ?? false,
     };
     const evidence = audit.evidenceByUnitId.get(unit.unitId);
     const auditFailure = audit.invariantByUnitId.get(unit.unitId) ?? audit.sourceInvariant;
@@ -588,8 +880,24 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
       });
     }
 
+    let accountingFailure: IrPreparationFailure | undefined;
+    if (bodyAccounting) {
+      accountingFailure = functionBodyAccountingFailure({
+        unit,
+        skippedBodyUnitIds: input.skippedBodyUnitIds,
+        accounting: bodyAccounting,
+        outcome,
+      });
+      if (accountingFailure) outcome = observedFailure(base, accountingFailure);
+    }
+
     outcomes.push(outcome);
-    if (outcome.kind === "invariant" && evidence?.kind !== "failed") {
+    const unchangedReportVisibleInvariant =
+      accountingFailure === undefined &&
+      evidence?.kind === "failed" &&
+      evidence.diagnosticVisibility === "report" &&
+      sameInvariantFailure(outcome, evidence.error.outcome);
+    if (outcome.kind === "invariant" && !unchangedReportVisibleInvariant) {
       diagnostics.push(`IR outcome invariant [${outcome.code}] for ${unit.matchName}: ${outcome.detail}`);
     }
   }

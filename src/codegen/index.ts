@@ -2446,6 +2446,7 @@ function recordObservedIrOutcomes(
   const existingOutcomes = preparedCallableUnitIds
     ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
     : ctx.irOutcomes;
+  const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2453,6 +2454,7 @@ function recordObservedIrOutcomes(
     preparedSelection,
     preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
     skippedBodyUnitIds,
+    ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
     report,
     existingOutcomes,
     target,
