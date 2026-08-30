@@ -71,7 +71,7 @@ import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -990,6 +990,7 @@ export function compileBinaryExpression(
   // owned by the `admitsObjectAdd` dispatch below.
   if (
     DEFERRED_TONUMERIC_OPS.has(op) &&
+    !hasStaticBigIntOperand(leftTsType, rightTsType) &&
     (isDeferredExponentiationObject(expr.left, leftTsType) || isDeferredExponentiationObject(expr.right, rightTsType))
   ) {
     const leftReturnsSymbol = objectValueOfReturnsSymbol(ctx, expr.left, leftTsType);
@@ -998,7 +999,6 @@ export function compileBinaryExpression(
     if (!leftType) return { kind: "f64" };
     const leftTemp = allocTempLocal(fctx, leftType);
     fctx.body.push({ op: "local.set", index: leftTemp });
-
     const rightType = compileExpression(ctx, fctx, expr.right);
     if (!rightType) return { kind: "f64" };
     const rightTemp = allocTempLocal(fctx, rightType);

@@ -148,6 +148,10 @@ describe("#3481 — Symbol / non-callable negatives still throw", () => {
     ).toBe("TypeError");
   });
 
+  it("toString returning a Symbol beside BigInt still throws TypeError", async () => {
+    expect(await throwsWith(`return { toString: function () { return Symbol("s"); } } * 2n;`)).toBe("TypeError");
+  });
+
   it("@@toPrimitive returning a Symbol into a number coercion throws TypeError", async () => {
     expect(
       await throwsWith(`var o: any = { [Symbol.toPrimitive]: function () { return Symbol("s"); } }; return +o;`),
