@@ -902,15 +902,16 @@ and is explicitly R9 debt in #4522. The feature work remains complete; this
 checkpoint removes only the obsolete rollback and proves that its performance
 win cannot silently disappear.
 
-Ground the work on exact `loopdive/js2` main
-`275216c74c7299ea07a72c8d5479f7e1a477000c`. At that commit the rollback name
-occurs 24 times in exactly seven files. `src/ir/propagate.ts` contains three
-textual occurrences—two rollout comments and one environment read—but only one
-live reader/helper, `objectShapesEnabled()`. That helper controls three
-semantically distinct consumers: fnctor `NewExpression` admission in the
-propagation extension, checker-known object seeding, and object-literal
-inference. The focused test contributes nine references; five plans contribute
-the remaining twelve historical/inventory references. No open pull request
+The historical audit was grounded on exact `loopdive/js2` main
+`275216c74c7299ea07a72c8d5479f7e1a477000c`. At that commit the retired helper
+and rollback identifier occur 25 times across exactly eight tracked files,
+including `plan/agent-context/dev-1231.md`; the earlier seven-file count omitted
+that record. Re-measure the exact tracked-file census after #5332 lands because
+its serialized R9 ledgers intentionally add current inventory references.
+`src/ir/propagate.ts` has only one live reader/helper,
+`objectShapesEnabled()`. That helper controls three semantically distinct
+consumers: fnctor `NewExpression` admission in the propagation extension,
+checker-known object seeding, and object-literal inference. No open pull request
 claims this retirement. The active ProgramABI/#3525 publication work does not
 edit the owned source or focused test; do not widen into those files.
 
@@ -944,26 +945,20 @@ edit the owned source or focused test; do not widen into those files.
   synchronous withdrawals, while the final runtime row is the vacuous async
   case. Remove that helper and every rollback expectation without losing the
   remaining 13 positive/conservative controls.
-- Ground the main `=0` withdrawal in an isolated child process, or keep the
-  computed environment key set across `await fn()` inside `try/finally`. The
-  callback must assert that the computed key still equals `"0"` immediately
-  before and after every awaited compile. Restore the exact prior value only
-  after the promise settles. This proof must fail if the old synchronous
-  restore bug is reintroduced.
-- Add a computed stale-key control (construct the retired name from literal
-  fragments so repository grep can still prove exact textual zero). Close the
-  logical four-arm matrix at both `optimize: false` and `optimize: true` in
-  host and standalone for every positive fixture: A = grounded main/key
-  absent; B = grounded main/key `"0"`; C = candidate/key absent; D =
-  candidate/key `"0"`, `"1"`, and `"false"` in separate runs. Main A is the
-  independent acceptance oracle; B must show the expected withdrawal.
-  Candidate D must equal C, and C must equal A on every promised semantic and
-  artifact projection. At each fixture/target/optimization point, A/C/all D
-  runs must have exact-equal TypeMap, selection, outcomes, imports, exports,
-  WAT, binary bytes/SHA-256, validity, and runtime. B is intentionally not an
-  artifact-equality arm: it must match an independent literal withdrawal
-  projection (dynamic/boxed ownership and body shape) while preserving exact
-  public imports/exports, host-free standalone validity, and runtime behavior.
+- Add one computed stale-key control by constructing the retired identifier
+  from literal fragments, so repository grep can still prove exact textual
+  zero. Keep the computed key set across every `await` inside `try/finally`,
+  assert its exact value immediately before and after compilation, and restore
+  the exact prior value only after the promise settles. Record that this test
+  fails against the pre-change parent before making the production edit; that
+  first-failing observation is the non-vacuity proof for the removed reader.
+- At both `optimize: false` and `optimize: true`, compare the candidate with the
+  computed key absent against separate stale-key values `"0"`, `"1"`, and
+  `"false"` in host and standalone. Every stale-key arm must equal the absent
+  arm on the promised semantic and artifact projections. Do not keep a second
+  historical checkout or a permanent legacy-withdrawal oracle in the focused
+  test: after retirement, the old key has no authority and the tracked tree
+  must not preserve its literal spelling.
 - Run the simple numeric point, mixed string/number user, and chained
   `vec2/add` fixtures over that complete target × optimization × arm matrix.
   Compare against literal, source-qualified expected projections rather than
@@ -992,40 +987,34 @@ edit the owned source or focused test; do not widen into those files.
   Preserve every primitive, `any`, `unknown`, `never`, union, enum, and fallback
   branch byte-for-byte. Poison the direct body for positive fixtures so a
   hidden legacy compilation cannot satisfy the runtime oracle.
-- Ground the third consumer independently through the production adapter chain
-  `makeIrFnctorPropagationAdmissionResolver` →
-  `buildIrOverlayIdentityMaps` → `buildIrUnitTypeMap`; ordinary #1231 map calls
-  and selection-only fnctor tests do not exercise it. For the exact linked
-  Parser constructor, baseline A must produce the source-qualified
-  `{ input: string }` parameter atom and exact TypeMap/selection/outcomes in
-  host and standalone, while baseline B must withdraw that projection.
-  Candidate C and every stale-key D run must reproduce A at both optimization
-  settings. Mutate the `NewExpression` form, source ID, constructor identity,
-  same-source proof, fixed `input: string` field shape, reservation, alias,
-  reassignment, escape, collision, and argument-count/spread proof separately;
-  each must refuse with its exact projection and no foreign admission. Run
-  `tests/issue-3521-linked-string-parser-abi.test.ts`,
-  `tests/ir/fnctor-admission.test.ts`, and a new/extended production-adapter
-  propagation control; do not claim
-  `tests/ir/fnctor-argument-projection.test.ts` as coverage because its current
-  unit-map helper omits propagation options.
+- Exercise the third consumer directly in the owned focused test through the
+  existing `buildIrUnitTypeMap(..., propagationOptions)` boundary. Supply a
+  source-local `resolveFnctorAdmission` test resolver for one exact
+  `NewExpression`, require its fixed `{ input: string }` atom with the computed
+  stale key absent and set to `"0"`, and require resolver absence plus wrong
+  expression/source/constructor proofs to retain their current refusal. Do not
+  invent or take ownership of `makeIrFnctorPropagationAdmissionResolver`,
+  linked-Parser, or fnctor-admission files that are absent from the rebased
+  parent. If parallel #3521 work lands those controls first, run them unchanged
+  as downstream regressions rather than editing them in this slice.
 - Repository-wide tracked-file grep for the retired environment identifier must
   be exactly zero. Also require zero `objectShapesEnabled` and
   `withoutObjectShapes` identifiers, including rollout comments that would
   survive a mechanical helper/call deletion. The only retained stale-key
   representation is a computed literal-fragment assembly in the focused
   retirement test. Update this record, #1235, #1574, sprint 47, #4522, and
-  #3518 by paraphrasing historical rollout facts without preserving a usable
-  configuration name.
+  #3518, and `plan/agent-context/dev-1231.md` by paraphrasing historical rollout
+  facts without preserving a usable configuration name.
 
 ### Files and dependency order
 
 The implementation owns only `src/ir/propagate.ts`,
-`tests/issue-1231.test.ts`, an optional new focused retirement test if needed,
-this issue, `plan/issues/1235-ci-prevent-baseline-drift-false.md`,
+`tests/issue-1231.test.ts`, this issue,
+`plan/issues/1235-ci-prevent-baseline-drift-false.md`,
 `plan/issues/1574-ir-improvement-spec.md`, `plan/issues/sprints/47.md`, and the
 single #4522 inventory row/summary plus
-`plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`. The
+`plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md` and
+`plan/agent-context/dev-1231.md`. The
 shared documents land in this exact order:
 
 1. the approved Math retirement lands with a live 15-switch
@@ -1041,8 +1030,9 @@ mixed-conditional work.
 
 ### Validation and landing
 
-Run the focused #1231 suite, the exact linked-parser/fnctor production-adapter
-controls, and every target × optimization × arm projection above, followed by
+Run the focused #1231 suite, including the direct propagation-options control,
+and every target × optimization × arm projection above. Run any linked-Parser
+or fnctor controls already present on the rebased parent unchanged, followed by
 TS7 and TS5, IR layering, fallback and IR-only policy gates, targeted Biome,
 Prettier, diff-check, and host/standalone equivalence. The protected merge
 queue supplies the full Test262 regression verdict; the branch must not lower
