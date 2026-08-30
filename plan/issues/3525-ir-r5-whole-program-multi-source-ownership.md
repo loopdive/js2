@@ -1570,14 +1570,16 @@ before committing. Let the complete precommit and prepush hooks run without
 bypass. No baseline, LOC, function-size, binary-size, or hook exception is
 authorized.
 
-The post-sync quality run moved the existing `forof.string` neutrality
-evidence in `src/ir/integration.ts` from line 5146 to line 5929 as a direct
-consequence of this checkpoint's bounded integration growth. Regenerating the
-neutrality evidence with `check:ir-kind-neutrality -- --update-on-decrease`
-changes only that evidence locator and the generated date in parsed JSON: all
-85 kind verdicts and the 55 neutral / 27 JS / 3 unresolved counts remain
-unchanged, and no verdict grew. This is an exact evidence-pointer refresh, not
-a new neutrality allowance or regression baseline.
+The post-sync quality runs moved the existing `forof.string` neutrality
+evidence in `src/ir/integration.ts` from line 5146 first to line 5929, then to
+its final post-repair line 6001, as a direct consequence of this checkpoint's
+bounded integration growth. Regenerating the neutrality evidence with
+`check:ir-kind-neutrality -- --update-on-decrease` changes only that evidence
+locator and the generated date (2026-08-29 to 2026-08-30) across the two parsed
+JSON updates: all 85 kind verdicts and the 55 neutral / 27 JS / 3 unresolved
+counts remain unchanged, and no verdict grew. This is an exact
+evidence-pointer refresh, not a new neutrality allowance or regression
+baseline.
 
 Luna Max owns only the production/test surface explicitly named above on branch
 `codex/3525-m1a3-same-spelling-callables`; the plan remains root-owned and no

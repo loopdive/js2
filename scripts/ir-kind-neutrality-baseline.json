@@ -284,7 +284,7 @@
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:713",
       "why": "This is `%String.prototype%[@@iterator]` inlined as a statement form. The per-iteration element is a CODE POINT rendered as a one-element string — the intent field resolves to `__str_charAt_cp`, deliberately not the code-unit `string.char_at` next door. Its general sibling `forof.iter` is already in the dialect, so keeping the string specialization in core splits one protocol across the boundary.",
-      "evidence": ["src/ir/dialect/js.ts:722", "src/ir/integration.ts:5929"]
+      "evidence": ["src/ir/dialect/js.ts:722", "src/ir/integration.ts:6001"]
     },
     "forof.vec": {
       "verdict": "neutral",
