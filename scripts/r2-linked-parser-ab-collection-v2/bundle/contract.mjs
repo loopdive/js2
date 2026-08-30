@@ -75,30 +75,60 @@ export const SANCTIONED_EXCEPTION = Object.freeze({
   structurallyComplete: false,
 });
 
-// DEFECT 4 CARRIER. The exact expected WAT ABI, carried structurally rather
-// than as a hash. A hash-only carrier cannot see an i32 -> f32 parameter
-// change once the report's own manifest hash is recomputed alongside it.
-// These values are the committed contract; changing them requires an approved
-// relock, not a collector edit.
+// The frozen production inventory has one local module-init unit. It remains a
+// direct legacy body on BOTH outer collection routes: the outer "prepared"
+// route is the linked-parser overlay choice, not permission to invent a
+// Prepared module-init terminal.
+export const OWNED_MODULE_INIT = Object.freeze({
+  unit: "empty.mjs::__module_init",
+  source: "empty.mjs",
+  file: "empty.mjs",
+  kind: "module-init",
+  selfOwner: "inventory",
+  disposition: "legacy-ast-entry",
+});
+
+export const OWNED_MODULE_INIT_PHYSICAL = Object.freeze({
+  fn: "compileModuleInitBody",
+  structurallyComplete: true,
+  bodyRoute: "direct-legacy",
+  count: 1,
+});
+
+export const OWNED_MODULE_INIT_OUTCOME = Object.freeze({
+  bodyRoute: "direct-legacy",
+  outcome: "body-shape-rejected",
+  legacyBodyEmitted: true,
+  irBodyEmitted: false,
+});
+
+// DEFECT 4 CARRIER. These are normalized physical descriptors, keyed by the
+// host that produced the child. Named reference types deliberately replace raw
+// numeric type indexes: a compacted module must not make a type-index spelling
+// look like the same ABI.
 export const EXPECTED_WAT_ABI = Object.freeze({
-  parser: Object.freeze({
-    name: "$js2_linked_parser_parse",
-    params: Object.freeze(["i32", "i32"]),
-    results: Object.freeze(["i32"]),
+  standalone: Object.freeze({
+    stringToNumber: Object.freeze({
+      params: Object.freeze(["ref null $AnyString", "i32"]),
+      results: Object.freeze(["f64"]),
+    }),
+    readNumber: Object.freeze({
+      params: Object.freeze(["ref null $__fnctor_Parser"]),
+      results: Object.freeze(["f64"]),
+    }),
+    run: Object.freeze({ params: Object.freeze([]), results: Object.freeze(["f64"]) }),
   }),
-  caller: Object.freeze({
-    name: "$js2_linked_parser_call",
-    params: Object.freeze(["i32", "i32", "i32"]),
-    results: Object.freeze(["i32"]),
-  }),
-  run: Object.freeze({
-    name: "$js2_linked_parser_run",
-    params: Object.freeze(["i32"]),
-    results: Object.freeze(["i32"]),
+  host: Object.freeze({
+    stringToNumber: Object.freeze({
+      params: Object.freeze(["externref", "i32"]),
+      results: Object.freeze(["f64"]),
+    }),
+    readNumber: Object.freeze({ params: Object.freeze(["externref"]), results: Object.freeze(["f64"]) }),
+    run: Object.freeze({ params: Object.freeze([]), results: Object.freeze(["f64"]) }),
   }),
 });
 
-export const WAT_CARRIERS = Object.freeze(["parser", "caller", "run"]);
+export const WAT_CARRIERS = Object.freeze(["stringToNumber", "readNumber", "run"]);
 
 export const CENSUS_STATES = Object.freeze([
   "scheduled",
@@ -174,10 +204,25 @@ export function sha256(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-export function canonicalWatText(carrier) {
-  const params = (carrier?.params ?? []).map((p) => `(param ${p})`).join(" ");
-  const results = (carrier?.results ?? []).map((r) => `(result ${r})`).join(" ");
-  return `(func ${carrier?.name ?? ""} ${params} ${results})`.replace(/\s+/g, " ").trim();
+function normalizePhysicalType(type) {
+  if (typeof type !== "string") return null;
+  const compact = type.trim().replace(/\s+/g, " ");
+  const wrappedNullableRef = compact.match(/^\(ref null (\$[A-Za-z0-9_.$-]+)\)$/);
+  return wrappedNullableRef ? `ref null ${wrappedNullableRef[1]}` : compact;
+}
+
+function normalizePhysicalTypes(types) {
+  if (!Array.isArray(types)) return null;
+  const normalized = types.map(normalizePhysicalType);
+  return normalized.every((type) => type !== null) ? normalized : null;
+}
+
+// Hash the normalized descriptor, not a raw WAT declaration. This preserves
+// symbolic reference names while making inconsequential whitespace irrelevant.
+export function canonicalWatText(carrierName, carrier) {
+  const params = normalizePhysicalTypes(carrier?.params) ?? ["<malformed>"];
+  const results = normalizePhysicalTypes(carrier?.results) ?? ["<malformed>"];
+  return `${String(carrierName ?? "")}(${params.join(",")})->${results.join(",")}`;
 }
 
 // --- failure accumulator ----------------------------------------------------
@@ -273,6 +318,7 @@ function repairedCensusCheck(report, failures) {
 
 const EXCEPTION_FIELDS = Object.freeze([
   "fn",
+  "unit",
   "source",
   "file",
   "kind",
@@ -281,17 +327,65 @@ const EXCEPTION_FIELDS = Object.freeze([
   "structurallyComplete",
 ]);
 const JOIN_FIELDS = Object.freeze(["source", "file", "kind", "selfOwner", "disposition"]);
+const INVENTORY_FIELDS = Object.freeze(["unit", ...JOIN_FIELDS]);
+const OWNED_PHYSICAL_FIELDS = Object.freeze(["fn", "structurallyComplete", "bodyRoute", "count"]);
+const OWNED_OUTCOME_FIELDS = Object.freeze(["bodyRoute", "outcome", "legacyBodyEmitted", "irBodyEmitted"]);
 
 function indexInventory(child) {
   const byUnit = new Map();
-  for (const unit of child.record?.inventory?.units ?? []) byUnit.set(unit.unit, unit);
+  for (const unit of child.record?.inventory?.units ?? []) {
+    if (unit !== null && typeof unit === "object") byUnit.set(unit.unit, unit);
+  }
   return byUnit;
+}
+
+function checkCanonicalInventory(child, inventory, failures) {
+  const key = canonicalKey(child);
+  const units = child.record?.inventory?.units;
+  if (!Array.isArray(units)) {
+    failures.add("declaration/malformed-inventory", key, "inventory.units is not an array");
+    return;
+  }
+  if (units.length !== 1) {
+    failures.add(
+      "declaration/inventory-mismatch",
+      key,
+      `expected exactly one owned empty.mjs module-init unit, saw ${units.length}`,
+    );
+  }
+  if (inventory.size !== units.length) {
+    failures.add("declaration/inventory-mismatch", key, "inventory contains a malformed or duplicate unit key");
+  }
+  for (const unit of units) {
+    if (unit === null || typeof unit !== "object") {
+      failures.add("declaration/malformed-inventory", key, "inventory contains a non-object unit");
+      continue;
+    }
+    for (const field of INVENTORY_FIELDS) {
+      if (unit[field] !== OWNED_MODULE_INIT[field]) {
+        failures.add(
+          "declaration/inventory-mismatch",
+          key,
+          `inventory ${field}=${String(unit[field])} != expected ${String(OWNED_MODULE_INIT[field])}`,
+        );
+      }
+    }
+  }
+}
+
+function expectedOwnedPhysicalField(field) {
+  return OWNED_MODULE_INIT_PHYSICAL[field];
+}
+
+function expectedOwnedOutcomeField(field) {
+  return OWNED_MODULE_INIT_OUTCOME[field];
 }
 
 // DEFECT 1 REPAIR. The physical-row census is CLOSED: every row either joins an
 // inventory-owned unit on all join fields, or it is the one sanctioned unitless
-// exception. An arbitrary extra unitless row -- `compileDeclarations` or
-// anything else -- has nowhere to land and fails closed.
+// exception. The current one-unit inventory also has one exact direct legacy
+// physical row on EVERY outer route; a prepared tuple may not manufacture a
+// prepared module-init terminal.
 function repairedDeclarationCensus(child, failures) {
   const key = canonicalKey(child);
   const rows = child.record?.physicalRows;
@@ -300,9 +394,15 @@ function repairedDeclarationCensus(child, failures) {
     return;
   }
   const inventory = indexInventory(child);
+  checkCanonicalInventory(child, inventory, failures);
   const unitless = [];
+  const physicalByUnit = new Map();
 
   for (const row of rows) {
+    if (row === null || typeof row !== "object") {
+      failures.add("declaration/malformed-census", key, "physicalRows contains a non-object row");
+      continue;
+    }
     if (row.unit === null || row.unit === undefined) {
       unitless.push(row);
       continue;
@@ -321,13 +421,32 @@ function repairedDeclarationCensus(child, failures) {
         );
       }
     }
+    if (physicalByUnit.has(row.unit)) {
+      failures.add("declaration/duplicate-physical-row", key, `unit ${row.unit} has more than one physical row`);
+    } else {
+      physicalByUnit.set(row.unit, row);
+    }
+    for (const field of OWNED_PHYSICAL_FIELDS) {
+      const expected = expectedOwnedPhysicalField(field);
+      if (row[field] !== expected) {
+        failures.add(
+          "declaration/physical-row-mismatch",
+          key,
+          `physical row ${row.fn} ${field}=${String(row[field])} != expected ${String(expected)}`,
+        );
+      }
+    }
+  }
+
+  for (const unit of inventory.values()) {
+    if (!physicalByUnit.has(unit.unit)) {
+      failures.add("declaration/missing-physical-row", key, `inventory unit ${unit.unit} has no physical row`);
+    }
   }
 
   if (unitless.length === 0) {
     failures.add("declaration/missing-exception", key, "the graph-global module-init exception is absent");
-    return;
-  }
-  if (unitless.length > 1) {
+  } else if (unitless.length > 1) {
     failures.add(
       "declaration/unsanctioned-unitless-row",
       key,
@@ -357,8 +476,16 @@ function repairedDeclarationCensus(child, failures) {
 function repairedOutcomeIndex(child, failures) {
   const key = canonicalKey(child);
   const outcomes = child.record?.irOutcomes ?? [];
+  if (!Array.isArray(outcomes)) {
+    failures.add("outcome/malformed-census", key, "irOutcomes is not an array");
+    return new Map();
+  }
   const byKey = new Map();
   for (const outcome of outcomes) {
+    if (outcome === null || typeof outcome !== "object") {
+      failures.add("outcome/malformed-census", key, "irOutcomes contains a non-object row");
+      continue;
+    }
     if (byKey.has(outcome.key)) {
       failures.add(
         "outcome/duplicate-key",
@@ -375,8 +502,9 @@ function repairedOutcomeIndex(child, failures) {
 // --- strategy 2: full outcome joins -----------------------------------------
 
 // DEFECT 2 REPAIR. An outcome must join its inventory unit on EVERY field, not
-// merely exist under the right key. A prepared module-init outcome recorded
-// against the wrong file used to pass on key presence alone.
+// merely exist under the right key. Production records the owned module-init as
+// direct legacy / body-shape-rejected on both outer routes, so its exact route
+// and terminal code are part of the join rather than an invented prepared row.
 function repairedOutcomeJoin(child, byKey, failures) {
   const key = canonicalKey(child);
   const inventory = indexInventory(child);
@@ -399,25 +527,25 @@ function repairedOutcomeJoin(child, byKey, failures) {
         );
       }
     }
+    for (const field of OWNED_OUTCOME_FIELDS) {
+      const expected = expectedOwnedOutcomeField(field);
+      if (outcome[field] !== expected) {
+        failures.add(
+          "outcome/terminal-mismatch",
+          key,
+          `outcome ${outcome.key} ${field}=${String(outcome[field])} != expected ${String(expected)}`,
+        );
+      }
+    }
   }
 
-  if (child.route !== "prepared") return;
   for (const unit of inventory.values()) {
-    if (unit.kind !== "module-init") continue;
     const outcome = byKey.get(unit.unit);
     if (!outcome) {
       failures.add(
         "outcome/missing-terminal",
         key,
-        `prepared route has no terminal outcome for inventory unit ${unit.unit}`,
-      );
-      continue;
-    }
-    if (outcome.outcome !== "prepared-terminal") {
-      failures.add(
-        "outcome/missing-terminal",
-        key,
-        `prepared route outcome for ${unit.unit} is ${String(outcome.outcome)}, expected prepared-terminal`,
+        `direct legacy module-init has no terminal outcome for inventory unit ${unit.unit}`,
       );
     }
   }
@@ -434,37 +562,42 @@ function repairedWatCarriers(child, failures) {
   const key = canonicalKey(child);
   const carriers = child.record?.watCarriers;
   const manifest = child.record?.watManifest ?? {};
-  if (!carriers) {
+  const expectedByHost = EXPECTED_WAT_ABI[child.host];
+  if (!expectedByHost) {
+    failures.add("wat/unknown-host-mode", key, `no WAT ABI is pinned for host ${String(child.host)}`);
+    return;
+  }
+  if (carriers === null || typeof carriers !== "object" || Array.isArray(carriers)) {
     failures.add("wat/missing-carrier", key, "watCarriers is absent");
     return;
   }
+  for (const name of Object.keys(carriers)) {
+    if (!WAT_CARRIERS.includes(name)) failures.add("wat/unexpected-carrier", key, `unexpected carrier ${name}`);
+  }
   for (const name of WAT_CARRIERS) {
     const observed = carriers[name];
-    const expected = EXPECTED_WAT_ABI[name];
+    const expected = expectedByHost[name];
     if (!observed) {
       failures.add("wat/missing-carrier", key, `carrier ${name} is absent`);
       continue;
     }
-    if (observed.name !== expected.name) {
-      failures.add("wat/abi-mismatch", key, `carrier ${name} name ${String(observed.name)} != ${expected.name}`);
-    }
-    const observedParams = observed.params ?? [];
+    const observedParams = normalizePhysicalTypes(observed.params);
     if (stableStringify(observedParams) !== stableStringify(expected.params)) {
       failures.add(
         "wat/abi-mismatch",
         key,
-        `carrier ${name} params ${stableStringify(observedParams)} != expected ${stableStringify(expected.params)}`,
+        `carrier ${name} params ${stableStringify(observedParams)} != ${child.host} expected ${stableStringify(expected.params)}`,
       );
     }
-    const observedResults = observed.results ?? [];
+    const observedResults = normalizePhysicalTypes(observed.results);
     if (stableStringify(observedResults) !== stableStringify(expected.results)) {
       failures.add(
         "wat/abi-mismatch",
         key,
-        `carrier ${name} results ${stableStringify(observedResults)} != expected ${stableStringify(expected.results)}`,
+        `carrier ${name} results ${stableStringify(observedResults)} != ${child.host} expected ${stableStringify(expected.results)}`,
       );
     }
-    const recomputed = sha256(canonicalWatText(observed));
+    const recomputed = sha256(canonicalWatText(name, observed));
     if (observed.sha256 !== recomputed) {
       failures.add("wat/hash-mismatch", key, `carrier ${name} sha256 does not match its own WAT text`);
     }
@@ -579,7 +712,7 @@ function checkAccounting(child, failures) {
   if (!(child.side === "candidate" && child.host === "standalone" && child.route === "prepared")) return;
   const key = canonicalKey(child);
   const accounting = child.record?.accounting ?? {};
-  for (const carrier of ["parser", "caller"]) {
+  for (const carrier of ["stringToNumber", "readNumber"]) {
     const entry = accounting[carrier];
     if (entry?.direct !== 1 || entry?.ir !== 1) {
       failures.add(
@@ -589,6 +722,14 @@ function checkAccounting(child, failures) {
       );
     }
   }
+  const run = accounting.run;
+  if (run?.direct !== 1 || run?.ir !== 0) {
+    failures.add(
+      "accounting/mismatch",
+      key,
+      `landed candidate run accounting ${stableStringify(run ?? null)} != {direct:1, ir:0}`,
+    );
+  }
 }
 
 function checkDiagnostics(child, failures) {
@@ -597,15 +738,15 @@ function checkDiagnostics(child, failures) {
   const diagnostics = child.record?.diagnostics ?? [];
   const count = (kind, carrier) => diagnostics.filter((d) => d.kind === kind && d.carrier === carrier).length;
 
-  if (count("post-claim", "parser") !== 1 || count("compile-warning", "parser") !== 1) {
+  if (count("post-claim", "stringToNumber") !== 1 || count("compile-warning", "stringToNumber") !== 1) {
     failures.add(
       "diagnostics/parser-withdrawal",
       key,
-      "historical base standalone/prepared requires exactly one parser post-claim row and its matching compile warning",
+      "historical base standalone/prepared requires exactly one stringToNumber post-claim row and matching compile warning",
     );
   }
-  const callerClaim = count("post-claim", "caller");
-  const callerWarning = count("compile-warning", "caller");
+  const callerClaim = count("post-claim", "readNumber");
+  const callerWarning = count("compile-warning", "readNumber");
   if (callerClaim !== callerWarning || callerClaim > 1) {
     failures.add(
       "diagnostics/caller-cascade",
@@ -622,6 +763,14 @@ function projectChild(child) {
     key: canonicalKey(child),
     revision: child.revision ?? null,
     options: child.options ?? null,
+    inventory: (child.record?.inventory?.units ?? []).map((u) => ({
+      unit: u.unit,
+      source: u.source,
+      file: u.file,
+      kind: u.kind,
+      selfOwner: u.selfOwner,
+      disposition: u.disposition,
+    })),
     physicalRows: (child.record?.physicalRows ?? []).map((r) => ({
       fn: r.fn,
       unit: r.unit ?? null,
@@ -631,6 +780,8 @@ function projectChild(child) {
       selfOwner: r.selfOwner,
       disposition: r.disposition,
       structurallyComplete: r.structurallyComplete,
+      bodyRoute: r.bodyRoute,
+      count: r.count,
     })),
     irOutcomes: (child.record?.irOutcomes ?? []).map((o) => ({
       key: o.key,
@@ -640,9 +791,14 @@ function projectChild(child) {
       kind: o.kind,
       selfOwner: o.selfOwner,
       disposition: o.disposition,
+      bodyRoute: o.bodyRoute,
       outcome: o.outcome,
+      legacyBodyEmitted: o.legacyBodyEmitted,
+      irBodyEmitted: o.irBodyEmitted,
     })),
     watCarriers: child.record?.watCarriers ?? null,
+    diagnostics: child.record?.diagnostics ?? [],
+    accounting: child.record?.accounting ?? {},
   };
 }
 

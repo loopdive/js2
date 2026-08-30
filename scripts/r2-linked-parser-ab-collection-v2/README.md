@@ -16,10 +16,10 @@ relock; nothing here authorises that run.
 
 | file                 | role                                                                                                                                   |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `contract.mjs`       | the fail-closed oracle: canonical 16+8 matrix, pins, census states, declaration census, outcome joins, exact WAT ABI carriers, digests |
+| `contract.mjs`       | the fail-closed oracle: canonical 16+8 matrix, pins, census states, exact physical-row/outcome joins, host-scoped normalized ABI descriptors, digests |
 | `fixtures.mjs`       | canonical 24-child report fixture plus every mutation operator                                                                         |
 | `baseline-naive.mjs` | **reconstructed pre-repair baseline** — see caveat below                                                                               |
-| `selftest.mjs`       | static selftest and the five non-vacuity proofs                                                                                        |
+| `selftest.mjs`       | static selftest, five audit non-vacuity proofs, and four production-model relock proofs                                               |
 | `relock.mjs`         | manifest relock and `bundle/` byte-equality gate                                                                                       |
 | `manifest.json`      | relocked source digests, pins, expected census, root hash                                                                              |
 | `bundle/`            | byte-for-byte mirror of every source above                                                                                             |
@@ -35,9 +35,9 @@ fail-closed check with a runnable two-sided mutation in `selftest.mjs`:
 | #   | false pass                                                                  | repair                                                                                                           | failure code                            |
 | --- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | D1  | an arbitrary extra unitless `compileDeclarations` call passed               | the physical-row census is CLOSED: every row joins an inventory unit or is the one sanctioned unitless exception | `declaration/unsanctioned-unitless-row` |
-| D2  | a wrong-file prepared module-init outcome passed                            | outcomes join their inventory unit on every field, not by key presence                                           | `outcome/join-mismatch`                 |
+| D2  | a wrong-file direct-legacy module-init outcome passed                       | outcomes join their inventory unit on every field, not by key presence                                           | `outcome/join-mismatch`                 |
 | D3  | a duplicate outcome key passed                                              | the outcome index detects duplicates instead of `map.set` overwriting                                            | `outcome/duplicate-key`                 |
-| D4  | the parser's second WAT parameter `i32`→`f32` passed with hashes recomputed | the exact expected ABI is carried structurally, not only as a hash                                               | `wat/abi-mismatch`                      |
+| D4  | `stringToNumber`'s second WAT parameter `i32`→`f32` passed with hashes recomputed | the exact expected ABI is carried structurally, not only as a hash                                               | `wat/abi-mismatch`                      |
 | D5  | attempted/spawned/completed collapsed when a spawn threw                    | the three states are derived separately per child and cross-checked against the reported counters                | `census/state-collapse`                 |
 
 ## Caveat: `baseline-naive.mjs` is a RECONSTRUCTION
@@ -54,17 +54,24 @@ exactly one defect. This makes each mutation demonstrably non-vacuous — but
 evidence produced against it is evidence about the reconstruction, **not an
 observation of the original collector**, and must never be reported as one.
 
-## Open items for the independent auditor
+## Relocked production model
 
-1. **`EXPECTED_WAT_ABI` values are pinned placeholders.** The repair is that the
-   ABI is carried _exactly_ rather than by hash; the specific parameter and
-   result types must be confirmed against the landed L3 production ABI and
-   re-pinned under the approved relock before any collection.
-2. **The sole exception is enforced per child.** The issue says "each side must
-   retain exactly one copy" of the graph-global unitless `compileModuleInitBody`
-   row against `entry.mjs`. Each child is a separate compilation of the graph,
-   so the contract requires exactly one per child record. Confirm this reading.
-3. **The fixture is synthetic.** `fixtures.mjs` hand-builds a canonical report;
-   it is not a captured collection. The inventory shape (one owned module-init
-   unit in `empty.mjs`) follows the issue's description of the current bounded
-   multi-source exception and needs confirming against a real frozen inventory.
+The independent production readout closes the former placeholders:
+
+- `standalone` pins `stringToNumber(ref null $AnyString,i32)->f64`,
+  `readNumber(ref null $__fnctor_Parser)->f64`, and `run()->f64`.
+- `host` pins `stringToNumber(externref,i32)->f64`,
+  `readNumber(externref)->f64`, and `run()->f64`. The descriptors contain named
+  physical references, never numeric type indexes.
+- Every child contains exactly two physical rows: one owned
+  `empty.mjs::__module_init` direct-legacy row and exactly one immutable,
+  unitless graph-global `entry.mjs` exception. The outer `prepared` tuple does
+  not convert that module-init body into a Prepared terminal.
+- Every child records the owned module-init as direct legacy with the exact
+  `body-shape-rejected` terminal outcome. The fixture therefore reflects the
+  same physical row and outcome on both outer direct and prepared routes.
+
+`P1`–`P4` in the static selftest mutate the host ABI, module-init route,
+physical row, and terminal outcome. Each still passes the reconstructed
+hash/presence baseline but fails the repaired contract, proving the new checks
+are non-vacuous. No runtime collection is run by these scripts.
