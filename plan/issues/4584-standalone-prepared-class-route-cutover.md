@@ -3,7 +3,7 @@ id: 4584
 title: "Bypass the legacy class-body walker for exact Prepared standalone classes"
 status: in-progress
 created: 2026-08-21
-updated: 2026-08-30
+updated: 2026-08-31
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -14,7 +14,7 @@ goal: ir-full-coverage
 sprint: current
 parent: 3518
 depends_on: [1231, 3522, 4522, 4579, 4583]
-related: [1231, 3090, 3518, 3522, 3792, 4522, 4579, 4583]
+related: [1231, 3090, 3518, 3522, 3525, 3792, 4522, 4579, 4583, 5092]
 origin: "The Classes corpus is 11/11 IR-owned but still physically enters compileClassBodies for Animal and Dog."
 files:
   - src/codegen/prepared-class-body-cutover.ts
@@ -122,11 +122,22 @@ staged-body correlations satisfy the existing whole-class predicate.
 
 ### Grounded current state
 
-At `main` `275216c74c7299ea07a72c8d5479f7e1a477000c`, the temporary rollback has
-one production reader, at the start of
+The original route cutover was measured at historical `main`
+`275216c74c7299ea07a72c8d5479f7e1a477000c`. That SHA and its artifact hashes
+remain provenance for the already-landed cutover, not evidence for this
+retirement. On 2026-08-31, live `main`
+`adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2` has exactly **7 tracked key
+matches in 3 files**: one production reader, five focused-test references, and
+one historical acceptance reference in this issue. The queued Math-switch
+retirement is expected to add one #4522 inventory row, making the pre-retirement
+planning census 8 matches in 4 files. The implementation must instead ground
+its evidence on the exact post-Math, post-#1231 rebased parent and remeasure the
+reader census there.
+
+The production reader remains at the start of
 `tryCorrelateFullyPreparedStandaloneClassBodies` in
-`src/codegen/prepared-class-body-cutover.ts`. Removing that guard leaves the
-following fail-closed predicate unchanged:
+`src/codegen/prepared-class-body-cutover.ts`. Removing only that guard leaves
+the following fail-closed predicate unchanged:
 
 - standalone WasmGC only, not host GC and not WASI;
 - exact named top-level class declaration identity;
@@ -139,18 +150,20 @@ following fail-closed predicate unchanged:
 
 The old focused rollback control is non-vacuous: setting the former key to its
 disabled value brings back exactly the `Animal` and `Dog`
-`compileClassBodies` roots while retaining byte-identical output. That control
-must be grounded before the reader is removed, then replaced by an external
-stale-key arm that proves the candidate ignores the former key. The final
-candidate must contain no spelling of the retired identifier in `src`,
-`tests`, `scripts`, or `plan`; this section must therefore be rewritten to
-say “former Prepared class-route rollback” in the implementation commit.
+`compileClassBodies` roots while retaining byte-identical output. Ground that
+positive control against the final parent before deleting the reader. The
+candidate proof then supplies the stale key only from an external invocation;
+the tracked test must not spell or reconstruct it. The final candidate must
+contain no spelling of the retired identifier anywhere in the tracked tree,
+including this issue and the #4522 inventory.
 
-The live standalone corpus denominator is **22,056 source bytes / 5 cases /
-5 sources / 2 classes / 47 units / 38 terminal units / 9 owned support units /
-0 unowned support units / 19 derived units**. The older 37-terminal completion
-wording above is historical evidence and must be corrected when this
-retirement lands.
+The historical completion receipt above reports 37 terminal units, while a
+later draft census reported 38. Neither number is authoritative for the future
+landing parent. The implementation must measure the corpus once on its exact
+rebased parent, preserve that same denominator on the candidate, and record one
+unambiguous source/case/source-file/class/unit/terminal/support/derived census
+in the landing receipt. Any difference must be explained from the raw rows,
+not reconciled by choosing the larger summary.
 
 ### Exact implementation scope
 
@@ -158,9 +171,11 @@ The implementation owner may change only:
 
 1. `src/codegen/prepared-class-body-cutover.ts` — delete the single
    environment guard; do not alter the remaining correlation predicate.
-2. `tests/issue-4584-standalone-prepared-class-cutover.test.ts` — replace the
-   tracked rollback test with exact route, stale-external-key, direct-control,
-   census, and mutation-resistant assertions.
+2. `tests/issue-4584-standalone-prepared-class-cutover.test.ts` — remove the
+   rollback-key setup/control and retain the bounded default Prepared route,
+   host-GC route, malformed-wrapper fail-closed mutation, and one unsupported
+   parameter-property class. The stale-key B/D proof belongs to the external
+   A/B harness, not a tracked reconstruction of the retired key.
 3. This issue — record the grounded A/B result, final live denominators, and
    remove the retired key spelling.
 4. `plan/issues/4522-ir-kill-switch-inventory-r9.md` — remove exactly the
@@ -179,10 +194,19 @@ active ownership.
 
 The shared #4522 inventory edit is serialized in this exact landing order:
 
-1. the Math-switch retirement lands;
-2. the object-shape rollback retirement rebases onto it and lands;
-3. this Prepared class-route retirement rebases onto both and then edits the
-   #4522 and #3518 inventories.
+1. the Math-switch retirement lands and establishes a 15-reader inventory;
+2. the #1231 object-shape rollback retirement rebases onto it and records
+   **15 → 14**;
+3. this Prepared class-route retirement rebases onto both and records
+   **14 → 13** while editing #4522 and #3518.
+
+That numeric sequence is valid only if the #5092 mixed-primitive reader counted
+by the Math checkpoint is present on the exact rebased parent. If it is absent
+or has changed, stop and remeasure the live table instead of hard-coding 14 or
+13. Concurrent #3525 Program ABI work has no file ownership in this slice, but
+the final branch must coordinate with its handoff and re-probe the current
+class layout/callable registries before validation; do not copy or edit its
+session, planning, publication, or orchestration implementation.
 
 Implementation may be developed against the production/test files in
 parallel, but its inventory receipts and final pushed SHA must be rebuilt after
@@ -202,16 +226,17 @@ Ground the exact `Animal`/`Dog` fixture before source edits and run both
 | D | candidate, former key externally disabled | none | stale-key no-op proof |
 
 The old key must be supplied only by the external test command for arms B and
-D; no tracked candidate file may retain its spelling. Before deleting the
-reader, persist an evidence row for every grounded-main arm and optimization
-setting containing the source SHA, command, environment arm, Wasm bytes and
-SHA-256, WAT bytes and SHA-256, imports, exports, canonical IR outcomes,
-physical class roots, module validity, and runtime trace. Repeat the same table
-on the candidate. At each optimization setting, A/B/C/D must be byte-identical
-and WAT-identical. The physical-root projection is deliberately compared
-separately because arm B alone must contain `Animal` and `Dog`; A/C/D contain
-none. All four arms must otherwise have exact-equal canonical outcome,
-import/export, validity, and runtime projections.
+D; no tracked candidate file may retain its spelling. For every arm and
+optimization setting, record the exact source SHA, standalone lane, harness
+path/version, full compiler options, invocation command, environment arm, Wasm
+bytes and SHA-256, WAT bytes and SHA-256, imports, exports, canonical IR
+outcomes, physical class roots, module validity, and runtime trace. Repeat the
+same table on the candidate. Acceptance requires the freshly measured A/B/C/D
+artifacts to be byte- and WAT-identical at each optimization setting; do not
+carry the historical hashes forward as proof. Compare the physical-root
+projection separately because arm B alone must contain `Animal` and `Dog`,
+while A/C/D contain none. Require equality of every other projection only from
+the recorded rows.
 
 The exact nine-line runtime trace, at both `optimize: false` and
 `optimize: true`, is:
@@ -266,30 +291,15 @@ body flag; missing, duplicate, and foreign terminal rows; and a mismatched
 prepared-component join. A positive reordered-input mutation must canonicalize
 to the same projection and digest.
 
-Add an independent, non-`Animal`/`Dog` eligible-class control (for example a
-top-level `Counter` with an explicit constructor and ordinary method). Poison
-its direct class body, require its exact Prepared terminal/outcome joins, and
-prove that it also has no physical `compileClassBodies` root. This prevents a
-fixture-name-specific implementation from satisfying the retirement.
-
-Retain or add bounded controls proving the walker still owns:
-
-- an unsupported parameter-property class;
-- a computed member name;
-- a property initializer;
-- a nested class declaration;
-- a class expression;
-- a scoped same-name class;
-- an implicit constructor;
-- a Promise/builtin-backed class;
-- the host `gc` lane;
-- the WASI lane.
-
-The malformed `Animal_new` wrapper plus poisoned direct emitter remains a
-required fail-closed mutation: once the exact route starts certification, a
-post-certification mismatch must fail rather than retry through direct class
-codegen. Keep every exclusion independent so computed names are not conflated
-with initializers and nested declarations are not conflated with expressions.
+Do not add a `Counter` fixture, a new generic-class contract, or a new
+exhaustive exclusion matrix for this one-line guard deletion. The focused test
+remains bounded to its existing default route, host-GC control, malformed
+`Animal_new` wrapper plus poisoned direct emitter, and unsupported
+parameter-property class. The malformed wrapper must still fail rather than
+retry through direct class codegen. Run the existing #3522 class ownership,
+#2623 Promise-subclass, same-name class, route-audit, and corpus suites
+unchanged; those suites provide the broader nested/expression/implicit/builtin
+coverage without transferring their production ownership into this slice.
 
 ### Optimization-preservation contract
 
