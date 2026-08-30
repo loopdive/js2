@@ -10,7 +10,6 @@ import { analyzeSource } from "../src/checker/index.js";
 import { definedFuncAt } from "../src/codegen/func-space.js";
 import { generateModule } from "../src/codegen/index.js";
 import { ProgramAbiCallableRegistry } from "../src/codegen/program-abi-callable-planning.js";
-import { emitBinary } from "../src/emit/binary.js";
 import {
   VEC_HOST_BRIDGE_ROLE,
   type VecHostBridgeKind,
@@ -18,6 +17,8 @@ import {
   resolveVecHostBridgeHelper,
   vecHostBridgePhysicalExportBase,
 } from "../src/codegen/vec-access-exports.js";
+import { emitBinary } from "../src/emit/binary.js";
+import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { type CompileResult, compile } from "../src/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
@@ -487,6 +488,15 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
         expected: /resolves to a different allocator function/,
       },
       {
+        name: "one-past-defined-functions",
+        mutate: (_registry, result, entry) => {
+          const liveImportCount = result.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+          entry.desc.index = liveImportCount + result.module.functions.length;
+          expect(entry.desc.index).toBeLessThan(STABLE_FUNC_BASE);
+        },
+        expected: /resolves to a different allocator function/,
+      },
+      {
         name: "kind-changed",
         mutate: (_registry, _result, entry) => {
           entry.desc = { kind: "global", index: entry.desc.index };
@@ -513,6 +523,23 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
       if (!entry) throw new Error(`missing compiler-owned vec export for ${mutation.name}`);
       mutation.mutate(registry, result, entry);
       expect(() => finalizeVecHostBridgeExports(registry.ctx), mutation.name).toThrow(mutation.expected);
+    }
+  });
+
+  it("fails closed when disabled host-bridge policy retains a compiler-owned descriptor", () => {
+    const { registry, result } = generateWithCapturedRegistry(ARRAY_SOURCE, "vec-export-disabled-policy-survivor.ts");
+    const entry = result.module.exports.find(
+      (candidate) => candidate.name === "__vec_len" && candidate.desc.kind === "func",
+    );
+    if (!entry) throw new Error("missing compiler-owned vec export for disabled-policy-survivor");
+
+    const originalEmitHostBridge = registry.ctx.emitHostBridge;
+    try {
+      registry.ctx.emitHostBridge = false;
+      expect(result.module.exports).toContain(entry);
+      expect(() => finalizeVecHostBridgeExports(registry.ctx)).toThrow(/survived disabled host-bridge policy/);
+    } finally {
+      registry.ctx.emitHostBridge = originalEmitHostBridge;
     }
   });
 

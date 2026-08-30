@@ -5624,6 +5624,22 @@ export function compileArrayLiteral(
     const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
     elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
+  // (#5212) A Map/Set subclass forwards its first constructor argument through
+  // an externref provider that can only index native array carriers. The
+  // ordinary contextual type for `ReadonlyArray<readonly [K, V]>` selects an
+  // outer `vec<tuple>` while the nested literal, with tuple lowering disabled,
+  // selects a numeric/reference vec — an invalid `array.new_fixed` mismatch.
+  // Under the call-site-only collection carrier flag, use the lossless outer
+  // `vec<externref>` representation for every literal in the carrier tree;
+  // nested array literals remain real native vec values and are explicitly
+  // boxed into that outer carrier by the element loop below. This flag is
+  // narrower than `_arrayLiteralForceVec` and is never set by ordinary
+  // tuple/destructure lowering.
+  const forceCollectionArrayVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+    ._arrayLiteralForceCollectionVec;
+  if (forceCollectionArrayVec) {
+    elemWasm = { kind: "externref" };
+  }
   if (forcedElementType !== undefined) elemWasm = forcedElementType;
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an
@@ -5699,7 +5715,16 @@ export function compileArrayLiteral(
           objectElement !== null && staticObjectLiteralDataKeys(ctx, objectElement) !== null
             ? compileObjectLiteralAsExternref(ctx, fctx, objectElement)
             : null;
-        if (openObjectType === null) compileExpression(ctx, fctx, el, elemWasm);
+        if (openObjectType === null) {
+          const compiledElementType = compileExpression(ctx, fctx, el, elemWasm);
+          if (
+            forceCollectionArrayVec &&
+            compiledElementType !== null &&
+            !valTypesMatch(compiledElementType, elemWasm)
+          ) {
+            coerceType(ctx, fctx, compiledElementType, elemWasm);
+          }
+        }
       }
     }
     fctx.body.push({ op: "array.new_fixed", typeIdx: arrTypeIdx, length: expr.elements.length });

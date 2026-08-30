@@ -181,9 +181,10 @@ export function reserveTypedNativeConstructDriver(
   arity: number,
   resultTypeIdx: number,
 ): { name: string; funcIdx: number } | undefined {
-  // The typed path prepends the allocated receiver for a source-level explicit
-  // `this` pseudo-parameter, so it needs the N+1 method dispatcher.
-  if (arity < 0 || arity + 1 > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+  // TypeScript's explicit `this` pseudo-parameter is erased from the closure's
+  // JS-visible arity. The method dispatcher carries the allocated receiver in
+  // its dedicated `this` channel, so only the source arguments count here.
+  if (arity < 0 || arity > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
   const definition = ctx.mod.types[resultTypeIdx];
   if (!definition || !structFields(definition)) return undefined;
 
@@ -229,7 +230,7 @@ export function reserveTypedNativeConstructDriver(
 /** Highest reserved driver arity, or -1 when no site reserved one. */
 export function maxReservedNativeConstructArity(ctx: CodegenContext): number {
   let maxTyped = -1;
-  for (const driver of typedDriversByContext.get(ctx) ?? []) maxTyped = Math.max(maxTyped, driver.arity + 1);
+  for (const driver of typedDriversByContext.get(ctx) ?? []) maxTyped = Math.max(maxTyped, driver.arity);
   for (let arity = MAX_NATIVE_CONSTRUCT_ARITY; arity >= 0; arity--) {
     if (ctx.funcMap.has(driverName(arity))) return Math.max(arity, maxTyped);
   }
@@ -527,7 +528,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const selfTypeIdx = selfType?.kind === "ref" || selfType?.kind === "ref_null" ? selfType.typeIdx : undefined;
     const fields = selfTypeIdx === undefined ? undefined : structFields(ctx.mod.types[selfTypeIdx]);
     const closureArityIdx = ctx.funcMap.get("__closure_arity");
-    const methodCallIdx = ctx.funcMap.get(`__call_fn_method_${arity + 1}`);
+    const methodCallIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
     if (
       selfTypeIdx === undefined ||
       fields === undefined ||
@@ -543,13 +544,12 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const selfLocal = arity + 1;
     const resultLocal = arity + 2;
     const body: Instr[] = [
-      // Only closures whose declared arity contains one extra formal can own
-      // this path. That extra slot is TypeScript's explicit `this` parameter;
-      // an ordinary N-arg closure keeps the historical null fallthrough rather
-      // than receiving the typed self as a shifted user argument.
+      // Explicit TypeScript `this` parameters are erased from Function.length.
+      // Match the closure's source arity; the dispatcher supplies the allocated
+      // receiver through its separate `this` channel.
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: closureArityIdx },
-      { op: "i32.const", value: arity + 1 },
+      { op: "i32.const", value: arity },
       { op: "i32.ne" },
       {
         op: "if",
@@ -564,11 +564,6 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { op: "local.get", index: selfLocal },
       { op: "extern.convert_any" },
       { op: "local.get", index: 0 },
-      // The explicit `this` pseudo-parameter remains a real leading Wasm
-      // formal in current closure lowering, in addition to the method
-      // dispatcher's receiver channel.
-      { op: "local.get", index: selfLocal },
-      { op: "extern.convert_any" },
     );
     for (let arg = 0; arg < arity; arg++) body.push({ op: "local.get", index: arg + 1 });
     body.push({ op: "call", funcIdx: methodCallIdx }, { op: "local.set", index: resultLocal });

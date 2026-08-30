@@ -35,6 +35,30 @@ const FACTORY = `
  * undefined and trapped with "dereferencing a null pointer".
  */
 describe("#1058 object-literal method extracted as a value", () => {
+  it("survives TypeScript's exact nested-function shorthand factory shape", async () => {
+    const result = await compile(`
+      interface Factory { createIdentifier(t: number): number; }
+      function createNodeFactory(seed: number): Factory {
+        function createIdentifier(t: number): number { return seed + t; }
+        return { createIdentifier };
+      }
+
+      namespace Parser {
+        var factory = createNodeFactory(100);
+        var { createIdentifier: factoryCreateIdentifier } = factory;
+
+        function createIdentifier(isIdentifier: boolean): number {
+          if (isIdentifier) return factoryCreateIdentifier(7);
+          return -1;
+        }
+        function parseIdentifier(): number { return createIdentifier(true); }
+        export function parsePrimaryExpression(): number { return parseIdentifier(); }
+      }
+      export function test(): number { return Parser.parsePrimaryExpression(); }
+    `);
+    expect((await instantiate(result)).test()).toBe(107);
+  });
+
   it("survives a renamed destructure inside a namespace (the parser.ts shape)", async () => {
     const result = await compile(`${FACTORY}
       namespace Parser {
