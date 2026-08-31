@@ -433,3 +433,33 @@ valid checkpoint evidence, but root must normally integrate c281 (or newer)
 without force operations, rerun the scoped static/focused/exact-row gates on
 the resulting head, and record that exact integrated SHA before publication.
 No GitHub issue was created.
+
+### c281 integrated-head acceptance replay (2026-08-31)
+
+Root committed the reviewed four-path fix as
+`dc431dd80065f1cc07b97325ea792789b1734e8c`, then normally merged exact live
+upstream `c281669805ea987c0c5c08e4681370d199b77a34`. The resulting tested merge
+head is `d03d77e419bfcb4e46edc1699c662b606330bb08`; its two parents are the fix
+checkpoint and c281. No rebase, force, or skipped hook was used.
+
+Exact-head results:
+
+- focused lookup + producer files: **2 / 2 files, 13 / 13 tests passed** in
+  34.71 s total (18.66 s test time), one fork and no file parallelism;
+- canonical host manifest: harness positive/negative controls passed,
+  **8 / 8 rows passed**, counts summed to eight, `nondeterministic: 0`;
+- canonical pinned-QuickJS standalone manifest: harness controls passed,
+  **8 / 8 rows passed**, counts summed to eight, `nondeterministic: 0`;
+- TS7 `--noEmit -p tsconfig.ts7.json`: exit 0 with no diagnostics;
+- targeted Prettier, Biome error lint, LOC budget, and function budget: exit 0;
+- both fix and merge commit hooks passed. Each changed-root hook reran the
+  eight producer controls successfully, and oracle ratchet reported zero net
+  checker-usage growth.
+
+The integrated row captures are `.tmp/4449-d03d77e-host-8.jsonl` and
+`.tmp/4449-d03d77e-standalone-8.jsonl`; both contain exactly eight pass rows.
+The manifest and QuickJS hashes remain the pinned values above. This tracker
+update changes documentation only; the accepted code/test tree is exactly the
+tested d03d merge. A fresh upstream-head check, required pre-push hook, remote
+push, compliant PR body, and independent PR shepherd remain before
+publication. No GitHub issue was created.
