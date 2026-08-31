@@ -23,6 +23,7 @@ import type {
 import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
+import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
 import { getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
@@ -797,12 +798,12 @@ interface LinkedRewriteBinding {
 
 function getterLocalName(binding: Pick<LinkedRewriteBinding, "specifier" | "exportName" | "localName">): string {
   const safe = binding.exportName === "*" ? "namespace" : binding.exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
-  return `__js2wasm_get_${safe}_${hashText([binding.specifier, binding.exportName, binding.localName]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_GETTER_PREFIX}${safe}_${hashText([binding.specifier, binding.exportName, binding.localName]).slice(0, 8)}`;
 }
 
 function reexportLocalName(specifier: string, publishedName: string, sourceName: string, importer: string): string {
   const safe = publishedName.replace(/[^$A-Z_a-z0-9]/g, "_");
-  return `__js2wasm_reexport_${safe}_${hashText([specifier, publishedName, sourceName, importer]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_REEXPORT_PREFIX}${safe}_${hashText([specifier, publishedName, sourceName, importer]).slice(0, 8)}`;
 }
 
 /**
@@ -930,11 +931,11 @@ function declarationSourceFile(node: PackageNode, exported: FunctionExport | Val
 
 function boundaryGetterField(exportName: string, packageName: string): string {
   const safe = exportName === "default" ? "default" : exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
-  return `__js2wasm_get_${safe}_${hashText([packageName, exportName]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_GETTER_PREFIX}${safe}_${hashText([packageName, exportName]).slice(0, 8)}`;
 }
 
 function namespaceGetterField(packageName: string): string {
-  return `__js2wasm_get_namespace_${hashText([packageName]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_GETTER_PREFIX}namespace_${hashText([packageName]).slice(0, 8)}`;
 }
 
 function buildDeclarationStub(node: PackageNode): string {

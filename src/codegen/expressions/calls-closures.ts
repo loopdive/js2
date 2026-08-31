@@ -65,6 +65,7 @@ import { ensureStandaloneNativeMethodClosure } from "../native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
+import { programDeclaresClassMethod, receiverOriginRejectsExternBinding } from "../class-instance-method-names.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
 import {
   captureObjectLiteralMethodReceiver,
@@ -2191,6 +2192,21 @@ export function tryExternClassMethodOnAny(
   // handles genuine extern receivers correctly host-side.
   if (
     sourceDefinesFunctionMember(expr.getSourceFile(), methodName) ||
+    // (#5241) The same refusal, asked of the whole PROGRAM rather than of this
+    // one file. `sourceDefinesFunctionMember` stops applying the moment the
+    // class and the call site are in different modules — a provider declaring
+    // `class K { add(n) {…} }` plus a consumer calling `inst.add(2)` on an
+    // `any` receiver first-matched `Set.prototype.add` and emitted
+    // `env::Set_add`, which answered `undefined`, and (because this arm returns
+    // before the class-member dispatcher below is consulted) the
+    // `__class_call_add_1` bridge export was never demanded either. See
+    // class-instance-method-names.ts for the measurement.
+    programDeclaresClassMethod(ctx, methodName) ||
+    // (#5241, linked lane) The consumer of a `separate` link plan compiles on
+    // its own, so the provider's classes are absent from the sets above. Ask
+    // where the RECEIVER's value came from instead — see
+    // receiverOriginRejectsExternBinding.
+    receiverOriginRejectsExternBinding(ctx.oracle, propAccess.expression, methodName) ||
     // (#4439) `noJsHost` widens the alias shape to a borrowed BUILTIN method
     // (`o.match = String.prototype.match`), which otherwise first-matched the
     // DOM `Cache.match` extern class and leaked `env::Cache_match` host-free.

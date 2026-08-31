@@ -607,6 +607,8 @@ function collectFieldEntries(ctx: CodegenContext, methodName: string): FieldEntr
 /** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
 type CoerceIdxs = {
   boxNumIdx?: number;
+  /** (#5241) `__box_boolean` — a boolean-returning method's `i32` result. */
+  boxBoolIdx?: number;
   unboxNumIdx?: number;
   unboxBoolIdx?: number;
   undefinedIdx?: number;
@@ -626,7 +628,7 @@ function buildEntryArm(
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
 ): Instr[] {
-  const { boxNumIdx, unboxNumIdx, unboxBoolIdx } = ci;
+  const { boxNumIdx, boxBoolIdx, unboxNumIdx, unboxBoolIdx } = ci;
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
     { op: "ref.cast", typeIdx: entry.typeIdx }, // `this`
@@ -688,9 +690,20 @@ function buildEntryArm(
     if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
     else arm.push({ op: "drop" }, { op: "ref.null.extern" });
   } else if (entry.resultType.kind === "i32") {
-    arm.push({ op: "f64.convert_i32_s" });
-    if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
-    else arm.push({ op: "drop" }, { op: "ref.null.extern" });
+    // (#5241) A BOOLEAN return also lowers to `i32`, and the ValType carries
+    // the `boolean` marker the ARGUMENT coercion above already honours. Boxing
+    // it as a number answered `1`/`0` where the same call on a TYPED receiver
+    // answered `true`/`false` — measured on a plain class,
+    // `String(inst.bigger(0))` → `"1"` through this dispatcher, `"true"`
+    // direct. Pre-existing; it became reachable for more names once #5241
+    // stopped the extern-class hijack from consuming those calls first.
+    if ((entry.resultType as { boolean?: true }).boolean && boxBoolIdx !== undefined) {
+      arm.push({ op: "call", funcIdx: boxBoolIdx });
+    } else {
+      arm.push({ op: "f64.convert_i32_s" });
+      if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
+      else arm.push({ op: "drop" }, { op: "ref.null.extern" });
+    }
   }
   // externref result: no coercion.
   return arm;
@@ -707,6 +720,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const ci: CoerceIdxs = {
     boxNumIdx: ctx.funcMap.get("__box_number"),
+    boxBoolIdx: ctx.funcMap.get("__box_boolean"),
     unboxNumIdx: ctx.funcMap.get("__unbox_number"),
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
     undefinedIdx: ctx.funcMap.get("__get_undefined"),
