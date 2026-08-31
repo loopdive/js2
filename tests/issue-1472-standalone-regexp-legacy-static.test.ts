@@ -9,7 +9,7 @@ import { compile } from "../src/index.js";
 
 const SOURCE = `
 class MyRegExp extends RegExp {}
-class OwnRegExp extends RegExp { static input = 7; }
+class OwnRegExp extends RegExp { static input = 7; static ["$_"] = 8; }
 class Plain { static ["$1"] = 7; }
 class ParentRegExp extends RegExp {
   static input = 7;
@@ -17,8 +17,10 @@ class ParentRegExp extends RegExp {
   static get lastMatch() { return 6; }
 }
 class ChildRegExp extends ParentRegExp {}
+class TransitiveRegExp extends MyRegExp {}
 const ChildRegExpAlias = ChildRegExp;
 const MyRegExpAlias = MyRegExp;
+const TransitiveRegExpAlias = TransitiveRegExp;
 
 export function subclassLegacyNames(): number {
   let passed = 0;
@@ -36,6 +38,13 @@ export function subclassLegacyNames(): number {
   try { MyRegExp["$+"]; } catch (error) { if (error instanceof TypeError) passed++; }
   try { MyRegExp["$\`"]; } catch (error) { if (error instanceof TypeError) passed++; }
   try { MyRegExp["$'"]; } catch (error) { if (error instanceof TypeError) passed++; }
+  return passed;
+}
+
+export function subclassLegacySetters(): number {
+  let passed = 0;
+  try { MyRegExp.input = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { MyRegExp["$_"] = ""; } catch (error) { if (error instanceof TypeError) passed++; }
   return passed;
 }
 
@@ -67,6 +76,26 @@ export function aliasedLegacyNames(): number {
     return error instanceof TypeError ? 1 : 2;
   }
 }
+
+export function aliasedLegacySetters(): number {
+  let passed = 0;
+  try { MyRegExpAlias.input = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { MyRegExpAlias["$_"] = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { TransitiveRegExp.input = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { TransitiveRegExpAlias["$_"] = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  return passed;
+}
+
+export function setterControls(): number {
+  let result = 0;
+  try { RegExp.input = "intrinsic"; if (RegExp.input === "intrinsic") result |= 1; } catch {}
+  try { RegExp["$_"] = "intrinsic-alias"; if (RegExp["$_"] === "intrinsic-alias") result |= 2; } catch {}
+  try { OwnRegExp.input = 11; if (OwnRegExp.input === 11) result |= 4; } catch {}
+  try { OwnRegExp["$_"] = 12; if (OwnRegExp["$_"] === 12) result |= 8; } catch {}
+  try { Plain.input = 13; if (Plain.input === 13) result |= 16; } catch {}
+  try { Plain["$_"] = 14; if (Plain["$_"] === 14) result |= 32; } catch {}
+  return result;
+}
 `;
 
 describe("#1472 — standalone inherited RegExp legacy statics", () => {
@@ -82,13 +111,19 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
     const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
     const exports = instance.exports as unknown as {
       subclassLegacyNames(): number;
+      subclassLegacySetters(): number;
       controls(): number;
       inheritedAndAliasedStatics(): number;
       aliasedLegacyNames(): number;
+      aliasedLegacySetters(): number;
+      setterControls(): number;
     };
     expect(exports.subclassLegacyNames()).toBe(19);
+    expect(exports.subclassLegacySetters()).toBe(2);
     expect(exports.controls()).toBe(11);
     expect(exports.inheritedAndAliasedStatics()).toBe(42);
     expect(exports.aliasedLegacyNames()).toBe(1);
+    expect(exports.aliasedLegacySetters()).toBe(4);
+    expect(exports.setterControls()).toBe(63);
   });
 });

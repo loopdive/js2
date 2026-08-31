@@ -16,7 +16,8 @@ import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
-import { compileExpression, resolveComputedKeyExpression, skipTransparentExpressions } from "./shared.js";
+import { compileExpression, resolveComputedKeyExpression, skipTransparentExpressions, VOID_RESULT } from "./shared.js";
+import type { InnerResult } from "./shared.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { localGlobalIdx } from "./registry/imports.js";
 
@@ -42,6 +43,7 @@ export const STANDALONE_REGEXP_LEGACY_STATIC_NAMES: ReadonlySet<string> = new Se
   "$8",
   "$9",
 ]);
+const REGEXP_LEGACY_STATIC_SET_NAMES: ReadonlySet<string> = new Set(["input", "$_"]);
 
 const REGEXP_SUBCLASS_STATIC_ERROR = "RegExp legacy static accessor requires the RegExp constructor as this";
 
@@ -153,6 +155,51 @@ function resolveRegExpClassReceiver(
   if (ts.isIdentifier(source)) return resolveRegExpClassReceiver(ctx, source, seen);
   if (ts.isClassExpression(source)) return ctx.anonClassExprNames.get(source);
   return undefined;
+}
+
+/**
+ * Apply the same receiver rule to an inherited legacy static setter.  The
+ * setter must evaluate a computed key and RHS before its accessor throws; a
+ * direct dot access has no additional key expression to emit.
+ */
+export function tryCompileRegExpLegacyStaticWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  value: ts.Expression,
+): InnerResult | undefined {
+  const parsed = resolveLegacyStaticTarget(ctx, target);
+  if (parsed === undefined || !isRegExpSubclass(ctx, parsed.className)) return undefined;
+  const provenName =
+    parsed.keyName ?? (parsed.keyExpression && resolveComputedKeyExpression(ctx, parsed.keyExpression));
+  const isLegacy = provenName !== undefined ? REGEXP_LEGACY_STATIC_SET_NAMES.has(provenName) : false;
+  if (!isLegacy || (provenName !== undefined && ownsLegacyStatic(ctx, parsed.className, provenName))) return undefined;
+  if (parsed.keyExpression !== undefined) {
+    const keyType = compileExpression(ctx, fctx, parsed.keyExpression);
+    if (keyType === null) return null;
+    if ((keyType as unknown) !== VOID_RESULT) fctx.body.push({ op: "drop" });
+  }
+  const rhsType = compileExpression(ctx, fctx, value);
+  if (rhsType === null) return null;
+  if ((rhsType as unknown) !== VOID_RESULT) fctx.body.push({ op: "drop" });
+  return emitSubclassTypeError(ctx, fctx);
+}
+
+function resolveLegacyStaticTarget(
+  ctx: CodegenContext,
+  target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): { className: string; keyExpression?: ts.Expression; keyName?: string } | undefined {
+  const receiver = skipTransparentExpressions(target.expression);
+  if (!ts.isIdentifier(receiver)) return undefined;
+  const className = resolveRegExpClassReceiver(ctx, receiver);
+  if (className === undefined) return undefined;
+  return ts.isPropertyAccessExpression(target)
+    ? { className, keyName: target.name.text }
+    : {
+        className,
+        keyExpression: target.argumentExpression,
+        keyName: resolveComputedKeyExpression(ctx, target.argumentExpression),
+      };
 }
 
 function ownsLegacyStatic(ctx: CodegenContext, className: string, propertyName: string): boolean {
