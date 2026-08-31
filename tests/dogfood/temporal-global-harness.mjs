@@ -72,6 +72,11 @@ const SUPPORTED = {
   aliasable: `
     export function run() { const T = Temporal; return typeof T.ZonedDateTime; }
   `,
+  // (#5223) Was a knownGap reading "[object Object]". It answers the real ISO
+  // date on this base — the #5221 lowering fixes wired the prototype-method
+  // dispatch for a `new`-constructed provider instance. Promoted here so the
+  // vitest wrapper asserts it and a regression is loud.
+  instanceToString: `export function run() { return new Temporal.PlainDate(2020, 3, 4).toString(); }`,
   // (#5222) `Now` is a plain NAMESPACE OBJECT of functions nested one level
   // inside `Temporal`, so reaching its methods crosses the provider seam TWICE.
   // On base the second crossing erased them: "undefined", and
@@ -91,9 +96,15 @@ const KNOWN_GAPS = {
   staticFrom: {
     source: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
     note:
-      "fails IDENTICALLY (RuntimeError: dereferencing a null pointer) when the polyfill is compiled as ONE " +
-      "module with no provider and no linking — a pre-existing compiler gap inside the polyfill's own " +
-      "intrinsic/Object.create machinery, not a provider-seam defect (measured 2026-08-30, .tmp/probe-ab.mts)",
+      'no longer THROWS (the #5221 null deref is gone) — it now answers "[object Object]". Measured 2026-08-30 ' +
+      "(#5223): `.from()` returns a host object whose prototype is the provider's compiled PlainDate prototype, " +
+      "and every member read off that prototype answers undefined IN THE CONSUMER (`typeof " +
+      'Temporal.PlainDate.prototype.toString` === "undefined", `d.year` === undefined) while the same reads ' +
+      "succeed on a `new`-constructed instance. The host boundary resolves compiled class members against the " +
+      "CALLING module's exports: the provider exports __member_kind_toString / __call_get_year (141 / 41 of them, " +
+      "counted in the provider binary) and the consumer exports none, so nothing resolves. Cross-module member " +
+      "resolution, not an accessor-demand gap — #5223's read-registration fix does NOT move this row (re-measured " +
+      "after it, identical)",
   },
   // (#5222) `Temporal.Now.instant` moved to SUPPORTED above. These two are
   // what is LEFT once the member loss is fixed, and they are different animals.
@@ -113,9 +124,13 @@ const KNOWN_GAPS = {
       "#5222 fixed, this survives it — the residual is in what `timeZoneId` REACHES (the host " +
       "`Intl.DateTimeFormat().resolvedOptions()` path, cf. #5206), not in the value crossing",
   },
-  instanceToString: {
-    source: `export function run() { return new Temporal.PlainDate(2020, 3, 4).toString(); }`,
-    note: 'returns "[object Object]" — the class\'s Symbol.toStringTag / prototype-method dispatch is not wired',
+  instanceToStringTag: {
+    source: `export function run() { const d = new Temporal.PlainDate(2020, 3, 4); return String(d[Symbol.toStringTag]); }`,
+    note:
+      'answers "undefined" — `Symbol.toStringTag` on a compiled class instance is not wired, so ' +
+      "`Object.prototype.toString.call(inst)` still reports [object Object]. Measured 2026-08-30 (#5223) and " +
+      "reproduced on a PLAIN user class in one module, so it is general, not Temporal- or provider-specific. " +
+      "The prototype `toString()` METHOD does dispatch correctly (see `instanceToString` in SUPPORTED)",
   },
 };
 
