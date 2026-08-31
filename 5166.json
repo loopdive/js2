@@ -1,10 +1,11 @@
 {
   "id": "5166",
   "assignee": "ttraenkler/opus-5166",
-  "requested_by": "ttraenkler/opus-5166",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5166-nested-vec-carrier",
   "claimed_at": "2026-08-29T02:43:29Z",
-  "updated_at": "2026-08-29T02:43:29Z",
-  "write_id": "25739-l10yam6m"
+  "updated_at": "2026-08-31T01:33:22Z",
+  "write_id": "1742-5k130wek",
+  "released_at": "2026-08-31T01:33:22Z"
 }
