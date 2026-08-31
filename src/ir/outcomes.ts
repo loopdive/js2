@@ -123,6 +123,8 @@ export type IrInvariantCode =
   | "tagged-union-validation-failure"
   | "synthetic-owner-missing"
   | "pass-output-mismatch"
+  /** Exact production body receipts were absent, foreign, duplicated, or impossible. */
+  | "body-emission-evidence"
   | "unexpected-internal-throw";
 
 export type IrPreparationFailure =
@@ -260,6 +262,16 @@ interface IrObservedOutcomeBase {
   readonly column: number;
   readonly backend: IrObservedBackend;
   readonly target: IrObservedTarget;
+  /**
+   * R2 production body-emission evidence for a terminal whose direct and IR
+   * dispatchers both have exact receipts. These remain optional while class
+   * and module-init owners retain their separately scoped body dispatchers.
+   * When present, the compatibility booleans below are derived from and
+   * validated against these counters.
+   */
+  readonly prepareAttempts?: number;
+  readonly directBodyEmissions?: number;
+  readonly irBodyEmissions?: number;
   readonly legacyBodyEmitted: boolean;
   readonly irBodyEmitted: boolean;
   /** R2 component whose ABI was dependency-derived and sealed before lowering. */
@@ -281,12 +293,33 @@ export interface IrOutcomePolicyVerdict {
   readonly blockers: readonly IrObservedOutcome[];
 }
 
+/** Reject partial, impossible, or boolean-inconsistent exact body accounting. */
+function hasMalformedBodyEmissionAccounting(outcome: IrObservedOutcome): boolean {
+  const values = [outcome.prepareAttempts, outcome.directBodyEmissions, outcome.irBodyEmissions];
+  if (values.every((value) => value === undefined)) return false;
+  if (values.some((value) => value === undefined)) return true;
+  const [prepareAttempts, directBodyEmissions, irBodyEmissions] = values as [number, number, number];
+  if (
+    prepareAttempts !== 1 ||
+    !Number.isSafeInteger(directBodyEmissions) ||
+    !Number.isSafeInteger(irBodyEmissions) ||
+    directBodyEmissions < 0 ||
+    irBodyEmissions < 0 ||
+    directBodyEmissions > 1 ||
+    irBodyEmissions > 1
+  ) {
+    return true;
+  }
+  return outcome.legacyBodyEmitted !== (directBodyEmissions === 1) || outcome.irBodyEmitted !== (irBodyEmissions === 1);
+}
+
 /** Evaluate policy over the exact observed ledger; never re-run selection. */
 export function evaluateIrOutcomePolicy(
   outcomes: readonly IrObservedOutcome[],
   policy: IrOutcomePolicy,
 ): IrOutcomePolicyVerdict {
   const blockers = outcomes.filter((outcome) => {
+    if (hasMalformedBodyEmissionAccounting(outcome)) return true;
     if (outcome.kind === "invariant") return true;
     // The discriminant and body evidence are one contract. Hybrid may retain
     // a typed Unsupported unit only when its direct body actually exists; an
