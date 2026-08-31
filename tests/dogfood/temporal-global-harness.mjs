@@ -183,6 +183,27 @@ const KNOWN_GAPS = {
   //                             inherited; the whole `knownGaps` block below is
   //                             byte-identical between the two runs.
   //
+  // HOW TO ASSEMBLE THE SINGLE-MODULE CONTROL — one line decides what you
+  // measure, and getting it wrong looks like a PASS (#5243, 2026-08-31). The
+  // polyfill bundle ends with `export{qi as Temporal}`: an export ALIAS, not a
+  // top-level binding. So concatenating the bundle with a consumer that says
+  // bare `Temporal` leaves that identifier UNBOUND, and the #661 syntactic
+  // native lowering answers the spelling instead — the compiled polyfill is
+  // never entered. Measured with both bindings in ONE module:
+  //
+  //                          bare `Temporal`            `const T = qi`
+  //     typeof               "undefined"                "object"
+  //     .PlainDate.name      THREW "Temporal is not     "PlainDate"
+  //                           defined"
+  //     add({days:1})        "2020-03-05"               THREW destructure null
+  //     with({year:2021})    THREW "with is not a       "2021-03-04"
+  //                           function"
+  //
+  // `typeof Temporal === "undefined"` while `Temporal.PlainDate.from(…).add(…)`
+  // returns a correct date is the tell. Bind the namespace —
+  // `const Temporal = qi;` — or you are measuring the native lowering, whose
+  // gaps (no `with`) are the exact INVERSE of the polyfill's.
+  //
   // What is LEFT in the single-module lane is ONE defect, and it is not this
   // change's: the ISO calendar's `dateAdd(e, {years=0, months=0, weeks=0,
   // days=0}, i)` has a DESTRUCTURING PARAMETER, and its second argument arrives

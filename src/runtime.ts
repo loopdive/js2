@@ -8694,7 +8694,18 @@ function _makeClassCtorMirrorForHost(
       const ctorBridge = _resolveClassConstructBridge(className, callbackState);
       let inst: any;
       if (ctorBridge !== undefined) {
-        inst = ctorBridge.fn(..._denseOwnWasmArgs(args, ctorBridge.arity));
+        // `_applyWithPrefix` + the dense arg array, never a spread: `...` goes
+        // through `Array.prototype[Symbol.iterator]`, which compiled programs
+        // are free to replace (#4758), and the leading `argc` is what lets
+        // `<Class>_new` apply parameter defaults for the arguments the caller
+        // genuinely omitted. Clamped to the declared arity, matching
+        // `maybeSetArgcForKnownCall`'s `min(actual, params)`.
+        inst = _applyWithPrefix(
+          ctorBridge.fn,
+          undefined,
+          [Math.min(args.length, ctorBridge.arity)],
+          _denseOwnWasmArgs(args, ctorBridge.arity),
+        );
       } else {
         const ctorClosure = _classCtorClosures.get(classObj);
         // Dispatch the raw closure directly — for a class EXPRESSION the ctor
