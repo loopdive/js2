@@ -1,7 +1,8 @@
 ---
 id: 5225
 title: "Consumer-module object literals are opaque to a linked provider — Temporal.PlainDate.from({year,month,day}) throws 'year is required' while string and host-object forms work"
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-5225
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +10,19 @@ goal: core-semantics
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-30
+loc-budget-allow:
+  # 2026-08-31 (#5225): STRANDED-GRANT RESTATEMENT, not new growth of this PR.
+  # src/codegen/context/types.ts is +7 over main's current ceiling because of
+  # #5223, whose grant lives in that issue's own file — a file this
+  # predecessor-stacked branch does not modify, so the gate cannot see it
+  # (CLAUDE.md "Simulate CI's base too" → stranded grants). Restated here so
+  # the #5225 PR, which inherits #5223 through the #5241..#5244 chain, is not
+  # blocked by a predecessor's already-justified growth.
+  - src/codegen/context/types.ts
+func-budget-allow:
+  # 2026-08-31 (#5225): same stranded-grant restatement, function ratchet side.
+  # createCodegenContext is +1 from #5223's accessor-read demand-set wiring.
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #5225 — provider seam: consumer struct opaque to provider module
