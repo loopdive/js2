@@ -11,6 +11,14 @@ const SOURCE = `
 class MyRegExp extends RegExp {}
 class OwnRegExp extends RegExp { static input = 7; }
 class Plain { static ["$1"] = 7; }
+class ParentRegExp extends RegExp {
+  static input = 7;
+  static ["$1"] = 8;
+  static get lastMatch() { return 6; }
+}
+class ChildRegExp extends ParentRegExp {}
+const ChildRegExpAlias = ChildRegExp;
+const MyRegExpAlias = MyRegExp;
 
 export function subclassLegacyNames(): number {
   let passed = 0;
@@ -38,6 +46,27 @@ export function controls(): number {
   const ownSubclassStatic = OwnRegExp.input === 7;
   return directThrows * 100 + (ordinaryStatic ? 10 : 0) + (ownSubclassStatic ? 1 : 0);
 }
+
+export function inheritedAndAliasedStatics(): number {
+  const key = "$1";
+  return (
+    ChildRegExp.input +
+    ChildRegExp[key] +
+    ChildRegExp.lastMatch +
+    ChildRegExpAlias.input +
+    ChildRegExpAlias[key] +
+    ChildRegExpAlias.lastMatch
+  );
+}
+
+export function aliasedLegacyNames(): number {
+  try {
+    MyRegExpAlias.input;
+    return 0;
+  } catch (error) {
+    return error instanceof TypeError ? 1 : 2;
+  }
+}
 `;
 
 describe("#1472 — standalone inherited RegExp legacy statics", () => {
@@ -54,8 +83,12 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
     const exports = instance.exports as unknown as {
       subclassLegacyNames(): number;
       controls(): number;
+      inheritedAndAliasedStatics(): number;
+      aliasedLegacyNames(): number;
     };
     expect(exports.subclassLegacyNames()).toBe(19);
     expect(exports.controls()).toBe(11);
+    expect(exports.inheritedAndAliasedStatics()).toBe(42);
+    expect(exports.aliasedLegacyNames()).toBe(1);
   });
 });

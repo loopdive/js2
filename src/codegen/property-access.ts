@@ -5071,12 +5071,12 @@ export function compileElementAccess(
   // identifier doesn't compile to a useful runtime value for struct access.
   if (ts.isIdentifier(expr.expression)) {
     const objName = expr.expression.text;
+    const legacyStaticRead = tryCompileStandaloneRegExpLegacyStaticRead(ctx, fctx, expr);
+    if (legacyStaticRead !== undefined) return legacyStaticRead;
     // Resolve class expressions (var C = class {}) through the expr-name map
     const resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
     if (ctx.classSet.has(resolvedClass)) {
       const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
-      const legacyStaticRead = tryCompileStandaloneRegExpLegacyStaticRead(ctx, fctx, expr);
-      if (legacyStaticRead !== undefined) return legacyStaticRead;
       if (key !== undefined) {
         // Check static accessor first
         const accessorKey = `${resolvedClass}_${key}`;
@@ -5088,7 +5088,6 @@ export function compileElementAccess(
             return retType ?? { kind: "externref" };
           }
         }
-        // Check static property global
         const fullName = `${resolvedClass}_${key}`;
         const globalIdx = ctx.staticProps.get(fullName);
         if (globalIdx !== undefined) {

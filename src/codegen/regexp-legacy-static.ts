@@ -18,6 +18,7 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { compileExpression, resolveComputedKeyExpression, skipTransparentExpressions } from "./shared.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
+import { localGlobalIdx } from "./registry/imports.js";
 
 /** Annex B B.2.2 legacy RegExp accessor names, including their aliases. */
 export const STANDALONE_REGEXP_LEGACY_STATIC_NAMES: ReadonlySet<string> = new Set([
@@ -65,23 +66,27 @@ export function tryCompileStandaloneRegExpLegacyStaticRead(
     if (ts.isPropertyAccessExpression(expression)) {
       const receiver = skipTransparentExpressions(expression.expression);
       if (!ts.isIdentifier(receiver)) return undefined;
-      resolvedClass = ctx.classExprNameMap.get(receiver.text) ?? receiver.text;
+      const receiverClass = resolveRegExpClassReceiver(ctx, receiver);
+      if (receiverClass === undefined) return undefined;
+      resolvedClass = receiverClass;
       keyExpression = undefined;
       keyName = expression.name.text;
     } else {
       if (!ts.isIdentifier(expression.expression)) return undefined;
-      const objName = expression.expression.text;
-      resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
-      if (!ctx.classSet.has(resolvedClass)) return undefined;
+      const receiverClass = resolveRegExpClassReceiver(ctx, expression.expression);
+      if (receiverClass === undefined) return undefined;
+      resolvedClass = receiverClass;
       keyExpression = expression.argumentExpression;
       keyName = resolveComputedKeyExpression(ctx, keyExpression);
     }
   }
-  if (!ctx.standalone || ctx.classBuiltinParentMap.get(resolvedClass) !== "RegExp") return undefined;
+  if (!ctx.standalone || !isRegExpSubclass(ctx, resolvedClass)) return undefined;
 
   const provenName = keyName ?? (keyExpression && resolveComputedKeyExpression(ctx, keyExpression));
   if (provenName !== undefined) {
     if (!STANDALONE_REGEXP_LEGACY_STATIC_NAMES.has(provenName)) return undefined;
+    const staticProperty = emitInheritedStaticPropertyRead(ctx, fctx, resolvedClass, provenName);
+    if (staticProperty !== undefined) return staticProperty;
     if (ownsLegacyStatic(ctx, resolvedClass, provenName)) return undefined;
     return emitSubclassTypeError(ctx, fctx);
   }
@@ -100,9 +105,79 @@ export function tryCompileStandaloneRegExpLegacyStaticRead(
   return emitSubclassTypeError(ctx, fctx);
 }
 
+function emitInheritedStaticPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+  propertyName: string,
+): ValType | undefined {
+  const seen = new Set<string>();
+  let current: string | undefined = className;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    const fullName = `${current}_${propertyName}`;
+    const globalIdx = ctx.staticProps.get(fullName);
+    if (globalIdx !== undefined) {
+      fctx.body.push({ op: "global.get", index: globalIdx });
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+      return globalDef?.type ?? { kind: "externref" };
+    }
+    current = ctx.classParentMap.get(current);
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a statically immutable constructor alias to its compiled class name.
+ *
+ * `classExprNameMap` covers class-expression bindings, but not `const Alias =
+ * RegExpSubclass`.  Following only `const` initializers keeps this bridge from
+ * claiming a mutable binding whose constructor may have changed before the
+ * read.  An unresolved alias deliberately falls through to the ordinary
+ * dynamic path.
+ */
+function resolveRegExpClassReceiver(
+  ctx: CodegenContext,
+  receiver: ts.Identifier,
+  seen = new Set<ts.Identifier>(),
+): string | undefined {
+  if (seen.has(receiver)) return undefined;
+  seen.add(receiver);
+
+  const mapped = ctx.classExprNameMap.get(receiver.text) ?? receiver.text;
+  if (ctx.classSet.has(mapped)) return mapped;
+
+  const initializer = ctx.oracle.constInitializerOf(receiver);
+  if (initializer === undefined) return undefined;
+  const source = skipTransparentExpressions(initializer);
+  if (ts.isIdentifier(source)) return resolveRegExpClassReceiver(ctx, source, seen);
+  if (ts.isClassExpression(source)) return ctx.anonClassExprNames.get(source);
+  return undefined;
+}
+
 function ownsLegacyStatic(ctx: CodegenContext, className: string, propertyName: string): boolean {
-  const fullName = `${className}_${propertyName}`;
-  return ctx.staticProps.has(fullName) || ctx.staticAccessorSet.has(fullName) || ctx.staticMethodSet.has(fullName);
+  const seen = new Set<string>();
+  let current: string | undefined = className;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    const fullName = `${current}_${propertyName}`;
+    if (ctx.staticProps.has(fullName) || ctx.staticAccessorSet.has(fullName) || ctx.staticMethodSet.has(fullName))
+      return true;
+    current = ctx.classParentMap.get(current);
+  }
+  return false;
+}
+
+/** Recognize direct and user-class-transitive RegExp subclasses. */
+function isRegExpSubclass(ctx: CodegenContext, className: string): boolean {
+  const seen = new Set<string>();
+  let current: string | undefined = className;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    if (ctx.classBuiltinParentMap.get(current) === "RegExp") return true;
+    current = ctx.classParentMap.get(current);
+  }
+  return false;
 }
 
 function emitSubclassTypeError(ctx: CodegenContext, fctx: FunctionContext): ValType {

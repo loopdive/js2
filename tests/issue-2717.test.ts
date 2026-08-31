@@ -94,6 +94,31 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
     expect(noFlatImports(r)).toEqual([]);
   });
 
+  it("keeps an Array-subclass callback fail-loud under custom species", async () => {
+    const r = await compileStandalone(`
+      class SubArray extends Array<number> {}
+      const a: number[] = [1, 2];
+      a.constructor = SubArray;
+      return a.flatMap((x) => new SubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
+  it("keeps a transitive Array-subclass callback fail-loud", async () => {
+    const r = await compileStandalone(`
+      class BaseArray extends Array<number> {}
+      class SubArray extends BaseArray {}
+      const a: number[] = [1, 2];
+      a.constructor = SubArray;
+      return a.flatMap((x) => new SubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
   const loudCases: Array<[string, string, RegExp]> = [
     [
       "flat(depth) explicit arg",

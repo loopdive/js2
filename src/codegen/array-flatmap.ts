@@ -17,8 +17,14 @@ export function flatMapCallbackReturnFact(ctx: CodegenContext, cbArg: ts.Express
 }
 
 /** A concrete callback carrier is a non-array value, so depth-1 flatten is identity. */
-export function flatMapReturnIsDefinitelyNonArray(fact: TypeFact | undefined): boolean {
+export function flatMapReturnIsDefinitelyNonArray(ctx: CodegenContext, fact: TypeFact | undefined): boolean {
   if (!fact) return false;
+  // `class SubArray extends Array {}` is represented as a class fact, but its
+  // instances are still arrays at runtime. Treat direct and user-class-
+  // transitive Array subclasses as potentially flattenable; the native arm
+  // then takes its existing fail-loud path instead of returning the species
+  // result without flattening it.
+  if (fact.kind === "class" && isArraySubclass(ctx, fact.name)) return false;
   return !["array", "tuple", "union", "any", "unknown", "unresolvable"].includes(fact.kind);
 }
 
@@ -31,8 +37,20 @@ export function flatMapSpeciesResult(
   // ArraySpeciesCreate widens the map result to externref. For a statically
   // concrete scalar/object callback that remains the final flatMap result;
   // dynamic, union, and array returns stay fail-loud.
-  if (mapType?.kind === "externref" && flatMapReturnIsDefinitelyNonArray(flatMapCallbackReturnFact(ctx, cbArg))) {
+  if (mapType?.kind === "externref" && flatMapReturnIsDefinitelyNonArray(ctx, flatMapCallbackReturnFact(ctx, cbArg))) {
     return mapType;
   }
   return undefined;
+}
+
+/** Recognize direct and user-class-transitive Array subclasses. */
+function isArraySubclass(ctx: CodegenContext, className: string): boolean {
+  const seen = new Set<string>();
+  let current: string | undefined = className;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    if (ctx.classBuiltinParentMap.get(current) === "Array") return true;
+    current = ctx.classParentMap.get(current);
+  }
+  return false;
 }
