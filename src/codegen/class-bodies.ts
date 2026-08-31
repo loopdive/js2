@@ -22,7 +22,7 @@ import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
-import { exactClassExpressionTypeName } from "./class-expression-identity.js";
+import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
@@ -928,7 +928,7 @@ export function collectClassDeclaration(
           // as `HonoBase`, and imported through that alias. Resolve the exact
           // class-expression declaration so the derived struct is registered
           // as a subtype of the synthetic base struct whose bodies actually run.
-          parentClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(baseExpr)) ?? baseExpr.text;
+          parentClassName = resolveClassHeritageAlias(ctx, baseExpr) ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;

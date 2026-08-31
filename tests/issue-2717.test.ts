@@ -119,6 +119,33 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
     expect(noFlatImports(r)).toEqual([]);
   });
 
+  it("keeps a builtin-aliased Array-subclass callback fail-loud under custom species", async () => {
+    const r = await compileStandalone(`
+      const ArrayAlias = Array;
+      class AliasSubArray extends ArrayAlias<number> {}
+      const a: number[] = [1, 2];
+      a.constructor = AliasSubArray;
+      return a.flatMap((x) => new AliasSubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
+  it("keeps a user-aliased Array-subclass callback fail-loud under custom species", async () => {
+    const r = await compileStandalone(`
+      class BaseArray extends Array<number> {}
+      const UserAlias = BaseArray;
+      class AliasSubArray extends UserAlias {}
+      const a: number[] = [1, 2];
+      a.constructor = AliasSubArray;
+      return a.flatMap((x) => new AliasSubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
   const loudCases: Array<[string, string, RegExp]> = [
     [
       "flat(depth) explicit arg",

@@ -2,6 +2,8 @@
 
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { resolveBuiltinCtorAliasName } from "./native-ordinary-instanceof.js";
+import { skipTransparentExpressions } from "./shared.js";
 
 /**
  * Resolve a class-expression type by declaration identity.
@@ -33,6 +35,50 @@ export function exactClassExpressionTypeName(ctx: CodegenContext, type: ts.Type)
     if (!ts.isClassExpression(candidate) && !ts.isClassDeclaration(candidate)) continue;
     const syntheticName = ctx.anonClassExprNames.get(candidate);
     if (syntheticName && ctx.structMap.has(syntheticName)) return syntheticName;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a class-heritage name before registering the class's parent. The
+ * collector used to retain only the alias spelling, so `const A = RegExp;
+ * class S extends A {}` never populated the builtin-parent map. The same
+ * omission affects aliases of user classes and other builtins (for example the
+ * Array subclass consumed by flatMap lowering).
+ *
+ * Only declaration-file builtin constructors and plain `const` variable
+ * initializers are followed. A `let`/`var`, import, conditional expression,
+ * or cyclic declaration returns `undefined`; the caller then retains its old
+ * spelling and dynamic behavior. Cycle detection uses binding declaration
+ * identity rather than source names so shadowed aliases cannot interfere.
+ */
+export function resolveClassHeritageAlias(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  seen = new Set<ts.Declaration>(),
+): string | undefined {
+  const exactClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(identifier));
+  if (exactClassName !== undefined) return exactClassName;
+  const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) {
+    return resolveBuiltinCtorAliasName(ctx, identifier, undefined);
+  }
+  if (seen.has(declaration)) return undefined;
+  seen.add(declaration);
+
+  if (ts.isClassDeclaration(declaration) && declaration.name) {
+    const className = ctx.anonClassExprNames.get(declaration) ?? declaration.name.text;
+    return ctx.classSet.has(className) ? className : undefined;
+  }
+  if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return undefined;
+
+  const initializer = ctx.oracle.constInitializerOf(identifier);
+  if (initializer === undefined) return undefined;
+  const source = skipTransparentExpressions(initializer);
+  if (ts.isIdentifier(source)) return resolveClassHeritageAlias(ctx, source, seen);
+  if (ts.isClassExpression(source)) {
+    const className = ctx.anonClassExprNames.get(source);
+    return className !== undefined && ctx.classSet.has(className) ? className : undefined;
   }
   return undefined;
 }

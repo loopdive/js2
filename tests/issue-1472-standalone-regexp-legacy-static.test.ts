@@ -21,6 +21,11 @@ class TransitiveRegExp extends MyRegExp {}
 const ChildRegExpAlias = ChildRegExp;
 const MyRegExpAlias = MyRegExp;
 const TransitiveRegExpAlias = TransitiveRegExp;
+const DirectHeritageAlias = RegExp;
+class DirectAliasRegExp extends DirectHeritageAlias {}
+class AliasedParentRegExp extends RegExp {}
+const TransitiveHeritageAlias = AliasedParentRegExp;
+class TransitiveAliasRegExp extends TransitiveHeritageAlias {}
 
 export function subclassLegacyNames(): number {
   let passed = 0;
@@ -86,6 +91,15 @@ export function aliasedLegacySetters(): number {
   return passed;
 }
 
+export function aliasedHeritageRegExpStatics(): number {
+  let passed = 0;
+  try { DirectAliasRegExp.input; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { DirectAliasRegExp.input = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { TransitiveAliasRegExp.input; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { TransitiveAliasRegExp["$_"] = ""; } catch (error) { if (error instanceof TypeError) passed++; }
+  return passed;
+}
+
 export function setterControls(): number {
   let result = 0;
   try { RegExp.input = "intrinsic"; if (RegExp.input === "intrinsic") result |= 1; } catch {}
@@ -116,6 +130,7 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
       inheritedAndAliasedStatics(): number;
       aliasedLegacyNames(): number;
       aliasedLegacySetters(): number;
+      aliasedHeritageRegExpStatics(): number;
       setterControls(): number;
     };
     expect(exports.subclassLegacyNames()).toBe(19);
@@ -124,6 +139,7 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
     expect(exports.inheritedAndAliasedStatics()).toBe(42);
     expect(exports.aliasedLegacyNames()).toBe(1);
     expect(exports.aliasedLegacySetters()).toBe(4);
+    expect(exports.aliasedHeritageRegExpStatics()).toBe(4);
     expect(exports.setterControls()).toBe(63);
   });
 });
