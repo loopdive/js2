@@ -14071,15 +14071,7 @@ assert._isSameValue = isSameValue;
           const vecMutation = _tryWasmVecMutation(obj, method, args, exports);
           if (vecMutation.handled) return vecMutation.value;
 
-          // (#5237) Every `_unwrapForHost(ret, …)` below passes THIS module's
-          // callback state as the reader. #5222 taught the exit-boundary
-          // un-marshal to leave a mirror minted by a linked PROVIDER intact,
-          // but only wired the reader through `__extern_get`. A method call is
-          // the other door a provider-owned value walks through — a static
-          // factory (`PlainDate.from(...)`, `Point.make(...)`) returns a fresh
-          // provider instance, and un-marshalling it here handed the consumer a
-          // raw WasmGC struct it has no `__sget_*`/`__member_kind_*` decoder
-          // for: measured as zero own keys and `undefined` for every field.
+          // (#5237) Pass this module's callback state below to preserve provider-owned mirrors returned by methods.
           const fn = wrappedObj[method];
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
           // generic `method="from"` dispatch on `Array`. Drain Wasm-closure
