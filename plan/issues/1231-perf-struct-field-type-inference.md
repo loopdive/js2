@@ -1419,3 +1419,24 @@ feature-aware reader closes the observed 132 failure. Root must still run the
 LOC and function ratchets immediately before the signed commit, run every
 precommit/prepush hook without bypass, push normally, update PR #5352's exact
 head/evidence, and request a fresh Sol review of that new remote SHA.
+
+### 2026-08-31 final protected-main sync after the CI repair
+
+The signed feature-aware reader checkpoint was prepared before protected main
+advanced again to `3193ca16685de143af1ae1d6066978b2590c687d`. That advance
+contains only the #5353 npm-compat artifact refresh and the #5355 filings for
+#5243/#5244; it does not touch the #1231 plan, test, or production file. The
+normal no-commit merge is conflict-free and preserves their exact SHA-256
+values before this evidence-only annotation: plan
+`93f06d0f0d203ccc9cead6593894dab4d73f6243d5935c75e6d8f9c7791c5043`, test
+`08049eb0aa2035982cc349da18cec36b069f422d7e12fcefe1d26dc61a879eca`, and
+production `ab162da8add04f6f5f7f6035479e3851bae9301f09f9c6019cde5131cdb4b20b`.
+This section changes only the plan record; its final hash is relocked after the
+merge commit.
+
+On the combined tree, the interpreter-mode focused suite passes 12/12 and
+both TS7 and TS5 typechecks pass under fresh strict load gates. The merge
+commit must still rerun LOC/function ratchets immediately before signing and
+the full precommit hook without bypass. The normal push must run the full
+prepush hook; only then can clean-install Binaryen 132 CI and a fresh Sol
+exact-byte review authorize PR readiness.
