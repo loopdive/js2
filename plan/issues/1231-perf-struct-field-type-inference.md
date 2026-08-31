@@ -571,9 +571,9 @@ call-graph closure.
 - **Selector closure churn.** Adding shape types to claim positions may
   pull more functions into the IR than today. That's the goal, but
   every newly-IR-claimed function is a regression vector for IR-only
-  bugs (#1169p history shows this). Recommend gating Phase 1 behind a
-  `JS2WASM_IR_OBJECT_SHAPES=1` env flag for a sprint to bake before
-  default-on.
+  bugs (#1169p history shows this). Phase 1 therefore used a temporary
+  opt-in rollout control for one sprint before graduating to default-on;
+  that emergency rollback is now retired.
 - **Cross-module / WIT generation.** WIT generator (`src/wit-generator.ts`)
   emits exported function signatures; if exports return typed structs,
   the WIT output must still expose them as the boxed externref view.
@@ -605,20 +605,21 @@ call-graph closure.
   `fields: { name; type: LatticeAtom }[]` instead of an opaque
   `shape: string`. Helpers `atomsEqual` / `atomOrder` / `typesEqual`
   recurse over the field list. `lowerTypeToIrType` lowers object
-  atoms to `IrType.object`. New constants
-  `LATTICE_OBJECT_SHAPE_MAX_DEPTH = 3` and `objectShapesEnabled()`
-  guard the env flag.
+  atoms to `IrType.object`. The
+  `LATTICE_OBJECT_SHAPE_MAX_DEPTH = 3` constant bounds recursive inference;
+  the temporary rollout predicate that once guarded it is now retired.
 - `src/ir/propagate.ts` — `inferExpr` gained handlers for
-  `ObjectLiteralExpression` (gated on the flag),
+  `ObjectLiteralExpression` (initially rollout-gated, now unconditional),
   `PropertyAccessExpression`, and string-keyed `ElementAccessExpression`.
 - `src/ir/propagate.ts` — `tsTypeToLattice` returns `UNKNOWN` for
-  `Object`-flagged TS types when the flag is on (instead of `DYNAMIC`),
+  `Object`-flagged TS types during the rollout (instead of `DYNAMIC`),
   so unannotated returns like `function createPoint(x, y) { return
   {x, y}; }` start at the bottom and let body-walk inference grow the
   fact. This was the missing piece preventing the seed-vs-body join
   rule from ever updating: `seedConcrete` was false for `dynamic` and
   the asymmetric rule still bound `newReturn = join(dynamic, t) =
-  dynamic`. Outside the gate, `DYNAMIC` is preserved for legacy.
+  dynamic`. The former rollback preserved `DYNAMIC` for the boxed path; that
+  representation escape hatch is now retired.
 - `src/codegen/index.ts` — replaced the `mapped.kind === "object"`
   throw in `resolvePositionType` with a call to a new
   `objectIrTypeFromLattice` helper that walks the lattice's recursive
@@ -668,19 +669,19 @@ call-graph closure.
    worklist fixpoint always terminates. Bumping to 5 is a one-line
    change if benchmarks demand it.
 
-6. **Why is the gate env-based, not a `CompileOptions` flag?**
+6. **Why was the rollout control environment-based, not a compile option?**
    Architect's risk-register call-out: "every newly-IR-claimed
    function is a regression vector for IR-only bugs (#1169p history
-   shows this)." Defaulting off for a sprint lets us iterate on
-   correctness without affecting test262 conformance numbers. An env
-   var is the simplest gate that works for both vitest and ad-hoc CI
-   runs.
+   shows this)." Defaulting off for a sprint let us iterate on
+   correctness without affecting test262 conformance numbers. An environment
+   control was the simplest mechanism that worked for both vitest and ad-hoc
+   CI runs; it is no longer present.
 
 ### Verified behaviour
 
 For `function createPoint(x, y) { return { x: x, y: y }; }` /
 `function distance(p) { return p.x * p.x + p.y * p.y; }`, the WAT
-under `JS2WASM_IR_OBJECT_SHAPES=1`:
+with the object-shape rollout enabled:
 
 ```
 (type $__anon_1 (struct (field $x (mut f64)) (field $y (mut f64))))
@@ -759,7 +760,8 @@ contract boundary.
 
 ## Phase 2 — enable by default, monomorphization, full test coverage
 
-**Status**: Phase 1 merged (PR #143, env-gated `JS2WASM_IR_OBJECT_SHAPES=1`).
+**Status**: Phase 1 merged (PR #143, initially behind a temporary environment
+rollout control that was retired on 2026-08-31).
 Phase 2 is dispatched to dev-1231.
 
 ### Context
@@ -779,9 +781,10 @@ Phase 1 established:
 - `LatticeAtom.object` carries recursive `fields: { name; type: LatticeAtom }[]`
 - `inferExpr` handlers for ObjectLiteralExpression, PropertyAccessExpression
 - `objectIrTypeFromLattice` replacing the `resolvePositionType` throw
-- `tsTypeToLattice` returns `UNKNOWN` (not `DYNAMIC`) for unannotated object
-  returns under the gate — the key fix enabling body-walk inference
-- Gate: `JS2WASM_IR_OBJECT_SHAPES=1` env flag
+- `tsTypeToLattice` returned `UNKNOWN` (not `DYNAMIC`) for unannotated object
+  returns during the rollout — the key fix enabling body-walk inference
+- Rollout: initially behind a temporary environment control; default-on after
+  Phase 2 and permanently retired on 2026-08-31
 - WAT verified: `(field $x (mut f64))` emitted for `createPoint(3, 4)` under gate
 
 ### Phase 2 scope
@@ -790,9 +793,9 @@ Phase 1 established:
 
 Determine whether the gate can be removed (enabled by default) or whether a
 more selective activation is needed. Options:
-- **Run test262 with `JS2WASM_IR_OBJECT_SHAPES=1` on CI** (add to the sharded
-  workflow for one run) and inspect the delta. If net ≥ 0 and no bucket > 50
-  regressions, remove the gate.
+- **Run test262 with the object-shape rollout enabled on CI** (add to the
+  sharded workflow for one run) and inspect the delta. If net ≥ 0 and no
+  bucket > 50 regressions, remove the rollout control.
 - If regressions appear: analyze per-bucket to distinguish real issues from
   test-corpus weirdness. Fix issues, then re-test.
 
@@ -880,8 +883,8 @@ This ensures future refactors don't accidentally re-introduce boxing.
 
 ### Phase 2 acceptance criteria
 
-1. `JS2WASM_IR_OBJECT_SHAPES` gate removed (or a concrete plan filed for why
-   it must stay, with a follow-up issue for removal)
+1. The emergency object-shape rollback is removed (or a concrete plan is
+   filed for why it must stay, with a follow-up issue for removal)
 2. All 6 test cases above covered (Cases 4/5 as stretch — file follow-up if
    not in scope for this PR)
 3. WAT snapshot assertion in place for Case 1 (no gate required)
@@ -908,9 +911,9 @@ and rollback identifier occur 25 times across exactly eight tracked files,
 including `plan/agent-context/dev-1231.md`; the earlier seven-file count omitted
 that record. Re-measure the exact tracked-file census after #5332 lands because
 its serialized R9 ledgers intentionally add current inventory references.
-`src/ir/propagate.ts` has only one live reader/helper,
-`objectShapesEnabled()`. That helper controls three semantically distinct
-consumers: fnctor `NewExpression` admission in the propagation extension,
+`src/ir/propagate.ts` has only one live rollback predicate. That predicate
+controls three semantically distinct consumers: fnctor `NewExpression`
+admission in the propagation extension,
 checker-known object seeding, and object-literal inference. No open pull request
 claims this retirement. The active ProgramABI/#3525 publication work does not
 edit the owned source or focused test; do not widen into those files.
@@ -923,10 +926,10 @@ The Math dependency is now satisfied on protected `origin/main` at exact merge
 identifier occurs 24 times across seven tracked files: six in this issue, one
 in #1235, one in #1574, three in #4522, one in sprint 47, three in
 `src/ir/propagate.ts`, and nine in `tests/issue-1231.test.ts`. The
-three-pattern union of that key with `objectShapesEnabled` and
-`withoutObjectShapes` contains 37 literal occurrences on 36 matching lines
-across eight tracked files at that base. This Sol plan itself adds seven
-literal helper-name references on seven lines, so the implementation starts
+three-pattern union of that key with the production predicate and focused-test
+rollback helper contains 37 literal occurrences on 36 matching lines across
+eight tracked files at that base. This Sol plan itself adds seven literal
+helper-name references on seven lines, so the implementation starts
 from exactly 44 literal occurrences on 43 matching lines across the same eight
 files; the eighth file is `plan/agent-context/dev-1231.md`. These are the
 authoritative deletion and documentation-rewrite denominators. An
@@ -946,9 +949,9 @@ file enters this ownership boundary.
 
 ### Exact production change
 
-1. Delete `objectShapesEnabled()` and its environment read. The frontend must
-   produce the same bounded lattice facts regardless of ambient process
-   configuration.
+1. Delete the production rollback predicate and its environment read. The
+   frontend must produce the same bounded lattice facts regardless of ambient
+   process configuration.
 2. In `buildIrUnitTypeMap`, keep the exact source-local fnctor-admission proof
    and the `NewExpression` requirement; remove only the rollback predicate.
    This preserves the linked-parser `{input: string}` projection rather than
@@ -964,12 +967,23 @@ file enters this ownership boundary.
    ProgramABI, or direct frontend. This is a frontend inference cleanup whose
    backend-visible output must equal the already-default route.
 
+### 2026-08-31 evidence-driven ownership amendment
+
+The first Terra implementation probe found that the annotated point fixture is
+selected and IR-emitted in both host and standalone, but the current
+single-source owner still emits the direct body too: terminal telemetry reports
+both body flags true and the prepared-skip projection is empty. The injected
+direct-body poison therefore fails before the otherwise valid IR body can run.
+That is a real pre-existing #3521 compile-once gap, not a consequence of this
+rollback deletion. This slice records the exact limitation and must not widen
+into declaration ownership merely to make a poison assertion green.
+
 ### Closed evidence matrix
 
-- First repair the test harness: the current generic `withoutObjectShapes`
-  helper restores the environment synchronously, so its async caller resets
-  the flag before the first awaited compile and its runtime rollback row is
-  vacuous. The grounded focused file contains 16 literal `it(...)` rows and
+- First repair the test harness: the current generic rollback helper restores
+  the environment synchronously, so its async caller resets the flag before
+  the first awaited compile and its runtime rollback row is vacuous. The
+  grounded focused file contains 16 literal `it(...)` rows and
   exactly three rollback rows: its lattice and selector rows are genuine
   synchronous withdrawals, while the final runtime row is the vacuous async
   case. Remove that helper and every rollback expectation without losing the
@@ -994,17 +1008,28 @@ file enters this ownership boundary.
   `.has(...)`, `arrayContaining`, module-global `f64` regexes, or cross-arm
   equality alone. Require exact TypeMap rows and atoms; the exact intended
   selection set with no extra unit; exactly one outcome per expected unit with
-  exact identity, kind/reason/stage and body flags; empty post-claim errors;
-  exact import/export sets; WAT struct-field identity and body-to-struct
-  linkage; byte-identical binary hashes where promised; `WebAssembly.validate`;
-  and exact exported runtime results. The standalone projection must remain
-  host-free, every positive body must remain IR-only, and its exact body must
-  contain no box/unbox call.
+  exact identity, kind/reason/stage and body flags; an exact post-claim
+  projection with one build row per ABI-parity withdrawal, no row for an
+  emitted unit, and no unrelated row; exact import/export sets; WAT
+  struct-field identity and body-to-struct linkage census; byte-identical
+  binary hashes where promised;
+  `WebAssembly.validate`; and exact exported runtime results. The grounded
+  standalone mixed-user arm registers the exact typed struct but has no
+  allocation/read link because every terminal withdraws on exact ABI parity;
+  record that target-specific `unlinked` state rather than inventing a body.
+  The standalone projection must remain
+  host-free and the emitted IR body must contain no box/unbox call. Do not
+  claim compile-once ownership here: the grounded single-source route still
+  emits both the direct and IR bodies, and that separate migration belongs to
+  #3521, "IR-only R2: prepare-before-emit free-function ownership."
 - Make the oracle reject a wrong TypeMap atom/source/unit, missing/duplicate or
   foreign selected unit/outcome, wrong outcome identity/reason/stage/body flag,
   import/export drift, WAT body/struct reassociation, binary drift, and runtime
-  drift. Direct-body poison remains necessary but is not a substitute for
-  these independent mutations.
+  drift. Keep a direct-body poison control that fails with the exact injected
+  error and pair it with telemetry proving `legacyBodyEmitted: true`,
+  `irBodyEmitted: true`, and an empty prepared-skip projection. This is a
+  non-vacuous record of the existing #3521 ownership gap, not acceptance for
+  this frontend rollback retirement.
 - Keep the full conservative matrix non-vacuous: polymorphic call sites,
   open-world exported input, empty/spread/method/accessor/computed/duplicate
   object literals, missing fields, optional property access, optional element
@@ -1012,10 +1037,15 @@ file enters this ownership boundary.
   exact current `dynamic` or unclaimed projection and refusal reason. Preserve
   accepted identifier, string-literal, and numeric-literal object keys; accept
   only string-literal or no-substitution-template element access; and refuse
-  numeric, dynamic, computed, or other nonliteral element keys independently.
+  static field inference for numeric, dynamic, computed, or other nonliteral
+  element keys independently. Preserve the exact selector projection too:
+  the grounded numeric-index control currently remains selected with a
+  `dynamic` return, so this slice must not invent a new selector refusal.
   Preserve every primitive, `any`, `unknown`, `never`, union, enum, and fallback
-  branch byte-for-byte. Poison the direct body for positive fixtures so a
-  hidden legacy compilation cannot satisfy the runtime oracle.
+  branch byte-for-byte. Positive fixtures must prove that the IR-emitted body
+  owns the typed object operations and runtime result; the separate poison
+  control must prove that the still-present direct compilation cannot be
+  mistaken for compile-once ownership.
 - Exercise the third consumer directly in the owned focused test through the
   existing `buildIrUnitTypeMap(..., propagationOptions)` boundary. Supply a
   source-local `resolveFnctorAdmission` test resolver for one exact
@@ -1026,10 +1056,10 @@ file enters this ownership boundary.
   linked-Parser, or fnctor-admission files that are absent from the rebased
   parent. If parallel #3521 work lands those controls first, run them unchanged
   as downstream regressions rather than editing them in this slice.
-- Repository-wide tracked-file grep for the retired environment identifier must
-  be exactly zero. Also require zero `objectShapesEnabled` and
-  `withoutObjectShapes` identifiers, including rollout comments that would
-  survive a mechanical helper/call deletion. The only retained stale-key
+- Repository-wide tracked-file grep for the retired environment identifier,
+  production predicate identifier, and focused-test rollback-helper identifier
+  must each be exactly zero, including rollout comments that would survive a
+  mechanical helper/call deletion. The only retained stale-key
   representation is a computed literal-fragment assembly in the focused
   retirement test. Update this record, #1235, #1574, sprint 47, #4522, and
   #3518, and `plan/agent-context/dev-1231.md` by paraphrasing historical rollout
@@ -1052,9 +1082,10 @@ shared documents land in this exact order:
    15→14 in both #4522 and #3518;
 3. #4584 rebases onto #1231 and records the next R9 14→13 transition.
 
-This branch remains plan-only until the Math checkpoint lands; then merge
-current main normally and preserve both inventories. Do not duplicate or
-conflict with the parallel Claude ProgramABI, multi-prepared publication, or
+The Math checkpoint is now on protected main. This implementation branch stays
+stacked on the plan-only PR until that prerequisite lands; then merge current
+main normally and preserve both inventories. Do not duplicate or conflict with
+the parallel Claude ProgramABI, multi-prepared publication, or
 mixed-conditional work.
 
 ### Validation and landing
@@ -1072,3 +1103,395 @@ and function-growth ratchets; keep the full precommit and prepush hooks
 enabled. Terra implements after the Math checkpoint; a fresh independent Sol
 review must approve the exact pushed SHA before the regular PR is marked ready
 or enqueued. No admin or direct merge is permitted.
+
+### 2026-08-31 implementation checkpoint — exact parent/candidate evidence
+
+Signed implementation commit
+`8295270f16b0724a642b1bd670c873fff46c0b8f` deletes only the three
+frontend rollback consumers described above. `src/ir/propagate.ts` shrinks by
+23 net lines; no selector, lowering, emitter, ProgramABI, direct-frontend,
+#3525 ("IR-only R5: whole-program single- and multi-source Prepared
+ownership"), or #5092 ("IR mixed-primitive conditional-expression ownership")
+file changed. The R9 inventory moves exactly 15→14 while retaining all fourteen
+independently owned readers. Repository-wide tracked source and plan scans find
+zero literal occurrences of the retired environment identifier, production
+predicate, and focused-test rollback helper. The sole stale-setting oracle
+constructs its 24-byte key from fragments and pins its SHA-256 without
+preserving the retired literal spelling.
+
+The non-vacuity A/B used both host and standalone lanes, both optimization
+arms, and the focused Vitest harness:
+
+```text
+pnpm exec vitest run tests/issue-1231.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+```
+
+The before side was exact parent
+`d3a4b4165c857fdb39e753c9fdff6761be42be93` with only the final test file
+from candidate commit `8295270f16b0724a642b1bd670c873fff46c0b8f`
+applied. It failed exactly 4/11 rows and passed 7/11: each of the three fixture
+matrices widened its object facts to `dynamic`, and the exact source-local
+fnctor admission likewise widened to `dynamic`. The candidate commit passed
+11/11 rows. Its three fixture rows cover 48 exact compile projections:
+three fixtures × two targets × two optimization arms × four absent/stale
+settings. The separate propagation-options row proves the third deleted reader
+under absent and stale-zero settings. This is the exact kill-switch-removal
+signal; the seven passing parent controls show that the harness itself remains
+usable.
+
+Validation used a fresh 10-core strict load gate before every heavy command,
+requiring a finite, non-negative one-minute sample below 8:
+
+- TS7 and TS5 typechecks passed.
+- IR layering passed at 86 imports against baseline 86.
+- The direct fallback-policy checker reported no unintended, post-claim, or
+  module-level increase; deferred string-builder stayed 2→2 and module units
+  stayed 2 claimable / 11 empty.
+- The direct IR-only checker reported host and standalone READY with 5/5
+  entries, 38 terminals and emitted IR bodies, and zero unsupported rows,
+  invariants, or legacy bodies.
+- The equivalence gate reported 1,718 passing and the same 24/24 known
+  failures, with zero new regressions.
+- Targeted Biome lint, Prettier, diff-check, issue integrity, and the exact-zero
+  retired-spelling scan passed.
+- The full precommit hook passed lint-staged, the −23 LOC ratchet, the
+  function-growth ratchet, the 11/11 changed-root suite, and the checker-oracle
+  ratchet without any skip or bypass.
+
+The two package wrappers for the fallback and IR-only policy scripts could not
+start their `tsx` IPC server in this long worktree path (`EINVAL`, then `EPERM`
+through a short symlink) and therefore do not count as checker runs. The exact
+same tracked scripts passed through their direct Node `tsx` loaders under the
+same archive-backed temporary directory. This is recorded as an environmental
+wrapper limitation rather than laundering the failed wrappers into green
+evidence.
+
+The retirement follow-up stays in progress until this implementation merges.
+The historical issue frontmatter remains `status: done`; after plan PR #5327
+merged, the atomic claim tool therefore refused #1231 as already complete.
+Do not force or fabricate a claim. Sync protected main, rerun the changed bytes,
+push once, and require a fresh independent Sol review of the exact pushed SHA
+before marking the implementation PR ready.
+
+### 2026-08-31 Sol HOLD repair plan
+
+The first independent Sol review of pushed draft head
+`bc0d2b5de22e01e812dff7b708cfda3708967b2d` approved the three-site
+production deletion and the 15→14 inventory transition, but held the focused
+oracle on three false-pass surfaces. The repair stays test-and-record only:
+
+1. Parse the final WAT type-declaration order and bind the one exact field
+   registration to its numeric type index. Require `struct.new` and every
+   promised `struct.get` to use that exact index inside the named fixture
+   bodies; never search the whole module for an arbitrary matching numeric
+   instruction. Add a raw-WAT mutation containing an unused correct struct plus
+   an unrelated allocation/read pair and prove it remains unlinked.
+2. Turn the annotated standalone point control into the positive final-body
+   proof: request WAT, require exact source-qualified emitted outcomes and
+   compiled-function census, validate and instantiate the binary, require the
+   exact typed allocation/read index with no box/unbox calls in those final
+   bodies, and require runtime `run() === 25`. Retain the separate direct-body
+   poison as evidence of #3521, "IR-only R2: prepare-before-emit free-function
+   ownership," rather than pretending compile-once ownership already landed.
+3. Replace the constant-false constructor control with a real second
+   constructor declaration and inventory unit. Feed an admission carrying that
+   wrong declaration/unit for the exact first allocation site through the same
+   guarded test resolver, and require refusal independently of wrong site,
+   source, resolver absence, and the exact positive.
+
+The plan sentence above is now grounded to the measured ABI-parity post-claim
+rows instead of requiring an empty array that the exact oracle correctly
+rejects. Terra Max owns only the focused-test implementation. A later push must
+rerun every hook and invalidates the prior review; Sol must review the new exact
+remote SHA from scratch.
+
+The pushed tip also contains signed concurrent main-sync merge
+`bc0d2b5de22e01e812dff7b708cfda3708967b2d`. It appeared from external shared
+branch state, not from this Codex turn, and therefore carries no Codex
+co-author claim. Published history remains append-only: do not rewrite or
+force-push it merely to manufacture a trailer whose producing agent cannot be
+established. The next forward repair commit records its own exact Codex
+co-author and model normally.
+
+### 2026-08-31 Sol HOLD repair checkpoint
+
+Terra Max implemented the bounded test-only repair in
+`tests/issue-1231.test.ts`; production remained byte-identical. The final
+focused suite passes 12/12 under a fresh 10-core gate with one-minute load 1.88
+strictly below 8. Scoped Prettier, Biome, and diff-check also pass.
+
+The final WAT oracle now matches the unique exact field registration by raw
+declaration ordinal and derives its numeric type index from `(ref null N)`
+anchors inside the exact final IR-emitted named bodies. It then censuses only
+`struct.new N` and `struct.get N field` in those same bodies. The generic point
+facts are GC ordinal 12 → index 15 and standalone ordinal 83 → index 123, with
+the exact `run` read projection `[0, 0, 1, 1]`. The annotated standalone
+positive is ordinal 31 → index 41: allocations occur in `createPoint` and
+`run`, reads occur in `distance` and `run` with `[0, 0, 1, 1]` each, all three
+outcomes are exact emitted rows, the binary validates and instantiates, no
+final body calls a box/unbox helper, and `run()` returns 25. The raw mutation
+places the unused exact struct at ordinal 1, gives the emitted body reference
+index 2, and puts an unrelated allocation/read pair at index 1; the oracle
+correctly keeps it unlinked. This body-derived join is required because
+Binaryen's emitted text omits some inlineable function-type declarations, so a
+textual declaration ordinal is not itself a canonical numeric type index.
+
+The fnctor control now contains distinct `Box` and `OtherBox` declarations and
+inventory units. Its source-local resolver independently uses the checker and
+identity inventory to prove the exact site, source, constructor declaration,
+and constructor unit. The positive admission succeeds while resolver absence,
+wrong site, wrong source, and the real `OtherBox` declaration/unit admission
+remain refused under both absent and stale-zero settings.
+
+### 2026-08-31 second Sol HOLD repair plan — authenticate the final binary type
+
+Fresh independent Sol review of exact pushed head
+`c2a4a74eb23d4f882bc393f9d3738574b14eb388` held the repaired WAT oracle on
+one remaining false-pass. `inspectWat` proves that a body-local `(ref null N)`,
+`struct.new N`, and `struct.get N` agree with each other, but it never proves
+that `N` denotes the separately matched exact field declaration. The raw
+mutation did not exercise the promised counterexample: its exact struct was
+type 1 and its `struct.new/get 1` therefore used that exact struct; only the
+local reference was changed to 2. An unused exact type 0 beside an unrelated
+type 1 whose body consistently uses `(ref null 1)`, `struct.new 1`, and
+`struct.get 1` can still pass the current label-by-assumption oracle.
+
+The second repair remains test-and-record only; production and the 15→14
+inventory stay byte-identical:
+
+1. Treat custom debug WAT declaration ordinals and numeric operands as a
+   diagnostic projection only. They are not the binary type-index authority:
+   the emitter can omit inline function-type declarations and the binary
+   layout can renumber the flat in-memory table.
+2. Disassemble the exact returned `CompileResult.binary` with the repository's
+   existing Binaryen dependency. In that final-byte disassembly, match exactly
+   one struct with the expected ordered mutable storage types, retain its
+   symbolic type identity, resolve the exact exported function symbols, and
+   census only `struct.new`/`struct.get` instructions that use that same
+   identity inside those function bodies. Field names remain corroborated by
+   the custom WAT declaration; storage layout and use linkage come from the
+   final binary.
+3. Freeze per-arm final-binary expectations instead of laundering optimizer
+   erasure into a WAT claim. The unoptimized point arms must retain the exact
+   allocation plus four exact field reads in `run`. Optimized arms may fold
+   that route to the runtime-equivalent constant but must still validate and
+   satisfy their exact frozen residual projection. The annotated standalone
+   positive remains optimized and must retain the exact final-binary
+   allocation in `createPoint`, the optimizer's exact two-read `[0, 1]`
+   projection in `distance`, no residual exact-struct operations in the folded
+   `run`, emitted outcome census, validation/instantiation, no box/unbox calls
+   in the relevant final bodies, and `run() === 25`.
+4. Replace the ineffective raw mutation with a Binaryen-style final-binary
+   disassembly containing unused exact type `$0` and unrelated type `$1`, with
+   the body consistently anchored to and operating on `$1`. Require the exact
+   type to remain unlinked. Add an independent wrong-field-layout mutation at
+   the used type so neither symbolic-name coincidence nor unrelated operations
+   can satisfy the oracle. Cache disassembly by binary SHA-256 so the four
+   stale-setting arms do not repeatedly parse identical bytes.
+
+Terra Max owns only `tests/issue-1231.test.ts` for this repair. It must not edit
+production, plans, stage, commit, or push. Root will inspect the exact diff,
+update this checkpoint with measured projections, rerun the strict-load
+validation and all unskipped hooks, and append a signed forward repair commit.
+That push invalidates the current review; a new independent Sol review must
+approve the exact remote SHA before draft PR #5352 can be marked ready.
+
+### 2026-08-31 second Sol HOLD repair checkpoint
+
+Terra Max implemented the second repair only in
+`tests/issue-1231.test.ts`; `src/ir/propagate.ts` and the 15→14 inventory remain
+byte-identical to the reviewed production change. The test now disassembles the
+exact returned binary with Binaryen, caches that disassembly by binary SHA-256,
+and selectively parses only the unique structural type, exact exports, and
+their referenced function bodies. Malformed strings, comments, parentheses,
+type layouts, export descriptors, duplicate identities, non-numeric field
+indices, and malformed direct-call targets all fail closed. The custom WAT
+projection now corroborates only source field names and declaration order; it
+no longer labels its debug numeric operands as final binary type indices.
+
+The measured final-binary projections are exact:
+
+- unoptimized generic Point, both GC and standalone: `createPoint` and
+  `distance` have no use of the exact `[f64, f64]` type; `run` has one exact
+  allocation and reads `[0, 0, 1, 1]`;
+- optimized generic Point, both targets: all three exported bodies have zero
+  residual uses after folding, while validation, binary identity, and runtime
+  remain frozen across all stale-setting arms;
+- optimized annotated standalone Point: exact type `$0` has mutable
+  `[f64, f64]` storage, `createPoint` has one allocation, `distance` has reads
+  `[0, 1]`, folded `run` has no residual exact-type operation, and all three
+  final bodies have an empty direct-call census. The binary validates and
+  instantiates, all three outcomes are emitted, and `run()` returns 25.
+
+The prior false-pass is now represented literally: a synthetic Binaryen-style
+module contains unused exact type `$0` and a consistently referenced/allocated/
+read unrelated type `$1`; the exact projection remains unlinked. A partially
+matching unrelated layout also remains unlinked, while a second exact layout
+is rejected as ambiguous. Independent projection mutations cover type identity,
+storage, export/function identity, allocation, read field, direct calls, and a
+missing final-binary record.
+
+The focused suite passes 12/12. Targeted Prettier, Biome, diff-check, the LOC
+ratchet, and the function-growth ratchet also pass under the strict 10-core
+finite/non-negative one-minute load limit below 8. Root still must sync current
+protected main, rerun the changed-root and full hooks, push normally, and obtain
+fresh Sol approval of that exact remote SHA before changing PR readiness.
+
+### 2026-08-31 protected-main relock
+
+The repair commit was merged normally with protected main
+`fd3bdefb718780032d99da896654d5e23b89d864`. The merge was conflict-free and
+did not overlap a #1231 file, but main's additional GC type and error path
+changed exact debug artifacts. Point GC moved from WAT declaration ordinal
+12→13 and User GC from 13→14; both now import `env::__new_TypeError` and export
+`__exn_tag`. Point/User standalone ordinals remain 83, Vec2 remains 7/84, and
+annotated standalone remains 31. Every IR/legacy ABI-parity pair and every
+final-binary structural/link/direct-call projection stayed unchanged. The
+relocked merged suite passes 12/12; no expectation was weakened.
+
+### 2026-08-31 current-head CI repair plan — feature-aware final-byte disassembly
+
+Current pushed head `07f47c7ab3d8d4b473ad12e412ade8ea1cf15d3d`
+passed every completed lane except the changed-root step in `quality`. Ubuntu
+ran `tests/issue-1231.test.ts` under `JS2WASM_EVAL_ENGINE=interpreter`; 10/12
+rows passed, while the two rows that first disassemble the generic Point
+binary failed before any oracle assertion with Binaryen's
+`invalid type: distinct rec groups would be identical after binary writing
+(to resolve this, use --enable-gc) at index 4`. The final binary itself is not
+the defect: validation/runtime and all other current-head lanes passed.
+
+The local shared `node_modules` resolves Binaryen 125 even though the current
+manifest and lock require 132, which explains why the full local hooks did not
+expose the compatibility difference. Binaryen's JavaScript `readBinary`
+wrapper calls `_BinaryenModuleRead` before a returned module exists, so
+`module.setFeatures(...)` cannot enable GC for that parse. The same package
+ships the official `binaryen/bin/wasm-dis` entry point, whose supported
+`--all-features` option enables GC while reading an input binary.
+
+The repair remains test-and-record only:
+
+1. Replace the direct JavaScript `binaryen.readBinary(...).emitText()` call in
+   `tests/issue-1231.test.ts` with the package's exact `wasm-dis` executable,
+   resolved through `createRequire(import.meta.url)`. Invoke it through
+   `process.execPath`, pass the exact returned binary on stdin as bytes, and use
+   `- --all-features` so no temporary artifact or ambient CLI path is involved.
+2. Fail closed on resolution/spawn error, signal, nonzero status, empty output,
+   or malformed UTF-8/text before the existing selective S-expression oracle
+   runs. Preserve the SHA-256 cache key over the original binary bytes; the CLI
+   output is only a deterministic view of those bytes, not a replacement
+   artifact or acceptance authority.
+3. Retain every current structural, export/function, same-symbol
+   `struct.new`/`struct.get`, direct-call, ambiguity, and raw counterexample
+   assertion unchanged. Remove the now-unused Binaryen JavaScript default
+   import. Do not touch production, ProgramABI, prepared multi-source
+   publication, or mixed-primitive conditional work.
+4. Rerun the 12-row suite both in the normal local mode and with
+   `JS2WASM_EVAL_ENGINE=interpreter`, then TS7/TS5, formatting/lint/diff, LOC and
+   function ratchets immediately before a signed forward commit. Run the full
+   precommit and prepush hooks without bypass. Any new push invalidates the
+   in-flight exact-byte review, so a fresh Sol review of the new remote SHA is
+   mandatory before PR #5352 can leave draft.
+
+Terra Max owns only `tests/issue-1231.test.ts` for the implementation. Root
+owns this plan and all commit/publication actions.
+
+### 2026-08-31 feature-aware disassembly repair checkpoint
+
+Terra Max implemented the recorded compatibility repair only in
+`tests/issue-1231.test.ts` (+38/−7); production and every existing oracle,
+mutation, expected projection, and cache key remain unchanged. The test no
+longer imports Binaryen's JavaScript reader. It resolves the package-owned
+`binaryen/bin/wasm-dis` entry point, launches it through the current Node
+executable with `- --all-features`, and sends the exact returned
+`Uint8Array` on stdin. Resolution failure, spawn error, signal, nonzero exit,
+stderr diagnostic, empty output, non-UTF-8 output, and empty decoded text all
+fail closed. Successful text remains cached under SHA-256 of the original
+binary bytes before the selective structural/type/export/function oracle runs.
+
+Under the strict 10-core finite/non-negative load limit below 8, the normal
+focused suite passed 12/12 at load 6.502 and the exact CI evaluation mode
+`JS2WASM_EVAL_ENGINE=interpreter` passed 12/12 at load 5.063. TS7, TS5,
+targeted Biome, Prettier, and diff-check passed. The shared local install still
+contains Binaryen 125 while the frozen lock and CI install Binaryen 132, so the
+new pushed CI run remains the necessary independent proof that the official
+feature-aware reader closes the observed 132 failure. Root must still run the
+LOC and function ratchets immediately before the signed commit, run every
+precommit/prepush hook without bypass, push normally, update PR #5352's exact
+head/evidence, and request a fresh Sol review of that new remote SHA.
+
+### 2026-08-31 final protected-main sync after the CI repair
+
+The signed feature-aware reader checkpoint was prepared before protected main
+advanced again to `3193ca16685de143af1ae1d6066978b2590c687d`. That advance
+contains only the #5353 npm-compat artifact refresh and the #5355 filings for
+#5243/#5244; it does not touch the #1231 plan, test, or production file. The
+normal no-commit merge is conflict-free and preserves their exact SHA-256
+values before this evidence-only annotation: plan
+`93f06d0f0d203ccc9cead6593894dab4d73f6243d5935c75e6d8f9c7791c5043`, test
+`08049eb0aa2035982cc349da18cec36b069f422d7e12fcefe1d26dc61a879eca`, and
+production `ab162da8add04f6f5f7f6035479e3851bae9301f09f9c6019cde5131cdb4b20b`.
+This section changes only the plan record; its final hash is relocked after the
+merge commit.
+
+On the combined tree, the interpreter-mode focused suite passes 12/12 and
+both TS7 and TS5 typechecks pass under fresh strict load gates. The merge
+commit must still rerun LOC/function ratchets immediately before signing and
+the full precommit hook without bypass. The normal push must run the full
+prepush hook; only then can clean-install Binaryen 132 CI and a fresh Sol
+exact-byte review authorize PR readiness.
+
+### 2026-08-31 fresh Sol HOLD repair plan — spawn-error precedence
+
+Fresh independent review of exact pushed head
+`c710ae0770d063e5905cd2f6a19b78dd67ced3a6` approved the final-byte identity
+oracle but found one transport-order defect. `disassembleFinalBinary` reads
+`result.stderr.length` while constructing a diagnostic before it checks
+`result.error`. A genuine `spawnSync` launch failure can return an `error` with
+no stdout/stderr buffers, so the code still rejects the run but throws an
+unrelated `TypeError`; the promised explicit `wasm-dis spawn failed` path is
+unreachable.
+
+The repair is test-only and must not change any accepted projection:
+
+1. Check `result.error` immediately after `spawnSync`, before accessing either
+   child stream. Its error must include the spawn error message and must not
+   depend on child diagnostics that do not exist when launch fails.
+2. After the error check, require both stdout and stderr to be `Buffer`
+   instances before reading their length or decoding them. Missing/malformed
+   streams without a spawn error must fail closed with a distinct transport
+   message. Retain signal, status, nonempty stderr, empty stdout, fatal UTF-8,
+   empty text, original-binary SHA cache, and every semantic mutation exactly.
+3. Rerun normal and interpreter-mode 12-row suites plus TS7/TS5 and scoped
+   static checks. Root must again run LOC/function ratchets immediately before
+   each signed commit and every precommit/prepush hook without bypass. A new
+   push invalidates the c710 review and requires a fresh Sol exact-byte review
+   and clean-install CI before readiness.
+
+Terra Max owns only `tests/issue-1231.test.ts`; root owns this plan, commits,
+pushes, and PR state.
+
+### 2026-08-31 spawn-error precedence repair checkpoint
+
+Before this final transport edit, the exact c710 clean-install CI run completed
+fully green; in particular, `quality` passed in 10m10s with Binaryen 132. That
+independently proves the package-owned `wasm-dis --all-features` reader closes
+the original GC rec-group failure rather than merely passing against the stale
+local Binaryen 125 install.
+
+Terra Max then changed only `tests/issue-1231.test.ts` (+6/−3). The code now
+checks `result.error` immediately after `spawnSync`; only a successfully
+launched result may expose stdout/stderr, and both streams must be `Buffer`
+instances before any length or UTF-8 operation. Spawn failure, missing stdout,
+and missing stderr therefore have distinct explicit fail-closed paths. Every
+other transport check, exact binary stdin, `- --all-features` arguments,
+original-binary SHA cache, structural identity join, expected projection, and
+mutation remains byte-for-byte unchanged.
+
+Normal and interpreter-mode focused suites both pass 12/12 under strict loads
+2.9873 and 3.4185 below 8. TS7 and TS5 pass under loads 3.4419 and 3.1211;
+Prettier, targeted Biome lint, and diff-check also pass. Root must still refresh
+protected main, run LOC/function ratchets immediately before signing, run every
+precommit/prepush hook without bypass, publish a normal forward commit, and
+obtain clean current-head CI plus a fresh Sol exact-byte review before changing
+PR readiness.

@@ -11,6 +11,15 @@ goal: core-semantics
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-31
+# 2026-08-31 (#5242): types.ts +7 / createCodegenContext +1 vs main's
+# post-#5343 refreshed baseline — the `classCtorHostRegistered` context field
+# and its initializer. Stranded-grant restatement (CLAUDE.md "Simulate CI's
+# base too"): the original grant was measured against the pre-merge base and
+# main's baseline refresh re-exposed it.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #5242 — dynamic class-value construction has no constructor bridge

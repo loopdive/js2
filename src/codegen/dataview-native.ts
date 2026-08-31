@@ -3342,8 +3342,6 @@ export function emitTaDynViewElementGet(
   const dynIdx = ctx.moduleUsesDynTaView ? getOrRegisterTaDynViewType(ctx) : -1;
   const staticIdx = ctx.moduleUsesStaticTaView ? getOrRegisterTaViewType(ctx, "Uint8Array") : -1;
   if (dynIdx < 0 && staticIdx < 0) return null;
-  const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
-
   // Receiver boxed externref is on the stack — stash it (needed by both arms).
   const recvLocal = allocLocal(fctx, `__dtag_recv_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: recvLocal });
@@ -3376,7 +3374,59 @@ export function emitTaDynViewElementGet(
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "local.set", index: anyLocal });
-  const candidateLocal = emitTaViewDispatchCandidate(ctx, fctx, anyLocal, "__dtag");
+  fctx.body.push(
+    ...buildTaDynViewElementGetDispatch(ctx, fctx, {
+      recvLocal,
+      idxF64,
+      rawAnyLocal: anyLocal,
+      resultLocal,
+      getIdxFn,
+      boxNumFn,
+    }),
+  );
+  fctx.body.push({ op: "local.get", index: resultLocal });
+  return { kind: "externref" };
+}
+
+/**
+ * Build the dynamic/static TypedArray portion of an erased numeric element
+ * read. Callers own receiver/index evaluation and the final result read. This
+ * lets the native-string guard use the exact same receiver and index locals:
+ * `$AnyString` gets priority, then typed-array views, then the original
+ * `__extern_get_idx` fallback — without evaluating either source expression
+ * more than once.
+ */
+export function buildTaDynViewElementGetDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  {
+    recvLocal,
+    idxF64,
+    rawAnyLocal,
+    resultLocal,
+    getIdxFn,
+    boxNumFn,
+  }: {
+    recvLocal: number;
+    idxF64: number;
+    rawAnyLocal: number;
+    resultLocal: number;
+    getIdxFn: number;
+    boxNumFn: number;
+  },
+): Instr[] {
+  const dynIdx = ctx.moduleUsesDynTaView ? getOrRegisterTaDynViewType(ctx) : -1;
+  const staticIdx = ctx.moduleUsesStaticTaView ? getOrRegisterTaViewType(ctx, "Uint8Array") : -1;
+  if (dynIdx < 0 && staticIdx < 0) {
+    return [
+      { op: "local.get", index: recvLocal },
+      { op: "local.get", index: idxF64 },
+      { op: "call", funcIdx: getIdxFn },
+      { op: "local.set", index: resultLocal },
+    ];
+  }
+  const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
+  const candidateLocal = emitTaViewDispatchCandidate(ctx, fctx, rawAnyLocal, "__dtag");
 
   const buildViewArm = (viewTypeIdx: number, label: string): Instr[] => {
     const dvLocal = allocLocal(fctx, `__dtag_${label}_dv_${fctx.locals.length}`, {
@@ -3406,8 +3456,10 @@ export function emitTaDynViewElementGet(
     fctx.body.push({ op: "local.set", index: esLocal });
     pushTaDynViewInBoundsLen(ctx, fctx, dvLocal, esLocal, viewTypeIdx);
     fctx.body.push({ op: "local.set", index: lenLocal });
-    // idx (i32) = trunc(idxF64) — a negative / huge index fails the unsigned
-    // bounds check below → OOB → undefined (spec IsValidIntegerIndex).
+    // idx (i32) = trunc(idxF64). The canonical-integer test below is required
+    // before the unsigned bounds check: without it `1.5` would read index 1.
+    // Negative / huge indexes then fail the unsigned bounds check → undefined
+    // (spec IsValidIntegerIndex).
     fctx.body.push({ op: "local.get", index: idxF64 });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     fctx.body.push({ op: "local.set", index: idxI32 });
@@ -3432,12 +3484,19 @@ export function emitTaDynViewElementGet(
       { op: "call", funcIdx: boxNumFn },
       { op: "local.set", index: resultLocal },
     ];
-    // if ((unsigned)idx < len) { box(decode) } else { undefined }
+    // if (f64(idx) === index && (unsigned)idx < len) { box(decode) }
+    // else { undefined }. The equality rejects fractional, NaN and infinite
+    // numeric property keys while preserving -0 as index 0.
     // (#3177) OOB = the `undefined` SINGLETON, not ref.null.extern — a null read
     // makes `ta[oob] === undefined` false (it compares as null; probe code 2).
     fctx.body.push({ op: "local.get", index: idxI32 });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push({ op: "local.get", index: idxF64 });
+    fctx.body.push({ op: "f64.eq" });
+    fctx.body.push({ op: "local.get", index: idxI32 });
     fctx.body.push({ op: "local.get", index: lenLocal });
     fctx.body.push({ op: "i32.lt_u" });
+    fctx.body.push({ op: "i32.and" });
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
@@ -3474,9 +3533,7 @@ export function emitTaDynViewElementGet(
       { op: "if", blockType: { kind: "empty" }, then: buildViewArm(dynIdx, "dyn"), else: dispatch },
     ];
   }
-  fctx.body.push(...dispatch);
-  fctx.body.push({ op: "local.get", index: resultLocal });
-  return { kind: "externref" };
+  return dispatch;
 }
 
 /**

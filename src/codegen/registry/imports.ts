@@ -154,6 +154,7 @@ export function addStringConstantGlobals(ctx: CodegenContext, values: Iterable<s
   if (ctx.nativeStrings) {
     for (const value of pending) {
       // Sentinel: no host import, materialize inline at use sites.
+      ctx.stringGlobalMap.set(value, -1);
       ctx.stringLiteralMap.set(value, `__str_${ctx.stringLiteralCounter}`);
       ctx.stringLiteralValues.set(`__str_${ctx.stringLiteralCounter}`, value);
       ctx.stringLiteralCounter++;
@@ -448,7 +449,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
 
   shiftModuleGlobalExportIndices(ctx, threshold, delta);
 
-  function shiftMap(map: Map<string, number>): void {
+  function shiftMap<Key>(map: Map<Key, number>): void {
     for (const [key, idx] of map) {
       if (idx >= threshold) {
         map.set(key, idx + delta);
@@ -492,6 +493,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
   shiftMap(ctx.tdzGlobals);
+  shiftMap(ctx.modulePatternTdzGlobals);
 
   // (#1749) The CPR proto-override records (Array.prototype[@@iterator] /
   // .values) root each lifted override closure in a module-defined `mut
