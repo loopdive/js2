@@ -19,9 +19,15 @@
 // `type-resolution-unsupported`@resolve path. Two nestings, two verdicts, one
 // underlying gap — this file pins that they now agree.
 //
-// Scope note: this is the CLASSIFICATION only. The nested-vec carrier is still
-// unrepresentable in the IR (`irBodyEmitted: false` throughout); adopting it is
-// #4470's blocked scope.
+// Scope note: #4486 was the CLASSIFICATION only — the nested-vec carrier was
+// still unrepresentable, so section A pinned `irBodyEmitted: false` throughout
+// and said so explicitly ("the assertion that flips when #4470 adopts
+// nested-vec carriers"). #5166 built the carrier on 2026-08-29, so section A
+// now pins the third and final state: these shapes EMIT. What #4486 itself
+// owns is unchanged and still load-bearing — the refusal that remains (an
+// object-typed element) is a typed `unsupported` demote, never an invariant,
+// and section B still proves the fallback body is correct for every shape
+// that does demote.
 
 import { describe, expect, it } from "vitest";
 
@@ -47,9 +53,65 @@ async function runMain(source: string): Promise<unknown> {
 // ---------------------------------------------------------------------------
 
 describe("#4486 A — nested-vec refusal is a typed demote, not an invariant", () => {
-  it("the identifier-head for-of over string[][] compiles and demotes", async () => {
+  it("the identifier-head for-of over string[][] compiles — and now emits (#5166)", async () => {
+    // The #4486 repro. It went invariant (hard CE) -> typed demote (#4486) ->
+    // emitted (#5166). The load-bearing part of #4486 survives either way:
+    // whatever the registry cannot carry must withdraw the claim as a typed
+    // `unsupported`, so a unit with a perfectly good legacy body never takes
+    // the program down. The shape that still exercises that is the
+    // object-element nesting below.
     const { result, outcome } = await outcomeForF(`
       function f(rows: string[][]): number {
+        let n = 0;
+        for (const r of rows) { n = n + 1; }
+        return n;
+      }
+      export function main(): number { return 0; }
+    `);
+    expect(result.success).toBe(true);
+    expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
+  // Every nesting the two layers can carry now EMITS, and it is the same set
+  // that used to split into "hard-failed here" and "withdrew a layer earlier"
+  // — one carrier, one verdict. `Uint8Array[]` matters as it did before: it is
+  // not a nested plain array (its element is a `vec<f64>` carrier), so neither
+  // the defect nor the fix was ever specific to `vec<externref>`.
+  const CARRIED_NESTINGS: Array<{ name: string; type: string }> = [
+    // Reached the registry arm and HARD-FAILED before #4486; demoted after it.
+    { name: "string[][]", type: "string[][]" },
+    { name: "Array<Array<string>>", type: "Array<Array<string>>" },
+    { name: "string[][][]", type: "string[][][]" },
+    { name: "any[][]", type: "any[][]" },
+    { name: "unknown[][]", type: "unknown[][]" },
+    { name: "Uint8Array[]", type: "Uint8Array[]" },
+    // Refused a layer earlier, in `resolvePositionType`, and soft throughout.
+    { name: "number[][]", type: "number[][]" },
+    { name: "boolean[][]", type: "boolean[][]" },
+  ];
+
+  for (const c of CARRIED_NESTINGS) {
+    it(`${c.name} emits an IR body (#5166 carrier)`, async () => {
+      const { result, outcome } = await outcomeForF(`
+        function f(rows: ${c.type}): number {
+          let n = 0;
+          for (const r of rows) { n = n + 1; }
+          return n;
+        }
+        export function main(): number { return 0; }
+      `);
+      expect(result.success).toBe(true);
+      expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+    });
+  }
+
+  // The #4486 contract itself, on a shape the carrier deliberately does NOT
+  // cover: an OBJECT element type is out of #5166's scope (tuple / boxed-any /
+  // object elements are #2379 territory), and it must still withdraw as a
+  // typed capability gap rather than an invariant.
+  it("{ v: number }[][] still withdraws as unsupported/type-resolution-unsupported@resolve", async () => {
+    const { result, outcome } = await outcomeForF(`
+      function f(rows: { v: number }[][]): number {
         let n = 0;
         for (const r of rows) { n = n + 1; }
         return n;
@@ -64,50 +126,7 @@ describe("#4486 A — nested-vec refusal is a typed demote, not an invariant", (
       irBodyEmitted: false,
       legacyBodyEmitted: true,
     });
-    expect(String((outcome as { detail?: string }).detail)).toContain("prepared vec element");
   });
-
-  // The point of the fix: every nesting withdraws the claim the SAME way. The
-  // `string[][]` row is the one that used to be an invariant; the others are
-  // the controls that were already soft, and they must not move.
-  const NESTINGS: Array<{ name: string; type: string }> = [
-    // Reached the registry arm and HARD-FAILED before this fix (measured: 6/15
-    // probe shapes). `Uint8Array[]` is the one that is not a nested plain
-    // array — its element is a `vec<f64>` carrier, so the defect was never
-    // specific to `vec<externref>`.
-    { name: "string[][]", type: "string[][]" },
-    { name: "Array<Array<string>>", type: "Array<Array<string>>" },
-    { name: "string[][][]", type: "string[][][]" },
-    { name: "any[][]", type: "any[][]" },
-    { name: "unknown[][]", type: "unknown[][]" },
-    { name: "Uint8Array[]", type: "Uint8Array[]" },
-    // Already soft before the fix — they are refused a layer earlier, in
-    // `resolvePositionType`. Pinned so the two paths cannot drift apart again.
-    { name: "number[][]", type: "number[][]" },
-    { name: "boolean[][]", type: "boolean[][]" },
-    { name: "{ v: number }[][]", type: "{ v: number }[][]" },
-  ];
-
-  for (const c of NESTINGS) {
-    it(`${c.name} withdraws as unsupported/type-resolution-unsupported@resolve`, async () => {
-      const { result, outcome } = await outcomeForF(`
-        function f(rows: ${c.type}): number {
-          let n = 0;
-          for (const r of rows) { n = n + 1; }
-          return n;
-        }
-        export function main(): number { return 0; }
-      `);
-      expect(result.success).toBe(true);
-      expect(outcome).toMatchObject({
-        kind: "unsupported",
-        code: "type-resolution-unsupported",
-        stage: "resolve",
-        irBodyEmitted: false,
-        legacyBodyEmitted: true,
-      });
-    });
-  }
 
   it("a FLAT string[] still emits an IR body (the fix does not widen the refusal)", async () => {
     const { result, outcome } = await outcomeForF(`

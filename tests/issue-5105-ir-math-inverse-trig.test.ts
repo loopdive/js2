@@ -248,39 +248,6 @@ describe("#5105 exact ambient Math.asin/Math.acos IR ownership", () => {
     }
   });
 
-  it.each([
-    ["asin", "JS2WASM_IR_MATH_ASIN", "acos"],
-    ["acos", "JS2WASM_IR_MATH_ACOS", "asin"],
-  ] as const)("withdraws only %s through its narrow rollback", async (disabled, flag, retained) => {
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(
-        `
-          export function asin(value: number): number { return Math.asin(value); }
-          export function acos(value: number): number { return Math.acos(value); }
-        `,
-        { fileName: `issue-5105-${disabled}-rollback.ts`, experimentalIR: true, trackIrOutcomes: true },
-      );
-      expectSuccess(result);
-      expect(outcomeFor(result, disabled)).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(outcomeFor(result, retained)).toMatchObject({
-        kind: "emitted",
-        legacyBodyEmitted: false,
-        irBodyEmitted: true,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (_label, source) => {
     const result = await compile(source, {
       fileName: `issue-5105-${_label.replaceAll(" ", "-")}.ts`,

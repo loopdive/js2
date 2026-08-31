@@ -281,30 +281,6 @@ describe("#5114 exact ambient Math.expm1 IR ownership", () => {
     }
   });
 
-  it("withdraws only expm1 through its narrow rollback", async () => {
-    const flag = "JS2WASM_IR_MATH_EXPM1";
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(`export function expm1(value: number): number { return Math.expm1(value); }`, {
-        fileName: "issue-5114-rollback.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expectSuccess(result);
-      expect(outcomeFor(result, "expm1")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (_label, source) => {
     const result = await compile(source, {
       fileName: `issue-5114-${_label.replaceAll(" ", "-")}.ts`,

@@ -66,6 +66,25 @@ export const INIT_MARSHAL_HELPERS: readonly string[] = [
 
 const REGISTER_IMPORT = "__register_init_export";
 
+/**
+ * (#5209) Does this module dispatch a DYNAMIC method call through the host?
+ *
+ * `__extern_method_call*` hands the runtime a receiver and arguments it must
+ * decode — i.e. it is a marshalling site, exactly like #5193's construct bridge
+ * and #5205's `Object.fromEntries`. A compiled vec reaching it during the start
+ * section could not be given its host Array facade (that facade needs
+ * `__is_vec`/`__vec_len`/`__vec_get`), so it fell back to the generic object
+ * proxy and `t.filter(cb)` threw "filter is not a function" — the tenth Temporal
+ * module-init blocker.
+ *
+ * Deciding this from the IMPORT LIST rather than from each of the ~20 emitting
+ * call sites keeps the trigger in one reviewable place; the cost when it fires
+ * is the 3-instruction-per-helper prologue and nothing else.
+ */
+function usesDynamicExternMethodCall(ctx: CodegenContext): boolean {
+  return ctx.mod.imports.some((imp) => imp.desc.kind === "func" && /^__extern_method_call(_[0-4])?$/.test(imp.name));
+}
+
 /** The defined function object exporting `name`, if this module emitted one. */
 function helperFunc(ctx: CodegenContext, name: string): WasmFunction | undefined {
   return ctx.mod.functions.find((fn) => fn.name === name);
@@ -79,7 +98,7 @@ function helperFunc(ctx: CodegenContext, name: string): WasmFunction | undefined
  * a JS-host module with a compiler-created module initializer.
  */
 export function emitInitMarshalHelperRegistration(ctx: CodegenContext, preferredUnitId?: IrUnitId): void {
-  if (!ctx.needsInitMarshalHelpers) return;
+  if (!ctx.needsInitMarshalHelpers && !usesDynamicExternMethodCall(ctx)) return;
   if (ctx.wasi || noJsHost(ctx)) return;
   // Same initializer selection as `finalizeInModuleInitFlag` (index.ts), so the
   // multi-source pipeline patches the exact prepared unit it owns.
