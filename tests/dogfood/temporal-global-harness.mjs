@@ -85,6 +85,12 @@ const SUPPORTED = {
   // dispatch for a `new`-constructed provider instance. Promoted here so the
   // vitest wrapper asserts it and a regression is loud.
   instanceToString: `export function run() { return new Temporal.PlainDate(2020, 3, 4).toString(); }`,
+  // (#5237) Two rows the cross-module member fixes moved. Both were reported
+  // as part of the `staticFrom` symptom and are genuinely seam defects, unlike
+  // `staticFrom` itself (see its note). On base the first THREW and the second
+  // answered 0.
+  protoMethodCall: `export function run() { return Temporal.PlainDate.prototype.toString.call(new Temporal.PlainDate(2020, 3, 4)); }`,
+  protoMemberCount: `export function run() { return Object.getOwnPropertyNames(Temporal.PlainDate.prototype).length; }`,
 };
 
 /**
@@ -96,15 +102,16 @@ const KNOWN_GAPS = {
   staticFrom: {
     source: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
     note:
-      'no longer THROWS (the #5221 null deref is gone) — it now answers "[object Object]". Measured 2026-08-30 ' +
-      "(#5223): `.from()` returns a host object whose prototype is the provider's compiled PlainDate prototype, " +
-      "and every member read off that prototype answers undefined IN THE CONSUMER (`typeof " +
-      'Temporal.PlainDate.prototype.toString` === "undefined", `d.year` === undefined) while the same reads ' +
-      "succeed on a `new`-constructed instance. The host boundary resolves compiled class members against the " +
-      "CALLING module's exports: the provider exports __member_kind_toString / __call_get_year (141 / 41 of them, " +
-      "counted in the provider binary) and the consumer exports none, so nothing resolves. Cross-module member " +
-      "resolution, not an accessor-demand gap — #5223's read-registration fix does NOT move this row (re-measured " +
-      "after it, identical)",
+      'answers "[object Object]"; `.year` answers undefined. NOT a provider-seam defect — re-measured 2026-08-31 ' +
+      "(#5237) against a SINGLE-MODULE control that compiles this same polyfill source and consumer into one " +
+      "module with no linker at all (`linkedModules === 0`), and it answers `[object Object]` / undefined " +
+      "IDENTICALLY. The earlier note here blamed cross-module member resolution; the control disproves that. " +
+      "What is actually left: `CreateTemporalDate` builds its instance as `Object.create(PlainDate.prototype)` " +
+      "and keeps the ISO fields in slots keyed by that HOST object, and a host object whose prototype is a " +
+      "WasmGC struct never reaches the prototype's accessors on a member read. #5237 did fix the two seam " +
+      "defects that shared these symptoms — `PlainDate.prototype.toString.call(inst)` went from THROWING to " +
+      '"2020-03-04", and `getOwnPropertyNames(PlainDate.prototype)` from 0 names to 31 — but neither moves this ' +
+      "row. Needs its own issue for the Object.create-instance member shape",
   },
   // (#5222) `Temporal.Now.instant` moved to SUPPORTED above. These two are
   // what is LEFT once the member loss is fixed, and they are different animals.
