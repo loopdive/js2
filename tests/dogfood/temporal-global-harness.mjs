@@ -130,6 +130,52 @@ const KNOWN_GAPS = {
       "#5222 fixed, this survives it — the residual is in what `timeZoneId` REACHES (the host " +
       "`Intl.DateTimeFormat().resolvedOptions()` path, cf. #5206), not in the value crossing",
   },
+  // (#5241) The arithmetic family — every test262 Temporal arithmetic row takes
+  // an argument, so this is what bounds that bucket next. #5241 fixed the
+  // extern-class HIJACK that made a builtin-colliding method name answer
+  // `undefined` without calling; these rows prove the call now HAPPENS and
+  // fails deeper, on defects that are not #5241's.
+  //
+  // Measured 2026-08-31 with a fresh JS2WASM_TEMPORAL_CACHE per lane
+  // (.tmp/probe-temporal-5241.mjs and .tmp/probe-temporal-single-5241.mjs):
+  //
+  //   PROVIDER lane        base           after #5241
+  //     add({days:1})      THREW          THREW      (unchanged)
+  //     add("P1D")         THREW          THREW      (unchanged)
+  //     subtract/with/until THREW         THREW      (unchanged)
+  //     equals("…")        true           true       (no regression)
+  //   SINGLE-MODULE lane (polyfill + consumer in ONE module, no linker)
+  //     add({days:1})      undefined  →   TypeError: Cannot destructure 'null' or 'undefined'
+  //     add("P1D")         undefined  →   TypeError: compiled class constructor Duration bridge unavailable
+  //     subtract({days:1}) same Duration-bridge TypeError both sides
+  //     with({year:2021})  "2021-03-04"   "2021-03-04"  (worked already)
+  //
+  // So the `undefined` #5241 names IS gone where the class is visible, and what
+  // is left is two different defects: a missing compiled-class constructor
+  // bridge for `Duration`, and a null destructure inside the polyfill's options
+  // handling. Through the PROVIDER the throw predates and survives #5241, which
+  // is why these stay here rather than being promoted.
+  arithmeticAddDuration: {
+    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
+    note:
+      "throws through the provider, identically on the #5241 base (measured 2026-08-31, fresh provider cache). " +
+      "In the SINGLE-MODULE control the same call moved from `undefined` (the #5241 hijack: `add` first-matched " +
+      "`Set.prototype.add`) to a real TypeError from inside the polyfill, so the call now happens. Residual is " +
+      "not the extern-binding defect; the object-literal ARGUMENT crossing the provider seam is #5225's lane",
+  },
+  arithmeticSubtract: {
+    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
+    note:
+      "same provider-lane throw, unchanged by #5241. Single-module control fails with `compiled class constructor " +
+      "Duration bridge unavailable` on BOTH sides of #5241 — a missing constructor bridge for a compiled class " +
+      "reached as a value, adjacent to #5239's instance minting but on the CONSTRUCT path",
+  },
+  arithmeticWith: {
+    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
+    note:
+      'throws through the provider on both sides of #5241, but ANSWERS "2021-03-04" in the single-module control ' +
+      "on both sides too — so this row isolates the provider SEAM specifically, unlike the two above",
+  },
   instanceToStringTag: {
     source: `export function run() { const d = new Temporal.PlainDate(2020, 3, 4); return String(d[Symbol.toStringTag]); }`,
     note:
