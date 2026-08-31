@@ -1483,9 +1483,25 @@ export function lowerIrFunctionBody<S, Slot>(
 
   const emitInstrTree = (instr: IrInstr, out: S): void => {
     switch (instr.kind) {
-      case "const":
-        emitter.emitConst(instr, func.name, out);
+      case "const": {
+        // (#5166) `const null` carries a SEMANTIC result type, but every
+        // backend's `emitNull` answers on a ValType. After Program-ABI
+        // preparation `attachIrVecLayouts` maps a physical vec ref BACK to a
+        // logical `IrType.vec`, so the OOB arm of a nested-vec read
+        // (`emitSafeVecGet`'s `ref_null` default for `m[5]` on a
+        // `number[][]`) arrives here as `vec`, not `val`. Resolve it to the
+        // physical carrier first. Without this the emitter throws "cannot
+        // materialize null for IrType 'vec'" — a plain `Error`, so an untyped
+        // INVARIANT and therefore a hard compile error, for a claim that is
+        // otherwise fully lowerable. Scoped to `vec`: every other non-`val`
+        // result type reaches the emitter exactly as it did before.
+        const nullVecType =
+          instr.value.kind === "null" && instr.resultType?.kind === "vec"
+            ? ({ kind: "val", val: lowerIrTypeToValType(instr.resultType, resolver, func.name) } as IrType)
+            : null;
+        emitter.emitConst(nullVecType ? { ...instr, resultType: nullVecType } : instr, func.name, out);
         return;
+      }
       case "fnctor.new": {
         const lowering = resolver.resolveFnctor?.(instr.shape);
         if (

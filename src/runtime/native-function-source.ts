@@ -5,6 +5,8 @@ import type { AsyncCallbackExceptionPolicy } from "../ir/async-runtime-providers
 type CallbackState = {
   getExports: () => Record<string, Function> | undefined;
   deferToExports?: (fn: () => void) => void;
+  /** (#5193) Helpers the module registered on itself during its start section. */
+  getStartExports?: () => Record<string, Function> | undefined;
 };
 
 // #3540 — Compiled closures do not retain source text, so their observable
@@ -73,6 +75,22 @@ export function normalizeModuleCallbackException(
   }
 }
 
+/**
+ * (#5209) Resolve the compiled body `__cb_<id>` for a callback bridge.
+ *
+ * Prefers the real export object; falls back to the `ref.func` values the
+ * module registered on itself from inside its `start` section (#5193/#5205 —
+ * `__cb_*` joined that channel for this issue). Without the fallback every
+ * callback invoked SYNCHRONOUSLY during module init — `arr.filter(cb)` at top
+ * level — was parked and answered `undefined` on the spot.
+ */
+function callbackDispatcher(id: number, callbackState?: CallbackState): Function | undefined {
+  const fromExports = callbackState?.getExports()?.[`__cb_${id}`];
+  if (typeof fromExports === "function") return fromExports;
+  const fromStart = callbackState?.getStartExports?.()?.[`__cb_${id}`];
+  return typeof fromStart === "function" ? fromStart : undefined;
+}
+
 export function invokeNativeFunctionCallback(
   id: number,
   cap: any,
@@ -81,7 +99,7 @@ export function invokeNativeFunctionCallback(
   exceptionPolicy?: AsyncCallbackExceptionPolicy,
 ): any {
   try {
-    return callbackState?.getExports()?.[`__cb_${id}`]?.(cap, ...args);
+    return callbackDispatcher(id, callbackState)?.(cap, ...args);
   } catch (error) {
     throw normalizeModuleCallbackException(error, callbackState, exceptionPolicy);
   }
@@ -105,6 +123,11 @@ export function createNativeFunctionCallbackBridge(
   const dispatch = (args: any[]): any => invokeNativeFunctionCallback(id, cap, args, callbackState, exceptionPolicy);
   const body = (args: any[]): any => {
     const exports = callbackState?.getExports();
+    // (#5209) Park ONLY when the compiled body is genuinely unreachable. A
+    // callback the module registered from its start section can — and must —
+    // run in place: parking returns `undefined` to the caller, which is right
+    // for an async reaction and silently wrong for `filter`/`map`/`sort`.
+    if (exports === undefined && callbackDispatcher(id, callbackState) !== undefined) return dispatch(args);
     if (exports === undefined && callbackState?.deferToExports) {
       callbackState.deferToExports(() => {
         dispatch(args);
