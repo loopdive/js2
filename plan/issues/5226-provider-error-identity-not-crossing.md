@@ -1,7 +1,8 @@
 ---
 id: 5226
 title: "Errors thrown inside a linked provider lose identity at the seam — e.pass through as generic objects, instanceof RangeError is false in the consumer"
-status: in-progress
+status: done
+completed: 2026-08-31
 assignee: ttraenkler/dev-5226
 sprint: current
 priority: medium
@@ -15,19 +16,31 @@ created: 2026-08-30
 # branch in `ensureExnTag` plus `exportedExnTagIndex`) and the comment that says
 # why a module-local tag is uncatchable across the seam; the other three are a
 # one-line option declaration / pass-through / two installer calls each.
-# `src/package-linker.ts` is a RESTATED grant: against the merge-base it is
-# covered by #5241's issue file, but CI diffs the merge preview against main's
-# refreshed baseline, where that grant is stranded (verified 2026-08-31 with
-# LOC_GATE_BASE=origin/main). This PR's own +12 there is the two
-# `installSharedExceptionTag` calls plus their comments.
+# THIS PR'S OWN growth: registry/imports.ts (the fix), compiler.ts + index.ts
+# (one line each), package-linker.ts (+11: the two `installSharedExceptionTag`
+# calls and their comments).
+#
+# RESTATED grants, NOT this PR's work — src/runtime.ts (+191) and
+# src/codegen/index.ts (+12) belong to the predecessor stack this branch is
+# based on (#3523 and #5241 respectively) and are granted in THOSE issue files.
+# Which base the gate resolves decides whether those files count as
+# "changed by this change-set", so the grants strand as the stack lands
+# (verified 2026-08-31: green against LOC_GATE_BASE=origin/main at b91fed8a1f,
+# red against the default base once main advanced to d2c7305c0f). Restated here
+# per CLAUDE.md so the gate can see them from a file this PR touches; they carry
+# no claim of authorship and should disappear when main's baseline refreshes.
 loc-budget-allow:
   - src/codegen/registry/imports.ts
   - src/compiler.ts
   - src/index.ts
   - src/package-linker.ts
+  - src/runtime.ts
+  - src/codegen/index.ts
 func-budget-allow:
   - src/package-linker.ts::compileLinkedProject
   - src/codegen/index.ts::generateMultiModule
+  # restated, same reason as above — #5241's growth, not this PR's
+  - src/runtime.ts::resolveImport
 ---
 
 # #5226 — provider seam: error identity does not cross
@@ -139,6 +152,19 @@ surfaces as a bare `WebAssembly.Exception` with no `name`/`message`. Measured
 identical in the single-module control, before and after — an export-boundary
 gap, not a provider-seam one. The last test in the reduction asserts both lanes
 agree so a future fix has a measured starting point.
+
+### Validation
+
+`tests/issue-5226-provider-error-identity.test.ts` (4). Regressions green, one
+vitest process per file: issue-5221/5222/5223/5225/5237/5239/5241/5242/5243/5244,
+issue-4628 ×2 (including the heavy Temporal lane, 11 tests, with the three new
+error-identity rows), provider-manifest, linker, issue-3521 ×4, issue-3765 ×2,
+issue-3782, issue-2928-e6, issue-2928-refusal. Equivalence gate: 24 failing /
+1718 passing — exactly the baseline, no new regressions. Gates green on both
+bases (`merge-base(origin)` and `LOC_GATE_BASE=origin/main`).
+
+Known container-environmental, fails on base too:
+`issue-3521-prepared-free-function-routing` (vitest fork OOM at ~55 s).
 
 ## Notes
 
