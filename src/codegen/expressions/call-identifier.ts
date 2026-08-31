@@ -1282,15 +1282,7 @@ export function compileIdentifierCall(
         // explicit hint also keeps the dispatch table in
         // `__extern_method_call` honest for wasmGC structs that V8
         // can't introspect natively.
-        const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
-        if (toStrIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: toStrIdx });
-          // (#4174) `__extern_toString`'s string arm is identity — a rope comes
-          // back unchanged; flatten it here (acorn's `this.input = String(input)`).
-          emitStringExternResultFlatten(ctx, fctx);
-        }
-        return { kind: "externref" };
+        return emitToString(ctx, fctx, argType, argTsType, "string");
       }
 
       if (argType?.kind === "ref" || argType?.kind === "ref_null") {
