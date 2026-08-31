@@ -1,7 +1,8 @@
 ---
 id: 5225
 title: "Consumer-module object literals are opaque to a linked provider — Temporal.PlainDate.from({year,month,day}) throws 'year is required' while string and host-object forms work"
-status: in-progress
+status: done
+completed: 2026-08-31
 assignee: ttraenkler/dev-5225
 sprint: current
 priority: high
