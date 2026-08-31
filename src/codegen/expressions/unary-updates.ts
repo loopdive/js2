@@ -58,6 +58,7 @@ import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-refere
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
+import { emitConstIdentifierUpdateGuard } from "./identifier-assignment.js";
 import {
   compileHostBigIntIdentifierUpdate,
   emitHostBigIntBinaryOpFromStack,
@@ -1083,11 +1084,7 @@ function compilePrefixUpdate(
     const isIncrement = expr.operator === ts.SyntaxKind.PlusPlusToken;
     const w = compileWithUpdateExpression(ctx, fctx, updateOperand, isIncrement, /*prefix*/ true);
     if (w !== undefined) return w;
-    if (fctx.constBindings?.has(updateOperand.text)) {
-      emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-      fctx.body.push({ op: "unreachable" });
-      return { kind: "f64" };
-    }
+    if (emitConstIdentifierUpdateGuard(ctx, fctx, updateOperand)) return { kind: "f64" };
     if (isHostBigIntUpdate(ctx, updateOperand))
       return compileHostBigIntIdentifierUpdate(ctx, fctx, updateOperand, isIncrement, false);
   }
@@ -1474,11 +1471,7 @@ function compilePostfixUnary(
 
   if (ts.isIdentifier(postOperand)) {
     // const bindings — increment/decrement throws TypeError at runtime
-    if (fctx.constBindings?.has(postOperand.text)) {
-      emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-      fctx.body.push({ op: "unreachable" });
-      return { kind: "f64" };
-    }
+    if (emitConstIdentifierUpdateGuard(ctx, fctx, postOperand)) return { kind: "f64" };
     if (isHostBigIntUpdate(ctx, postOperand)) {
       return compileHostBigIntIdentifierUpdate(ctx, fctx, postOperand, isIncrement, true);
     }

@@ -151,25 +151,6 @@ export const LATTICE_UNION_MAX_MEMBERS = 4;
 export const LATTICE_OBJECT_SHAPE_MAX_DEPTH = 3;
 
 /**
- * #1231 Phase 2 — object-shape inference is **enabled by default** as of
- * this graduation. The env var stays as an emergency opt-out: setting
- * `JS2WASM_IR_OBJECT_SHAPES=0` reverts to the legacy boxed-externref
- * path so a regression can be hot-fixed without redeploying the
- * compiler. `JS2WASM_IR_OBJECT_SHAPES=1` (or unset) keeps the new
- * behaviour. Re-evaluated on every call so vitest can flip the flag
- * per-test.
- *
- * History: Phase 1 (PR #143) shipped behind the gate as opt-IN.
- * Phase 2 (this PR) graduates the gate after local equivalence /
- * IR / object-tests showed identical pass/fail counts with the flag
- * on vs. off — i.e. no observable regressions. CI's test262 sharded
- * run is the authoritative arbiter for conformance numbers.
- */
-function objectShapesEnabled(): boolean {
-  return process.env.JS2WASM_IR_OBJECT_SHAPES !== "0";
-}
-
-/**
  * #1126 Stage 2 — integer-domain inference flag. Default **OFF** until
  * Stage 3 lands the emitter side. While off, all producer rules below
  * fall back to their pre-#1126 behaviour (`F64` for numeric literals,
@@ -325,7 +306,7 @@ export function buildIrUnitTypeMap(
   const fnctorExtension: InferExtension | undefined = resolveFnctorAdmission
     ? {
         tryInfer: (expr, scope) => {
-          if (!objectShapesEnabled() || !ts.isNewExpression(expr)) return undefined;
+          if (!ts.isNewExpression(expr)) return undefined;
           const sourceId = identityContext.sourceIdBySourceFile.get(expr.getSourceFile());
           if (sourceId === undefined) return undefined;
           const admission = resolveFnctorAdmission(expr, sourceId, scope);
@@ -685,15 +666,13 @@ function tsTypeToLattice(ty: ts.Type, _checker: ts.TypeChecker): LatticeType {
   if (flags & ts.TypeFlags.Any || flags & ts.TypeFlags.Unknown) return UNKNOWN;
   // Never is unreachable — treat as unknown so it doesn't kill fixpoint.
   if (flags & ts.TypeFlags.Never) return UNKNOWN;
-  // #1231 Phase 1 — under the env gate, TS-inferred object types seed as
-  // UNKNOWN so the body-walk pass can refine the shape via `inferExpr`.
-  // Without this, an unannotated `function createPoint(x, y) { return
-  // {x, y}; }` would have its checker-derived return type `{x: any,
-  // y: any}` lower to DYNAMIC, absorb every body-observed atom, and
-  // block the IR claim. Outside the gate the legacy DYNAMIC fallback
-  // is preserved.
-  if (flags & ts.TypeFlags.Object && objectShapesEnabled()) return UNKNOWN;
-  // Object / union / enum / etc remain `dynamic` for now — they'd need
+  // #1231 Phase 1 — TS-inferred object types seed as UNKNOWN so the body-walk
+  // pass can refine the shape via `inferExpr`. Without this, an unannotated
+  // `function createPoint(x, y) { return {x, y}; }` would have its
+  // checker-derived return type `{x: any, y: any}` lower to DYNAMIC, absorb
+  // every body-observed atom, and block the IR claim.
+  if (flags & ts.TypeFlags.Object) return UNKNOWN;
+  // Union / enum / other categories remain `dynamic` for now — they'd need
   // richer shape inference to be usable in the IR selector.
   return DYNAMIC;
 }
@@ -995,7 +974,7 @@ function inferExpr(
   // whole literal to `dynamic`. Spread / methods / getters / setters /
   // computed keys / duplicate keys also widen — those force the
   // function back to the legacy boxed path.
-  if (ts.isObjectLiteralExpression(expr) && objectShapesEnabled()) {
+  if (ts.isObjectLiteralExpression(expr)) {
     return inferObjectLiteralAtom(expr, scope, entries, resolveCallTarget, ext);
   }
   // #1231 Phase 1 — property / element access on a known object atom:
@@ -1071,10 +1050,8 @@ function inferObjectLiteralAtom(
 /**
  * Look up `expr.name` against the receiver's object atom. Returns the
  * field's atom if the receiver is an object atom and the field exists;
- * otherwise widens to `dynamic`. Note that property access doesn't
- * need its own gate — when `objectShapesEnabled()` is false no source
- * produces an object atom, so the `recvType.kind === "object"` arm is
- * never reached.
+ * otherwise widens to `dynamic`. Object literals are the only source of
+ * object atoms, so property access needs no separate admission condition.
  */
 function inferPropertyAccessAtom(
   expr: ts.PropertyAccessExpression,

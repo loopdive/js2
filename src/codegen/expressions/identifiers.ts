@@ -31,6 +31,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
+import { addHostStringConstantGlobal } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
 import {
@@ -39,7 +40,7 @@ import {
   isShadowStaticArmFor,
   withShadowReadSuppressed,
 } from "../fn-global-shadow.js"; // (#4630 / #4648)
-import { emitTdzCheck, emitTdzCheckAtGlobal } from "../statements.js";
+import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -79,6 +80,7 @@ import {
 } from "./promise-subclass.js";
 import {
   emitLiveIdentifierGlobalRead,
+  moduleTdzGlobalIndexForIdentifier,
   tryEmitAmbientRegistryCollisionRead,
   tryEmitExplicitHostAmbientValueRead,
 } from "./identifier-module-storage.js";
@@ -224,9 +226,13 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   fctx.body.push({ op: "i32.eqz" });
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    } else {
+      const tagIdx = ensureExnTag(ctx);
+      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
+    }
   } else {
     const tagIdx = ensureExnTag(ctx);
     then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
@@ -720,12 +726,13 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
   const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
   flushLateImportShifts(ctx, fctx);
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-    fctx.body.push({ op: "unreachable" });
-    return;
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      fctx.body.push({ op: "global.get", index: strIdx });
+      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+      fctx.body.push({ op: "unreachable" });
+      return;
+    }
   }
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "ref.null.extern" });
@@ -824,18 +831,21 @@ function shouldUseRuntimeEvalGlobalLexicalRead(
   );
 }
 
+function emitModuleTdzReadCheck(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): void {
+  const flagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
+  if (flagIdx === undefined) return;
+  const tdzResult = analyzeTdzAccess(ctx, id);
+  if (tdzResult === "check") emitTdzCheckAtGlobal(ctx, fctx, flagIdx, id.text, noJsHost(ctx));
+  else if (tdzResult === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
+}
+
 function compileCapturedGlobalRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
   name: string,
 ): ValType {
-  const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-  if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-  } else if (tdzResult === "throw") {
-    emitStaticTdzThrow(ctx, fctx, id.text);
-  }
+  emitModuleTdzReadCheck(ctx, fctx, id);
   const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
   if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
     fctx.body.push({ op: "ref.as_non_null" });
@@ -1392,12 +1402,7 @@ function compileIdentifierCore(
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
   const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     return emitCapturedBoxGlobalRead(ctx, fctx, capturedBox);
   }
 
@@ -1422,12 +1427,7 @@ function compileIdentifierCore(
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
@@ -1505,8 +1505,7 @@ function compileIdentifierCore(
       flushLateImportShifts(ctx, fctx);
       if (gtFuncIdx !== undefined && getIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
-        addStringConstantGlobal(ctx, name);
-        const strGlobalIdx = ctx.stringGlobalMap.get(name);
+        const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
         fctx.body.push(
           strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
         );
@@ -1582,8 +1581,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       fctx.body.push(
         strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
       );
@@ -1655,8 +1653,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       if (strGlobalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: strGlobalIdx });
       } else {
@@ -1707,8 +1704,7 @@ function compileIdentifierCore(
       );
       flushLateImportShifts(ctx, fctx);
       if (getIdx !== undefined) {
-        addStringConstantGlobal(ctx, globalInfo.member);
-        const strGlobalIdx = ctx.stringGlobalMap.get(globalInfo.member);
+        const strGlobalIdx = addHostStringConstantGlobal(ctx, globalInfo.member);
         if (strGlobalIdx !== undefined) {
           fctx.body.push({ op: "global.get", index: strGlobalIdx });
         } else {
@@ -1961,8 +1957,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       if (strGlobalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: strGlobalIdx });
       } else {
@@ -2181,12 +2176,15 @@ function compileIdentifierCore(
     const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
     flushLateImportShifts(ctx, fctx);
     if (throwRefErrIdx !== undefined) {
-      addStringConstantGlobal(ctx, msg);
-      const strIdx = ctx.stringGlobalMap.get(msg)!;
-      fctx.body.push({ op: "global.get", index: strIdx });
-      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-      fctx.body.push({ op: "unreachable" });
-    } else {
+      const strIdx = addHostStringConstantGlobal(ctx, msg);
+      if (strIdx !== undefined) {
+        fctx.body.push({ op: "global.get", index: strIdx });
+        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+        fctx.body.push({ op: "unreachable" });
+        return { kind: "externref" };
+      }
+    }
+    {
       // Fallback: raw exception-tag throw (no JS host to construct a ReferenceError).
       const tagIdx = ensureExnTag(ctx);
       fctx.body.push({ op: "ref.null.extern" });

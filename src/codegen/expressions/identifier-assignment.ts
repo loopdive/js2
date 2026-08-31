@@ -3,33 +3,118 @@
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { getLocalType } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
 import { localGlobalIdx } from "../registry/imports.js";
-import { coerceType, valTypesMatch } from "../shared.js";
-import { emitTdzCheck } from "../statements/tdz.js";
-import { emitThrowTypeError, noJsHost } from "./helpers.js";
-import { analyzeTdzAccess as analyzeIdentifierTdzAccess, emitStaticTdzThrow } from "./identifiers.js";
-import { identifierResolvesToCurrentTopLevelLexical } from "./identifier-module-storage.js";
+import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
+import { emitThrowTypeError, isConstIdentifierAssignmentTarget } from "./helpers.js";
+import {
+  analyzeTdzAccess as analyzeIdentifierTdzAccess,
+  emitLocalTdzCheck,
+  emitStaticTdzThrow,
+} from "./identifiers.js";
+import { currentSourceModuleGlobalIndex, moduleTdzGlobalIndexForIdentifier } from "./identifier-module-storage.js";
 
-function moduleLexicalAssignmentTdzDecision(
-  ctx: CodegenContext,
-  id: ts.Identifier,
-  allowUnresolvedTopLevelVariable: boolean,
-): "skip" | "throw" | "check" | undefined {
-  if (!ctx.moduleGlobals.has(id.text) || !ctx.tdzGlobals.has(id.text)) return undefined;
-  if (!identifierResolvesToCurrentTopLevelLexical(ctx, id, allowUnresolvedTopLevelVariable)) return undefined;
-  return analyzeIdentifierTdzAccess(ctx, id);
-}
-
-function emitModuleLexicalAssignmentTdzGuard(
+/**
+ * Emit the TDZ half of an identifier PutValue after its source value has been
+ * acquired. Returns true only when static analysis emitted an abrupt throw.
+ */
+export function emitIdentifierAssignmentTdzGuard(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
-  allowUnresolvedTopLevelVariable: boolean,
-): void {
-  const decision = moduleLexicalAssignmentTdzDecision(ctx, id, allowUnresolvedTopLevelVariable);
-  if (decision === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
-  else if (decision === "check") emitTdzCheck(ctx, fctx, id.text, true);
+  pendingStackValue = false,
+): boolean {
+  const localFlag = fctx.tdzFlagLocals?.get(id.text);
+  const moduleFlagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
+  if (localFlag === undefined && moduleFlagIdx === undefined) return false;
+  const decision = analyzeIdentifierTdzAccess(ctx, id);
+  if (decision === "throw") {
+    if (pendingStackValue) fctx.body.push({ op: "drop" });
+    emitStaticTdzThrow(ctx, fctx, id.text);
+    return true;
+  }
+  if (decision !== "check") return false;
+  if (localFlag !== undefined) {
+    emitLocalTdzCheck(ctx, fctx, id.text, localFlag);
+    return false;
+  }
+  // PutValue errors are observable to JS catch/instanceof, even on the host
+  // lane. A bare Wasm tag would skip the later real-error guard and surface as
+  // the wrong error class.
+  if (moduleFlagIdx !== undefined) emitTdzCheckAtGlobal(ctx, fctx, moduleFlagIdx, id.text, true);
+  return false;
+}
+
+/** Evaluate a simple-assignment RHS before an abrupt lexical PutValue. */
+export function tryConstSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  right: ts.Expression,
+): boolean {
+  const isConst = isConstIdentifierAssignmentTarget(ctx, fctx, id);
+  const hasTdzFlag =
+    fctx.tdzFlagLocals?.has(id.text) === true || moduleTdzGlobalIndexForIdentifier(ctx, id) !== undefined;
+  // A simple assignment evaluates its RHS before PutValue. This early arm is
+  // only for a statically future lexical whose storage falls through a
+  // same-named foreign module-global projection before the normal write arm.
+  if (!isConst && !(hasTdzFlag && analyzeIdentifierTdzAccess(ctx, id) === "throw")) return false;
+  const rhsType = compileExpression(ctx, fctx, right);
+  if (rhsType) fctx.body.push({ op: "drop" });
+  if (!emitIdentifierAssignmentTdzGuard(ctx, fctx, id) && isConst) {
+    emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+    fctx.body.push({ op: "unreachable" });
+  }
+  return isConst || hasTdzFlag;
+}
+
+/**
+ * Guard an exact const target before callers evaluate a compound RHS or begin
+ * an update read. Callers receive `"not-const"` for every other identifier.
+ * A statically future lexical must throw ReferenceError first; an
+ * initialized const keeps the caller's ordinary TypeError ordering.
+ */
+function constIdentifierAssignmentTdzState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): "not-const" | "tdz-throw" | "const" {
+  if (!isConstIdentifierAssignmentTarget(ctx, fctx, id)) return "not-const";
+  return emitIdentifierAssignmentTdzGuard(ctx, fctx, id) ? "tdz-throw" : "const";
+}
+
+/**
+ * Handle a const identifier compound target before its caller evaluates an
+ * ordinary read-modify-write path. Returns true exactly when it emitted the
+ * abrupt completion (including the TDZ-before-RHS case).
+ */
+export function tryEmitConstIdentifierCompoundAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  right: ts.Expression,
+): boolean {
+  const target = constIdentifierAssignmentTdzState(ctx, fctx, id);
+  if (target === "not-const") return false;
+  if (target === "const") {
+    const rhsType = compileExpression(ctx, fctx, right);
+    if (rhsType) fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+    fctx.body.push({ op: "unreachable" });
+  }
+  return true;
+}
+
+/** Handle a const identifier prefix/postfix update before the value is read. */
+export function emitConstIdentifierUpdateGuard(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
+  const target = constIdentifierAssignmentTdzState(ctx, fctx, id);
+  if (target === "not-const") return false;
+  if (target === "const") {
+    emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
+    fctx.body.push({ op: "unreachable" });
+  }
+  return true;
 }
 
 /**
@@ -46,26 +131,47 @@ export function emitPutValueTargetGuard(
   id: ts.Identifier,
   pendingStackValue = true,
 ): boolean {
-  const name = id.text;
-  if (ctx.tdzGlobals.has(name)) {
-    const tdzResult = analyzeIdentifierTdzAccess(ctx, id);
-    if (tdzResult === "throw") {
-      if (pendingStackValue) fctx.body.push({ op: "drop" });
-      emitStaticTdzThrow(ctx, fctx, name);
-      return true;
-    }
-    if (tdzResult === "check") emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-  }
-  const declaration = ctx.oracle.variableDeclarationOf(id);
-  const isConst =
-    fctx.constBindings?.has(name) === true ||
-    (declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      (declaration.parent.flags & ts.NodeFlags.Const) !== 0);
-  if (!isConst) return false;
+  if (emitIdentifierAssignmentTdzGuard(ctx, fctx, id, pendingStackValue)) return true;
+  if (!isConstIdentifierAssignmentTarget(ctx, fctx, id)) return false;
   if (pendingStackValue) fctx.body.push({ op: "drop" });
   emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
   fctx.body.push({ op: "unreachable" });
+  return true;
+}
+
+/** Resolve a pattern-write identifier to durable module storage when it has it. */
+export function resolveModuleAwareIdentifierWriteTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  valueType: ValType,
+): { localIdx: number | undefined; moduleGlobalIdx: number | undefined } {
+  // A physical module-init leaf cannot retain a source binding in a Wasm
+  // local. Prefer its durable source-qualified global, while ordinary
+  // functions and the unsplit initializer retain their established local
+  // shadow behavior.
+  const durableModuleGlobalIdx = fctx.moduleInitChunk ? currentSourceModuleGlobalIndex(ctx, id) : undefined;
+  let localIdx = durableModuleGlobalIdx === undefined ? fctx.localMap.get(id.text) : undefined;
+  const moduleGlobalIdx =
+    durableModuleGlobalIdx ?? (localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, id) : undefined);
+  if (localIdx === undefined && moduleGlobalIdx === undefined) localIdx = allocLocal(fctx, id.text, valueType);
+  return { localIdx, moduleGlobalIdx };
+}
+
+/** Complete a plain for-of head's PutValue, using durable storage in chunks. */
+export function tryEmitForOfIdentifierWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  valueLocal: number,
+  valueType: ValType,
+): boolean {
+  if (emitPutValueTargetGuard(ctx, fctx, id, false)) return true;
+  if (!fctx.moduleInitChunk) return false;
+  const moduleGlobalIdx = currentSourceModuleGlobalIndex(ctx, id);
+  if (moduleGlobalIdx === undefined) return false;
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  emitResolvedIdentifierWriteFromStack(ctx, fctx, id, valueType, undefined, moduleGlobalIdx);
   return true;
 }
 
@@ -83,20 +189,34 @@ export function emitResolvedIdentifierWriteFromStack(
   // inserted an import global. Treat the caller's index as target identity
   // only; re-read the graph-global name map before inspecting its type.
   if (emitPutValueTargetGuard(ctx, fctx, id)) return true;
-  const currentModuleGlobalIdx = moduleGlobalIdx === undefined ? undefined : ctx.moduleGlobals.get(id.text);
+  const durableModuleGlobalIdx = fctx.moduleInitChunk
+    ? currentSourceModuleGlobalIndex(ctx, id, allowUnresolvedTopLevelVariable)
+    : undefined;
+  const currentModuleGlobalIdx =
+    durableModuleGlobalIdx ??
+    (moduleGlobalIdx === undefined
+      ? undefined
+      : (currentSourceModuleGlobalIndex(ctx, id, allowUnresolvedTopLevelVariable) ?? moduleGlobalIdx));
+  const currentLocalIdx = durableModuleGlobalIdx === undefined ? localIdx : undefined;
   const targetType =
-    localIdx !== undefined
-      ? getLocalType(fctx, localIdx)
+    currentLocalIdx !== undefined
+      ? getLocalType(fctx, currentLocalIdx)
       : currentModuleGlobalIdx !== undefined
         ? ctx.mod.globals[localGlobalIdx(ctx, currentModuleGlobalIdx)]?.type
         : undefined;
-  if (localIdx === undefined && currentModuleGlobalIdx === undefined) return false;
+  if (currentLocalIdx === undefined && currentModuleGlobalIdx === undefined) return false;
   if (targetType && !valTypesMatch(valueType, targetType)) coerceType(ctx, fctx, valueType, targetType);
-  if (localIdx !== undefined) {
-    fctx.body.push({ op: "local.set", index: localIdx });
+  if (currentLocalIdx !== undefined) {
+    fctx.body.push({ op: "local.set", index: currentLocalIdx });
     return true;
   }
-  emitModuleLexicalAssignmentTdzGuard(ctx, fctx, id, allowUnresolvedTopLevelVariable);
+  // A closure-backed top-level binding keeps an externref shadow local for
+  // precise same-helper reads. Chunk leaves must still persist the write in
+  // the module global for subsequent helpers, so mirror the already-coerced
+  // value into that established shadow before the durable store.
+  const shadowLocalIdx =
+    durableModuleGlobalIdx === undefined ? undefined : fctx.moduleBindingShadowLocals?.get(id.text);
+  if (shadowLocalIdx !== undefined) fctx.body.push({ op: "local.tee", index: shadowLocalIdx });
   // Re-read after coercion/guard helpers: either can settle imports/globals.
   fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(id.text)! });
   return true;

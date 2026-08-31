@@ -19,7 +19,7 @@ import { tryCompileNativeWeakMethodCall } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefDeref } from "../weakref-runtime.js";
 import { noJsHost } from "../js-errors.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
-import { addStringConstantGlobal } from "../registry/imports.js";
+import { addHostStringConstantGlobal } from "../registry/imports.js";
 import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#3976) standalone proto as a real $Object
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { emitFuncRefAsClosure } from "../closures.js";
@@ -278,8 +278,7 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
   if (registerProtoFuncIdx !== undefined && csvGlobalIdx === undefined) {
     const methodNames = ctx.classMethodNames.get(className) ?? [];
     const methodsCsv = methodNames.join(",");
-    addStringConstantGlobal(ctx, methodsCsv);
-    csvGlobalIdx = ctx.stringGlobalMap.get(methodsCsv);
+    csvGlobalIdx = addHostStringConstantGlobal(ctx, methodsCsv);
     if (csvGlobalIdx !== undefined) {
       ctx.classMethodsCsvGlobal.set(className, csvGlobalIdx);
     }
@@ -402,8 +401,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   if (registerClassFuncIdx !== undefined && csvGlobalIdx === undefined) {
     const staticMethodNames = ctx.classStaticMethodNames.get(className) ?? [];
     const staticMethodsCsv = staticMethodNames.join(",");
-    addStringConstantGlobal(ctx, staticMethodsCsv);
-    csvGlobalIdx = ctx.stringGlobalMap.get(staticMethodsCsv);
+    csvGlobalIdx = addHostStringConstantGlobal(ctx, staticMethodsCsv);
     if (csvGlobalIdx !== undefined) {
       ctx.classStaticMethodsCsvGlobal.set(className, csvGlobalIdx);
     }
@@ -416,10 +414,10 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   // but SET/registered the class-object global, so the read returned the
   // PROTO struct and the host [[Construct]] bridge never matched).
   if (!ctx.standalone && !ctx.wasi) {
-    addStringConstantGlobal(ctx, "name");
-    addStringConstantGlobal(ctx, className);
+    addHostStringConstantGlobal(ctx, "name");
+    addHostStringConstantGlobal(ctx, className);
     for (const m of ctx.classStaticMethodNames.get(className) ?? []) {
-      addStringConstantGlobal(ctx, m);
+      addHostStringConstantGlobal(ctx, m);
     }
   }
   // (#4618) The class-object global index MUST be re-read at every push:
@@ -498,10 +496,8 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
   if (!ctx.standalone && !ctx.wasi && !className.startsWith("__") && !hasStaticNameAccessor) {
     const setIdx = ctx.funcMap.get("__extern_set");
     if (setIdx !== undefined) {
-      addStringConstantGlobal(ctx, "name");
-      addStringConstantGlobal(ctx, className);
-      const nameKeyIdx = ctx.stringGlobalMap.get("name");
-      const nameValIdx = ctx.stringGlobalMap.get(className);
+      const nameKeyIdx = addHostStringConstantGlobal(ctx, "name");
+      const nameValIdx = addHostStringConstantGlobal(ctx, className);
       if (nameKeyIdx !== undefined && nameValIdx !== undefined) {
         initBody.push({ op: "global.get", index: classObjIdx() });
         initBody.push({ op: "global.get", index: nameKeyIdx });
@@ -531,8 +527,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
         const fullName = `${className}_${methodName}`;
         const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
         if (methodIdx === undefined) continue;
-        addStringConstantGlobal(ctx, methodName);
-        const methodNameGlobalIdx = ctx.stringGlobalMap.get(methodName);
+        const methodNameGlobalIdx = addHostStringConstantGlobal(ctx, methodName);
         if (methodNameGlobalIdx === undefined) continue;
 
         fctx.body.push({ op: "global.get", index: classObjIdx() });
@@ -610,12 +605,11 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
           // arg 4 — the class NAME, so the runtime mirror can key the
           // dynamic-parent lookup and stamp `.name` without relying on the
           // (#4616) sidecar stamp having run.
-          addStringConstantGlobal(ctx, className);
-          const classNameGlobalIdx = ctx.stringGlobalMap.get(className);
-          if (classNameGlobalIdx !== undefined && classNameGlobalIdx >= 0) {
+          const classNameGlobalIdx = addHostStringConstantGlobal(ctx, className);
+          if (classNameGlobalIdx !== undefined) {
             fctx.body.push({ op: "global.get", index: classNameGlobalIdx });
           } else {
-            compileStringLiteral(ctx, fctx, className);
+            fctx.body.push({ op: "ref.null.extern" });
           }
           // arg 5 — whether the source has the spec-synthesized derived
           // constructor `constructor(...args) { super(...args); }` and the
@@ -710,12 +704,11 @@ export function emitRegisterDynamicClassParent(
   const regIdx = ensureLateImport(ctx, "__register_class_parent", [{ kind: "externref" }, { kind: "externref" }], []);
   flushLateImportShifts(ctx, fctx);
   if (regIdx === undefined) return;
-  addStringConstantGlobal(ctx, className);
-  const nameIdx = ctx.stringGlobalMap.get(className);
-  if (nameIdx !== undefined && nameIdx >= 0) {
+  const nameIdx = addHostStringConstantGlobal(ctx, className);
+  if (nameIdx !== undefined) {
     fctx.body.push({ op: "global.get", index: nameIdx });
   } else {
-    compileStringLiteral(ctx, fctx, className);
+    fctx.body.push({ op: "ref.null.extern" });
   }
   // (#4618) A PROPERTY-ACCESS heritage (react's `extends React.Component`)
   // must be read through the dynamic MOP here: the static member lane can
@@ -749,12 +742,11 @@ export function emitRegisterDynamicClassParent(
       coerceType(ctx, fctx, objT, { kind: "externref" });
       // stack: [nameStr, obj] — now the key string
       const propName = heritageExpr.name.text;
-      addStringConstantGlobal(ctx, propName);
-      const propIdx = ctx.stringGlobalMap.get(propName);
-      if (propIdx !== undefined && propIdx >= 0) {
+      const propIdx = addHostStringConstantGlobal(ctx, propName);
+      if (propIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: propIdx });
       } else {
-        compileStringLiteral(ctx, fctx, propName);
+        fctx.body.push({ op: "ref.null.extern" });
       }
       fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__register_class_parent_ref") ?? refRegIdx });
       return;

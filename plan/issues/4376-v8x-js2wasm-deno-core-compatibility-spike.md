@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-08-22
+updated: 2026-08-31
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -55,6 +55,11 @@ loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/expressions.ts
   - src/codegen/property-access.ts
+  # 2026-08-30: unchanged deno_core publication through the captured
+  # Object.assign primordial, plus native-string sentinel registration for
+  # linked standalone/provider graphs.
+  - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/registry/imports.ts
   # 2026-08-29: deno-core bootstrap local-index remapping (createTimer /
   # __eventLoopTick / runImmediates class): lift-time transitive-capture
   # promotion incl. no-captures branch, recorded-slot fallbacks, stale
@@ -104,12 +109,20 @@ func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccess
   - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
   - src/codegen/class-bodies.ts::compileSuperCall
+  # 2026-08-30: closed-struct Object.assign publication and dynamic reads in
+  # unchanged deno_core bootstrap code.
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 oracle-ratchet-allow:
   # 2026-08-28: PR #5148 checkpoint — new raw-checker queries in DataView
   # lowering and source-scan predicates; migrate to ctx.oracle in follow-up.
   - src/codegen/dataview-native.ts
   - src/codegen/index.ts
   - src/codegen/source-scan-predicates.ts
+coercion-sites-allow:
+  # Multi-source finalization checks whether the shared ToBoolean helper is
+  # already registered before asking the existing union engine to add it.
+  - src/codegen/index.ts
 files:
   - .prettierignore
   - examples/v8x-js2wasm-spike/README.md
@@ -526,6 +539,16 @@ origin/main — none introduced by the continuation):
   loop until the 20-minute vitest timeout — present since the checkpoint
   merge (reproduced at the merge point with none of the continuation fixes
   applied).
+
+## Current artifact refresh (2026-08-31)
+
+The current exact artifact measures 10,004,942 bytes with SHA-256
+`88e2d7dfef7e5fba490bdf79802b7242a11d0cb1eedc2d0ca393ed24416af024`.
+It imports exactly nine `v8x:deno` bridges and two deferred `runtime-eval`
+imports, with no `env::Promise_new` import. Two isolated stores still complete
+the `42`/`43`/`44` stages and all bridge checks. Against the clean checkpoint
+without the composed patch (10,007,948 bytes), the patch reduces the artifact
+by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
 
