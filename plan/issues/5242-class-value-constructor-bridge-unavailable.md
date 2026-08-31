@@ -180,9 +180,9 @@ So the bound spelling was **already** silently wrong before this change; #5242
 fixed the spelling that used to throw and left the other exactly as it was. The
 "louder → quieter" concern does not apply to it — it was never loud.
 
-**FOUR ELIMINATED CANDIDATES** for whoever picks it up. Two are mine, two are
-dev-5243's, and **their two kill the mechanism I proposed** — read the
-eliminations, not my first guess:
+**FIVE ELIMINATED CANDIDATES** for whoever picks it up. Two are mine, three are
+dev-5243's, and **theirs kill every mechanism I proposed** — read the
+eliminations, not my guesses:
 
 - **It is ORDER-DEPENDENT.** Run alone, the bound spelling is CORRECT
   (`11,12,…,20`); it misreads only after a four-argument bound construct of the
@@ -204,10 +204,25 @@ eliminations, not my first guess:
   `11,12,13,14,…` — four good values, not one. That also rules out the cached
   `_wrapCallableForHost` → `_wrapWasmClosureUnknownArity` wrapper I named as the
   likely culprit. (dev-5243)
+- **NOT an arity-carrying cache** — the last shape either of us had on the
+  table, including the sentence that used to end this section. dev-5243
+  measured one compile per width: the FIRST bound construct of a class is
+  correct at ANY width (two / four / ten args), and every later one collapses
+  to exactly one argument. The decisive row is ten-then-ten — a predecessor
+  that itself answers perfectly, at the SAME width as its successor, still
+  poisons it. So nothing is carrying the first call's arity. (dev-5243)
 
-What survives all four: something the FIRST bound construct installs and the
-second reuses, which yields exactly one correct argument regardless of the
-global's state and regardless of the emitted dispatcher arities.
+What survives all five: a **first-call-wins latch that degrades to arity 1** —
+something the first bound construct of a class MEMOISES, reused by every later
+one, delivering exactly one correct argument regardless of either call's width,
+of the global's state, and of which dispatchers the module emits. Start at
+whatever is cached per class on that first construct.
+
+**The authoritative #5244 handoff lives in dev-5243's own issue file**, which
+carries the full per-width table. (Not linked by path here: that file is on the
+#5243 branch, not this one, and the issue-integrity gate correctly rejects a
+path that does not resolve on the branch citing it.) This section is the
+#5242-side summary; if the two ever disagree, that one is the record.
 
 Filed as its own lane (#5244 territory). Pinned in this issue rather than in the
 test's expectations because the test's own reduction does not reproduce it (its
