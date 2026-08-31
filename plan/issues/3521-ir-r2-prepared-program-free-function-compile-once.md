@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-30
+updated: 2026-09-01
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -3010,3 +3010,31 @@ per-terminal reconciliation.
   - TypeScript 7, changed-file Biome lint and Prettier check, `git diff --check`,
     IR layering/dialect/kind-neutrality/fallback/IR-only readiness, adoption,
     optimization-retirement, oracle, and LOC/function budget gates: passed.
+
+## 2026-09-01 — fast JS-host pass-through string-signature checkpoint
+
+Status: bounded production checkpoint only; this tracker remains in-progress.
+
+The separate r2FastJsHostPassThroughStringSignature admission adds only the
+normalized JS-host lane: !ctx.nativeStrings && !ctx.standalone && !ctx.wasi &&
+!ctx.strictNoHostImports. It requires one top-level named function with
+required identifier parameters, explicit string annotations at every parameter
+and result position, no generic/async/generator/default/rest/optional/
+destructured form, and a constructed all-IrType.string override that still
+equals the exact allocated Program ABI slot. The existing fast scalar admission
+is unchanged. Native strings, standalone, WASI, strict no-host imports, and
+defaulted string parameters retain their direct or existing post-direct route.
+
+Focused evidence: tests/issue-3521-prepared-free-function-routing.test.ts
+passed 46/46 with VITEST_FORK_MAX_OLD_SPACE_SIZE=4096. The poisoned fast
+JS-host echo(value: string): string route returned its original string with
+irFirstSkipped, a UnitId and prepared-component identity, and exact post-#5313
+accounting (prepareAttempts, directBodyEmissions, irBodyEmissions) = (1, 0, 1).
+Four isolated excluded-lane controls reached the poisoned direct emitter. The
+unpoisoned native-string control records directBodyEmissions=1 without
+pre-body skip ownership (its established late-overlay patch remains (1,1,1)),
+and the defaulted-string boundary remains direct. Existing standalone and
+native-string routing coverage ran in the same focused suite.
+
+This does not broaden general string admission or complete the overall R2
+prepare-before-emit migration.
