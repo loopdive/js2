@@ -16,10 +16,23 @@ created: 2026-08-31
 # and its initializer. Stranded-grant restatement (CLAUDE.md "Simulate CI's
 # base too"): the original grant was measured against the pre-merge base and
 # main's baseline refresh re-exposed it.
+# 2026-08-31 (#5242, restated again after main's post-#5347/#5350 baseline
+# refresh): runtime.ts +132 is this PR's own work (_classCtorCallbackStates,
+# _resolveClassConstructBridge, the argc-aware trap); codegen/index.ts +19 is
+# the #5242 emission beside the finalize anchor; resolveImport +21 is #5241's
+# registration (its grant merged with #5350 and stranded when the baseline
+# reset); generateModule +3 / generateMultiModule +5 are the #5239 call sites
+# (same stranding). Stranded-grant restatement per CLAUDE.md "Simulate CI's
+# base too".
 loc-budget-allow:
   - src/codegen/context/types.ts
+  - src/runtime.ts
+  - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
+  - src/runtime.ts::resolveImport
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::generateModule
 ---
 
 # #5242 — dynamic class-value construction has no constructor bridge
