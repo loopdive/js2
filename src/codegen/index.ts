@@ -11951,13 +11951,13 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // program resolves byte-identically.
     const builtinSymName = symbolShadowsBuiltinGlobal(sym) ? undefined : sym?.name;
 
-    // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
-    // is a TS-only modifier with no runtime representation. Without this, a
-    // ReadonlyArray-typed struct field falls through to the anonymous-struct /
-    // externref path and mismatches the vec the array literal builds, trapping
-    // on indexed read (#1748).
+    // `readonly T[]` / `ReadonlyArray<T>` lower to `T[]`; otherwise fields fall
+    // through to a mismatched anonymous struct (#1748).
+    // #5190: host-native match arrays must retain their native result fields.
     const inheritedArrayElement =
-      builtinSymName === "Array" || builtinSymName === "ReadonlyArray"
+      builtinSymName === "Array" ||
+      builtinSymName === "ReadonlyArray" ||
+      (!ctx.nativeStrings && (sym?.name === "RegExpExecArray" || sym?.name === "RegExpMatchArray"))
         ? undefined
         : inheritedArrayElementType(ctx.checker, tsType);
     if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray" || inheritedArrayElement) {
