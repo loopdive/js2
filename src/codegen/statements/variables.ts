@@ -52,7 +52,7 @@ import {
 import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
-import { compileNestedClassDeclaration, emitPreparedAccessorComputedNameEffects } from "./nested-declarations.js";
+import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -1534,12 +1534,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const deferredSynth = ctx.anonClassExprNames.get(decl.initializer);
         if (deferredSynth !== undefined && ctx.deferredClassBodies.has(deferredSynth)) {
           compileNestedClassDeclaration(ctx, fctx, decl.initializer, deferredSynth);
-        } else {
-          // Module-init class expressions were compiled eagerly, but their
-          // computed names still execute here, at runtime, immediately before
-          // the binding value is materialized. Deferred expressions already
-          // emit through compileNestedClassDeclaration above.
-          emitPreparedAccessorComputedNameEffects(ctx, fctx, decl.initializer);
         }
       }
       // (#3045 identity) Materialize a class-expression BINDING as the class's
@@ -1563,9 +1557,17 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         classInitializer !== undefined &&
         clsSynth !== undefined &&
         ctx.classObjectGlobals?.has(clsSynth) &&
-        emitLazyClassObjectGet(ctx, fctx, clsSynth)
+        ctx.structMap.has(clsSynth) &&
+        ctx.structFields.has(clsSynth)
       ) {
-        actualType = emitClassExpressionStaticsBeforeValue(ctx, fctx, classInitializer, { kind: "externref" });
+        // This singleton materialization path bypasses compileClassExpression,
+        // so it owns the shared unresolved accessor-name effect exactly once.
+        emitUnresolvedComputedAccessorNameEffects(ctx, fctx, classInitializer);
+        if (emitLazyClassObjectGet(ctx, fctx, clsSynth)) {
+          actualType = emitClassExpressionStaticsBeforeValue(ctx, fctx, classInitializer, { kind: "externref" });
+        } else {
+          actualType = compileExpression(ctx, fctx, decl.initializer);
+        }
       } else {
         actualType = compileExpression(ctx, fctx, decl.initializer);
       }
