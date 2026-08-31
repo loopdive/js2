@@ -1095,7 +1095,11 @@ function disassembleFinalBinary(binary: Uint8Array): BinaryenDisassembly {
     input: binary,
     maxBuffer: WASM_DIS_MAX_OUTPUT_BYTES,
   });
+  if (result.error) throw new Error(`wasm-dis spawn failed: ${result.error.message}`);
+  const stdout = result.stdout;
   const stderr = result.stderr;
+  if (!Buffer.isBuffer(stdout)) throw new Error("wasm-dis transport did not return a Buffer stdout");
+  if (!Buffer.isBuffer(stderr)) throw new Error("wasm-dis transport did not return a Buffer stderr");
   const diagnostic =
     stderr.length === 0
       ? "no stderr diagnostic"
@@ -1106,14 +1110,13 @@ function disassembleFinalBinary(binary: Uint8Array): BinaryenDisassembly {
             return "non-UTF-8 stderr diagnostic";
           }
         })();
-  if (result.error) throw new Error(`wasm-dis spawn failed: ${result.error.message}; ${diagnostic}`);
   if (result.signal) throw new Error(`wasm-dis terminated by ${result.signal}; ${diagnostic}`);
   if (result.status !== 0) throw new Error(`wasm-dis exited ${String(result.status)}; ${diagnostic}`);
   if (stderr.length !== 0) throw new Error(`wasm-dis reported a diagnostic: ${diagnostic}`);
-  if (result.stdout.length === 0) throw new Error("wasm-dis produced no stdout");
+  if (stdout.length === 0) throw new Error("wasm-dis produced no stdout");
   let wat: string;
   try {
-    wat = new TextDecoder("utf-8", { fatal: true }).decode(result.stdout);
+    wat = new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   } catch {
     throw new Error("wasm-dis stdout is not valid UTF-8");
   }

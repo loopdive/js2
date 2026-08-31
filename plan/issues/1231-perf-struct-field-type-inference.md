@@ -1440,3 +1440,58 @@ commit must still rerun LOC/function ratchets immediately before signing and
 the full precommit hook without bypass. The normal push must run the full
 prepush hook; only then can clean-install Binaryen 132 CI and a fresh Sol
 exact-byte review authorize PR readiness.
+
+### 2026-08-31 fresh Sol HOLD repair plan — spawn-error precedence
+
+Fresh independent review of exact pushed head
+`c710ae0770d063e5905cd2f6a19b78dd67ced3a6` approved the final-byte identity
+oracle but found one transport-order defect. `disassembleFinalBinary` reads
+`result.stderr.length` while constructing a diagnostic before it checks
+`result.error`. A genuine `spawnSync` launch failure can return an `error` with
+no stdout/stderr buffers, so the code still rejects the run but throws an
+unrelated `TypeError`; the promised explicit `wasm-dis spawn failed` path is
+unreachable.
+
+The repair is test-only and must not change any accepted projection:
+
+1. Check `result.error` immediately after `spawnSync`, before accessing either
+   child stream. Its error must include the spawn error message and must not
+   depend on child diagnostics that do not exist when launch fails.
+2. After the error check, require both stdout and stderr to be `Buffer`
+   instances before reading their length or decoding them. Missing/malformed
+   streams without a spawn error must fail closed with a distinct transport
+   message. Retain signal, status, nonempty stderr, empty stdout, fatal UTF-8,
+   empty text, original-binary SHA cache, and every semantic mutation exactly.
+3. Rerun normal and interpreter-mode 12-row suites plus TS7/TS5 and scoped
+   static checks. Root must again run LOC/function ratchets immediately before
+   each signed commit and every precommit/prepush hook without bypass. A new
+   push invalidates the c710 review and requires a fresh Sol exact-byte review
+   and clean-install CI before readiness.
+
+Terra Max owns only `tests/issue-1231.test.ts`; root owns this plan, commits,
+pushes, and PR state.
+
+### 2026-08-31 spawn-error precedence repair checkpoint
+
+Before this final transport edit, the exact c710 clean-install CI run completed
+fully green; in particular, `quality` passed in 10m10s with Binaryen 132. That
+independently proves the package-owned `wasm-dis --all-features` reader closes
+the original GC rec-group failure rather than merely passing against the stale
+local Binaryen 125 install.
+
+Terra Max then changed only `tests/issue-1231.test.ts` (+6/−3). The code now
+checks `result.error` immediately after `spawnSync`; only a successfully
+launched result may expose stdout/stderr, and both streams must be `Buffer`
+instances before any length or UTF-8 operation. Spawn failure, missing stdout,
+and missing stderr therefore have distinct explicit fail-closed paths. Every
+other transport check, exact binary stdin, `- --all-features` arguments,
+original-binary SHA cache, structural identity join, expected projection, and
+mutation remains byte-for-byte unchanged.
+
+Normal and interpreter-mode focused suites both pass 12/12 under strict loads
+2.9873 and 3.4185 below 8. TS7 and TS5 pass under loads 3.4419 and 3.1211;
+Prettier, targeted Biome lint, and diff-check also pass. Root must still refresh
+protected main, run LOC/function ratchets immediately before signing, run every
+precommit/prepush hook without bypass, publish a normal forward commit, and
+obtain clean current-head CI plus a fresh Sol exact-byte review before changing
+PR readiness.
