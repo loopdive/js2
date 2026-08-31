@@ -106,6 +106,7 @@ import {
 } from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
+import * as classStaticParent from "./runtime/class-static-parent.js";
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
@@ -5416,6 +5417,13 @@ function _safeGet(
     // retained while the receiver's static shape was widened.
     const sc = _sidecarGet(obj, key);
     if (sc !== undefined) return sc;
+    const inheritedStatic = classStaticParent.resolveClassStaticParent(
+      obj,
+      key,
+      callbackState?.getExports(),
+      _wrapForHost,
+    );
+    if (inheritedStatic !== classStaticParent.MISS) return inheritedStatic;
     // A declared own field shadows a prototype method with the same spelling
     // (§9.4.2 [[Get]]). This matters when an untyped host call reaches a
     // compiled class whose field stores a callable closure (Marked's
@@ -6183,14 +6191,6 @@ const _classFnctorParents = new WeakMap<object, any>();
 // (`class C extends React.Component {}`) need the spec-synthesized
 // `super(...args)` applied by the host mirror after the Wasm struct allocation.
 const _classImplicitDynamicParentCtor = new WeakSet<object>();
-// Dynamic `extends <value>` parents, registered by NAME at the declaration
-// statement (`__register_class_parent`) — the name-keyed twin of the
-// WeakMap above, matching the name-keyed class-object singleton. Last write
-// wins, which mirrors how a re-declared same-named class shadows.
-const _classDynamicParentsByName = new Map<string, any>();
-// Class name per class-object singleton, from the 5th __register_class_ctor
-// arg — the mirror's key into the dynamic-parent map and its `.name` source.
-const _classNamesByObj = new WeakMap<object, string>();
 
 /** (#4618) `__register_class_ctor` import: pair the class object with
  * everything the host-side constructible mirror needs. Idempotent sets.
@@ -6210,7 +6210,8 @@ function _registerClassCtorHandler(
   if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
   if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
-  if (typeof classNameArg === "string" && classNameArg.length > 0) _classNamesByObj.set(classObj, classNameArg);
+  if (typeof classNameArg === "string" && classNameArg.length > 0)
+    classStaticParent.registerClassObject(classObj, classNameArg);
   if (implicitDynamicParentCtor === 1) _classImplicitDynamicParentCtor.add(classObj);
   else _classImplicitDynamicParentCtor.delete(classObj);
   _hostProxyCache.delete(classObj);
@@ -6247,7 +6248,7 @@ function _classObjectPrototypeStruct(obj: any): any {
 function _registerClassParentHandler(className: any, parentValue: any): void {
   if (typeof className !== "string" || className.length === 0) return;
   if (parentValue == null) return;
-  _classDynamicParentsByName.set(className, parentValue);
+  classStaticParent.registerClassParent(className, parentValue);
 }
 
 /** (#4618) Lazy dynamic-parent registration for PROPERTY-ACCESS heritage
@@ -6256,11 +6257,10 @@ function _registerClassParentHandler(className: any, parentValue: any): void {
  * (observed in the react per-file batch), so the runtime stores the live
  * container object + key and resolves `obj[key]` host-side, on demand, when
  * the class mirror needs the parent. Memoized on first non-null resolve. */
-const _classDynamicParentLazy = new Map<string, () => any>();
 function _registerClassParentRefHandler(className: any, obj: any, key: any, exports?: Record<string, Function>): void {
   if (typeof className !== "string" || className.length === 0) return;
   if (obj == null || typeof key !== "string" || key.length === 0) return;
-  _classDynamicParentLazy.set(className, () => {
+  classStaticParent.registerClassParentLazy(className, () => {
     try {
       // The container is often a RAW wasm struct (the compiled module's
       // `exports` object): its props may live in the sidecar OR as real
@@ -6282,10 +6282,7 @@ function _registerClassParentRefHandler(className: any, obj: any, key: any, expo
         if (wrapped != null && wrapped !== obj) v = (wrapped as any)[key];
       }
       if (v == null) v = (obj as any)[key];
-      if (v != null) {
-        _classDynamicParentsByName.set(className, v);
-        _classDynamicParentLazy.delete(className);
-      }
+      if (v != null) classStaticParent.rememberClassParent(className, v);
       return v;
     } catch {
       return undefined;
@@ -8489,7 +8486,7 @@ function _makeClassCtorMirrorForHost(
   const meta = _wasmStructProps.get(classObj);
   const sidecarName = _sidecarGet(classObj, "name");
   const className =
-    _classNamesByObj.get(classObj) ??
+    classStaticParent.classObjectName(classObj) ??
     (typeof meta?.name === "string" ? meta.name : typeof sidecarName === "string" ? sidecarName : "");
   const fnTarget = function compiledClassTarget() {} as any;
   try {
@@ -8504,7 +8501,7 @@ function _makeClassCtorMirrorForHost(
     const viaFnctor = _classFnctorParents.get(classObj);
     if (viaFnctor != null) return viaFnctor;
     if (className === "") return undefined;
-    return _classDynamicParentsByName.get(className) ?? _classDynamicParentLazy.get(className)?.();
+    return classStaticParent.getClassParent(className);
   };
   const resolveParentProto = (): any => {
     const pf = resolveParent();
@@ -12707,10 +12704,7 @@ assert._isSameValue = isSameValue;
           // statically named top-level function parent has no class `_init`,
           // so the compiler passes its canonical closure directly instead.
           // Both are the same JavaScript SuperCall operation once resolved.
-          const parent =
-            className !== ""
-              ? (_classDynamicParentsByName.get(className) ?? _classDynamicParentLazy.get(className)?.())
-              : parentIdentity;
+          const parent = className !== "" ? classStaticParent.getClassParent(className) : parentIdentity;
           const parentCtor =
             typeof parent === "function"
               ? parent

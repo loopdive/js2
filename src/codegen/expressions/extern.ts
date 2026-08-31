@@ -24,6 +24,7 @@ import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { emitFuncRefAsClosure } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import type { InnerResult } from "../shared.js";
 import {
   coerceType,
@@ -54,6 +55,49 @@ export function findExternInfoForMember(
     current = ctx.externClassParent.get(current);
   }
   return null;
+}
+
+interface BuiltinClassStaticParentRegistration {
+  parentName: string;
+  registerClassParentIdx: number;
+  getBuiltinIdx: number;
+}
+
+function prepareBuiltinClassStaticParent(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+): BuiltinClassStaticParentRegistration | undefined {
+  if (ctx.standalone || ctx.wasi) return undefined;
+  const parentName = ctx.classBuiltinParentMap.get(className);
+  if (parentName === undefined) return undefined;
+  addStringConstantGlobal(ctx, parentName);
+  const registerClassParentIdx = ensureLateImport(
+    ctx,
+    "__register_class_parent",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  const getBuiltinIdx = ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (registerClassParentIdx === undefined || getBuiltinIdx === undefined) return undefined;
+  return { parentName, registerClassParentIdx, getBuiltinIdx };
+}
+
+function emitBuiltinClassStaticParent(
+  ctx: CodegenContext,
+  initBody: Instr[],
+  className: string,
+  registration: BuiltinClassStaticParentRegistration | undefined,
+): void {
+  if (registration === undefined) return;
+  initBody.push(...stringConstantExternrefInstrs(ctx, className));
+  initBody.push(...stringConstantExternrefInstrs(ctx, registration.parentName));
+  initBody.push({ op: "call", funcIdx: registration.getBuiltinIdx });
+  initBody.push({
+    op: "call",
+    funcIdx: ctx.funcMap.get("__register_class_parent") ?? registration.registerClassParentIdx,
+  });
 }
 
 // ── Extern method calls ──────────────────────────────────────────────
@@ -420,6 +464,8 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       addHostStringConstantGlobal(ctx, m);
     }
   }
+
+  const builtinParentRegistration = prepareBuiltinClassStaticParent(ctx, fctx, className);
   // (#4618) The class-object global index MUST be re-read at every push:
   // string-constant interning inserts an IMPORTED global, and the shift
   // repair updates ctx.classObjectGlobals plus every REACHABLE body — a
@@ -651,6 +697,9 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       }
     }
   }
+
+  // (#5206) Record the host builtin parent after constructor registration.
+  emitBuiltinClassStaticParent(ctx, initBody, className, builtinParentRegistration);
 
   // Emit: if global is null, init it; then get it. initBody is now embedded
   // in fctx.body (reachable through the normal body walks) — release the
