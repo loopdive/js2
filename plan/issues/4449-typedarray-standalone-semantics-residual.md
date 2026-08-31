@@ -489,9 +489,27 @@ The completed branch normally merged that exact upstream head as
 `87cd03f8c3efe9ca989ac43052d3c0ddb5882aba`. Its #4449 code/test tree is
 byte-identical to the fully tested `d03d77e419bfcb4e46edc1699c662b606330bb08`
 checkpoint, and the pull-request diff remains exactly this tracker, the two
-source files, and the focused producer test. The only remaining local gate is
-the required pre-push hook. Remote publication is blocked by the execution
-environment's external-destination safeguard until the user explicitly
-authorizes pushing the completed branch to the configured public
-`ttraenkler/js2` fork; no push or pull request has been attempted around that
-guard. No GitHub issue was created.
+source files, and the focused producer test.
+
+The first local pre-push invocation stopped before validation because this
+worktree had an incomplete generated `node_modules` tree without the
+`typescript7` package link. Root preserved that ignored tree under
+`.tmp/4449-node_modules-incomplete-20260831`, installed the standard
+worktree-to-root dependency symlink, and reran the unchanged hook without a
+remote write or gate bypass. On checkpoint
+`96ebf11e93eb90bcd8460b2e437c5c681acbbd25`, the complete hook passed:
+
+- TS7 typecheck and lint passed in parallel;
+- repository-wide Prettier `format:check` passed;
+- oracle and coercion-site ratchets both reported zero net growth;
+- numeric-local IR parity passed **18 / 18**; and
+- conformance synchronization made no tracked change and issue integrity
+  passed.
+
+This documentation commit is followed by one final unchanged pre-push replay
+so the eventual publication SHA, rather than only the preceding evidence SHA,
+is verified. Remote publication remains blocked by the execution environment's
+external-destination safeguard until the user explicitly authorizes pushing
+the completed branch to the configured public `ttraenkler/js2` fork; no push
+or pull request has been attempted around that guard. No GitHub issue was
+created.
