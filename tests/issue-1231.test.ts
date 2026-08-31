@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 
+import binaryen from "binaryen";
 import { describe, expect, it } from "vitest";
 
 import { analyzeSource } from "../src/checker/index.js";
@@ -54,27 +55,22 @@ interface WatField {
   readonly storage: string;
 }
 
-interface WatReadExpectation {
-  readonly body: string;
-  readonly fieldIndex: number;
-}
-
 interface WatRegistrationExpectation {
   readonly declarationOrdinal: number;
-  readonly typeIndex?: number;
-  readonly allocationBodies: readonly string[];
-  readonly reads: readonly WatReadExpectation[];
 }
 
-interface WatAllocation {
-  readonly body: string;
-  readonly typeIndex: number;
+type OptimizationArm = "unoptimized" | "optimized";
+
+interface FinalBinaryFunctionExpectation {
+  readonly exportName: string;
+  readonly allocationCount: number;
+  readonly readFields: readonly number[];
+  readonly calls?: readonly string[];
 }
 
-interface WatRead {
-  readonly body: string;
-  readonly typeIndex: number;
-  readonly fieldIndex: number;
+interface FinalBinaryStructExpectation {
+  readonly storage: readonly string[];
+  readonly functions: readonly FinalBinaryFunctionExpectation[];
 }
 
 interface RuntimeExpectation {
@@ -99,6 +95,9 @@ interface Fixture {
   readonly watFields: readonly WatField[];
   readonly standaloneWatFields?: readonly WatField[];
   readonly watRegistrationByTarget: Readonly<Partial<Record<Target, WatRegistrationExpectation>>>;
+  readonly finalBinaryByTarget?: Readonly<
+    Partial<Record<Target, Readonly<Partial<Record<OptimizationArm, FinalBinaryStructExpectation>>>>>
+  >;
   readonly hostFields: readonly string[];
   readonly runtime: readonly RuntimeExpectation[];
   readonly outcomes: readonly OutcomeExpectation[];
@@ -141,13 +140,21 @@ interface WatProjection {
   readonly registration: string;
   readonly registrationName: string;
   readonly declarationOrdinal: number;
-  readonly registrationIndex?: number;
-  readonly allocations: readonly WatAllocation[];
-  readonly reads: readonly WatRead[];
-  readonly body?: string;
-  readonly reference?: string;
-  readonly bodyText?: string;
-  readonly readLinked: boolean;
+}
+
+interface FinalBinaryFunctionProjection {
+  readonly exportName: string;
+  readonly functionSymbol: string;
+  readonly allocationCount: number;
+  readonly readFields: readonly number[];
+  readonly calls: readonly string[];
+}
+
+interface FinalBinaryProjection {
+  readonly sha256: string;
+  readonly typeSymbol: string;
+  readonly storage: readonly string[];
+  readonly functions: readonly FinalBinaryFunctionProjection[];
 }
 
 interface ArtifactProjection {
@@ -160,6 +167,7 @@ interface ArtifactProjection {
   readonly imports: readonly string[];
   readonly exports: readonly string[];
   readonly wat: WatProjection;
+  readonly finalBinary?: FinalBinaryProjection;
   readonly binaryHash: string;
   readonly runtime: readonly RuntimeExpectation[];
 }
@@ -208,13 +216,15 @@ function parityDetails(
   };
 }
 
-function watRegistration(
-  declarationOrdinal: number,
-  typeIndex: number | undefined,
-  allocationBodies: readonly string[],
-  reads: readonly WatReadExpectation[],
-): WatRegistrationExpectation {
-  return { declarationOrdinal, typeIndex, allocationBodies, reads };
+function watRegistration(declarationOrdinal: number): WatRegistrationExpectation {
+  return { declarationOrdinal };
+}
+
+function finalBinaryStruct(
+  storage: readonly string[],
+  functions: readonly FinalBinaryFunctionExpectation[],
+): FinalBinaryStructExpectation {
+  return { storage, functions };
 }
 
 const DATA_STRUCT_BRIDGE_TAIL = [
@@ -262,28 +272,46 @@ const FIXTURES: readonly Fixture[] = [
       { name: "y", storage: "f64" },
     ],
     watRegistrationByTarget: {
-      gc: watRegistration(
-        12,
-        15,
-        ["run"],
-        [
-          { body: "run", fieldIndex: 0 },
-          { body: "run", fieldIndex: 0 },
-          { body: "run", fieldIndex: 1 },
-          { body: "run", fieldIndex: 1 },
-        ],
-      ),
-      standalone: watRegistration(
-        83,
-        123,
-        ["run"],
-        [
-          { body: "run", fieldIndex: 0 },
-          { body: "run", fieldIndex: 0 },
-          { body: "run", fieldIndex: 1 },
-          { body: "run", fieldIndex: 1 },
-        ],
-      ),
+      gc: watRegistration(12),
+      standalone: watRegistration(83),
+    },
+    finalBinaryByTarget: {
+      gc: {
+        unoptimized: finalBinaryStruct(
+          ["f64", "f64"],
+          [
+            { exportName: "createPoint", allocationCount: 0, readFields: [] },
+            { exportName: "distance", allocationCount: 0, readFields: [] },
+            { exportName: "run", allocationCount: 1, readFields: [0, 0, 1, 1] },
+          ],
+        ),
+        optimized: finalBinaryStruct(
+          ["f64", "f64"],
+          [
+            { exportName: "createPoint", allocationCount: 0, readFields: [] },
+            { exportName: "distance", allocationCount: 0, readFields: [] },
+            { exportName: "run", allocationCount: 0, readFields: [] },
+          ],
+        ),
+      },
+      standalone: {
+        unoptimized: finalBinaryStruct(
+          ["f64", "f64"],
+          [
+            { exportName: "createPoint", allocationCount: 0, readFields: [] },
+            { exportName: "distance", allocationCount: 0, readFields: [] },
+            { exportName: "run", allocationCount: 1, readFields: [0, 0, 1, 1] },
+          ],
+        ),
+        optimized: finalBinaryStruct(
+          ["f64", "f64"],
+          [
+            { exportName: "createPoint", allocationCount: 0, readFields: [] },
+            { exportName: "distance", allocationCount: 0, readFields: [] },
+            { exportName: "run", allocationCount: 0, readFields: [] },
+          ],
+        ),
+      },
     },
     hostFields: ["x", "y"],
     runtime: [{ name: "run", args: [], value: 25 }],
@@ -343,8 +371,8 @@ const FIXTURES: readonly Fixture[] = [
       { name: "name", storage: "(ref null 6)" },
     ],
     watRegistrationByTarget: {
-      gc: watRegistration(13, undefined, [], []),
-      standalone: watRegistration(83, undefined, [], []),
+      gc: watRegistration(13),
+      standalone: watRegistration(83),
     },
     hostFields: ["name", "age"],
     runtime: [{ name: "run", args: [], value: 30 }],
@@ -411,8 +439,8 @@ const FIXTURES: readonly Fixture[] = [
       { name: "y", storage: "f64" },
     ],
     watRegistrationByTarget: {
-      gc: watRegistration(7, undefined, [], []),
-      standalone: watRegistration(84, undefined, [], []),
+      gc: watRegistration(7),
+      standalone: watRegistration(84),
     },
     hostFields: ["x", "y"],
     runtime: [
@@ -620,7 +648,6 @@ function inspectWat(
   fixture: Fixture,
   target: Target,
   wat: string,
-  emittedBodies: readonly string[],
   registrationExpectation = expectedWatRegistration(fixture, target),
 ): WatProjection {
   const fields = expectedWatFields(fixture, target);
@@ -638,63 +665,441 @@ function inspectWat(
   expect(registration.ordinal, `typed-struct declaration ordinal for ${fixture.id}/${target}`).toBe(
     registrationExpectation.declarationOrdinal,
   );
-  const namedBodies = emittedBodies.map((name) => {
-    const text = extractFuncBody(wat, name);
-    if (!text) throw new Error(`missing named WAT body ${name} for ${fixture.id}/${target}`);
-    return { name, text };
-  });
-  // Binaryen's debug text may omit inline function-type declarations, so the
-  // declaration ordinal is not a canonical numeric type index. The final
-  // emitted body's `(ref null N)` is the raw-WAT bridge from this exact
-  // registered struct use to the numeric struct.new/struct.get instructions.
-  const registrationIndices = [
-    ...new Set(
-      namedBodies.flatMap((body) =>
-        [...body.text.matchAll(/\(ref\s+null\s+(\d+)\)/g)].map((match) => Number(match[1])),
-      ),
-    ),
-  ];
-  if (namedBodies.length > 0) {
-    expect(registrationIndices, `raw WAT registration index for ${fixture.id}/${target}`).toHaveLength(1);
-  }
-  const registrationIndex = registrationIndices[0];
-  if (registrationExpectation.typeIndex !== undefined) {
-    expect(registrationIndex, `exact raw WAT registration index for ${fixture.id}/${target}`).toBe(
-      registrationExpectation.typeIndex,
-    );
-  }
-  const allocations: WatAllocation[] = [];
-  const reads: WatRead[] = [];
-  if (registrationIndex !== undefined) {
-    for (const body of namedBodies) {
-      for (const match of body.text.matchAll(/struct\.new\s+(\d+)/g)) {
-        const typeIndex = Number(match[1]);
-        if (typeIndex === registrationIndex) allocations.push({ body: body.name, typeIndex });
-      }
-      for (const match of body.text.matchAll(/struct\.get\s+(\d+)\s+(\d+)/g)) {
-        const typeIndex = Number(match[1]);
-        if (typeIndex === registrationIndex) {
-          reads.push({ body: body.name, typeIndex, fieldIndex: Number(match[2]) });
-        }
-      }
-    }
-  }
-  const linkedBody = namedBodies.find(
-    (body) =>
-      allocations.some((allocation) => allocation.body === body.name) && reads.some((read) => read.body === body.name),
-  );
-  const reference = linkedBody ? String(registrationIndex) : undefined;
   return {
     fields,
     registration: registration.text,
     registrationName: registration.name,
     declarationOrdinal: registration.ordinal,
-    ...(registrationIndex === undefined ? {} : { registrationIndex }),
-    allocations,
-    reads,
-    ...(linkedBody === undefined ? {} : { body: linkedBody.name, reference, bodyText: linkedBody.text }),
-    readLinked: linkedBody !== undefined,
   };
+}
+
+type BinaryenWatNode = string | readonly BinaryenWatNode[];
+type BinaryenWatList = readonly BinaryenWatNode[];
+
+interface BinaryenDisassembly {
+  readonly sha256: string;
+  readonly wat: string;
+}
+
+interface FinalBinaryTypeIdentity {
+  readonly typeSymbol: string;
+  readonly storage: readonly string[];
+}
+
+interface ResolvedFinalBinaryFunction {
+  readonly exportName: string;
+  readonly functionSymbol: string;
+  readonly body: BinaryenWatList;
+}
+
+const FINAL_BINARY_DISASSEMBLY_BY_SHA = new Map<string, BinaryenDisassembly>();
+
+function isBinaryenWatList(node: BinaryenWatNode): node is BinaryenWatList {
+  return Array.isArray(node);
+}
+
+function binaryenWatHead(node: BinaryenWatNode): string | undefined {
+  return isBinaryenWatList(node) && typeof node[0] === "string" ? node[0] : undefined;
+}
+
+function requireBinaryenWatAtom(node: BinaryenWatNode | undefined, context: string): string {
+  if (typeof node !== "string") throw new Error(`missing exact Binaryen WAT atom for ${context}`);
+  return node;
+}
+
+function tokenizeBinaryenWat(wat: string): readonly string[] {
+  const tokens: string[] = [];
+  let index = 0;
+  while (index < wat.length) {
+    const current = wat[index]!;
+    if (/\s/u.test(current)) {
+      index++;
+      continue;
+    }
+    if (current === ";" && wat[index + 1] === ";") {
+      index += 2;
+      while (index < wat.length && wat[index] !== "\n") index++;
+      continue;
+    }
+    if (current === "(" && wat[index + 1] === ";") {
+      index += 2;
+      let depth = 1;
+      while (index < wat.length && depth > 0) {
+        if (wat[index] === "(" && wat[index + 1] === ";") {
+          depth++;
+          index += 2;
+        } else if (wat[index] === ";" && wat[index + 1] === ")") {
+          depth--;
+          index += 2;
+        } else {
+          index++;
+        }
+      }
+      if (depth !== 0) throw new Error("unterminated Binaryen WAT block comment");
+      continue;
+    }
+    if (current === "(" || current === ")") {
+      tokens.push(current);
+      index++;
+      continue;
+    }
+    if (current === '"') {
+      const start = index++;
+      let closed = false;
+      while (index < wat.length) {
+        if (wat[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (wat[index++] === '"') {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) throw new Error("unterminated Binaryen WAT string");
+      tokens.push(wat.slice(start, index));
+      continue;
+    }
+    const start = index;
+    while (index < wat.length) {
+      const next = wat[index]!;
+      if (/\s/u.test(next) || next === "(" || next === ")" || (next === ";" && wat[index + 1] === ";")) break;
+      index++;
+    }
+    if (start === index) throw new Error(`invalid Binaryen WAT token at offset ${index}`);
+    tokens.push(wat.slice(start, index));
+  }
+  return tokens;
+}
+
+function parseBinaryenWatExpression(wat: string): BinaryenWatList {
+  const tokens = tokenizeBinaryenWat(wat);
+  let index = 0;
+  const parseNode = (): BinaryenWatNode => {
+    const token = tokens[index++];
+    if (token === undefined) throw new Error("unexpected end of Binaryen WAT");
+    if (token === ")") throw new Error("unexpected Binaryen WAT closing parenthesis");
+    if (token !== "(") return token;
+    const nodes: BinaryenWatNode[] = [];
+    while (tokens[index] !== ")") {
+      if (tokens[index] === undefined) throw new Error("unterminated Binaryen WAT expression");
+      nodes.push(parseNode());
+    }
+    index++;
+    return nodes;
+  };
+  const roots: BinaryenWatNode[] = [];
+  while (index < tokens.length) roots.push(parseNode());
+  if (roots.length !== 1 || !isBinaryenWatList(roots[0])) {
+    throw new Error("expected one Binaryen WAT expression");
+  }
+  return roots[0];
+}
+
+function renderBinaryenWat(node: BinaryenWatNode): string {
+  return typeof node === "string" ? node : `(${node.map(renderBinaryenWat).join(" ")})`;
+}
+
+interface BinaryenTextForm {
+  readonly head: string;
+  readonly text: string;
+}
+
+function skipBinaryenWatTrivia(wat: string, start: number): number {
+  let index = start;
+  while (index < wat.length) {
+    if (/\s/u.test(wat[index]!)) {
+      index++;
+      continue;
+    }
+    if (wat[index] === ";" && wat[index + 1] === ";") {
+      index += 2;
+      while (index < wat.length && wat[index] !== "\n") index++;
+      continue;
+    }
+    if (wat[index] === "(" && wat[index + 1] === ";") {
+      index += 2;
+      let depth = 1;
+      while (index < wat.length && depth > 0) {
+        if (wat[index] === "(" && wat[index + 1] === ";") {
+          depth++;
+          index += 2;
+        } else if (wat[index] === ";" && wat[index + 1] === ")") {
+          depth--;
+          index += 2;
+        } else {
+          index++;
+        }
+      }
+      if (depth !== 0) throw new Error("unterminated Binaryen WAT block comment");
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+function readBinaryenWatAtom(wat: string, start: number): { readonly atom: string; readonly end: number } {
+  const index = skipBinaryenWatTrivia(wat, start);
+  if (wat[index] === undefined || wat[index] === "(" || wat[index] === ")") {
+    throw new Error(`expected Binaryen WAT atom at offset ${index}`);
+  }
+  if (wat[index] === '"') {
+    const stringStart = index;
+    let cursor = index + 1;
+    while (cursor < wat.length) {
+      if (wat[cursor] === "\\") {
+        cursor += 2;
+      } else if (wat[cursor++] === '"') {
+        return { atom: wat.slice(stringStart, cursor), end: cursor };
+      }
+    }
+    throw new Error("unterminated Binaryen WAT string");
+  }
+  let cursor = index;
+  while (cursor < wat.length) {
+    const current = wat[cursor]!;
+    if (/\s/u.test(current) || current === "(" || current === ")" || (current === ";" && wat[cursor + 1] === ";")) {
+      break;
+    }
+    cursor++;
+  }
+  if (cursor === index) throw new Error(`invalid Binaryen WAT atom at offset ${index}`);
+  return { atom: wat.slice(index, cursor), end: cursor };
+}
+
+function scanBinaryenWatExpressionEnd(wat: string, start: number): number {
+  if (wat[start] !== "(") throw new Error(`expected Binaryen WAT expression at offset ${start}`);
+  let depth = 0;
+  let index = start;
+  while (index < wat.length) {
+    if (wat[index] === '"') {
+      index = readBinaryenWatAtom(wat, index).end;
+      continue;
+    }
+    if (wat[index] === ";" && wat[index + 1] === ";") {
+      index = skipBinaryenWatTrivia(wat, index);
+      continue;
+    }
+    if (wat[index] === "(" && wat[index + 1] === ";") {
+      index = skipBinaryenWatTrivia(wat, index);
+      continue;
+    }
+    if (wat[index] === "(") depth++;
+    else if (wat[index] === ")" && --depth === 0) return index + 1;
+    index++;
+  }
+  throw new Error("unterminated Binaryen WAT expression");
+}
+
+function topLevelBinaryenForms(wat: string): readonly BinaryenTextForm[] {
+  const moduleStart = skipBinaryenWatTrivia(wat, 0);
+  if (wat[moduleStart] !== "(") throw new Error("missing Binaryen WAT module");
+  const moduleHead = readBinaryenWatAtom(wat, moduleStart + 1);
+  if (moduleHead.atom !== "module") throw new Error("expected Binaryen WAT module");
+  const moduleEnd = scanBinaryenWatExpressionEnd(wat, moduleStart);
+  if (skipBinaryenWatTrivia(wat, moduleEnd) !== wat.length) throw new Error("trailing Binaryen WAT content");
+  const forms: BinaryenTextForm[] = [];
+  let index = moduleHead.end;
+  while (true) {
+    index = skipBinaryenWatTrivia(wat, index);
+    if (index === moduleEnd - 1) return forms;
+    if (index >= moduleEnd || wat[index] !== "(")
+      throw new Error(`invalid Binaryen WAT module form at offset ${index}`);
+    const head = readBinaryenWatAtom(wat, index + 1);
+    const end = scanBinaryenWatExpressionEnd(wat, index);
+    forms.push({ head: head.atom, text: wat.slice(index, end) });
+    index = end;
+  }
+}
+
+function directBinaryenTextForms(disassembly: BinaryenDisassembly, head: string): readonly BinaryenTextForm[] {
+  return topLevelBinaryenForms(disassembly.wat).filter((form) => form.head === head);
+}
+
+function binaryenTextFormSymbol(form: BinaryenTextForm): string | undefined {
+  const head = readBinaryenWatAtom(form.text, 1);
+  if (head.atom !== form.head) throw new Error(`mismatched Binaryen WAT form head ${form.head}`);
+  const symbolStart = skipBinaryenWatTrivia(form.text, head.end);
+  if (form.text[symbolStart] === "(") return undefined;
+  return readBinaryenWatAtom(form.text, symbolStart).atom;
+}
+
+function exactlyOne<T>(values: readonly T[], description: string): T {
+  if (values.length !== 1) throw new Error(`expected exactly one ${description}, received ${values.length}`);
+  return values[0]!;
+}
+
+function sameOrderedStorage(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((storage, index) => storage === right[index]);
+}
+
+function mutableStructStorage(type: BinaryenWatList): readonly string[] | undefined {
+  if (binaryenWatHead(type) !== "type" || type.length !== 3 || !isBinaryenWatList(type[2])) return undefined;
+  const struct = type[2];
+  if (binaryenWatHead(struct) !== "struct") return undefined;
+  const storage: string[] = [];
+  for (const field of struct.slice(1)) {
+    if (!isBinaryenWatList(field) || binaryenWatHead(field) !== "field" || field.length < 2) return undefined;
+    const mutable = field[field.length - 1];
+    if (!isBinaryenWatList(mutable) || binaryenWatHead(mutable) !== "mut" || mutable.length !== 2) return undefined;
+    storage.push(renderBinaryenWat(mutable[1]!));
+  }
+  return storage;
+}
+
+function resolveFinalBinaryType(
+  disassembly: BinaryenDisassembly,
+  expectedStorage: readonly string[],
+): FinalBinaryTypeIdentity {
+  const matches = directBinaryenTextForms(disassembly, "type")
+    .map((form) => {
+      const type = parseBinaryenWatExpression(form.text);
+      const typeSymbol = requireBinaryenWatAtom(type[1], "struct type identity");
+      const storage = mutableStructStorage(type);
+      return storage !== undefined && sameOrderedStorage(storage, expectedStorage)
+        ? { typeSymbol, storage }
+        : undefined;
+    })
+    .filter((candidate): candidate is FinalBinaryTypeIdentity => candidate !== undefined);
+  return exactlyOne(matches, `final Binaryen struct with mutable layout ${expectedStorage.join(",")}`);
+}
+
+function resolveFinalBinaryFunction(disassembly: BinaryenDisassembly, exportName: string): ResolvedFinalBinaryFunction {
+  const exportForm = exactlyOne(
+    directBinaryenTextForms(disassembly, "export").filter((form) => {
+      const parsed = parseBinaryenWatExpression(form.text);
+      return parsed[1] === JSON.stringify(exportName);
+    }),
+    `final Binaryen export ${JSON.stringify(exportName)}`,
+  );
+  const parsedExport = parseBinaryenWatExpression(exportForm.text);
+  const descriptor = parsedExport[2];
+  if (!isBinaryenWatList(descriptor) || binaryenWatHead(descriptor) !== "func") {
+    throw new Error(`final Binaryen export ${exportName} is not a function`);
+  }
+  const functionSymbol = requireBinaryenWatAtom(descriptor[1], `exported function ${exportName}`);
+  const bodyForm = exactlyOne(
+    directBinaryenTextForms(disassembly, "func").filter((form) => binaryenTextFormSymbol(form) === functionSymbol),
+    `final Binaryen function ${functionSymbol} for export ${exportName}`,
+  );
+  const body = parseBinaryenWatExpression(bodyForm.text);
+  return { exportName, functionSymbol, body };
+}
+
+function censusFinalBinaryTypeUse(
+  body: BinaryenWatList,
+  typeSymbol: string,
+): Pick<FinalBinaryFunctionProjection, "allocationCount" | "readFields" | "calls"> {
+  let allocationCount = 0;
+  const readFields: number[] = [];
+  const calls: string[] = [];
+  const visit = (node: BinaryenWatNode): void => {
+    if (!isBinaryenWatList(node)) return;
+    if (binaryenWatHead(node) === "struct.new" && node[1] === typeSymbol) allocationCount++;
+    if (binaryenWatHead(node) === "struct.get" && node[1] === typeSymbol) {
+      const fieldIndex = requireBinaryenWatAtom(node[2], `struct.get field for ${typeSymbol}`);
+      if (!/^(?:0|[1-9]\d*)$/u.test(fieldIndex)) {
+        throw new Error(`non-numeric final Binaryen struct.get field ${fieldIndex} for ${typeSymbol}`);
+      }
+      readFields.push(Number(fieldIndex));
+    }
+    if (binaryenWatHead(node) === "call") {
+      const target = requireBinaryenWatAtom(node[1], "direct final Binaryen call target");
+      if (target[0] !== "$" || target.length === 1) {
+        throw new Error(`invalid direct final Binaryen call target ${target}`);
+      }
+      calls.push(target);
+    }
+    for (const child of node) visit(child);
+  };
+  visit(body);
+  return { allocationCount, readFields, calls };
+}
+
+function inspectFinalBinaryDisassembly(
+  disassembly: BinaryenDisassembly,
+  expected: FinalBinaryStructExpectation,
+  fixtureExportNames: readonly string[],
+): FinalBinaryProjection {
+  const type = resolveFinalBinaryType(disassembly, expected.storage);
+  const exportNames = expected.functions.map((entry) => entry.exportName);
+  if (new Set(exportNames).size !== exportNames.length) throw new Error("duplicate final Binaryen export expectation");
+  if (new Set(fixtureExportNames).size !== fixtureExportNames.length) throw new Error("duplicate fixture export name");
+  if (exportNames.some((name) => !fixtureExportNames.includes(name))) {
+    throw new Error("final Binaryen expectation names a non-fixture export");
+  }
+  if (exportNames.length !== fixtureExportNames.length) {
+    throw new Error("final Binaryen expectation must freeze every fixture export");
+  }
+  const expectedByExport = new Map(expected.functions.map((entry) => [entry.exportName, entry]));
+  const functions: FinalBinaryFunctionProjection[] = [];
+  for (const exportName of fixtureExportNames) {
+    const resolved = resolveFinalBinaryFunction(disassembly, exportName);
+    const observed = {
+      exportName,
+      functionSymbol: resolved.functionSymbol,
+      ...censusFinalBinaryTypeUse(resolved.body, type.typeSymbol),
+    };
+    const expectedFunction = expectedByExport.get(exportName);
+    if (!expectedFunction) {
+      if (observed.allocationCount !== 0 || observed.readFields.length !== 0) {
+        throw new Error(`unfrozen exact final Binaryen type use in export ${exportName}`);
+      }
+      continue;
+    }
+    functions.push(observed);
+  }
+  if (new Set(functions.map((entry) => entry.functionSymbol)).size !== functions.length) {
+    throw new Error("duplicate final Binaryen function identity for exact exports");
+  }
+  return { sha256: disassembly.sha256, typeSymbol: type.typeSymbol, storage: type.storage, functions };
+}
+
+function disassembleFinalBinary(binary: Uint8Array): BinaryenDisassembly {
+  const sha256 = createHash("sha256").update(binary).digest("hex");
+  const cached = FINAL_BINARY_DISASSEMBLY_BY_SHA.get(sha256);
+  if (cached) return cached;
+  const module = binaryen.readBinary(binary);
+  try {
+    const disassembly = { sha256, wat: module.emitText() };
+    FINAL_BINARY_DISASSEMBLY_BY_SHA.set(sha256, disassembly);
+    return disassembly;
+  } finally {
+    module.dispose();
+  }
+}
+
+function inspectFinalBinary(
+  binary: Uint8Array,
+  expected: FinalBinaryStructExpectation,
+  fixtureExportNames: readonly string[],
+): FinalBinaryProjection {
+  return inspectFinalBinaryDisassembly(disassembleFinalBinary(binary), expected, fixtureExportNames);
+}
+
+function inspectFinalBinaryText(
+  wat: string,
+  expected: FinalBinaryStructExpectation,
+  fixtureExportNames: readonly string[],
+): FinalBinaryProjection {
+  return inspectFinalBinaryDisassembly(
+    { sha256: createHash("sha256").update(wat).digest("hex"), wat },
+    expected,
+    fixtureExportNames,
+  );
+}
+
+function optimizationArm(optimize: boolean): OptimizationArm {
+  return optimize ? "optimized" : "unoptimized";
+}
+
+function expectedFinalBinary(
+  fixture: Fixture,
+  target: Target,
+  optimize: boolean,
+): FinalBinaryStructExpectation | undefined {
+  return fixture.finalBinaryByTarget?.[target]?.[optimizationArm(optimize)];
 }
 
 function normalizeOutcome(outcome: IrObservedOutcome): OutcomeProjection {
@@ -755,50 +1160,62 @@ function expectedPostClaimErrors(fixture: Fixture, target: Target): ArtifactProj
 }
 
 function assertExactWatProjection(fixture: Fixture, target: Target, wat: WatProjection): void {
+  // Custom WAT corroborates source field names only. Its declaration ordinals
+  // and numeric operands are not authoritative after final binary layout.
   expect(wat.fields).toEqual(expectedWatFields(fixture, target));
   for (const field of wat.fields) {
     expect(wat.registration).toContain(`(field $${field.name} (mut ${field.storage}))`);
   }
   const registration = expectedWatRegistration(fixture, target);
   expect(wat.declarationOrdinal).toBe(registration.declarationOrdinal);
-  const requiresRegistrationIndex = registration.allocationBodies.length > 0 || registration.reads.length > 0;
-  if (requiresRegistrationIndex) {
-    if (wat.registrationIndex === undefined || registration.typeIndex === undefined) {
-      throw new Error(`missing raw WAT registration index for ${fixture.id}/${target}`);
-    }
-    expect(wat.registrationIndex).toBe(registration.typeIndex);
-    expect(wat.allocations).toEqual(
-      registration.allocationBodies.map((body) => ({ body, typeIndex: wat.registrationIndex! })),
-    );
-    expect(wat.reads).toEqual(registration.reads.map((read) => ({ ...read, typeIndex: wat.registrationIndex! })));
-  } else {
-    expect(wat.registrationIndex).toBeUndefined();
-    expect(wat.allocations).toEqual([]);
-    expect(wat.reads).toEqual([]);
+  expect(wat.registrationName).toMatch(/^\$/u);
+}
+
+function assertExactFinalBinaryProjection(
+  fixture: Fixture,
+  target: Target,
+  optimize: boolean,
+  projection: ArtifactProjection,
+): void {
+  const expected = expectedFinalBinary(fixture, target, optimize);
+  if (!expected) {
+    expect(projection.finalBinary).toBeUndefined();
+    return;
   }
-  const linkedBody = registration.allocationBodies.find((body) =>
-    registration.reads.some((read) => read.body === body),
+  if (!projection.finalBinary) throw new Error(`missing final Binaryen projection for ${fixture.id}/${target}`);
+  expect(projection.finalBinary.sha256).toBe(projection.binaryHash);
+  expect(projection.finalBinary.typeSymbol).toMatch(/^\$/u);
+  expect(projection.finalBinary.storage).toEqual(expected.storage);
+  expect(
+    projection.finalBinary.functions.map(({ exportName, allocationCount, readFields }) => ({
+      exportName,
+      allocationCount,
+      readFields,
+    })),
+  ).toEqual(
+    expected.functions.map(({ exportName, allocationCount, readFields }) => ({
+      exportName,
+      allocationCount,
+      readFields,
+    })),
   );
-  expect(wat.readLinked).toBe(linkedBody !== undefined);
-  if (linkedBody !== undefined) {
-    if (!wat.body || !wat.reference || !wat.bodyText || wat.registrationIndex === undefined) {
-      throw new Error(`missing linked source body for ${fixture.id}/${target}`);
-    }
-    expect(wat.body).toBe(linkedBody);
-    expect(wat.reference).toBe(String(wat.registrationIndex));
-    expect(wat.bodyText).toContain(`struct.new ${wat.registrationIndex}`);
-    expect(wat.bodyText).not.toMatch(/call\s+\$__box_number(?:_import)?/);
-    expect(wat.bodyText).not.toMatch(/call\s+\$__unbox_number(?:_import)?/);
-  } else {
-    expect(wat.body).toBeUndefined();
-    expect(wat.reference).toBeUndefined();
-    expect(wat.bodyText).toBeUndefined();
+  for (const expectedFunction of expected.functions) {
+    if (expectedFunction.calls === undefined) continue;
+    const observed = exactlyOne(
+      projection.finalBinary.functions.filter((entry) => entry.exportName === expectedFunction.exportName),
+      `final Binaryen projection for export ${expectedFunction.exportName}`,
+    );
+    expect(observed.calls).toEqual(expectedFunction.calls);
   }
+  expect(new Set(projection.finalBinary.functions.map((entry) => entry.functionSymbol)).size).toBe(
+    projection.finalBinary.functions.length,
+  );
 }
 
 function assertExactProjection(
   fixture: Fixture,
   target: Target,
+  optimize: boolean,
   staticProjection: StaticFixtureProjection,
   projection: ArtifactProjection,
   baseline?: ArtifactProjection,
@@ -813,11 +1230,13 @@ function assertExactProjection(
   expect(projection.exports).toEqual(expectedExports(fixture, target));
   assertExactWatProjection(fixture, target, projection.wat);
   expect(projection.binaryHash).toMatch(/^[a-f0-9]{64}$/);
+  assertExactFinalBinaryProjection(fixture, target, optimize, projection);
   expect(projection.runtime).toEqual(fixture.runtime);
   if (baseline) {
     expect(projection.outcomes).toEqual(baseline.outcomes);
     expect(projection.postClaimErrors).toEqual(baseline.postClaimErrors);
     expect(projection.wat).toEqual(baseline.wat);
+    expect(projection.finalBinary).toEqual(baseline.finalBinary);
     expect(projection.binaryHash).toBe(baseline.binaryHash);
   }
 }
@@ -840,6 +1259,8 @@ async function observeFixture(fixture: Fixture, target: Target, optimize: boolea
     expect(fn, `runtime export ${expected.name}`).toBeTypeOf("function");
     return { ...expected, value: fn!(...expected.args) };
   });
+  const finalBinaryExpectation = expectedFinalBinary(fixture, target, optimize);
+  const binaryHash = createHash("sha256").update(result.binary).digest("hex");
   const projection: ArtifactProjection = {
     typeRows: staticProjection.typeRows,
     selection: staticProjection.selection,
@@ -849,11 +1270,14 @@ async function observeFixture(fixture: Fixture, target: Target, optimize: boolea
     postClaimErrors: result.irPostClaimErrors ?? [],
     imports: result.imports.map((entry) => `${entry.module}::${entry.name}`).sort(),
     exports: WebAssembly.Module.exports(new WebAssembly.Module(result.binary)).map((entry) => entry.name),
-    wat: inspectWat(fixture, target, result.wat, [...(result.irCompiledFuncs ?? [])]),
-    binaryHash: createHash("sha256").update(result.binary).digest("hex"),
+    wat: inspectWat(fixture, target, result.wat),
+    ...(finalBinaryExpectation === undefined
+      ? {}
+      : { finalBinary: inspectFinalBinary(result.binary, finalBinaryExpectation, fixture.names) }),
+    binaryHash,
     runtime,
   };
-  assertExactProjection(fixture, target, staticProjection, projection);
+  assertExactProjection(fixture, target, optimize, staticProjection, projection);
   return projection;
 }
 
@@ -870,7 +1294,7 @@ describe("#1231 unconditional object-literal facts", () => {
               continue;
             }
             const staticProjection = inspectStaticFixture(fixture);
-            assertExactProjection(fixture, target, staticProjection, projection, baseline);
+            assertExactProjection(fixture, target, optimize, staticProjection, projection, baseline);
             expect(projection).toEqual(baseline);
           }
         }
@@ -895,21 +1319,19 @@ describe("#1231 unconditional object-literal facts", () => {
       outcomes: names.map((name) => ({ name, kind: "emitted" })),
       emitted: names,
       watRegistrationByTarget: {
-        standalone: watRegistration(
-          31,
-          41,
-          ["createPoint", "run"],
-          [
-            { body: "distance", fieldIndex: 0 },
-            { body: "distance", fieldIndex: 0 },
-            { body: "distance", fieldIndex: 1 },
-            { body: "distance", fieldIndex: 1 },
-            { body: "run", fieldIndex: 0 },
-            { body: "run", fieldIndex: 0 },
-            { body: "run", fieldIndex: 1 },
-            { body: "run", fieldIndex: 1 },
-          ],
-        ),
+        standalone: watRegistration(31),
+      },
+      finalBinaryByTarget: {
+        standalone: {
+          optimized: finalBinaryStruct(
+            ["f64", "f64"],
+            [
+              { exportName: "createPoint", allocationCount: 1, readFields: [], calls: [] },
+              { exportName: "distance", allocationCount: 0, readFields: [0, 1], calls: [] },
+              { exportName: "run", allocationCount: 0, readFields: [], calls: [] },
+            ],
+          ),
+        },
       },
     };
     const staticProjection = inspectStaticFixture(annotatedFixture);
@@ -929,9 +1351,21 @@ describe("#1231 unconditional object-literal facts", () => {
       expect((clean.irOutcomes ?? []).map(normalizeOutcome)).toEqual(
         expectedOutcomeRows(annotatedFixture, "standalone", staticProjection),
       );
-      const wat = inspectWat(annotatedFixture, "standalone", clean.wat, names);
+      const wat = inspectWat(annotatedFixture, "standalone", clean.wat);
       assertExactWatProjection(annotatedFixture, "standalone", wat);
-      expect(wat.registrationIndex).toBe(41);
+      const finalBinaryExpectation = expectedFinalBinary(annotatedFixture, "standalone", true);
+      if (!finalBinaryExpectation) throw new Error("missing annotated final Binaryen expectation");
+      const finalBinary = inspectFinalBinary(clean.binary, finalBinaryExpectation, names);
+      expect(finalBinary.typeSymbol).toBe("$0");
+      expect(finalBinary.storage).toEqual(["f64", "f64"]);
+      expect(
+        finalBinary.functions.map(({ exportName, allocationCount, readFields, calls }) => ({
+          exportName,
+          allocationCount,
+          readFields,
+          calls,
+        })),
+      ).toEqual(finalBinaryExpectation.functions);
       for (const name of names) {
         const body = extractFuncBody(clean.wat, name);
         if (!body) throw new Error(`annotated point is missing final WAT body ${name}`);
@@ -975,28 +1409,47 @@ describe("#1231 unconditional object-literal facts", () => {
     }
   }, 120_000);
 
-  it("keeps an unused exact WAT struct unlinked from an unrelated allocation/read pair", () => {
-    const fixture = FIXTURES[0]!;
-    const rawWat = `
+  it("keeps an unused exact Binaryen type unlinked from unrelated final-byte operations", () => {
+    const expected = finalBinaryStruct(
+      ["f64", "f64"],
+      [{ exportName: "run", allocationCount: 0, readFields: [], calls: [] }],
+    );
+    const disassembly = `
       (module
-        (type $unrelated (struct (field $value (mut f64))))
-        (type $exact_point (struct (field $x (mut f64)) (field $y (mut f64))))
-        (func $createPoint)
-        (func $distance)
-        (func $run (local $point (ref null 2))
-          f64.const 0
-          struct.new 1
-          struct.get 1 0
+        (type $0 (struct (field (mut f64)) (field (mut f64))))
+        (type $1 (struct (field (mut i32)) (field (mut i32))))
+        (export "run" (func $1))
+        (func $1 (local $value (ref null $1))
+          (drop
+            (struct.get $1 0
+              (struct.new $1
+                (i32.const 3)
+                (i32.const 4)
+              )
+            )
+          )
         )
       )
     `;
-    const wat = inspectWat(fixture, "gc", rawWat, ["run"], watRegistration(1, 2, [], []));
-    expect(wat.registrationName).toBe("$exact_point");
-    expect(wat.declarationOrdinal).toBe(1);
-    expect(wat.registrationIndex).toBe(2);
-    expect(wat.allocations).toEqual([]);
-    expect(wat.reads).toEqual([]);
-    expect(wat.readLinked).toBe(false);
+    const projection = inspectFinalBinaryText(disassembly, expected, ["run"]);
+    expect(projection.typeSymbol).toBe("$0");
+    expect(projection.functions).toEqual([
+      { exportName: "run", functionSymbol: "$1", allocationCount: 0, readFields: [], calls: [] },
+    ]);
+
+    const wrongUsedLayout = disassembly.replace(
+      "(type $1 (struct (field (mut i32)) (field (mut i32))))",
+      "(type $1 (struct (field (mut f64)) (field (mut i32))))",
+    );
+    expect(inspectFinalBinaryText(wrongUsedLayout, expected, ["run"]).functions).toEqual(projection.functions);
+
+    const collidingUsedLayout = disassembly.replace(
+      "(type $1 (struct (field (mut i32)) (field (mut i32))))",
+      "(type $1 (struct (field (mut f64)) (field (mut f64))))",
+    );
+    expect(() => inspectFinalBinaryText(collidingUsedLayout, expected, ["run"])).toThrow(
+      "expected exactly one final Binaryen struct",
+    );
   });
 
   it("rejects every independently-mutated exact projection", async () => {
@@ -1004,7 +1457,7 @@ describe("#1231 unconditional object-literal facts", () => {
     const staticProjection = inspectStaticFixture(fixture);
     const baseline = await withStaleValue(undefined, () => observeFixture(fixture, "gc", false));
     const assertBaseline = (candidate: ArtifactProjection) =>
-      assertExactProjection(fixture, "gc", staticProjection, candidate, baseline);
+      assertExactProjection(fixture, "gc", false, staticProjection, candidate, baseline);
     assertBaseline(baseline);
     const rejects = (label: string, mutate: (candidate: DeepMutable<ArtifactProjection>) => void): void => {
       const candidate = JSON.parse(JSON.stringify(baseline)) as DeepMutable<ArtifactProjection>;
@@ -1060,24 +1513,35 @@ describe("#1231 unconditional object-literal facts", () => {
     rejects("WAT declaration ordinal drift", (candidate) => {
       candidate.wat.declarationOrdinal++;
     });
-    rejects("WAT registration index drift", (candidate) => {
-      candidate.wat.registrationIndex = 999;
+    rejects("final Binaryen type identity drift", (candidate) => {
+      if (!candidate.finalBinary) throw new Error("missing final Binaryen baseline");
+      candidate.finalBinary.typeSymbol = "$foreign";
     });
-    rejects("WAT allocation census drift", (candidate) => {
-      candidate.wat.allocations[0]!.typeIndex = 999;
+    rejects("final Binaryen storage layout drift", (candidate) => {
+      if (!candidate.finalBinary) throw new Error("missing final Binaryen baseline");
+      candidate.finalBinary.storage[1] = "i32";
     });
-    rejects("WAT read-field census drift", (candidate) => {
-      candidate.wat.reads[0]!.fieldIndex = 999;
+    rejects("final Binaryen export-function identity drift", (candidate) => {
+      if (!candidate.finalBinary) throw new Error("missing final Binaryen baseline");
+      candidate.finalBinary.functions[0]!.functionSymbol = "$foreign";
     });
-    rejects("WAT body reassociation", (candidate) => {
-      candidate.wat.body = "distance";
-      candidate.wat.reference = "999";
+    rejects("final Binaryen allocation census drift", (candidate) => {
+      const run = candidate.finalBinary?.functions.find((entry) => entry.exportName === "run");
+      if (!run) throw new Error("missing final Binaryen run baseline");
+      run.allocationCount = 0;
     });
-    rejects("flipped linked WAT allocation/read state", (candidate) => {
-      candidate.wat.readLinked = false;
+    rejects("final Binaryen read-field census drift", (candidate) => {
+      const run = candidate.finalBinary?.functions.find((entry) => entry.exportName === "run");
+      if (!run) throw new Error("missing final Binaryen run baseline");
+      run.readFields[0] = 999;
     });
-    rejects("boxed WAT body", (candidate) => {
-      candidate.wat.bodyText = "struct.new 1 call $__box_number struct.get 1";
+    rejects("final Binaryen direct-call census drift", (candidate) => {
+      const run = candidate.finalBinary?.functions.find((entry) => entry.exportName === "run");
+      if (!run) throw new Error("missing final Binaryen run baseline");
+      run.calls.push("$foreign");
+    });
+    rejects("missing final Binaryen projection", (candidate) => {
+      candidate.finalBinary = undefined;
     });
     rejects("binary drift", (candidate) => {
       candidate.binaryHash = "0".repeat(64);
@@ -1085,26 +1549,6 @@ describe("#1231 unconditional object-literal facts", () => {
     rejects("runtime drift", (candidate) => {
       candidate.runtime[0].value = 999;
     });
-
-    const unlinkedFixture = FIXTURES.find((candidate) => candidate.id === "user");
-    if (!unlinkedFixture) throw new Error("missing standalone user registration control");
-    const unlinkedStaticProjection = inspectStaticFixture(unlinkedFixture);
-    const unlinkedBaseline = await withStaleValue(undefined, () =>
-      observeFixture(unlinkedFixture, "standalone", false),
-    );
-    const flippedUnlinkedState = JSON.parse(JSON.stringify(unlinkedBaseline)) as DeepMutable<ArtifactProjection>;
-    flippedUnlinkedState.wat.readLinked = true;
-    expect(
-      () =>
-        assertExactProjection(
-          unlinkedFixture,
-          "standalone",
-          unlinkedStaticProjection,
-          flippedUnlinkedState,
-          unlinkedBaseline,
-        ),
-      "flipped unlinked standalone registration state",
-    ).toThrow();
   }, 120_000);
 });
 

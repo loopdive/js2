@@ -1243,3 +1243,97 @@ identity inventory to prove the exact site, source, constructor declaration,
 and constructor unit. The positive admission succeeds while resolver absence,
 wrong site, wrong source, and the real `OtherBox` declaration/unit admission
 remain refused under both absent and stale-zero settings.
+
+### 2026-08-31 second Sol HOLD repair plan — authenticate the final binary type
+
+Fresh independent Sol review of exact pushed head
+`c2a4a74eb23d4f882bc393f9d3738574b14eb388` held the repaired WAT oracle on
+one remaining false-pass. `inspectWat` proves that a body-local `(ref null N)`,
+`struct.new N`, and `struct.get N` agree with each other, but it never proves
+that `N` denotes the separately matched exact field declaration. The raw
+mutation did not exercise the promised counterexample: its exact struct was
+type 1 and its `struct.new/get 1` therefore used that exact struct; only the
+local reference was changed to 2. An unused exact type 0 beside an unrelated
+type 1 whose body consistently uses `(ref null 1)`, `struct.new 1`, and
+`struct.get 1` can still pass the current label-by-assumption oracle.
+
+The second repair remains test-and-record only; production and the 15→14
+inventory stay byte-identical:
+
+1. Treat custom debug WAT declaration ordinals and numeric operands as a
+   diagnostic projection only. They are not the binary type-index authority:
+   the emitter can omit inline function-type declarations and the binary
+   layout can renumber the flat in-memory table.
+2. Disassemble the exact returned `CompileResult.binary` with the repository's
+   existing Binaryen dependency. In that final-byte disassembly, match exactly
+   one struct with the expected ordered mutable storage types, retain its
+   symbolic type identity, resolve the exact exported function symbols, and
+   census only `struct.new`/`struct.get` instructions that use that same
+   identity inside those function bodies. Field names remain corroborated by
+   the custom WAT declaration; storage layout and use linkage come from the
+   final binary.
+3. Freeze per-arm final-binary expectations instead of laundering optimizer
+   erasure into a WAT claim. The unoptimized point arms must retain the exact
+   allocation plus four exact field reads in `run`. Optimized arms may fold
+   that route to the runtime-equivalent constant but must still validate and
+   satisfy their exact frozen residual projection. The annotated standalone
+   positive remains optimized and must retain the exact final-binary
+   allocation in `createPoint`, the optimizer's exact two-read `[0, 1]`
+   projection in `distance`, no residual exact-struct operations in the folded
+   `run`, emitted outcome census, validation/instantiation, no box/unbox calls
+   in the relevant final bodies, and `run() === 25`.
+4. Replace the ineffective raw mutation with a Binaryen-style final-binary
+   disassembly containing unused exact type `$0` and unrelated type `$1`, with
+   the body consistently anchored to and operating on `$1`. Require the exact
+   type to remain unlinked. Add an independent wrong-field-layout mutation at
+   the used type so neither symbolic-name coincidence nor unrelated operations
+   can satisfy the oracle. Cache disassembly by binary SHA-256 so the four
+   stale-setting arms do not repeatedly parse identical bytes.
+
+Terra Max owns only `tests/issue-1231.test.ts` for this repair. It must not edit
+production, plans, stage, commit, or push. Root will inspect the exact diff,
+update this checkpoint with measured projections, rerun the strict-load
+validation and all unskipped hooks, and append a signed forward repair commit.
+That push invalidates the current review; a new independent Sol review must
+approve the exact remote SHA before draft PR #5352 can be marked ready.
+
+### 2026-08-31 second Sol HOLD repair checkpoint
+
+Terra Max implemented the second repair only in
+`tests/issue-1231.test.ts`; `src/ir/propagate.ts` and the 15→14 inventory remain
+byte-identical to the reviewed production change. The test now disassembles the
+exact returned binary with Binaryen, caches that disassembly by binary SHA-256,
+and selectively parses only the unique structural type, exact exports, and
+their referenced function bodies. Malformed strings, comments, parentheses,
+type layouts, export descriptors, duplicate identities, non-numeric field
+indices, and malformed direct-call targets all fail closed. The custom WAT
+projection now corroborates only source field names and declaration order; it
+no longer labels its debug numeric operands as final binary type indices.
+
+The measured final-binary projections are exact:
+
+- unoptimized generic Point, both GC and standalone: `createPoint` and
+  `distance` have no use of the exact `[f64, f64]` type; `run` has one exact
+  allocation and reads `[0, 0, 1, 1]`;
+- optimized generic Point, both targets: all three exported bodies have zero
+  residual uses after folding, while validation, binary identity, and runtime
+  remain frozen across all stale-setting arms;
+- optimized annotated standalone Point: exact type `$0` has mutable
+  `[f64, f64]` storage, `createPoint` has one allocation, `distance` has reads
+  `[0, 1]`, folded `run` has no residual exact-type operation, and all three
+  final bodies have an empty direct-call census. The binary validates and
+  instantiates, all three outcomes are emitted, and `run()` returns 25.
+
+The prior false-pass is now represented literally: a synthetic Binaryen-style
+module contains unused exact type `$0` and a consistently referenced/allocated/
+read unrelated type `$1`; the exact projection remains unlinked. A partially
+matching unrelated layout also remains unlinked, while a second exact layout
+is rejected as ambiguous. Independent projection mutations cover type identity,
+storage, export/function identity, allocation, read field, direct calls, and a
+missing final-binary record.
+
+The focused suite passes 12/12. Targeted Prettier, Biome, diff-check, the LOC
+ratchet, and the function-growth ratchet also pass under the strict 10-core
+finite/non-negative one-minute load limit below 8. Root still must sync current
+protected main, rerun the changed-root and full hooks, push normally, and obtain
+fresh Sol approval of that exact remote SHA before changing PR readiness.
