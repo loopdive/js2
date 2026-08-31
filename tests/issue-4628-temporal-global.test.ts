@@ -191,10 +191,6 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.classHasStatics.value).toBe("compare,from,length,name,prototype");
     expect(s.constructAndReadFields.value).toBe("2020/3/4");
     expect(s.aliasable.value).toBe("function");
-    // (#5223) Promoted out of knownGaps: the prototype `toString()` of a
-    // `new`-constructed provider instance dispatches, so the instance
-    // stringifies to its real ISO date instead of "[object Object]".
-    expect(s.instanceToString.value).toBe("2020-03-04");
 
     // (#5222) `Temporal.Now` is a namespace object nested one level inside
     // `Temporal`, so its methods cross the provider seam twice. On base the
@@ -205,6 +201,18 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.nowInstantIsFunction.value).toBe("function");
     expect(s.nowPlainDateISOIsFunction.value).toBe("function");
     expect(s.nowInstantCallable.value).toBe("object");
+    // (#5223) Promoted out of knownGaps: the prototype `toString()` of a
+    // `new`-constructed provider instance dispatches, so the instance
+    // stringifies to its real ISO date instead of "[object Object]".
+    expect(s.instanceToString.value).toBe("2020-03-04");
+    // (#5237) A prototype method dispatched with an explicit receiver. On base
+    // this THREW ("Cannot read properties of null") because the resolved bridge
+    // was bound to the prototype carrier and ignored `this`.
+    expect(s.protoMethodCall.value).toBe("2020-03-04");
+    // (#5237) The class-ctor mirror's `prototype` facade reported ZERO own
+    // keys — its Proxy target is a bare `Object.create(null)` and only
+    // `get`/`has` were trapped.
+    expect(s.protoMemberCount.value).toBe(31);
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the

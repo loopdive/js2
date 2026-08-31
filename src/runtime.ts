@@ -6707,6 +6707,9 @@ const _resolveClassMember = createClassMemberResolver({
     _isWasmStruct(value) || _fnctorInstanceCtor.has(value as object) || _userClassTags.has(value as object),
   getClassName: (value) => _userClassTags.get(value as object),
   marshalBridgeResult: _marshalBridgeResult,
+  // (#5237) No reader: the compiled bridges dispatch on the RAW carrier, so an
+  // explicit `this` that arrived as a host mirror must be stripped back to it.
+  unwrapReceiver: (value) => _unwrapForHost(value),
 });
 const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
@@ -8527,6 +8530,16 @@ function _makeClassCtorMirrorForHost(
         if (protoHost !== undefined && key in (protoHost as any)) return true;
         const pp = resolveParentProto();
         return pp != null ? key in (pp as any) : false;
+      },
+      // (#5237) Without this the facade reported ZERO own keys, because its
+      // target is a bare `Object.create(null)` and only `get`/`has` were
+      // trapped. `Object.getOwnPropertyNames(C.prototype)` therefore answered
+      // "" in a linked consumer while the identical single-module program
+      // answered the real member list. Own keys come from the wrapped
+      // prototype struct only — inherited members are not own keys, so the
+      // parent chain consulted by `get`/`has` is deliberately not merged in.
+      ownKeys() {
+        return protoHost !== undefined ? Reflect.ownKeys(protoHost as object) : [];
       },
     });
     try {
@@ -14058,6 +14071,7 @@ assert._isSameValue = isSameValue;
           const vecMutation = _tryWasmVecMutation(obj, method, args, exports);
           if (vecMutation.handled) return vecMutation.value;
 
+          // (#5237) Pass this module's callback state below to preserve provider-owned mirrors returned by methods.
           const fn = wrappedObj[method];
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
           // generic `method="from"` dispatch on `Array`. Drain Wasm-closure
@@ -14068,7 +14082,7 @@ assert._isSameValue = isSameValue;
             const drained = _drainWasmClosureIterable(callArgs[0], callbackState);
             if (drained !== null) callArgs[0] = drained;
             const ret = (Array.from as (...xs: any[]) => any).apply(wrappedObj, callArgs);
-            return ret === wrappedObj ? obj : _unwrapForHost(ret);
+            return ret === wrappedObj ? obj : _unwrapForHost(ret, callbackState);
           }
           if (typeof fn !== "function") {
             // Dynamic field reads expose WasmGC structs through a live host
@@ -14101,7 +14115,7 @@ assert._isSameValue = isSameValue;
               const resolved = _maybeWrapCallableUnknownArity(_unwrapForHost(rawMethod), callbackState);
               if (typeof resolved === "function") {
                 const ret = resolved.apply(obj, wrappedArgs);
-                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret, callbackState);
               }
             }
             // (#4149) Sibling case of the recovery above, and NOT covered by
@@ -14119,7 +14133,7 @@ assert._isSameValue = isSameValue;
               const resolved = _maybeWrapCallableUnknownArity(fn, callbackState);
               if (typeof resolved === "function") {
                 const ret = resolved.apply(wrappedObj, wrappedArgs);
-                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret, callbackState);
               }
             }
             // (#1712) Static method on a callable closure struct (function-style
@@ -14136,7 +14150,7 @@ assert._isSameValue = isSameValue;
               const resolved = _maybeWrapCallableUnknownArity(_safeGet(obj, method, callbackState), callbackState);
               if (typeof resolved === "function") {
                 const ret = resolved.apply(obj, wrappedArgs);
-                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret, callbackState);
               }
             }
             // (#2628) Prototype method on a `__construct_closure`-built instance.
@@ -14158,7 +14172,7 @@ assert._isSameValue = isSameValue;
                   : _maybeWrapCallableUnknownArity(protoDesc.value, callbackState);
                 if (typeof resolved === "function") {
                   const ret = resolved.apply(obj, wrappedArgs);
-                  return ret === obj ? obj : _unwrapForHost(ret);
+                  return ret === obj ? obj : _unwrapForHost(ret, callbackState);
                 }
               }
             }
@@ -14258,7 +14272,7 @@ assert._isSameValue = isSameValue;
               }
             }
           }
-          return ret === wrappedObj || ret === dispatchRecv ? obj : _unwrapForHost(ret);
+          return ret === wrappedObj || ret === dispatchRecv ? obj : _unwrapForHost(ret, callbackState);
         };
       // (#1439) RegExp.prototype[@@replace/@@match/@@search/@@split/@@matchAll]
       // protocol invocation. The compiler resolves `regex[Symbol.replace]` to
