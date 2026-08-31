@@ -76,8 +76,7 @@ spread, and wrong-arity forms remain direct.
 3. Add all three methods to `IR_MATH_METHOD_TABLE` and reuse the generic
    selector, call-graph walker, from-AST emitter, manifest, and provider
    materializer.
-4. Add independent `JS2WASM_IR_MATH_ASINH=0`,
-   `JS2WASM_IR_MATH_ACOSH=0`, and `JS2WASM_IR_MATH_ATANH=0` rollbacks.
+4. Initial rollout added independent per-method rollbacks.
 5. Widen #3526 exhaustive vocabulary, dependency, integration,
    linear-legality, and neutrality evidence from twenty-three to twenty-six
    source Math intrinsics.
@@ -100,8 +99,9 @@ spread, and wrong-arity forms remain direct.
   inherited range edges, NaN, and infinities.
 - Native-Math checks pin explicit method-specific safe-range envelopes while
   separately proving every oracle ran on an IR-only body.
-- Each narrow rollback withdraws only its corresponding method, and excluded
-  shapes decline before claim without invariants or post-claim errors.
+- During initial rollout, each narrow rollback withdrew only its corresponding
+  method; excluded shapes decline before claim without invariants or post-claim
+  errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
 
 ## Implementation outcome and validation
@@ -114,8 +114,7 @@ spread, and wrong-arity forms remain direct.
   `Math_acosh`, and `Math_atanh` callables, closes each over `math.log`,
   materializes that dependency once, and requests no host capability. No Math
   algorithm or direct-codegen file changed.
-- Independent `JS2WASM_IR_MATH_ASINH=0`, `JS2WASM_IR_MATH_ACOSH=0`, and
-  `JS2WASM_IR_MATH_ATANH=0` controls withdraw only their corresponding claim.
+- Independent per-method controls withdrew only their corresponding claim.
   Shadowed, aliased, computed, optional-invocation, optional-receiver,
   wrong-arity, spread, and non-number forms all decline before claim.
 - Four focused/affected contract suites pass 45/45. They cover host and
@@ -168,5 +167,13 @@ The principal risks are inherited cancellation near zero, domain endpoints,
 and multiplication overflow in the existing `x * x` formulas for large finite
 inputs. Direct-path bit identity remains the hard migration invariant; native
 Math evidence will use separately measured safe ranges rather than disguise
-known approximation limits. Independent environment flags provide narrow
-rollback; `JS2WASM_IR_FIRST=0` remains the global control.
+known approximation limits. During initial rollout, independent per-method
+withdrawals provided narrow rollback; `JS2WASM_IR_FIRST=0` remains the global
+control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawals are retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

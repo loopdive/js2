@@ -2912,3 +2912,18 @@ bytes), the independent `directOnly` scalar owner proves compile-once beside a
 blocked function-value component, and the module-init boundary poisons the
 scalar callee's direct body while proving that the module initializer itself
 remains direct.
+
+## 2026-08-30 — exact function-body UnitId routing checkpoint
+
+This bounded checkpoint makes exact `IrUnitId` skip and preserve receipts the
+authority at the ordinary prepare-before-direct declaration seam, including the
+inherited compatibility route and already-installed prepared free bodies. The
+legacy name sets remain deterministic compatibility/telemetry projections and
+must agree with the exact receipts or fail closed. It changes neither selector
+population nor the legacy-body count.
+
+## Test Results
+
+- Focused exact-routing plus fast-scalar/route-off/direct-negative subset: 6 passed.
+- TypeScript 7 validation, changed-file lint/format, IR fallback/layering, and
+  LOC/function budget ratchets: passed.

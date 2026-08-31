@@ -156,38 +156,6 @@ describe("#5101 exact ambient Math.atan IR ownership", () => {
     }
   });
 
-  it("uses the narrow env rollback for atan without withdrawing atan2", async () => {
-    const previous = process.env.JS2WASM_IR_MATH_ATAN;
-    process.env.JS2WASM_IR_MATH_ATAN = "0";
-    try {
-      const result = await compile(
-        `
-          export function atan(value: number): number { return Math.atan(value); }
-          export function atan2(left: number, right: number): number { return Math.atan2(left, right); }
-        `,
-        { fileName: "issue-5101-rollback.ts", experimentalIR: true, trackIrOutcomes: true, emitWat: true },
-      );
-      expectSuccess(result);
-      expect(outcomeFor(result, "atan")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(outcomeFor(result, "atan2")).toMatchObject({
-        kind: "emitted",
-        legacyBodyEmitted: false,
-        irBodyEmitted: true,
-      });
-      expect(result.irCompiledFuncs ?? []).not.toContain("atan");
-      expect(result.irCompiledFuncs ?? []).toContain("atan2");
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_MATH_ATAN");
-      else process.env.JS2WASM_IR_MATH_ATAN = previous;
-    }
-  });
-
   it.each([
     [
       "shadowed Math",

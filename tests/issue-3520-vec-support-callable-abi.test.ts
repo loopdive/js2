@@ -8,12 +8,14 @@ import { describe, expect, it, vi } from "vitest";
 import { SINGLE_HOST_ENTRIES } from "../scripts/check-ir-only.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { definedFuncAt } from "../src/codegen/func-space.js";
+import { stripHostBridgeExports } from "../src/codegen/host-bridge-exports.js";
 import { generateModule } from "../src/codegen/index.js";
 import { ProgramAbiCallableRegistry } from "../src/codegen/program-abi-callable-planning.js";
 import {
   VEC_HOST_BRIDGE_ROLE,
   type VecHostBridgeKind,
   finalizeVecHostBridgeExports,
+  isCoreVecHostBridgePublicName,
   resolveVecHostBridgeHelper,
   vecHostBridgePhysicalExportBase,
 } from "../src/codegen/vec-access-exports.js";
@@ -148,6 +150,64 @@ const ARRAY_FREE_PHYSICAL_SPOOF_SOURCE = `
   }
 `;
 
+const ARRAY_FREE_LOGICAL_SPOOF_SOURCE = `
+  export function __vec_len(): number { return 702; }
+
+  class Empty {
+    m(): number { return 1; }
+  }
+
+  export function mkInstance(): Empty {
+    return new Empty();
+  }
+`;
+
+const ALL_PUBLIC_COLLISION_VALUES = [
+  ["__vec_len", 101],
+  ["__vec_get", 102],
+  ["__is_vec", 103],
+  ["__vec_mut_supported", 104],
+  ["__vec_push", 105],
+  ["__vec_pop", 106],
+  ["$v0", 901],
+  ["$v0$$", 902],
+] as const;
+
+const PREFIX_ONLY_COLLISION_VALUES = [
+  ["$v0", 201],
+  ["$v1", 202],
+  ["$v2", 203],
+  ["$v3", 204],
+  ["$v4", 205],
+  ["$v5", 206],
+] as const;
+
+const STANDALONE_VALUE_HELPER_EXPORTS = [
+  "__any_box_null",
+  "__any_box_undefined",
+  "__box_bigint",
+  "__box_boolean",
+  "__box_number",
+  "__dynamic_boundary_tag",
+  "__exn_tag",
+  "__to_bigint",
+  "__typeof_bigint",
+  "__typeof_boolean",
+  "__typeof_number",
+  "__unbox_boolean",
+  "__unbox_number",
+] as const;
+
+function assertFunctionValueCensus(
+  exports: Record<string, WebAssembly.ExportValue>,
+  expected: readonly (readonly [string, number])[],
+): void {
+  for (const [name, value] of expected) {
+    expect(exports[name], name).toEqual(expect.any(Function));
+    expect((exports[name] as () => number)(), name).toBe(value);
+  }
+}
+
 function generate(source: string, fileName: string, trackIrOutcomes = true) {
   const ast = analyzeSource(source, fileName);
   return {
@@ -198,6 +258,12 @@ async function instantiate(result: CompileResult): Promise<Record<string, WebAss
 }
 
 describe("#3520 vec host-bridge Program ABI ownership", () => {
+  it("classifies only exact core logical and physical vec names", () => {
+    expect(VEC_BRIDGES.every((bridge) => isCoreVecHostBridgePublicName(bridge.name))).toBe(true);
+    expect(["$v0", "$v0$", "$v0$$", "$v5$$$$"].every(isCoreVecHostBridgePublicName)).toBe(true);
+    expect(["$v00", "$v0x", "$v6", "__vec_len$", "__vec_custom"].some(isCoreVecHostBridgePublicName)).toBe(false);
+  });
+
   it("publishes all six bridges beneath the entry source with fixed ordinals and exact final slots", () => {
     const { ast, result } = generate(ARRAY_SOURCE, "vec-host-bridge.ts");
     const hardErrors = result.errors.filter((error) => error.severity !== "warning");
@@ -308,20 +374,33 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
   });
 
   it("strips exact compiler-owned suffixed aliases without deleting standalone or WASI user collisions", async () => {
+    const expectedNames = ["$v0$", "__exn_tag", "returnedValues"];
     for (const target of ["standalone", "wasi"] as const) {
-      const result = await compile(HOST_FREE_PHYSICAL_COLLISION_SOURCE, {
+      const options = {
         fileName: `vec-host-free-physical-collision-${target}.ts`,
         experimentalIR: true,
-        trackIrOutcomes: true,
         target,
-      });
-      expect(result.success, `${target}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
-      const module = await WebAssembly.compile(result.binary);
-      const exportNames = WebAssembly.Module.exports(module).map(({ name }) => name);
-      expect(exportNames, target).toContain("$v0$");
-      expect(exportNames, target).not.toContain("__vec_len");
-      expect(exportNames, target).not.toContain("$v0");
-      expect(exportNames, target).not.toContain("$v0$$");
+      } as const;
+      const untracked = await compile(HOST_FREE_PHYSICAL_COLLISION_SOURCE, options);
+      const tracked = await compile(HOST_FREE_PHYSICAL_COLLISION_SOURCE, { ...options, trackIrOutcomes: true });
+      expect(untracked.success, `${target}: ${untracked.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      expect(tracked.success, `${target}: ${tracked.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      expect(untracked.imports, `${target} untracked imports`).toEqual([]);
+      expect(tracked.imports, `${target} tracked imports`).toEqual([]);
+      expect(tracked.binary, `${target} tracked/untracked bytes`).toEqual(untracked.binary);
+
+      const targetExpectedNames = [...expectedNames, ...(target === "wasi" ? ["memory"] : [])].sort();
+      for (const [label, result] of [
+        ["untracked", untracked],
+        ["tracked", tracked],
+      ] as const) {
+        const exports = await instantiate(result);
+        expect(Object.keys(exports).sort(), `${target} ${label} public names`).toEqual(targetExpectedNames);
+        expect(Object.keys(exports).filter(isVecHostBridgePhysicalExport), `${target} ${label} physical names`).toEqual(
+          ["$v0$"],
+        );
+        expect((exports["$v0$"] as () => number)(), `${target} ${label} collision value`).toBe(811);
+      }
     }
   });
 
@@ -376,6 +455,47 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(wrapped.returnedValues()).toEqual([7, 8]);
   });
 
+  it("retains exact logical and physical user collisions in standalone and WASI", async () => {
+    const expectedNames = [
+      ...ALL_PUBLIC_COLLISION_VALUES.map(([name]) => name),
+      ...STANDALONE_VALUE_HELPER_EXPORTS,
+      "dynamicPush",
+      "dynamicPop",
+      "echo",
+      "returnedValues",
+    ];
+    for (const target of ["standalone", "wasi"] as const) {
+      const options = {
+        fileName: `vec-all-public-collisions-${target}.ts`,
+        experimentalIR: true,
+        target,
+      } as const;
+      const untracked = await compile(ALL_PUBLIC_COLLISION_SOURCE, options);
+      const tracked = await compile(ALL_PUBLIC_COLLISION_SOURCE, { ...options, trackIrOutcomes: true });
+      expect(untracked.success, `${target} untracked`).toBe(true);
+      expect(tracked.success, `${target} tracked`).toBe(true);
+      expect(untracked.imports, `${target} untracked imports`).toEqual([]);
+      expect(tracked.imports, `${target} tracked imports`).toEqual([]);
+      expect(tracked.binary, `${target} tracked/untracked bytes`).toEqual(untracked.binary);
+
+      const untrackedExports = await instantiate(untracked);
+      const trackedExports = await instantiate(tracked);
+      const targetExpectedNames = [...expectedNames, ...(target === "wasi" ? ["memory"] : [])].sort();
+      expect(Object.keys(untrackedExports).sort(), `${target} public names`).toEqual(targetExpectedNames);
+      expect(Object.keys(trackedExports).sort(), `${target} tracked public names`).toEqual(targetExpectedNames);
+      expect(
+        Object.keys(untrackedExports).filter(isVecHostBridgePhysicalExport).sort(),
+        `${target} physical collision names`,
+      ).toEqual(["$v0", "$v0$$"]);
+      expect(
+        Object.keys(trackedExports).filter(isVecHostBridgePhysicalExport).sort(),
+        `${target} tracked physical collision names`,
+      ).toEqual(["$v0", "$v0$$"]);
+      assertFunctionValueCensus(untrackedExports, ALL_PUBLIC_COLLISION_VALUES);
+      assertFunctionValueCensus(trackedExports, ALL_PUBLIC_COLLISION_VALUES);
+    }
+  });
+
   it("terminates all six prefix-only physical families with the structural helper", async () => {
     const runtime = await compile(PREFIX_ONLY_COLLISION_SOURCE, {
       fileName: "vec-helper-prefix-only-collisions.ts",
@@ -396,6 +516,47 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect((rawExports.dynamicPush as (values: unknown, value: number) => number)(rawValues, 3)).toBe(3);
     expect(wrapped.echo(rawValues)).toEqual([7, 8, 3]);
     expect(wrapped.mkInstance()).toEqual({});
+  });
+
+  it("retains exact prefix-only user collisions in standalone and WASI", async () => {
+    const expectedNames = [
+      ...PREFIX_ONLY_COLLISION_VALUES.map(([name]) => name),
+      ...STANDALONE_VALUE_HELPER_EXPORTS,
+      "mkInstance",
+      "dynamicPush",
+      "echo",
+      "returnedValues",
+    ];
+    for (const target of ["standalone", "wasi"] as const) {
+      const options = {
+        fileName: `vec-prefix-only-collisions-${target}.ts`,
+        experimentalIR: true,
+        target,
+      } as const;
+      const untracked = await compile(PREFIX_ONLY_COLLISION_SOURCE, options);
+      const tracked = await compile(PREFIX_ONLY_COLLISION_SOURCE, { ...options, trackIrOutcomes: true });
+      expect(untracked.success, `${target} untracked`).toBe(true);
+      expect(tracked.success, `${target} tracked`).toBe(true);
+      expect(untracked.imports, `${target} untracked imports`).toEqual([]);
+      expect(tracked.imports, `${target} tracked imports`).toEqual([]);
+      expect(tracked.binary, `${target} tracked/untracked bytes`).toEqual(untracked.binary);
+
+      const untrackedExports = await instantiate(untracked);
+      const trackedExports = await instantiate(tracked);
+      const targetExpectedNames = [...expectedNames, ...(target === "wasi" ? ["memory"] : [])].sort();
+      expect(Object.keys(untrackedExports).sort(), `${target} public names`).toEqual(targetExpectedNames);
+      expect(Object.keys(trackedExports).sort(), `${target} tracked public names`).toEqual(targetExpectedNames);
+      expect(
+        Object.keys(untrackedExports).filter(isVecHostBridgePhysicalExport).sort(),
+        `${target} physical collision names`,
+      ).toEqual(PREFIX_ONLY_COLLISION_VALUES.map(([name]) => name).sort());
+      expect(
+        Object.keys(trackedExports).filter(isVecHostBridgePhysicalExport).sort(),
+        `${target} tracked physical collision names`,
+      ).toEqual(PREFIX_ONLY_COLLISION_VALUES.map(([name]) => name).sort());
+      assertFunctionValueCensus(untrackedExports, PREFIX_ONLY_COLLISION_VALUES);
+      assertFunctionValueCensus(trackedExports, PREFIX_ONLY_COLLISION_VALUES);
+    }
   });
 
   it("fills sparse physical gaps without rebasing any occupied user descriptor", async () => {
@@ -435,6 +596,33 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     expect(wrapped.mkInstance()).toEqual({});
   });
 
+  it("keeps array-free logical and physical spoof exports public without a vec family", async () => {
+    for (const [target, source, name, value] of [
+      ["standalone", ARRAY_FREE_LOGICAL_SPOOF_SOURCE, "__vec_len", 702],
+      ["wasi", ARRAY_FREE_LOGICAL_SPOOF_SOURCE, "__vec_len", 702],
+      ["standalone", ARRAY_FREE_PHYSICAL_SPOOF_SOURCE, "$v0", 701],
+      ["wasi", ARRAY_FREE_PHYSICAL_SPOOF_SOURCE, "$v0", 701],
+    ] as const) {
+      const result = await compile(source, {
+        fileName: `vec-array-free-spoof-${target}-${name.replaceAll("$", "s")}.ts`,
+        experimentalIR: true,
+        target,
+        trackIrOutcomes: true,
+      });
+      expect(result.success, `${target} ${name}`).toBe(true);
+      expect(result.imports, `${target} ${name} imports`).toEqual([]);
+      expect(result.programAbi?.abi.entries().filter((entry) => entry.id.includes(VEC_HOST_BRIDGE_ROLE)) ?? []).toEqual(
+        [],
+      );
+      const rawExports = await instantiate(result);
+      expect(Object.keys(rawExports)).toContain(name);
+      expect((rawExports[name] as () => number)()).toBe(value);
+      expect(Object.keys(rawExports).filter(isVecHostBridgePhysicalExport)).toEqual(
+        name.startsWith("$v") ? [name] : [],
+      );
+    }
+  });
+
   it("aborts compilation when structural vec ABI observation fails", () => {
     const observe = vi
       .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
@@ -451,7 +639,7 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     }
   });
 
-  it("fails closed when a compiler-owned export entry is replaced, duplicated, retargeted, or loses its function", () => {
+  it("fails closed when a compiler-owned export entry is replaced, duplicated, renamed, retargeted, or loses its function", () => {
     const cases: readonly {
       readonly name: string;
       readonly mutate: (
@@ -475,6 +663,13 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
           result.module.exports.push(entry);
         },
         expected: /appears more than once in the module/,
+      },
+      {
+        name: "name-changed",
+        mutate: (_registry, _result, entry) => {
+          entry.name = "__vec_get";
+        },
+        expected: /changed its published name to __vec_get/,
       },
       {
         name: "retargeted",
@@ -538,6 +733,27 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
       registry.ctx.emitHostBridge = false;
       expect(result.module.exports).toContain(entry);
       expect(() => finalizeVecHostBridgeExports(registry.ctx)).toThrow(/survived disabled host-bridge policy/);
+    } finally {
+      registry.ctx.emitHostBridge = originalEmitHostBridge;
+    }
+  });
+
+  it("strips a cloned descriptor that still resolves to the exact compiler allocator", () => {
+    const { registry, result } = generateWithCapturedRegistry(ARRAY_SOURCE, "vec-export-cloned-descriptor.ts");
+    const entryIndex = result.module.exports.findIndex(
+      (candidate) => candidate.name === "__vec_len" && candidate.desc.kind === "func",
+    );
+    if (entryIndex < 0) throw new Error("missing compiler-owned vec export for cloned-descriptor");
+    const entry = result.module.exports[entryIndex]!;
+    if (entry.desc.kind !== "func") throw new Error("vec clone source changed export kind");
+    const clone: WasmExport = { name: entry.name, desc: { kind: "func", index: entry.desc.index } };
+    result.module.exports[entryIndex] = clone;
+    const originalEmitHostBridge = registry.ctx.emitHostBridge;
+    try {
+      registry.ctx.emitHostBridge = false;
+      expect(result.module.exports).toContain(clone);
+      expect(stripHostBridgeExports(registry.ctx)).toBeGreaterThan(0);
+      expect(result.module.exports).not.toContain(clone);
     } finally {
       registry.ctx.emitHostBridge = originalEmitHostBridge;
     }

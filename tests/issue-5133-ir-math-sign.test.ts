@@ -228,30 +228,6 @@ describe("#5133 exact ambient Math.sign IR ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("withdraws only sign through its narrow rollback", async () => {
-    const flag = "JS2WASM_IR_MATH_SIGN";
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(`export function sign(value: number): number { return Math.sign(value); }`, {
-        fileName: "issue-5133-rollback.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expectSuccess(result);
-      expect(outcomeFor(result, "sign")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (label, source) => {
     const result = await compile(source, {
       fileName: `issue-5133-${label.replaceAll(" ", "-")}.ts`,
