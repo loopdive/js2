@@ -224,6 +224,7 @@ function buildClosureFuncCandidates(
   declared: FuncCandidate,
   sigParamCount: number,
   sigParamWasmTypes: ValType[],
+  admitShorterArity = false,
 ): FuncCandidate[] {
   const funcCandidates: FuncCandidate[] = [declared];
   const seen = new Set<number>([declared.funcTypeIdx]);
@@ -262,10 +263,18 @@ function buildClosureFuncCandidates(
   if (declaredKind !== "i32") tryAlt([{ kind: "i32" }]);
 
   for (const [, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length !== sigParamCount) continue;
+    const shorterArity = info.paramTypes.length < sigParamCount;
+    if (info.paramTypes.length > sigParamCount) continue;
+    // A callable property may expose a wider interface signature than the
+    // closure stored in that field. JavaScript still invokes the shorter
+    // function and ignores surplus arguments. Only admit a shorter source
+    // closure when its body cannot observe the call-site arity through
+    // `arguments`, rest parameters, or defaults; otherwise the declared-width
+    // argc/extras setup below would be observably wrong for that candidate.
+    if (shorterArity && (!admitShorterArity || info.needsCallSiteArity !== false)) continue;
     if (seen.has(info.funcTypeIdx)) continue;
     let paramsMatch = true;
-    for (let pi = 0; pi < sigParamCount; pi++) {
+    for (let pi = 0; pi < info.paramTypes.length; pi++) {
       if (callablePropertyRefBridge(ctx, sigParamWasmTypes[pi]!, info.paramTypes[pi]!) === null) {
         paramsMatch = false;
         break;
@@ -373,7 +382,11 @@ function emitRootFuncrefDispatch(
     if (candidateSelfTypeIdx !== rootIdx) {
       fcCallBody.push({ op: "ref.cast", typeIdx: candidateSelfTypeIdx });
     }
-    for (let index = 0; index < argLocals.length; index++) {
+    // A shorter-arity runtime candidate consumes only its formal prefix. Every
+    // source argument was already evaluated into `argLocals`; leaving the
+    // surplus locals unread implements JavaScript's ignored-extra-argument
+    // rule without dropping their side effects.
+    for (let index = 0; index < fc.paramTypes.length; index++) {
       fcCallBody.push({ op: "local.get", index: argLocals[index]! });
       const bridge = callablePropertyRefBridge(ctx, argTypes[index]!, fc.paramTypes[index]!);
       if (bridge === null) {
@@ -1490,6 +1503,7 @@ export function compileCallablePropertyCall(
         },
         sigParamCount,
         sigParamWasmTypes,
+        true,
       );
 
       // Compile receiver (normalized to the struct type, #1734), get field value.
