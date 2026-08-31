@@ -577,6 +577,7 @@ import {
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
+import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -5811,6 +5812,9 @@ export function generateModule(
     // the syntactic `Object.create(Foo.prototype)` fast path.
     emitObjectCreateClassInstanceExport(ctx);
 
+    // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
+    emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
+
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
     // (#3100) vec-FAMILY normalization arms ($ObjVec + `__vec_<elemKind>` —
@@ -7911,6 +7915,16 @@ function appendClassBridgeResultBoxing(ctx: CodegenContext, body: Instr[], resul
   else return false;
   return true;
 }
+
+/**
+ * (#5242) The two boundary primitives `emitClassValueConstructExports` needs,
+ * passed in rather than imported so the emitter can live in its own file
+ * without a cycle back into this module.
+ */
+const CLASS_VALUE_CONSTRUCT_HELPERS = {
+  paramCoercion: hostClassBridgeParamCoercion,
+  boxResult: appendClassBridgeResultBoxing,
+};
 
 /**
  * (#5204) Emit `__class_call_<Class>_<key>_vararg` — the rest-parameter shape
@@ -10729,6 +10743,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // (#5239) See the single-source path — same placement, same gate.
     profilePhase("emit-object-create-class-instance", () => emitObjectCreateClassInstanceExport(ctx));
+
+    // (#5242) See the single-source path — same placement, same gate.
+    profilePhase("emit-class-value-construct", () =>
+      emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
+    );
 
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).
     profilePhase("emit-closure-call-export-0", () => emitClosureCallExport(ctx));

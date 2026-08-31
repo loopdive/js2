@@ -640,6 +640,10 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
           // captured at block entry (measured: the stale call index sent the
           // registration to a NEIGHBORING import for 2-method classes).
           fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__register_class_ctor") ?? registerCtorIdx });
+          // (#5242) The host may also CONSTRUCT this class now — the mirror's
+          // `[[Construct]]` arm has no way back into Wasm other than a
+          // dedicated bridge. Record the class so the finalize pass emits one.
+          ctx.classCtorHostRegistered.add(className);
           // The host may now dynamically invoke any of this class's instance
           // methods (react-dom's `instance.render()` / lifecycle calls) —
           // admit them to the #3123 member-dispatch export surface.

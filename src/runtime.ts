@@ -6202,6 +6202,18 @@ const _classStaticMethodClosures = new WeakSet<object>();
  * function mirror instead of the plain non-callable object proxy.
  */
 const _classCtorClosures = new WeakMap<object, any>();
+/**
+ * (#5242) The LIVE export source of the module that registered each class
+ * object. The constructible mirror is built once and cached in
+ * `_hostProxyCache` forever, but it captured a SNAPSHOT of `exports` — and for
+ * a class declared at top level that snapshot is taken during the wasm `start`
+ * section, where `getExports()` is `undefined` for every caller (#5193). So
+ * the mirror's own `[[Construct]]` arm could never reach `__call_fn_N` and
+ * threw "compiled class constructor <Name> bridge unavailable" for the whole
+ * life of the module — the polyfill's `new (ce("%Temporal.Duration%"))(…)`.
+ * Registering the live state here lets the mirror re-ask after instantiation.
+ */
+const _classCtorCallbackStates = new WeakMap<object, MarshalExportSource>();
 const _classProtoStructs = new WeakMap<object, any>();
 const _classFnctorParents = new WeakMap<object, any>();
 // Classes whose source omitted a constructor while extending a runtime parent
@@ -6230,8 +6242,10 @@ function _registerClassCtorHandler(
   parentFnctor: any,
   classNameArg: any,
   implicitDynamicParentCtor: any,
+  liveExportSource?: MarshalExportSource,
 ): void {
   if (classObj == null || typeof classObj !== "object") return;
+  if (liveExportSource !== undefined) _classCtorCallbackStates.set(classObj, liveExportSource);
   if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
   if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
@@ -8495,6 +8509,60 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
 }
 
 /**
+ * (#5242) Per-export-view cache of the resolved `__class_construct_<Class>_<N>`
+ * bridges. The export view is walked with `getOwnPropertyNames` up the
+ * prototype chain (the host-bridge projection puts generated helpers on a
+ * prototype), which is not something to repeat on every `new`.
+ */
+const _classConstructBridgeCache = new WeakMap<object, Map<string, { fn: Function; arity: number } | null>>();
+
+/**
+ * Resolve the compiled constructor bridge for `className`, or `undefined` when
+ * this module published none (a rest-parameter ctor, a formal with no
+ * externref boundary coercion, or a module compiled before #5242).
+ *
+ * There is exactly ONE constructor per class, so the arity-suffixed family has
+ * a single member and the first match is the answer — no arity selection, no
+ * declared-arity probe export.
+ */
+function _resolveClassConstructBridge(
+  className: string,
+  reader: MarshalExportSource,
+): { fn: Function; arity: number } | undefined {
+  if (className === "") return undefined;
+  const exports = marshalExports(reader);
+  if (exports === undefined) return undefined;
+  let byClass = _classConstructBridgeCache.get(exports);
+  if (byClass === undefined) {
+    byClass = new Map();
+    _classConstructBridgeCache.set(exports, byClass);
+  }
+  const cached = byClass.get(className);
+  if (cached !== undefined) return cached ?? undefined;
+
+  const prefix = `__class_construct_${className}_`;
+  let found: { fn: Function; arity: number } | null = null;
+  let view: Record<string, any> | null = exports;
+  const seen = new Set<string>();
+  while (view !== null && found === null) {
+    for (const name of Object.getOwnPropertyNames(view)) {
+      if (seen.has(name) || !name.startsWith(prefix)) continue;
+      seen.add(name);
+      const suffix = name.slice(prefix.length);
+      if (!/^\d+$/.test(suffix)) continue;
+      const fn = exports[name];
+      if (typeof fn === "function") {
+        found = { fn, arity: Number(suffix) };
+        break;
+      }
+    }
+    view = Object.getPrototypeOf(view);
+  }
+  byClass.set(className, found);
+  return found ?? undefined;
+}
+
+/**
  * (#4618) Constructible host mirror for a compiled class object. Modeled on
  * `_wrapCallableForHost`: a Proxy over a real `function` target so
  * `[[Construct]]` is installable and `typeof === "function"` holds.
@@ -8510,7 +8578,23 @@ function _makeClassCtorMirrorForHost(
   propProxy: any,
   exports: Record<string, Function> | undefined,
 ): any {
-  const callbackState = { getExports: () => exports };
+  // (#5242) LIVE, not a snapshot. `exports` is the view the FIRST crossing
+  // happened to have, and this mirror outlives that crossing by the whole run
+  // of the program: for a class declared at top level the first crossing is
+  // inside the wasm `start` section, where the only view available is the
+  // partial #5202 start-export registry (or nothing at all). Frozen, that view
+  // has no `__class_construct_*` / `__call_fn_*` entry for the ctor, so
+  // `[[Construct]]` threw "bridge unavailable" for the module's whole life.
+  //
+  // The live view is preferred, not merely used as a fallback: the snapshot is
+  // non-undefined in exactly the init case that must be re-asked. It resolves
+  // to `undefined` during init, so the snapshot still answers there and the
+  // init-window behaviour is unchanged.
+  const liveSource = _classCtorCallbackStates.get(classObj);
+  const callbackState = {
+    getExports: () => liveSource?.getExports() ?? exports,
+    getStartExports: () => liveSource?.getStartExports?.(),
+  };
   const meta = _wasmStructProps.get(classObj);
   const sidecarName = _sidecarGet(classObj, "name");
   const className =
@@ -8597,16 +8681,30 @@ function _makeClassCtorMirrorForHost(
       return fn.apply(thisArg, args);
     },
     construct(_t, args, _newTarget) {
-      const ctorClosure = _classCtorClosures.get(classObj);
-      // Dispatch the raw closure directly — for a class EXPRESSION the ctor
-      // closure IS the registered class object, so the generic wrap would
-      // return this very mirror (whose `apply` throws the class-without-new
-      // TypeError). `_wrapWasmClosureUnknownArity` is the underlying bridge.
-      const ctorFn = _wrapWasmClosureUnknownArity(ctorClosure, callbackState, true);
-      if (typeof ctorFn !== "function") {
-        throw new TypeError(`compiled class constructor ${className} bridge unavailable`);
+      // (#5242) The class-qualified constructor bridge FIRST. The generic
+      // closure path below can only dispatch arities the module happened to
+      // emit `__call_fn_<N>` for (N ≤ 4, and only when something else in the
+      // module needed generic closure dispatch), so a ten-parameter ctor —
+      // `@js-temporal/polyfill`'s `Duration` — had no route back into Wasm at
+      // all and threw "bridge unavailable". Silently: `__call_fn_4` returns
+      // NULL for an unmatched closure, which the arm below then degrades to an
+      // empty `{}`, so the failure resurfaced later as "Missing internal slot".
+      const ctorBridge = _resolveClassConstructBridge(className, callbackState);
+      let inst: any;
+      if (ctorBridge !== undefined) {
+        inst = ctorBridge.fn(..._denseOwnWasmArgs(args, ctorBridge.arity));
+      } else {
+        const ctorClosure = _classCtorClosures.get(classObj);
+        // Dispatch the raw closure directly — for a class EXPRESSION the ctor
+        // closure IS the registered class object, so the generic wrap would
+        // return this very mirror (whose `apply` throws the class-without-new
+        // TypeError). `_wrapWasmClosureUnknownArity` is the underlying bridge.
+        const ctorFn = _wrapWasmClosureUnknownArity(ctorClosure, callbackState, true);
+        if (typeof ctorFn !== "function") {
+          throw new TypeError(`compiled class constructor ${className} bridge unavailable`);
+        }
+        inst = ctorFn(...args);
       }
-      const inst = ctorFn(...args);
       if (inst != null && typeof inst === "object") {
         if (_classImplicitDynamicParentCtor.has(classObj)) {
           const parent = resolveParent();
@@ -8711,6 +8809,29 @@ function _unwrapForHost(v: any, reader?: MarshalExportSource): any {
   const orig = _hostProxyReverse.get(v);
   if (orig !== undefined) return orig;
   return typeof v === "function" ? (_wasmClosureWrapperTargets.get(v) ?? v) : v;
+}
+
+/**
+ * (#5242) Result marshalling for `__construct` / `__construct_closure`.
+ *
+ * Those imports exist only for COMPILED code — the `new <value>(…)` whose
+ * callee could not be proven constructable at compile time. When the callee is
+ * itself compiled, the host-side [[Construct]] arm hands back a `_wrapForHost`
+ * PROXY, and returning that proxy to the compiled caller splits the constructed
+ * object's identity in two: the constructor body stored its state keyed by the
+ * RAW struct (`slots.set(this, …)` — every Temporal class does exactly this),
+ * while the caller then reads through the proxy and finds nothing. The observed
+ * symptom was `Missing internal slot slot-years` from `new
+ * (ce("%Temporal.Duration%"))(…)`, one layer past the ctor-bridge fix.
+ *
+ * A host (non-wasm) callee keeps its result untouched: a native constructor's
+ * instance has no raw twin, and the compiled side already knows how to read a
+ * host object.
+ */
+function _constructResultForCompiledConsumer(result: any, callee: any, reader?: MarshalExportSource): any {
+  if (!_isWasmStruct(callee)) return result;
+  const raw = _unwrapForHost(result, reader);
+  return _isWasmStruct(raw) ? raw : result;
 }
 
 // (#1694 A.i / #1632b-1) Host-callable/constructible representation of a
@@ -12751,7 +12872,28 @@ assert._isSameValue = isSameValue;
           _sidecarSet(classObj, methodName, closure);
           _getSidecarDescs(classObj).set(methodName, _SC_DEFINED | _SC_WRITABLE | _SC_CONFIGURABLE);
         };
-      if (name === "__register_class_ctor") return _registerClassCtorHandler;
+      if (name === "__register_class_ctor")
+        return function registerClassCtor(
+          classObj: any,
+          ctorClosure: any,
+          protoObj: any,
+          parentFnctor: any,
+          classNameArg: any,
+          implicitDynamicParentCtor: any,
+        ): void {
+          // (#5242) Hand the LIVE callback state through — the mirror this
+          // registration enables is cached for the module's whole life and
+          // must not freeze the `undefined` init-window export view.
+          _registerClassCtorHandler(
+            classObj,
+            ctorClosure,
+            protoObj,
+            parentFnctor,
+            classNameArg,
+            implicitDynamicParentCtor,
+            callbackState,
+          );
+        };
       if (name === "__register_class_parent") return _registerClassParentHandler;
       if (name === "__register_class_parent_ref")
         return function registerClassParentRef(n: any, o: any, k: any): void {
@@ -15069,7 +15211,11 @@ assert._isSameValue = isSameValue;
               _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
             );
           }
-          return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
+          return _constructResultForCompiledConsumer(
+            Reflect.construct(wrappedCallee, wrappedArgs ?? []),
+            callee,
+            callbackState,
+          );
         };
       // (#1632b-2 / #1528a residual) Dynamically CONSTRUCT a runtime function
       // VALUE — `var C = makeCtor(); new C(args)` where `C` is a factory-returned
@@ -15129,7 +15275,11 @@ assert._isSameValue = isSameValue;
               _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
             );
           }
-          return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
+          return _constructResultForCompiledConsumer(
+            Reflect.construct(wrappedCallee, wrappedArgs ?? []),
+            callee,
+            callbackState,
+          );
         };
       // Symbol.for(key) — global symbol registry (#965)
       // Symbol.for(key) — §20.4.2.2: stringKey = ? ToString(key). Passing a

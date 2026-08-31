@@ -155,20 +155,55 @@ const KNOWN_GAPS = {
   // bridge for `Duration`, and a null destructure inside the polyfill's options
   // handling. Through the PROVIDER the throw predates and survives #5241, which
   // is why these stay here rather than being promoted.
+  //
+  // (#5242) The FIRST of those two is now fixed — a compiled class reached as a
+  // VALUE has a real constructor bridge (`__class_construct_<Class>_<arity>`),
+  // so `compiled class constructor Duration bridge unavailable` no longer
+  // appears anywhere. Re-measured 2026-08-31 with a fresh JS2WASM_TEMPORAL_CACHE
+  // per lane, on both sides of the change:
+  //
+  //   SINGLE-MODULE lane        base (#5242)                    after #5242
+  //     add({days:1})           destructure null                destructure null   (unchanged)
+  //     add("P1D")              Duration bridge unavailable  →  destructure null
+  //     subtract({days:1})      Duration bridge unavailable  →  destructure null
+  //     subtract("P1D")         Duration bridge unavailable  →  destructure null
+  //     with({year:2021})       "2021-03-04"                    "2021-03-04"       (unchanged)
+  //     new Duration(0,0,0,1)   "P1D"                           "P1D"              (unchanged)
+  //   PROVIDER lane             every arithmetic row throws identically on both
+  //                             sides (WebAssembly.Exception) — measured, not
+  //                             inherited; the whole `knownGaps` block below is
+  //                             byte-identical between the two runs.
+  //
+  // What is LEFT in the single-module lane is ONE defect, and it is not this
+  // change's: the ISO calendar's `dateAdd(e, {years=0, months=0, weeks=0,
+  // days=0}, i)` has a DESTRUCTURING PARAMETER, and its second argument arrives
+  // null through the dynamic method bridge (`__extern_method_call` →
+  // `__call_fn_method_3` → `__anon_0_dateAdd`). Control: `add({days:1})` — which
+  // never constructs a Duration at all — fails with the SAME message and the
+  // SAME stack on base, where no constructor bridge was involved. So it is a
+  // parameter-destructuring / argument-marshalling gap on the dynamic method
+  // bridge, adjacent to #5221's destructuring work, not a residue of the
+  // constructor path.
   arithmeticAddDuration: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
     note:
       "throws through the provider, identically on the #5241 base (measured 2026-08-31, fresh provider cache). " +
       "In the SINGLE-MODULE control the same call moved from `undefined` (the #5241 hijack: `add` first-matched " +
       "`Set.prototype.add`) to a real TypeError from inside the polyfill, so the call now happens. Residual is " +
-      "not the extern-binding defect; the object-literal ARGUMENT crossing the provider seam is #5225's lane",
+      "not the extern-binding defect; the object-literal ARGUMENT crossing the provider seam is #5225's lane. " +
+      "(#5242) This row is the CONTROL that attributes the remaining single-module failure: it never constructs a " +
+      "Duration, yet it throws `Cannot destructure 'null' or 'undefined'` with an identical stack on both sides of " +
+      "#5242 — the ISO calendar's `dateAdd(e, {years=0, …}, i)` destructuring parameter receives null through the " +
+      "dynamic method bridge. So that null is NOT a constructor-path residue",
   },
   arithmeticSubtract: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
     note:
-      "same provider-lane throw, unchanged by #5241. Single-module control fails with `compiled class constructor " +
-      "Duration bridge unavailable` on BOTH sides of #5241 — a missing constructor bridge for a compiled class " +
-      "reached as a value, adjacent to #5239's instance minting but on the CONSTRUCT path",
+      "same provider-lane throw, unchanged by #5241 AND unchanged by #5242 (both sides measured 2026-08-31 with a " +
+      "fresh provider cache). The single-module control moved: it failed with `compiled class constructor Duration " +
+      "bridge unavailable` on both sides of #5241, and #5242 fixed that — it now fails one layer deeper, on the " +
+      "`dateAdd` destructuring-parameter null shared with `arithmeticAddDuration`. Provider-lane residue is the " +
+      "object-literal ARGUMENT crossing the seam, #5225's lane",
   },
   arithmeticWith: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
