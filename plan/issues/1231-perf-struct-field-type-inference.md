@@ -571,9 +571,9 @@ call-graph closure.
 - **Selector closure churn.** Adding shape types to claim positions may
   pull more functions into the IR than today. That's the goal, but
   every newly-IR-claimed function is a regression vector for IR-only
-  bugs (#1169p history shows this). Recommend gating Phase 1 behind a
-  `JS2WASM_IR_OBJECT_SHAPES=1` env flag for a sprint to bake before
-  default-on.
+  bugs (#1169p history shows this). Phase 1 therefore used a temporary
+  opt-in rollout control for one sprint before graduating to default-on;
+  that emergency rollback is now retired.
 - **Cross-module / WIT generation.** WIT generator (`src/wit-generator.ts`)
   emits exported function signatures; if exports return typed structs,
   the WIT output must still expose them as the boxed externref view.
@@ -605,20 +605,21 @@ call-graph closure.
   `fields: { name; type: LatticeAtom }[]` instead of an opaque
   `shape: string`. Helpers `atomsEqual` / `atomOrder` / `typesEqual`
   recurse over the field list. `lowerTypeToIrType` lowers object
-  atoms to `IrType.object`. New constants
-  `LATTICE_OBJECT_SHAPE_MAX_DEPTH = 3` and `objectShapesEnabled()`
-  guard the env flag.
+  atoms to `IrType.object`. The
+  `LATTICE_OBJECT_SHAPE_MAX_DEPTH = 3` constant bounds recursive inference;
+  the temporary rollout predicate that once guarded it is now retired.
 - `src/ir/propagate.ts` — `inferExpr` gained handlers for
-  `ObjectLiteralExpression` (gated on the flag),
+  `ObjectLiteralExpression` (initially rollout-gated, now unconditional),
   `PropertyAccessExpression`, and string-keyed `ElementAccessExpression`.
 - `src/ir/propagate.ts` — `tsTypeToLattice` returns `UNKNOWN` for
-  `Object`-flagged TS types when the flag is on (instead of `DYNAMIC`),
+  `Object`-flagged TS types during the rollout (instead of `DYNAMIC`),
   so unannotated returns like `function createPoint(x, y) { return
   {x, y}; }` start at the bottom and let body-walk inference grow the
   fact. This was the missing piece preventing the seed-vs-body join
   rule from ever updating: `seedConcrete` was false for `dynamic` and
   the asymmetric rule still bound `newReturn = join(dynamic, t) =
-  dynamic`. Outside the gate, `DYNAMIC` is preserved for legacy.
+  dynamic`. The former rollback preserved `DYNAMIC` for the boxed path; that
+  representation escape hatch is now retired.
 - `src/codegen/index.ts` — replaced the `mapped.kind === "object"`
   throw in `resolvePositionType` with a call to a new
   `objectIrTypeFromLattice` helper that walks the lattice's recursive
@@ -668,19 +669,19 @@ call-graph closure.
    worklist fixpoint always terminates. Bumping to 5 is a one-line
    change if benchmarks demand it.
 
-6. **Why is the gate env-based, not a `CompileOptions` flag?**
+6. **Why was the rollout control environment-based, not a compile option?**
    Architect's risk-register call-out: "every newly-IR-claimed
    function is a regression vector for IR-only bugs (#1169p history
-   shows this)." Defaulting off for a sprint lets us iterate on
-   correctness without affecting test262 conformance numbers. An env
-   var is the simplest gate that works for both vitest and ad-hoc CI
-   runs.
+   shows this)." Defaulting off for a sprint let us iterate on
+   correctness without affecting test262 conformance numbers. An environment
+   control was the simplest mechanism that worked for both vitest and ad-hoc
+   CI runs; it is no longer present.
 
 ### Verified behaviour
 
 For `function createPoint(x, y) { return { x: x, y: y }; }` /
 `function distance(p) { return p.x * p.x + p.y * p.y; }`, the WAT
-under `JS2WASM_IR_OBJECT_SHAPES=1`:
+with the object-shape rollout enabled:
 
 ```
 (type $__anon_1 (struct (field $x (mut f64)) (field $y (mut f64))))
@@ -759,7 +760,8 @@ contract boundary.
 
 ## Phase 2 — enable by default, monomorphization, full test coverage
 
-**Status**: Phase 1 merged (PR #143, env-gated `JS2WASM_IR_OBJECT_SHAPES=1`).
+**Status**: Phase 1 merged (PR #143, initially behind a temporary environment
+rollout control that was retired on 2026-08-31).
 Phase 2 is dispatched to dev-1231.
 
 ### Context
@@ -779,9 +781,10 @@ Phase 1 established:
 - `LatticeAtom.object` carries recursive `fields: { name; type: LatticeAtom }[]`
 - `inferExpr` handlers for ObjectLiteralExpression, PropertyAccessExpression
 - `objectIrTypeFromLattice` replacing the `resolvePositionType` throw
-- `tsTypeToLattice` returns `UNKNOWN` (not `DYNAMIC`) for unannotated object
-  returns under the gate — the key fix enabling body-walk inference
-- Gate: `JS2WASM_IR_OBJECT_SHAPES=1` env flag
+- `tsTypeToLattice` returned `UNKNOWN` (not `DYNAMIC`) for unannotated object
+  returns during the rollout — the key fix enabling body-walk inference
+- Rollout: initially behind a temporary environment control; default-on after
+  Phase 2 and permanently retired on 2026-08-31
 - WAT verified: `(field $x (mut f64))` emitted for `createPoint(3, 4)` under gate
 
 ### Phase 2 scope
@@ -790,9 +793,9 @@ Phase 1 established:
 
 Determine whether the gate can be removed (enabled by default) or whether a
 more selective activation is needed. Options:
-- **Run test262 with `JS2WASM_IR_OBJECT_SHAPES=1` on CI** (add to the sharded
-  workflow for one run) and inspect the delta. If net ≥ 0 and no bucket > 50
-  regressions, remove the gate.
+- **Run test262 with the object-shape rollout enabled on CI** (add to the
+  sharded workflow for one run) and inspect the delta. If net ≥ 0 and no
+  bucket > 50 regressions, remove the rollout control.
 - If regressions appear: analyze per-bucket to distinguish real issues from
   test-corpus weirdness. Fix issues, then re-test.
 
@@ -880,8 +883,8 @@ This ensures future refactors don't accidentally re-introduce boxing.
 
 ### Phase 2 acceptance criteria
 
-1. `JS2WASM_IR_OBJECT_SHAPES` gate removed (or a concrete plan filed for why
-   it must stay, with a follow-up issue for removal)
+1. The emergency object-shape rollback is removed (or a concrete plan is
+   filed for why it must stay, with a follow-up issue for removal)
 2. All 6 test cases above covered (Cases 4/5 as stretch — file follow-up if
    not in scope for this PR)
 3. WAT snapshot assertion in place for Case 1 (no gate required)
@@ -908,9 +911,9 @@ and rollback identifier occur 25 times across exactly eight tracked files,
 including `plan/agent-context/dev-1231.md`; the earlier seven-file count omitted
 that record. Re-measure the exact tracked-file census after #5332 lands because
 its serialized R9 ledgers intentionally add current inventory references.
-`src/ir/propagate.ts` has only one live reader/helper,
-`objectShapesEnabled()`. That helper controls three semantically distinct
-consumers: fnctor `NewExpression` admission in the propagation extension,
+`src/ir/propagate.ts` has only one live rollback predicate. That predicate
+controls three semantically distinct consumers: fnctor `NewExpression`
+admission in the propagation extension,
 checker-known object seeding, and object-literal inference. No open pull request
 claims this retirement. The active ProgramABI/#3525 publication work does not
 edit the owned source or focused test; do not widen into those files.
@@ -923,10 +926,10 @@ The Math dependency is now satisfied on protected `origin/main` at exact merge
 identifier occurs 24 times across seven tracked files: six in this issue, one
 in #1235, one in #1574, three in #4522, one in sprint 47, three in
 `src/ir/propagate.ts`, and nine in `tests/issue-1231.test.ts`. The
-three-pattern union of that key with `objectShapesEnabled` and
-`withoutObjectShapes` contains 37 literal occurrences on 36 matching lines
-across eight tracked files at that base. This Sol plan itself adds seven
-literal helper-name references on seven lines, so the implementation starts
+three-pattern union of that key with the production predicate and focused-test
+rollback helper contains 37 literal occurrences on 36 matching lines across
+eight tracked files at that base. This Sol plan itself adds seven literal
+helper-name references on seven lines, so the implementation starts
 from exactly 44 literal occurrences on 43 matching lines across the same eight
 files; the eighth file is `plan/agent-context/dev-1231.md`. These are the
 authoritative deletion and documentation-rewrite denominators. An
@@ -946,9 +949,9 @@ file enters this ownership boundary.
 
 ### Exact production change
 
-1. Delete `objectShapesEnabled()` and its environment read. The frontend must
-   produce the same bounded lattice facts regardless of ambient process
-   configuration.
+1. Delete the production rollback predicate and its environment read. The
+   frontend must produce the same bounded lattice facts regardless of ambient
+   process configuration.
 2. In `buildIrUnitTypeMap`, keep the exact source-local fnctor-admission proof
    and the `NewExpression` requirement; remove only the rollback predicate.
    This preserves the linked-parser `{input: string}` projection rather than
@@ -964,12 +967,23 @@ file enters this ownership boundary.
    ProgramABI, or direct frontend. This is a frontend inference cleanup whose
    backend-visible output must equal the already-default route.
 
+### 2026-08-31 evidence-driven ownership amendment
+
+The first Terra implementation probe found that the annotated point fixture is
+selected and IR-emitted in both host and standalone, but the current
+single-source owner still emits the direct body too: terminal telemetry reports
+both body flags true and the prepared-skip projection is empty. The injected
+direct-body poison therefore fails before the otherwise valid IR body can run.
+That is a real pre-existing #3521 compile-once gap, not a consequence of this
+rollback deletion. This slice records the exact limitation and must not widen
+into declaration ownership merely to make a poison assertion green.
+
 ### Closed evidence matrix
 
-- First repair the test harness: the current generic `withoutObjectShapes`
-  helper restores the environment synchronously, so its async caller resets
-  the flag before the first awaited compile and its runtime rollback row is
-  vacuous. The grounded focused file contains 16 literal `it(...)` rows and
+- First repair the test harness: the current generic rollback helper restores
+  the environment synchronously, so its async caller resets the flag before
+  the first awaited compile and its runtime rollback row is vacuous. The
+  grounded focused file contains 16 literal `it(...)` rows and
   exactly three rollback rows: its lattice and selector rows are genuine
   synchronous withdrawals, while the final runtime row is the vacuous async
   case. Remove that helper and every rollback expectation without losing the
@@ -996,15 +1010,24 @@ file enters this ownership boundary.
   selection set with no extra unit; exactly one outcome per expected unit with
   exact identity, kind/reason/stage and body flags; empty post-claim errors;
   exact import/export sets; WAT struct-field identity and body-to-struct
-  linkage; byte-identical binary hashes where promised; `WebAssembly.validate`;
-  and exact exported runtime results. The standalone projection must remain
-  host-free, every positive body must remain IR-only, and its exact body must
-  contain no box/unbox call.
+  linkage census; byte-identical binary hashes where promised;
+  `WebAssembly.validate`; and exact exported runtime results. The grounded
+  standalone mixed-user arm registers the exact typed struct but has no
+  allocation/read link because every terminal withdraws on exact ABI parity;
+  record that target-specific `unlinked` state rather than inventing a body.
+  The standalone projection must remain
+  host-free and the emitted IR body must contain no box/unbox call. Do not
+  claim compile-once ownership here: the grounded single-source route still
+  emits both the direct and IR bodies, and that separate migration belongs to
+  #3521, "IR-only R2: prepare-before-emit free-function ownership."
 - Make the oracle reject a wrong TypeMap atom/source/unit, missing/duplicate or
   foreign selected unit/outcome, wrong outcome identity/reason/stage/body flag,
   import/export drift, WAT body/struct reassociation, binary drift, and runtime
-  drift. Direct-body poison remains necessary but is not a substitute for
-  these independent mutations.
+  drift. Keep a direct-body poison control that fails with the exact injected
+  error and pair it with telemetry proving `legacyBodyEmitted: true`,
+  `irBodyEmitted: true`, and an empty prepared-skip projection. This is a
+  non-vacuous record of the existing #3521 ownership gap, not acceptance for
+  this frontend rollback retirement.
 - Keep the full conservative matrix non-vacuous: polymorphic call sites,
   open-world exported input, empty/spread/method/accessor/computed/duplicate
   object literals, missing fields, optional property access, optional element
@@ -1012,10 +1035,15 @@ file enters this ownership boundary.
   exact current `dynamic` or unclaimed projection and refusal reason. Preserve
   accepted identifier, string-literal, and numeric-literal object keys; accept
   only string-literal or no-substitution-template element access; and refuse
-  numeric, dynamic, computed, or other nonliteral element keys independently.
+  static field inference for numeric, dynamic, computed, or other nonliteral
+  element keys independently. Preserve the exact selector projection too:
+  the grounded numeric-index control currently remains selected with a
+  `dynamic` return, so this slice must not invent a new selector refusal.
   Preserve every primitive, `any`, `unknown`, `never`, union, enum, and fallback
-  branch byte-for-byte. Poison the direct body for positive fixtures so a
-  hidden legacy compilation cannot satisfy the runtime oracle.
+  branch byte-for-byte. Positive fixtures must prove that the IR-emitted body
+  owns the typed object operations and runtime result; the separate poison
+  control must prove that the still-present direct compilation cannot be
+  mistaken for compile-once ownership.
 - Exercise the third consumer directly in the owned focused test through the
   existing `buildIrUnitTypeMap(..., propagationOptions)` boundary. Supply a
   source-local `resolveFnctorAdmission` test resolver for one exact
@@ -1026,10 +1054,10 @@ file enters this ownership boundary.
   linked-Parser, or fnctor-admission files that are absent from the rebased
   parent. If parallel #3521 work lands those controls first, run them unchanged
   as downstream regressions rather than editing them in this slice.
-- Repository-wide tracked-file grep for the retired environment identifier must
-  be exactly zero. Also require zero `objectShapesEnabled` and
-  `withoutObjectShapes` identifiers, including rollout comments that would
-  survive a mechanical helper/call deletion. The only retained stale-key
+- Repository-wide tracked-file grep for the retired environment identifier,
+  production predicate identifier, and focused-test rollback-helper identifier
+  must each be exactly zero, including rollout comments that would survive a
+  mechanical helper/call deletion. The only retained stale-key
   representation is a computed literal-fragment assembly in the focused
   retirement test. Update this record, #1235, #1574, sprint 47, #4522, and
   #3518, and `plan/agent-context/dev-1231.md` by paraphrasing historical rollout
@@ -1052,9 +1080,10 @@ shared documents land in this exact order:
    15→14 in both #4522 and #3518;
 3. #4584 rebases onto #1231 and records the next R9 14→13 transition.
 
-This branch remains plan-only until the Math checkpoint lands; then merge
-current main normally and preserve both inventories. Do not duplicate or
-conflict with the parallel Claude ProgramABI, multi-prepared publication, or
+The Math checkpoint is now on protected main. This implementation branch stays
+stacked on the plan-only PR until that prerequisite lands; then merge current
+main normally and preserve both inventories. Do not duplicate or conflict with
+the parallel Claude ProgramABI, multi-prepared publication, or
 mixed-conditional work.
 
 ### Validation and landing
