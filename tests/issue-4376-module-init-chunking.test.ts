@@ -6,12 +6,14 @@
 import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
+import { disableForEachChildMeter, enableForEachChildMeter, readForEachChildCalls } from "../src/ts-api.js";
 // Side-effect import: installs the statement/expression delegates used by
 // generateModule when this test bypasses the normal compile entry point.
 import "../src/codegen/expressions.js";
 import {
   MODULE_INIT_CHUNK_MAX_AST_NODES,
   MODULE_INIT_CHUNK_MAX_ENTRIES,
+  moduleInitChunksRequired,
   planModuleInitChunks,
 } from "../src/codegen/module-init-chunks.js";
 import { compile, compileMulti } from "../src/index.js";
@@ -267,6 +269,24 @@ describe("#4376 — bounded module-init helpers", () => {
     expect(chunks).toHaveLength(2);
     expect(chunks[0]).toEqual([entries[0]]);
     expect(chunks[1]).toEqual([entries[1]]);
+  });
+
+  it("memoizes complete-entry weights across admission and final planning", () => {
+    const source = analyzeSource(
+      Array.from({ length: MODULE_INIT_CHUNK_MAX_ENTRIES + 1 }, (_, index) => `phase = phase + ${index};`).join("\n"),
+      FILE_NAME,
+    ).sourceFile;
+    const entries = source.statements.map((node) => ({ node }));
+    enableForEachChildMeter();
+    try {
+      expect(moduleInitChunksRequired(entries)).toBe(true);
+      const firstCalls = readForEachChildCalls();
+      expect(planModuleInitChunks(entries)).toHaveLength(2);
+      expect(firstCalls).toBeGreaterThan(0);
+      expect(readForEachChildCalls()).toBe(firstCalls);
+    } finally {
+      disableForEachChildMeter();
+    }
   });
 
   it("uses private [] -> [] helpers with bounded bodies behind one public dispatcher", () => {

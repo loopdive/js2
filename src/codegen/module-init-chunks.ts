@@ -53,8 +53,13 @@ export interface ModuleInitChunkEntry {
   readonly node: ts.Node;
 }
 
+/** Immutable AST nodes can be replanned by IR admission and final emission. */
+const sourceNodeWeights = new WeakMap<ts.Node, number>();
+
 /** Count AST nodes iteratively so a pathological source tree cannot grow the JS stack. */
 function sourceNodeWeight(root: ts.Node): number {
+  const cached = sourceNodeWeights.get(root);
+  if (cached !== undefined) return cached;
   let weight = 0;
   const pending: ts.Node[] = [root];
   while (pending.length > 0) {
@@ -67,6 +72,7 @@ function sourceNodeWeight(root: ts.Node): number {
       pending.push(child);
     });
   }
+  sourceNodeWeights.set(root, weight);
   return weight;
 }
 
