@@ -91,6 +91,8 @@ export class D {
 registry.set("%D%", D);
 
 export function defaultedDynamicFull() { const C = intrinsic("%D%"); return new C(11, 12, 13, 14, 15, 16).read(); }
+/** The INLINE construct spelling — no local binding between the lookup and \`new\`. */
+export function defaultedInlineFull() { return new (intrinsic("%D%"))(11, 12, 13, 14, 15, 16).read(); }
 export function defaultedDynamicPartial() { const C = intrinsic("%D%"); return new C(11, 12).read(); }
 export function defaultedDirectFull() { return new D(11, 12, 13, 14, 15, 16).read(); }
 export function defaultedDirectPartial() { return new D(11, 12).read(); }
@@ -124,6 +126,7 @@ export function defaultedFull() { return defaultedDynamicFull(); }
 export function defaultedPartial() { return defaultedDynamicPartial(); }
 export function defaultedFullControl() { return defaultedDirectFull(); }
 export function defaultedPartialControl() { return defaultedDirectPartial(); }
+export function defaultedInline() { return defaultedInlineFull(); }
 `;
 
 /** Every probe's expected answer. Identical for both lanes — that is the point. */
@@ -142,6 +145,7 @@ const EXPECTED: Record<string, unknown> = {
   defaultedPartial: "11,12,0,0,0,0",
   defaultedFullControl: "11,12,13,14,15,16",
   defaultedPartialControl: "11,12,0,0,0,0",
+  defaultedInline: "11,12,13,14,15,16",
 };
 
 function readAll(exports: Record<string, unknown>): Record<string, unknown> {
@@ -162,7 +166,7 @@ describe("#5242 — constructing a compiled class reached as a value", () => {
     const result = await compileMulti(
       {
         "/provider.js": PROVIDER_SOURCE,
-        [entry]: `import { makeDynamic, makeDirect, initConstructed, defaultedDynamicFull, defaultedDynamicPartial, defaultedDirectFull, defaultedDirectPartial } from "./provider";\n${CONSUMER_PROBES}`,
+        [entry]: `import { makeDynamic, makeDirect, initConstructed, defaultedInlineFull, defaultedDynamicFull, defaultedDynamicPartial, defaultedDirectFull, defaultedDirectPartial } from "./provider";\n${CONSUMER_PROBES}`,
       },
       entry,
       { allowJs: true, skipSemanticDiagnostics: true },
@@ -191,7 +195,7 @@ describe("#5242 — constructing a compiled class reached as a value", () => {
     const entry = join(root, "main.js");
     writeFileSync(
       entry,
-      `import { makeDynamic, makeDirect, initConstructed, defaultedDynamicFull, defaultedDynamicPartial, defaultedDirectFull, defaultedDirectPartial } from "cv5242";\n${CONSUMER_PROBES}`,
+      `import { makeDynamic, makeDirect, initConstructed, defaultedInlineFull, defaultedDynamicFull, defaultedDynamicPartial, defaultedDirectFull, defaultedDirectPartial } from "cv5242";\n${CONSUMER_PROBES}`,
     );
 
     const result = await compileProject(entry, {
