@@ -216,7 +216,22 @@ describe("#3523 direct-queue parity inventory", () => {
     });
   });
 
-  it("keeps duplicated class-expression static queues observational", () => {
+  // Until `8f161cbf1` (which added `src/codegen/class-expression-static-init.ts`)
+  // a variable-bound class expression pushed its statics onto the MODULE-level
+  // `staticInitExprs` queue, and did so twice — once under the source binding
+  // and once under the synthetic identity. The legacy order for the source
+  // below was therefore `[static:28:29, static:43:44, static:28:29,
+  // static:43:44]` — four entries, two distinct — with the owning statement
+  // missing entirely, and this test pinned that divergence as observational.
+  //
+  // Class-expression statics now execute as part of ClassDefinitionEvaluation
+  // at the exact expression site (the expression-owned queue), so the
+  // module-level ordered queue holds exactly the one statement the plan
+  // predicts. Verified beyond the parity report: for a module that interleaves
+  // `log` writes with a class expression whose two statics also write `log`,
+  // both lanes observe `1234` and read the static values back as `5`/`6` — the
+  // statics still run, at the right point in source order.
+  it("aligns the class-expression static queue with the planned statement entry", () => {
     const ast = analyzeSource(
       `var C = class { static #a = 1; static #b = 2; m() { return 42; } };`,
       "module-init-class-expression-duplicate.js",
@@ -229,14 +244,17 @@ describe("#3523 direct-queue parity inventory", () => {
     const evidence = generated.moduleInitPlanning;
     expect(evidence).toBeDefined();
     expect(evidence!.parity).toMatchObject({
-      aligned: false,
+      aligned: true,
       plannedEntryCount: 1,
-      legacyEntryCount: 4,
-      missingFromLegacy: [expect.stringMatching(/^statement:/)],
+      legacyEntryCount: 1,
+      missingFromLegacy: [],
+      extraInLegacy: [],
       reordered: [],
     });
-    expect(evidence!.parity.extraInLegacy).toHaveLength(4);
-    expect(new Set(evidence!.parity.extraInLegacy).size).toBe(2);
+    // The single entry is the owning statement, not a static — no
+    // module-level static entry survives for a class EXPRESSION.
+    expect(evidence!.parity.legacyOrder).toEqual([expect.stringMatching(/^statement:/)]);
+    expect(evidence!.parity.legacyOrder).toEqual(evidence!.parity.plannedOrder);
   });
 
   it("detects the legacy all-statics-before-statements reordering in production", () => {
