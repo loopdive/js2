@@ -270,22 +270,48 @@ function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
   return entrySources[0]!.id;
 }
 
+/**
+ * Leaf element kinds a vector carrier can bottom out in, in their historical
+ * Program ABI order. Index IS the depth-1 ordinal, so `vec<f64>` stays 0,
+ * `vec<i32>` 1, `vec<externref>` 2, `vec<string>` 3 — unchanged bytes for
+ * every module that only uses flat vectors.
+ */
+const VECTOR_LEAF_ORDINALS = ["f64", "i32", "externref", "string"] as const;
+
+/**
+ * Stable Program ABI ordinal for one logical vector carrier.
+ *
+ * (#5166) The key grammar is `irTypeKey`'s: `vec<ELEM>` with an optional `?`
+ * nullability suffix on a nested element, so a `number[][]` carrier is
+ * `vec<vec<f64>?>`. Nested carriers used to fall off the end of a four-entry
+ * switch and throw — an INVARIANT, i.e. a hard compile error for any function
+ * whose claim reached preparation with a nested vec.
+ *
+ * The ordinal is now a pure structural function of the key: depth-major,
+ * leaf-minor. That gives the two properties the ordering sidecar needs — it is
+ * identical on every compilation of the same program (no encounter-order
+ * counter), and it is distinct for every distinct nesting, so two carriers
+ * never collide on one ordering tuple. Laying deeper nestings out AFTER the
+ * depth-1 block also means adding a nesting never renumbers a shallower
+ * carrier.
+ */
 function vectorLogicalOrdinal(logicalKey: string): number {
-  switch (logicalKey) {
-    case "vec<f64>":
-      return 0;
-    case "vec<i32>":
-      return 1;
-    case "vec<externref>":
-      return 2;
-    case "vec<string>":
-      return 3;
-    default:
-      throw new ProgramAbiInvariantError(
-        "unknown-order-anchor",
-        `vector layout ${logicalKey} has no stable Program ABI order`,
-      );
+  let depth = 0;
+  let body = logicalKey;
+  for (;;) {
+    if (body.endsWith("?")) body = body.slice(0, -1);
+    if (!body.startsWith("vec<") || !body.endsWith(">")) break;
+    depth += 1;
+    body = body.slice(4, -1);
   }
+  const leaf = (VECTOR_LEAF_ORDINALS as readonly string[]).indexOf(body);
+  if (depth === 0 || leaf < 0) {
+    throw new ProgramAbiInvariantError(
+      "unknown-order-anchor",
+      `vector layout ${logicalKey} has no stable Program ABI order`,
+    );
+  }
+  return (depth - 1) * VECTOR_LEAF_ORDINALS.length + leaf;
 }
 
 /**

@@ -1,9 +1,11 @@
 ---
 id: 3577
 title: "nested-vec element materializer reserve-pass (flatMap depth-always-one illegal-cast + related host-lane T[][] coercion traps)"
-status: blocked
+status: done
+completed: 2026-08-29
+resolution: done-by-other-means
 created: 2026-07-24
-updated: 2026-07-24
+updated: 2026-08-29
 priority: medium
 feasibility: medium
 task_type: bug
@@ -13,8 +15,7 @@ language_feature: array-methods
 goal: builtin-methods
 sprint: current
 horizon: m
-blocked-on: "#1917 Stage B (sdev is actively refactoring src/codegen/type-coercion.ts — the emitToPrimitive façade); land after that settles to avoid a guaranteed conflict"
-related: [3200, 1917, 2831]
+related: [3200, 1917, 2831, 5166]
 origin: "2026-07-24 #3200 Slice-2 (flatMap) — routed out; the depth-always-one illegal-cast trap"
 loc-budget-allow:
   - src/codegen/type-coercion.ts
@@ -71,7 +72,7 @@ host-array nested element, so (1) can only convert a 100%-trapping path into a
 correct value — it cannot regress a passing test. (2) reserves extra defined
 funcs; verify no interaction with index-space freeze / dead-func elimination.
 
-## Blocked-on
+## Blocked-on (cleared 2026-08-29 — see Resolution)
 
 **#1917 Stage B** — sdev is actively refactoring `type-coercion.ts` (the
 `emitToPrimitive` façade). Two agents editing that file in parallel is a
@@ -85,3 +86,58 @@ owner picks it up then.
 2. No test262 regressions (gc + standalone floors).
 3. Repro in a `tests/issue-3577.test.ts` (`[1,2,3].flatMap(e => [[e*2]])` →
    `[[2],[4],[6]]`).
+
+---
+
+## Resolution (2026-08-29) — DONE BY OTHER MEANS
+
+The repro passes on `main`, and has for a while. Measured on unmodified main
+(`fc6fd3b5`) and again with #5166 applied, host lane, compiled + instantiated +
+called in-process:
+
+```ts
+export function main(): string {
+  const r = [1, 2, 3].flatMap(e => [[e * 2]]);
+  return "" + r[0][0] + r[1][0] + r[2][0];
+}
+```
+
+| lane | result |
+| --- | --- |
+| node | `"246"` |
+| js2wasm legacy | `"246"` |
+| js2wasm IR overlay | `"246"` |
+
+No illegal cast, no trap.
+
+### The mechanism that landed is NOT this issue's sketch
+
+The fix sketch above had two parts: (1) recurse in `buildElemCoerce`, and (2) a
+**reserve pass** extension in `member-set-dispatch.ts` so the per-target
+`__vec_from_extern_<elemTypeIdx>` materializer resolves post-freeze. What
+actually shipped is part (1) only, and it does not go through the reserved
+per-target materializer at all: the `ref`/`ref_null` element arm of
+`buildElemCoerce` (`src/codegen/type-coercion.ts`) recognises a nested vec via
+`getVecInfo(ctx, elemTypeIdx)` and recurses into `buildVecFromExternref`
+**in the same `FunctionContext`**, guarded against cycles by a
+`materializingVecTypes` set. Because the conversion is emitted inline rather
+than reserved, the index-space freeze that motivated the reserve pass never
+comes into it — which is why part (2) was never needed.
+
+Recording the difference explicitly: an issue closed against a mechanism it did
+not describe is exactly the kind of thing that gets re-opened and
+re-implemented later. Anyone reading this for the nested-`T[][]` coercion path
+should read `buildElemCoerce`'s ref arm, not `reserveVecFieldMaterializers`.
+
+### Acceptance, against the criteria as written
+
+1. Nested `T[][]` flatMap results materialize correctly — **yes**, measured
+   above. (The `flatMap/depth-always-one.js` test262 file itself is CI's to
+   report; the illegal-cast trap this issue was filed for is gone.)
+2. No test262 regressions — nothing was changed here to regress.
+3. A repro test — pinned in `tests/issue-5166.test.ts` section F rather than in
+   a `tests/issue-3577.test.ts`, since the carrier work is where a future
+   regression would come from.
+
+The **blocked-on** (#1917 Stage B, the `type-coercion.ts` refactor) is moot:
+that refactor is where the recursion landed.

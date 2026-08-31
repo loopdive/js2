@@ -446,7 +446,28 @@ const CLOSURE_SAFE_AMBIENT_GLOBALS = new Set([
 // list is deliberately small; it keeps the generic host fallback for realm
 // objects while retaining the host-free fast path for callbacks that only use
 // normal JS builtins.
-const CLOSURE_UNSAFE_HOST_AMBIENTS = new Set(["Temporal", "TemporalHelpers", "Intl", "$262"]);
+// (#4628) `Temporal` came OUT of this set when it stopped being a host-only
+// ambient: `src/temporal-provider.ts` binds it to a compiled, separately
+// linked `@js-temporal/polyfill` provider, so a callback capturing it captures
+// an ordinary user-source `const` the closure lane resolves fine.
+//
+// This removal is exactly the PR #2838 hazard the issue flagged (widening this
+// gate flipped 212 Temporal tests pass→fail), so read WHAT the entry was
+// doing: the deny list is consulted BEFORE the generic
+// `decl === undefined || decl.getSourceFile().isDeclarationFile` test below.
+// While `Temporal` is an undeclared host ambient — which is still every
+// program that does NOT go through the provider — `valueDeclarationOf` returns
+// undefined and that generic test already classifies it unsafe. So the entry
+// was redundant for the hazard case and load-bearing only for the wired case,
+// where it would have been the one thing forcing a genuinely-safe compiled
+// binding onto the host-callback path (a silent no-op for a ref-element
+// receiver, the #3126 residual). `TemporalHelpers` STAYS: it is a test262
+// harness ambient, it is not what the provider makes real, and it is the
+// specific name in the #2838 failure text ("TemporalHelpers is not defined"
+// inside a lifted closure). Verified by tests/issue-4628-temporal-global.test.ts
+// ("undeclared Temporal keeps the host-callback lane") plus tests/issue-3126.test.ts
+// and tests/issue-4787-temporal-merge-group-regressions.test.ts.
+const CLOSURE_UNSAFE_HOST_AMBIENTS = new Set(["TemporalHelpers", "Intl", "$262"]);
 
 /**
  * (#4616) May this ref-element HOF call take the closure lane in the gc HOST
