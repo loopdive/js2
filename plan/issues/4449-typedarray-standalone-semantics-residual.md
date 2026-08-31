@@ -474,3 +474,24 @@ Root merged it normally as `59bb198317da139e912cd4c98c7a7613bb759760`.
 The accepted code/test tree is therefore byte-identical to tested merge
 `d03d77e419bfcb4e46edc1699c662b606330bb08`; the later commits add only this
 issue's evidence and unrelated upstream markdown. No GitHub issue was created.
+
+### Fresh live-main sync before publication (2026-08-31)
+
+Root freshly fetched `loopdive/js2` main at
+`932341cc7d01547bf6b0065d766a31cdf3478d9f`. The complete incremental
+`207793dd444e17215db38c955ce3baaca5f85c7a..932341cc7d01547bf6b0065d766a31cdf3478d9f`
+range changes only nine generated landing benchmark artifacts. It has no
+overlap with this tracker, either #4449 source file, the focused test, the
+Test262 runner or gitlink, quality configuration, or the accepted evidence
+artifacts.
+
+The completed branch normally merged that exact upstream head as
+`87cd03f8c3efe9ca989ac43052d3c0ddb5882aba`. Its #4449 code/test tree is
+byte-identical to the fully tested `d03d77e419bfcb4e46edc1699c662b606330bb08`
+checkpoint, and the pull-request diff remains exactly this tracker, the two
+source files, and the focused producer test. The only remaining local gate is
+the required pre-push hook. Remote publication is blocked by the execution
+environment's external-destination safeguard until the user explicitly
+authorizes pushing the completed branch to the configured public
+`ttraenkler/js2` fork; no push or pull request has been attempted around that
+guard. No GitHub issue was created.
