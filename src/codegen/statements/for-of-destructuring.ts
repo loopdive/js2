@@ -74,7 +74,7 @@ import {
   tryEmitArrayProtoIteratorReadDrive,
 } from "./destructuring.js";
 import { collectInstrs } from "./shared.js";
-import { emitForOfRestObjectNamedDefault } from "./for-of-rest-object-default.js";
+import { emitForOfRestObjectCarrier } from "./for-of-rest-object-default.js";
 
 /**
  * Preserve §13.15.5 PutValue errors for identifier targets in an assignment
@@ -175,21 +175,23 @@ function emitGlobalSyncWriteback(
 
 /**
  * (#4447) Re-resolve a module global's ABSOLUTE index at write time, then emit
- * the sync writeback.
- *
- * A module global's absolute index shifts every time a string-constant IMPORT
- * global is added (`addStringConstantGlobal` → `fixupModuleGlobalIndices`,
- * which re-maps `ctx.moduleGlobals` and every already-emitted `global.get/set`
- * — but obviously not an index a caller stashed in a local variable). Between
- * resolving the target and emitting its writeback these paths now register a
- * property-name constant and/or compile a default initializer, either of which
- * can import a string constant. A stale index then lands in the IMPORT range:
- * "immutable global #N cannot be assigned" (reproduced on
- * `for ({ x: a = 11 } of [{}])` in the JS-host lane).
- *
- * `hadGlobal` preserves the caller's decision that this target IS a module
- * global (a name absent from `ctx.moduleGlobals` must stay unsynced).
+ * the sync writeback. A late string-constant import can shift the absolute
+ * index after target resolution, so the name map—not a captured index—must be
+ * authoritative at this point. `hadGlobal` preserves the caller's decision
+ * that this target is a module global (a name absent from the map stays
+ * unsynced).
  */
+function emitGlobalSyncWritebackByName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetLocal: number,
+  targetName: string,
+  hadGlobal: boolean,
+): void {
+  if (!hadGlobal) return;
+  emitGlobalSyncWriteback(ctx, fctx, targetLocal, ctx.moduleGlobals.get(targetName));
+}
+
 /**
  * (#5144 cluster R) Assignment-form twin of `emitObjectPatternRestFromVec`:
  * destructure an OBJECT ASSIGNMENT pattern out of a freshly built rest vec —
@@ -200,89 +202,19 @@ function emitGlobalSyncWriteback(
  * reads on that array: `length` → the vec's logical length, a non-negative
  * integer key → the element (out of range ⇒ `undefined`). The generic
  * struct-by-name object arm resolves fields by NAME and therefore dropped both.
- * Array-like keys use direct vec reads; named-key defaults are handled by the
- * dedicated assignment helper.
+ * Materialise the vector as the Array carrier consumed by the generic object
+ * assignment path so all property keys, defaults, targets, and prototype reads
+ * share the established `__extern_get`/PutValue implementation.
  */
 function emitAssignObjectPatternFromVec(
   ctx: CodegenContext,
   fctx: FunctionContext,
   vecLocal: number,
-  vecTypeIdx: number,
-  arrTypeIdx: number,
   pattern: ts.ObjectLiteralExpression,
+  stmt: ts.ForOfStatement,
 ): void {
-  const arrDef = ctx.mod.types[arrTypeIdx];
-  const elemWasmType: ValType = arrDef && arrDef.kind === "array" ? arrDef.element : ({ kind: "externref" } as ValType);
-  for (const prop of pattern.properties) {
-    let key: string | undefined;
-    let target: ts.Expression | undefined;
-    if (ts.isShorthandPropertyAssignment(prop)) {
-      key = prop.name.text;
-      target = prop.name;
-    } else if (ts.isPropertyAssignment(prop)) {
-      const nameNode = prop.name;
-      if (ts.isIdentifier(nameNode) || ts.isStringLiteral(nameNode) || ts.isNumericLiteral(nameNode)) {
-        key = nameNode.text;
-      }
-      target = prop.initializer;
-    }
-    if (key === undefined || target === undefined) continue;
-    const numKey = Number(key);
-    const isIndexKey = Number.isInteger(numKey) && numKey >= 0 && String(numKey) === key;
-    if (key !== "length" && !isIndexKey && emitForOfRestObjectNamedDefault(ctx, fctx, prop)) continue;
-
-    const valueType: ValType = key === "length" ? { kind: "f64" } : elemWasmType;
-    const tmp = allocLocal(fctx, `__forof_restobj_${fctx.locals.length}`, valueType);
-    if (key === "length") {
-      fctx.body.push({ op: "local.get", index: vecLocal });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-      coerceType(ctx, fctx, { kind: "i32" }, valueType);
-    } else {
-      fctx.body.push({ op: "local.get", index: vecLocal });
-      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-      fctx.body.push({ op: "i32.const", value: numKey });
-      emitBoundsCheckedArrayGet(
-        fctx,
-        arrTypeIdx,
-        elemWasmType,
-        ctx,
-        elemWasmType.kind === "externref" || elemWasmType.kind === "ref_extern",
-      );
-    }
-    fctx.body.push({ op: "local.set", index: tmp });
-
-    if (!ts.isIdentifier(target)) {
-      emitAssignToTarget(ctx, fctx, target, tmp, valueType);
-      continue;
-    }
-    if (emitForOfAssignmentTargetGuard(ctx, fctx, target)) continue;
-    const targetName = target.text;
-    let targetLocal = fctx.localMap.get(targetName);
-    const globalIdx = ctx.moduleGlobals.get(targetName);
-    if (targetLocal === undefined) {
-      if (globalIdx === undefined) continue;
-      const globalType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? ({ kind: "externref" } as ValType);
-      targetLocal = allocLocal(fctx, targetName, globalType);
-    }
-    fctx.body.push({ op: "local.get", index: tmp });
-    const targetType = getLocalType(fctx, targetLocal);
-    if (targetType && !valTypesMatch(valueType, targetType)) {
-      coerceType(ctx, fctx, valueType, targetType);
-    }
-    fctx.body.push({ op: "local.set", index: targetLocal });
-    emitGlobalSyncWritebackByName(ctx, fctx, targetLocal, targetName, globalIdx !== undefined);
-  }
-}
-
-function emitGlobalSyncWritebackByName(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  targetLocal: number,
-  targetName: string,
-  hadGlobal: boolean,
-): void {
-  if (!hadGlobal) return;
-  emitGlobalSyncWriteback(ctx, fctx, targetLocal, ctx.moduleGlobals.get(targetName));
+  const carrierLocal = emitForOfRestObjectCarrier(ctx, fctx, vecLocal);
+  compileForOfIteratorAssignDestructuring(ctx, fctx, pattern, carrierLocal, stmt);
 }
 
 /** Enforce GetIterator for an empty ArrayAssignmentPattern (#4714). */
@@ -2064,6 +1996,15 @@ function emitForOfRestAssignment(
   // TDZ/const error without skipping observable source evaluation.
   if (ts.isIdentifier(restTarget) && emitForOfAssignmentTargetGuard(ctx, fctx, restTarget)) return true;
 
+  // Captured mutable identifiers are represented by a ref-cell local. The
+  // rest value is already on the stack, so write through that cell instead of
+  // replacing the cell reference itself.
+  const boxedCapRest = fctx.boxedCaptures?.get(restName);
+  if (boxedCapRest) {
+    emitBoxedForOfAssignStore(ctx, fctx, targetLocal!, { kind: "externref" }, boxedCapRest);
+    return true;
+  }
+
   // Coerce externref slice -> the rest target's declared type and store. For an
   // untyped (`any` → externref) target this is a no-op; for `number[]` (a vec
   // ref) coerceType reconstructs the vec from the JS-array externref (its
@@ -2201,7 +2142,7 @@ function emitVecRestAssignment(
       // (#5144 cluster R) The rest slice is array-LIKE — `length` and numeric
       // keys are the only readable properties, and the generic struct-by-name
       // arm knows neither.
-      emitAssignObjectPatternFromVec(ctx, fctx, targetLocal!, vecTypeIdx, arrTypeIdx, restTarget);
+      emitAssignObjectPatternFromVec(ctx, fctx, targetLocal!, restTarget, stmt);
       return;
     }
     compileForOfAssignDestructuring(
@@ -2227,6 +2168,11 @@ function emitVecRestAssignment(
   }
 
   // PutValue to the identifier rest target.
+  const boxedCapRest = ts.isIdentifier(restTarget) ? fctx.boxedCaptures?.get(restTarget.text) : undefined;
+  if (boxedCapRest) {
+    emitBoxedForOfAssignStore(ctx, fctx, targetLocal!, restVecType, boxedCapRest);
+    return;
+  }
   const targetType = getLocalType(fctx, targetLocal!);
   if (targetType && !valTypesMatch(restVecType, targetType)) {
     coerceType(ctx, fctx, restVecType, targetType);
