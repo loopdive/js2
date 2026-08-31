@@ -1292,7 +1292,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
   // imports. Read its funcIdx only after that flush: any import registered by
   // buildVecFromExternref can shift defined helper indices.
   ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-  if (!ctx.standalone && !ctx.wasi) {
+  if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
     // A cross-representation source may still be a compiled vec carrying
     // ordinary Array properties in its runtime sidecar (notably TypeScript's
     // NodeArray pos/end/hasTrailingComma metadata). The materializer creates a
@@ -1306,7 +1306,10 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
   // allocated before the short-circuit temp below.
   const matInstrs = buildVecFromExternref(ctx, fctx, 0, vecTypeIdx, vecInfo);
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  const copySidecarIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__copy_wasm_struct_sidecar") : undefined;
+  const copySidecarIdx =
+    !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
+      ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
+      : undefined;
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   const crossRepInstrs: Instr[] = matInstrs;
   if (copySidecarIdx !== undefined) {
@@ -2183,7 +2186,7 @@ function emitVecToVecBody(
   // sidecar after its indexed elements are projected. Resolve the funcIdx only
   // after the late-import flush to avoid retaining a shifted defined index.
   let copySidecarIdx: number | undefined;
-  if (!ctx.standalone && !ctx.wasi) {
+  if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
     ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
     flushLateImportShifts(ctx, fctx);
     copySidecarIdx = ctx.funcMap.get("__copy_wasm_struct_sidecar");
@@ -3186,7 +3189,7 @@ export function coerceType(
       if (to.kind === "ref_null") {
         ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       }
-      if (!ctx.standalone && !ctx.wasi) {
+      if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
         // This direct coercion path is separate from the reserved
         // __vec_from_extern helper used by generated field setters. It also
         // materializes a fresh vec from a host Array mirror, so preserve the
@@ -3197,7 +3200,10 @@ export function coerceType(
       // buildVecFromExternref flushes every late-import shift. Resolve the
       // helpers afterwards so these calls cannot retain stale defined funcIdxs.
       const isUndefinedIdx = to.kind === "ref_null" ? ctx.funcMap.get("__extern_is_undefined") : undefined;
-      const copySidecarIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__copy_wasm_struct_sidecar") : undefined;
+      const copySidecarIdx =
+        !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
+          ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
+          : undefined;
       const materializeWithSidecar: Instr[] = materializeVec;
       if (copySidecarIdx !== undefined) {
         const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {
