@@ -1,16 +1,23 @@
 ---
 id: 68
 title: "Issue 68: DOM containment — scope wasm module access to a subtree"
-status: done
+status: ready
 created: 2026-03-03
-updated: 2026-04-14
-completed: 2026-03-03
+updated: 2026-08-31
+priority: high
+horizon: m
+feasibility: medium
+reasoning_effort: max
+task_type: bugfix
+area: runtime, host-interop
 goal: compiler-architecture
-sprint: 0
+sprint: current
+related: [593]
 ---
 # Issue 68: DOM containment — scope wasm module access to a subtree
 
-Depends on: [#67](67.md) — Closed import objects
+Depends on: [#67](67-closed-import-objects-replace-proxy.md) — Closed import
+objects
 
 ## Summary
 
@@ -102,3 +109,42 @@ capabilities outside the policy (e.g., `Document.cookie`, `Window.fetch`).
 ## Complexity
 
 M — ~250 lines in runtime.ts + new containment module
+
+## 2026-08-31 — reopened: the implemented containment contract is incomplete
+
+The Sol Ultra whole-project audit re-ran `tests/dom-containment.test.ts` on
+upstream `main`: **15/19 passed, 4/19 failed**. The failing cases are both
+above-root traversal checks plus outside-receiver mutation and property-set
+checks. That directly violates this issue's original test contract.
+
+Three implementation defects explain the result:
+
+1. `src/runtime.ts:17878-17883` uses current-realm `instanceof Node`
+   exclusively whenever global `Node` exists. Cross-realm nodes therefore
+   become "not node-like"; the structural `nodeType` fallback is never tried.
+   The current Node-less test mocks also omit `nodeType`, so receiver checks do
+   not run for them.
+2. Method wrappers at lines 17941-17955 call `self[member]` instead of the
+   already-resolved `fn`, discarding resolver behavior and creating a second,
+   divergent dispatch policy.
+3. Root-relative outward mutation is exempted by `self !== domRoot`. Methods
+   such as `remove`, `before`, `after`, `replaceWith`, and `insertAdjacent*`
+   can therefore act on the containment root itself and alter its ancestors or
+   siblings. `getRootNode` is blocked only in the property-get branch, not when
+   represented as a method.
+
+The same 123-line implementation is duplicated in
+`src/runtime-containment.ts` with zero importers. Fix the production copy and
+remove the unused duplicate under #3103 so the policy cannot drift again.
+This is a host API containment/correctness contract, not a security boundary.
+
+### Reopened acceptance criteria
+
+- [ ] The existing containment suite passes 19/19 with positive controls.
+- [ ] Same-realm, cross-realm, and structural test nodes receive identical
+      containment decisions.
+- [ ] `parentElement`/`parentNode` cannot expose an ancestor above `domRoot`.
+- [ ] Outside receivers cannot be read, written, or mutated.
+- [ ] Inward operations on the root remain allowed, while root-relative
+      outward operations cannot alter ancestors or siblings.
+- [ ] Allowed methods delegate through the resolved import function.

@@ -1,10 +1,10 @@
 ---
 id: 3103
-title: "Split src/runtime.ts (15,032 LOC) host runtime by concern; decompose resolveImport (6,517-line function)"
+title: "Split src/runtime.ts (18,786 LOC) host runtime by concern and remove duplicate helper implementations"
 status: ready
 sprint: current
 created: 2026-07-09
-updated: 2026-07-17
+updated: 2026-08-31
 priority: high
 horizon: l
 feasibility: medium
@@ -229,3 +229,35 @@ confirmed **0** stray references to the four privatized symbols remain in
 lines: license header, one `export` keyword, one import block). `tsc --noEmit`:
 clean. `check:loc-budget`: green. `runtime.ts` is host-side JS, not in the Wasm
 emit path, so the split cannot change an emitted byte by construction.
+
+## 2026-08-31 — audit update: the public helpers now have divergent copies
+
+`src/runtime.ts` has grown to **18,786 lines**. The audit also found that the
+partial extraction created parallel implementations rather than a canonical
+module boundary:
+
+- `src/runtime-instantiate.ts` is 99 lines and is imported by **40** source/test
+  files, yet it duplicates `instantiateWasm`, `instantiateWasmStreaming`, and
+  `compileAndInstantiate` from the production `src/runtime.ts` entry point.
+  The two copies already differ: the production helper preserves the
+  data-struct association capability and uses `buildCompiledImports`; the
+  sibling does neither. Both retain the catch-all retry defect filed as #5231.
+- `src/runtime-containment.ts` is a 129-line copy of
+  `wrapWithContainment` with **zero importers**. Production continues to use
+  the private copy in `src/runtime.ts`; fixing the apparently extracted file
+  would change no behavior. The live copy currently violates reopened #68.
+
+This is not just file size. Two sources of truth make correctness fixes land in
+the wrong copy or drift by caller. The decomposition must make each concern
+canonical before shrinking the barrel.
+
+### Added acceptance criteria
+
+- [ ] Exactly one implementation owns each public instantiation helper; all 40
+      helper consumers and the package export route through it.
+- [ ] Exactly one implementation owns DOM containment; no zero-import duplicate
+      remains.
+- [ ] The canonicalization preserves data-struct association and compiled-import
+      construction behavior, with differential tests before deletion.
+- [ ] #5231 and #68 regression tests execute through the canonical production
+      entry point and any supported subpath.
