@@ -34,6 +34,7 @@ import {
   isUndefWidenedBindingElement,
   resolveBindingElementType,
 } from "../checker/type-mapper.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
@@ -41,6 +42,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -52,11 +54,10 @@ import {
 } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
-import { addUnionImports } from "./index.js";
+import { addUnionImports, ensureI32Condition, resolveWasmType } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
-import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 // (#2895 PR1) The frame ABI (state-struct field offsets + resume modes) and the
@@ -120,7 +121,15 @@ type StateTerminator =
   // finally's exit router proceeds to the join. Abrupt entries write the pending
   // fields directly in the routers; plain jumps leave it undefined (no write).
   | { kind: "jump"; next: number; setPending?: number }
-  | { kind: "branch"; cond: ts.Expression; negate: boolean; thenState: number; elseState: number }
+  | {
+      kind: "branch";
+      cond: ts.Expression;
+      negate: boolean;
+      thenState: number;
+      elseState: number;
+      /** #680 continuation conditional: use canonical JS ToBoolean. */
+      canonical?: boolean;
+    }
   // (#3050) Exit router of a state-lowered `finally` block: consult the saved
   // pending completion — none → proceed to `join`; return/throw → re-dispatch
   // the completion against the region's OUTER unwind chain (innermost-first),
@@ -224,6 +233,20 @@ type UnwindEntry =
  */
 type ThrowRoute = { kind: "catch"; region: TryRegionPlan } | { kind: "finally"; region: TryRegionPlan };
 
+/** A yield-free operand evaluated once before a continuation suspension. */
+interface NativeGeneratorExpressionCapture {
+  expression: ts.Expression;
+  spillName: string;
+  type: ValType;
+  /** Oracle proved this direct prefix is global undefined; never box it as i32. */
+  canonicalUndefined?: boolean;
+}
+
+/** A source-node identity replaced by a state-local continuation spill. */
+type NativeGeneratorExpressionReplacement =
+  | { kind: "yield"; expression: ts.YieldExpression; spillName: string }
+  | { kind: "operand"; expression: ts.Expression; spillName: string };
+
 interface NativeGeneratorState {
   /** Straight-line, yield-free statements to run on entering this state. */
   statements: ts.Statement[];
@@ -249,6 +272,10 @@ interface NativeGeneratorState {
    * executes (set for states positionally inside a NEW try-region).
    */
   throwRoute?: ThrowRoute;
+  /** Planner-owned pre-yield values, emitted once before this state suspends. */
+  expressionCaptures?: readonly NativeGeneratorExpressionCapture[];
+  /** Original AST nodes read from spills while this state emits source code. */
+  continuationReplacements?: readonly NativeGeneratorExpressionReplacement[];
   terminator: StateTerminator;
 }
 
@@ -454,6 +481,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   const states: NativeGeneratorState[] = [];
   const spills: string[] = [];
+  // (#680) Continuation metadata is plan-local. A state owns captures emitted
+  // before its suspension and source-node replacements read only while its
+  // successor/branch source expression is compiled.
+  const stateExpressionCaptures = new Map<number, NativeGeneratorExpressionCapture[]>();
+  const stateContinuationReplacements = new Map<number, NativeGeneratorExpressionReplacement[]>();
+  // Synthetic operand spills have no VariableDeclaration for the historical
+  // type resolver, so retain their already validated frame representation.
+  const continuationSpillTypes = new Map<string, ValType>();
   // (#2170) `yield*` delegation sites, allocated in source order; index into
   // this array is the terminator's `siteIndex`.
   const delegationSites: { innerName: string }[] = [];
@@ -555,6 +590,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       resumeBindings: curResumeBindings,
       abruptResume: curAbrupt,
       unwind: curUnwind,
+      expressionCaptures: stateExpressionCaptures.get(id),
+      continuationReplacements: stateContinuationReplacements.get(id),
       terminator,
     };
   }
@@ -592,7 +629,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    * entries (byte-identical to the historical activeFinalizers threading) plus
    * `catch` / `finally` entries for regions on the new try-region machinery.
    */
-  function lowerStatements(statements: readonly ts.Statement[], unwind: readonly UnwindEntry[]): boolean {
+  function lowerStatements(
+    statements: readonly ts.Statement[],
+    unwind: readonly UnwindEntry[],
+    allowExpressionContinuations: boolean,
+  ): boolean {
     for (const stmt of statements) {
       if (!ok) return false;
       if (stmt.kind === ts.SyntaxKind.EmptyStatement) continue;
@@ -641,6 +682,19 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         continue;
       }
 
+      // 2b) #680 continuation expressions are only admitted in the direct
+      // generator body. Every recursive structural list passes false. A
+      // state-lowered-finally context rejects this path even if a future caller
+      // accidentally grants permission; direct yields already continued above.
+      if (ts.isExpressionStatement(stmt) && stateFinallyDepth > 0 && nodeContainsYield(stmt.expression)) {
+        return fail();
+      }
+      if (ts.isExpressionStatement(stmt) && allowExpressionContinuations) {
+        const continuation = lowerExpressionContinuation(stmt, unwind);
+        if (continuation === "lowered") continue;
+        if (continuation === "failed") return false;
+      }
+
       // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
         const finallyYieldFree = !stmt.finallyBlock || statementsAreYieldFree(stmt.finallyBlock.statements);
@@ -648,10 +702,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           // Legacy kind-L region: finally-only, yield-free finally — the
           // historical replay lowering, byte-identical to pre-#3050.
           if (
-            !lowerStatements(stmt.tryBlock.statements, [
-              ...unwind,
-              { kind: "replay", statements: [...stmt.finallyBlock.statements] },
-            ])
+            !lowerStatements(
+              stmt.tryBlock.statements,
+              [...unwind, { kind: "replay", statements: [...stmt.finallyBlock.statements] }],
+              false,
+            )
           ) {
             return false;
           }
@@ -690,7 +745,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
       // 6) A bare block with yields — flatten it (no new scope modeling).
       if (ts.isBlock(stmt)) {
-        if (!lowerStatements(stmt.statements, unwind)) return false;
+        if (!lowerStatements(stmt.statements, unwind, false)) return false;
         continue;
       }
 
@@ -783,7 +838,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     finishState(curId, { kind: "jump", next: tryEntry });
     curThrowRoute = tryPartRoute;
     resetCursor(tryEntry);
-    const tryOk = lowerStatements(stmt.tryBlock.statements, tryUnwind);
+    const tryOk = lowerStatements(stmt.tryBlock.statements, tryUnwind, false);
     curThrowRoute = outerRoute;
     if (!tryOk) return false;
     finishState(curId, { kind: "jump", next: normalNext, setPending: normalPending });
@@ -792,7 +847,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (stmt.catchClause) {
       curThrowRoute = catchPartRoute;
       resetCursor(catchEntry);
-      const catchOk = lowerStatements(stmt.catchClause.block.statements, catchUnwind);
+      const catchOk = lowerStatements(stmt.catchClause.block.statements, catchUnwind, false);
       curThrowRoute = outerRoute;
       if (!catchOk) return false;
       finishState(curId, { kind: "jump", next: normalNext, setPending: normalPending });
@@ -802,7 +857,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (stmt.finallyBlock) {
       resetCursor(finallyEntry);
       stateFinallyDepth++;
-      const finOk = lowerStatements(stmt.finallyBlock.statements, [...outerUnwind]);
+      const finOk = lowerStatements(stmt.finallyBlock.statements, [...outerUnwind], false);
       stateFinallyDepth--;
       if (!finOk) return false;
       finishState(curId, { kind: "finally-exit", join: joinId, unwind: [...outerUnwind].reverse() });
@@ -1101,6 +1156,525 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     pendingUnwind = undefined;
   }
 
+  // -------------------------------------------------------------------------
+  // #680 expression continuations
+  //
+  // The bounded grammar uses original AST identities, not synthetic replay
+  // nodes. Prefix operands are captured into ordinary generator spills before a
+  // suspension; a successor state recompiles the original expression with each
+  // capture/yield read from its validated spill.
+
+  type ContinuationYieldBinding = readonly [ts.YieldExpression, string];
+  type ExpressionContinuationAttempt = "lowered" | "not-applicable" | "failed";
+
+  interface ContinuationCaptureType {
+    type: ValType;
+    /** Emit the canonical JS undefined singleton instead of a raw i32 value. */
+    canonicalUndefined: boolean;
+  }
+
+  let continuationSpillOrdinal = 0;
+
+  function continuationSpillName(role: "operand" | "sent"): string {
+    for (;;) {
+      const name = `__gen_expr_${role}_${continuationSpillOrdinal++}`;
+      if (spillSet.has(name)) continue;
+      if (decl.parameters.some((param) => ts.isIdentifier(param.name) && param.name.text === name)) continue;
+      if (decl.body && bodyDeclaresBinding(decl.body, name)) continue;
+      return name;
+    }
+  }
+
+  function unwrapContinuationWrapper(expr: ts.Expression): ts.Expression {
+    let current = expr;
+    for (;;) {
+      if (ts.isParenthesizedExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isAsExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isTypeAssertionExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isNonNullExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isSatisfiesExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      return current;
+    }
+  }
+
+  /** Only a bare, non-delegating yield belongs to this checkpoint. */
+  function bareContinuationYield(expr: ts.Expression): ts.YieldExpression | null {
+    const inner = unwrapContinuationWrapper(expr);
+    if (!ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) return null;
+    return inner;
+  }
+
+  /** The standalone form is deliberately limited to one-or-more parentheses. */
+  function parenthesizedContinuationYield(expr: ts.Expression): ts.YieldExpression | null {
+    let inner = expr;
+    let parenthesized = false;
+    while (ts.isParenthesizedExpression(inner)) {
+      parenthesized = true;
+      inner = inner.expression;
+    }
+    if (!parenthesized || !ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) {
+      return null;
+    }
+    return inner;
+  }
+
+  /** Verify that every yield in a rebuilt expression is one of our bare yields. */
+  function continuationYields(root: ts.Expression): ts.YieldExpression[] | null {
+    const yields: ts.YieldExpression[] = [];
+    let valid = true;
+    function visit(node: ts.Node): void {
+      if (!valid) return;
+      if (ts.isYieldExpression(node)) {
+        if (node.asteriskToken || node.expression !== undefined) valid = false;
+        else yields.push(node);
+        return;
+      }
+      if (node !== root && isFunctionLikeScope(node)) {
+        valid = false;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(root);
+    return valid ? yields : null;
+  }
+
+  /**
+   * Values before a suspension must not require observable Get/call/spread/key
+   * work. Local/literal arithmetic and identifier updates are the bounded
+   * one-time-effect set proven by this slice.
+   */
+  function isSafeContinuationOperand(expr: ts.Expression): boolean {
+    if (nodeContainsYield(expr)) return false;
+    const inner = unwrapContinuationWrapper(expr);
+    if (ts.isIdentifier(inner) || ts.isNumericLiteral(inner) || ts.isStringLiteral(inner)) return true;
+    if (
+      inner.kind === ts.SyntaxKind.TrueKeyword ||
+      inner.kind === ts.SyntaxKind.FalseKeyword ||
+      inner.kind === ts.SyntaxKind.NullKeyword
+    ) {
+      return true;
+    }
+    if (ts.isPostfixUnaryExpression(inner)) {
+      return (
+        ts.isIdentifier(inner.operand) &&
+        (inner.operator === ts.SyntaxKind.PlusPlusToken || inner.operator === ts.SyntaxKind.MinusMinusToken)
+      );
+    }
+    if (ts.isPrefixUnaryExpression(inner)) {
+      if (inner.operator === ts.SyntaxKind.PlusPlusToken || inner.operator === ts.SyntaxKind.MinusMinusToken) {
+        return ts.isIdentifier(inner.operand);
+      }
+      return isSafeContinuationOperand(inner.operand);
+    }
+    if (!ts.isBinaryExpression(inner)) return false;
+    switch (inner.operatorToken.kind) {
+      case ts.SyntaxKind.EqualsToken:
+      case ts.SyntaxKind.PlusEqualsToken:
+      case ts.SyntaxKind.MinusEqualsToken:
+        return ts.isIdentifier(inner.left) && isSafeContinuationOperand(inner.right);
+      case ts.SyntaxKind.PlusToken:
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken:
+      case ts.SyntaxKind.PercentToken:
+        return isSafeContinuationOperand(inner.left) && isSafeContinuationOperand(inner.right);
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * The direct identifier compiler arm gives `undefined` canonical semantics,
+   * so a continuation may skip source emission only when the oracle proves the
+   * ORIGINAL identifier has only ambient declaration-file bindings, never a
+   * user source declaration. A transparent wrapper is intentionally not
+   * canonical: its type can launder a value.
+   */
+  function isOracleUnshadowedGlobalUndefined(expr: ts.Expression): boolean {
+    const declaration = ctx.oracle.valueDeclarationOf(expr);
+    return (
+      ts.isIdentifier(expr) &&
+      expr.text === "undefined" &&
+      // lib.d.ts supplies the ambient global declaration; a source declaration
+      // is a shadow and must not be canonicalized.
+      (declaration === undefined || declaration.getSourceFile().isDeclarationFile) &&
+      ctx.oracle.declarationsOf(expr).every((entry) => entry.getSourceFile().isDeclarationFile)
+    );
+  }
+
+  /** Noncanonical undefined/void and any nullish union lack a proven spill carrier. */
+  function hasDisallowedContinuationNullishFact(fact: TypeFact): boolean {
+    if (fact.kind === "undefined" || fact.kind === "void") return true;
+    if (fact.kind !== "union") return false;
+    return fact.nullable || fact.undefinable || fact.parts.some((part) => hasDisallowedContinuationNullishFact(part));
+  }
+
+  /**
+   * Map the oracle's registry-free fact to the bounded capture ABI. Complex,
+   * unknown, and non-nullish union values use the existing lossless externref
+   * spill route; only primitives retain their scalar/native-string carriers.
+   */
+  function continuationCaptureFactValType(fact: TypeFact): ValType | null {
+    switch (fact.kind) {
+      case "number":
+        return { kind: "f64" };
+      case "boolean":
+        return { kind: "i32", boolean: true };
+      case "string":
+        return ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 ? nativeStringType(ctx) : { kind: "externref" };
+      case "bigint":
+        return usesHostBigIntCarrier(ctx) ? { kind: "externref" } : { kind: "i64", bigint: true };
+      case "symbol":
+        return { kind: "i32", symbol: true };
+      case "undefined":
+      case "void":
+        return null;
+      default:
+        return { kind: "externref" };
+    }
+  }
+
+  function continuationCaptureType(expr: ts.Expression): ContinuationCaptureType | null {
+    const inner = unwrapContinuationWrapper(expr);
+    const outerFact = ctx.oracle.typeFactOf(expr);
+    const innerFact = inner === expr ? outerFact : ctx.oracle.typeFactOf(inner);
+    const canonicalUndefined = isOracleUnshadowedGlobalUndefined(expr);
+
+    // A user binding named `undefined` reaches the direct identifier compiler
+    // arm too. Do not let this narrow continuation lane misread it as ambient.
+    if (ts.isIdentifier(inner) && inner.text === "undefined" && !canonicalUndefined) return null;
+
+    // This gate precedes boolean branding. An assertion can otherwise present
+    // an inner `true` as outer `void`/`undefined`, and a wrapper can conceal a
+    // nullish union around an otherwise numeric inner expression. Direct null
+    // is not a union and stays on the ordinary externref capture route.
+    if (
+      !canonicalUndefined &&
+      (hasDisallowedContinuationNullishFact(outerFact) || hasDisallowedContinuationNullishFact(innerFact))
+    ) {
+      return null;
+    }
+
+    if (canonicalUndefined) {
+      // The host lane would need a preplanned `__get_undefined` import. Do
+      // not accept the expression and accidentally fall through to its legacy
+      // null/i32 representation; keep that lane on the existing host fallback.
+      if (!(ctx.standalone || ctx.nativeStrings)) return null;
+      return { type: { kind: "externref" }, canonicalUndefined: true };
+    }
+
+    // The normal expression compiler brands raw booleans. Preserve that brand
+    // through the i32 spill so rebuilding `[true, yield]` invokes the ordinary
+    // boolean boxer rather than treating `true` as numeric 1.
+    if (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword) {
+      return { type: { kind: "i32", boolean: true }, canonicalUndefined: false };
+    }
+
+    const captureFactType = continuationCaptureFactValType(outerFact);
+    if (!captureFactType) return null;
+    const type = spillSafeValType(captureFactType);
+    return type ? { type, canonicalUndefined: false } : null;
+  }
+
+  function captureContinuationOperand(expr: ts.Expression): NativeGeneratorExpressionCapture | null {
+    if (!isSafeContinuationOperand(expr)) return null;
+    const captureType = continuationCaptureType(expr);
+    if (!captureType) return null;
+    const spillName = continuationSpillName("operand");
+    addSpill(spillName);
+    continuationSpillTypes.set(spillName, captureType.type);
+    const capture = {
+      expression: expr,
+      spillName,
+      type: captureType.type,
+      canonicalUndefined: captureType.canonicalUndefined,
+    };
+    const existing = stateExpressionCaptures.get(curId);
+    if (existing) existing.push(capture);
+    else stateExpressionCaptures.set(curId, [capture]);
+    return capture;
+  }
+
+  /**
+   * Build a complete replacement list before attaching a state. Missing or
+   * duplicate original-node identities fail native-plan construction rather
+   * than permitting replay/default behavior in codegen.
+   */
+  function buildContinuationReplacements(
+    root: ts.Expression,
+    captures: readonly NativeGeneratorExpressionCapture[],
+    yieldBindings: readonly ContinuationYieldBinding[],
+  ): NativeGeneratorExpressionReplacement[] | null {
+    const yields = continuationYields(root);
+    if (!yields || yields.length !== yieldBindings.length) return null;
+
+    const replacements: NativeGeneratorExpressionReplacement[] = [];
+    const seen = new Set<ts.Expression>();
+    for (const capture of captures) {
+      if (
+        seen.has(capture.expression) ||
+        !spillSet.has(capture.spillName) ||
+        continuationSpillTypes.get(capture.spillName) === undefined
+      ) {
+        return null;
+      }
+      seen.add(capture.expression);
+      replacements.push({ kind: "operand", expression: capture.expression, spillName: capture.spillName });
+    }
+
+    const yieldSpills = new Map<ts.YieldExpression, string>();
+    for (const [yieldExpr, spillName] of yieldBindings) {
+      if (yieldSpills.has(yieldExpr) || !spillSet.has(spillName)) return null;
+      yieldSpills.set(yieldExpr, spillName);
+    }
+    for (const yieldExpr of yields) {
+      const spillName = yieldSpills.get(yieldExpr);
+      if (spillName === undefined || seen.has(yieldExpr)) return null;
+      seen.add(yieldExpr);
+      replacements.push({ kind: "yield", expression: yieldExpr, spillName });
+    }
+    return yieldSpills.size === yields.length ? replacements : null;
+  }
+
+  function attachContinuationReplacements(
+    stateId: number,
+    replacements: NativeGeneratorExpressionReplacement[],
+  ): boolean {
+    if (replacements.length === 0 || stateContinuationReplacements.has(stateId)) return false;
+    stateContinuationReplacements.set(stateId, replacements);
+    return true;
+  }
+
+  function finishExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    captures: readonly NativeGeneratorExpressionCapture[],
+    yieldBindings: readonly ContinuationYieldBinding[],
+  ): boolean {
+    const replacements = buildContinuationReplacements(stmt.expression, captures, yieldBindings);
+    if (!replacements || !attachContinuationReplacements(curId, replacements)) return false;
+    curStatements.push(stmt);
+    return true;
+  }
+
+  function lowerSingleExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    yieldExpr: ts.YieldExpression,
+    captureExpressions: readonly ts.Expression[],
+    unwind: readonly UnwindEntry[],
+  ): boolean {
+    const captures: NativeGeneratorExpressionCapture[] = [];
+    for (const expression of captureExpressions) {
+      const capture = captureContinuationOperand(expression);
+      if (!capture) return false;
+      captures.push(capture);
+    }
+    const sentSpill = continuationSpillName("sent");
+    if (!emitYield(yieldExpr, sentSpill, unwind)) return false;
+    return finishExpressionContinuation(stmt, captures, [[yieldExpr, sentSpill]]);
+  }
+
+  function flattenCommaExpression(expr: ts.Expression, terms: ts.Expression[]): void {
+    const inner = unwrapContinuationWrapper(expr);
+    if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      flattenCommaExpression(inner.left, terms);
+      flattenCommaExpression(inner.right, terms);
+      return;
+    }
+    terms.push(inner);
+  }
+
+  function lowerCommaExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    root: ts.Expression,
+    unwind: readonly UnwindEntry[],
+  ): boolean {
+    const terms: ts.Expression[] = [];
+    flattenCommaExpression(root, terms);
+    if (terms.length < 2) return false;
+
+    const yields: { index: number; expression: ts.YieldExpression }[] = [];
+    for (let index = 0; index < terms.length; index++) {
+      const yieldExpr = bareContinuationYield(terms[index]!);
+      if (yieldExpr) yields.push({ index, expression: yieldExpr });
+      else if (!isSafeContinuationOperand(terms[index]!)) return false;
+    }
+    if (yields.length === 0) return false;
+
+    const captures: NativeGeneratorExpressionCapture[] = [];
+    const bindings: ContinuationYieldBinding[] = [];
+    let nextYield = 0;
+    for (let index = 0; index < terms.length; index++) {
+      const yieldAtTerm = nextYield < yields.length && yields[nextYield]!.index === index;
+      if (yieldAtTerm) {
+        const yieldExpr = yields[nextYield]!.expression;
+        const sentSpill = continuationSpillName("sent");
+        if (!emitYield(yieldExpr, sentSpill, unwind)) return false;
+        bindings.push([yieldExpr, sentSpill]);
+        nextYield++;
+      } else if (nextYield < yields.length) {
+        const capture = captureContinuationOperand(terms[index]!);
+        if (!capture) return false;
+        captures.push(capture);
+      }
+    }
+    return finishExpressionContinuation(stmt, captures, bindings);
+  }
+
+  function lowerConditionalExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    conditional: ts.ConditionalExpression,
+    unwind: readonly UnwindEntry[],
+  ): boolean {
+    const conditionYield = bareContinuationYield(conditional.condition);
+    const thenYield = bareContinuationYield(conditional.whenTrue);
+    const elseYield = bareContinuationYield(conditional.whenFalse);
+    if (!conditionYield || !thenYield || !elseYield) return false;
+
+    const conditionSent = continuationSpillName("sent");
+    if (!emitYield(conditionYield, conditionSent, unwind)) return false;
+
+    const thenEntry = reserveState();
+    const elseEntry = reserveState();
+    const join = reserveState();
+    const conditionReplacements = buildContinuationReplacements(
+      conditional.condition,
+      [],
+      [[conditionYield, conditionSent]],
+    );
+    if (!conditionReplacements || !attachContinuationReplacements(curId, conditionReplacements)) return false;
+    finishState(curId, {
+      kind: "branch",
+      cond: conditional.condition,
+      negate: false,
+      thenState: thenEntry,
+      elseState: elseEntry,
+      canonical: true,
+    });
+
+    resetCursor(thenEntry);
+    const thenSent = continuationSpillName("sent");
+    if (!emitYield(thenYield, thenSent, unwind)) return false;
+    const thenReplacements = buildContinuationReplacements(
+      stmt.expression,
+      [],
+      [
+        [conditionYield, conditionSent],
+        [thenYield, thenSent],
+        [elseYield, thenSent],
+      ],
+    );
+    if (!thenReplacements || !attachContinuationReplacements(curId, thenReplacements)) return false;
+    curStatements.push(stmt);
+    finishState(curId, { kind: "jump", next: join });
+
+    resetCursor(elseEntry);
+    const elseSent = continuationSpillName("sent");
+    if (!emitYield(elseYield, elseSent, unwind)) return false;
+    const elseReplacements = buildContinuationReplacements(
+      stmt.expression,
+      [],
+      [
+        [conditionYield, conditionSent],
+        [thenYield, elseSent],
+        [elseYield, elseSent],
+      ],
+    );
+    if (!elseReplacements || !attachContinuationReplacements(curId, elseReplacements)) return false;
+    curStatements.push(stmt);
+    finishState(curId, { kind: "jump", next: join });
+
+    resetCursor(join);
+    return true;
+  }
+
+  function lowerExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
+    const root = unwrapContinuationWrapper(stmt.expression);
+    const singleYield = parenthesizedContinuationYield(stmt.expression);
+    const arrayRoot = ts.isArrayLiteralExpression(root) ? root : undefined;
+    const objectRoot = ts.isObjectLiteralExpression(root) ? root : undefined;
+    const conditionalRoot = ts.isConditionalExpression(root) ? root : undefined;
+    const commaRoot =
+      ts.isBinaryExpression(root) && root.operatorToken.kind === ts.SyntaxKind.CommaToken ? root : undefined;
+    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot) return "not-applicable";
+
+    // Bare-yield sent values are f64 in this checkpoint. String/boxed-any
+    // carriers and every try/unwind crossing retain the existing fail-closed
+    // native-plan boundary.
+    if (unwind.length !== 0 || elemValType.kind !== "f64") return "failed";
+
+    if (singleYield) {
+      return lowerSingleExpressionContinuation(stmt, singleYield, [], unwind) ? "lowered" : "failed";
+    }
+
+    if (arrayRoot) {
+      const elements: ts.Expression[] = [];
+      for (const element of arrayRoot.elements) {
+        if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return "not-applicable";
+        elements.push(element as ts.Expression);
+      }
+      const yieldIndex = elements.findIndex((element) => bareContinuationYield(element) !== null);
+      if (yieldIndex < 0 || elements.some((element, index) => index !== yieldIndex && nodeContainsYield(element))) {
+        return "not-applicable";
+      }
+      const yieldExpr = bareContinuationYield(elements[yieldIndex]!);
+      if (
+        !yieldExpr ||
+        !elements.every((element, index) => index === yieldIndex || isSafeContinuationOperand(element))
+      ) {
+        return "not-applicable";
+      }
+      return lowerSingleExpressionContinuation(stmt, yieldExpr, elements.slice(0, yieldIndex), unwind)
+        ? "lowered"
+        : "failed";
+    }
+
+    if (objectRoot) {
+      const values: ts.Expression[] = [];
+      for (const property of objectRoot.properties) {
+        if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) return "not-applicable";
+        values.push(property.initializer);
+      }
+      const yieldIndex = values.findIndex((value) => bareContinuationYield(value) !== null);
+      if (yieldIndex < 0 || values.some((value, index) => index !== yieldIndex && nodeContainsYield(value))) {
+        return "not-applicable";
+      }
+      const yieldExpr = bareContinuationYield(values[yieldIndex]!);
+      if (!yieldExpr || !values.every((value, index) => index === yieldIndex || isSafeContinuationOperand(value))) {
+        return "not-applicable";
+      }
+      return lowerSingleExpressionContinuation(stmt, yieldExpr, values.slice(0, yieldIndex), unwind)
+        ? "lowered"
+        : "failed";
+    }
+
+    if (conditionalRoot) {
+      return lowerConditionalExpressionContinuation(stmt, conditionalRoot, unwind) ? "lowered" : "not-applicable";
+    }
+    if (commaRoot) {
+      return lowerCommaExpressionContinuation(stmt, commaRoot, unwind) ? "lowered" : "not-applicable";
+    }
+    return "not-applicable";
+  }
+
   /** if (cond) thenBlock [else elseBlock] — at least one branch yields. */
   function lowerIf(stmt: ts.IfStatement, unwind: readonly UnwindEntry[]): boolean {
     if (!isNumericExpression(ctx, stmt.expression)) return fail();
@@ -1129,7 +1703,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.thenStatement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.thenStatement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: joinId });
 
     if (hasElse) {
@@ -1138,7 +1712,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       curResumeBindings = [];
       curAbrupt = undefined;
       curUnwind = undefined;
-      if (!lowerStatements(thenBody(stmt.elseStatement!), unwind)) return false;
+      if (!lowerStatements(thenBody(stmt.elseStatement!), unwind, false)) return false;
       finishState(curId, { kind: "jump", next: joinId });
     }
 
@@ -1176,7 +1750,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.statement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: headerId });
 
     // continue at exit.
@@ -1206,7 +1780,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.statement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: headerId });
 
     // header: cond ? bodyEntry : exit
@@ -1270,7 +1844,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.statement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: updateId });
 
     // update → header
@@ -1492,7 +2066,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
   }
 
-  if (!lowerStatements(decl.body.statements, [])) return null;
+  if (!lowerStatements(decl.body.statements, [], true)) return null;
   if (!ok) return null;
 
   // Final fallthrough state completes the generator.
@@ -1575,6 +2149,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // value), so keep bailing that shape to the host path, exactly as F1 did.
       if (carrierIsAny(elemValType)) return null;
       spillTypes.set(name, carrierType);
+      continue;
+    }
+    // (#680) Synthetic continuation operands have no declaration to resolve;
+    // their planner-validated representation is the spill's exact ABI type.
+    const continuationType = continuationSpillTypes.get(name);
+    if (continuationType !== undefined) {
+      spillTypes.set(name, continuationType);
       continue;
     }
     // (#2920) A destructuring-param binding name — typed up-front from the
@@ -3211,6 +3792,100 @@ function emitConditionAsI32(ctx: CodegenContext, fctx: FunctionContext, expr: ts
 }
 
 /**
+ * Emit one planner-owned pre-yield operand capture. The expression runs before
+ * its suspension; later states read only this spill through the scoped map.
+ */
+function emitNativeGeneratorExpressionCapture(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  capture: NativeGeneratorExpressionCapture,
+): void {
+  const localIdx = fctx.localMap.get(capture.spillName);
+  const localType = localIdx === undefined ? undefined : getLocalType(fctx, localIdx);
+  if (localIdx === undefined || localType === undefined) {
+    reportError(ctx, capture.expression, "Internal error: native generator continuation capture spill is unavailable");
+    throw new Error("native generator continuation capture spill is unavailable");
+  }
+
+  if (capture.canonicalUndefined) {
+    // Only oracle-proven unshadowed `undefined` bypasses the normal expression
+    // compiler when a successor recompiles the source. Its admitted
+    // representation is the standalone canonical singleton — never an
+    // unbranded i32 that could box as numeric zero.
+    if (localType.kind !== "externref") {
+      reportError(ctx, capture.expression, "Internal error: canonical undefined continuation spill is not externref");
+      throw new Error("canonical undefined continuation spill is not externref");
+    }
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+    fctx.body.push({ op: "local.set", index: localIdx });
+    return;
+  }
+
+  const emittedType = compileExpression(ctx, fctx, capture.expression, capture.type);
+  if (emittedType === null) {
+    reportError(
+      ctx,
+      capture.expression,
+      "Internal error: native generator continuation capture did not produce a value",
+    );
+    throw new Error("native generator continuation capture did not produce a value");
+  }
+  if (!valTypesMatch(emittedType, localType)) coerceType(ctx, fctx, emittedType, localType);
+  fctx.body.push({ op: "local.set", index: localIdx });
+}
+
+/**
+ * Install continuation substitutions only while compiling the original source
+ * expression in its successor state. `finally` restoration keeps the maps
+ * state-local even when expression lowering throws or recursively compiles a
+ * nested body. Planner validation makes every entry mandatory; this helper
+ * fails loudly rather than allowing a missing spill to replay source.
+ */
+function withNativeGeneratorContinuationLocals<T>(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  replacements: readonly NativeGeneratorExpressionReplacement[] | undefined,
+  emit: () => T,
+): T {
+  if (!replacements || replacements.length === 0) return emit();
+
+  const previousYieldLocals = fctx.nativeGeneratorYieldValueLocals;
+  const previousExpressionLocals = fctx.nativeGeneratorExpressionValueLocals;
+  const yieldLocals = new Map(previousYieldLocals);
+  const expressionLocals = new Map(previousExpressionLocals);
+  const seen = new Set<ts.Expression>();
+
+  for (const replacement of replacements) {
+    const localIdx = fctx.localMap.get(replacement.spillName);
+    if (seen.has(replacement.expression) || localIdx === undefined || getLocalType(fctx, localIdx) === undefined) {
+      reportError(
+        ctx,
+        replacement.expression,
+        "Internal error: native generator continuation replacement is unavailable",
+      );
+      throw new Error("native generator continuation replacement is unavailable");
+    }
+    seen.add(replacement.expression);
+    if (replacement.kind === "yield") yieldLocals.set(replacement.expression, localIdx);
+    else expressionLocals.set(replacement.expression, localIdx);
+  }
+
+  fctx.nativeGeneratorYieldValueLocals = yieldLocals;
+  fctx.nativeGeneratorExpressionValueLocals = expressionLocals;
+  try {
+    return emit();
+  } finally {
+    fctx.nativeGeneratorYieldValueLocals = previousYieldLocals;
+    fctx.nativeGeneratorExpressionValueLocals = previousExpressionLocals;
+  }
+}
+
+/** #680 condition states need the canonical JS ToBoolean path (NaN is false). */
+function emitCanonicalConditionAsI32(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): void {
+  ensureI32Condition(fctx, compileExpression(ctx, fctx, expr), ctx);
+}
+
+/**
  * Emit the trampoline resume body into `fctx.body`. `selfLocal` is the state
  * struct ref. The shape is:
  *
@@ -3527,12 +4202,27 @@ function compileState(
   }
 
   // Prelude statements (straight-line, yield-free).
-  for (const stmt of state.statements) compileStatement(ctx, fctx, stmt);
+  for (const stmt of state.statements) {
+    withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () => {
+      compileStatement(ctx, fctx, stmt);
+    });
+  }
+
+  // Captures are attached when their continuation is found, so a state can
+  // already have earlier yield-free prelude statements. Emit that prelude
+  // first to preserve source order. Captures stay deliberately outside the
+  // replacement scope: this is the sole evaluation of their ORIGINAL AST;
+  // successor states only read the saved value.
+  for (const capture of state.expressionCaptures ?? []) {
+    emitNativeGeneratorExpressionCapture(ctx, fctx, capture);
+  }
 
   const term = state.terminator;
   switch (term.kind) {
     case "yield": {
-      const tmp = emitYieldValueAsElem(ctx, fctx, term.expr, info);
+      const tmp = withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () =>
+        emitYieldValueAsElem(ctx, fctx, term.expr, info),
+      );
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, term.next));
       body.push(...setModeInstrs(info, selfLocal, 0));
@@ -3544,7 +4234,9 @@ function compileState(
       break;
     }
     case "return": {
-      const tmp = emitYieldValueAsElem(ctx, fctx, term.expr, info);
+      const tmp = withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () =>
+        emitYieldValueAsElem(ctx, fctx, term.expr, info),
+      );
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, info.doneState));
       body.push(...setModeInstrs(info, selfLocal, 0));
@@ -3601,7 +4293,10 @@ function compileState(
     }
     case "branch": {
       body.push(...storeSpills(info, fctx, selfLocal));
-      emitConditionAsI32(ctx, fctx, term.cond);
+      withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () => {
+        if (term.canonical) emitCanonicalConditionAsI32(ctx, fctx, term.cond);
+        else emitConditionAsI32(ctx, fctx, term.cond);
+      });
       if (term.negate) body.push({ op: "i32.eqz" });
       body.push({
         op: "if",
