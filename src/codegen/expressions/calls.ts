@@ -26,6 +26,7 @@ import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; /
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
+import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
@@ -3824,6 +3825,13 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   const usedAsValueFunctions =
     registrationState.__funcValueWrapperFunctionExpressions ??
     (registrationState.__funcValueWrapperFunctionExpressions = new Set<ts.FunctionExpression | ts.ArrowFunction>());
+  const observeMinimumArgumentCount = (
+    wrapper: NonNullable<ReturnType<typeof getOrCreateFuncRefWrapperTypes>>,
+    minimumArgumentCount: number,
+  ): void => {
+    const current = wrapper.closureInfo.minimumArgumentCount ?? wrapper.closureInfo.paramTypes.length;
+    wrapper.closureInfo.minimumArgumentCount = Math.min(current, minimumArgumentCount);
+  };
 
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -3890,7 +3898,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     if ((captures?.length ?? 0) === 0 && funcIdx !== undefined) {
       const sig = getFuncSignature(ctx, funcIdx);
       if (sig) {
-        getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
+        const wrapper = getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
+        if (wrapper && expectedArgumentCountOfParams(declaration.parameters) < sig.params.length) {
+          observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
+        }
         continue;
       }
     }
@@ -3904,22 +3915,32 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     const { params, returnType } = computeClosureWrapperSig(ctx, declaration);
     const allExternref = params.every((p) => p.kind === "externref");
     const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-    // A zero-argument callback cannot trigger the speculative
-    // over-arity numeric-parameter hazard described below.  Register it early
+    const hasOmittableTrailingParams = expectedArgumentCountOfParams(declaration.parameters) < params.length;
+    // A callback whose entire parameter ABI is externref can safely be
+    // registered before its value site: omitted trailing parameters are
+    // materialized as JavaScript `undefined` by the dynamic dispatcher below.
+    // Register it early
     // so generic helpers such as TypeScript's `speculationHelper<T>(() => T)`
     // and `parseListElement<T>(() => T)` can discover later-compiled boolean
     // predicates and GC-reference parsers. The dynamic-call bridge preserves
     // the boolean brand or losslessly exports the GC ref when the generic
     // result carrier is externref.
-    const safeZeroArgErasedReturn =
-      params.length === 0 &&
+    // Scalar erased returns remain zero-argument-only: widening that older
+    // exception would admit speculative numeric signatures whose argument
+    // bridges are not proven here.
+    const safeErasedReturn =
       returnType !== null &&
-      ((returnType.kind === "i32" && returnType.boolean === true) ||
-        (returnType.kind === "f64" && returnType.undefSentinel !== true) ||
-        returnType.kind === "ref" ||
-        returnType.kind === "ref_null");
-    if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) continue;
-    getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+      (params.length === 0
+        ? returnType.kind === "ref" ||
+          returnType.kind === "ref_null" ||
+          (returnType.kind === "i32" && returnType.boolean === true) ||
+          (returnType.kind === "f64" && returnType.undefSentinel !== true)
+        : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
+    if (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) continue;
+    const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+    if (wrapper && hasOmittableTrailingParams) {
+      observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
+    }
   }
 
   // (#2939) Nested-scope function-expression / arrow callbacks. A callback like
@@ -3983,15 +4004,20 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
       // via the array-method path, never this inline dispatcher.)
       const allExternref = params.every((p) => p.kind === "externref");
       const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-      const safeZeroArgErasedReturn =
-        params.length === 0 &&
+      const hasOmittableTrailingParams = expectedArgumentCountOfParams(node.parameters) < params.length;
+      const safeErasedReturn =
         returnType !== null &&
-        ((returnType.kind === "i32" && returnType.boolean === true) ||
-          (returnType.kind === "f64" && returnType.undefSentinel !== true) ||
-          returnType.kind === "ref" ||
-          returnType.kind === "ref_null");
-      if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) return;
-      getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+        (params.length === 0
+          ? returnType.kind === "ref" ||
+            returnType.kind === "ref_null" ||
+            (returnType.kind === "i32" && returnType.boolean === true) ||
+            (returnType.kind === "f64" && returnType.undefSentinel !== true)
+          : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
+      if (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) return;
+      const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+      if (wrapper && hasOmittableTrailingParams) {
+        observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(node.parameters));
+      }
     };
     for (const node of usedAsValueFunctions) usedAsValueFn(node);
   }
@@ -6685,6 +6711,28 @@ function emitRuntimeEvalResultBoundaryWrap(ctx: CodegenContext, fctx: FunctionCo
   return externref;
 }
 
+/** Marshal an i32 boolean without first materializing the provider module's
+ * private boolean box. Mirrored object fields live past the call boundary, so
+ * their primitive payload must enter the canonical value carrier directly. */
+function emitRuntimeEvalBooleanBoundaryWrap(ctx: CodegenContext, fctx: FunctionContext): ValType {
+  const externref: ValType = { kind: "externref" };
+  const booleanLocal = allocLocal(fctx, `__runtime_eval_boolean_${fctx.locals.length}`, {
+    kind: "i32",
+    boolean: true,
+  });
+  fctx.body.push(
+    { op: "local.set", index: booleanLocal },
+    { op: "i32.const", value: RUNTIME_EVAL_VALUE_KIND_BOOLEAN },
+    { op: "local.get", index: booleanLocal },
+    { op: "f64.const", value: 0 },
+    { op: "i64.const", value: 0n },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: ensureRuntimeEvalValueType(ctx) },
+    { op: "extern.convert_any" },
+  );
+  return externref;
+}
+
 /** Provider-local inverse of the canonical result carrier. This is used by
  * canaries that exercise an exported envelope from inside the provider; user
  * modules decode the same shape in emitRuntimeEvalResultUnwrap. */
@@ -6786,18 +6834,31 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const unwraps = calleeName === "__runtime_eval_unwrap_interpreted_callback";
   const testsIntrinsic = calleeName === "__runtime_eval_is_intrinsic_callback";
   const wrapsResult = calleeName === "__runtime_eval_wrap_result";
+  const wrapsBooleanResult = calleeName === "__runtime_eval_wrap_boolean_result";
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
   const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
-    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult && !testsAotCallable) ||
+    (!wraps &&
+      !unwraps &&
+      !testsIntrinsic &&
+      !wrapsResult &&
+      !wrapsBooleanResult &&
+      !unwrapsResult &&
+      !testsAotCallable) ||
     (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
   ) {
     return undefined;
   }
 
   const externref: ValType = { kind: "externref" };
+  if (wrapsBooleanResult) {
+    const booleanType: ValType = { kind: "i32", boolean: true };
+    const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, booleanType);
+    if (valueType && valueType.kind !== "i32") coerceType(ctx, fctx, valueType, booleanType);
+    return emitRuntimeEvalBooleanBoundaryWrap(ctx, fctx);
+  }
   const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
   if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
   if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);

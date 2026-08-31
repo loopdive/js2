@@ -441,4 +441,72 @@ export function test(): number {
     expect(reducerValue).toBe(2);
     expect(exports.test()).toBe(70302);
   });
+
+  it("registers a later captured callback with an optional externref parameter", async () => {
+    const result = await compileMulti(
+      {
+        "./dispatcher.ts": `
+export function invoke<T>(callback: () => T): T {
+  return callback();
+}
+`,
+        "./parser.ts": `
+import { invoke } from "./dispatcher.js";
+
+type DiagnosticMessage = object;
+
+interface NodeLike {
+  kind: number;
+}
+
+function warmSharedWrapper(message: DiagnosticMessage): number {
+  // A required-parameter sibling shares parseNode's lowered wrapper ABI. Its
+  // capture-free registration must not erase the optional-arity fact that was
+  // discovered for the later captured/constructible subtype.
+  const strictNode = (message: DiagnosticMessage): NodeLike => {
+    return { kind: message === undefined ? -1 : 7 };
+  };
+  return strictNode(message).kind;
+}
+
+function invokeAfterWarm<T>(callback: () => T): T {
+  return callback();
+}
+
+export function parse(): number {
+  let optionalWasUndefined = false;
+
+  function parseNode(message?: DiagnosticMessage): NodeLike {
+    optionalWasUndefined = message === undefined;
+    return { kind: 42 };
+  }
+
+  if (warmSharedWrapper({}) !== 7) return -1;
+  // Keep the cross-file registration witness and add the production ordering:
+  // parseModuleExportName's dynamic call compiles after many sibling closures.
+  if (invoke(() => 1) !== 1) return -2;
+  const node = invokeAfterWarm(parseNode);
+  return (optionalWasUndefined ? 100 : 0) + node.kind;
+}
+`,
+        "./main.ts": `
+import { parse } from "./parser.js";
+
+export function test(): number {
+  return parse();
+}
+`,
+      },
+      "./main.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { test(): number };
+    expect(exports.test()).toBe(142);
+  });
 });

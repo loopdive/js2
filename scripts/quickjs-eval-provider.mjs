@@ -441,6 +441,14 @@ var qjsUtf8Len: number = 0;
 var qjsPushRefusal: string = "";
 var qjsPullRefusal: string = "";
 
+/** Keep a QuickJS boolean in its scalar lane while constructing the canonical
+ * provider→caller carrier. The standalone compiler replaces this identity
+ * helper before the provider-local boolean box can escape into a mirrored
+ * object owned by another module. */
+function __runtime_eval_wrap_boolean_result(value: boolean): any {
+  return value;
+}
+
 function runtimeEvalResult(ok: boolean, value: any): any {
   const result: any[] = [ok, __runtime_eval_wrap_result(value)];
   return result;
@@ -1502,7 +1510,10 @@ function qjsBoxReadValue(c: number, h: number, key: string): any {
   if (v === 0) return undefined;
   const saved: string = qjsPullRefusal;
   qjsPullRefusal = "";
-  const out: any = qjsToGc(c, v);
+  const out: any =
+    qjs_tag(v) === QJS_TAG_BOOL
+      ? __runtime_eval_wrap_boolean_result(qjs_to_f64(c, v) !== 0)
+      : __runtime_eval_wrap_result(qjsToGc(c, v));
   const refused: boolean = qjsPullRefusal !== "";
   qjsPullRefusal = saved;
   qjs_free_value(c, v);
@@ -1516,7 +1527,7 @@ function qjsBoxWriteValue(c: number, h: number, key: string, value: any): void {
   if (namePtr === 0) return;
   const saved: string = qjsPushRefusal;
   qjsPushRefusal = "";
-  const vh: number = qjsToQuickjs(c, value);
+  const vh: number = qjsToQuickjs(c, __runtime_eval_unwrap_result(value));
   const refused: boolean = qjsPushRefusal !== "";
   qjsPushRefusal = saved;
   if (!refused && vh !== 0) qjs_set_prop_str(c, h, namePtr, vh);
