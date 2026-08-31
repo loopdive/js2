@@ -1,5 +1,9 @@
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import { optimizeBinaryAsync } from "../src/optimize.js";
 
 describe("wasm-opt optimization pass", () => {
   const source = `
@@ -10,6 +14,11 @@ describe("wasm-opt optimization pass", () => {
       if (n <= 1) return n;
       return fib(n - 1) + fib(n - 2);
     }
+  `;
+  const compactImportSource = `
+    class A { x = 1; }
+    class B { y = "a"; }
+    export function f(n: number): any { return n ? new A() : new B(); }
   `;
 
   it("compiles successfully without optimize flag", async () => {
@@ -68,5 +77,109 @@ describe("wasm-opt optimization pass", () => {
     // WAT should be the same regardless of optimize flag,
     // because WAT is emitted from the IR, not from the binary
     expect(withOpt.wat).toBe(withoutOpt.wat);
+  });
+
+  it("keeps Binaryen 132 compact-import rewrites loadable by Node", async () => {
+    const raw = await compile(compactImportSource);
+    expect(raw.success).toBe(true);
+    expect(WebAssembly.validate(raw.binary)).toBe(true);
+
+    // Exclude any system wasm-opt so this exercises the binaryen package path
+    // used by clean benchmark runners. Keep Node on PATH for Binaryen's
+    // /usr/bin/env node launcher.
+    const previousPath = process.env.PATH;
+    process.env.PATH = [resolve(process.cwd(), "node_modules", ".bin"), dirname(process.execPath)].join(delimiter);
+    try {
+      const optimized = await optimizeBinaryAsync(raw.binary, { level: 4 });
+      expect(optimized.optimized, optimized.warning).toBe(true);
+      expect(WebAssembly.validate(optimized.binary)).toBe(true);
+    } finally {
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, "PATH");
+      else process.env.PATH = previousPath;
+    }
+  });
+
+  it("does not pass compact-import flags to an older system wasm-opt", async () => {
+    const raw = await compile(compactImportSource);
+    expect(raw.success).toBe(true);
+
+    const fakeRoot = mkdtempSync(join(tmpdir(), "js2-wasm-opt-old-"));
+    const fakeWasmOpt = join(fakeRoot, "wasm-opt");
+    const capturedArgs = join(fakeRoot, "args.json");
+    writeFileSync(
+      fakeWasmOpt,
+      `#!/usr/bin/env node
+const { copyFileSync, writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  console.log("old wasm-opt help");
+  process.exit(0);
+}
+writeFileSync(process.env.JS2WASM_FAKE_WASM_OPT_ARGS, JSON.stringify(args));
+copyFileSync(args[0], args[args.indexOf("-o") + 1]);
+`,
+    );
+    chmodSync(fakeWasmOpt, 0o755);
+
+    const previousPath = process.env.PATH;
+    const previousCapture = process.env.JS2WASM_FAKE_WASM_OPT_ARGS;
+    process.env.PATH = [fakeRoot, dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter);
+    process.env.JS2WASM_FAKE_WASM_OPT_ARGS = capturedArgs;
+    try {
+      const optimized = await optimizeBinaryAsync(raw.binary, { level: 4 });
+      expect(optimized.optimized, optimized.warning).toBe(true);
+      const args = JSON.parse(readFileSync(capturedArgs, "utf8")) as string[];
+      expect(args).toContain("--all-features");
+      expect(args).toContain("--disable-custom-descriptors");
+      expect(args).not.toContain("--disable-compact-imports");
+    } finally {
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, "PATH");
+      else process.env.PATH = previousPath;
+      if (previousCapture === undefined) Reflect.deleteProperty(process.env, "JS2WASM_FAKE_WASM_OPT_ARGS");
+      else process.env.JS2WASM_FAKE_WASM_OPT_ARGS = previousCapture;
+      rmSync(fakeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports rejected optimizer output instead of claiming wasm-opt is missing", async () => {
+    const raw = await compile(compactImportSource);
+    expect(raw.success).toBe(true);
+
+    const fakeRoot = mkdtempSync(join(tmpdir(), "js2-wasm-opt-invalid-"));
+    const fakeWasmOpt = join(fakeRoot, "wasm-opt");
+    writeFileSync(
+      fakeWasmOpt,
+      `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  console.log("--disable-compact-imports");
+  process.exit(0);
+}
+writeFileSync(args[args.indexOf("-o") + 1], Buffer.from([0]));
+`,
+    );
+    chmodSync(fakeWasmOpt, 0o755);
+
+    const previousPath = process.env.PATH;
+    const binaryenSpecifierKey = "__js2wasmBinaryenModuleSpecifier";
+    const globalObject = globalThis as Record<string, unknown>;
+    const previousBinaryenSpecifier = globalObject[binaryenSpecifierKey];
+    process.env.PATH = [fakeRoot, dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter);
+    globalObject[binaryenSpecifierKey] = `file://${join(fakeRoot, "missing-binaryen.mjs")}`;
+    try {
+      const optimized = await optimizeBinaryAsync(raw.binary, { level: 4 });
+      expect(optimized.optimized).toBe(false);
+      expect(optimized.binary).toEqual(raw.binary);
+      expect(optimized.warning).toContain("wasm-opt produced an invalid binary");
+      expect(optimized.warning).toContain("Runtime validation:");
+      expect(optimized.warning).not.toContain("wasm-opt not available");
+    } finally {
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, "PATH");
+      else process.env.PATH = previousPath;
+      if (previousBinaryenSpecifier === undefined) Reflect.deleteProperty(globalObject, binaryenSpecifierKey);
+      else globalObject[binaryenSpecifierKey] = previousBinaryenSpecifier;
+      rmSync(fakeRoot, { recursive: true, force: true });
+    }
   });
 });

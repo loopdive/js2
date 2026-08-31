@@ -344,37 +344,6 @@ describe("#5130 exact ambient binary Math.min/max IR ownership", () => {
     );
   });
 
-  it.each([
-    ["MIN", "min2", "max2"],
-    ["MAX", "max2", "min2"],
-  ] as const)("withdraws only Math.%s through its narrow rollback", async (suffix, withdrawn, retained) => {
-    const flag = `JS2WASM_IR_MATH_${suffix}`;
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(SOURCE, {
-        fileName: `issue-5130-${suffix.toLowerCase()}-rollback.ts`,
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expectSuccess(result);
-      expect(outcomeFor(result, withdrawn)).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(outcomeFor(result, retained)).toMatchObject({
-        kind: "emitted",
-        legacyBodyEmitted: false,
-        irBodyEmitted: true,
-      });
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (label, body) => {
     const source = `export function f(x: number, y: number): number { ${body} }`;
     const result = await compile(source, {

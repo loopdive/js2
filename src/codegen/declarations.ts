@@ -156,6 +156,7 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
+import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import {
@@ -5653,18 +5654,34 @@ export function compileDeclarations(
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#2965) Reset the program-order-sensitive property state to its
-    // pre-pass-1 value so this recompile does not treat pass 1's own
-    // defineProperty/freeze effects as pre-existing (see snapshot above).
-    restorePropOrderState();
-    compiledInitFctx = profilePhase("module-init-pass2", () => {
-      if (!hasAsyncGraphInit) return compileModuleInitBody();
-      return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
-        compileModuleInitBody(resumeFctx, false);
-      }).fctx;
-    });
-    ctx.pendingInitBody = compiledInitFctx.body;
-    dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
+    // call, so a population with no call anywhere recompiles to the body pass 1
+    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
+    // the end. Skipping then also skips `restorePropOrderState` (nothing
+    // recompiles; pass 1's end state is where pass 2 converged anyway) and
+    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
+    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // takes pass 2 (its lowering exists only there), stated explicitly rather
+    // than via the scan's AwaitExpression refusal. The env seam restores the
+    // unconditional recompile so tests can A/B against the two-pass body.
+    if (
+      process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
+      hasAsyncGraphInit ||
+      !moduleInitPopulationIsCallFree(ctx)
+    ) {
+      // (#2965) Reset the program-order-sensitive property state to its
+      // pre-pass-1 value so this recompile does not treat pass 1's own
+      // defineProperty/freeze effects as pre-existing (see snapshot above).
+      restorePropOrderState();
+      compiledInitFctx = profilePhase("module-init-pass2", () => {
+        if (!hasAsyncGraphInit) return compileModuleInitBody();
+        return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
+          compileModuleInitBody(resumeFctx, false);
+        }).fctx;
+      });
+      ctx.pendingInitBody = compiledInitFctx.body;
+      dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+    }
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)
