@@ -540,3 +540,40 @@ the actual final HEAD. Stop on any regression or generated-path leak. No push
 or GitHub mutation is authorized by this plan; publication remains blocked on
 explicit permission to push the completed branch to the public
 `ttraenkler/js2` fork for a non-draft PR against `loopdive/js2:main`.
+
+### Live-main integrated validation handoff — 2026-09-01
+
+The plan commit is `c9a661d5d2`; its normal hook passed the producer matrix **8
+/ 8**, the exact LOC/function grants, and the zero-growth oracle ratchet. Fresh
+fetch still resolved live main to
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`. The attributed merge is
+`9eaf563d934bdf25520a3a2b4611f10e02c2fb4f`; its unskipped hook repeated the
+same gates and producer **8 / 8** result.
+
+The temporary four-path Prettier guard was never staged or committed and was
+removed immediately after the merge. `.prettierignore` is byte-identical to
+`HEAD`; `git diff upstream/main...HEAD` contains exactly this tracker, the two
+implementation sources, and the producer test, with no benchmark, public,
+website, or `labs/` path.
+
+The integrated one-fork replay of the unchanged five lookup controls plus the
+eight producer controls passed **2 / 2 files and 13 / 13 tests** (19.79 s
+total, 10.03 s test time). One serial host harness process then passed the
+mandatory must-pass/must-fail controls and all **8 / 8** exact rows, with total
+`8` and `nondeterministic: 0`; its artifact is
+`.tmp/4449-a4d-host-8.jsonl`. The pinned-QuickJS standalone process repeated
+the structural controls and passed **8 / 8**, total `8`,
+`nondeterministic: 0`, writing `.tmp/4449-a4d-standalone-8.jsonl`.
+
+Both artifacts contain exactly eight distinct requested paths, eight callbacks,
+and only `pass` rows in their respective target. Their LF-normalized sorted
+manifest SHA-256 is the canonical
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf`.
+Standalone used the pinned QuickJS artifact whose `libquickjs.wasm` SHA-256 is
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+Direct TypeScript 7 exited **0** with no diagnostics.
+
+This handoff note must pass the normal commit hook, after which the complete
+synthetic-ref pre-push hook must pass on the actual final HEAD. No push or
+GitHub mutation has occurred; explicit public-fork authorization remains the
+only publication-permission blocker.
