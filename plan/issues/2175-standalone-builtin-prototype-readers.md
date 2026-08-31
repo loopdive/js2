@@ -4201,3 +4201,35 @@ HEAD. Stop on any regression or generated-path leak. Publication remains
 blocked pending explicit authorization to push this completed branch to the
 public `ttraenkler/js2` fork for a non-draft PR against `loopdive/js2:main`; no
 push or GitHub mutation is part of this integration plan.
+
+### Live-main integrated validation handoff — 2026-09-01
+
+The plan was committed normally at `dfba027113`; its hook passed the focused
+#2175 file **30 / 30**, all exact LOC/function grants, and the zero-growth
+oracle ratchet. The attributed upstream merge is
+`aab562d5836f9ca2ede9c01dd5b0425f053a65a7`, with second parent
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`. Its unskipped hook again passed
+the exact grants, oracle ratchet, and focused **30 / 30** controls (26.26 s
+total, 14.77 s test time).
+
+The four-path worktree-only Prettier guard was never staged or committed and
+was removed immediately after the merge. `.prettierignore` is byte-identical
+to `HEAD`, the worktree is clean, and `git diff upstream/main...HEAD` contains
+exactly the tracker, six implementation sources, and the focused test—no
+benchmark, public-report, website-report, or `labs/` path.
+
+One serial deterministic harness process then ran the four exact standalone
+rows into `.tmp/2175-d5-null-proto-rows-integrated-aab.jsonl`. Its mandatory
+must-pass and must-fail controls both behaved correctly; the result was **4 /
+4 pass**, total `4`, `nondeterministic: 0`. The JSONL contains four distinct
+requested paths, four `target: standalone` rows, and four `status: pass` rows.
+The byte-sorted LF manifest SHA-256 remains
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+
+Only after that green result, the one-fork #5239 bridge regression passed **2 /
+2** (10.35 s total, 815 ms test time). Direct TypeScript 7 then exited **0**
+with no diagnostics. This handoff note must pass the normal commit hook; the
+resulting actual HEAD must pass the complete synthetic-ref pre-push hook before
+publication. No push or GitHub mutation has occurred, and explicit
+authorization for the public fork remains the only publication-permission
+blocker.
