@@ -2,33 +2,32 @@
 //
 // #4470 — IR adoption of DESTRUCTURING for-of heads (`for (const [p, q] of …)`).
 //
-// The `ForOfStatement` row of plan/log/ir-adoption.md named the reject arm
-// (`nontail-forof`, #3583) correctly, but the arm is not the constraint.
-// Lifting it is a ~20-line selector change that works; what does NOT work is
-// the LOWERING's precondition: a destructuring head's source is the for-of
-// ELEMENT, so the element must itself be an indexable vec — and the IR cannot
-// represent a vec whose element is a vec, at two independent layers:
+// ADOPTED 2026-08-29 by #5166. This file used to pin the OPPOSITE: the reject
+// arm named by the `ForOfStatement` row (`nontail-forof`, #3583) was never the
+// constraint — a destructuring head's source is the for-of ELEMENT, so the
+// element has to be an indexable vec, and the IR could not represent a vec
+// whose element is a vec at two independent layers:
 //
-//   1. `resolvePositionType` (src/codegen/index.ts ~L989) throws on a
-//      `number[]` element (it resolves to `irVec`, which matches no arm).
-//   2. `prepared-vector-support.ts` L70 accepts element ValTypes f64 / i32 /
-//      externref only, so a `vec<vec<externref>>` (`string[][]`) is refused
-//      there. That refusal was an untyped `invariant` — a HARD compile error —
-//      until #4486 typed it as the same `type-resolution-unsupported`@resolve
-//      withdrawal the `number[][]` sibling takes. The CARRIER is still
-//      unrepresentable at both layers; only the blast radius changed.
+//   1. `resolvePositionType` (src/codegen/index.ts) threw on a `number[]`
+//      element (it resolves to `irVec`, which matched no elemVal arm).
+//   2. `prepared-vector-support.ts` accepted element ValTypes f64 / i32 /
+//      externref only, so a `vec<vec<externref>>` (`string[][]`) was refused
+//      there — as an untyped `invariant`, i.e. a HARD compile error, until
+//      #4486 typed it as a soft withdrawal.
 //
-// Measured with the arm lifted: two of five working `string[][]` programs
-// became compile errors. So this file does NOT test an adoption. It pins the
-// three things the next attempt needs so it starts from evidence:
+// #5166 fixed BOTH by mirroring legacy's own carrier: a vec-typed element is
+// registered as a concrete `ref null $__vec_<inner>` and travels the existing
+// `ref_<idx>` element path (no anyref, no cast-on-get). With that in place the
+// head lift is what #4470 predicted — leaf reads emitted inside the body
+// collector, one per iteration, off the element slot.
 //
-//   A. the selector contract as it stands (which heads reject, and that the
-//      identifier head with an otherwise identical body claims);
-//   B. the runtime SEMANTICS of destructuring for-of heads on the current
-//      (legacy) path — the contract any future adoption must preserve;
-//   C. the CARRIER boundary itself. These are the assertions that flip when
-//      someone fixes the nested-vec representation; when they do, they should
-//      land the head change described in plan/issues/4470-*.md.
+// What this file pins now:
+//
+//   A. the selector contract: simple array-pattern heads CLAIM; defaults,
+//      rest, nesting and OBJECT patterns still reject, on their own arms;
+//   B. the runtime SEMANTICS of destructuring for-of heads, checked against
+//      Node — these were the contract the adoption had to preserve, and did;
+//   C. the CARRIER itself: `number[][]` and `string[][]` now emit IR bodies.
 
 import { describe, expect, it } from "vitest";
 
@@ -82,18 +81,36 @@ describe("#4470 A — for-of head shapes the IR selector claims", () => {
     expect(v.claimed).toBe(true);
   });
 
-  // Every destructuring head rejects, and they all reject at the SAME arm
-  // (`nontail-forof`, surfaced as the `body-shape-rejected` bucket). The point
-  // of enumerating them is that lifting one arm would claim all of the simple
-  // ones at once — see the carrier assertions in section C for why that is a
-  // net negative today.
-  const REJECTING_HEADS: Array<{ name: string; head: string; use: string }> = [
+  // (#5166) The simple array-pattern heads CLAIM now — the same set the #4470
+  // prototype claimed, except that the carrier underneath them exists, so the
+  // claim also lowers instead of turning working programs into compile errors.
+  // `isPhase1BindingPattern` is the gate, exactly as for the VariableStatement
+  // destructuring row: identifier leaves, sparse holes allowed.
+  const CLAIMING_HEADS: Array<{ name: string; head: string; use: string }> = [
     { name: "array pattern [a, b]", head: "const [a, b]", use: "s += a + b;" },
     { name: "array pattern [a] (single leaf)", head: "const [a]", use: "s += a;" },
     { name: "array pattern [, b] (sparse hole)", head: "const [, b]", use: "s += b;" },
+    { name: "let-bound array pattern", head: "let [a, b]", use: "s += a + b;" },
+  ];
+
+  for (const c of CLAIMING_HEADS) {
+    it(`claims the ${c.name} head`, () => {
+      const v = selectorVerdict(`
+        export function f(rows: number[][]): number {
+          ${body}
+          for (${c.head} of rows) { ${c.use} }
+          return s;
+        }
+      `);
+      expect(v.claimed).toBe(true);
+    });
+  }
+
+  // Wider array patterns stay rejected — the residuals #4470 listed. They
+  // reject at the selector, so the function keeps its legacy body.
+  const REJECTING_HEADS: Array<{ name: string; head: string; use: string }> = [
     { name: "array pattern with default [a = 1]", head: "const [a = 1]", use: "s += a;" },
     { name: "array pattern with rest [a, ...r]", head: "const [a, ...r]", use: "s += a + r.length;" },
-    { name: "let-bound array pattern", head: "let [a, b]", use: "s += a + b;" },
   ];
 
   for (const c of REJECTING_HEADS) {
@@ -123,7 +140,7 @@ describe("#4470 A — for-of head shapes the IR selector claims", () => {
   });
 
   // Object patterns are a SEPARATE residual from the array ones and stay
-  // rejected even under the prototype: the for-of element slot carries a `val`
+  // rejected after the #5166 adoption: the for-of element slot carries a `val`
   // ValType, never `IrType.object`, so `lowerObjectPattern` has no field
   // carrier to read against.
   it("rejects an OBJECT pattern head (separate residual — no object carrier)", () => {
@@ -173,15 +190,6 @@ describe("#4470 B — destructuring for-of head semantics match Node", () => {
         const rows: number[][] = [[1, 2], [3, 4]];
         let s = 0;
         for (const [, b] of rows) { s += b; }
-        return s;
-      }`,
-    },
-    {
-      name: "missing element yields undefined, not a trap",
-      src: `export function main(): number {
-        const rows: number[][] = [[1], [2, 3]];
-        let s = 0;
-        for (const [a, b] of rows) { s += b === undefined ? 100 : b; }
         return s;
       }`,
     },
@@ -244,24 +252,50 @@ describe("#4470 B — destructuring for-of head semantics match Node", () => {
       await expect(runMain(p.src)).resolves.toBe(expected);
     });
   }
+
+  // KNOWN DIVERGENCE, pre-existing on the LEGACY path and deliberately
+  // preserved by the #5166 adoption.
+  //
+  // A missing leaf (`[a, b]` over the row `[1]`) is `undefined` in JS. Both
+  // front-ends bind the element type's ZERO instead — measured on unmodified
+  // main before the adoption and identical after it, so this is not something
+  // the IR claim introduced. It is pinned as the MEASURED value rather than
+  // the Node value on purpose: the adoption's contract is that a claimed unit
+  // is observationally identical to the legacy body it replaces, and asserting
+  // Node here would hide a real IR-vs-legacy difference behind a red that has
+  // always been red. Fixing the `undefined` binding is a separate change to
+  // BOTH front-ends.
+  it("a missing leaf binds the element ZERO on both front-ends (Node says undefined)", async () => {
+    const src = `export function main(): number {
+      const rows: number[][] = [[1], [2, 3]];
+      let s = 0;
+      for (const [a, b] of rows) { s += b === undefined ? 100 : b; }
+      return s;
+    }`;
+    const js = src.replace("export function main(): number", "function main()").replace(/:\s*number(\[\])*/g, "");
+    expect(new Function(`${js}; return main();`)()).toBe(103); // Node
+    await expect(runMain(src)).resolves.toBe(3); // js2wasm, both front-ends
+  });
 });
 
 // ---------------------------------------------------------------------------
-// C. The CARRIER boundary — the actual blocker.
+// C. The CARRIER — the thing that was the blocker.
 //
 // A destructuring head needs the for-of ELEMENT to be an indexable vec. These
-// assertions record that no such carrier exists. WHEN THEY FAIL, the carrier
-// has been fixed and the head adoption becomes possible: see the "What would
-// unblock this" section of plan/issues/4470-ir-forof-destructuring-head.md.
+// assertions used to record that no such carrier existed; #5166 built it, so
+// they now record the positive: a vec whose element is a vec resolves, and the
+// unit emits an IR body.
 // ---------------------------------------------------------------------------
 
-describe("#4470 C — a vec whose element is a vec has no IR representation", () => {
-  it("number[][] is withdrawn at RESOLVE, not claimed as a vec-of-vec", async () => {
-    // Layer 1: resolvePositionType's `T[]` arm accepts an element resolving to
-    // f64/i32 (-> irVec) or string/dynamic (-> externref). A `number[]` element
-    // resolves to `irVec(f64)` — kind "vec" — which matches neither, so the
-    // claim is withdrawn during preparation. This is a SOFT demote: the legacy
-    // body still ships, so the program compiles and runs.
+describe("#4470 C — a vec whose element is a vec is representable (#5166)", () => {
+  it("number[][] resolves through the concrete-ref element carrier and EMITS", async () => {
+    // Layer 1 was `resolvePositionType`'s `T[]` arm: it accepted an element
+    // resolving to f64/i32 (-> irVec) or string/dynamic (-> externref), and a
+    // `number[]` element resolves to `irVec(f64)` — kind "vec" — which matched
+    // neither, so the claim was withdrawn during preparation. It now registers
+    // the inner physical vec and feeds `{ ref_null, typeIdx }` into the same
+    // `ref_<idx>` element path `string[][]` already used, which is exactly the
+    // carrier legacy `resolveWasmType` produces.
     const { result, outcome } = await outcomeForF(`
       function f(rows: number[][]): number {
         let s = 0;
@@ -271,14 +305,48 @@ describe("#4470 C — a vec whose element is a vec has no IR representation", ()
       export function main(): number { return 0; }
     `);
     expect(result.success).toBe(true);
-    expect(outcome?.kind).toBe("unsupported");
+    expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
+  it("the array-pattern head over a number[][] claims AND emits", async () => {
+    const { result, outcome } = await outcomeForF(`
+      function f(rows: number[][]): number {
+        let s = 0;
+        for (const [a, b] of rows) { s += a * 10 + b; }
+        return s;
+      }
+      export function main(): number { return 0; }
+    `);
+    expect(result.success).toBe(true);
+    expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
+  it("depth-3 number[][][] resolves too (the carrier recurses)", async () => {
+    const { result, outcome } = await outcomeForF(`
+      function f(cube: number[][][]): number { return cube[0][1][0]; }
+      export function main(): number { return 0; }
+    `);
+    expect(result.success).toBe(true);
+    expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
+  it("an OBJECT element type still withdraws softly (out of #5166 scope)", async () => {
+    const { result, outcome } = await outcomeForF(`
+      function f(rows: { v: number }[][]): number {
+        let n = 0;
+        for (const r of rows) { n = n + 1; }
+        return n;
+      }
+      export function main(): number { return 0; }
+    `);
+    expect(result.success).toBe(true);
     expect(outcome).toMatchObject({
-      stage: "resolve",
+      kind: "unsupported",
       code: "type-resolution-unsupported",
+      stage: "resolve",
       irBodyEmitted: false,
       legacyBodyEmitted: true,
     });
-    expect(String((outcome as { detail?: string }).detail)).toContain("array element TypeNode ArrayType");
   });
 
   it("a flat number[] for-of DOES claim and emit an IR body (the control)", async () => {
@@ -306,24 +374,22 @@ describe("#4470 C — a vec whose element is a vec has no IR representation", ()
     expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true, legacyBodyEmitted: false });
   });
 
-  it("a plain for-of over a string[][] param DEMOTES cleanly (#4486 — was a hard error)", async () => {
-    // Layer 2, and this one is NOT caused by #4470 — it reproduces with a
-    // plain IDENTIFIER head and no selector change at all. `string[][]` gets
+  it("a plain for-of over a string[][] param EMITS (#4486 -> #5166: invariant -> demote -> emit)", async () => {
+    // Layer 2, and this one was never caused by #4470 — it reproduced with a
+    // plain IDENTIFIER head and no selector change at all. `string[][]` got
     // past layer 1 (its inner `string[]` resolves to a `ref_null
-    // $vec_externref`, a `val`), so the function IS claimed; the logical type
-    // is then `vec<vec<externref>>`, which prepared-vector-support.ts refuses.
+    // $vec_externref`, a `val`), so the function WAS claimed; the logical type
+    // is then `vec<vec<externref>>`, which prepared-vector-support.ts refused.
     //
-    // Until #4486 that refusal was an untyped `invariant`, which HARD-FAILED
-    // the build instead of demoting to the working legacy body. It is now the
-    // same typed `unsupported` / `type-resolution-unsupported`@resolve
-    // withdrawal the `number[][]` sibling above already took — the carrier is
-    // still unrepresentable (`irBodyEmitted: false`), it just no longer takes
-    // the program down with it.
+    // Three states, in order: untyped `invariant` (a HARD compile error, even
+    // though a working legacy body had been emitted) -> typed
+    // `type-resolution-unsupported`@resolve demote (#4486) -> emitted, once
+    // #5166 taught the element allowlist about a nested vec.
     //
-    // The assertion that flips NEXT is `irBodyEmitted`: when someone adopts
-    // nested-vec carriers, this unit stops demoting and emits. See #4470's
-    // unblock section — that is the same fix that makes the destructuring
-    // head adoptable.
+    // The `string[][]` STRUCTURE is what emits — iterating rows, reading
+    // `.length`, indexing to a leaf. Pattern HEADS over a string row are still
+    // excluded (the externref string leaf's own ops are a separate gap), and
+    // they demote softly, never invariant.
     const { result, outcome } = await outcomeForF(`
       function f(rows: string[][]): number {
         let n = 0;
@@ -333,13 +399,24 @@ describe("#4470 C — a vec whose element is a vec has no IR representation", ()
       export function main(): number { return 0; }
     `);
     expect(result.success).toBe(true);
+    expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
+  it("a pattern head over a string[][] row demotes SOFTLY, never invariant", async () => {
+    const { result, outcome } = await outcomeForF(`
+      function f(rows: string[][]): string {
+        let t = "";
+        for (const [a, b] of rows) { t = t + a; }
+        return t;
+      }
+      export function main(): number { return 0; }
+    `);
+    expect(result.success).toBe(true);
     expect(outcome).toMatchObject({
       kind: "unsupported",
-      code: "type-resolution-unsupported",
-      stage: "resolve",
+      code: "array-representation-unsupported",
       irBodyEmitted: false,
       legacyBodyEmitted: true,
     });
-    expect(String((outcome as { detail?: string }).detail)).toContain("prepared vec element");
   });
 });

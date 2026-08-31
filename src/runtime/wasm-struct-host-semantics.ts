@@ -82,13 +82,18 @@ export function normalizeSandboxValue(
   key: PropertyKey,
   sandbox: Record<string, any> | undefined,
   owner: CallbackState | undefined,
-  unwrap: (value: any) => any,
+  // (#5222) `unwrap` receives the READING module's callback state as its second
+  // argument so it can decline to un-marshal a mirror minted by a DIFFERENT
+  // module across the #2527 linked-provider seam. Passed as the state, not as
+  // resolved exports, so the un-marshal never pays `getExports()` on the hot
+  // single-module path.
+  unwrap: (value: any, reader?: CallbackState) => any,
 ): any {
   if (sandbox && receiver === sandbox && typeof value === "function") {
     const callableOwner = callableOwners.get(value);
     if (!callableOwner || !owner || callableOwner !== owner) return value;
   }
-  const normalized = unwrap(value);
+  const normalized = unwrap(value, owner);
   if (sandbox && key === "constructor" && typeof normalized === "function") {
     const name = normalized.name;
     if (name && normalized === (globalThis as any)[name] && sandbox[name] !== undefined) return sandbox[name];

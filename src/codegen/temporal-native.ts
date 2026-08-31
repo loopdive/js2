@@ -107,12 +107,58 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
   return cur;
 }
 
-function temporalCtorName(expr: ts.Expression): TemporalKind | undefined {
+/**
+ * (#4628) Does this `Temporal` identifier name a REAL, compiled binding?
+ *
+ * This whole file is a compile-time LOWERING keyed on the spelling `Temporal`
+ * — `temporalCtorName` below matches `Temporal.PlainDate` syntactically, with
+ * no reference to what `Temporal` resolves to. That was sound while `Temporal`
+ * could only ever be an undeclared host ambient. It stops being sound the
+ * moment a program actually HAS a `Temporal` binding: the linked-provider lane
+ * (`src/temporal-provider.ts`) binds `const Temporal = <provider getter>()`,
+ * and an ordinary lexical binding must shadow an ambient — otherwise the real
+ * polyfill object is compiled, instantiated, and then silently bypassed.
+ *
+ * Measured, not assumed (2026-08-30, `.tmp/probe-provider.mts`): with the
+ * provider wired but this gate absent, `Temporal.PlainDate.from(...)` answered
+ * correctly *through the native lowering*, while `Temporal.Duration…total()`
+ * threw "total is not a function", `Temporal.Now.instant()` threw "instant is
+ * not a function", and `Temporal.ZonedDateTime` / `PlainDateTime` threw — the
+ * exact 3-class ceiling of this file, not the polyfill's 9-class surface.
+ * Those first two messages are literally rows 3 and 4 of the issue's measured
+ * failure buckets ("round is not a function" 77, "total is not a function"
+ * 28), so a bypassed provider is indistinguishable from no provider at all.
+ *
+ * The gate is a resolution question, not a flag: an undeclared `Temporal`
+ * (every program today) still takes the native lane, unchanged. Only a
+ * program that declares a real, value-producing one — the provider prelude, or
+ * a user's own mock — takes it away.
+ *
+ * AMBIENT declarations do NOT count, and that exclusion is load-bearing rather
+ * than defensive: `tests/issue-661.test.ts` writes `declare const Temporal:
+ * any;` at the top of every fixture, in an ordinary `.ts` file. `declare`
+ * emits no value — it asserts a HOST global exists, which is precisely the
+ * case the #661 lowering is for. Testing only `isDeclarationFile` therefore
+ * stood the lowering down for all five of those tests (measured: 5 failures on
+ * the first run of this gate). Both spellings are excluded: a `.d.ts` source,
+ * and the `declare` modifier, read through the PUBLIC
+ * `getCombinedModifierFlags` (the `ts.NodeFlags.Ambient` bit exists at runtime
+ * but is not in the public type surface).
+ */
+function temporalIsCompiledBinding(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const decl = ctx.oracle.valueDeclarationOf(id);
+  if (decl === undefined) return false;
+  if (decl.getSourceFile().isDeclarationFile) return false;
+  return (ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Ambient) === 0;
+}
+
+function temporalCtorName(ctx: CodegenContext, expr: ts.Expression): TemporalKind | undefined {
   const target = unwrapExpression(expr);
   if (
     ts.isPropertyAccessExpression(target) &&
     ts.isIdentifier(target.expression) &&
-    target.expression.text === "Temporal"
+    target.expression.text === "Temporal" &&
+    !temporalIsCompiledBinding(ctx, target.expression)
   ) {
     const name = target.name.text;
     if (name === "PlainDate" || name === "PlainTime" || name === "Duration") return name;
@@ -120,13 +166,14 @@ function temporalCtorName(expr: ts.Expression): TemporalKind | undefined {
   return undefined;
 }
 
-function temporalNowMethod(expr: ts.Expression): string | undefined {
+function temporalNowMethod(ctx: CodegenContext, expr: ts.Expression): string | undefined {
   const target = unwrapExpression(expr);
   if (
     ts.isPropertyAccessExpression(target) &&
     ts.isIdentifier(target.expression) &&
     target.expression.text === "Temporal" &&
-    target.name.text === "Now"
+    target.name.text === "Now" &&
+    !temporalIsCompiledBinding(ctx, target.expression)
   ) {
     return "Now";
   }
@@ -164,13 +211,13 @@ function temporalKindForExpression(
     return undefined;
   }
   if (ts.isNewExpression(target)) {
-    return temporalCtorName(target.expression);
+    return temporalCtorName(ctx, target.expression);
   }
   if (ts.isCallExpression(target) && ts.isPropertyAccessExpression(target.expression)) {
     const callTarget = target.expression;
-    const staticKind = temporalCtorName(callTarget.expression);
+    const staticKind = temporalCtorName(ctx, callTarget.expression);
     if (staticKind && callTarget.name.text === "from") return staticKind;
-    if (temporalNowMethod(callTarget.expression) && callTarget.name.text === "plainDateISO") return "PlainDate";
+    if (temporalNowMethod(ctx, callTarget.expression) && callTarget.name.text === "plainDateISO") return "PlainDate";
 
     const receiverKind = temporalKindForExpression(ctx, fctx, callTarget.expression);
     if (receiverKind === "PlainDate" && (callTarget.name.text === "add" || callTarget.name.text === "subtract")) {
@@ -812,7 +859,7 @@ export function compileTemporalNewExpression(
   fctx: FunctionContext,
   expr: ts.NewExpression,
 ): ValType | null | undefined {
-  const kind = temporalCtorName(expr.expression);
+  const kind = temporalCtorName(ctx, expr.expression);
   if (!kind) return undefined;
 
   const args = expr.arguments ?? [];
@@ -911,7 +958,7 @@ export function tryCompileTemporalStaticCall(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
-  const staticKind = temporalCtorName(propAccess.expression);
+  const staticKind = temporalCtorName(ctx, propAccess.expression);
   if (staticKind && propAccess.name.text === "from") {
     const arg = callExpr.arguments[0];
     const locals =
@@ -925,7 +972,7 @@ export function tryCompileTemporalStaticCall(
     return result;
   }
 
-  if (temporalNowMethod(propAccess.expression) && propAccess.name.text === "plainDateISO") {
+  if (temporalNowMethod(ctx, propAccess.expression) && propAccess.name.text === "plainDateISO") {
     const typeIdx = ensureTemporalStruct(ctx, "PlainDate");
     fctx.body.push(
       { op: "f64.const", value: 2026 },

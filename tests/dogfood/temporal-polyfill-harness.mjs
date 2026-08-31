@@ -228,6 +228,14 @@ async function measure({ label, fileName, source, log, instantiate = true }) {
       // needs the module's own `__exn_tag` export to read — unavailable here,
       // because the throw happened BEFORE there is an instance. Record the
       // shape; `.tmp` bisection is how the offending statement gets named.
+      //
+      // (#5209) A HOST-side TypeError (the common module-init blocker: the
+      // runtime refusing a compiled value at a host boundary) does carry a
+      // stack, and it names the polyfill function chain down from
+      // `__module_init` — which is the single most useful line for filing the
+      // next blocker. `JS2WASM_DOGFOOD_STACK=1` prints it. Off by default so
+      // the report output stays the stable artifact it is today.
+      if (process.env.JS2WASM_DOGFOOD_STACK) console.error("[dogfood] init stack:\n" + (e?.stack ?? e));
       instantiateError =
         typeof WebAssembly !== "undefined" && e instanceof WebAssembly.Exception
           ? "WebAssembly.Exception thrown from module init (payload unreadable: no instance, so no __exn_tag)"
