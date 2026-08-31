@@ -163,6 +163,44 @@ arguments must be tested against a callee that can TELL — the six-parameter
 class proved arity and the export view, and proved nothing about defaults. The
 regression rows are now in the test with a direct-`new` control beside each.
 
+### The LOCAL-BOUND construct spelling is a separate, PRE-EXISTING defect
+
+dev-5243 reported that `const t = ce("%Temporal.Duration%"); new t(a…j)` still
+reads back `11,0,0,0,…` while the inline `new (ce(…))(a…j)` is correct, and
+proposed it as an uncovered arm of this fix. Measured, it is **not** — it is
+older than #5242 and #5242 did not make it quieter:
+
+| probe (polyfill `ce`, ten args) | pre-#5242 base `528b8d42cc` | after #5242 |
+| --- | --- | --- |
+| inline `new (ce(…))(11,…,20)` | THREW `bridge unavailable` | `11,12,…,20` ✅ |
+| **bound** `const t = ce(…); new t(11,…,20)` | **`11,0,0,0,…`** | `11,0,0,0,…` (unchanged) |
+| control `new Temporal.Duration(11,…,20)` | `11,12,…,20` | unchanged |
+
+So the bound spelling was **already** silently wrong before this change; #5242
+fixed the spelling that used to throw and left the other exactly as it was. The
+"louder → quieter" concern does not apply to it — it was never loud.
+
+Two further measurements that matter for whoever picks it up:
+
+- **It is ORDER-DEPENDENT.** Run alone, the bound spelling is CORRECT
+  (`11,12,…,20`); run after a 4-argument construct of the same class it reads
+  `11,0,0,0,…`. `11` + nine zeros is the signature of `__argc` stale at `1`, so
+  the callee is being reached by a route that neither sets `__argc` nor caps at
+  the right arity — consistent with a cached generic-closure wrapper
+  (`_wrapCallableForHost`'s `[[Construct]]` → `_wrapWasmClosureUnknownArity`,
+  arity ≤ 4, no argc) being reused for the later call. A single-probe test will
+  therefore report this as PASSING.
+- **It does not enter `__construct_closure` as a struct.** Tracing shows
+  `struct=false` there, so a fix that reorders the `_classCtorClosures` /
+  `__is_closure` test inside that import does nothing. I wrote that fix, measured
+  it, and removed it — it changed no observable value.
+
+Filed as its own lane (#5244 territory). Pinned in this issue rather than in the
+test's expectations because the test's own reduction does not reproduce it (its
+registry is a plain `Map`, which routes to the class mirror for both spellings);
+the `defaultedInline` row was added so the spelling that IS covered is covered
+explicitly rather than by accident.
+
 ### Deliberately NOT done
 
 - **Rest-parameter constructors** (`constructor(...args)`) and constructors with

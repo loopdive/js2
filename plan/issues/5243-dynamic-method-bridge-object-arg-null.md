@@ -165,7 +165,56 @@ and every constructor argument after the first is lost. Measured on one build:
 
 So the emitted bridge is correct and the trap's inputs are correct; the loss is
 between the trap's `ctorBridge.fn(…)` result and what the Wasm caller observes.
-Two hypotheses were tested and **disproved**: it is not `__argc` default-param
-plumbing (forcing `__argc = params.length` in the bridge changed nothing), and
-it is not a bridge-arity mismatch (only `__class_construct_Duration_10` exists).
+It is not a bridge-arity mismatch (only `__class_construct_Duration_10` exists).
 Left for #5244.
+
+### Correction, same day — it WAS `__argc`, and my disproof was invalid
+
+The paragraph above originally also claimed `__argc` default-parameter plumbing
+was disproved. **That claim was wrong and is retracted.** dev-5242b fixed exactly
+that (`23bab6240c` on `issue-5242-class-value-ctor-bridge`): `<Class>_new` reads
+the mutable `__argc` module global once in its prologue to tell an omitted
+argument from an explicit `undefined`, the construct bridge never wrote it, so
+the callee read whatever the previously compiled call site had left there. One
+omission, two symptoms: stale `-1` defaults nothing and the padding arrives as
+`undefined` → NaN; a stale small count `n` makes `argc !== -1 && argc <= i` fire
+past `n`, so the REAL arguments are discarded in favour of the initializers —
+which is the `11,0,0,0,…` above.
+
+**Why my test did not refute it:** I forced `__argc = params.length` *from the
+host*, and the callee reads the **wasm global**, which nothing reachable from
+the host side can set. The intervention could not touch the mechanism, so its
+null result was evidence about nothing. Recorded because the failure is
+reusable: a negative result only bears on a mechanism if the intervention can
+actually reach it.
+
+Measured with `23bab6240c` trial-merged on top of this change (single-module
+lane, one build) — it moves some of these rows and not others:
+
+| probe | this change alone | + the argc fix |
+| --- | --- | --- |
+| `sn("P1D")` fields | `0,0` | **`1,0`** |
+| `add("P1D")` end-to-end | `"2020-03-04"` | **`"2020-03-05"`** |
+| `qr(sn("P1D"))` | `date.days=0 time.sec=0` | `date.days=0 time.sec=86400` (= the `new Duration` control) |
+| `const t = ce("%Temporal.Duration%"); new t(11,…,20)` | `11,0,0,…` | `11,0,0,…` — **unchanged** |
+| `add({days:1})` / `Duration.from({days:1})` | `"2020-03-04"` / `"PT0S"` | unchanged |
+
+So two paths remain open, both #5244's, both now narrowed:
+
+1. **A local-bound callee still loses its arguments.** The argc fix covers the
+   INLINE spelling `new (ce("%Temporal.Duration%"))(…)` — which is what `sn`'s
+   string branch uses, hence the win — but not `const t = ce(…); new t(…)`.
+   Those take different arms in `new-super.ts` (a local-held callee routes
+   through `__construct` / `__construct_closure`, not the class bridge).
+2. **`Duration.from({days:1})` is NOT this change's `buildRecordFromExternref`.**
+   It stays `"PT0S"` with both fixes applied. `sn`'s object branch is a
+   computed-key copy into a statically-shaped record
+   (`const n = {years:0,…}; r = kt(e); for (…) { o = r[st[i]]; if (o !== undefined) n[st[i]] = o; }`).
+   That shape reduced in isolation — computed-key read plus computed-key write
+   into a 3-field record, with static-write and read-only controls — answers
+   **correctly** (`"0/0/1"`, `"0/1"`, `"1"`). So the generic computed-key
+   machinery is fine and the loss is in `kt(e)` (the copy of the user's object)
+   or `st` (the key list), not in member-set dispatch.
+
+Also unresolved and worth its own look: single-module `until(...)` throws a
+value with no `name` and no `message` (`THREW undefined: undefined`).
