@@ -3369,7 +3369,31 @@ export function compileObjectLiteralForStruct(
     }
   }
 
+  // (#1058) Object-literal method fields whose callable could not be installed
+  // during construction because the method's function had not been registered
+  // yet. `compileObjectLiteralForStruct` compiles method bodies AFTER the field
+  // loop (they run past the `struct.new` below), so a literal whose methods are
+  // seen for the first time here — the common shape for a literal built inside a
+  // function body, e.g. `function make(): F { return { ci(t) {...} }; }` — found
+  // `ctx.funcMap` empty and fell through to the undefined default. A direct
+  // `obj.ci(x)` call still worked (it dispatches statically), but EXTRACTING the
+  // method as a value (`const f = obj.ci; f(x)`) read undefined and trapped with
+  // "dereferencing a null pointer" at the call. That is the TypeScript-parser
+  // Tier-3 blocker: parser.ts destructures `factory.createIdentifier` (and ~25
+  // siblings) out of the object `createNodeFactory` returns.
+  //
+  // Record the field here, keep emitting the undefined default so the
+  // `struct.new` stays balanced, and patch the real closure in after the method
+  // bodies are registered (see the deferred-install block before the return).
+  const deferredMethodFields: {
+    fieldIdx: number;
+    fieldName: string;
+    fieldType: ValType;
+    methodProp: ts.MethodDeclaration;
+  }[] = [];
+  let fieldOrdinal = -1;
   for (const field of fields) {
+    fieldOrdinal++;
     // (#2129) Collect EVERY property that defines this field, in source
     // order. Per §13.2.5.5 PropertyDefinitionEvaluation, each duplicate runs
     // (its initializer's side effects are observable) and the LAST definition
@@ -3471,6 +3495,16 @@ export function compileObjectLiteralForStruct(
       // above. The trampoline must reference the funcIdx whose body will
       // actually be compiled for THIS literal, not a sibling literal's body.
       const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
+      if (methodFuncIdx === undefined) {
+        // (#1058) Not registered yet — install the callable after the method
+        // bodies below instead of leaving the field permanently undefined.
+        deferredMethodFields.push({
+          fieldIdx: fieldOrdinal,
+          fieldName: field.name,
+          fieldType: field.type,
+          methodProp,
+        });
+      }
       if (methodFuncIdx !== undefined) {
         // (#4440) `methodProp` is the object-literal member itself — pass it so
         // the closure carries §15.1.5 `length` / §10.2.9 `name` metadata.
@@ -4240,6 +4274,56 @@ export function compileObjectLiteralForStruct(
       if (savedFunc) ctx.parentBodiesStack.pop();
       ctx.currentFunc = savedFunc;
     }
+  }
+
+  // (#1058) Deferred object-literal method install. Everything above has now
+  // registered and compiled the literal's method bodies, so `ctx.funcMap` can
+  // answer the lookups that came back undefined during the field loop. The
+  // constructed struct is still the only value on the stack; park it in a temp,
+  // store the real callable into each deferred field, and hand the same value
+  // back. Object-literal struct fields are emitted mutable, so `struct.set` is
+  // the whole patch — no second `struct.new`, and field order is untouched.
+  if (deferredMethodFields.length > 0) {
+    const objTmp = allocTempLocal(fctx, { kind: "ref_null", typeIdx: structTypeIdx });
+    fctx.body.push({ op: "local.set", index: objTmp });
+    for (const deferred of deferredMethodFields) {
+      const methodFullName = `${typeName}_${deferred.fieldName}`;
+      const methodFuncIdx = literalMethodFuncIdx.get(deferred.fieldName) ?? ctx.funcMap.get(methodFullName);
+      if (methodFuncIdx === undefined) continue;
+      fctx.body.push({ op: "local.get", index: objTmp });
+      const closureType = emitObjectMethodAsClosure(
+        ctx,
+        fctx,
+        methodFullName,
+        methodFuncIdx,
+        structTypeIdx,
+        deferred.methodProp,
+      );
+      if (!closureType) {
+        // Closure emission declined (unsupported signature). Drop the receiver
+        // we just pushed and leave the field at its undefined default — the
+        // same outcome as before this deferral existed.
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+      if (deferred.fieldType.kind === "externref") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (deferred.fieldType.kind === "eqref") {
+        // ref → eqref is an implicit GC subtype widening.
+      } else if (
+        (deferred.fieldType.kind === "ref" || deferred.fieldType.kind === "ref_null") &&
+        (deferred.fieldType as { typeIdx: number }).typeIdx !== (closureType as { typeIdx: number }).typeIdx
+      ) {
+        // Mismatched ref types — same guard the in-loop path uses. Drop both the
+        // closure and the receiver rather than emitting an ill-typed store.
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        continue;
+      }
+      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: deferred.fieldIdx });
+    }
+    fctx.body.push({ op: "local.get", index: objTmp });
+    releaseTempLocal(fctx, objTmp);
   }
 
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -5529,6 +5613,22 @@ export function compileArrayLiteral(
     const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
     elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
+  // (#5212) A Map/Set subclass forwards its first constructor argument through
+  // an externref provider that can only index native array carriers. The
+  // ordinary contextual type for `ReadonlyArray<readonly [K, V]>` selects an
+  // outer `vec<tuple>` while the nested literal, with tuple lowering disabled,
+  // selects a numeric/reference vec — an invalid `array.new_fixed` mismatch.
+  // Under the call-site-only collection carrier flag, use the lossless outer
+  // `vec<externref>` representation for every literal in the carrier tree;
+  // nested array literals remain real native vec values and are explicitly
+  // boxed into that outer carrier by the element loop below. This flag is
+  // narrower than `_arrayLiteralForceVec` and is never set by ordinary
+  // tuple/destructure lowering.
+  const forceCollectionArrayVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+    ._arrayLiteralForceCollectionVec;
+  if (forceCollectionArrayVec) {
+    elemWasm = { kind: "externref" };
+  }
   if (forcedElementType !== undefined) elemWasm = forcedElementType;
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an
@@ -5604,7 +5704,16 @@ export function compileArrayLiteral(
           objectElement !== null && staticObjectLiteralDataKeys(ctx, objectElement) !== null
             ? compileObjectLiteralAsExternref(ctx, fctx, objectElement)
             : null;
-        if (openObjectType === null) compileExpression(ctx, fctx, el, elemWasm);
+        if (openObjectType === null) {
+          const compiledElementType = compileExpression(ctx, fctx, el, elemWasm);
+          if (
+            forceCollectionArrayVec &&
+            compiledElementType !== null &&
+            !valTypesMatch(compiledElementType, elemWasm)
+          ) {
+            coerceType(ctx, fctx, compiledElementType, elemWasm);
+          }
+        }
       }
     }
     fctx.body.push({ op: "array.new_fixed", typeIdx: arrTypeIdx, length: expr.elements.length });

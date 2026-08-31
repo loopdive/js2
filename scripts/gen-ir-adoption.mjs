@@ -63,8 +63,8 @@ const SECTIONS = [
       [
         "`ForStatement`",
         "mixed",
-        "Bare `for (;;)` and `for (init; ; incr)` ADOPTED (#3583): an omitted condition emits the constant-`true` cond buffer directly, byte-identical to the already-claimed `for (; true; )`. Residual: a TAIL-position `for` whose body `return`s rejects at `tail-unhandled` — the orthogonal tail-position gate, not the retired `for-missing-cond` arm.",
-        "#2952",
+        "Bare `for (;;)` and `for (init; ; incr)` ADOPTED (#3583): an omitted condition emits the constant-`true` cond buffer directly, byte-identical to the already-claimed `for (; true; )`. A function ENDING in a `for` is ADOPTED too (#5165 S1) — void functions fall out into the implicit empty return, non-void ones need `loopNeverFallsThrough` (no falsifiable condition AND no `break` binding this loop, scanned with nesting respected). Residual: a tail-position non-void loop that CAN complete normally (e.g. `while (true) { if (x) return 1; break; }`) stays legacy at `tail-loop-falls-through` — emitting `unreachable` there would trap where JS returns `undefined`.",
+        "#2952, #5165",
       ],
       [
         "`ForOfStatement`",
@@ -72,12 +72,17 @@ const SECTIONS = [
         "Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof`. #4470 measured what happens if that arm is lifted: the head itself lowers fine (element slot + one `vec.get` per leaf, reusing `lowerArrayPattern`), but the ELEMENT CARRIER is the real blocker — a vec whose element is itself a vec is unrepresentable, so `number[][]` dies at `resolve` (`array element TypeNode ArrayType could not be lowered to a primitive ValType`) and `string[][]`/`any[][]` die as a HARD `invariant` in `prepared-vector-support.ts` (elements must be `f64`/`i32`/`externref`). Lifting `nontail-forof` alone turns working legacy programs into compile errors — fix the nested-vec carrier FIRST.",
         "#3518, #4470",
       ],
-      ["`WhileStatement`", "ir-owned", "—", "—"],
+      [
+        "`WhileStatement`",
+        "ir-owned",
+        "Includes a function ENDING in a `while` (#5165 S1) — same `loopNeverFallsThrough` proof as `ForStatement`.",
+        "#5165",
+      ],
       [
         "`TryStatement`",
         "mixed",
-        'CORRECTED (measured 2026-08-15, #3583): `try`/`finally`, `try`/`catch`/`finally` and a `try`/`catch` assigning an outer local ALL claim — the old "finally + rethrow partial" note was backwards. What actually rejects is a `return` inside the `try` or `catch` (`tail-unhandled`), i.e. the residual is tail-position control flow, plus a catch clause with no binding.',
-        "#2952",
+        "`try`/`finally`, `try`/`catch`/`finally`, a `try`/`catch` assigning an outer local, and a catch clause with NO binding all claim (measured 2026-08-15 #3583; re-measured 2026-08-29 #5165). A `return` inside a finally-LESS `try` or `catch` is ADOPTED (#5165 S2) — a Wasm `return` is not intercepted by an exception handler, so it leaves the function exactly as JS does. A function ENDING in a `try` is ADOPTED too (#5165 S3): void falls out into the implicit empty return, non-void needs every path (try block, catch block) to terminate. Residual: a `return` that would cross a `finally` stays legacy at `body-return-context` (#5165 S4 — it needs the value-stash + inlined-finally machinery), as does a non-void tail try that can fall out (`tail-try-falls-through`) and a destructuring catch param.",
+        "#2952, #5165",
       ],
       ["`ThrowStatement`", "ir-owned", "—", "—"],
       ["`Block`", "ir-owned", "Plain statement lists; scope handling via LowerCtx.", "—"],
@@ -102,8 +107,8 @@ const SECTIONS = [
       [
         "`DoStatement`",
         "mixed",
-        "Post-test loop claimed (reuses `while.loop` + `postCond`); unlabeled break/continue bodies claimed since slice 2; labeled since slice 3.",
-        "#2952",
+        "Post-test loop claimed (reuses `while.loop` + `postCond`); unlabeled break/continue bodies claimed since slice 2; labeled since slice 3; a function ENDING in a `do … while` claimed since #5165 S1.",
+        "#2952, #5165",
       ],
       [
         "`LabeledStatement`",

@@ -4,7 +4,9 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-28
+updated: 2026-08-30
+assignee: ttraenkler/codex
+branch: codex/3526-f1-s1-number-boundary
 priority: critical
 horizon: xl
 complexity: XL
@@ -859,3 +861,389 @@ frontend deletion remains #3090/R10.
 - **Math slice widening:** `Math.random`, dynamic coercion, or variadic calls can
   make M1 impure. Define M1 by the exact deterministic table entries and reject
   unlisted shapes until their later family slice.
+
+## 2026-08-29 F1-S1 implementation plan — number-boundary intrinsics (family 1, slice 1)
+
+**Fable lane.** Grounded on `origin/main` merged at `fe3fe11e52`. This is the
+first slice of "Later measured family slices" item 1 (scalar/coercion/value
+carriers). It follows the A1/A2 shape: a behavior-neutral authority transfer
+with an exact ownership list, no provider-choice change, no Wasm delta on any
+clean lane. Opus implements against this plan; every cited line number must be
+re-located by symbol before editing.
+
+### Measured facts (verified on the grounded tree)
+
+- The family-1 beachhead already exists and is wired end-to-end:
+  `NUMERIC_COERCION_INTRINSIC_IDS = ["js.to_uint32"]`
+  (`src/ir/intrinsics.ts:51`), feature (`:98`), signature row (`:194`,
+  `F64_TO_U32_INTRINSIC_SIGNATURE`), provider `backend.js.to_uint32`
+  (`src/ir/runtime-manifest.ts:105`, `:324`), backend composite `"to-uint32"`
+  (`src/ir/intrinsic-support.ts:37` — the composite table also carries
+  `math.clz32/imul/max/min`). Copy this pattern, do not invent a parallel one.
+- The number boundary is the widest un-migrated coercion carrier, and its IR
+  authority is currently split across name-symbolic emission and resolver mode
+  proxies:
+  - **Box arm** — `coerceToExpectedExtern` (`src/ir/from-ast.ts:6929-6947`):
+    f64→externref emits `emitCall(irImportFuncRef("env", "__box_number"))`
+    gated on `cx.resolver?.hasHostNumberBox?.()`. Standalone has NO
+    `__box_number` (its boxing is the `$AnyValue` family) so the predicate is
+    false there and the arm falls through to the demote throw.
+  - **Unbox arm** — the declared-f64 return coercion
+    (`src/ir/from-ast.ts:8936-8948`): both lanes own `__unbox_number`
+    `(externref) -> f64`; the PROVIDER choice is inlined in from-ast —
+    `hasHostNumberBox()` → `irImportFuncRef("env","__unbox_number")`, else
+    `hasNativeNumberUnbox()` → `irRuntimeFuncRef("__unbox_number")` (the
+    native function `addUnionImports` registers under
+    `semanticProviders: "native-first"`, #4461), else return unconverted.
+  - The predicate implementations are one-line mode reads on the
+    integration resolver: `hasHostNumberBox(): !ctx.nativeStrings`
+    (`src/ir/integration.ts:4722`), `hasNativeNumberUnbox():
+    ctx.targetProfile.semanticProviders === "native-first"` (`:4749`). #2955
+    moved these OUT of from-ast precisely so the front-end reads no mode
+    flags; F1-S1 finishes the move by making the answer a frozen-manifest
+    fact instead of a live mode read.
+  - These two arms are the ONLY from-ast consumers of the two predicates
+    (measured: `from-ast.ts:6939`, `:8936-8938`; every other hit is doc
+    text). `hasHostBooleanBox` (boolean boxing) is a separate consumer family
+    and stays untouched.
+  - Name-symbolic joins elsewhere in IR:
+    `src/ir/compiler-timer-shim-preparation.ts:42,244-278` resolves
+    `__box_number`/`__unbox_number` by `ctx.funcMap.get(name)`;
+    `src/ir/async-prepare.ts:805-808` authenticates a carrier unbox by target
+    NAME `"__unbox_number"`. Both are in-scope consumers of the new records
+    (join by attached record, keep the name as diagnostic), IF the join is a
+    mechanical substitution; otherwise record them as follow-up rows — do not
+    widen.
+- `prepareIrRuntimeManifest` runs at `src/ir/integration.ts:752`, after
+  lowering and before prepared-component sealing (the M1 ordering), so
+  provider choice at freeze-time and intrinsic emission at lowering-time is
+  the established order. `IrInstrIntrinsic` (`src/ir/nodes.ts:867`) is the
+  node to reuse.
+- A2 already publishes `RuntimeBackendRequirement` including
+  `async.native.number-boundary` for async owners — the number boundary is
+  already a named backend concept; F1-S1 gives it a family-owned intrinsic
+  identity for the two synchronous coercion arms.
+
+### Contract
+
+Add to the closed vocabularies (canonical order, versioned signatures):
+
+- `js.number.box` — `(f64) -> externref`. Target policy: HOST-ONLY for this
+  slice. A native-first/standalone request is a preparation-time typed
+  `Unsupported` naming the intrinsic — exactly the population that demotes at
+  the box arm today, moved to a typed reason. The `$AnyValue` standalone
+  boxing family is explicitly NOT this intrinsic and NOT this slice.
+- `js.number.unbox` — `(externref) -> f64`. Target policy: host AND
+  native-first. Two providers, chosen at freeze exactly as the from-ast
+  inline pick does today:
+  - `host.js.number.unbox` → host capability record `env.__unbox_number`
+    `(externref) -> f64`;
+  - `native.js.number.unbox` → the union-native `__unbox_number` function
+    (symbolic runtime funcref; NO host capability).
+- `host.js.number.box` → host capability record `env.__box_number`
+  `(f64) -> externref`.
+
+The two host records are the FIRST non-async `HostCapability` records. Reuse
+A1's record machinery (`AsyncHostAdapter`-style exact frozen records,
+`hostCapabilityRecords` projection, canonical-record guards) — generalize the
+record type's name if needed, but do NOT create a second record table or a
+second resolver. Feature rows mirror 1:1 (the `js.to_uint32` pattern); the
+callable-backed provider attachment follows the seven self-host Math
+methods, not the five native-opcode ones.
+
+### Production changes (exact ownership)
+
+1. `src/ir/intrinsics.ts` — the two IDs, signatures, features.
+2. `src/ir/runtime-manifest.ts` — the three providers, target policies, host
+   capability records, freeze/verification rows.
+3. `src/ir/from-ast.ts` — the two arms emit `intrinsic` nodes (id, args, f64/
+   externref result, source location) with NO provider and NO predicate read.
+   Delete `hasHostNumberBox`/`hasNativeNumberUnbox` from the from-ast
+   resolver contract ONLY if the final trace confirms no other consumer;
+   otherwise leave the contract entries and delete just these two reads.
+4. `src/ir/intrinsic-support.ts` — provider attachment for the two IDs
+   (callable-backed pattern); the host arm attaches its exact capability
+   record, the native arm its runtime funcref.
+5. `src/ir/integration.ts` — provider selection at manifest preparation from
+   the target profile (the SAME `!ctx.nativeStrings` /
+   `semanticProviders === "native-first"` facts, now consulted exactly once,
+   at freeze); the resolver predicate implementations are deleted with their
+   contract entries or left for non-from-ast callers per the trace.
+6. Timer-shim and async-prepare joins per the measured-facts caveat.
+
+Do NOT touch: legacy codegen emission of `__box_number`/`__unbox_number`
+(`coerceType`, deno-api, generators-native-consumer, builtin-value-read — the
+direct-route substrate stays until R9/R10), `addUnionImports` registration,
+`__box_boolean`/`__box_symbol`, `__any_to_f64`/`__to_primitive`/equality
+(later F1 rows), the #2108 coercion-sites gate baseline, and the public
+`ImportIntent` projection.
+
+### Behavior-neutrality obligations (each is a test)
+
+1. **Host lane byte-parity**: fixtures whose IR bodies box (f64→externref
+   argument/return) and unbox (the #4461 `Map.get` return-hit shape) compile
+   byte-identically before/after — same `env` imports, same call sites.
+2. **Native-first unbox parity**: the standalone `Map.get` shape still
+   IR-emits and calls the union-native `__unbox_number`; runtime parity.
+3. **Standalone box parity**: every shape that demotes at the box arm today
+   still demotes — now as preparation-time typed `Unsupported` naming
+   `js.number.box`. The strict fixed-corpus census
+   (`pnpm run check:ir-fallbacks`) must be unchanged in every unintended
+   bucket; a reason-string migration inside the same bucket is acceptable,
+   a bucket count change is not.
+4. **Freeze discipline**: a post-freeze request for either intrinsic is an
+   invariant; provider substitution/duplication/cross-wiring on the
+   attachment rejects before materialization (A2's mutation matrix shape).
+5. **Canonicalization**: reversed traversal publishes byte-equivalent
+   manifest projections; the two new records appear in
+   `hostCapabilityRecords` only when a provider edge requests them —
+   async-only and Math-only manifests keep their current record sets.
+6. **Non-vacuity**: reverting only the from-ast arm changes (keeping the
+   schema) must fail the new tests (the intrinsic path, not the old inline
+   path, carries the fixtures).
+
+### Required pre-implementation verifications (record answers in the checkpoint note)
+
+- Full-repo trace of `hasHostNumberBox`/`hasNativeNumberUnbox` consumers
+  (expected: the two from-ast arms + integration implementations only).
+- The `gen.setReturn` boxing path (`from-ast.ts` ~2010, throws to legacy when
+  the box helper is unresolvable): confirm whether it routes through
+  `coerceToExpectedExtern` (then it is covered) or emits its own
+  `__box_number` join (then it is an explicit follow-up row, not silent
+  scope).
+- Who guarantees the union-native `__unbox_number` exists when a prepared
+  body calls it (materialization trigger for `irRuntimeFuncRef` resolution)
+  — the manifest records the choice; materialization must keep its current
+  owner.
+- Whether `IrInstrIntrinsic` lowering for callable-backed providers already
+  handles externref args/results (the Math seven are all-f64).
+
+### Validation
+
+Focused suite (`tests/issue-3526-ir-runtime-manifest.test.ts` ownership +
+a new `tests/issue-3526-number-boundary-intrinsics.test.ts`), the M1/A1/A2
+suites unchanged, `tests/issue-4106-ir-async-fetch-user.test.ts` and
+`tests/issue-4167-async-rejection-identity.test.ts` as controls; typecheck;
+`pnpm run check:ir-fallbacks` bare; ratchet chain bare + `LOC_GATE_BASE`
+CI-base simulation; hooks without bypass. Acceptance: all six neutrality
+obligations green, census unchanged, the two arms free of predicate reads.
+
+## 2026-08-30 Sol correction — F1-S1 provider and preparation authority
+
+The 2026-08-29 F1-S1 plan is not implementation-ready as written. This
+correction is grounded on `origin/main`
+`4881206ab3001505fcfca875589aff8daf375ff9` and supersedes its inaccurate
+facts and incomplete ownership list. No source implementation may begin until
+the overlapping Claude IR PR #5218 has merged, this branch has been rebased on
+the resulting `origin/main`, and the exact-file collision census has been
+repeated.
+
+### Corrected facts and retained control paths
+
+- Standalone does define native `__box_number` and `__unbox_number` through
+  the union-native family. The current f64-to-externref Prepared arm is
+  host-only by *policy* (`!ctx.nativeStrings`), not because standalone lacks a
+  helper. F1-S1 must preserve that policy and may not infer support from helper
+  presence.
+- `RuntimeManifestPolicy` currently carries only `target` and `backend`.
+  `prepareBuiltFnRuntimeManifest(...)` maps ordinary GC and GC native-first to
+  the same host target, while the existing choice additionally depends on
+  `nativeStrings` and `semanticProviders`. Provider selection therefore
+  requires one frozen number-boundary policy projection containing those exact
+  facts; target alone is insufficient. In particular, distinguish ordinary
+  host-assisted GC, GC native-first, and host-assisted GC with explicit native
+  strings. Do not read the live codegen context after freeze.
+- Executable `hasHostNumberBox` implementations exist in integration, the
+  linear adapter, and the self-hosted stdlib adapter; `hasNativeNumberUnbox`
+  exists in integration. Removing the resolver contract requires updating all
+  implementations, not only integration. The linear adapter must keep the new
+  externref intrinsics rejected/demoted unless it receives an exact supported
+  provider policy.
+- `gen.setReturn` does not flow through `coerceToExpectedExtern`. It attaches a
+  direct runtime `__box_number` reference through `boxProvider`; that path is a
+  named control/follow-up and remains unchanged in this slice.
+- `src/ir/async-prepare.ts` recognizes its exact numeric-return roundtrip as a
+  raw call to `env.__unbox_number`. Once from-ast emits a provider-free
+  intrinsic, that optimization would stop firing. Update this consumer
+  mechanically to accept the exact intrinsic ID, version, argument, and result
+  shape while retaining its existing raw-import form for legacy owners.
+  `compiler-timer-shim-preparation.ts` is a different dynamic box/to-number
+  family and remains unchanged unless a later exact trace proves a mechanical
+  join.
+- A physical union import is shared by several raw consumers. Do not replace
+  its `irImportFuncRef` identity with a capability-only identity. Retain the
+  canonical host-capability record as manifest authority while lowering to
+  the same physical import target.
+
+### One host-capability catalogue
+
+Generalize the existing async-only capability authority into one central
+runtime host-capability catalogue, for example
+`src/ir/runtime-host-capabilities.ts`; do not add a second table.
+
+1. The closed ID and record unions contain the existing async capabilities and
+   the two number-boundary host records. Value types gain `f64` alongside
+   `externref` and `i32`. Records retain canonical object identity, exact
+   namespace/name/signature, and exception-policy semantics.
+2. `async-runtime-providers.ts` must expose narrowed compatibility aliases and
+   derive its complete async-only projection from the central table.
+   `AsyncHostAdapterValueType` remains exactly `externref | i32`, and
+   `AsyncHostAdapter` excludes every new f64 record. Do not re-export the
+   widened central union under either async name: the existing async adapter
+   materializer treats every non-i32 row as externref and would silently
+   mislower f64. Existing async manifests must remain byte-for-byte and
+   record-for-record unchanged.
+3. `FrozenRuntimeManifest.hostCapabilityRecords` carries the generalized
+   record union. Canonicalization validates the complete central catalogue,
+   while an individual manifest includes only the exact records requested by
+   its provider closure. Math-only, async-only, and empty manifests may not
+   acquire number records.
+4. No intrinsic instruction duplicates a capability record. The manifest is
+   the record authority; the attached provider/target retains enough exact
+   identity for verification and lowering.
+
+### Synchronous callable provider implementations
+
+The existing callable intrinsic plumbing is ABI-generic enough for externref,
+but its provider model is not. `RuntimeProviderPlan` and
+`IntrinsicRuntimeProviderImplementation` currently admit backend/self-hosted
+implementations only; `providerAttachment(...)` always constructs an
+`irIntrinsicFuncRef`, and provider resolution only accepts the prepared Math
+index for an intrinsic target. Copying the seven Math rows is therefore not a
+valid implementation.
+
+Add two explicit synchronous callable implementation kinds:
+
+- `host-callable`, naming an exact central host-capability ID and deriving the
+  canonical physical `irImportFuncRef`; and
+- `runtime-callable`, naming the exact runtime symbol and deriving the
+  canonical `irRuntimeFuncRef`.
+
+Keep the existing async `host-capability` implementation non-callable and keep
+self-hosted Math unchanged. Extend intrinsic nodes/provider equality,
+verification, attachment, provider observation, and lowering only as required
+to recompute and authenticate these exact target kinds. A wrong capability,
+wrong runtime symbol, cloned/mismatched binding, wrong signature, provider
+substitution, duplicate attachment, or post-freeze request is an Invariant
+before materialization. The semantic instruction identity remains the
+versioned `IntrinsicId`; the physical target remains the existing import or
+runtime funcref so legacy consumers and byte order do not drift.
+
+### Exact policy and owner-local preparation
+
+Freeze an explicit, already-resolved number-boundary provider policy per
+preparation caller with the runtime manifest. Global target/mode facts are
+inputs only; they are not the final policy because adapters deliberately expose
+different support. The caller projections are exact:
+
+- integration derives the current host/native truth table from its exact
+  `nativeStrings` and `semanticProviders` facts;
+- linear resolves both number-boundary arms disabled; and
+- stdlib selfhost resolves both arms disabled, even when an ambient host
+  context has `nativeStrings === false`.
+
+Within the integration projection, preserve the current decisions exactly:
+
+- host box and host unbox are selected only when `nativeStrings === false`;
+- native unbox is selected only when
+  `semanticProviders === "native-first"`; and
+- all other combinations retain their current unsupported/no-conversion
+  behavior. Native `__box_number` presence must not widen the box policy.
+
+The current integration prepares one aggregate runtime manifest for all
+healthy functions inside `runGlobalPreparation`; a
+`provider-target-unavailable` throw consequently fails every owner. Moving a
+box rejection to preparation without changing that lifecycle would turn one
+owner-local demotion into `unexpected-internal-throw` for unrelated owners.
+Before deleting the from-ast predicate, partition the decision by exact
+terminal owner (or an equally exact component boundary):
+
+1. determine provider-policy support before any body, slot, alias, outcome, or
+   manifest prefix is published;
+2. classify unavailable number-boundary policy for only the requesting
+   owner/component as the existing exact outcome
+   `kind:"unsupported"`, `code:"late-preparation-unsupported"`,
+   `stage:"resolve"`, with a canonical detail that names the exact
+   `IntrinsicId` and resolved caller policy; do not add a new outcome code;
+3. remove that owner's candidate artifacts, then prepare one deterministic
+   frozen manifest over the surviving owners; and
+4. keep structural manifest corruption and late mutation fatal for the whole
+   transaction.
+
+The required non-vacuity is one standalone box owner beside an unrelated clean
+IR owner: the box owner records Unsupported/direct exactly once, the clean
+owner remains Prepared exactly once, and no failed-owner slot, alias, outcome,
+or body prefix survives. Reordered owner input produces the same surviving
+manifest and accounting.
+
+### Materialization without ABI drift
+
+Today a raw `__unbox_number` call makes preregistration invoke
+`addUnionImports`, which materializes the complete canonical union family.
+Replacing the call with an intrinsic would otherwise remove that trigger and
+change import membership/order.
+
+- Preserve `addUnionImports` as the physical whole-family materializer.
+- After provider attachment and before body indices freeze, make
+  preregistration recognize the exact host import and native runtime targets
+  attached to `js.number.box`/`js.number.unbox`, then invoke the same
+  materializer.
+- Let the existing exact import resolver/runtime observer resolve those
+  targets; do not add name scanning or a second allocator.
+- Add an isolated synthetic intrinsic fixture whose only union-family trigger
+  is the new attached provider. A #4461 Map fixture alone is vacuous because
+  its other adapter paths already materialize the union family.
+- Compare import set, order, signatures, indices, and Wasm bytes with the
+  legacy control in every clean lane.
+
+### Revised production ownership
+
+The implementation owner may edit only the following initially approved
+surface, with any expansion requiring another Sol plan amendment before edit:
+
+- `src/ir/intrinsics.ts`
+- `src/ir/runtime-manifest.ts`
+- one new central host-capability catalogue
+- `src/ir/async-runtime-providers.ts`
+- `src/ir/nodes.ts` and the exact verifier/provider-equality consumer
+- `src/ir/intrinsic-support.ts`
+- `src/ir/async-prepare.ts`
+- `src/ir/from-ast.ts`
+- `src/ir/integration.ts`
+- `src/ir/backend/linear-integration.ts`
+- `src/codegen/stdlib-selfhost.ts`
+- focused #3526 manifest/number-boundary tests and existing directly affected
+  async/provider tests.
+
+Do not edit `src/codegen/index.ts`, declarations, raw union registration,
+compiler timer-shim preparation, timer shims, generator `setReturn`, public
+import projection, or direct codegen handlers without first recording an exact
+authority trace and amending this lock. No LOC/function/baseline exception is
+authorized by the broad historical frontmatter list.
+
+### Acceptance matrix and coordination gate
+
+In addition to the earlier six obligations, acceptance requires:
+
+- all three GC number-boundary policy combinations above, plus standalone,
+  WASI, linear, and self-hosted controls;
+- exact provider-attachment mutations for host/runtime crosswire, wrong
+  capability/symbol/signature, duplicate, late request, and non-canonical
+  capability record;
+- the owner-local unsupported-plus-clean-owner transaction test;
+- isolated whole-union materialization plus exact import/order/byte parity;
+- the exact async-prepare intrinsic roundtrip and unchanged raw-import control;
+- unchanged `gen.setReturn`, compiler timer shim, boolean/symbol/AnyValue,
+  async-only, and Math-only projections; and
+- bare fallback census, TypeScript 7 and 5, focused/equivalence/standalone/WASI
+  tests, IR dialect/layering/readiness/oracle ratchets, LOC and function
+  regrowth ratchets immediately before every commit, and complete precommit
+  and prepush hooks under a finite non-negative one-minute load strictly below
+  `logical cores - 2`.
+
+This remains a blocked plan-only checkpoint while #5218 is open. Once the
+overlap clears, Luna Max may implement only from the rebased, re-audited lock.
+The PR stays draft until an independent Sol reviews the exact pushed head SHA
+and explicitly approves provider policy, owner-local failure accounting,
+canonical materialization, bytes, tests, and the no-overlap census. Only then,
+if the PR is mergeable and green, may root mark it ready.

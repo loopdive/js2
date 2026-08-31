@@ -235,6 +235,25 @@ jobs:
         env:
           JS2WASM_EVAL_ENGINE: quickjs
           JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
+          # The OOM here is in a vitest WORKER, not the step's own process:
+          # "FATAL ERROR: Reached heap limit" with the frames tagged
+          # `[node (vitest 3)]`, at Mark-Compact ~545 MB, then
+          # ERR_IPC_CHANNEL_CLOSED as the pool collapses. The pool collapse is
+          # what surfaces, which is why it reads as infrastructure noise.
+          #
+          # `NODE_OPTIONS` does NOT fix it. vitest.config.ts forks workers with
+          # an explicit `--max-old-space-size=${VITEST_FORK_MAX_OLD_SPACE_SIZE
+          # || 512}` in `poolOptions.forks.execArgv`, and execArgv overrides an
+          # inherited NODE_OPTIONS — so the 512 default IS the ~545 MB ceiling
+          # observed. Verified: a NODE_OPTIONS=--max-old-space-size=3072 attempt
+          # OOMed at the identical ceiling (PR #5263, 80fa9c65).
+          #
+          # 1024 is the value every other capped lane uses (test262-sharded.yml,
+          # refresh-baseline.yml, and the 1024 defaults in equivalence-gate.mjs
+          # / issue-tests-gate.mjs). Deliberately not higher: `maxForks` runs
+          # several per-file forks concurrently, so the cap is multiplied by
+          # fork count against the runner's memory.
+          VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
         run: |
           npx vitest run \
             tests/quickjs-eval-provider.test.ts \
@@ -246,8 +265,21 @@ jobs:
       - name: Kept native interpreter path remains selectable
         env:
           JS2WASM_EVAL_ENGINE: interpreter
+          # Same worker-heap exhaustion as the quickjs step above, wearing a
+          # different mask: here it surfaces as
+          # `[vitest-worker]: Timeout calling "onTaskUpdate"` with every test
+          # PASSING (6 files, 77 passed / 1 skipped) and vitest still exiting 1.
+          # Reproduced locally: the worker OOMs inside V8's
+          # `JsonStringifier::Stringify` — i.e. while the reporter RPC serializes
+          # a task update — so the "timeout" is the OOM, not a slow runner. Same
+          # command with this cap set exits 0.
+          VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
         run: |
-          npx vitest run \
+          # These compiler-heavy files all pass concurrently, but under CI load
+          # their reporter traffic can starve Vitest's worker RPC and make the
+          # step exit 1 with `Timeout calling "onTaskUpdate"`. Keep this canary
+          # deterministic by using one worker; semantic coverage is unchanged.
+          npx vitest run --pool=forks --poolOptions.forks.singleFork --no-file-parallelism \
             tests/issue-2928-refusal-provider.test.ts \
             tests/issue-2960.test.ts \
             tests/issue-2928-e6-provider-cache.test.ts \

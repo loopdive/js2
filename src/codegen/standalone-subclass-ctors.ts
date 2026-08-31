@@ -43,11 +43,13 @@
  *     whereas a plain object carries no false brand.
  *
  * ── SCOPE, STATED PLAINLY ───────────────────────────────────────────────────
- * Construction and identity, NOT faithful behaviour. The instance is not a
- * functional Date/RegExp/Promise/…: no [[DateValue]], no compiled pattern, no
- * executor is run, no byteLength, and constructor arguments are still
- * side-effect-evaluated at the call site (§13.3.7.1) and then DROPPED. This is
- * the same scope as the existing #3239 TypedArray/SharedArrayBuffer rung.
+ * Construction and identity, NOT blanket faithful behaviour. The identity and
+ * wrapper parents still ignore their already side-effect-evaluated arguments;
+ * they are not functional Date/RegExp/Promise/… instances (no [[DateValue]],
+ * compiled pattern, executor, or byteLength). Map/Set are the deliberate
+ * exception covered by this issue: their first forwarded value is consumed as
+ * a native array carrier below. This is the same bounded scope as the
+ * existing #3239 TypedArray/SharedArrayBuffer rung for every other parent.
  *
  * That bound is set by measurement, not optimism: of 25,692 passing standalone
  * test262 rows, ZERO contain `extends <one of these parents>` in their source,
@@ -73,6 +75,8 @@ import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { COLLECTION_KIND, ensureMapHelpers } from "./map-runtime.js";
+import { ensureSetHelpers } from "./set-runtime.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 
 /** `externref × count` — the forwarder ABI every arm below declares. */
 function externrefParams(count: number): ValType[] {
@@ -83,11 +87,17 @@ function externrefParams(count: number): ValType[] {
  * Register a defined `<key> : (externref × argCount) -> externref` whose body is
  * `body`, and record it in `ctx.funcMap` under `key`. Returns the funcIdx.
  */
-function registerSuperCtor(ctx: CodegenContext, key: string, argCount: number, body: Instr[]): number {
+function registerSuperCtor(
+  ctx: CodegenContext,
+  key: string,
+  argCount: number,
+  body: Instr[],
+  locals: { name: string; type: ValType }[] = [],
+): number {
   const typeIdx = addFuncType(ctx, externrefParams(argCount), [{ kind: "externref" }], `${key}_type`);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(key, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals: [], body, exported: false });
+  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals, body, exported: false });
   return funcIdx;
 }
 
@@ -174,8 +184,15 @@ export const STANDALONE_COLLECTION_BUILTIN_PARENTS: ReadonlyMap<string, number> 
  * inherited `sub.add(1)` on a subclass-typed receiver still resolve host-free
  * (measured), which is why the #2620 refusal could be narrowed rather than kept.
  *
- * The iterable-initialiser form (`new Sub([[k, v]])`) is part of the deferred
- * behaviour scope: the arguments are dropped, per the file header.
+ * Map/Set iterable initialisers are the one behaviour slice handled here. The
+ * caller compiles the first `super(...)` value once as an `externref`; this
+ * helper consumes that exact carrier through the existing native array readers
+ * (`__extern_length` / `__extern_get_idx`) and seeds the fresh `$Map` with the
+ * same `__map_set` / `__set_add` operations used by direct `new Map` / `new
+ * Set`. No AST is available here and none is recompiled. The carrier walk is
+ * intentionally bounded to the native array carriers those readers understand;
+ * general iterator protocol remains an explicit follow-up rather than silently
+ * producing a successful empty subclass.
  */
 export function emitStandaloneCollectionSuperCtor(
   ctx: CodegenContext,
@@ -188,17 +205,179 @@ export function emitStandaloneCollectionSuperCtor(
   const existing = ctx.funcMap.get(key);
   if (existing !== undefined) return existing;
 
+  // Map/Set construction reuses the object-runtime's finalized array-reader
+  // contract. WeakMap/WeakSet stay on the #3972 empty-carrier path: their
+  // iterable semantics and weak-key checks are a separate slice and must not
+  // be widened as a side effect of this issue.
+  const isMapOrSet = parentName === "Map" || parentName === "Set";
+  const needsIterableWalk = isMapOrSet && argCount > 0;
+  if (needsIterableWalk) ensureObjectRuntime(ctx);
   ensureMapHelpers(ctx);
   const mapNewIdx = ctx.mapHelpers.get("__map_new");
   if (mapNewIdx === undefined) return undefined; // defensive: substrate unavailable
 
-  // `extern.convert_any` is the same no-op boxing the object runtime uses to
-  // expose `$Object`/vec structs as externref.
-  return registerSuperCtor(ctx, key, argCount, [
+  const collectionLocal = argCount;
+  const lenLocal = argCount + 1;
+  const iLocal = argCount + 2;
+  const entryLocal = argCount + 3;
+  const keyLocal = argCount + 4;
+  const valueLocal = argCount + 5;
+  const locals: { name: string; type: ValType }[] = needsIterableWalk
+    ? [
+        { name: "collection", type: { kind: "ref", typeIdx: ctx.mapTypeIdx } },
+        { name: "len", type: { kind: "f64" } },
+        { name: "i", type: { kind: "i32" } },
+        { name: "entry", type: { kind: "externref" } },
+        { name: "key", type: { kind: "anyref" } },
+        { name: "value", type: { kind: "anyref" } },
+      ]
+    : [];
+
+  const body: Instr[] = [
     { op: "i32.const", value: kind },
     { op: "call", funcIdx: mapNewIdx },
-    { op: "extern.convert_any" },
-  ]);
+  ];
+
+  // Preserve the compact #3972 helper for the no-argument/Weak* arms. Only a
+  // Map/Set helper with a forwarded argument needs the object-runtime readers
+  // and its extra locals; this keeps unrelated collection subclasses out of
+  // the iterable-specific generated shape.
+  if (!needsIterableWalk) {
+    body.push({ op: "extern.convert_any" });
+    return registerSuperCtor(ctx, key, argCount, body);
+  }
+
+  body.push({ op: "local.set", index: collectionLocal });
+
+  if (needsIterableWalk) {
+    const externLengthIdx = ctx.funcMap.get("__extern_length");
+    const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+    const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+    const isArrayIdx = ctx.funcMap.get("__extern_is_array");
+    const mapSetIdx = parentName === "Map" ? ctx.mapHelpers.get("__map_set") : undefined;
+    if (parentName === "Set") ensureSetHelpers(ctx);
+    const setAddIdx = parentName === "Set" ? ctx.mapHelpers.get("__set_add") : undefined;
+
+    // `ensureObjectRuntime` normally installs all three readers before this
+    // helper is registered. Keep the defensive guard so a partially available
+    // substrate still returns a correctly branded empty carrier instead of
+    // baking an invalid call target.
+    if (
+      externLengthIdx !== undefined &&
+      externGetIdxIdx !== undefined &&
+      isArrayIdx !== undefined &&
+      ((parentName === "Map" && mapSetIdx !== undefined) || (parentName === "Set" && setAddIdx !== undefined))
+    ) {
+      // The native reader returns the logical length as f64. Keep the same
+      // i32 loop/index convention as Map.groupBy and the direct Set array
+      // walk. The loop body is retained as a named array so each arm can add
+      // its seeding operation without relying on positional casts into the
+      // surrounding instruction list.
+      const loopBody: Instr[] = [
+        { op: "local.get", index: iLocal },
+        { op: "f64.convert_i32_s" },
+        { op: "local.get", index: lenLocal },
+        { op: "f64.ge" },
+        { op: "br_if", depth: 1 },
+        // `entry = __extern_get_idx(iterable, f64(i))` — this is the
+        // already-evaluated `super(...)` value, never the source AST.
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: iLocal },
+        { op: "f64.convert_i32_s" },
+        { op: "call", funcIdx: externGetIdxIdx },
+        { op: "local.set", index: entryLocal },
+      ];
+      const iterateBody: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: externLengthIdx },
+        { op: "local.set", index: lenLocal },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: iLocal },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+        },
+      ];
+
+      if (parentName === "Map") {
+        loopBody.push(
+          // Map entries are the same two-element array carriers accepted by
+          // direct `new Map([[k, v], ...])`. The finalized reader boxes each
+          // key/value without re-evaluating either expression.
+          { op: "local.get", index: entryLocal },
+          { op: "f64.const", value: 0 },
+          { op: "call", funcIdx: externGetIdxIdx },
+          { op: "any.convert_extern" },
+          { op: "local.set", index: keyLocal },
+          { op: "local.get", index: entryLocal },
+          { op: "f64.const", value: 1 },
+          { op: "call", funcIdx: externGetIdxIdx },
+          { op: "any.convert_extern" },
+          { op: "local.set", index: valueLocal },
+          { op: "local.get", index: collectionLocal },
+          { op: "local.get", index: keyLocal },
+          { op: "local.get", index: valueLocal },
+          { op: "call", funcIdx: mapSetIdx! },
+          { op: "drop" },
+        );
+      } else {
+        loopBody.push(
+          // Set stores every value as both key and value through __set_add;
+          // the shared Map runtime therefore supplies SameValueZero dedup.
+          { op: "local.get", index: collectionLocal },
+          { op: "local.get", index: entryLocal },
+          { op: "any.convert_extern" },
+          { op: "call", funcIdx: setAddIdx! },
+          { op: "drop" },
+        );
+      }
+      loopBody.push(
+        { op: "local.get", index: iLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "local.set", index: iLocal },
+        { op: "br", depth: 0 },
+      );
+
+      // `new Map()` / `new Set()` and their nullish forms are empty. The
+      // implicit forwarder pads missing arguments with undefined, while an
+      // explicit `super(null)` passes a null externref; both must skip the
+      // reader walk. Under the undefined-singleton regime the native predicate
+      // distinguishes undefined from null without changing the ABI.
+      const nullishGuard: Instr[] = [{ op: "local.get", index: 0 }, { op: "ref.is_null" }];
+      if (isUndefinedIdx !== undefined) {
+        nullishGuard.push({ op: "local.get", index: 0 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
+      }
+      const invalidIterable = buildThrowJsErrorInstrs(
+        ctx,
+        "TypeError",
+        `${parentName} subclass constructor requires an array iterable`,
+        { forceInModuleCtor: true },
+      );
+      body.push({ op: "local.get", index: 0 }, ...nullishGuard.slice(1), {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isArrayIdx },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: invalidIterable,
+            else: iterateBody,
+          },
+        ],
+      });
+    }
+  }
+
+  // `extern.convert_any` is the same no-op boxing the object runtime uses to
+  // expose `$Object`/vec structs as externref.
+  body.push({ op: "local.get", index: collectionLocal }, { op: "extern.convert_any" });
+  return registerSuperCtor(ctx, key, argCount, body, locals);
 }
 
 /**

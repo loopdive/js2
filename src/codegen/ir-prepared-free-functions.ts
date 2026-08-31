@@ -71,10 +71,10 @@ export function computePreparedInheritedIrFirstSkipUnitIds(input: {
       generatorsSkippable: input.generatorsSkippable,
     }),
   );
-  // Fast mode can ground source `number` positions to i32 during direct body
-  // discovery even though the early IR override still says f64. Keep only the
-  // annotation-proven boolean subset on the inherited compile-once route until
-  // exact callable-contract comparison moves into preparation.
+  // Keep the inherited fast route to its annotation-proven boolean subset.
+  // Numeric scalars have a separate pre-body admission below, where the final
+  // IR override is compared with the allocated callable slot before ownership
+  // can move out of the direct overlay.
   if (!input.fast) return requestedSkipUnitIds;
 
   const fastBlockedUnitIds = new Set<IrUnitId>();
@@ -118,7 +118,16 @@ interface PreparedIrBodyFamily {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {}
+/**
+ * Prepared free-function bodies retain their exact ownership rows alongside
+ * the temporary declaration-name projection. The UnitId sets are the routing
+ * authority; names remain only for the legacy declaration seam and telemetry.
+ */
+export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {
+  readonly completedBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly skipBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly preserveBodyUnitIds: ReadonlySet<IrUnitId>;
+}
 
 export interface PreparedIrClassMemberBodies extends PreparedIrBodyFamily {
   readonly completedBodyUnitIds: ReadonlySet<IrUnitId>;
@@ -719,6 +728,71 @@ function r2SignatureMatchesAllocatedSlot(
 }
 
 /**
+ * Fast mode used to keep every selected owner on the direct/IR overlay because
+ * its direct `number` ABI could be i32 while IR retained f64. #3907 makes a
+ * source `number` position f64 in fast mode, but do not turn that repair into
+ * a general fast-mode admission: only a syntax-fixed scalar declaration whose
+ * final override still equals the already allocated slot may prepare early.
+ *
+ * This deliberately duplicates the narrow declaration checks rather than
+ * widening the general R2 vocabulary. In particular, a checked `any`, string,
+ * vector, reference, generic, default/rest/optional, destructured, async, or
+ * generator position remains typed Unsupported on the existing direct route.
+ */
+function r2FastPreparedScalarFunctionSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  unitId: IrUnitId,
+  claim: IrExactFunctionClaim,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  const declaration = claim.declaration;
+  const scalarAnnotationKind = (type: ts.TypeNode | undefined): "f64" | "i32" | undefined => {
+    if (type?.kind === ts.SyntaxKind.NumberKeyword) return "f64";
+    if (type?.kind === ts.SyntaxKind.BooleanKeyword) return "i32";
+    return undefined;
+  };
+
+  if (
+    !declaration.name ||
+    declaration.name.text !== claim.legacyName ||
+    declaration.parent !== sourceFile ||
+    !sourceFile.statements.some((statement) => statement === declaration) ||
+    !declaration.body ||
+    (declaration.typeParameters?.length ?? 0) !== 0 ||
+    declaration.asteriskToken !== undefined ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    declaration.parameters.length !== override.params.length ||
+    !declaration.parameters.every((parameter, index) => {
+      const expectedKind = scalarAnnotationKind(parameter.type);
+      return (
+        ts.isIdentifier(parameter.name) &&
+        parameter.questionToken === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        parameter.initializer === undefined &&
+        expectedKind !== undefined &&
+        asVal(override.params[index]!)?.kind === expectedKind
+      );
+    })
+  ) {
+    return false;
+  }
+  if (declaration.type?.kind === ts.SyntaxKind.VoidKeyword) {
+    if (override.returnType !== null) return false;
+  } else {
+    const expectedKind = scalarAnnotationKind(declaration.type);
+    if (
+      expectedKind === undefined ||
+      override.returnType === null ||
+      asVal(override.returnType)?.kind !== expectedKind
+    ) {
+      return false;
+    }
+  }
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
+}
+
+/**
  * (#4514) The narrow value vocabulary whose physical carrier is fixed by the
  * declaration alone, with no decision the prepared component could re-plan:
  * `void`, `f64`/`i32` scalars, `string` (one `nativeStrings`-keyed carrier both
@@ -1130,9 +1204,10 @@ export function finalizeR3PreparedOwnerPopulation(input: {
  * R2/R3 prepare only components whose free-function and class-member contracts
  * have one backend-stable Program ABI projection: scalars, strings, selected
  * vectors, and opaque JS-host externrefs. Other reference-shaped contracts,
- * fast-mode grounded numerics, and async/generator frames still require direct
- * discovery and remain on the post-direct overlay. Nested callable syntax
- * inside an otherwise admitted owner does not by itself block that owner.
+ * unproven fast-mode signatures, and async/generator frames still require
+ * direct discovery and remain on the post-direct overlay. Nested callable
+ * syntax inside an otherwise admitted owner does not by itself block that
+ * owner.
  */
 export function selectR2PreparedOwnerComponents(input: {
   readonly ctx: CodegenContext;
@@ -1192,7 +1267,8 @@ export function selectR2PreparedOwnerComponents(input: {
     // legacy lowering is the disjoint #680 native carrier.
     const signatureOptions = isGenerator ? { allowOpaqueExternrefValue: true } : undefined;
     if (
-      input.ctx.fast ||
+      (input.ctx.fast &&
+        !r2FastPreparedScalarFunctionSignature(input.ctx, input.sourceFile, unitId, claim, override)) ||
       isAsync ||
       (isGenerator && !generatorsPreparable(input.ctx)) ||
       containsUnplannedNestedExecutableSyntax(
@@ -1741,6 +1817,11 @@ export function prepareIrBodies(input: {
     completedBodies: new Set([...freeFunctionNames].filter((legacyName) => !freeDeferredBodies.has(legacyName))),
     skipBodies: new Set(freeRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     preserveBodies: new Set(freePreparedProjection.entries.map(({ legacyName }) => legacyName)),
+    completedBodyUnitIds: new Set(
+      [...freeFunctionClaimsByUnitId.keys()].filter((unitId) => !deferredPartition.freeFunctionUnitIds.has(unitId)),
+    ),
+    skipBodyUnitIds: irOwnedPartition.freeFunctionUnitIds,
+    preserveBodyUnitIds: preparedPartition.freeFunctionUnitIds,
   };
 
   const classRequestedSkipProjection = classPopulation
