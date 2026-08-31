@@ -2,10 +2,11 @@
   "id": "3523",
   "slice": "gap1a",
   "assignee": "ttraenkler/fable-ir-takeover",
-  "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3523-gap1a-single-pass",
   "claimed_at": "2026-08-29T07:40:16Z",
-  "updated_at": "2026-08-29T07:40:16Z",
-  "write_id": "18302-w8qtvlb3"
+  "updated_at": "2026-08-31T14:51:45Z",
+  "write_id": "2499-aqn72c4e",
+  "released_at": "2026-08-31T14:51:45Z"
 }
