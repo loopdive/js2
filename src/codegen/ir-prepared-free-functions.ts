@@ -118,7 +118,16 @@ interface PreparedIrBodyFamily {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {}
+/**
+ * Prepared free-function bodies retain their exact ownership rows alongside
+ * the temporary declaration-name projection. The UnitId sets are the routing
+ * authority; names remain only for the legacy declaration seam and telemetry.
+ */
+export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {
+  readonly completedBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly skipBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly preserveBodyUnitIds: ReadonlySet<IrUnitId>;
+}
 
 export interface PreparedIrClassMemberBodies extends PreparedIrBodyFamily {
   readonly completedBodyUnitIds: ReadonlySet<IrUnitId>;
@@ -1808,6 +1817,11 @@ export function prepareIrBodies(input: {
     completedBodies: new Set([...freeFunctionNames].filter((legacyName) => !freeDeferredBodies.has(legacyName))),
     skipBodies: new Set(freeRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     preserveBodies: new Set(freePreparedProjection.entries.map(({ legacyName }) => legacyName)),
+    completedBodyUnitIds: new Set(
+      [...freeFunctionClaimsByUnitId.keys()].filter((unitId) => !deferredPartition.freeFunctionUnitIds.has(unitId)),
+    ),
+    skipBodyUnitIds: irOwnedPartition.freeFunctionUnitIds,
+    preserveBodyUnitIds: preparedPartition.freeFunctionUnitIds,
   };
 
   const classRequestedSkipProjection = classPopulation
