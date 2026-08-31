@@ -1,14 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irImportFuncRef, irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
-import type { AsyncHostCapabilityId } from "./async-runtime-providers.js";
+import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
+import {
+  resolveRuntimeHostCapabilityRecord,
+  RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityRecord,
+} from "./runtime-host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
   forEachInstrDeep,
   irTypeEquals,
   mapNestedBuffers,
+  type IrFuncRef,
   type IrFunction,
   type IrInstr,
   type IrInstrIntrinsic,
@@ -20,6 +26,7 @@ import {
 import {
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
+  RUNTIME_PROVIDERS,
   type FrozenRuntimeManifest,
   type RuntimeManifestPolicy,
   type RuntimeProviderPlan,
@@ -40,6 +47,52 @@ const BACKEND_COMPOSITE_BY_INTRINSIC: Readonly<Partial<Record<IrInstrIntrinsic["
     "math.max": "math.max",
     "math.min": "math.min",
   });
+
+/**
+ * (#3526 F1-S1) Closed set of PHYSICAL callable targets each intrinsic admits,
+ * derived from the provider catalogue and the central capability records — not
+ * from an emitted import spelling. The semantic identity of the instruction is
+ * always the versioned `IntrinsicId`; these keys authenticate the exact
+ * physical target a frozen provider is allowed to attach, so a crosswire, a
+ * wrong capability, or a wrong runtime symbol rejects before materialization.
+ */
+function callableBindingKey(binding: IrFuncRef["binding"]): string {
+  switch (binding.kind) {
+    case "import":
+      return `import:${binding.module}:${binding.field}`;
+    case "runtime":
+      return `runtime:${binding.symbol}`;
+    case "intrinsic":
+      return `intrinsic:${binding.symbol}`;
+    default:
+      return `other:${binding.kind}`;
+  }
+}
+
+const ADMITTED_CALLABLE_TARGETS: ReadonlyMap<IrInstrIntrinsic["id"], ReadonlySet<string>> = (() => {
+  const table = new Map<IrInstrIntrinsic["id"], Set<string>>();
+  for (const provider of RUNTIME_PROVIDERS) {
+    const implementation = provider.implementation;
+    if (implementation.kind !== "host-callable" && implementation.kind !== "runtime-callable") continue;
+    for (const [id, definition] of Object.entries(INTRINSIC_DEFINITIONS)) {
+      if (definition.feature !== provider.feature) continue;
+      const key =
+        implementation.kind === "host-callable"
+          ? callableBindingKey(
+              irImportFuncRef(
+                ...((record) => [record.module, record.field] as const)(
+                  resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
+                ),
+              ).binding,
+            )
+          : callableBindingKey(irRuntimeFuncRef(implementation.symbol).binding);
+      const admitted = table.get(id as IrInstrIntrinsic["id"]) ?? new Set<string>();
+      admitted.add(key);
+      table.set(id as IrInstrIntrinsic["id"], admitted);
+    }
+  }
+  return table;
+})();
 
 /** Project the semantic standalone clock intent without adding a helper call. */
 function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
@@ -91,11 +144,25 @@ export function verifyIrIntrinsicInstruction(
   if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {
     errors.push(`${instr.id} result does not match its v${instr.version} signature`);
   }
-  if (
-    instr.provider?.kind === "callable" &&
-    (instr.provider.target.binding.kind !== "intrinsic" || instr.provider.target.binding.symbol !== instr.id)
-  ) {
-    errors.push(`${instr.id} callable provider must retain the semantic intrinsic binding`);
+  if (instr.provider?.kind === "callable") {
+    const binding = instr.provider.target.binding;
+    if (binding.kind === "intrinsic") {
+      if (binding.symbol !== instr.id) {
+        errors.push(`${instr.id} callable provider must retain the semantic intrinsic binding`);
+      }
+    } else {
+      // (#3526 F1-S1) A physical import/runtime target is admitted only when
+      // the closed provider catalogue names it for THIS intrinsic. Keeping the
+      // physical identity (rather than a capability-only one) is deliberate:
+      // the union import is shared with raw consumers and its ABI/order must
+      // not drift.
+      const admitted = ADMITTED_CALLABLE_TARGETS.get(instr.id);
+      if (!admitted || !admitted.has(callableBindingKey(binding))) {
+        errors.push(
+          `${instr.id} callable provider target ${callableBindingKey(binding)} is not an admitted physical provider`,
+        );
+      }
+    }
   }
   if (instr.provider?.kind === "backend-composite") {
     const expected = BACKEND_COMPOSITE_BY_INTRINSIC[instr.id];
@@ -138,7 +205,11 @@ function valueTypesOf(fn: IrFunction): ReadonlyMap<IrValueId, IrType> {
   return result;
 }
 
-function providerAttachment(id: IrInstrIntrinsic["id"], provider: RuntimeProviderPlan): IrIntrinsicProvider {
+function providerAttachment(
+  id: IrInstrIntrinsic["id"],
+  provider: RuntimeProviderPlan,
+  capabilityRecords: readonly RuntimeHostCapabilityRecord[],
+): IrIntrinsicProvider {
   if (provider.implementation.kind === "backend-op") {
     return Object.freeze({ kind: "backend-op", opcode: provider.implementation.opcode });
   }
@@ -147,6 +218,16 @@ function providerAttachment(id: IrInstrIntrinsic["id"], provider: RuntimeProvide
   }
   if (provider.implementation.kind === "backend-composite") {
     return Object.freeze({ kind: "backend-composite", operation: provider.implementation.operation });
+  }
+  if (provider.implementation.kind === "host-callable") {
+    // The canonical record IS the manifest authority for this ABI; the emitted
+    // target stays the exact physical union import so raw consumers and import
+    // order are untouched.
+    const record = resolveRuntimeHostCapabilityRecord(capabilityRecords, provider.implementation.capability);
+    return Object.freeze({ kind: "callable", target: irImportFuncRef(record.module, record.field, record.field) });
+  }
+  if (provider.implementation.kind === "runtime-callable") {
+    return Object.freeze({ kind: "callable", target: irRuntimeFuncRef(provider.implementation.symbol) });
   }
   return Object.freeze({
     kind: "callable",
@@ -176,6 +257,7 @@ function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): bo
 function attachProvidersToBuffer(
   buffer: readonly IrInstr[],
   providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>,
+  capabilityRecords: readonly RuntimeHostCapabilityRecord[],
 ): readonly IrInstr[] {
   const mapBuffer = (nestedBuffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(nestedBuffer, mapInstr);
   const mapInstr = (instr: IrInstr): IrInstr => {
@@ -183,7 +265,7 @@ function attachProvidersToBuffer(
     if (nested.kind !== "intrinsic") return nested;
     const provider = providers.get(nested.id);
     if (!provider) throw new Error(`IR intrinsic ${nested.id} is absent from the frozen runtime manifest`);
-    const attachment = providerAttachment(nested.id, provider);
+    const attachment = providerAttachment(nested.id, provider, capabilityRecords);
     if (nested.provider) {
       if (!sameProvider(nested.provider, attachment)) {
         throw new Error(`IR intrinsic ${nested.id} already carries a different prepared provider`);
@@ -198,9 +280,10 @@ function attachProvidersToBuffer(
 function attachProviders(
   fn: IrFunction,
   providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>,
+  capabilityRecords: readonly RuntimeHostCapabilityRecord[],
 ): IrFunction {
   const blocks = mapArray(fn.blocks, (block) => {
-    const instrs = attachProvidersToBuffer(block.instrs, providers);
+    const instrs = attachProvidersToBuffer(block.instrs, providers, capabilityRecords);
     return instrs === block.instrs ? block : { ...block, instrs };
   });
   return blocks === fn.blocks ? fn : { ...fn, blocks };
@@ -296,15 +379,25 @@ export function prepareIrRuntimeManifest(input: {
     }
     const capabilities = new Set<AsyncHostCapabilityId>();
     for (const provider of selectedProviders) {
-      for (const capability of provider.hostCapabilities) capabilities.add(capability);
+      for (const capability of provider.hostCapabilities) {
+        // Async providers only ever declare async capabilities; the narrowing
+        // is checked, never cast, so a widened central row can never reach the
+        // async adapter materializer (which would mislower f64 as externref).
+        if (!isAsyncHostCapabilityId(capability)) {
+          throw new Error(`IR async runtime attachment for ${fn.name} requested non-async capability ${capability}`);
+        }
+        capabilities.add(capability);
+      }
     }
-    const records = manifest.hostCapabilityRecords.filter((record) => capabilities.has(record.capability));
+    const records = manifest.hostCapabilityRecords
+      .filter((record) => isAsyncHostCapabilityId(record.capability) && capabilities.has(record.capability))
+      .map(asAsyncHostAdapter);
     if (records.length !== capabilities.size) {
       throw new Error(`IR async runtime attachment for ${fn.name} is missing a frozen capability record`);
     }
     const states = Object.freeze(
       plan.states.map((state) => {
-        const attached = attachProvidersToBuffer(state.body, providers);
+        const attached = attachProvidersToBuffer(state.body, providers, manifest.hostCapabilityRecords);
         const body = nativeProjection ? attached.map(projectStandaloneAsyncStateInstr) : attached;
         return body === state.body ? state : Object.freeze({ ...state, body });
       }),
@@ -343,7 +436,9 @@ export function prepareIrRuntimeManifest(input: {
     return { ...fn, asyncPlan: plan, asyncRuntime: runtime };
   };
   return Object.freeze({
-    functions: Object.freeze(input.functions.map((fn) => attachAsyncRuntime(attachProviders(fn, providers)))),
+    functions: Object.freeze(
+      input.functions.map((fn) => attachAsyncRuntime(attachProviders(fn, providers, manifest.hostCapabilityRecords))),
+    ),
     manifest,
     providers,
   });

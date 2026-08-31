@@ -6,6 +6,7 @@ import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan } from "./async-plan.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
 import { createDerivedIrUnitId, type IrDerivedUnitProvenance } from "./identity.js";
+import { INTRINSIC_SIGNATURE_VERSION } from "./intrinsics.js";
 import {
   asBlockId,
   asValueId,
@@ -800,7 +801,24 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
   const returned = block.terminator.values[0]!;
   const fulfillmentType = fn.resultTypes[0]!;
   const carrierUnbox = suffix.instrs.length === 1 ? suffix.instrs[0] : undefined;
-  const elidesNumericCarrierRoundTrip =
+  // The exact numeric-return roundtrip this optimization recognizes has two
+  // shapes now. (#3526 F1-S1) from-ast emits the semantic `js.number.unbox`
+  // intrinsic — provider-free at this point, since manifest freeze runs after
+  // async preparation — while legacy owners still reach here as the raw
+  // `env.__unbox_number` import call. Both are the same one-instruction
+  // externref→f64 tail; matching only the raw form would silently stop the
+  // elision from firing and reintroduce the redundant round trip.
+  const elidesNumericCarrierRoundTripAsIntrinsic =
+    carrierUnbox?.kind === "intrinsic" &&
+    carrierUnbox.id === "js.number.unbox" &&
+    carrierUnbox.version === INTRINSIC_SIGNATURE_VERSION &&
+    carrierUnbox.args.length === 1 &&
+    carrierUnbox.args[0] === awaited.result &&
+    carrierUnbox.result === returned &&
+    carrierUnbox.resultType !== null &&
+    carrierUnbox.resultType !== undefined &&
+    irTypeEquals(carrierUnbox.resultType, fulfillmentType);
+  const elidesNumericCarrierRoundTripAsImport =
     carrierUnbox?.kind === "call" &&
     carrierUnbox.target.name === "__unbox_number" &&
     carrierUnbox.target.binding.kind === "import" &&
@@ -811,6 +829,8 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
     carrierUnbox.result === returned &&
     carrierUnbox.resultType !== null &&
     irTypeEquals(carrierUnbox.resultType, fulfillmentType);
+  const elidesNumericCarrierRoundTrip =
+    elidesNumericCarrierRoundTripAsIntrinsic || elidesNumericCarrierRoundTripAsImport;
   const directIdentity =
     suffix.instrs.length === 0 && returned === awaited.result && irTypeEquals(awaited.resultType, fulfillmentType);
   const identityContinuation = directIdentity || elidesNumericCarrierRoundTrip;
