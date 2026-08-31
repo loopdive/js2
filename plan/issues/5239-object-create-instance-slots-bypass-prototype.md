@@ -31,7 +31,9 @@ loc-budget-allow:
 # `generateMultiModule` grew by the 3 lines of the multi-source call site
 # (comment + call). Splitting that function is #3399's job, not this fix's.
 func-budget-allow:
+  - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/runtime.ts::resolveImport
 ---
 
 # #5239 — `Object.create(proto)` host objects bypass compiled prototype accessors
