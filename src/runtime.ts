@@ -8811,29 +8811,6 @@ function _unwrapForHost(v: any, reader?: MarshalExportSource): any {
   return typeof v === "function" ? (_wasmClosureWrapperTargets.get(v) ?? v) : v;
 }
 
-/**
- * (#5242) Result marshalling for `__construct` / `__construct_closure`.
- *
- * Those imports exist only for COMPILED code — the `new <value>(…)` whose
- * callee could not be proven constructable at compile time. When the callee is
- * itself compiled, the host-side [[Construct]] arm hands back a `_wrapForHost`
- * PROXY, and returning that proxy to the compiled caller splits the constructed
- * object's identity in two: the constructor body stored its state keyed by the
- * RAW struct (`slots.set(this, …)` — every Temporal class does exactly this),
- * while the caller then reads through the proxy and finds nothing. The observed
- * symptom was `Missing internal slot slot-years` from `new
- * (ce("%Temporal.Duration%"))(…)`, one layer past the ctor-bridge fix.
- *
- * A host (non-wasm) callee keeps its result untouched: a native constructor's
- * instance has no raw twin, and the compiled side already knows how to read a
- * host object.
- */
-function _constructResultForCompiledConsumer(result: any, callee: any, reader?: MarshalExportSource): any {
-  if (!_isWasmStruct(callee)) return result;
-  const raw = _unwrapForHost(result, reader);
-  return _isWasmStruct(raw) ? raw : result;
-}
-
 // (#1694 A.i / #1632b-1) Host-callable/constructible representation of a
 // compiled Wasm closure.
 //
@@ -15211,11 +15188,7 @@ assert._isSameValue = isSameValue;
               _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
             );
           }
-          return _constructResultForCompiledConsumer(
-            Reflect.construct(wrappedCallee, wrappedArgs ?? []),
-            callee,
-            callbackState,
-          );
+          return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };
       // (#1632b-2 / #1528a residual) Dynamically CONSTRUCT a runtime function
       // VALUE — `var C = makeCtor(); new C(args)` where `C` is a factory-returned
@@ -15275,11 +15248,7 @@ assert._isSameValue = isSameValue;
               _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
             );
           }
-          return _constructResultForCompiledConsumer(
-            Reflect.construct(wrappedCallee, wrappedArgs ?? []),
-            callee,
-            callbackState,
-          );
+          return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };
       // Symbol.for(key) — global symbol registry (#965)
       // Symbol.for(key) — §20.4.2.2: stringKey = ? ToString(key). Passing a

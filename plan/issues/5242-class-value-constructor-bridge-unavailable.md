@@ -129,6 +129,16 @@ be closed before Temporal's `Duration` could be constructed:
   constructor bridge was involved. So it is a separate argument-marshalling gap
   on the dynamic method bridge (`__extern_method_call` → `__call_fn_method_3`),
   adjacent to #5221's destructuring work.
+- **Un-marshalling the `__construct` / `__construct_closure` RESULT.** Those two
+  imports exist only for compiled callers, and the host `[[Construct]]` arm
+  hands back a `_wrapForHost` proxy, so returning the raw struct instead looked
+  like an obvious companion fix (a constructor stores state keyed by the raw
+  `this`, the caller then reads through the proxy). It was built, measured, and
+  **removed**: with the bridge in place every probe answers identically with and
+  without it, and the only observable difference was the *wording* of an
+  unrelated pre-existing throw (`until` moved between two failure messages, both
+  wrong). An unvalidated marshalling change on a path this hot is not worth
+  carrying, so this PR is exactly the two root causes above.
 - **`Temporal.Duration.from({days:1})` answering `"PT0S"`.** Wrong on base and
   wrong after, unchanged by this work; recorded here so it is not rediscovered
   as a regression.
