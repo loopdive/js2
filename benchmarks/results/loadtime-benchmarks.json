@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-31T02:33:28.289Z",
+  "timestamp": "2026-08-31T09:21:18.505Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -2768,7 +2768,7 @@
         "padding:8px 28px;background:#fff;color:#111;border-radius:999px;cursor:pointer;font-size:0.9rem;font-weight:600",
         "timestamp",
         "\u0000js2_data_struct_host_bridge_token",
-        "__\u0000js2_call_fn_method_argc_0,__\u0000js2_call_fn_method_argc_1,__\u0000js2_call_fn_method_argc_2,__\u0000js2_call_fn_method_argc_3,__\u0000js2_call_fn_method_argc_4,__\u0000js2_call_fn_method_argc_5,__call_fn_0,__call_fn_1,__call_fn_2,__call_fn_3,__call_fn_4,__call_fn_method_0,__call_fn_method_1,__call_fn_method_2,__call_fn_method_3,__call_fn_method_4,__call_fn_method_5,__closure_arity,__is_closure"
+        "__\u0000js2_call_fn_method_argc_0,__\u0000js2_call_fn_method_argc_1,__\u0000js2_call_fn_method_argc_2,__\u0000js2_call_fn_method_argc_3,__\u0000js2_call_fn_method_argc_4,__\u0000js2_call_fn_method_argc_5,__call_fn_0,__call_fn_1,__call_fn_2,__call_fn_3,__call_fn_4,__call_fn_method_0,__call_fn_method_1,__call_fn_method_2,__call_fn_method_3,__call_fn_method_4,__call_fn_method_5,__cb_0,__cb_1,__cb_2,__cb_3,__cb_4,__cb_5,__cb_6,__cb_7,__closure_arity,__is_closure,__is_data_struct,__sget_timestamp,__struct_field_names"
       ]
     }
   ]
