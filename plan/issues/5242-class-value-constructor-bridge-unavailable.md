@@ -180,20 +180,49 @@ So the bound spelling was **already** silently wrong before this change; #5242
 fixed the spelling that used to throw and left the other exactly as it was. The
 "louder → quieter" concern does not apply to it — it was never loud.
 
-Two further measurements that matter for whoever picks it up:
+**FIVE ELIMINATED CANDIDATES** for whoever picks it up. Two are mine, three are
+dev-5243's, and **theirs kill every mechanism I proposed** — read the
+eliminations, not my guesses:
 
 - **It is ORDER-DEPENDENT.** Run alone, the bound spelling is CORRECT
-  (`11,12,…,20`); run after a 4-argument construct of the same class it reads
-  `11,0,0,0,…`. `11` + nine zeros is the signature of `__argc` stale at `1`, so
-  the callee is being reached by a route that neither sets `__argc` nor caps at
-  the right arity — consistent with a cached generic-closure wrapper
-  (`_wrapCallableForHost`'s `[[Construct]]` → `_wrapWasmClosureUnknownArity`,
-  arity ≤ 4, no argc) being reused for the later call. A single-probe test will
-  therefore report this as PASSING.
+  (`11,12,…,20`); it misreads only after a four-argument bound construct of the
+  same class, and that four-argument call is itself correct. So it is the route
+  the first call leaves BEHIND, not the first call's own result. A single-probe
+  test therefore reports this as PASSING. (mine)
 - **It does not enter `__construct_closure` as a struct.** Tracing shows
   `struct=false` there, so a fix that reorders the `_classCtorClosures` /
-  `__is_closure` test inside that import does nothing. I wrote that fix, measured
-  it, and removed it — it changed no observable value.
+  `__is_closure` test inside that import does nothing. I wrote that fix,
+  measured it, and removed it — it changed no observable value. (mine)
+- **NOT ambient `__argc`.** I originally read `11` + nine zeros as the signature
+  of `__argc` stale at `1`. **dev-5243 disproved it**: interposing a ten-argument
+  STATIC construct — which leaves `__argc` at 10 — between the two bound calls
+  does not repair the second, and a repeat call is stable at `11,0,0,…`. A
+  stale-global explanation cannot produce a value that survives the global being
+  overwritten. Do not spend time here on my account.
+- **NOT the `__call_fn_<N>` arity clamp.** The failing module exports
+  `__call_fn_0` … `__call_fn_4`, so a generic-closure fallback would deliver
+  `11,12,13,14,…` — four good values, not one. That also rules out the cached
+  `_wrapCallableForHost` → `_wrapWasmClosureUnknownArity` wrapper I named as the
+  likely culprit. (dev-5243)
+- **NOT an arity-carrying cache** — the last shape either of us had on the
+  table, including the sentence that used to end this section. dev-5243
+  measured one compile per width: the FIRST bound construct of a class is
+  correct at ANY width (two / four / ten args), and every later one collapses
+  to exactly one argument. The decisive row is ten-then-ten — a predecessor
+  that itself answers perfectly, at the SAME width as its successor, still
+  poisons it. So nothing is carrying the first call's arity. (dev-5243)
+
+What survives all five: a **first-call-wins latch that degrades to arity 1** —
+something the first bound construct of a class MEMOISES, reused by every later
+one, delivering exactly one correct argument regardless of either call's width,
+of the global's state, and of which dispatchers the module emits. Start at
+whatever is cached per class on that first construct.
+
+**The authoritative #5244 handoff lives in dev-5243's own issue file**, which
+carries the full per-width table. (Not linked by path here: that file is on the
+#5243 branch, not this one, and the issue-integrity gate correctly rejects a
+path that does not resolve on the branch citing it.) This section is the
+#5242-side summary; if the two ever disagree, that one is the record.
 
 Filed as its own lane (#5244 territory). Pinned in this issue rather than in the
 test's expectations because the test's own reduction does not reproduce it (its
@@ -208,11 +237,21 @@ explicitly rather than by accident.
   annotations, struct/vec refs) get no bridge and keep today's generic-closure
   behaviour. Widening either would need its own ABI contract, exactly as #5204
   decided for the method bridges.
-- **The provider lane's Temporal arithmetic.** Measured on both sides today with
-  a fresh `JS2WASM_TEMPORAL_CACHE` per run: the `knownGaps` block of
-  `tests/dogfood/report/temporal-global.json` is byte-identical before and
-  after. The residue there is the object-literal argument crossing the seam —
-  #5225.
+- **The provider lane's Temporal arithmetic.** The `knownGaps` block of
+  `tests/dogfood/report/temporal-global.json` is byte-identical across THREE
+  runs — pre-fix, post-fix, and again after the `__argc` ABI change — each from
+  a dedicated `.tmp/tcache-*` directory reporting `cacheHit: false`. The residue
+  there is the object-literal argument crossing the seam — #5225.
+
+  **`cacheHit: false` is load-bearing here, not decoration.** The provider cache
+  is content-addressed on the POLYFILL SOURCE, which a compiler change does not
+  touch, so a cache HIT serves a provider built by whatever compiler last ran in
+  the container against a consumer built by yours — a compiler-change measurement
+  that silently compares two different compilers. dev-5243 hit exactly that on
+  2026-08-31: a 17-hour-old `/tmp/js2wasm-temporal-cache` produced five
+  simultaneous `supported` failures that read as "the merge regressed #5237",
+  and all eleven passed against a fresh directory. No number in this issue used
+  the default cache dir.
 - **The `dateAdd` destructuring-parameter null.** After this change every
   single-module Temporal arithmetic row fails with `Cannot destructure 'null'
   or 'undefined'` from the ISO calendar's `dateAdd(e, {years=0, months=0,

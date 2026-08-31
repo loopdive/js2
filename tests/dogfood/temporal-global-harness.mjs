@@ -33,7 +33,7 @@
 //
 // Invoke:  node --import tsx tests/dogfood/temporal-global-harness.mjs [--json]
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -369,6 +369,40 @@ export async function runTemporalGlobalHarness({ quiet = false, cacheDir } = {})
     `[temporal-global] provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +
       `built in ${provider.buildMs}ms cacheHit=${provider.cacheHit}`,
   );
+  // (#5227 / #5243) A CACHE HIT IS NOT FREE INFORMATION — SAY SO.
+  //
+  // The provider cache is content-addressed on the POLYFILL source, which a
+  // compiler change does not touch. So a hit serves a provider binary built by
+  // whatever compiler ran last in this container, against a consumer compiled
+  // by yours, and the mismatch surfaces as `RuntimeError: dereferencing a null
+  // pointer` in rows that have nothing to do with your change.
+  //
+  // Cost of not saying it, measured 2026-08-31: a 17-hour-old
+  // `$TMPDIR/js2wasm-temporal-cache` made FIVE asserted `supported` rows fail
+  // at once — `protoMethodCall`, `staticFrom`, `staticFromField`,
+  // `staticCompare`, `arithmeticAddString` — in a pre-commit hook run, on a
+  // branch where every one of them passes with a fresh cache. The vitest
+  // wrapper reports only the first, so it reads as one specific regression in
+  // somebody's recent work rather than as a stale artifact.
+  //
+  // Rule: after ANY `src/` edit, point `JS2WASM_TEMPORAL_CACHE` at a fresh
+  // directory. The age below is printed so a surprising row can be checked
+  // against it before it is attributed to a code change.
+  let providerCacheAgeHours = null;
+  if (provider.cacheHit) {
+    try {
+      providerCacheAgeHours =
+        Math.round(((Date.now() - statSync(join(providerCacheDir, "providers")).mtimeMs) / 3_600_000) * 10) / 10;
+    } catch {
+      /* cache layout differs — the warning below still stands */
+    }
+    log(
+      `[temporal-global] WARNING: served a CACHED provider${providerCacheAgeHours === null ? "" : `, ${providerCacheAgeHours}h old`}` +
+        ` from ${providerCacheDir}. It was NOT built by the compiler in this working tree. A failing row may be ` +
+        `this, not your change — re-run with JS2WASM_TEMPORAL_CACHE pointing at a fresh directory before ` +
+        `attributing it.`,
+    );
+  }
 
   const report = {
     issue: 4628,
@@ -380,6 +414,9 @@ export async function runTemporalGlobalHarness({ quiet = false, cacheDir } = {})
       binaryBytes: provider.artifact.binary.length,
       buildMs: provider.buildMs,
       cacheHit: provider.cacheHit,
+      // (#5227 / #5243) Non-null ONLY on a cache hit. A reader diagnosing a
+      // failed row should check this before attributing it to a code change.
+      cacheAgeHours: providerCacheAgeHours,
     },
     supported: {},
     knownGaps: {},

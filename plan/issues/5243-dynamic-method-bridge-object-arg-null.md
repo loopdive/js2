@@ -188,8 +188,9 @@ null result was evidence about nothing. Recorded because the failure is
 reusable: a negative result only bears on a mechanism if the intervention can
 actually reach it.
 
-Measured with `23bab6240c` trial-merged on top of this change (single-module
-lane, one build) — it moves some of these rows and not others:
+The argc fix is now merged into this branch (`ce0700b315`). Measured on the
+merged result (single-module lane, one build) — it moves some of these rows and
+not others:
 
 | probe | this change alone | + the argc fix |
 | --- | --- | --- |
@@ -201,11 +202,66 @@ lane, one build) — it moves some of these rows and not others:
 
 So two paths remain open, both #5244's, both now narrowed:
 
-1. **A local-bound callee still loses its arguments.** The argc fix covers the
-   INLINE spelling `new (ce("%Temporal.Duration%"))(…)` — which is what `sn`'s
-   string branch uses, hence the win — but not `const t = ce(…); new t(…)`.
-   Those take different arms in `new-super.ts` (a local-held callee routes
-   through `__construct` / `__construct_closure`, not the class bridge).
+1. **A local-bound callee still loses its arguments — and it is PRE-EXISTING,
+   not something #5242 uncovered.** dev-5242b measured the same row on the
+   pre-#5242 base `528b8d42cc`: bound `const t = ce(…); new t(11,…,20)` already
+   answered `11,0,0,0,…` there, while the INLINE spelling
+   `new (ce(…))(11,…,20)` threw `bridge unavailable`. #5242 fixed the spelling
+   that used to throw and left the other untouched. So the general
+   "louder → quieter" worry — #5242 turning a thrown
+   `compiled class constructor Duration bridge unavailable` into a
+   silently-wrong value — does not apply to THIS row: it was never loud. An earlier
+   draft of this section framed it as an arm the argc fix failed to cover —
+   that framing was wrong and is corrected here.
+
+   **It is ORDER-DEPENDENT, which makes it invisible to a single-probe test.**
+   Verified independently on the merged branch (`.tmp/order-dep.mjs`, one
+   compile per mode):
+
+   | module | the FIRST bound construct | `boundTen` = `const t = ce(…); new t(11,…,20)` |
+   | --- | --- | --- |
+   | ten-arg bound construct ALONE | — | `11,12,13,14,15,16,17,18,19,20` — correct |
+   | a **two**-arg bound construct runs first | `1,2,0,0,0,0,0,0,0,0` — correct | `11,0,0,0,0,0,0,0,0,0` |
+   | a **four**-arg bound construct runs first | `1` — correct | `11,0,0,0,0,0,0,0,0,0` |
+   | a **ten**-arg bound construct runs first | `1,2,3,4,5,6,7,8,9,10` — correct | `11,0,0,0,0,0,0,0,0,0` |
+
+   **The first bound construct of a class is always correct, at any width; every
+   LATER one collapses to exactly ONE argument, and the "one" is a constant.**
+   It does not track either call's width — a ten-arg predecessor that itself
+   answers perfectly still poisons an identical ten-arg successor. So this is a
+   first-call-wins latch that degrades to arity 1, not a cache that carries the
+   first call's arity.
+
+   Three further measurements, each eliminating a candidate explanation:
+
+   - **Not ambient `__argc` at the call site.** Interposing `control()` — a
+     TEN-arg construct on the static path, which leaves `__argc` at 10 —
+     between the two bound calls does **not** repair the second
+     (`11,0,0,…` before and after, and stable on a repeat call). So the carrier
+     is a latched per-class route, not whatever last wrote `__argc`.
+   - **Not the `__call_fn_<N>` arity collapse.** The failing module exports
+     `__call_fn_0` … `__call_fn_4`, so a generic-closure fallback would clamp a
+     ten-arg call to 4 and deliver `11,12,13,14,…` — not the single value
+     observed. Only one construct bridge exists
+     (`__class_construct_Duration_10`).
+
+   - **Not an arity-carrying cache.** The width table above: a two-, four- or
+     ten-arg predecessor all produce the same one-argument successor.
+
+   dev-5242b separately traced that it does not enter `__construct_closure` as
+   a struct (`struct=false`), and wrote and then removed a reordering of the
+   `_classCtorClosures` / `__is_closure` test there because it moved no
+   observable value — a fourth eliminated candidate. dev-5242b also retracted
+   the "`__argc` stale at 1 / cached `_wrapCallableForHost` wrapper" reading
+   once the interposition result landed; it is recorded here as eliminated, not
+   as a lead.
+
+   **What survives all of it:** something the FIRST bound construct of a class
+   installs, which every later one reuses, delivering exactly one correct
+   argument regardless of either call's width, regardless of the `__argc`
+   global's state, and regardless of which `__call_fn_<N>` dispatchers the
+   module emits. Start at whatever is memoised per class on that first
+   construct.
 2. **`Duration.from({days:1})` is NOT this change's `buildRecordFromExternref`.**
    It stays `"PT0S"` with both fixes applied. `sn`'s object branch is a
    computed-key copy into a statically-shaped record
