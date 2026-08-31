@@ -3,7 +3,7 @@ id: 1231
 title: "perf: struct field type inference — eliminate boxing in object properties"
 status: in-progress
 created: 2026-05-02
-updated: 2026-08-30
+updated: 2026-08-31
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -914,6 +914,31 @@ consumers: fnctor `NewExpression` admission in the propagation extension,
 checker-known object seeding, and object-literal inference. No open pull request
 claims this retirement. The active ProgramABI/#3525 publication work does not
 edit the owned source or focused test; do not widen into those files.
+
+### 2026-08-31 post-Math authoritative remeasurement
+
+The Math dependency is now satisfied on protected `origin/main` at exact merge
+`f08c7c62ce96ce4cbfe06d406f82de779cfd1f` (tree
+`0f3770a0d69394edeb9f00f61159492c7c5cec32`). The exact retired environment
+identifier occurs 24 times across seven tracked files: six in this issue, one
+in #1235, one in #1574, three in #4522, one in sprint 47, three in
+`src/ir/propagate.ts`, and nine in `tests/issue-1231.test.ts`. The union of
+that identifier with `objectShapesEnabled` and `withoutObjectShapes` is
+exactly 36 occurrences across eight tracked files; the eighth file is
+`plan/agent-context/dev-1231.md`. These are the authoritative deletion and
+documentation-rewrite denominators for the implementation. An implementation
+that reports the earlier 25/eight historical count, drops the dev record, or
+leaves any literal spelling is stale and must fail review.
+
+The merged #4522/#3518 inventory now names exactly fifteen live
+`retire-at-R9` route/representation readers. This slice owns only the
+object-shape row and therefore must publish the exact 15→14 transition. It
+must preserve the separately owned mixed-primitive conditional row, all nine
+Prepared cutovers, the three remaining global IR controls, and the linear
+direct-backend reader. The current main source still contains exactly one
+production helper with three guarded consumers at
+`src/ir/propagate.ts`; no ProgramABI, selector, lowering, emitter, or #5092
+file enters this ownership boundary.
 
 ### Exact production change
 
