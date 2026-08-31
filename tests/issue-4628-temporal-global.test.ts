@@ -247,6 +247,17 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // failure, replaced with `ref.null`. The object-ARGUMENT rows
     // (`add({days: 1})`) stay in knownGaps — that is #5225's seam, not this.
     expect(s.arithmeticAddString.value).toBe("2020-03-05");
+    // (#5225) The object-ARGUMENT family, promoted out of knownGaps. A value
+    // minted in the CONSUMER reached the polyfill as a raw WasmGC struct, and
+    // every read path in the provider resolved `__struct_field_names` /
+    // `__sget_<field>` from the module that was RUNNING rather than the module
+    // that MINTED it. On base: "year is required" / "invalid duration-like" /
+    // three WebAssembly.Exceptions.
+    expect(s.staticFromObject.value).toBe("2020-03-04");
+    expect(s.durationFromObject.value).toBe("P1D");
+    expect(s.arithmeticAddDuration.value).toBe("2020-03-05");
+    expect(s.arithmeticSubtract.value).toBe("2020-03-03");
+    expect(s.arithmeticWith.value).toBe("2021-03-04");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the
@@ -257,15 +268,11 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // was measured about each. Asserting only their presence keeps the list
     // honest without pinning today's failure text.
     expect(Object.keys(report.knownGaps).sort()).toEqual([
-      // (#5241) The arithmetic family joined the list. It is NOT a new
-      // regression: these throw identically on #5241's base through the
-      // provider. They are recorded because #5241 changed what they do in the
-      // single-module control — `undefined` (never called) became a real
-      // in-polyfill TypeError — which is the evidence that the extern-class
-      // hijack is gone and the residual belongs elsewhere. See the harness.
-      "arithmeticAddDuration",
-      "arithmeticSubtract",
-      "arithmeticWith",
+      // (#5225) The arithmetic family LEFT this list — it was the object
+      // ARGUMENT crossing the provider seam, and it is asserted above now.
+      // What remains is three rows that are not seam defects: two are #5221's
+      // null deref (identical single-module) and one is a missing
+      // `Symbol.toStringTag` wiring reproduced on a plain user class.
       "instanceToStringTag",
       "nowPlainDateISOCall",
       "nowTimeZoneIdCall",

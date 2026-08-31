@@ -51,6 +51,7 @@ import {
   type MarshalExportSource,
 } from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
+import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
@@ -2412,7 +2413,7 @@ export function wrapLinkedProviderValue(value: any, providerExports: Record<stri
   // mirror is minted, so every mirror created underneath — including the nested
   // ones the proxy's get-trap mints lazily — is recognisable as foreign when the
   // CONSUMER module later reads through it.
-  _linkedProviderMirrors.registerProviderExports(providerExports);
+  registerLinkedProviderModule(providerExports);
   if (value == null || (typeof value !== "object" && typeof value !== "function")) return value;
   const callable = _maybeWrapCallableUnknownArity(value, { getExports: () => providerExports });
   return callable !== value ? callable : _wrapForHost(value, providerExports);
@@ -4307,6 +4308,7 @@ function _hostToPrimitive(
 const _csvSplitCache = new Map<string, readonly string[]>();
 
 function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | undefined): readonly string[] | null {
+  exports = _decoderExportsFor(obj, exports); // (#5225)
   if (!exports) return null;
   const fn = exports.__struct_field_names;
   if (typeof fn !== "function") return null;
@@ -4339,6 +4341,7 @@ function _tupleFieldCount(obj: any, exports: Record<string, Function> | undefine
 }
 
 function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
+  exports = _decoderExportsFor(obj, exports); // (#5225) `__shas_` must match the names
   const names = _structFieldNamesRaw(obj, exports);
   if (!names) return null;
   return names.filter((field) => {
@@ -4360,6 +4363,7 @@ function _structOwnFieldStatus(
   key: string,
   exports: Record<string, Function> | undefined,
 ): boolean | undefined {
+  exports = _decoderExportsFor(obj, exports); // (#5225) `__shas_` must match the names
   const names = _structFieldNamesRaw(obj, exports);
   if (!names) return undefined;
   if (!names.includes(key)) return false;
@@ -4386,6 +4390,7 @@ function _structHasOwnFieldName(obj: any, key: string, exports: Record<string, F
  * symbol identity (a symbol key is never stringified).
  */
 function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function> | undefined): boolean {
+  exports = _decoderExportsFor(obj, exports); // (#5225)
   // (#1334) Property explicitly deleted — treat as absent regardless of the
   // struct shape having the field name.
   const tomb = _wasmStructDeletedKeys.get(obj);
@@ -5316,6 +5321,13 @@ function _safeGet(
   rawCallable = false,
 ): any {
   if (obj == null) return undefined;
+  // (#5225) Every struct probe below resolves helpers from `callbackState`. When
+  // the receiver was minted by ANOTHER module of this linked project those
+  // helpers are the wrong ones, and the failure is silent: a reader whose own
+  // shapes reuse the field name (`day`, `month`, … are everywhere in the
+  // Temporal polyfill) serves its `__sget_` `ref.test`-miss DEFAULT — 0 — which
+  // reads as a real value. Redirect once, here, rather than at each probe.
+  callbackState = _crossModuleCallbackState(obj, callbackState);
   const scAccessor = typeof key === "string" ? _wasmStructProps.get(obj) : undefined;
   if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__get_${key}`] === "function")
     return (scAccessor[`__get_${key}`] as Function).call(obj);
@@ -6031,6 +6043,47 @@ const _nativePromiseHostCache = new WeakMap<object, Promise<unknown>>();
 const _hostProxyExportSlots = new WeakMap<object, { current: Record<string, Function> | undefined }>();
 
 const _linkedProviderMirrors = createLinkedProviderMirrorOwnership(_canBeWeakKey);
+// (#5225) Inbound twin: which module of a linked project can DECODE a struct.
+const _crossModuleStructs = createCrossModuleStructOwners(_canBeWeakKey);
+
+/** (#5225) Record a linked provider's exports as a decoder for the project. */
+export function registerLinkedProviderModule(exports: Record<string, Function>): void {
+  _linkedProviderMirrors.registerProviderExports(exports);
+  _crossModuleStructs.registerModule(exports);
+}
+
+/** (#5225) Record the consumer's exports as a decoder for the project. */
+export function registerLinkedConsumerModule(exports: Record<string, Function>): void {
+  _crossModuleStructs.registerModule(exports);
+}
+
+/**
+ * (#5225) The exports that can DECODE `obj` — the reader's own, unless another
+ * module of the same linked project minted it.
+ *
+ * Every struct read must resolve its field-name list, its `__shas_` presence
+ * bit and its `__sget_` getter from the SAME module. Mixing them is not a
+ * missed optimisation but a wrong answer: with the owner's names and the
+ * reader's getter, a field name the reader happens to reuse for one of its own
+ * shapes (`month` and `day` are all over the Temporal polyfill) reads as
+ * "present" and returns that getter's `ref.test`-miss default — 0 — instead of
+ * the real value. So this is applied at the top of each read, not as a retry.
+ *
+ * One boolean when no linked project is live; a cached `WeakMap.get` otherwise.
+ */
+function _decoderExportsFor(
+  obj: any,
+  exports: Record<string, Function> | undefined,
+): Record<string, Function> | undefined {
+  return _crossModuleStructs.decoderFor(obj, exports) ?? exports;
+}
+
+/** (#5225) `_decoderExportsFor` for the paths that thread a callback state. */
+function _crossModuleCallbackState<T extends MarshalExportSource | undefined>(obj: any, state: T): T {
+  if (obj == null || typeof obj !== "object") return state;
+  const owner = _crossModuleStructs.decoderFor(obj, state?.getExports());
+  return owner === undefined ? state : (_crossModuleStructs.stateFor(owner) as T);
+}
 
 // (#2671) RegExp.lastIndex value-preserving slot. §22.2.7.2 RegExpBuiltinExec
 // reads lastIndex as `ToLength(? Get(R, "lastIndex"))`; the setter stores the
@@ -7893,6 +7946,12 @@ function _wrapHostArrayElems(arr: any[], exports: Record<string, Function> | und
 function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): any {
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
+
+  // (#5225) A struct minted by another module of this linked project must be
+  // mirrored against the exports that can DECODE it, not against whichever
+  // module happens to be reading. Every trap below (field reads, key
+  // enumeration, callable members) resolves through these exports.
+  exports = _decoderExportsFor(obj, exports);
 
   const primitiveValue = _nativePrimitiveToHost(obj, exports);
   if (primitiveValue !== _MISS) return primitiveValue;
@@ -11838,7 +11897,7 @@ assert._isSameValue = isSameValue;
             // A delete tombstone outranks the immutable backing field (#2179).
             const tomb = _wasmStructDeletedKeys.get(obj);
             if (tomb && tomb.has(key)) return undefined;
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
             const getter = exports?.[`__sget_${key}`];
             const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
             if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
@@ -17933,7 +17992,7 @@ assert._isSameValue = isSameValue;
           // A delete tombstone outranks the immutable backing field (#2179).
           const tomb = _wasmStructDeletedKeys.get(obj);
           if (tomb && tomb.has(key)) return undefined;
-          const exports = callbackState?.getExports();
+          const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
           const getter = exports?.[`__sget_${key}`];
           const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
           if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);

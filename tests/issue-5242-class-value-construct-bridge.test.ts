@@ -227,10 +227,19 @@ describe("#5242 — constructing a compiled class reached as a value", () => {
     // not. So the constructed-through-a-value path is now the BETTER-behaved
     // one across the seam, which is why this asymmetry is pinned rather than
     // asserted away.
+    //
+    // (#5225) TWO OF THE THREE PINNED ROWS ARE FIXED, and by the general
+    // mechanism this comment predicted: the runtime now resolves a struct's
+    // DECODER (its `__struct_field_names` / `__sget_*` / `__shas_*`) from the
+    // module that MINTED it rather than the module that is reading, so the raw
+    // struct crossing the seam is no longer worse off than the mirrored one.
+    //   directGetter  "undefined"                      → "21"
+    //   directLabel   "THREW: label is not a function" → "K1|2|3|4|5|6"
+    // `directToString` still answers "[object Object]" — that is the
+    // `Symbol.toStringTag` wiring gap (#5223's `instanceToStringTag`), which
+    // reproduces on a plain user class in ONE module and is not a seam defect.
     expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual({
       ...EXPECTED,
-      directLabel: "THREW: label is not a function",
-      directGetter: "undefined",
       directToString: "[object Object]",
     });
   });

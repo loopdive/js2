@@ -111,6 +111,35 @@ const SUPPORTED = {
   // record — which is why it flips here while `add({days: 1})` (a user object
   // literal crossing the seam, #5225's lane) stays in knownGaps.
   arithmeticAddString: `export function run() { return Temporal.PlainDate.from("2020-03-04").add("P1D").toString(); }`,
+  // (#5225) THE OBJECT-ARGUMENT FAMILY. Every row below hands the provider a
+  // value the CONSUMER minted, which is the inbound twin of #5222: a raw WasmGC
+  // struct carries no decoder, and every runtime read path resolved
+  // `__struct_field_names` / `__sget_<field>` from whichever module was
+  // RUNNING. Inside the polyfill that is the provider, which names none of the
+  // consumer's fields — so the object presented as empty ("year is required")
+  // and, once the field-name list was borrowed from the owner but the getter
+  // was not, as all-zeroes ("Cannot convert a number less than one to a
+  // positive integer", "PT0S"). Measured on base 2026-08-31 with a fresh
+  // JS2WASM_TEMPORAL_CACHE (cacheHit=false), then again after the fix:
+  //
+  //   row                        base                          after #5225
+  //   staticFromObject           TypeError year is required →  "2020-03-04"
+  //   durationFromObject         TypeError invalid            "P1D"
+  //                              duration-like             →
+  //   arithmeticAddDuration      WebAssembly.Exception     →  "2020-03-05"
+  //   arithmeticSubtract         WebAssembly.Exception     →  "2020-03-03"
+  //   arithmeticWith             WebAssembly.Exception     →  "2021-03-04"
+  //   staticFromString (control) "2020-03-04"                 unchanged
+  //   arithmeticAddString (ctl)  "2020-03-05"                 unchanged
+  //
+  // The partial-object controls answer the SPEC's errors rather than a seam
+  // failure: `from({year, month})` says "day is required" and
+  // `from({month, day})` says "year is required" (both measured after).
+  staticFromObject: `export function run() { return Temporal.PlainDate.from({ year: 2020, month: 3, day: 4 }).toString(); }`,
+  durationFromObject: `export function run() { return Temporal.Duration.from({ days: 1 }).toString(); }`,
+  arithmeticAddDuration: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
+  arithmeticSubtract: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
+  arithmeticWith: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
 };
 
 /**
@@ -286,46 +315,12 @@ const KNOWN_GAPS = {
   //   STILL BROKEN, single-module, unchanged on both sides and NOT triaged:
   //     Duration.from({hours:25}).total({unit:"hours"})  → WebAssembly.Exception
   //     Duration.from({hours:25}).round({largestUnit:"days"}) → same
-  arithmeticAddDuration: {
-    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
-    note:
-      "throws through the provider, identically on the #5241 base (measured 2026-08-31, fresh provider cache). " +
-      "In the SINGLE-MODULE control the same call moved from `undefined` (the #5241 hijack: `add` first-matched " +
-      "`Set.prototype.add`) to a real TypeError from inside the polyfill, so the call now happens. Residual is " +
-      "not the extern-binding defect; the object-literal ARGUMENT crossing the provider seam is #5225's lane. " +
-      "(#5242) This row is the CONTROL that attributes the remaining single-module failure: it never constructs a " +
-      "Duration, yet it throws `Cannot destructure 'null' or 'undefined'` with an identical stack on both sides of " +
-      "#5242 — the ISO calendar's `dateAdd(e, {years=0, …}, i)` destructuring parameter receives null through the " +
-      "dynamic method bridge. So that null is NOT a constructor-path residue. " +
-      "(#5243) That null is FIXED (it was the host-path object SPREAD in `Wr`, null-cast back into its inferred " +
-      "record type — see the block above). This row's provider-lane throw is UNCHANGED and is #5225's; its " +
-      'single-module control now answers "2020-03-04" — no throw, wrong date — which was #5244. ' +
-      '(#5244) FIXED in the single-module lane: it answers "2020-03-05". Two codegen defects, neither of them in ' +
-      "the polyfill. The dynamic-`new` dispatch ladder never published `__argc`, so a defaulted constructor reached " +
-      "through a class VALUE re-defaulted arguments that were genuinely passed; and `__sset_<field>` appended its " +
-      "shape/tag refinement with `i32.and`, whose eager `ref.cast` trapped on every receiver `ref.test` had just " +
-      "rejected, so a computed-key write never reached the struct slot (the `ToTemporalDuration` accumulation loop). " +
-      "THIS PROVIDER ROW IS UNCHANGED — measured 2026-08-31 on both sides with a fresh JS2WASM_TEMPORAL_CACHE — and " +
-      "stays #5225's: the object-literal ARGUMENT crossing the seam",
-  },
-  arithmeticSubtract: {
-    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
-    note:
-      "same provider-lane throw, unchanged by #5241 AND unchanged by #5242 (both sides measured 2026-08-31 with a " +
-      "fresh provider cache). The single-module control moved: it failed with `compiled class constructor Duration " +
-      "bridge unavailable` on both sides of #5241, and #5242 fixed that — it now fails one layer deeper, on the " +
-      "`dateAdd` destructuring-parameter null shared with `arithmeticAddDuration`. Provider-lane residue is the " +
-      "object-literal ARGUMENT crossing the seam, #5225's lane. (#5243) Same as `arithmeticAddDuration`: the " +
-      'destructuring null is gone, the provider throw is unchanged, and the single-module control answers "2020-03-04" ' +
-      '(#5244). (#5244) FIXED single-module: it answers "2020-03-03". Provider row UNCHANGED (measured 2026-08-31, ' +
-      "fresh provider cache, both sides) and stays #5225's",
-  },
-  arithmeticWith: {
-    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
-    note:
-      'throws through the provider on both sides of #5241, but ANSWERS "2021-03-04" in the single-module control ' +
-      "on both sides too — so this row isolates the provider SEAM specifically, unlike the two above",
-  },
+  //
+  // (#5225) `arithmeticAddDuration`, `arithmeticSubtract` and `arithmeticWith`
+  // were the three rows this block ended with, and all three are now in
+  // SUPPORTED above: the provider-lane throw was the consumer's object
+  // ARGUMENT reaching the polyfill undecodable. The history above stays
+  // because it is what attributed each earlier layer to its own issue.
   instanceToStringTag: {
     source: `export function run() { const d = new Temporal.PlainDate(2020, 3, 4); return String(d[Symbol.toStringTag]); }`,
     note:
