@@ -5178,8 +5178,6 @@ export function compileElementAccess(
     // RUNTIME (`any`/`unknown` static type). Full rationale, spec shape and the
     // `moduleUsesDynTaView` deferral are documented in string-element-read.ts.
     if (
-      !ctx.moduleUsesDynTaView &&
-      !ctx.moduleUsesStaticTaView &&
       isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
       receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
     ) {

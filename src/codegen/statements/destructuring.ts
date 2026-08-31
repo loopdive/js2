@@ -46,11 +46,12 @@ import {
   valTypesMatch,
 } from "../shared.js";
 import { collectInstrs } from "./shared.js";
-import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
+import { emitBindingElementTdzInit, emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
+import { currentSourceModuleGlobalIndex } from "../expressions/identifier-module-storage.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -328,7 +329,7 @@ export function syncDestructuredLocalsToGlobals(
         // the central "destructure complete" callsite — and is a
         // no-op for non-let/const bindings, which have no TDZ flag.
         emitLocalTdzInit(fctx, name);
-        const moduleGlobalIdx = isModuleLevel ? ctx.moduleGlobals.get(name) : undefined;
+        const moduleGlobalIdx = isModuleLevel ? currentSourceModuleGlobalIndex(ctx, element.name) : undefined;
         const localIdx = fctx.localMap.get(name);
         if (moduleGlobalIdx !== undefined && localIdx !== undefined) {
           const localType = getLocalType(fctx, localIdx);
@@ -340,11 +341,10 @@ export function syncDestructuredLocalsToGlobals(
             coerceType(ctx, fctx, localType, globalType);
           }
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
-          // Module-level destructuring initializes both the local shadow used
-          // by the init body and the persistent lexical cell. Keep its exact
-          // projected TDZ flag in sync as well; otherwise namespace functions
-          // observe the initialized value through a still-zero flag and throw.
-          emitTdzInit(ctx, fctx, name);
+          // Pattern leaves own exact TDZ sidecars. Never also initialize the
+          // legacy name-keyed flag: a different source may own that spelling.
+          if (ctx.modulePatternTdzGlobals.has(element)) emitBindingElementTdzInit(ctx, fctx, element);
+          else emitTdzInit(ctx, fctx, name);
         }
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         syncDestructuredLocalsToGlobals(ctx, fctx, element.name);

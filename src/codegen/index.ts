@@ -104,6 +104,7 @@ import {
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
+import { moduleInitChunksRequired } from "./module-init-chunks.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
@@ -2368,6 +2369,34 @@ export interface IrOverlayPlan {
 }
 
 /**
+ * IR module-init lowering emits one physical Wasm body. Keep a large source
+ * population on the direct route, whose complete-entry dispatcher is the only
+ * representation with a bounded body. This runs while both IR-first and the
+ * late overlay still share the same mutable safe-selection object.
+ */
+function withdrawChunkedModuleInitFromIrSelection(
+  sourceFile: ts.SourceFile,
+  safeSelection: { moduleInit?: import("../ir/select.js").IrModuleInitAssessment },
+  recordPreparationFailure: (name: string, failure: IrPreparationFailure) => void,
+): void {
+  const moduleInit = safeSelection.moduleInit;
+  if (
+    moduleInit?.reason !== null ||
+    moduleInit.stmtCount === 0 ||
+    !moduleInitChunksRequired(collectModuleInitPopulation(sourceFile).map((node) => ({ node })))
+  ) {
+    return;
+  }
+  recordPreparationFailure(MODULE_INIT_UNIT_NAME, {
+    kind: "unsupported",
+    code: "late-preparation-unsupported",
+    stage: "resolve",
+    detail: "module initialization exceeds the complete-entry Wasm body budget and uses direct chunked emission",
+  });
+  safeSelection.moduleInit = undefined;
+}
+
+/**
  * Allocate and freeze direct function-value singleton support before a target
  * body can seal through Prepared IR. A direct caller may still materialize the
  * value later, but it must reuse these exact allocator objects rather than
@@ -3235,12 +3264,11 @@ function planIrOverlay(
     funcs: irOverlayIdentity.projectIrSafeFunctionNames(identityPlan.safeFunctionUnitIds, identityPlan),
     classMembers: selection.classMembers,
     classMemberUnitIds: selection.classMemberUnitIds,
-    // (#3142 Slice 2) Forward the module-init claim. A resolve-time drop of
-    // one of the unit's callees is self-limiting: the integration builds
-    // `calleeTypes` from safeSelection.funcs, so a call to a dropped callee
-    // throws at build time and the unit demotes to the legacy body.
+    // (#3142 Slice 2) A dropped callee is self-limiting: integration builds
+    // `calleeTypes` from safeSelection.funcs, so this unit returns to legacy.
     moduleInit: selection.moduleInit,
   };
+  withdrawChunkedModuleInitFromIrSelection(ast.sourceFile, safeSelection, recordPreparationFailure);
   // (#2928) The linked runtime-eval carrier is currently owned by the legacy
   // WasmGC closure/object runtime. Its recursive cross-module types may be
   // registered while module-init writes are compiled, after legacy function
@@ -10762,6 +10790,28 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch.
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
+
+    // Multi-source parity with generateModule: rebuild the reserved native
+    // iterator ladders only after every graph carrier and receiver dispatcher
+    // is known. In particular, Reflect.ownKeys returns an $ObjVec whose late
+    // normalization arm does not exist in the eager placeholder body.
+    if (
+      ctx.nativeIteratorUserArmPending &&
+      !ctx.funcMap.has("__is_truthy") &&
+      ((ctx.funcMap.has("__call_@@iterator") &&
+        ctx.funcMap.has("__call_next") &&
+        ctx.funcMap.has("__sget_value") &&
+        ctx.funcMap.has("__sget_done")) ||
+        (ctx.funcMap.has("__extern_get") && ctx.funcMap.has("__box_symbol") && ctx.objectRuntimeTypes !== undefined))
+    ) {
+      addUnionImports(ctx);
+    }
+    profilePhase("fill-native-iterator-late-arms", () => fillNativeIteratorLateArms(ctx));
+    profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
+    profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
+    profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
+    profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
 
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).
     profilePhase("emit-closure-call-export-0", () => emitClosureCallExport(ctx));

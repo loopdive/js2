@@ -18,6 +18,7 @@ import {
   updateLocalType,
 } from "../expressions/helpers.js";
 import { emitAssignToTarget } from "../expressions/assignment.js";
+import { tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -102,9 +103,7 @@ function unwrapForOfAssignmentTarget(target: ts.Expression): ts.Expression {
   return unwrapped;
 }
 
-/** Write one already-evaluated for-of value to a member/call assignment head.
- * Identifier targets reuse the selected loop local, while call targets retain
- * Annex-B's evaluate-then-ReferenceError behavior. */
+/** Write an already-evaluated for-of value to a member/call assignment target. */
 function emitForOfAssignmentTarget(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -117,6 +116,7 @@ function emitForOfAssignmentTarget(
     emitAssignToTarget(ctx, fctx, unwrapped, valueLocal, valueType);
     return;
   }
+  if (ts.isIdentifier(unwrapped) && tryEmitForOfIdentifierWrite(ctx, fctx, unwrapped, valueLocal, valueType)) return;
   emitWebCompatCallAssignmentTarget(ctx, fctx, target);
 }
 
