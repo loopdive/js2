@@ -128,6 +128,33 @@ const vecHostBridgeAllocations = new WeakMap<CodegenContext, ReadonlyMap<VecHost
 const vecHostBridgePublishedExports = new WeakMap<CodegenContext, readonly VecHostBridgePublishedExport[]>();
 
 /**
+ * Exact public names reserved by the six core vec bridge helpers.
+ *
+ * The logical names are compiler-owned only when their descriptor provenance
+ * says so. The physical `$v<ordinal>` family has the same rule, including
+ * only literal `$` suffixes; a near-prefix such as `$v00` or `$v0x` is a
+ * normal user export and must not enter this namespace.
+ */
+export function isCoreVecHostBridgePublicName(name: string): boolean {
+  return VEC_HOST_BRIDGE_DEFINITIONS.some((definition) => {
+    if (name === definition.name) return true;
+    const physicalBase = `$v${definition.ordinal}`;
+    return name.startsWith(physicalBase) && /^\$*$/.test(name.slice(physicalBase.length));
+  });
+}
+
+/** Resolve a public function descriptor under C36's two handle regimes. */
+function resolveVecHostBridgeExportTarget(ctx: CodegenContext, entry: WasmExport): WasmFunction | undefined {
+  if (entry.desc.kind !== "func") return undefined;
+  if (entry.desc.index < STABLE_FUNC_BASE) {
+    const currentImportCount = ctx.mod.imports.filter((candidate) => candidate.desc.kind === "func").length;
+    const currentPosition = entry.desc.index - currentImportCount;
+    return currentPosition < 0 ? undefined : ctx.mod.functions[currentPosition];
+  }
+  return definedFuncAt(ctx, entry.desc.index);
+}
+
+/**
  * Authenticate one export descriptor as a compiler-published core vec bridge.
  *
  * Standalone/WASI stripping must use descriptor identity rather than widening
@@ -135,7 +162,16 @@ const vecHostBridgePublishedExports = new WeakMap<CodegenContext, readonly VecHo
  * and those same suffixes remain a valid user-export namespace.
  */
 export function isCompilerOwnedVecHostBridgeExport(ctx: CodegenContext, entry: WasmExport): boolean {
-  return vecHostBridgePublishedExports.get(ctx)?.some((published) => published.entry === entry) ?? false;
+  const published = vecHostBridgePublishedExports.get(ctx);
+  if (!published) return false;
+  if (published.some((candidate) => candidate.entry === entry)) return true;
+  // A copied descriptor is still compiler-owned when it resolves to the exact
+  // allocator object captured at publication. Restrict this inference to the
+  // bounded core namespace so an arbitrary user alias cannot become a bridge
+  // export merely by targeting a compiler helper.
+  if (!isCoreVecHostBridgePublicName(entry.name)) return false;
+  const target = resolveVecHostBridgeExportTarget(ctx, entry);
+  return target !== undefined && published.some((candidate) => candidate.allocation.func === target);
 }
 
 function vecHostBridgeDefinition(kind: VecHostBridgeKind): VecHostBridgeDefinition {
@@ -320,8 +356,7 @@ export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
     if (currentPosition < 0) {
       throw new Error(`vec host bridge export descriptor ${name} resolves to a function import`);
     }
-    const currentAllocation =
-      entry.desc.index < STABLE_FUNC_BASE ? ctx.mod.functions[currentPosition] : definedFuncAt(ctx, entry.desc.index);
+    const currentAllocation = resolveVecHostBridgeExportTarget(ctx, entry);
     if (currentAllocation !== allocation.func) {
       throw new Error(`vec host bridge export descriptor ${name} resolves to a different allocator function`);
     }

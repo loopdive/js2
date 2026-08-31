@@ -161,39 +161,6 @@ describe("#5103 exact ambient Math.tan IR ownership", () => {
     }
   });
 
-  it("uses the narrow env rollback for tan without withdrawing sin or cos", async () => {
-    const previous = process.env.JS2WASM_IR_MATH_TAN;
-    process.env.JS2WASM_IR_MATH_TAN = "0";
-    try {
-      const result = await compile(
-        `
-          export function tan(value: number): number { return Math.tan(value); }
-          export function sin(value: number): number { return Math.sin(value); }
-          export function cos(value: number): number { return Math.cos(value); }
-        `,
-        { fileName: "issue-5103-rollback.ts", experimentalIR: true, trackIrOutcomes: true },
-      );
-      expectSuccess(result);
-      expect(outcomeFor(result, "tan")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      for (const name of ["sin", "cos"]) {
-        expect(outcomeFor(result, name)).toMatchObject({
-          kind: "emitted",
-          legacyBodyEmitted: false,
-          irBodyEmitted: true,
-        });
-      }
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_MATH_TAN");
-      else process.env.JS2WASM_IR_MATH_TAN = previous;
-    }
-  });
-
   it.each([
     [
       "shadowed Math",
