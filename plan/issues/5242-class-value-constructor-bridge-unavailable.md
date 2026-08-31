@@ -230,6 +230,28 @@ registry is a plain `Map`, which routes to the class mirror for both spellings);
 the `defaultedInline` row was added so the spelling that IS covered is covered
 explicitly rather than by accident.
 
+### Provenance of merge `8251510f63` — the coordinator, not an unknown actor
+
+Commit `56333d3892`'s message records that the 12:23 merge onto this branch
+"was not mine" without naming who made it, which invites exactly the
+investigation it was meant to save. Correcting it here, since the commit message
+is published and must not be rewritten:
+
+**It was the coordinator's shepherd loop.** All six chain PRs went `DIRTY` when
+main's docs merges landed, so it refreshed the whole stack in land order —
+`origin/issue-5241-parametered-bridge-calls @ 442d0cbfb4` (carrying
+`origin/main @ 3193ca1668`) into this branch — after running the fresh-cache
+Temporal harness (11/11), this branch's own #5242 test, and every gate including
+`LOC_GATE_BASE=origin/main`. Same operation on the #5243 branch. No third party
+touched either branch, and the coordinator will now message the owning dev when
+it advances a branch that is actively being worked.
+
+**The re-validation was still right, and its reason is not the attribution.**
+New code arriving after a branch's numbers were taken makes those numbers stale
+until re-taken, *whoever* moved the tip. That is why the post-merge re-run
+(typecheck, #5242/#5239/#5241/#5237, five ratchet gates, equivalence at the
+24-failure baseline) was worth its cost — not because the merge looked unowned.
+
 ### Deliberately NOT done
 
 - **Rest-parameter constructors** (`constructor(...args)`) and constructors with
