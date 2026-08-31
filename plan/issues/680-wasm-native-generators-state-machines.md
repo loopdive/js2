@@ -1138,3 +1138,18 @@ Publication remains pending final exact-head pre-push validation and explicit
 authorization to push this completed branch to the public `ttraenkler/js2`
 fork for a non-draft PR against `loopdive/js2:main`. No push or GitHub mutation
 has occurred.
+
+The first integrated pre-push pass ran against clean handoff head
+`bcd2a159c3769f33e91c51092a21e9a19e2ce98b` with the exact synthetic new-branch
+ref update for `fork`. An initial standalone `pnpm run
+sync:conformance:check` attempted an unnecessary worktree dependency verify and
+stopped before the script; no file changed. The equivalent direct pinned Node
+entry then confirmed all five conformance anchors unchanged, and the pre-push
+environment disabled only that redundant dependency reinstall—not any gate.
+
+The unskipped hook passed TS7 typecheck plus lint, repository-wide Prettier,
+the zero-growth oracle and coercion ratchets, numeric-local IR parity **18 /
+18**, conformance synchronization with no generated commit, and both committed
+and working-tree issue integrity. This final evidence note must now pass the
+normal commit hook and the resulting documentation-only head must repeat the
+same pre-push gate before publication.
