@@ -85,6 +85,7 @@ import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
 import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { genericCallbackResultDeclaration } from "../generic-callback-result.js";
+import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -110,6 +111,188 @@ import {
   shadowNestedFuncName,
 } from "../nested-function-name-scope.js"; // (#4456) lexical scope for the flat funcMap namespace
 import { collectBlockScopedNames } from "./shared.js";
+
+/**
+ * Mirror declarations.ts' omitted-parameter ABI rule for lifted nested
+ * declarations. An optional parameter without an initializer must preserve
+ * JavaScript `undefined`; a scalar Wasm slot would instead receive the numeric
+ * missing-argument sentinel. Explicit native annotations intentionally retain
+ * their scalar ABI.
+ */
+function nestedParameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+  const jsdocType = ts.getJSDocType(param);
+  const jsdocTags = ts.getJSDocParameterTags(param);
+  return (
+    param.initializer === undefined &&
+    (param.questionToken !== undefined ||
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      jsdocTags.some((tag) => tag.isBracketed === true))
+  );
+}
+
+const nestedParamUndefinedObservationCache = new WeakMap<ts.ParameterDeclaration, boolean>();
+
+/**
+ * Prove that this exact parameter's body observes the JavaScript distinction
+ * between omission and a falsey scalar. The symbol check is load-bearing: a
+ * same-spelled local inside a deeper closure must not widen an unrelated ABI.
+ */
+function nestedParameterIsComparedToUndefined(
+  ctx: CodegenContext,
+  owner: ts.FunctionLikeDeclarationBase,
+  param: ts.ParameterDeclaration,
+): boolean {
+  const cached = nestedParamUndefinedObservationCache.get(param);
+  if (cached !== undefined) return cached;
+  if (!owner.body || !ts.isIdentifier(param.name)) {
+    nestedParamUndefinedObservationCache.set(param, false);
+    return false;
+  }
+
+  const parameterName = param.name.text;
+  const isParameterRead = (node: ts.Expression): boolean =>
+    ts.isIdentifier(node) &&
+    node.text === parameterName &&
+    (ctx.checker.getSymbolAtLocation(node)?.valueDeclaration ??
+      ctx.checker.getSymbolAtLocation(node)?.declarations?.[0]) === param;
+  const isUndefinedRead = (node: ts.Expression): boolean => {
+    if (!ts.isIdentifier(node) || node.text !== "undefined") return false;
+    const symbol = ctx.checker.getSymbolAtLocation(node);
+    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    // An unresolved intrinsic or lib declaration is the realm-global
+    // `undefined`. A source declaration is a shadow and proves nothing about
+    // omitted-argument semantics.
+    return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+  };
+  let observed = false;
+  const visit = (node: ts.Node): void => {
+    if (observed) return;
+    if (node !== owner && ts.isFunctionLike(node)) return;
+    if (ts.isBinaryExpression(node)) {
+      const comparison =
+        node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      if (
+        comparison &&
+        ((isParameterRead(node.left) && isUndefinedRead(node.right)) ||
+          (isUndefinedRead(node.left) && isParameterRead(node.right)))
+      ) {
+        observed = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(owner.body, visit);
+  nestedParamUndefinedObservationCache.set(param, observed);
+  return observed;
+}
+
+function preserveOmittedNestedParameter(
+  ctx: CodegenContext,
+  owner: ts.FunctionDeclaration,
+  param: ts.ParameterDeclaration,
+  wasmType: ValType,
+): ValType {
+  // Keep i32 optionals on their scalar ABI. Contextual function fields and
+  // shared closure wrappers derive that ABI independently; widening only the
+  // lifted declaration makes an otherwise valid closure fail its guarded cast
+  // and become null. Omitted booleans are instead tracked through `__argc`
+  // below, which preserves the ABI while retaining undefined-vs-false.
+  return wasmType.kind === "f64" &&
+    nestedParameterMayBeOmitted(param) &&
+    nativeTypeOfDeclaration(ctx.checker, param) === null
+    ? { kind: "externref" }
+    : wasmType;
+}
+
+function nestedParameterIsTrailingForwardedArgument(
+  ctx: CodegenContext,
+  owner: ts.FunctionLikeDeclarationBase,
+  param: ts.ParameterDeclaration,
+): boolean {
+  if (!owner.body || !ts.isIdentifier(param.name)) return false;
+  let forwarded = false;
+  const visit = (node: ts.Node): void => {
+    if (forwarded) return;
+    if (node !== owner && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node) && node.arguments.length > 0) {
+      const argument = node.arguments[node.arguments.length - 1]!;
+      if (
+        ts.isIdentifier(argument) &&
+        (ctx.checker.getSymbolAtLocation(argument)?.valueDeclaration ??
+          ctx.checker.getSymbolAtLocation(argument)?.declarations?.[0]) === param
+      ) {
+        forwarded = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(owner.body, visit);
+  return forwarded;
+}
+
+/**
+ * Cache the source activation's argument count only for optional booleans that
+ * either observe `undefined` themselves or forward the trailing formal to
+ * another call. The latter is the parser -> NodeFactory shape: the syntactic
+ * forwarding call has two arguments, but its second value may still represent
+ * an argument omitted by the parser's caller.
+ */
+function registerNestedOmissionTrackedScalarParams(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  owner: ts.FunctionLikeDeclarationBase,
+  paramTypes: readonly ValType[],
+): boolean {
+  let tracked = false;
+  for (let i = 0; i < owner.parameters.length; i++) {
+    const param = owner.parameters[i]!;
+    const type = paramTypes[i];
+    if (
+      type?.kind !== "i32" ||
+      type.boolean !== true ||
+      !nestedParameterMayBeOmitted(param) ||
+      nativeTypeOfDeclaration(ctx.checker, param) !== null ||
+      (!nestedParameterIsComparedToUndefined(ctx, owner, param) &&
+        !nestedParameterIsTrailingForwardedArgument(ctx, owner, param))
+    ) {
+      continue;
+    }
+    if (!fctx.omissionTrackedScalarParams) fctx.omissionTrackedScalarParams = new Map();
+    fctx.omissionTrackedScalarParams.set(param, i);
+    tracked = true;
+  }
+  return tracked;
+}
+
+/**
+ * A hoisted function declaration can be materialized before a captured
+ * `let`/`const` initializer has finished. The canonical factory shape is:
+ *
+ *     const factory = { createNodeArray, createUnion };
+ *     function createUnion() { return factory.createNodeArray(); }
+ *
+ * `createUnion` is hoisted, but its shorthand closure is created while
+ * `factory` still contains the TDZ/pre-init value. Capturing `factory` by value
+ * therefore freezes that value forever. Prove the exact cycle by declaration
+ * identity so unrelated references in the initializer do not widen captures.
+ */
+function initializerMaterializesHoistedFunction(
+  ctx: CodegenContext,
+  capturedDecl: ts.VariableDeclaration | undefined,
+  functionDecl: ts.FunctionDeclaration,
+): boolean {
+  const initializer = capturedDecl?.initializer;
+  if (!initializer || !ts.isObjectLiteralExpression(initializer)) return false;
+  return initializer.properties.some(
+    (property) =>
+      ts.isShorthandPropertyAssignment(property) && ctx.oracle.valueDeclarationOf(property.name) === functionDecl,
+  );
+}
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -899,6 +1082,9 @@ function compileNestedFunctionDeclarationInScope(
       foreignEvalDeclaration || restBindingOverridesToExternref(p)
         ? { kind: "externref" }
         : resolveWasmType(ctx, paramType!);
+    if (!foreignEvalDeclaration) {
+      wasmType = preserveOmittedNestedParameter(ctx, stmt, p, wasmType);
+    }
     // If the parameter has a default value and is a non-null ref type,
     // widen to ref_null so callers can pass ref.null as a sentinel for "use default"
     if (p.initializer && wasmType.kind === "ref") {
@@ -1156,6 +1342,7 @@ function compileNestedFunctionDeclarationInScope(
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
+    const capturedDecl = findScopedVariableDeclaration(stmt, name);
     // (#5148 checkpoint) Function declarations hoist, so captures are
     // collected BEFORE the captured binding's declaration statement compiles —
     // and the pre-allocated local can still carry the closed anonymous-shape
@@ -1171,7 +1358,6 @@ function compileNestedFunctionDeclarationInScope(
       (type.kind === "ref" || type.kind === "ref_null") &&
       !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx)
     ) {
-      const capturedDecl = findScopedVariableDeclaration(stmt, name);
       const capturedInit = capturedDecl?.initializer;
       if (
         capturedInit !== undefined &&
@@ -1221,7 +1407,11 @@ function compileNestedFunctionDeclarationInScope(
     // (`localMap.get(cap.name) ?? cap.outerLocalIdx`) to be re-applied AND
     // the destructure-assign path to be box-aware. Both are out of scope
     // for this PR; the test is marked `.todo` until that follow-up lands.
-    const isMutable = writtenInBody.has(name) || mutatedInSiblingScope.has(name) || writtenAfterDeclaration.has(name);
+    const isMutable =
+      writtenInBody.has(name) ||
+      mutatedInSiblingScope.has(name) ||
+      writtenAfterDeclaration.has(name) ||
+      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a
@@ -2654,6 +2844,7 @@ export function hoistFunctionDeclarations(
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
         let wt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(p));
+        wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
         }
@@ -2969,12 +3160,15 @@ export function emitDefaultParamInit(
   paramTypes: ValType[],
   paramOffset: number,
 ): void {
-  const defaultArgcLocal = stmt.parameters.some((param, i) => {
-    if (!param.initializer) return false;
-    return paramDefaultNeedsArgc(paramTypes[i]);
-  })
-    ? cacheParamDefaultArgc(ctx, liftedFctx)
-    : undefined;
+  const tracksScalarOmission = registerNestedOmissionTrackedScalarParams(ctx, liftedFctx, stmt, paramTypes);
+  const defaultArgcLocal =
+    tracksScalarOmission ||
+    stmt.parameters.some((param, i) => {
+      if (!param.initializer) return false;
+      return paramDefaultNeedsArgc(paramTypes[i]);
+    })
+      ? cacheParamDefaultArgc(ctx, liftedFctx)
+      : undefined;
   for (let i = 0; i < stmt.parameters.length; i++) {
     const param = stmt.parameters[i]!;
     if (!param.initializer) continue;

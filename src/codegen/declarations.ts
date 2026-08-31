@@ -1599,6 +1599,20 @@ function resolveGenericDeclarationCallSiteTypes(
   if (!resolved) return null;
   const params = resolved.params.map((wasmType, index) => {
     const param = stmt.parameters[index];
+    // The checker-resolved signature of a generic call includes every formal,
+    // even when the call omitted an optional one. Do not let that specialization
+    // bypass lowerParamType's undefined-capable ABI: a scalar slot would receive
+    // the numeric missing-argument sentinel and `value ?? fallback` would observe
+    // it as a present value. TypeScript's parser helpers (`finishNode<T>` and
+    // `createNodeArray<T>`) exercise this exact generic + optional-number shape.
+    if (
+      param &&
+      wasmType.kind === "f64" &&
+      nativeTypeOfDeclaration(ctx.checker, param) === null &&
+      parameterMayBeOmitted(param)
+    ) {
+      return { kind: "externref" } as const;
+    }
     if (
       !param ||
       !stmt.body ||
@@ -2375,7 +2389,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       } else if (ts.isTypeAliasDeclaration(stmt)) {
         const aliasType = ctx.checker.getTypeAtLocation(stmt);
         if (aliasType.flags & ts.TypeFlags.Object) {
-          collectObjectType(ctx, stmt.name.text, aliasType);
+          collectObjectType(ctx, stmt.name.text, aliasType, stmt);
         }
       }
     }
@@ -3442,7 +3456,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     block: ts.ModuleBlock,
     name: string,
     wasmType: ValType,
-    declaration: ts.VariableDeclaration | undefined,
+    declaration: ts.VariableDeclaration | ts.BindingElement | undefined,
     lexical: boolean,
   ): void {
     const bindings = runtimeModuleGlobals(ctx, block);
@@ -3485,7 +3499,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (ts.isIdentifier(element.name)) {
         const elementType = ctx.checker.getTypeAtLocation(element);
         const wasmType = resolveBindingElementType(element, elementType, (type) => resolveWasmType(ctx, type));
-        registerRuntimeModuleGlobalBinding(block, element.name.text, wasmType, undefined, lexical);
+        registerRuntimeModuleGlobalBinding(block, element.name.text, wasmType, element, lexical);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerRuntimeModuleBindingPattern(block, element.name, lexical);
       }

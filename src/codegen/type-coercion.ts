@@ -1288,16 +1288,46 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
     savedBodies: [],
   };
 
+  // Register the undefined predicate before the materializer flushes late
+  // imports. Read its funcIdx only after that flush: any import registered by
+  // buildVecFromExternref can shift defined helper indices.
+  ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  if (!ctx.standalone && !ctx.wasi) {
+    // A cross-representation source may still be a compiled vec carrying
+    // ordinary Array properties in its runtime sidecar (notably TypeScript's
+    // NodeArray pos/end/hasTrailingComma metadata). The materializer creates a
+    // fresh target vec, so reserve the same sidecar bridge used by the typed
+    // vec-to-vec projector before buildVecFromExternref freezes import indices.
+    ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+  }
+
   // The cross-rep / host-array conversion (registers its late imports + flushes
   // against fctx; produces ref_null $vec). Built first so its locals are
   // allocated before the short-circuit temp below.
   const matInstrs = buildVecFromExternref(ctx, fctx, 0, vecTypeIdx, vecInfo);
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const copySidecarIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__copy_wasm_struct_sidecar") : undefined;
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const crossRepInstrs: Instr[] = matInstrs;
+  if (copySidecarIdx !== undefined) {
+    const resultLocal = allocLocal(fctx, `__vfe_result_${fctx.locals.length}`, resultType);
+    crossRepInstrs.push(
+      { op: "local.set", index: resultLocal },
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: resultLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: copySidecarIdx },
+      { op: "local.get", index: resultLocal },
+    );
+  }
 
   const body: Instr[] = [
     // (1) null/undefined guard.
     { op: "local.get", index: 0 },
     { op: "ref.is_null" },
+    ...(isUndefinedIdx !== undefined
+      ? ([{ op: "local.get", index: 0 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" }] satisfies Instr[])
+      : []),
     {
       op: "if",
       blockType: { kind: "val", type: resultType },
@@ -1318,7 +1348,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
             { op: "ref.cast", typeIdx: vecTypeIdx },
           ],
           // (3) host externref / cross-rep → materialize a fresh exact-type vec.
-          else: matInstrs,
+          else: crossRepInstrs,
         },
       ],
     },
@@ -1763,13 +1793,17 @@ function emitSafeStructConversion(
   if (srcVec) {
     const tupleFields = getTupleFields(ctx, toTypeIdx);
     if (tupleFields) {
-      return emitVecToTupleBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, tupleFields);
+      return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+        emitVecToTupleBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, tupleFields);
+      });
     }
 
     // Case 2: vec -> vec (different element types)
     const dstVec = getVecInfo(ctx, toTypeIdx);
     if (dstVec && srcVec.elemType.kind !== dstVec.elemType.kind) {
-      return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+      return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+        emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+      });
     }
     // Also handle vec -> vec where both are ref but different typeIdx
     if (
@@ -1780,7 +1814,9 @@ function emitSafeStructConversion(
       const srcRefIdx = (srcVec.elemType as { typeIdx: number }).typeIdx;
       const dstRefIdx = (dstVec.elemType as { typeIdx: number }).typeIdx;
       if (srcRefIdx !== dstRefIdx) {
-        return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+        return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+          emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+        });
       }
     }
   }
@@ -1824,7 +1860,9 @@ function emitSafeStructConversion(
             ? (dstVec.elemType as { typeIdx: number }).typeIdx
             : undefined;
         if (vecShaped.elemType.kind !== dstVec.elemType.kind || srcRefIdx !== dstRefIdx) {
-          return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, vecShaped, dstVec);
+          return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+            emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, vecShaped, dstVec);
+          });
         }
       }
     }
@@ -1837,6 +1875,51 @@ function emitSafeStructConversion(
   }
 
   return false;
+}
+
+/**
+ * Preserve a nullable source while materializing a structurally different vec
+ * carrier. The non-null vec projectors immediately read the source length and
+ * data fields, so feeding them JavaScript's null-backed `undefined` traps
+ * before the surrounding optional call can observe it. Mirror struct
+ * narrowing's null arm: nullable destinations retain null unchanged, while a
+ * non-null destination performs the ordinary runtime non-null assertion.
+ */
+function emitNullableVecProjection(
+  fctx: FunctionContext,
+  fromTypeIdx: number,
+  toTypeIdx: number,
+  fromNullable: boolean,
+  toNullable: boolean,
+  emitNonNullProjection: () => void,
+): boolean {
+  if (!fromNullable) {
+    emitNonNullProjection();
+    return true;
+  }
+
+  const sourceLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: fromTypeIdx });
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+
+  if (toNullable) {
+    fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.is_null" });
+    const projection = captureBody(fctx, () => {
+      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+      emitNonNullProjection();
+    });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toTypeIdx } },
+      then: [{ op: "ref.null", typeIdx: toTypeIdx }],
+      else: projection,
+    });
+  } else {
+    fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+    emitNonNullProjection();
+  }
+
+  releaseTempLocal(fctx, sourceLocal);
+  return true;
 }
 
 /** Returns true if `fromTypeIdx` is a declared Wasm subtype of `toTypeIdx`
@@ -1948,6 +2031,19 @@ function emitVecToVecBody(
   srcVec: { arrTypeIdx: number; elemType: ValType },
   dstVec: { arrTypeIdx: number; elemType: ValType },
 ): boolean {
+  // A vec projection changes only the compiler's element heap type; at the
+  // JavaScript level it is still the same Array object. In host-backed GC mode
+  // its non-index properties live in a WeakMap keyed by the raw vec. Reserve a
+  // bridge before emitting the copy so the fresh destination can inherit that
+  // sidecar after its indexed elements are projected. Resolve the funcIdx only
+  // after the late-import flush to avoid retaining a shifted defined index.
+  let copySidecarIdx: number | undefined;
+  if (!ctx.standalone && !ctx.wasi) {
+    ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+    flushLateImportShifts(ctx, fctx);
+    copySidecarIdx = ctx.funcMap.get("__copy_wasm_struct_sidecar");
+  }
+
   // Save the source vec ref to a temp local
   const srcRefType: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
   const srcLocal = allocTempLocal(fctx, srcRefType);
@@ -2067,6 +2163,18 @@ function emitVecToVecBody(
   fctx.body.push({ op: "local.get", index: lenLocal });
   fctx.body.push({ op: "local.get", index: dstArrLocal });
   fctx.body.push({ op: "struct.new", typeIdx: toTypeIdx });
+
+  if (copySidecarIdx !== undefined) {
+    const dstVecLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: toTypeIdx });
+    fctx.body.push({ op: "local.set", index: dstVecLocal });
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "local.get", index: dstVecLocal });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "call", funcIdx: copySidecarIdx });
+    fctx.body.push({ op: "local.get", index: dstVecLocal });
+    releaseTempLocal(fctx, dstVecLocal);
+  }
 
   releaseTempLocal(fctx, iLocal);
   releaseTempLocal(fctx, dstArrLocal);
@@ -2236,6 +2344,13 @@ function assertedStructExtensionInfo(
 
 /** Pure preflight for callers that must choose a stack conversion first. */
 export function canEmitAssertedStructExtension(ctx: CodegenContext, from: ValType, to: ValType): boolean {
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    (to.kind === "ref" || to.kind === "ref_null") &&
+    isDeclaredStructSubtype(ctx, from.typeIdx, to.typeIdx)
+  ) {
+    return true;
+  }
   return assertedStructExtensionInfo(ctx, from, to) !== undefined;
 }
 
@@ -2323,6 +2438,14 @@ export function emitAssertedStructExtension(
   from: ValType,
   to: ValType,
 ): boolean {
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    (to.kind === "ref" || to.kind === "ref_null") &&
+    isDeclaredStructSubtype(ctx, from.typeIdx, to.typeIdx)
+  ) {
+    if (from.kind === "ref_null" && to.kind === "ref") fctx.body.push({ op: "ref.as_non_null" });
+    return true;
+  }
   const info = assertedStructExtensionInfo(ctx, from, to);
   if (!info) return false;
 
@@ -2910,20 +3033,56 @@ export function coerceType(
     // Build else-branch: when cast fails, construct from JS object if possible
     let elseBranch: Instr[];
     if (vecInfo) {
-      // (#4614) A NULL input must stay `ref.null $vec` — `ref.test` answers
-      // false for null, so without this guard the materializer built an EMPTY
-      // vec out of nothing (`__extern_length(null)` → 0) and
-      // `flag ? rows() : null` bound to a vec slot read back as a TRUTHY
-      // zero-length array: cookie's `tableRows || cases` then selected the
-      // phantom empty table and every it.each registration vanished.
+      // (#4614 / #1058) A null/undefined input must stay `ref.null $vec` —
+      // `ref.test` answers false for both, so without this guard the
+      // materializer builds an EMPTY vec out of nothing. That turns an absent
+      // optional array into a TRUTHY zero-length array and loses the JS value's
+      // branch identity.
+      if (to.kind === "ref_null") {
+        ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      }
+      if (!ctx.standalone && !ctx.wasi) {
+        // This direct coercion path is separate from the reserved
+        // __vec_from_extern helper used by generated field setters. It also
+        // materializes a fresh vec from a host Array mirror, so preserve the
+        // source vec's ordinary-property sidecar here as well.
+        ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+      }
+      const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
+      // buildVecFromExternref flushes every late-import shift. Resolve the
+      // helpers afterwards so these calls cannot retain stale defined funcIdxs.
+      const isUndefinedIdx = to.kind === "ref_null" ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+      const copySidecarIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__copy_wasm_struct_sidecar") : undefined;
+      const materializeWithSidecar: Instr[] = materializeVec;
+      if (copySidecarIdx !== undefined) {
+        const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: toIdx,
+        });
+        materializeWithSidecar.push(
+          { op: "local.set", index: resultLocal },
+          { op: "local.get", index: tmpExternLocal },
+          { op: "local.get", index: resultLocal },
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: copySidecarIdx },
+          { op: "local.get", index: resultLocal },
+        );
+      }
       elseBranch = [
         { op: "local.get", index: tmpExternLocal },
         { op: "ref.is_null" },
+        ...(isUndefinedIdx !== undefined
+          ? ([
+              { op: "local.get", index: tmpExternLocal },
+              { op: "call", funcIdx: isUndefinedIdx },
+              { op: "i32.or" },
+            ] satisfies Instr[])
+          : []),
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo),
+          else: materializeWithSidecar,
         },
       ];
     } else {

@@ -250,8 +250,24 @@ export function currentSourceModuleGlobalIndex(
       : undefined;
   }
   if (declaration.getSourceFile() !== sourceFile) return undefined;
-  if (ts.isBindingElement(declaration) && isCurrentSourceRuntimeVariable(declaration, sourceFile)) {
-    return ctx.moduleGlobals.get(id.text);
+  if (ts.isBindingElement(declaration)) {
+    const projectedIdx = ctx.moduleGlobals.get(id.text);
+    if (projectedIdx === undefined) return undefined;
+
+    // A destructured runtime-namespace lexical is registered under a
+    // collision-safe qualified name and projected to its bare spelling only
+    // while that namespace body is emitted. ModuleBlock declarations are not
+    // top-level module variables, so accept the projection only when its exact
+    // allocator object belongs to this BindingElement. This mirrors the
+    // VariableDeclaration path below without letting an outer/sibling binding
+    // with the same spelling receive the destructuring writeback.
+    const exactBinding = ctx.programAbiGlobals?.moduleBinding(declaration);
+    if (exactBinding !== undefined) {
+      const projectedGlobal = ctx.mod.globals[localGlobalIdx(ctx, projectedIdx)];
+      if (projectedGlobal === exactBinding.value) return projectedIdx;
+    }
+
+    if (isCurrentSourceRuntimeVariable(declaration, sourceFile)) return projectedIdx;
   }
   if (ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) && declaration.name.text === id.text) {
     const projectedIdx = ctx.moduleGlobals.get(id.text);

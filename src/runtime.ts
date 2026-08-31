@@ -3299,6 +3299,42 @@ function _sidecarSet(obj: any, key: any, val: any): void {
   }
 }
 
+/**
+ * Preserve the ordinary-property state of a Wasm vec when codegen must project
+ * it to a vec with a different element heap type.
+ *
+ * The projection allocates a new physical vec and copies its indexed elements.
+ * Augmented arrays such as TypeScript's `NodeArray<T>` also carry `pos`, `end`,
+ * `hasTrailingComma`, and `transformFlags` in the opaque struct sidecars above.
+ * Alias those sidecar records onto the projected vec so the representation-only
+ * conversion does not erase properties or split subsequent metadata writes.
+ */
+function _copyWasmStructSidecar(source: any, destination: any): void {
+  // `__make_iterable` exposes a Wasm vec as a real Array mirror. That mirror
+  // has its own indexed/expando properties, but `_unwrapForHost` only reverses
+  // object/closure proxies; vec mirrors use the separate write-back registry.
+  // Resolve that registry first so a host round-trip aliases the authoritative
+  // raw vec sidecar instead of looking for one on the temporary Array facade.
+  const rawSource = vecForMirror(source) ?? _unwrapForHost(source);
+  const rawDestination = vecForMirror(destination) ?? _unwrapForHost(destination);
+  if (rawSource === rawDestination || !_canBeWeakKey(rawSource) || !_canBeWeakKey(rawDestination)) return;
+
+  const props = _wasmStructProps.get(rawSource);
+  if (props) _wasmStructProps.set(rawDestination, props);
+  const descriptors = _wasmPropDescs.get(rawSource);
+  if (descriptors) _wasmPropDescs.set(rawDestination, descriptors);
+  const accessors = _wasmStructAccessors.get(rawSource);
+  if (accessors) _wasmStructAccessors.set(rawDestination, accessors);
+  const deleted = _wasmStructDeletedKeys.get(rawSource);
+  if (deleted) _wasmStructDeletedKeys.set(rawDestination, deleted);
+  const shadowed = _wasmStructShadowedFields.get(rawSource);
+  if (shadowed) _wasmStructShadowedFields.set(rawDestination, shadowed);
+  if (_wasmStructProto.has(rawSource)) _wasmStructProto.set(rawDestination, _wasmStructProto.get(rawSource));
+  if (_wasmFrozenObjs.has(rawSource)) _wasmFrozenObjs.add(rawDestination);
+  if (_wasmSealedObjs.has(rawSource)) _wasmSealedObjs.add(rawDestination);
+  if (_wasmNonExtensibleObjs.has(rawSource)) _wasmNonExtensibleObjs.add(rawDestination);
+}
+
 // Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
 function _mirrorClosurePropertyToHostBridges(
   closure: any,
@@ -7619,14 +7655,14 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
       return undefined;
     }
   };
-  const rawDesc = (key: string): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, readExports());
-  const hostDesc = (key: string): PropertyDescriptor | undefined => {
+  const rawDesc = (key: string | symbol): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, readExports());
+  const hostDesc = (key: string | symbol): PropertyDescriptor | undefined => {
     const desc = rawDesc(key);
     if (!desc) return undefined;
     if ("value" in desc) desc.value = _wrapForHost(desc.value, readExports());
     return desc;
   };
-  const materializeNonConfigurable = (key: string, desc: PropertyDescriptor | undefined): void => {
+  const materializeNonConfigurable = (key: string | symbol, desc: PropertyDescriptor | undefined): void => {
     if (!desc || desc.configurable !== false) return;
     try {
       Object.defineProperty(target, key, desc);
@@ -7673,6 +7709,25 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
     }
     return { hit: true, value: val };
   };
+  const isVisibleSidecarOwnKey = (key: string | symbol): boolean => {
+    const normalized = typeof key === "symbol" ? key : String(key);
+    if (_wasmStructDeletedKeys.get(vec)?.has(normalized)) return false;
+    if (
+      typeof normalized === "string" &&
+      (normalized === "length" ||
+        _asArrayIndex(normalized) !== undefined ||
+        normalized.startsWith("__get_") ||
+        normalized.startsWith("__set_"))
+    ) {
+      return false;
+    }
+    const sidecar = _wasmStructProps.get(vec);
+    return (
+      (!!sidecar && normalized in sidecar) ||
+      (_wasmPropDescs.get(vec)?.has(normalized) ?? false) ||
+      (_wasmStructAccessors.get(vec)?.has(normalized) ?? false)
+    );
+  };
   const handler: ProxyHandler<any[]> = {
     get(_t, key) {
       if (key === "length") return liveLen();
@@ -7704,10 +7759,42 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
     ownKeys() {
       const n = liveLen();
       const keys: (string | symbol)[] = [];
+      const push = (key: string | symbol): void => {
+        if (!keys.includes(key)) keys.push(key);
+      };
       for (let i = 0; i < n; i++) {
-        if (!mappedArguments || rawDesc(String(i)) !== undefined) keys.push(String(i));
+        if (!mappedArguments || rawDesc(String(i)) !== undefined) push(String(i));
       }
-      keys.push("length");
+      push("length");
+      // (#1058) A NodeArray's `pos`, `end`, and related metadata live in the
+      // vec sidecar. The live array facade already exposes their values via
+      // `get`/`has`; expose the same own-key set to reflection as well. This
+      // is the path used by `Object.prototype.hasOwnProperty.call` after an
+      // array mirror is unwrapped back to its original vec.
+      const symbols: symbol[] = [];
+      const addSidecarKey = (key: string | symbol): void => {
+        if (!isVisibleSidecarOwnKey(key)) return;
+        if (typeof key === "symbol") {
+          if (!symbols.includes(key)) symbols.push(key);
+        } else {
+          push(key);
+        }
+      };
+      const sidecar = _wasmStructProps.get(vec);
+      if (sidecar) {
+        for (const key of Object.getOwnPropertyNames(sidecar)) addSidecarKey(key);
+        for (const key of Object.getOwnPropertySymbols(sidecar)) addSidecarKey(key);
+      }
+      for (const key of _wasmPropDescs.get(vec)?.keys() ?? []) addSidecarKey(key);
+      for (const key of _wasmStructAccessors.get(vec)?.keys() ?? []) addSidecarKey(key);
+      for (const key of Reflect.ownKeys(target)) {
+        if (typeof key === "symbol") {
+          if (!symbols.includes(key)) symbols.push(key);
+        } else {
+          push(key);
+        }
+      }
+      for (const key of symbols) push(key);
       return keys;
     },
     getOwnPropertyDescriptor(_t, key) {
@@ -7726,7 +7813,19 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
           return desc;
         }
       }
-      return undefined;
+      // (#1058) Named vec expandos are own properties, not merely values
+      // reachable through the proxy's `get` trap. In particular TypeScript's
+      // `isNodeArray` asks `hasOwnProperty` for the `pos` and `end` sidecars.
+      // Returning their stored descriptor keeps [[GetOwnProperty]] consistent
+      // with `get`, `has`, and `ownKeys` while preserving custom attributes.
+      if (isVisibleSidecarOwnKey(key)) {
+        const desc = hostDesc(key);
+        if (desc !== undefined) {
+          materializeNonConfigurable(key, desc);
+          return desc;
+        }
+      }
+      return Reflect.getOwnPropertyDescriptor(_t, key);
     },
     defineProperty(_t, key, descriptor) {
       if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
@@ -11782,6 +11881,7 @@ assert._isSameValue = isSameValue;
             _compiledTypedArrayKinds.set(vec, kind);
           }
         };
+      if (name === "__copy_wasm_struct_sidecar") return _copyWasmStructSidecar;
       // Reverse any host-side facade that originated from a Wasm value before
       // codegen narrows the externref back to a concrete GC representation.
       // A vec mirror may have been mutated by a host Array/TypedArray method;

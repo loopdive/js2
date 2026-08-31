@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { genericStructFactoryCall } from "../src/codegen/generic-struct-factory.js";
+import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../src/codegen/generic-struct-factory.js";
 import { compile, compileMulti, wrapExports } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
 
@@ -35,6 +35,47 @@ function typedSource(source: string): { checker: ts.TypeChecker; sourceFile: ts.
 }
 
 describe("#1058 generic base-node factories", () => {
+  it("rejects a non-generic call before scanning its binding across the program", () => {
+    const { checker, sourceFile } = typedSource(`
+      function ordinary(value: number): number { return value + 1; }
+      const result = ordinary(41);
+    `);
+    let call: ts.CallExpression | undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) call = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    expect(call).toBeDefined();
+
+    let symbolReads = 0;
+    const observedChecker = new Proxy(checker, {
+      get(target, property) {
+        if (property === "getSymbolAtLocation") {
+          return (node: ts.Node) => {
+            symbolReads++;
+            return target.getSymbolAtLocation(node);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const context = {
+      checker: observedChecker,
+      callableSourceFiles: [sourceFile],
+      oracle: {
+        valueDeclarationOf(): never {
+          throw new Error("non-generic resolved calls must not reach the oracle fallback");
+        },
+      },
+    } as unknown as Parameters<typeof genericStructFactoryCall>[0];
+
+    expect(genericStructFactoryCall(context, call!)).toBeNull();
+    expect(genericIdentityReturnParamIndex(context, call!)).toBeUndefined();
+    expect(symbolReads).toBe(0);
+  });
+
   it("does not treat an arbitrary constructor result as a fresh instantiated generic carrier", async () => {
     const { checker, sourceFile } = typedSource(`
       interface Node { kind: number; pos: number; }
@@ -951,5 +992,262 @@ describe("#1058 generic base-node factories", () => {
     );
 
     expect((await instantiate(result)).test()).toBe(311);
+  });
+
+  it("keeps TypeScript's LiteralLikeNode view on the shared syntax-node carrier", async () => {
+    const result = await compileMulti(
+      {
+        "./src/compiler/types.ts": `
+          // The brands are never actually given values. At runtime they have zero cost.
+          export type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+          export interface Node {
+            kind: number;
+            pos: number;
+            end: number;
+            flags: number;
+            modifierFlagsCache: number;
+            transformFlags: number;
+            parent: Node;
+          }
+          export interface SymbolInfo { id: number; }
+          export interface Declaration extends Node { symbol: SymbolInfo; localSymbol?: SymbolInfo; }
+          export interface MemberExpression extends Node { _memberExpressionBrand: any; }
+          export interface PrimaryExpression extends MemberExpression { _primaryExpressionBrand: any; }
+          export interface LiteralLikeNode extends Node {
+            text: string;
+            isUnterminated?: boolean;
+            hasExtendedUnicodeEscape?: boolean;
+          }
+          export interface LiteralExpression extends LiteralLikeNode, PrimaryExpression {
+            _literalExpressionBrand: any;
+          }
+          export interface StringLiteral extends LiteralExpression, Declaration { singleQuote?: boolean; }
+          export interface BaseNodeFactory { createBaseNode(kind: number): Node; }
+        `,
+        "./src/compiler/base.ts": `
+          import type { BaseNodeFactory, Mutable, Node } from "./types.js";
+
+          function RuntimeNode(this: Mutable<Node>, kind: number, pos: number, end: number): void {
+            this.kind = kind;
+            this.pos = pos;
+            this.end = end;
+            this.flags = 0;
+            this.modifierFlagsCache = 0;
+            this.transformFlags = 0;
+            this.parent = undefined!;
+          }
+
+          const objectAllocator = { getNodeConstructor: () => RuntimeNode as any };
+
+          export function createBaseNodeFactory(): BaseNodeFactory {
+            let NodeConstructor: new (kind: number, pos: number, end: number) => Node;
+            return { createBaseNode };
+
+            function createBaseNode(kind: number): Node {
+              return new (NodeConstructor || (NodeConstructor = objectAllocator.getNodeConstructor()))(kind, -1, -1);
+            }
+          }
+        `,
+        "./src/compiler/factory.ts": `
+          import type { BaseNodeFactory, Declaration, Mutable, Node, StringLiteral } from "./types.js";
+
+          export function createNodeFactory(baseFactory: BaseNodeFactory) {
+            function createBaseNode<T extends Node>(kind: T["kind"]) {
+              return baseFactory.createBaseNode(kind) as Mutable<T>;
+            }
+            function createBaseDeclaration<T extends Declaration>(kind: T["kind"]) {
+              const node = createBaseNode(kind);
+              node.symbol = undefined!;
+              node.localSymbol = undefined;
+              return node;
+            }
+            function createBaseStringLiteral(text: string, isSingleQuote?: boolean) {
+              const node = createBaseDeclaration<StringLiteral>(11);
+              node.text = text;
+              node.singleQuote = isSingleQuote;
+              return node;
+            }
+            function createStringLiteral(
+              text: string,
+              isSingleQuote?: boolean,
+              hasExtendedUnicodeEscape?: boolean,
+            ): StringLiteral {
+              const node = createBaseStringLiteral(text, isSingleQuote);
+              node.hasExtendedUnicodeEscape = hasExtendedUnicodeEscape;
+              if (hasExtendedUnicodeEscape) node.transformFlags |= 4;
+              return node;
+            }
+            return { createStringLiteral };
+          }
+        `,
+        "./src/compiler/parser.ts": `
+          import type { LiteralExpression, LiteralLikeNode } from "./types.js";
+          import { createBaseNodeFactory } from "./base.js";
+          import { createNodeFactory } from "./factory.js";
+
+          const factory = createNodeFactory(createBaseNodeFactory());
+          function parseLiteralLikeNode(): LiteralLikeNode {
+            const node = factory.createStringLiteral("5.9", undefined, false);
+            if (false) node.isUnterminated = true;
+            return node;
+          }
+          function parseLiteralNode(): LiteralExpression {
+            return parseLiteralLikeNode() as LiteralExpression;
+          }
+          export function test(): number {
+            const node = parseLiteralNode();
+            return node.text.length * 100 + node.kind;
+          }
+        `,
+      },
+      "./src/compiler/parser.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(311);
+  });
+
+  it("keeps concrete type members on the TypeElement carrier while iterating", async () => {
+    const result = await compileMulti(
+      {
+        "./src/compiler/types.ts": `
+          // The brands are never actually given values. At runtime they have zero cost.
+          export type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+          export interface Node {
+            kind: number;
+            pos: number;
+            end: number;
+            flags: number;
+            modifierFlagsCache: number;
+            transformFlags: number;
+            parent: Node;
+          }
+          export interface SymbolInfo { id: number; }
+          export interface Declaration extends Node {
+            _declarationBrand: any;
+            symbol: SymbolInfo;
+            localSymbol?: SymbolInfo;
+          }
+          export interface NamedDeclaration extends Declaration { readonly name?: Node; }
+          export interface JSDocContainer extends Node {
+            _jsdocContainerBrand: any;
+            jsDoc?: Node[];
+          }
+          export interface LocalsContainer extends Node {
+            _localsContainerBrand: any;
+            locals?: unknown;
+          }
+          export interface ClassElement extends NamedDeclaration {
+            _classElementBrand: any;
+          }
+          export interface TypeElement extends NamedDeclaration {
+            _typeElementBrand: any;
+            readonly questionToken?: Node;
+          }
+          export interface PropertySignature extends TypeElement, JSDocContainer {
+            readonly kind: number;
+          }
+          export interface SignatureDeclarationBase extends NamedDeclaration, JSDocContainer {
+            readonly parameters: Node[];
+          }
+          export interface IndexSignatureDeclaration
+            extends SignatureDeclarationBase, ClassElement, TypeElement, LocalsContainer {
+            readonly kind: number;
+          }
+          export interface BaseNodeFactory { createBaseNode(kind: number): Node; }
+        `,
+        "./src/compiler/factory/baseNodeFactory.ts": `
+          import type { BaseNodeFactory, Mutable, Node } from "../types.js";
+
+          function RuntimeNode(this: Mutable<Node>, kind: number, pos: number, end: number): void {
+            this.kind = kind;
+            this.pos = pos;
+            this.end = end;
+            this.flags = 0;
+            this.modifierFlagsCache = 0;
+            this.transformFlags = 0;
+            this.parent = undefined!;
+          }
+
+          const objectAllocator = { getNodeConstructor: () => RuntimeNode as any };
+
+          export function createBaseNodeFactory(): BaseNodeFactory {
+            let NodeConstructor: new (kind: number, pos: number, end: number) => Node;
+            return { createBaseNode };
+
+            function createBaseNode(kind: number): Node {
+              return new (NodeConstructor || (NodeConstructor = objectAllocator.getNodeConstructor()))(kind, -1, -1);
+            }
+          }
+        `,
+        "./src/compiler/factory/nodeFactory.ts": `
+          import type {
+            BaseNodeFactory,
+            Declaration,
+            IndexSignatureDeclaration,
+            Mutable,
+            Node,
+            PropertySignature,
+          } from "../types.js";
+
+          export function createNodeFactory(baseFactory: BaseNodeFactory) {
+            function createBaseNode<T extends Node>(kind: T["kind"]): Mutable<T> {
+              return baseFactory.createBaseNode(kind) as Mutable<T>;
+            }
+            function createBaseDeclaration<T extends Declaration>(kind: T["kind"]): Mutable<T> {
+              const node = createBaseNode<T>(kind);
+              node.symbol = undefined!;
+              node.localSymbol = undefined;
+              return node;
+            }
+            function createPropertySignature(): PropertySignature {
+              const node = createBaseDeclaration<PropertySignature>(171);
+              node.name = undefined;
+              node.questionToken = undefined;
+              node.jsDoc = undefined;
+              return node;
+            }
+            function createIndexSignature(): IndexSignatureDeclaration {
+              const node = createBaseDeclaration<IndexSignatureDeclaration>(181);
+              node.name = undefined;
+              node.questionToken = undefined;
+              node.jsDoc = undefined;
+              node.parameters = [];
+              node.locals = undefined;
+              return node;
+            }
+            return { createPropertySignature, createIndexSignature };
+          }
+        `,
+        "./src/compiler/parser.ts": `
+          import type { TypeElement } from "./types.js";
+          import { createBaseNodeFactory } from "./factory/baseNodeFactory.js";
+          import { createNodeFactory } from "./factory/nodeFactory.js";
+
+          const factory = createNodeFactory(createBaseNodeFactory());
+          const propertySignature = factory.createPropertySignature();
+          const indexSignature = factory.createIndexSignature();
+
+          function parsePropertyTypeMember(): TypeElement {
+            return propertySignature;
+          }
+          function parseIndexTypeMember(): TypeElement {
+            return indexSignature;
+          }
+
+          export function test(): number {
+            const members: TypeElement[] = [parsePropertyTypeMember(), parseIndexTypeMember()];
+            if (members[0] !== propertySignature || members[1] !== indexSignature) return -1;
+            let fingerprint = 0;
+            for (const member of members) fingerprint = fingerprint * 1000 + member.kind;
+            return fingerprint;
+          }
+        `,
+      },
+      "./src/compiler/parser.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(171181);
   });
 });

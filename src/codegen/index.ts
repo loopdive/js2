@@ -370,6 +370,7 @@ import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set
 import { fillBigIntDynValueOfArm } from "./wrapper-proto-value-of.js"; // (#4631) dyn wrapper valueOf arm
 import { scanGlobalThisFnShadows } from "./fn-global-shadow.js"; // (#4630) globalThis.<fn> reassignment shadowing
 import { fillAsyncClosurePromiseWrappers } from "./async-closure-promise.js"; // (#4648)
+import { fillDeferredCallablePropertyDispatches } from "./expressions/calls-closures.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
@@ -5986,6 +5987,13 @@ export function generateModule(
       for (let n = 6; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     }
 
+    // (#1058) Callable-property sites can compile before the closure stored by
+    // a later source has published its concrete funcref ABI. Complete their
+    // reserved typed ladders now, over the final closure registry and before
+    // any consumer helper snapshots that registry. The fill only replaces
+    // reserved bodies/locals; it registers no module state.
+    fillDeferredCallablePropertyDispatches(ctx);
+
     // Emit the declared-arity classifier before filling `__apply_closure`.
     // The native bridge uses it to select a dispatcher wide enough for calls
     // that omit optional trailing arguments, padding those missing formals with
@@ -10906,6 +10914,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     });
 
+    // (#1058) Multi-source twin of the primary finalize seam. The parser-side
+    // call can precede the scanner-side captured closure, so the ladder must be
+    // filled only after the complete graph has emitted its closure ABIs.
+    profilePhase("fill-deferred-callable-property-dispatch", () => fillDeferredCallablePropertyDispatches(ctx));
+
     // These reserve/fill drivers require the receiver-aware arity-0 bridge,
     // which is only registered by the loop above in the multi-source path.
     profilePhase("fill-proto-iterator-driver", () => fillProtoIteratorDriver(ctx));
@@ -11963,8 +11976,24 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray" || inheritedArrayElement) {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       const elemTsType = inheritedArrayElement ?? typeArgs[0];
-      let elemWasm: ValType = elemTsType
-        ? resolveWasmType(ctx, elemTsType, _depth + 1, _visited)
+      // A constrained type parameter used AS AN ARRAY ELEMENT carries the
+      // representation of its constraint. The context-free fallback erases
+      // `T extends Node` to externref, which made `readonly T[]` an invariant
+      // sibling of the canonical Node vec and trapped TypeScript's generic
+      // `isNodeArray` predicate. Keep this deliberately scoped to container
+      // elements: a direct `T extends Node` parameter/result must remain erased
+      // so identity helpers such as `finishNode<T>(node: T): T` can transport
+      // richer sibling node layouts without narrowing them to the base struct.
+      // This selects the constraint carrier for the canonical container; it
+      // does not yet canonicalize multiple derived-array instantiations of one
+      // generic body, whose specialization ordering remains separate work.
+      const elemConstraint =
+        elemTsType && (elemTsType.flags & ts.TypeFlags.TypeParameter) !== 0
+          ? ctx.checker.getBaseConstraintOfType(elemTsType)
+          : undefined;
+      const runtimeElemTsType = elemConstraint && elemConstraint !== elemTsType ? elemConstraint : elemTsType;
+      let elemWasm: ValType = runtimeElemTsType
+        ? resolveWasmType(ctx, runtimeElemTsType, _depth + 1, _visited)
         : { kind: "externref" };
       // (#2806) An array whose element type is **purely** `undefined` / `void`
       // must lower to an externref-element vec, not a numeric (i32) vec — the
