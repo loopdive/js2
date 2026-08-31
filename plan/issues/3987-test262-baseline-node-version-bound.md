@@ -3,7 +3,7 @@ id: 3987
 title: "test262 shards are stranded on the absent Node 25 manifest pin — moving them to 24 needs the baseline regenerated first, because conformance results are Node-version-bound"
 status: ready
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-31
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -138,3 +138,22 @@ conservative on purpose and narrowing it deserves its own judgement.
 The unfinished half of #3963, split out so the deferral is tracked rather than
 buried in a merged issue's prose. #3963 shipped 7 workflows and recorded its own
 criterion 2 as not met specifically so this could be picked up deliberately.
+
+## 2026-08-31 — blast-radius refresh
+
+The shared `setup-node-pnpm` action still defaults to Node 25, and its absent-
+manifest fallback now reaches **seven unique workflows** (multiple jobs in
+several of them):
+
+- `ci.yml`;
+- `eval-interpreter-lane.yml`;
+- `npm-compat-promote.yml`;
+- `npm-compat-refresh.yml`;
+- `quickjs-wasi-artifact.yml`;
+- `refresh-baseline.yml`; and
+- `test262-sharded.yml`.
+
+The issue should no longer be read as a two-workflow residual. The baseline
+coordination requirement still applies to conformance jobs, but consumers such
+as ordinary `ci.yml` and artifact lanes need to be classified individually so
+unrelated work does not inherit a per-run fallback download without reason.

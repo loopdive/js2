@@ -6,10 +6,12 @@ import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
 import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
 import { correlateIrSkippedBodyUnitIds } from "../src/codegen/ir-overlay-safety.js";
+import { IrBodyRouteAuditSession } from "../src/codegen/legacy-body-audit.js";
 import { compile, createIncrementalCompiler, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
-import type { IrUnitId } from "../src/ir/identity.js";
+import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
+import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { buildImports } from "../src/runtime.js";
 
 // Register the low-level codegen delegates used by generateModule.
@@ -129,6 +131,137 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(() =>
       correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, preparedUnitId, foreignUnitId], "function"),
     ).toThrow(/foreign skipped function/);
+  });
+
+  it("ignores known support-function body entries in the R2 direct receipt census", () => {
+    const sourceFile = ts.createSourceFile(
+      "receipt-scope.ts",
+      `
+      export function owner(value: number): number { return value + 1; }
+      const runtimeNamespace = function runtimeNamespace(value: number): number { return value; };
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const identityContext = buildIrPlanningIdentityContext(
+      buildIrUnitInventory([sourceFile], { entrySource: sourceFile }),
+    );
+    const owner = sourceFile.statements.find(ts.isFunctionDeclaration);
+    const namespaceStatement = sourceFile.statements.find(ts.isVariableStatement);
+    const runtimeNamespace = namespaceStatement?.declarationList.declarations[0]?.initializer;
+    if (!owner || !runtimeNamespace || !ts.isFunctionExpression(runtimeNamespace)) {
+      throw new Error("receipt-scope fixture lost its expected functions");
+    }
+    const ownerUnitId = identityContext.unitIdByDeclaration.get(owner);
+    const supportUnitId = identityContext.unitIdByDeclaration.get(runtimeNamespace);
+    if (!ownerUnitId || !supportUnitId) throw new Error("receipt-scope fixture lost exact inventory identities");
+
+    const session = new IrBodyRouteAuditSession(identityContext, "gc", "compile");
+    session.recordRoot("compileFunctionBody", "owner", owner);
+    session.recordRoot("compileFunctionBody", "runtimeNamespace", runtimeNamespace);
+    const receipts = session.directFunctionBodyReceiptAudit(sourceFile);
+
+    expect(identityContext.unitByUnitId.get(supportUnitId)?.terminal).toBe(false);
+    expect(receipts.countsByUnitId).toEqual(new Map([[ownerUnitId, 1]]));
+    expect(receipts.violations).toEqual([]);
+  });
+
+  it("keeps direct receipt lookup source-local across a multi-source graph", () => {
+    const sourceFiles = Array.from({ length: 24 }, (_, index) =>
+      ts.createSourceFile(
+        `receipt-source-${index}.ts`,
+        `export function owner${index}(value: number): number { return value + ${index}; }`,
+        ts.ScriptTarget.Latest,
+        true,
+      ),
+    );
+    const identityContext = buildIrPlanningIdentityContext(
+      buildIrUnitInventory(sourceFiles, { entrySource: sourceFiles[0]! }),
+    );
+    let unitLookups = 0;
+    const unitByUnitId = new Proxy(identityContext.unitByUnitId, {
+      get(target, property) {
+        if (property === "get") {
+          return (unitId: IrUnitId) => {
+            unitLookups += 1;
+            return target.get(unitId);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const instrumentedContext = { ...identityContext, unitByUnitId };
+    const session = new IrBodyRouteAuditSession(instrumentedContext, "gc", "compile");
+    const expectedBySource = new Map<ts.SourceFile, IrUnitId>();
+    for (const sourceFile of sourceFiles) {
+      const declaration = sourceFile.statements.find(ts.isFunctionDeclaration);
+      const unitId = declaration && identityContext.unitIdByDeclaration.get(declaration);
+      if (!declaration || !unitId) throw new Error(`${sourceFile.fileName} lost its exact owner`);
+      expectedBySource.set(sourceFile, unitId);
+      session.recordRoot("compileFunctionBody", declaration.name!.text, declaration);
+    }
+
+    unitLookups = 0;
+    for (const [sourceFile, unitId] of expectedBySource) {
+      const receipts = session.directFunctionBodyReceiptAudit(sourceFile);
+      expect(receipts.countsByUnitId).toEqual(new Map([[unitId, 1]]));
+      expect(receipts.violations).toEqual([]);
+    }
+    expect(unitLookups).toBeLessThanOrEqual(sourceFiles.length);
+
+    const unattributedSource = ts.createSourceFile(
+      "unattributed-receipt.ts",
+      "function unknown(value: number): number { return value; }",
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const unknown = unattributedSource.statements.find(ts.isFunctionDeclaration);
+    if (!unknown) throw new Error("unattributed receipt fixture lost its function");
+    session.recordRoot("compileFunctionBody", "unknown", unknown);
+    for (const sourceFile of sourceFiles) {
+      expect(session.directFunctionBodyReceiptAudit(sourceFile).unattributedViolation).toMatchObject({
+        code: "missing-direct-function-body-identity",
+        detail: expect.stringContaining("unknown"),
+      });
+    }
+  });
+
+  it("accounts only the last physically emitted duplicate Script declaration", async () => {
+    const result = await compile(
+      `
+      function duplicate(value) { return value + 1; }
+      function duplicate(value) { return value + 2; }
+      function test() { return duplicate(40); }
+      `,
+      {
+        fileName: "duplicate-r2-accounting.js",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const duplicates =
+      result.irOutcomes?.filter(
+        (candidate) => candidate.unitKind === "function" && candidate.displayName === "duplicate",
+      ) ?? [];
+    expect(duplicates).toHaveLength(2);
+    const accounted = duplicates.filter((candidate) => candidate.prepareAttempts !== undefined);
+    expect(accounted).toEqual([
+      expect.objectContaining({
+        kind: "unsupported",
+        prepareAttempts: 1,
+        directBodyEmissions: 1,
+        irBodyEmissions: 0,
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      }),
+    ]);
+    const shadowed = duplicates.filter((candidate) => candidate.prepareAttempts === undefined);
+    expect(shadowed).toHaveLength(1);
+    expect(shadowed[0]).not.toHaveProperty("directBodyEmissions");
+    expect(shadowed[0]).not.toHaveProperty("irBodyEmissions");
   });
 
   it.each([
@@ -389,6 +522,9 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(outcome(result, "withDefault")).toMatchObject({
       kind: "unsupported",
       stage: "select",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 0,
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
@@ -444,6 +580,9 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(addOutcome.unitId).toBeDefined();
     expect(addOutcome).toMatchObject({
       kind: "emitted",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
       legacyBodyEmitted: false,
       irBodyEmitted: true,
       preparedComponentId: expect.stringMatching(/^prepared-component:/),
@@ -1154,6 +1293,9 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       kind: "invariant",
       code: "unexpected-internal-throw",
       stage: "build",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 0,
       legacyBodyEmitted: false,
       irBodyEmitted: false,
     });

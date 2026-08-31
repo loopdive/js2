@@ -2,7 +2,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import { genericStructFactoryCall } from "../src/codegen/generic-struct-factory.js";
 import { compile, compileMulti, wrapExports } from "../src/index.js";
+import { ts } from "../src/ts-api.js";
 
 async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -19,7 +21,66 @@ async function instantiate(result: Awaited<ReturnType<typeof compile>>) {
   return wrapExports(instance, { signatures: result.exportSignatures });
 }
 
+function typedSource(source: string): { checker: ts.TypeChecker; sourceFile: ts.SourceFile } {
+  const fileName = "/generic-struct-factory.ts";
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true, target: ts.ScriptTarget.ES2022 };
+  const sourceFile = ts.createSourceFile(fileName, source, options.target!, true, ts.ScriptKind.TS);
+  const host = ts.createCompilerHost(options, true);
+  host.fileExists = (name) => name === fileName;
+  host.readFile = (name) => (name === fileName ? source : undefined);
+  host.getSourceFile = (name) => (name === fileName ? sourceFile : undefined);
+  host.writeFile = () => {};
+  const program = ts.createProgram([fileName], options, host);
+  return { checker: program.getTypeChecker(), sourceFile };
+}
+
 describe("#1058 generic base-node factories", () => {
+  it("does not treat an arbitrary constructor result as a fresh instantiated generic carrier", async () => {
+    const { checker, sourceFile } = typedSource(`
+      interface Node { kind: number; pos: number; }
+      interface Token<K extends number> extends Node { kind: K; }
+      const shared: Node = { kind: 1, pos: 0 };
+      class ReusingToken implements Node {
+        kind: number;
+        pos = 0;
+        constructor(kind: number) {
+          this.kind = kind;
+          return shared as ReusingToken;
+        }
+      }
+      function make<K extends number>(kind: K): Token<K> {
+        return new ReusingToken(kind) as Token<K>;
+      }
+      const token = make(1);
+    `);
+    let call: ts.CallExpression | undefined;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === "token" &&
+        node.initializer &&
+        ts.isCallExpression(node.initializer)
+      ) {
+        call = node.initializer;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    expect(call).toBeDefined();
+    const context = {
+      checker,
+      callableSourceFiles: [sourceFile],
+      oracle: {
+        valueDeclarationOf(node: ts.Node) {
+          const symbol = checker.getSymbolAtLocation(node);
+          return symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+        },
+      },
+    } as unknown as Parameters<typeof genericStructFactoryCall>[0];
+    expect(genericStructFactoryCall(context, call!)).toBeNull();
+  });
+
   it("keeps a memoized callback's later factory capture live", async () => {
     const result = await compileMulti(
       {
@@ -678,6 +739,108 @@ describe("#1058 generic base-node factories", () => {
     );
 
     expect((await instantiate(result)).test()).toBe(517);
+  });
+
+  it("keeps a declaration's narrowed parent after an earlier sibling materialization", async () => {
+    const result = await compile(
+      `
+        type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+
+        interface Node {
+          kind: number;
+          parent: Node;
+        }
+
+        interface Declaration extends Node {
+          symbol: unknown;
+          localSymbol?: unknown;
+        }
+
+        interface NumericLiteral extends Declaration {
+          text: string;
+        }
+
+        interface VariableDeclarationList extends Node {
+          declarationCount: number;
+        }
+
+        interface CatchClause extends Node {
+          catchBlockKind: number;
+        }
+
+        interface VariableDeclaration extends Declaration {
+          parent: VariableDeclarationList | CatchClause;
+          name: string;
+        }
+
+        interface BaseNodeFactory {
+          createBaseNode(kind: number): Node;
+        }
+
+        function RuntimeNode(this: Mutable<Node>, kind: number): void {
+          this.kind = kind;
+          this.parent = undefined!;
+        }
+
+        function createBaseNodeFactory(): BaseNodeFactory {
+          let NodeConstructor: new (kind: number) => Node;
+          return { createBaseNode };
+
+          function createBaseNode(kind: number): Node {
+            return new (NodeConstructor || (NodeConstructor = RuntimeNode as any))(kind);
+          }
+        }
+
+        const baseFactory = createBaseNodeFactory();
+
+        function createBaseNode<T extends Node>(kind: T["kind"]): Mutable<T> {
+          return baseFactory.createBaseNode(kind) as Mutable<T>;
+        }
+
+        function createBaseDeclaration<T extends Declaration>(kind: T["kind"]): Mutable<T> {
+          const node = createBaseNode<T>(kind);
+          node.symbol = undefined!;
+          node.localSymbol = undefined;
+          return node;
+        }
+
+        function createNumericLiteral(text: string): NumericLiteral {
+          const node = createBaseDeclaration<NumericLiteral>(9);
+          node.text = text;
+          return node;
+        }
+
+        function createVariableDeclaration(
+          name: string,
+          parent: VariableDeclarationList | CatchClause,
+        ): VariableDeclaration {
+          const node = createBaseDeclaration<VariableDeclaration>(260);
+          node.name = name;
+          node.parent = parent;
+          return node;
+        }
+
+        export function test(): number {
+          const literal = createNumericLiteral("42");
+          const parent: VariableDeclarationList = {
+            kind: 261,
+            parent: undefined!,
+            declarationCount: 1,
+          };
+          const declaration = createVariableDeclaration("value", parent);
+          return literal.kind
+            + literal.text.length
+            + declaration.kind
+            + declaration.name.length
+            + declaration.parent.kind
+            + parent.declarationCount
+            + (declaration.parent === parent ? 1 : 0);
+        }
+      `,
+      { fileName: "issue-1058-variable-declaration-parent.ts", skipSemanticDiagnostics: true },
+    );
+
+    expect((await instantiate(result)).test()).toBe(539);
   });
 
   it("preserves a literal's nominal identity across a diamond interface return", async () => {
