@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import { compile } from "../src/index.js";
+import { runTest262File } from "./test262-runner.js";
 
 /**
  * #2717 — Array.prototype.flat / flatMap on the host-free lanes.
@@ -69,6 +71,28 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
       expect((instance.exports as { test: () => number }).test()).toBe(want);
     });
   }
+
+  it("preserves a scalar callback's custom species result", async () => {
+    const relativePath = "built-ins/Array/prototype/flatMap/target-array-with-non-writable-property.js";
+    const result = await runTest262File(
+      resolve("test262/test", relativePath),
+      "issue-2717-standalone",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, `${relativePath}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
+  });
+
+  it("keeps a dynamic scalar-or-array callback fail-loud", async () => {
+    const r = await compileStandalone(`
+      const a: number[] = [1, 2];
+      const cb: (x: number) => number | number[] = (x) => x;
+      return a.flatMap(cb).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
 
   const loudCases: Array<[string, string, RegExp]> = [
     [
