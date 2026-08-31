@@ -513,3 +513,30 @@ external-destination safeguard until the user explicitly authorizes pushing
 the completed branch to the configured public `ttraenkler/js2` fork; no push
 or pull request has been attempted around that guard. No GitHub issue was
 created.
+
+## Live-main integration plan — 2026-09-01
+
+The completed #4449 checkpoint is clean at
+`2ae828c69708179679cc13ae7bbe63583667824f`. Current shared
+`upstream/main` is `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`, five commits ahead of merge
+base `932341cc7d01547bf6b0065d766a31cdf3478d9f`. The complete upstream delta is
+limited to npm/Test262 benchmark mirrors and `scripts/loc-budget-baseline.json`;
+it has no direct overlap with this issue's tracker, two implementation sources,
+or focused test.
+
+Before integration, refresh `loopdive/js2:main` once more and re-audit that
+boundary. Use a temporary worktree-only `.prettierignore` block for the four
+public/website Test262 report mirrors so the normal merge hook cannot reformat
+generated upstream bytes into this four-path PR. The block must be applied and
+removed with `apply_patch`, never staged or committed. Merge with `--no-commit`,
+run the complete normal attributed commit hook, remove the guard, and prove the
+PR range is again exactly four intended paths with no benchmark or `labs/`
+leakage.
+
+Then serially repeat the focused **13/13** suite, the exact species-producer
+host **8/8** and standalone **8/8** manifests with deterministic path/row
+reconciliation, TS7/typecheck, and the complete synthetic-ref pre-push hook on
+the actual final HEAD. Stop on any regression or generated-path leak. No push
+or GitHub mutation is authorized by this plan; publication remains blocked on
+explicit permission to push the completed branch to the public
+`ttraenkler/js2` fork for a non-draft PR against `loopdive/js2:main`.
