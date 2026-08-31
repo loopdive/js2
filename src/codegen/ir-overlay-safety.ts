@@ -135,7 +135,7 @@ export function correlateIrSkippedBodyNames(
 export function correlateIrSkippedBodyUnitIds(
   requestedUnitIds: ReadonlySet<IrUnitId>,
   returnedUnitIds: readonly IrUnitId[],
-  kind: "class member" | "implicit constructor support",
+  kind: "function" | "class member" | "implicit constructor support",
 ): ReadonlySet<IrUnitId> {
   const completed = new Set<IrUnitId>();
   for (const unitId of returnedUnitIds) {

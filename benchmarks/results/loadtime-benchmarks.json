@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-24T22:28:49.024Z",
+  "timestamp": "2026-08-31T02:33:28.289Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -242,6 +242,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -348,8 +359,9 @@
         "fib(30)",
         "Recursive — pure i32/f64 math, no host calls",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
       ]
@@ -595,6 +607,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -700,8 +723,9 @@
         "Loop: 1M Int32 sum",
         "Tight i32 loop with explicit | 0 wrap, no allocations",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
       ]
@@ -947,6 +971,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -1063,8 +1098,9 @@
         "String: concat 1k",
         "wasm:js-string concat per iteration",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "repeat",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
@@ -1311,6 +1347,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -1416,8 +1463,9 @@
         "Array: fill+sum 10k",
         "Wasm GC array — push / get loop",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
       ]
@@ -1675,6 +1723,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -1782,8 +1841,9 @@
         "DOM: 100 elements",
         "Host boundary — createElement + appendChild",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
       ]
@@ -2053,6 +2113,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -2172,8 +2243,9 @@
         "Style: 100 updates",
         "Host boundary — style.background per iteration",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow-y:auto"
       ]
@@ -2450,6 +2522,17 @@
         },
         {
           "module": "env",
+          "name": "__new_TypeError",
+          "kind": "func",
+          "intent": {
+            "type": "extern_class",
+            "className": "TypeError",
+            "action": "new"
+          },
+          "paramCount": 1
+        },
+        {
+          "module": "env",
           "name": "__extern_to_string_default",
           "kind": "func",
           "intent": {
@@ -2488,6 +2571,16 @@
             "name": "__concat_7"
           },
           "paramCount": 7
+        },
+        {
+          "module": "env",
+          "name": "__throw_reference_error",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__throw_reference_error"
+          },
+          "paramCount": 1
         },
         {
           "module": "env",
@@ -2538,6 +2631,16 @@
             "name": "__call_function_4"
           },
           "paramCount": 6
+        },
+        {
+          "module": "env",
+          "name": "__register_init_class_export",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__register_init_class_export"
+          },
+          "paramCount": 3
         }
       ],
       "stringPool": [
@@ -2642,21 +2745,30 @@
         "saved ",
         "-",
         "padding:0.75rem;background:#1a1a35;border-radius:6px;border:1px solid #2a2a4a;margin-bottom:0.5rem;cursor:pointer",
-        "TypeError: Cannot access property on null or undefined",
-        "TypeError: Cannot access property on null or undefined at 33:17",
+        "Cannot access property on null or undefined at 31:15",
+        "TypeError: Cannot access property on null or undefined at 31:15",
+        "Cannot access property on null or undefined at 33:17",
         "RangeError: toFixed() digits argument must be between 0 and 100",
         "padding:8px 4px;text-align:center;font-size:0.8rem;color:#555;font-style:italic",
         "padding:6px 4px;text-align:center;font-size:0.8rem;cursor:pointer;border-radius:4px;background:",
         ";border:",
+        "selStart is not defined",
+        "selEnd is not defined",
         "margin:0;background:#111;color:#ddd;font-family:system-ui,sans-serif;overflow:hidden",
         "display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem",
+        "monthEl is not defined",
+        "yearEl is not defined",
         "display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:0.6rem;color:#666;margin-bottom:4px",
+        "gridEl is not defined",
         "display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:0.6rem;color:#666;margin-top:4px",
         "display:flex;align-items:center;justify-content:space-between;margin-top:0.75rem;font-size:0.85rem",
+        "nightsEl is not defined",
         "display:flex;align-items:center;justify-content:space-between;margin-top:0.5rem",
+        "totalEl is not defined",
         "padding:8px 28px;background:#fff;color:#111;border-radius:999px;cursor:pointer;font-size:0.9rem;font-weight:600",
         "timestamp",
-        "\u0000js2_data_struct_host_bridge_token"
+        "\u0000js2_data_struct_host_bridge_token",
+        "__\u0000js2_call_fn_method_argc_0,__\u0000js2_call_fn_method_argc_1,__\u0000js2_call_fn_method_argc_2,__\u0000js2_call_fn_method_argc_3,__\u0000js2_call_fn_method_argc_4,__\u0000js2_call_fn_method_argc_5,__call_fn_0,__call_fn_1,__call_fn_2,__call_fn_3,__call_fn_4,__call_fn_method_0,__call_fn_method_1,__call_fn_method_2,__call_fn_method_3,__call_fn_method_4,__call_fn_method_5,__closure_arity,__is_closure"
       ]
     }
   ]

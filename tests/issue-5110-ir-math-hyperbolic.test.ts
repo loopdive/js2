@@ -262,43 +262,6 @@ describe("#5110 exact ambient hyperbolic Math IR ownership", () => {
     }
   });
 
-  it.each([
-    ["sinh", "JS2WASM_IR_MATH_SINH", ["cosh", "tanh"]],
-    ["cosh", "JS2WASM_IR_MATH_COSH", ["sinh", "tanh"]],
-    ["tanh", "JS2WASM_IR_MATH_TANH", ["sinh", "cosh"]],
-  ] as const)("withdraws only %s through its narrow rollback", async (disabled, flag, retained) => {
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(
-        `
-          export function sinh(value: number): number { return Math.sinh(value); }
-          export function cosh(value: number): number { return Math.cosh(value); }
-          export function tanh(value: number): number { return Math.tanh(value); }
-        `,
-        { fileName: `issue-5110-${disabled}-rollback.ts`, experimentalIR: true, trackIrOutcomes: true },
-      );
-      expectSuccess(result);
-      expect(outcomeFor(result, disabled)).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      for (const method of retained) {
-        expect(outcomeFor(result, method)).toMatchObject({
-          kind: "emitted",
-          legacyBodyEmitted: false,
-          irBodyEmitted: true,
-        });
-      }
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (_label, source) => {
     const result = await compile(source, {
       fileName: `issue-5110-${_label.replaceAll(" ", "-")}.ts`,

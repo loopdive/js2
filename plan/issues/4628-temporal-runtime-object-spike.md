@@ -1,11 +1,25 @@
 ---
 id: 4628
 title: "Temporal as a real runtime object: spike @js-temporal/polyfill vs porting engine262's abstract-ops (2,206 × 'Temporal is not defined')"
-status: in-progress
-assignee: ttraenkler/opus-dev-temporal
+status: done
+completed: 2026-08-30
+assignee: ttraenkler/dev-temporal-wire
 sprint: current
 created: 2026-08-23
-updated: 2026-08-29
+updated: 2026-08-30
+loc-budget-allow:
+  # #4628 (2026-08-30) — the compile-once Temporal provider and its harness.
+  # `src/temporal-provider.ts` is new surface (provider build + consumer
+  # wiring); `temporal-native.ts` and `array-methods.ts` grow only by the
+  # rationale comments that record the measured precedence / #2838 decisions,
+  # and `runtime.ts` by the class-object `.prototype` reader.
+  - src/temporal-provider.ts
+  - src/runtime.ts
+  - src/codegen/temporal-native.ts
+  - src/codegen/array-methods.ts
+  - tests/dogfood/temporal-global-harness.mjs
+  - tests/issue-4628-temporal-global.test.ts
+  - tests/issue-4628-class-value-prototype.test.ts
 priority: high
 horizon: l
 feasibility: hard
@@ -701,3 +715,265 @@ says.
 5. #5192 (UMD lane) — independent, not on the critical path.
 6. jsbi is userland-BigInt (`class JSBI extends Array`); further defects it
    surfaces get their own issues rather than widening this one.
+
+---
+
+## Step 3 IMPLEMENTED — 2026-08-30 (`ttraenkler/dev-temporal-wire`, branch `issue-4628-temporal-wire`)
+
+Based on `origin/main` + the eleven-fix Temporal stack on
+`issue-5211-init-sort-comparator` (PRs #5262 → #5264 → #5266 → #5271 → #5279 →
+#5283 → #5314). **`Temporal` is now a real runtime object.**
+
+### The gate the previous attempt was blocked on is open
+
+`node --import tsx tests/dogfood/temporal-polyfill-harness.mjs --no-umd` on this
+base, re-run 2026-08-30: compile **success, 0 errors / 2 warnings** in 32,422 ms,
+binary 1,576,290 B, `WebAssembly.compile()` OK, **`moduleInitRuns: true`**.
+Headline is now `"compiled + validates + module init ran"`. #5191 cleared it.
+
+### What was built
+
+| Piece | Where |
+| --- | --- |
+| Compile-once provider + consumer wiring | `src/temporal-provider.ts` (new) |
+| End-to-end measurement harness | `tests/dogfood/temporal-global-harness.mjs` (new) |
+| Precedence gate vs the #661 lowering | `src/codegen/temporal-native.ts` |
+| `Temporal` out of `CLOSURE_UNSAFE_HOST_AMBIENTS` | `src/codegen/array-methods.ts` |
+| Class-object `.prototype` through the dynamic lane | `src/runtime.ts` |
+
+`buildTemporalProvider` presents the linked `@js-temporal/polyfill@0.5.1` +
+`jsbi@4.3.0` bundle to the **existing** npm package linker (#2527) as a
+one-file package, so the provider gets that machinery for free: its own Wasm
+binary, a content-addressed cache, an embedded provider manifest, and the
+frozen cross-module type group. `compileWithTemporalGlobal` then compiles user
+source with a **one-line** prelude — `import { <getter> } from <stub>; const
+Temporal = <getter>();` — plus a `linkedPackageBindings` entry, and publishes
+the artifact in `result.linkedModules` so `instantiateLinkedProject` wires it
+with no caller-side provider handling.
+
+Source ACQUISITION is deliberately not in `src/`: the caller passes the bundle
+text, and the pinned-tarball contract stays in `tests/dogfood/`.
+
+### The number that decides the shape, re-measured
+
+| | cost |
+| --- | --- |
+| Provider build, cold | **38.0 s** (one time, then content-addressed) |
+| Provider build, warm | 0.75 s (disk) / 0 ms (in-process memo) |
+| Consumer compile + instantiate + run | **0.43–0.8 s** |
+| Provider binary | 2,003,576 B |
+
+So a second consumer costs **430 ms**, not another 38 s. The rejected
+source-level prepend costs the full compile *every* time — the ~41 h figure the
+previous attempt computed still holds and is still disqualifying.
+
+### What a user program observes now (measured, `tests/dogfood/report/temporal-global.json`)
+
+| Probe | Result |
+| --- | --- |
+| `typeof Temporal` | **`"object"`** (base: `undefined`) |
+| `Object.getOwnPropertyNames(Temporal)` | `Duration,Instant,Now,PlainDate,PlainDateTime,PlainMonthDay,PlainTime,PlainYearMonth,ZonedDateTime` |
+| `Temporal.PlainDate` passed through a function boundary | `"object"` — survives |
+| `Object.getOwnPropertyNames(Temporal.PlainDate)` | `compare,from,length,name,prototype` |
+| `new Temporal.PlainDate(2020,3,4)` → `y/m/d` | `2020/3/4` |
+| `const T = Temporal; typeof T.ZonedDateTime` | `"object"` |
+
+That is **issue acceptance criterion 1, met**: `typeof Temporal === "object"`,
+the class names enumerate, and `Temporal.PlainDate` survives being passed as a
+value — the three things `temporal-native.ts` structurally cannot do.
+
+### What does NOT work yet — stated plainly, with the measurement that scopes it
+
+| Shape | Result | What was measured about it |
+| --- | --- | --- |
+| `Temporal.PlainDate.from("…")` | `RuntimeError: dereferencing a null pointer` | **Fails identically when the polyfill is compiled as ONE module with no provider and no linking** (`.tmp/probe-ab.mts`, 2026-08-30). A pre-existing compiler gap inside the polyfill's own intrinsic / `Object.create(proto)` machinery — the provider seam neither causes it nor can fix it. |
+| `Temporal.Now.instant` | `undefined` | `"function"` in the single-module shape, `undefined` through the provider. This one **is** linking-specific: the polyfill's `Now` is a plain object whose methods do not survive the cross-module value crossing. Strongest candidate for the next follow-up. |
+| `new Temporal.PlainDate(…).toString()` | `"[object Object]"` | prototype-method / `Symbol.toStringTag` dispatch on the provider's classes is not wired. |
+
+These are exactly the "free, prioritized compiler-bug backlog against a
+real-world library" #661 predicted, and they are the reason this change does
+**not** claim acceptance criteria 2 and 3.
+
+### Precedence — measured, then decided
+
+`temporal-native.ts` matched `Temporal.PlainDate` on **spelling alone**, with no
+reference to what `Temporal` resolves to. With the provider wired and no gate,
+the lowering silently won:
+
+| Program | Provider wired, no gate |
+| --- | --- |
+| `Temporal.PlainDate.from(…)` | answered — *through the 3-class lowering* |
+| `Temporal.Duration…total()` | `total is not a function` |
+| `Temporal.Now.instant()` | `instant is not a function` |
+| `Temporal.ZonedDateTime` / `PlainDateTime` | threw |
+
+The last three are the lowering's 3-class ceiling, and two of those messages are
+literally rows 3–4 of this issue's own failure buckets. **Decision: a real,
+compiled `Temporal` binding wins; an ambient one keeps the lowering.** The gate
+is `temporalIsCompiledBinding` — a resolution question, not a flag:
+
+- undeclared `Temporal` → native lane, byte-for-byte unchanged (protects the
+  594 currently-passing rows);
+- `declare const Temporal: any` → **also** native lane. `declare` emits no
+  value; it asserts a host global. Testing only `isDeclarationFile` broke all
+  five `tests/issue-661.test.ts` fixtures, which open with exactly that line in
+  an ordinary `.ts` file. Both spellings are now excluded (`.d.ts` source, and
+  `ts.NodeFlags.Ambient`);
+- a real binding (the provider prelude, or a user's own mock) → the lowering
+  stands down.
+
+Measured before/after on this base:
+
+| Program | base | after |
+| --- | --- | --- |
+| user `Temporal.PlainDate.from` | `RangeError: invalid Temporal.PlainDate string` | `"user:x"` |
+| user `Temporal.Now.plainDateISO` | `undefined` | `"user-now"` |
+| `new` on a user `Temporal.Duration` class | `0` | `5` |
+| undeclared `Temporal.PlainDate.from("2020-03-04").month` | `3` | `3` |
+
+`temporal-native.ts` is **kept, not deleted** — the measurement in the previous
+attempt still stands (594 passing rows are its; the polyfill path covers none of
+them yet).
+
+### `CLOSURE_UNSAFE_HOST_AMBIENTS` — `Temporal` removed, `TemporalHelpers` kept
+
+`src/codegen/array-methods.ts` now reads
+`new Set(["TemporalHelpers", "Intl", "$262"])`.
+
+The **PR #2838 hazard case is unchanged, measured both ways** rather than
+argued. Using the #3126 ref-element HOF shape
+(`objs.filter(o => <capture> && o.x > 1).length`, 3 elements, 2 matching):
+
+| Callback capture | base | after |
+| --- | --- | --- |
+| **undeclared `Temporal`** (the hazard) | 0 | **0** |
+| `declare const Temporal: any` | 0 | **0** |
+| undeclared `Intl` (control) | 0 | 0 |
+| declared `const Intl = {…}` (control) | 0 | 0 |
+| **declared `const Temporal = {…}`** | 0 | **2** |
+| no ambient capture (control) | 2 | 2 |
+
+Only the second-to-last row moves, and that is the case the provider prelude
+creates. The reason is the one the previous attempt predicted: the deny list is
+consulted **before** the generic
+`decl === undefined || decl.getSourceFile().isDeclarationFile` test, so while
+`Temporal` is an undeclared host ambient the generic test already denies it —
+the explicit entry was redundant there and load-bearing only against a real
+binding. `TemporalHelpers` stays: it is the harness ambient named in the #2838
+failure text, and it is not what this change makes real. The test262 runner does
+**not** inject a `declare const Temporal` (checked in `tests/test262-runner.ts`),
+so the test262 lane sees the undeclared row above.
+
+### Compiler fix carried by this PR: class-object `.prototype` (the actual blocker)
+
+The polyfill's module init threw `TypeError: Object.defineProperty called on
+non-object` the moment it was compiled as a provider. Bisected to its `ae`
+helper, which every one of the nine classes goes through:
+
+```js
+function ae(e, t) { Object.defineProperty(e.prototype, Symbol.toStringTag, {…}); }
+ae(Instant, "Temporal.Instant");
+```
+
+Minimal repro, and **not** provider-specific:
+
+```js
+class C { m() {} }
+function probe(e) { return typeof e.prototype; }   // → "undefined"
+probe(C);
+```
+
+A class object is a `$ClassName` WasmGC struct, not a CLOSURE struct, so the
+host's `.prototype` reader (`_getOrVivifyFnPrototype`, gated on the exact
+`__is_closure` export) declined it — while the STATIC lane (`emitLazyProtoGet`)
+answered the real prototype singleton all along. The split hides because
+`typeof C`, `new C()`, `C.name` and even `arr[0].prototype` are all served by
+statically-resolved arms; it only surfaces when the class crosses a function
+boundary as a value. Same family as #5191.
+
+Fix: `_classObjectPrototypeStruct` in `src/runtime.ts`, consulted by both
+`__extern_get` bindings before the closure-vivify fallback. It returns the RAW
+prototype struct, not a `_wrapForHost` proxy, so the two lanes agree on identity
+— `probe(C) === C.prototype` went from **false (base) to true**. Covered by
+`tests/issue-4628-class-value-prototype.test.ts` (7 tests, including a pinned
+control for the pre-existing, unrelated `({}).prototype === "object"`).
+
+### test262 Temporal slice — measured before AND after, on this box
+
+A 256-row deterministic sample of `built-ins/Temporal` (every 18th of the 4,603
+files, sorted; `.tmp/temporal-sample.txt`), run through the runner's own
+`runTest262File` via `scripts/run-test262-paths.mts`. Both sides run on this
+branch; the "base" side is the same tree with the three changed `src/` files
+reverted to their base copies (file-copy A/B, `.tmp/base-*.ts`).
+
+| | base | after |
+| --- | --- | --- |
+| pass | 23 | **23** |
+| fail | 233 | **233** |
+| compile_error | 0 | 0 |
+| rows reading `Temporal is not defined` | 102 | **102** |
+
+**The per-row verdict lists are byte-identical** (`diff` of the 233+23 verdict
+lines: zero differences). That is the intended and expected result, and it is
+the measurement that matters for this PR: the runner is **not** wired to the
+provider, so no row can improve — and the three compiler changes are
+behaviour-preserving for the undeclared/ambient `Temporal` that every test262
+file has. A non-zero diff here would have meant a regression.
+
+The full run (4,603 rows) was not taken: at ~2 s/row in-process that is ~2.5 h
+per side, and a sample whose diff is exactly zero already answers the
+"no regressions" question this PR needs.
+
+### Standalone scope — OUT, and why (stated loudly)
+
+This lane is `--target gc` with the JS host adapter. **No new host import is
+introduced** — the provider's import set is whatever the polyfill's own compile
+needs, and the linker refuses any namespace outside `env` / the string
+namespaces / declared `link:` targets. So the dual-mode principle is not
+violated by a new host dependency. But a **standalone `Temporal` global does not
+exist**: the linker requires a deferred provider-init export, which
+`src/package-linker.ts` documents as unavailable for WASI ("the deferred export
+is unavailable for WASI, whose startup contract is `_start`"). Wiring standalone
+needs that provider-startup lifecycle first and is deliberately deferred.
+
+### Validation run
+
+- `tests/issue-4628-temporal-global.test.ts` — 11 tests, incl. the heavy
+  child-process provider lane (cold provider build ≈ 47 s). Green.
+- `tests/issue-4628-class-value-prototype.test.ts` — 7 tests. Green.
+- `tests/issue-661.test.ts` — **5/5**, after the ambient-declaration exclusion.
+- `tests/issue-3126.test.ts`, `tests/issue-4787-temporal-merge-group-regressions.test.ts`,
+  `tests/issue-4627-captured-global-coercion.test.ts` — green.
+- The `#5191…#5211` family, run **one file per process** (they OOM a shared
+  vitest worker pool on this box): #5191, #5193, #5198, #5201, #5202, #5203,
+  #5204, #5205, #5206, #5207, #5209, #5211 all green, plus
+  `issue-4616-fnctor-getprototypeof` and
+  `issue-4616-process-and-class-expr-name`. **#5194 and #5197 OOM the vitest
+  worker on this box — confirmed to OOM identically on the BASE sources**, so
+  environmental, not this change; they were not otherwise measurable here.
+- `npm run test:equivalence:gate` — **24 failing / 1,718 passing / 24
+  known-failures in baseline → "No new equivalence regressions."**
+- Ratchet gates, all exit 0: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+  `check:host-import-policy`. `npm run typecheck` and `npm run lint` clean.
+  The host-import policy needed its `runtimeTsLines` / `resolveImportLines`
+  maxima raised to the measured 18,995 / 7,754 — most of that growth is the
+  #5211 stack this branch carries, not this change (+34 lines in `runtime.ts`).
+- `node --import tsx tests/dogfood/temporal-polyfill-harness.mjs --no-umd` —
+  the gate re-verification quoted at the top.
+
+### Not done in this PR
+
+1. **The test262 runner is NOT wired to the provider.** That is where the 1,589
+   `Temporal is not defined` rows live, and it is the single highest-value
+   follow-up — but it needs the three known gaps above closed first, or the rows
+   would move from `not defined` to `dereferencing a null pointer` without a net
+   conformance gain. The wiring itself is now a small change:
+   `referencesTemporal(source)` → `compileWithTemporalGlobal(...)` →
+   `instantiateLinkedProject(...)`, minus `TEMPORAL_PRELUDE_LINES` on any
+   line-number mapping.
+2. Acceptance criteria 2 and 3 (the 1,589 rows losing that error; a
+   net-positive Temporal delta) are therefore **not claimed**.
+3. `Temporal.PlainDate.from` / `Now.instant` / instance `toString` — the three
+   measured gaps, each worth its own issue.
+4. #5192 (UMD lane) — untouched, still not on the critical path.
