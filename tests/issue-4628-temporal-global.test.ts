@@ -170,9 +170,24 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(report.provider.binaryBytes).toBeGreaterThan(1_000_000);
 
     const s = report.supported;
-    for (const [label, probe] of Object.entries(s) as [string, { status: string }][]) {
-      expect(`${label}:${probe.status}`).toBe(`${label}:ok`);
-    }
+    // (#5227 / #5243) Report the stale-provider hypothesis BEFORE the row
+    // assertions, and report ALL failing rows rather than only the first.
+    // The provider cache is content-addressed on the polyfill source, which a
+    // compiler change does not touch, so a hit serves a binary built by
+    // whatever compiler ran last in this container. Measured 2026-08-31: a
+    // 17-hour-old default cache failed five of these rows at once on a branch
+    // where all five pass fresh, and the single-row assertion below read as a
+    // specific regression in recent work.
+    const failing = (Object.entries(s) as [string, { status: string; error?: string }][])
+      .filter(([, probe]) => probe.status !== "ok")
+      .map(([label, probe]) => `${label}: ${probe.error ?? probe.status}`);
+    const staleHint =
+      failing.length > 0 && report.provider?.cacheHit === true
+        ? ` — NOTE: the provider was served from CACHE (${report.provider.cacheAgeHours ?? "unknown"}h old) and was ` +
+          `NOT built by this working tree's compiler. Re-run with JS2WASM_TEMPORAL_CACHE set to a fresh directory ` +
+          `before treating this as a regression.`
+        : "";
+    expect(`supported failures: ${failing.join(" | ")}${staleHint}`).toBe("supported failures: ");
 
     // THE headline. On base this program answers "undefined".
     expect(s.typeofTemporal.value).toBe("object");
