@@ -4,7 +4,7 @@ title: "Inventory and retirement plan for IR/direct env kill-switches"
 status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-30
+updated: 2026-08-31
 priority: medium
 horizon: s
 feasibility: easy
@@ -29,7 +29,7 @@ documentation". Measured 2026-08-16: **13 distinct `JS2WASM_IR_*` env vars**
 
 `JS2WASM_IR_INLINE` (15) · `JS2WASM_IR_FIRST` (10) · `JS2WASM_IR_SHAPE_DIAG`
 (7) · `JS2WASM_IR_I…` (4) · `JS2WASM_IR_POSTCLAIM_LOG` (3) ·
-`JS2WASM_IR_OWNERSHIP` (3) · `JS2WASM_IR_OBJECT_SHAPES` (3) ·
+`JS2WASM_IR_OWNERSHIP` (3) · the now-retired object-shape rollout control (3) ·
 `JS2WASM_IR_GVN` (3) · `JS2WASM_IR_ESCAPE` (3) · `JS2WASM_IR_ASYNC` (3) ·
 `JS2WASM_IR_VERIFY_DOMINANCE_NAIVE` (2) · `JS2WASM_IR_STRING_BUILDER` (2) ·
 `JS2WASM_IR_GVN_DEBUG` (1)
@@ -58,12 +58,14 @@ kind of last-minute audit R9 should not depend on.
       land; a `JS2WASM_MULTI_PREPARED_*_CUTOVER` reader is R9 debt even though
       it is outside the historical `JS2WASM_IR_*` prefix census.
 
-## The inventory (measured 2026-08-21)
+## The inventory (measured 2026-08-21; maintained through 2026-08-31)
 
-**15 vars now, not 14** — the current source census includes the earlier
-`JS2WASM_IR_CUTOVER_AUDIT` addition and the live exact mixed-primitive
-conditional reader omitted by the prior table; the truncated `JS2WASM_IR_I…`
-in the problem statement is `JS2WASM_IR_I32_DOMAIN`. The classification key: a
+**14 live IR-prefixed vars after the #1231 retirement** — before this slice the
+source census was 15 because it included the earlier
+`JS2WASM_IR_CUTOVER_AUDIT` addition, the exact mixed-primitive conditional
+reader omitted by the prior table, and the now-retired object-shape rollback;
+the truncated `JS2WASM_IR_I…` in the problem statement is
+`JS2WASM_IR_I32_DOMAIN`. The classification key: a
 var is **R9 debt exactly when flipping it selects the legacy/direct path or a
 legacy representation** ("IR/legacy escape hatches and compile-twice switches",
 #3518 R9). A toggle over an IR-internal pass, experiment, or log never
@@ -76,7 +78,6 @@ blanket "pass toggles are the R9 debt" is corrected accordingly, per-var below.
 | `JS2WASM_IR_STRING_BUILDER` | on | `=0` forces builder loops to legacy (`string-builder-candidate`) | **retire-at-R9** — legacy escape hatch; its always-deferred sibling arm (`containsCountedLiteralStringAppend`, the #1004 repeat-fold) is a selector gap #3518's coverage closure must own, not an env var | R9 |
 | `JS2WASM_IR_ASYNC` | on | `=0` clears `supportsAsyncIr` — async bodies route to legacy | **retire-at-R9** | R7 (#3527/#1373b) then R9 |
 | `JS2WASM_IR_MIXED_PRIMITIVE_CONDITIONAL` | on | `=0` rejects the exact mixed primitive conditional/wrapper route before claim, leaving the function direct-owned | **retire-at-R9** — separately owned exact selector rollback | #5092 then R9 |
-| `JS2WASM_IR_OBJECT_SHAPES` | on | `=0` reverts to the legacy boxed-externref object representation | **retire-at-R9** — legacy-representation escape hatch | R9 |
 | `JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER` | on | `=0` restores direct-first ownership for the bounded scalar leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_MULTI_PREPARED_ARRAY_CUTOVER` | on | `=0` restores direct-first ownership for the bounded array leaf | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
 | `JS2WASM_MULTI_PREPARED_STRING_CUTOVER` | on | `=0` restores direct-first ownership for the exact counted-string benchmark leaf while retaining its late IR overlay | **retire-at-R9** — bounded direct-route escape hatch | #3518 R9 |
@@ -101,14 +102,16 @@ blanket "pass toggles are the R9 debt" is corrected accordingly, per-var below.
 Nothing is retire-now-already-dead: every var has a live reader under `src/`
 (verified by the per-var grep above the table's compilation, 2026-08-21).
 
-The original four global `JS2WASM_IR_*` retire-at-R9 vars remain
-`JS2WASM_IR_FIRST`, `JS2WASM_IR_STRING_BUILDER`, `JS2WASM_IR_ASYNC`, and
-`JS2WASM_IR_OBJECT_SHAPES`; the exact mixed-primitive conditional rollback is a
-fifth selector-route row, separately owned by #5092. The complete 2026-08-30
-source census finds fifteen `JS2WASM_IR_*` readers and nine non-test named
-Prepared cutover readers: the five earlier multi-source leaves plus callable
-component, module-init, standalone class, and timer-shim routes, plus the
-default-on `JS2WASM_LINEAR_IR` direct-backend reader. These fifteen
+The original global `JS2WASM_IR_*` retire-at-R9 population is now the three
+remaining controls `JS2WASM_IR_FIRST`, `JS2WASM_IR_STRING_BUILDER`, and
+`JS2WASM_IR_ASYNC`; #1231 retired the former boxed-object representation
+rollback. The exact mixed-primitive conditional rollback is a fourth
+selector-route row, separately owned by #5092. The complete 2026-08-31 source
+census finds fourteen route/representation readers: those four global/selector
+rows; nine non-test named Prepared cutover readers (the five earlier
+multi-source leaves plus callable component, module-init, standalone class, and
+timer-shim routes); and the default-on `JS2WASM_LINEAR_IR` direct-backend
+reader. These fourteen
 route/representation readers are the complete current `retire-at-R9` env
 denominator. `JS2WASM_LINEAR_IR_COVERAGE` and `JS2WASM_LINEAR_IR_DEBUG` are
 opt-in observation/debug siblings, while `JS2WASM_DIRECT_CALLS` only tunes
@@ -117,6 +120,13 @@ a host async-wrapper ABI; none of those select a source unit between IR and a
 direct body. R9 consumes the complete live table, not a stale historical
 cardinality. Every new bounded route switch must update this table in the same
 landing PR.
+
+### 2026-08-31 #1231 object-shape rollback retirement
+
+#1231 removes the sole frontend object-shape rollback reader and its three
+guarded consumers while preserving all conservative lattice refusals. The
+R9 route/representation denominator therefore moves exactly **15→14**. No
+other row in the table changes ownership or classification.
 
 ## 2026-08-30 Sol implementation plan — retire the exact Math rollback family
 
