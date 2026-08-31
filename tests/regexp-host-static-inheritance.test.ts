@@ -116,4 +116,35 @@ describe("host class static inheritance", () => {
     (instance.exports as { __module_init?: () => void }).__module_init?.();
     expect((instance.exports as { test: () => number }).test()).toBe(2);
   });
+
+  it("captures top-level mutable and const-snapshot heritage parents in source order", async () => {
+    const result = await compile(
+      `
+        let P = RegExp;
+        class BeforeWrite extends P {}
+        P = Object;
+        class AfterWrite extends P {}
+
+        let Mutable = RegExp;
+        const Stable = Mutable;
+        Mutable = Object;
+        class StableSnapshot extends Stable {}
+
+        export function test(): number {
+          let thrown = 0;
+          try { BeforeWrite.input; } catch { thrown++; }
+          try { AfterWrite.input; } catch {}
+          try { StableSnapshot.input; } catch { thrown++; }
+          return thrown;
+        }
+      `,
+      { fileName: "regexp-host-top-level-mutable-heritage.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const importObject = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, importObject);
+    (importObject as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    (instance.exports as { __module_init?: () => void }).__module_init?.();
+    expect((instance.exports as { test: () => number }).test()).toBe(2);
+  });
 });

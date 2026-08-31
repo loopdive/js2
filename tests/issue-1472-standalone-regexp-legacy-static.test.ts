@@ -32,6 +32,13 @@ class MutableLetAliasChild extends MutableLetHeritageAlias {}
 var MutableVarHeritageAlias = class extends RegExp {};
 MutableVarHeritageAlias = Object;
 class MutableVarAliasChild extends MutableVarHeritageAlias {}
+let DirectMutableHeritage = RegExp;
+class DirectMutableChild extends DirectMutableHeritage {}
+DirectMutableHeritage = Object;
+let MutableSnapshotSource = RegExp;
+const StableSnapshotAlias = MutableSnapshotSource;
+MutableSnapshotSource = Object;
+class StableSnapshotChild extends StableSnapshotAlias {}
 
 export function subclassLegacyNames(): number {
   let passed = 0;
@@ -113,6 +120,13 @@ export function mutableHeritageAliasControls(): number {
   return passed;
 }
 
+export function topLevelHeritageSnapshotControls(): number {
+  let passed = 0;
+  try { DirectMutableChild.input; } catch (error) { if (error instanceof TypeError) passed++; }
+  try { StableSnapshotChild.input; } catch (error) { if (error instanceof TypeError) passed++; }
+  return passed;
+}
+
 export function setterControls(): number {
   let result = 0;
   try { RegExp.input = "intrinsic"; if (RegExp.input === "intrinsic") result |= 1; } catch {}
@@ -145,6 +159,7 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
       aliasedLegacySetters(): number;
       aliasedHeritageRegExpStatics(): number;
       mutableHeritageAliasControls(): number;
+      topLevelHeritageSnapshotControls(): number;
       setterControls(): number;
     };
     expect(exports.subclassLegacyNames()).toBe(19);
@@ -155,6 +170,7 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
     expect(exports.aliasedLegacySetters()).toBe(4);
     expect(exports.aliasedHeritageRegExpStatics()).toBe(4);
     expect(exports.mutableHeritageAliasControls()).toBe(2);
+    expect(exports.topLevelHeritageSnapshotControls()).toBe(2);
     expect(exports.setterControls()).toBe(63);
   });
 });

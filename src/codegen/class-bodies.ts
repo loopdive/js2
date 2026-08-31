@@ -928,7 +928,7 @@ export function collectClassDeclaration(
           // as `HonoBase`, and imported through that alias. Resolve the exact
           // class-expression declaration so the derived struct is registered
           // as a subtype of the synthetic base struct whose bodies actually run.
-          parentClassName = resolveClassHeritageAlias(ctx, baseExpr) ?? baseExpr.text;
+          parentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl) ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;

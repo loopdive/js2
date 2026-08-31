@@ -25,7 +25,7 @@ import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.
 import { emitFuncRefAsClosure } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { classHasMutableHeritageBinding } from "../class-expression-identity.js";
+import { classHeritageRequiresRuntimeParent } from "../class-expression-identity.js";
 import type { InnerResult } from "../shared.js";
 import {
   coerceType,
@@ -70,10 +70,10 @@ function prepareBuiltinClassStaticParent(
   className: string,
 ): BuiltinClassStaticParentRegistration | undefined {
   if (ctx.standalone || ctx.wasi) return undefined;
-  // A mutable heritage identifier must be read at the class declaration's
-  // runtime evaluation point; its initializer's builtin ancestry is not the
-  // class's necessarily-current static parent.
-  if (classHasMutableHeritageBinding(ctx, className)) return undefined;
+  // A runtime heritage value must be read at the class declaration's
+  // evaluation point; its initializer's builtin ancestry is not necessarily
+  // the class's current static parent.
+  if (classHeritageRequiresRuntimeParent(ctx, className)) return undefined;
   const parentName = ctx.classBuiltinParentMap.get(className);
   if (parentName === undefined) return undefined;
   addHostStringConstantGlobal(ctx, parentName);
@@ -674,8 +674,8 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
             classDecl?.heritageClauses?.some(
               (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0,
             ) === true &&
-            !ctx.classParentMap.has(className) &&
-            !ctx.classBuiltinParentMap.has(className);
+            !ctx.classBuiltinParentMap.has(className) &&
+            (!ctx.classParentMap.has(className) || classHeritageRequiresRuntimeParent(ctx, className));
           const hasOwnCtor =
             classDecl?.members.some((member) => ts.isConstructorDeclaration(member) && member.body !== undefined) ===
             true;
@@ -742,7 +742,7 @@ export function emitRegisterDynamicClassParent(
   if (ctx.standalone || ctx.wasi) return;
   const className = classNameOverride ?? decl.name?.text;
   if (className === undefined) return;
-  if (ctx.classParentMap.has(className) && !classHasMutableHeritageBinding(ctx, className)) return;
+  if (ctx.classParentMap.has(className) && !classHeritageRequiresRuntimeParent(ctx, className)) return;
   if (decl.heritageClauses === undefined) return;
   let heritageExpr: ts.Expression | undefined;
   for (const clause of decl.heritageClauses) {

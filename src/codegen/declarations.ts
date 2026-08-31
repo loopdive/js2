@@ -62,6 +62,7 @@ import {
   emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
+import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -2255,11 +2256,15 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
- * Prepared top-level class declarations are byte-inert unless a computed
- * accessor name has source-ordered effects that module initialization must
- * preserve. The statement emitter consults the final IR skip set.
+ * Top-level class declarations are byte-inert unless computed-accessor or
+ * runtime-heritage effects require source-ordered module initialization. The
+ * statement emitter consults the final IR skip set.
  */
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
+  if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
+    ctx.moduleInitStatements.push(statement);
+    return true;
+  }
   if (
     !ts.isClassDeclaration(statement) ||
     !isBoundedPreparedAccessorClass(statement) ||
