@@ -54,6 +54,29 @@ interface WatField {
   readonly storage: string;
 }
 
+interface WatReadExpectation {
+  readonly body: string;
+  readonly fieldIndex: number;
+}
+
+interface WatRegistrationExpectation {
+  readonly declarationOrdinal: number;
+  readonly typeIndex?: number;
+  readonly allocationBodies: readonly string[];
+  readonly reads: readonly WatReadExpectation[];
+}
+
+interface WatAllocation {
+  readonly body: string;
+  readonly typeIndex: number;
+}
+
+interface WatRead {
+  readonly body: string;
+  readonly typeIndex: number;
+  readonly fieldIndex: number;
+}
+
 interface RuntimeExpectation {
   readonly name: string;
   readonly args: readonly number[];
@@ -75,8 +98,7 @@ interface Fixture {
   readonly typeRows: readonly TypeRow[];
   readonly watFields: readonly WatField[];
   readonly standaloneWatFields?: readonly WatField[];
-  readonly watLinkedByTarget?: Readonly<Record<Target, boolean>>;
-  readonly watRegistrationUsesByTarget?: Readonly<Partial<Record<Target, number>>>;
+  readonly watRegistrationByTarget: Readonly<Partial<Record<Target, WatRegistrationExpectation>>>;
   readonly hostFields: readonly string[];
   readonly runtime: readonly RuntimeExpectation[];
   readonly outcomes: readonly OutcomeExpectation[];
@@ -117,7 +139,11 @@ interface OutcomeProjection {
 interface WatProjection {
   readonly fields: readonly WatField[];
   readonly registration: string;
-  readonly registrationUses: number;
+  readonly registrationName: string;
+  readonly declarationOrdinal: number;
+  readonly registrationIndex?: number;
+  readonly allocations: readonly WatAllocation[];
+  readonly reads: readonly WatRead[];
   readonly body?: string;
   readonly reference?: string;
   readonly bodyText?: string;
@@ -182,6 +208,15 @@ function parityDetails(
   };
 }
 
+function watRegistration(
+  declarationOrdinal: number,
+  typeIndex: number | undefined,
+  allocationBodies: readonly string[],
+  reads: readonly WatReadExpectation[],
+): WatRegistrationExpectation {
+  return { declarationOrdinal, typeIndex, allocationBodies, reads };
+}
+
 const DATA_STRUCT_BRIDGE_TAIL = [
   "__is_data_struct",
   "$d0",
@@ -226,6 +261,30 @@ const FIXTURES: readonly Fixture[] = [
       { name: "x", storage: "f64" },
       { name: "y", storage: "f64" },
     ],
+    watRegistrationByTarget: {
+      gc: watRegistration(
+        12,
+        15,
+        ["run"],
+        [
+          { body: "run", fieldIndex: 0 },
+          { body: "run", fieldIndex: 0 },
+          { body: "run", fieldIndex: 1 },
+          { body: "run", fieldIndex: 1 },
+        ],
+      ),
+      standalone: watRegistration(
+        83,
+        123,
+        ["run"],
+        [
+          { body: "run", fieldIndex: 0 },
+          { body: "run", fieldIndex: 0 },
+          { body: "run", fieldIndex: 1 },
+          { body: "run", fieldIndex: 1 },
+        ],
+      ),
+    },
     hostFields: ["x", "y"],
     runtime: [{ name: "run", args: [], value: 25 }],
     outcomes: [
@@ -283,8 +342,10 @@ const FIXTURES: readonly Fixture[] = [
       { name: "age", storage: "f64" },
       { name: "name", storage: "(ref null 6)" },
     ],
-    watLinkedByTarget: { gc: true, standalone: false },
-    watRegistrationUsesByTarget: { standalone: 1 },
+    watRegistrationByTarget: {
+      gc: watRegistration(13, undefined, [], []),
+      standalone: watRegistration(83, undefined, [], []),
+    },
     hostFields: ["name", "age"],
     runtime: [{ name: "run", args: [], value: 30 }],
     outcomes: [
@@ -349,6 +410,10 @@ const FIXTURES: readonly Fixture[] = [
       { name: "x", storage: "f64" },
       { name: "y", storage: "f64" },
     ],
+    watRegistrationByTarget: {
+      gc: watRegistration(7, undefined, [], []),
+      standalone: watRegistration(84, undefined, [], []),
+    },
     hostFields: ["x", "y"],
     runtime: [
       { name: "runX", args: [], value: 4 },
@@ -533,47 +598,103 @@ function expectedWatFields(fixture: Fixture, target: Target): readonly WatField[
   return target === "standalone" ? (fixture.standaloneWatFields ?? fixture.watFields) : fixture.watFields;
 }
 
-function expectedWatLink(fixture: Fixture, target: Target): boolean {
-  return fixture.watLinkedByTarget?.[target] ?? true;
+function expectedWatRegistration(fixture: Fixture, target: Target): WatRegistrationExpectation {
+  const registration = fixture.watRegistrationByTarget[target];
+  if (!registration) throw new Error(`missing exact typed-struct registration for ${fixture.id}/${target}`);
+  return registration;
 }
 
-function inspectWat(fixture: Fixture, target: Target, wat: string): WatProjection {
+function parseWatTypeDeclarations(
+  wat: string,
+): readonly { readonly ordinal: number; readonly name: string; readonly text: string }[] {
+  const declarations: { ordinal: number; name: string; text: string }[] = [];
+  for (const line of wat.split("\n")) {
+    const name = line.match(/^\s*\(type\s+(\$[^\s()]+)/)?.[1];
+    if (!name) continue;
+    declarations.push({ ordinal: declarations.length, name, text: line });
+  }
+  return declarations;
+}
+
+function inspectWat(
+  fixture: Fixture,
+  target: Target,
+  wat: string,
+  emittedBodies: readonly string[],
+  registrationExpectation = expectedWatRegistration(fixture, target),
+): WatProjection {
   const fields = expectedWatFields(fixture, target);
-  const matchingStructLines = wat.split("\n").filter((line) => {
-    if (!line.includes("(type $") || !line.includes("(struct")) return false;
-    const fieldNames = [...line.matchAll(/\(field \$([^\s()]+) /g)].map((match) => match[1]);
+  const matchingStructDeclarations = parseWatTypeDeclarations(wat).filter((declaration) => {
+    if (!declaration.text.includes("(struct")) return false;
+    const fieldNames = [...declaration.text.matchAll(/\(field \$([^\s()]+) /g)].map((match) => match[1]);
     return (
       fieldNames.length === fields.length &&
       fieldNames.every((name, index) => name === fields[index]?.name) &&
-      fields.every((field) => line.includes(`(field $${field.name} (mut ${field.storage}))`))
+      fields.every((field) => declaration.text.includes(`(field $${field.name} (mut ${field.storage}))`))
     );
   });
-  expect(matchingStructLines, `exact typed WAT struct for ${fixture.id}`).toHaveLength(1);
-  const registration = matchingStructLines[0]!;
-  const registrationName = registration.match(/^\s*\(type\s+(\$[^\s()]+)/)?.[1];
-  if (!registrationName) throw new Error(`missing named typed-struct registration for ${fixture.id}/${target}`);
-  const registrationUses = wat.split(registrationName).length - 1;
-  if (!expectedWatLink(fixture, target)) {
-    return { fields, registration, registrationUses, readLinked: registrationUses > 1 };
+  expect(matchingStructDeclarations, `exact typed WAT struct for ${fixture.id}`).toHaveLength(1);
+  const registration = matchingStructDeclarations[0]!;
+  expect(registration.ordinal, `typed-struct declaration ordinal for ${fixture.id}/${target}`).toBe(
+    registrationExpectation.declarationOrdinal,
+  );
+  const namedBodies = emittedBodies.map((name) => {
+    const text = extractFuncBody(wat, name);
+    if (!text) throw new Error(`missing named WAT body ${name} for ${fixture.id}/${target}`);
+    return { name, text };
+  });
+  // Binaryen's debug text may omit inline function-type declarations, so the
+  // declaration ordinal is not a canonical numeric type index. The final
+  // emitted body's `(ref null N)` is the raw-WAT bridge from this exact
+  // registered struct use to the numeric struct.new/struct.get instructions.
+  const registrationIndices = [
+    ...new Set(
+      namedBodies.flatMap((body) =>
+        [...body.text.matchAll(/\(ref\s+null\s+(\d+)\)/g)].map((match) => Number(match[1])),
+      ),
+    ),
+  ];
+  if (namedBodies.length > 0) {
+    expect(registrationIndices, `raw WAT registration index for ${fixture.id}/${target}`).toHaveLength(1);
   }
-  for (const name of fixture.names) {
-    const body = extractFuncBody(wat, name);
-    if (!body) continue;
-    const created = [...body.matchAll(/struct\.new\s+(\d+)/g)].map((match) => match[1]!);
-    const reference = created.find((candidate) => wat.includes(`struct.get ${candidate}`));
-    if (reference !== undefined) {
-      return {
-        fields,
-        registration,
-        registrationUses,
-        body: name,
-        reference,
-        bodyText: body,
-        readLinked: true,
-      };
+  const registrationIndex = registrationIndices[0];
+  if (registrationExpectation.typeIndex !== undefined) {
+    expect(registrationIndex, `exact raw WAT registration index for ${fixture.id}/${target}`).toBe(
+      registrationExpectation.typeIndex,
+    );
+  }
+  const allocations: WatAllocation[] = [];
+  const reads: WatRead[] = [];
+  if (registrationIndex !== undefined) {
+    for (const body of namedBodies) {
+      for (const match of body.text.matchAll(/struct\.new\s+(\d+)/g)) {
+        const typeIndex = Number(match[1]);
+        if (typeIndex === registrationIndex) allocations.push({ body: body.name, typeIndex });
+      }
+      for (const match of body.text.matchAll(/struct\.get\s+(\d+)\s+(\d+)/g)) {
+        const typeIndex = Number(match[1]);
+        if (typeIndex === registrationIndex) {
+          reads.push({ body: body.name, typeIndex, fieldIndex: Number(match[2]) });
+        }
+      }
     }
   }
-  return { fields, registration, registrationUses, readLinked: false };
+  const linkedBody = namedBodies.find(
+    (body) =>
+      allocations.some((allocation) => allocation.body === body.name) && reads.some((read) => read.body === body.name),
+  );
+  const reference = linkedBody ? String(registrationIndex) : undefined;
+  return {
+    fields,
+    registration: registration.text,
+    registrationName: registration.name,
+    declarationOrdinal: registration.ordinal,
+    ...(registrationIndex === undefined ? {} : { registrationIndex }),
+    allocations,
+    reads,
+    ...(linkedBody === undefined ? {} : { body: linkedBody.name, reference, bodyText: linkedBody.text }),
+    readLinked: linkedBody !== undefined,
+  };
 }
 
 function normalizeOutcome(outcome: IrObservedOutcome): OutcomeProjection {
@@ -633,6 +754,48 @@ function expectedPostClaimErrors(fixture: Fixture, target: Target): ArtifactProj
     }));
 }
 
+function assertExactWatProjection(fixture: Fixture, target: Target, wat: WatProjection): void {
+  expect(wat.fields).toEqual(expectedWatFields(fixture, target));
+  for (const field of wat.fields) {
+    expect(wat.registration).toContain(`(field $${field.name} (mut ${field.storage}))`);
+  }
+  const registration = expectedWatRegistration(fixture, target);
+  expect(wat.declarationOrdinal).toBe(registration.declarationOrdinal);
+  const requiresRegistrationIndex = registration.allocationBodies.length > 0 || registration.reads.length > 0;
+  if (requiresRegistrationIndex) {
+    if (wat.registrationIndex === undefined || registration.typeIndex === undefined) {
+      throw new Error(`missing raw WAT registration index for ${fixture.id}/${target}`);
+    }
+    expect(wat.registrationIndex).toBe(registration.typeIndex);
+    expect(wat.allocations).toEqual(
+      registration.allocationBodies.map((body) => ({ body, typeIndex: wat.registrationIndex! })),
+    );
+    expect(wat.reads).toEqual(registration.reads.map((read) => ({ ...read, typeIndex: wat.registrationIndex! })));
+  } else {
+    expect(wat.registrationIndex).toBeUndefined();
+    expect(wat.allocations).toEqual([]);
+    expect(wat.reads).toEqual([]);
+  }
+  const linkedBody = registration.allocationBodies.find((body) =>
+    registration.reads.some((read) => read.body === body),
+  );
+  expect(wat.readLinked).toBe(linkedBody !== undefined);
+  if (linkedBody !== undefined) {
+    if (!wat.body || !wat.reference || !wat.bodyText || wat.registrationIndex === undefined) {
+      throw new Error(`missing linked source body for ${fixture.id}/${target}`);
+    }
+    expect(wat.body).toBe(linkedBody);
+    expect(wat.reference).toBe(String(wat.registrationIndex));
+    expect(wat.bodyText).toContain(`struct.new ${wat.registrationIndex}`);
+    expect(wat.bodyText).not.toMatch(/call\s+\$__box_number(?:_import)?/);
+    expect(wat.bodyText).not.toMatch(/call\s+\$__unbox_number(?:_import)?/);
+  } else {
+    expect(wat.body).toBeUndefined();
+    expect(wat.reference).toBeUndefined();
+    expect(wat.bodyText).toBeUndefined();
+  }
+}
+
 function assertExactProjection(
   fixture: Fixture,
   target: Target,
@@ -648,29 +811,7 @@ function assertExactProjection(
   expect(projection.postClaimErrors).toEqual(expectedPostClaimErrors(fixture, target));
   expect(projection.imports).toEqual(target === "gc" ? fixture.hostImports : []);
   expect(projection.exports).toEqual(expectedExports(fixture, target));
-  expect(projection.wat.fields).toEqual(expectedWatFields(fixture, target));
-  for (const field of projection.wat.fields) {
-    expect(projection.wat.registration).toContain(`(field $${field.name} (mut ${field.storage}))`);
-  }
-  const expectedRegistrationUses = fixture.watRegistrationUsesByTarget?.[target];
-  if (expectedRegistrationUses !== undefined) {
-    expect(projection.wat.registrationUses).toBe(expectedRegistrationUses);
-  }
-  expect(projection.wat.readLinked).toBe(expectedWatLink(fixture, target));
-  if (expectedWatLink(fixture, target)) {
-    if (!projection.wat.body || !projection.wat.reference || !projection.wat.bodyText) {
-      throw new Error(`missing linked source body for ${fixture.id}/${target}`);
-    }
-    expect(fixture.names).toContain(projection.wat.body);
-    expect(projection.wat.reference).toMatch(/^\d+$/);
-    expect(projection.wat.bodyText).toContain(`struct.new ${projection.wat.reference}`);
-    expect(projection.wat.bodyText).not.toMatch(/call\s+\$__box_number(?:_import)?/);
-    expect(projection.wat.bodyText).not.toMatch(/call\s+\$__unbox_number(?:_import)?/);
-  } else {
-    expect(projection.wat.body).toBeUndefined();
-    expect(projection.wat.reference).toBeUndefined();
-    expect(projection.wat.bodyText).toBeUndefined();
-  }
+  assertExactWatProjection(fixture, target, projection.wat);
   expect(projection.binaryHash).toMatch(/^[a-f0-9]{64}$/);
   expect(projection.runtime).toEqual(fixture.runtime);
   if (baseline) {
@@ -708,7 +849,7 @@ async function observeFixture(fixture: Fixture, target: Target, optimize: boolea
     postClaimErrors: result.irPostClaimErrors ?? [],
     imports: result.imports.map((entry) => `${entry.module}::${entry.name}`).sort(),
     exports: WebAssembly.Module.exports(new WebAssembly.Module(result.binary)).map((entry) => entry.name),
-    wat: inspectWat(fixture, target, result.wat),
+    wat: inspectWat(fixture, target, result.wat, [...(result.irCompiledFuncs ?? [])]),
     binaryHash: createHash("sha256").update(result.binary).digest("hex"),
     runtime,
   };
@@ -745,28 +886,61 @@ describe("#1231 unconditional object-literal facts", () => {
       export function run(): number { return distance(createPoint(3, 4)); }
     `;
     const names = ["createPoint", "distance", "run"];
+    const annotatedFixture: Fixture = {
+      ...FIXTURES[0]!,
+      id: "annotated-point",
+      fileName: "issue-1231-annotated-point.ts",
+      source,
+      typeRows: [row("createPoint", [F64, F64], DYNAMIC), row("distance", [DYNAMIC], F64), row("run", [], F64)],
+      outcomes: names.map((name) => ({ name, kind: "emitted" })),
+      emitted: names,
+      watRegistrationByTarget: {
+        standalone: watRegistration(
+          31,
+          41,
+          ["createPoint", "run"],
+          [
+            { body: "distance", fieldIndex: 0 },
+            { body: "distance", fieldIndex: 0 },
+            { body: "distance", fieldIndex: 1 },
+            { body: "distance", fieldIndex: 1 },
+            { body: "run", fieldIndex: 0 },
+            { body: "run", fieldIndex: 0 },
+            { body: "run", fieldIndex: 1 },
+            { body: "run", fieldIndex: 1 },
+          ],
+        ),
+      },
+    };
+    const staticProjection = inspectStaticFixture(annotatedFixture);
     await withStaleValue(undefined, async () => {
       const clean = await compile(source, {
-        fileName: "issue-1231-annotated-point.ts",
+        fileName: annotatedFixture.fileName,
         experimentalIR: true,
         optimize: true,
         target: "standalone",
+        emitWat: true,
         trackIrOutcomes: true,
       });
       expect(clean.success, clean.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(clean.binary)).toBe(true);
       expect(clean.irFirstSkipped ?? []).toEqual([]);
       expect(clean.irCompiledFuncs ?? []).toEqual(names);
-      expect(names.map((name) => (clean.irOutcomes ?? []).find((outcome) => outcome.displayName === name))).toEqual(
-        names.map((name) =>
-          expect.objectContaining({
-            displayName: name,
-            kind: "emitted",
-            stage: "patch",
-            legacyBodyEmitted: true,
-            irBodyEmitted: true,
-          }),
-        ),
+      expect((clean.irOutcomes ?? []).map(normalizeOutcome)).toEqual(
+        expectedOutcomeRows(annotatedFixture, "standalone", staticProjection),
       );
+      const wat = inspectWat(annotatedFixture, "standalone", clean.wat, names);
+      assertExactWatProjection(annotatedFixture, "standalone", wat);
+      expect(wat.registrationIndex).toBe(41);
+      for (const name of names) {
+        const body = extractFuncBody(clean.wat, name);
+        if (!body) throw new Error(`annotated point is missing final WAT body ${name}`);
+        expect(body).not.toMatch(/call\s+\$__box_number(?:_import)?/);
+        expect(body).not.toMatch(/call\s+\$__unbox_number(?:_import)?/);
+      }
+      const exports = await instantiate(clean, "standalone");
+      expect(exports.run, "annotated standalone run export").toBeTypeOf("function");
+      expect(exports.run!()).toBe(25);
       await withEnvValue(DIRECT_BODY_POISON_KEY, names.join(","), async () => {
         const poisoned = await compile(source, {
           fileName: "issue-1231-annotated-point-poison.ts",
@@ -800,6 +974,30 @@ describe("#1231 unconditional object-literal facts", () => {
       );
     }
   }, 120_000);
+
+  it("keeps an unused exact WAT struct unlinked from an unrelated allocation/read pair", () => {
+    const fixture = FIXTURES[0]!;
+    const rawWat = `
+      (module
+        (type $unrelated (struct (field $value (mut f64))))
+        (type $exact_point (struct (field $x (mut f64)) (field $y (mut f64))))
+        (func $createPoint)
+        (func $distance)
+        (func $run (local $point (ref null 2))
+          f64.const 0
+          struct.new 1
+          struct.get 1 0
+        )
+      )
+    `;
+    const wat = inspectWat(fixture, "gc", rawWat, ["run"], watRegistration(1, 2, [], []));
+    expect(wat.registrationName).toBe("$exact_point");
+    expect(wat.declarationOrdinal).toBe(1);
+    expect(wat.registrationIndex).toBe(2);
+    expect(wat.allocations).toEqual([]);
+    expect(wat.reads).toEqual([]);
+    expect(wat.readLinked).toBe(false);
+  });
 
   it("rejects every independently-mutated exact projection", async () => {
     const fixture = FIXTURES[0]!;
@@ -858,6 +1056,18 @@ describe("#1231 unconditional object-literal facts", () => {
     });
     rejects("export drift", (candidate) => {
       candidate.exports.push("foreign");
+    });
+    rejects("WAT declaration ordinal drift", (candidate) => {
+      candidate.wat.declarationOrdinal++;
+    });
+    rejects("WAT registration index drift", (candidate) => {
+      candidate.wat.registrationIndex = 999;
+    });
+    rejects("WAT allocation census drift", (candidate) => {
+      candidate.wat.allocations[0]!.typeIndex = 999;
+    });
+    rejects("WAT read-field census drift", (candidate) => {
+      candidate.wat.reads[0]!.fieldIndex = 999;
     });
     rejects("WAT body reassociation", (candidate) => {
       candidate.wat.body = "distance";
@@ -1183,8 +1393,10 @@ describe("#1231 source-local fnctor propagation option", () => {
   it("admits only the exact NewExpression/source/constructor proof under absent and stale settings", async () => {
     const source = `
       function Box(input) { this.input = input; }
+      function OtherBox(input) { this.input = input; }
       function make() { return new Box("ready"); }
       function other() { return new Box("other"); }
+      function otherConstructor() { return new OtherBox("wrong"); }
     `;
     const ast = analyzeSource(source, "issue-1231-fnctor.ts");
     const inventory = buildIrUnitInventory([ast.sourceFile], { checker: ast.checker, entrySource: ast.sourceFile });
@@ -1194,6 +1406,10 @@ describe("#1231 source-local fnctor propagation option", () => {
       (statement): statement is ts.FunctionDeclaration =>
         ts.isFunctionDeclaration(statement) && statement.name?.text === "Box",
     );
+    const otherConstructor = ast.sourceFile.statements.find(
+      (statement): statement is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(statement) && statement.name?.text === "OtherBox",
+    );
     const make = ast.sourceFile.statements.find(
       (statement): statement is ts.FunctionDeclaration =>
         ts.isFunctionDeclaration(statement) && statement.name?.text === "make",
@@ -1202,18 +1418,20 @@ describe("#1231 source-local fnctor propagation option", () => {
       (statement): statement is ts.FunctionDeclaration =>
         ts.isFunctionDeclaration(statement) && statement.name?.text === "other",
     );
-    if (!boxConstructor || !make || !other) throw new Error("fnctor fixture declarations missing");
+    if (!boxConstructor || !otherConstructor || !make || !other) throw new Error("fnctor fixture declarations missing");
     const constructorUnitId = identity.unitIdByDeclaration.get(boxConstructor);
+    const otherConstructorUnitId = identity.unitIdByDeclaration.get(otherConstructor);
     const makeUnitId = identity.unitIdByDeclaration.get(make);
-    if (!constructorUnitId || !makeUnitId) throw new Error("fnctor fixture identity missing");
+    if (!constructorUnitId || !otherConstructorUnitId || !makeUnitId)
+      throw new Error("fnctor fixture identity missing");
     const newExpressions: ts.NewExpression[] = [];
     const visit = (node: ts.Node): void => {
       if (ts.isNewExpression(node)) newExpressions.push(node);
       ts.forEachChild(node, visit);
     };
     visit(ast.sourceFile);
-    const [exactSite, otherSite] = newExpressions;
-    if (!exactSite || !otherSite) throw new Error("fnctor fixture allocations missing");
+    const [exactSite, otherSite, otherConstructorSite] = newExpressions;
+    if (!exactSite || !otherSite || !otherConstructorSite) throw new Error("fnctor fixture allocations missing");
     const admission: IrFnctorAdmission = {
       kind: "fnctor-admission",
       sourceId,
@@ -1233,8 +1451,41 @@ describe("#1231 source-local fnctor propagation option", () => {
         noCrossSourceCollision: true,
       },
     };
-    const exactResolver = (site: ts.NewExpression, candidateSourceId: typeof sourceId) =>
-      site === exactSite && candidateSourceId === sourceId ? admission : undefined;
+    const wrongSourceAdmission: IrFnctorAdmission = { ...admission, sourceId: "foreign-source" };
+    const wrongConstructorAdmission: IrFnctorAdmission = {
+      ...admission,
+      constructorUnitId: otherConstructorUnitId,
+      constructorDeclaration: otherConstructor,
+    };
+    const wrongSiteAdmission: IrFnctorAdmission = { ...admission, constructorSite: otherSite };
+    const resolveNewExpressionConstructor = (site: ts.NewExpression): ts.FunctionDeclaration | undefined => {
+      const symbol = ast.checker.getSymbolAtLocation(site.expression);
+      const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.find(ts.isFunctionDeclaration);
+      return declaration && ts.isFunctionDeclaration(declaration) ? declaration : undefined;
+    };
+    const guardedResolver =
+      (resolvedAdmission: IrFnctorAdmission) => (site: ts.NewExpression, candidateSourceId: typeof sourceId) => {
+        const constructorDeclaration = resolveNewExpressionConstructor(site);
+        const constructorUnitId = constructorDeclaration
+          ? identity.unitIdByDeclaration.get(constructorDeclaration)
+          : undefined;
+        if (
+          candidateSourceId !== sourceId ||
+          resolvedAdmission.sourceId !== sourceId ||
+          site !== resolvedAdmission.constructorSite ||
+          constructorDeclaration !== resolvedAdmission.constructorDeclaration ||
+          constructorUnitId !== resolvedAdmission.constructorUnitId
+        ) {
+          return undefined;
+        }
+        return resolvedAdmission;
+      };
+    const exactResolver = guardedResolver(admission);
+    expect(exactResolver(exactSite, sourceId)).toBe(admission);
+    expect(exactResolver(otherSite, sourceId)).toBeUndefined();
+    expect(exactResolver(otherConstructorSite, sourceId)).toBeUndefined();
+    expect(guardedResolver(wrongSourceAdmission)(exactSite, sourceId)).toBeUndefined();
+    expect(guardedResolver(wrongConstructorAdmission)(exactSite, sourceId)).toBeUndefined();
     const expected = irFnctorInputStringAtom();
 
     for (const staleValue of [undefined, "0"] as const) {
@@ -1248,18 +1499,17 @@ describe("#1231 source-local fnctor propagation option", () => {
         );
         expect(
           buildIrUnitTypeMap([ast.sourceFile], ast.checker, identity, undefined, {
-            resolveFnctorAdmission: (site) => (site === otherSite ? admission : undefined),
+            resolveFnctorAdmission: guardedResolver(wrongSiteAdmission),
           }).get(makeUnitId)?.returnType,
         ).not.toEqual(expected);
         expect(
           buildIrUnitTypeMap([ast.sourceFile], ast.checker, identity, undefined, {
-            resolveFnctorAdmission: (_site, candidateSourceId) =>
-              candidateSourceId === ("foreign-source" as typeof sourceId) ? admission : undefined,
+            resolveFnctorAdmission: guardedResolver(wrongSourceAdmission),
           }).get(makeUnitId)?.returnType,
         ).not.toEqual(expected);
         expect(
           buildIrUnitTypeMap([ast.sourceFile], ast.checker, identity, undefined, {
-            resolveFnctorAdmission: () => (boxConstructor === other ? admission : undefined),
+            resolveFnctorAdmission: guardedResolver(wrongConstructorAdmission),
           }).get(makeUnitId)?.returnType,
         ).not.toEqual(expected);
       });

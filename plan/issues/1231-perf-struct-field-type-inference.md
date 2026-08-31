@@ -1008,9 +1008,11 @@ into declaration ownership merely to make a poison assertion green.
   `.has(...)`, `arrayContaining`, module-global `f64` regexes, or cross-arm
   equality alone. Require exact TypeMap rows and atoms; the exact intended
   selection set with no extra unit; exactly one outcome per expected unit with
-  exact identity, kind/reason/stage and body flags; empty post-claim errors;
-  exact import/export sets; WAT struct-field identity and body-to-struct
-  linkage census; byte-identical binary hashes where promised;
+  exact identity, kind/reason/stage and body flags; an exact post-claim
+  projection with one build row per ABI-parity withdrawal, no row for an
+  emitted unit, and no unrelated row; exact import/export sets; WAT
+  struct-field identity and body-to-struct linkage census; byte-identical
+  binary hashes where promised;
   `WebAssembly.validate`; and exact exported runtime results. The grounded
   standalone mixed-user arm registers the exact typed struct but has no
   allocation/read link because every terminal withdraws on exact ABI parity;
@@ -1165,8 +1167,79 @@ same archive-backed temporary directory. This is recorded as an environmental
 wrapper limitation rather than laundering the failed wrappers into green
 evidence.
 
-The issue stays `in-progress` until this implementation merges. Plan PR #5327
-is still ahead in the protected queue, so the implementation remains a stacked
-draft; after that prerequisite lands, claim #1231, sync protected main, rerun
-the changed bytes, push once, and require a fresh independent Sol review of the
-exact pushed SHA before marking the PR ready.
+The retirement follow-up stays in progress until this implementation merges.
+The historical issue frontmatter remains `status: done`; after plan PR #5327
+merged, the atomic claim tool therefore refused #1231 as already complete.
+Do not force or fabricate a claim. Sync protected main, rerun the changed bytes,
+push once, and require a fresh independent Sol review of the exact pushed SHA
+before marking the implementation PR ready.
+
+### 2026-08-31 Sol HOLD repair plan
+
+The first independent Sol review of pushed draft head
+`bc0d2b5de22e01e812dff7b708cfda3708967b2d` approved the three-site
+production deletion and the 15→14 inventory transition, but held the focused
+oracle on three false-pass surfaces. The repair stays test-and-record only:
+
+1. Parse the final WAT type-declaration order and bind the one exact field
+   registration to its numeric type index. Require `struct.new` and every
+   promised `struct.get` to use that exact index inside the named fixture
+   bodies; never search the whole module for an arbitrary matching numeric
+   instruction. Add a raw-WAT mutation containing an unused correct struct plus
+   an unrelated allocation/read pair and prove it remains unlinked.
+2. Turn the annotated standalone point control into the positive final-body
+   proof: request WAT, require exact source-qualified emitted outcomes and
+   compiled-function census, validate and instantiate the binary, require the
+   exact typed allocation/read index with no box/unbox calls in those final
+   bodies, and require runtime `run() === 25`. Retain the separate direct-body
+   poison as evidence of #3521, "IR-only R2: prepare-before-emit free-function
+   ownership," rather than pretending compile-once ownership already landed.
+3. Replace the constant-false constructor control with a real second
+   constructor declaration and inventory unit. Feed an admission carrying that
+   wrong declaration/unit for the exact first allocation site through the same
+   guarded test resolver, and require refusal independently of wrong site,
+   source, resolver absence, and the exact positive.
+
+The plan sentence above is now grounded to the measured ABI-parity post-claim
+rows instead of requiring an empty array that the exact oracle correctly
+rejects. Terra Max owns only the focused-test implementation. A later push must
+rerun every hook and invalidates the prior review; Sol must review the new exact
+remote SHA from scratch.
+
+The pushed tip also contains signed concurrent main-sync merge
+`bc0d2b5de22e01e812dff7b708cfda3708967b2d`. It appeared from external shared
+branch state, not from this Codex turn, and therefore carries no Codex
+co-author claim. Published history remains append-only: do not rewrite or
+force-push it merely to manufacture a trailer whose producing agent cannot be
+established. The next forward repair commit records its own exact Codex
+co-author and model normally.
+
+### 2026-08-31 Sol HOLD repair checkpoint
+
+Terra Max implemented the bounded test-only repair in
+`tests/issue-1231.test.ts`; production remained byte-identical. The final
+focused suite passes 12/12 under a fresh 10-core gate with one-minute load 1.88
+strictly below 8. Scoped Prettier, Biome, and diff-check also pass.
+
+The final WAT oracle now matches the unique exact field registration by raw
+declaration ordinal and derives its numeric type index from `(ref null N)`
+anchors inside the exact final IR-emitted named bodies. It then censuses only
+`struct.new N` and `struct.get N field` in those same bodies. The generic point
+facts are GC ordinal 12 → index 15 and standalone ordinal 83 → index 123, with
+the exact `run` read projection `[0, 0, 1, 1]`. The annotated standalone
+positive is ordinal 31 → index 41: allocations occur in `createPoint` and
+`run`, reads occur in `distance` and `run` with `[0, 0, 1, 1]` each, all three
+outcomes are exact emitted rows, the binary validates and instantiates, no
+final body calls a box/unbox helper, and `run()` returns 25. The raw mutation
+places the unused exact struct at ordinal 1, gives the emitted body reference
+index 2, and puts an unrelated allocation/read pair at index 1; the oracle
+correctly keeps it unlinked. This body-derived join is required because
+Binaryen's emitted text omits some inlineable function-type declarations, so a
+textual declaration ordinal is not itself a canonical numeric type index.
+
+The fnctor control now contains distinct `Box` and `OtherBox` declarations and
+inventory units. Its source-local resolver independently uses the checker and
+identity inventory to prove the exact site, source, constructor declaration,
+and constructor unit. The positive admission succeeds while resolver absence,
+wrong site, wrong source, and the real `OtherBox` declaration/unit admission
+remain refused under both absent and stale-zero settings.
