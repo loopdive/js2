@@ -1,10 +1,9 @@
 ---
 id: 1231
 title: "perf: struct field type inference — eliminate boxing in object properties"
-status: done
+status: in-progress
 created: 2026-05-02
-updated: 2026-05-02
-completed: 2026-05-02
+updated: 2026-08-31
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -13,10 +12,10 @@ area: ir
 language_feature: object-literal, property-access
 goal: performance
 sprint: 47
-depends_on: [1169n, 1169o, 1169p]
-required_by: [1269, 1270]
+depends_on: [1169n, 1169o, 1169p, 3518, 4522]
+required_by: [1269, 1270, 4584]
 es_edition: ES2015+
-related: [1169, 1195]
+related: [1169, 1195, 3518, 4522, 4584]
 ---
 # #1229 — Struct field type inference: eliminate boxing in object properties
 
@@ -890,3 +889,186 @@ This ensures future refactors don't accidentally re-introduce boxing.
    object-heavy test categories)
 5. MLIR seam: `propagate()` returns explicit `TypeMap` as specified — confirm
    in code review before merge
+
+## 2026-08-30 Sol implementation plan — retire the object-shape rollback
+
+### Why this issue is open again
+
+Phase 2 did graduate typed object-shape inference to the default route, but it
+left one live emergency rollback that changes frontend type facts back to
+`dynamic` and thereby resurrects the boxed legacy representation. That is not
+a diagnostic or an IR-pass tuning knob: it crosses the frontend/backend seam
+and is explicitly R9 debt in #4522. The feature work remains complete; this
+checkpoint removes only the obsolete rollback and proves that its performance
+win cannot silently disappear.
+
+The historical audit was grounded on exact `loopdive/js2` main
+`275216c74c7299ea07a72c8d5479f7e1a477000c`. At that commit the retired helper
+and rollback identifier occur 25 times across exactly eight tracked files,
+including `plan/agent-context/dev-1231.md`; the earlier seven-file count omitted
+that record. Re-measure the exact tracked-file census after #5332 lands because
+its serialized R9 ledgers intentionally add current inventory references.
+`src/ir/propagate.ts` has only one live reader/helper,
+`objectShapesEnabled()`. That helper controls three semantically distinct
+consumers: fnctor `NewExpression` admission in the propagation extension,
+checker-known object seeding, and object-literal inference. No open pull request
+claims this retirement. The active ProgramABI/#3525 publication work does not
+edit the owned source or focused test; do not widen into those files.
+
+### 2026-08-31 post-Math authoritative remeasurement
+
+The Math dependency is now satisfied on protected `origin/main` at exact merge
+`f08c7c62ce96ce4cbfe8ec89dc7ec2e9a5d10dba` (tree
+`0f3770a0d69394edeb9f00f61159492c7c5cec32`). The exact retired environment
+identifier occurs 24 times across seven tracked files: six in this issue, one
+in #1235, one in #1574, three in #4522, one in sprint 47, three in
+`src/ir/propagate.ts`, and nine in `tests/issue-1231.test.ts`. The
+three-pattern union of that key with `objectShapesEnabled` and
+`withoutObjectShapes` contains 37 literal occurrences on 36 matching lines
+across eight tracked files at that base. This Sol plan itself adds seven
+literal helper-name references on seven lines, so the implementation starts
+from exactly 44 literal occurrences on 43 matching lines across the same eight
+files; the eighth file is `plan/agent-context/dev-1231.md`. These are the
+authoritative deletion and documentation-rewrite denominators. An
+implementation that reports the earlier 25/eight historical count, conflates
+matching lines with literal occurrences, drops the dev record, or leaves any
+literal spelling is stale and must fail review.
+
+The merged #4522/#3518 inventory now names exactly fifteen live
+`retire-at-R9` route/representation readers. This slice owns only the
+object-shape row and therefore must publish the exact 15→14 transition. It
+must preserve the separately owned mixed-primitive conditional row, all nine
+Prepared cutovers, the three remaining global IR controls, and the linear
+direct-backend reader. The current main source still contains exactly one
+production helper with three guarded consumers at
+`src/ir/propagate.ts`; no ProgramABI, selector, lowering, emitter, or #5092
+file enters this ownership boundary.
+
+### Exact production change
+
+1. Delete `objectShapesEnabled()` and its environment read. The frontend must
+   produce the same bounded lattice facts regardless of ambient process
+   configuration.
+2. In `buildIrUnitTypeMap`, keep the exact source-local fnctor-admission proof
+   and the `NewExpression` requirement; remove only the rollback predicate.
+   This preserves the linked-parser `{input: string}` projection rather than
+   weakening or generalising it.
+3. In `tsTypeToLattice`, always seed checker-known object types at `UNKNOWN` so
+   the body walk may refine them. All concrete primitive, `any`/`unknown`,
+   `never`, union, enum, and fallback rules remain byte-for-byte unchanged.
+4. In `inferExpr`, always run the existing bounded object-literal inference.
+   Preserve every refusal: empty, spread, method/accessor, computed or
+   duplicate keys; non-atom fields; polymorphic unions; dynamic receivers; and
+   recursive depth greater than three still widen to `dynamic`.
+5. Do not modify the selector, object lowering, WasmGC emitter, linear emitter,
+   ProgramABI, or direct frontend. This is a frontend inference cleanup whose
+   backend-visible output must equal the already-default route.
+
+### Closed evidence matrix
+
+- First repair the test harness: the current generic `withoutObjectShapes`
+  helper restores the environment synchronously, so its async caller resets
+  the flag before the first awaited compile and its runtime rollback row is
+  vacuous. The grounded focused file contains 16 literal `it(...)` rows and
+  exactly three rollback rows: its lattice and selector rows are genuine
+  synchronous withdrawals, while the final runtime row is the vacuous async
+  case. Remove that helper and every rollback expectation without losing the
+  remaining 13 positive/conservative controls.
+- Add one computed stale-key control by constructing the retired identifier
+  from literal fragments, so repository grep can still prove exact textual
+  zero. Keep the computed key set across every `await` inside `try/finally`,
+  assert its exact value immediately before and after compilation, and restore
+  the exact prior value only after the promise settles. Record that this test
+  fails against the pre-change parent before making the production edit; that
+  first-failing observation is the non-vacuity proof for the removed reader.
+- At both `optimize: false` and `optimize: true`, compare the candidate with the
+  computed key absent against separate stale-key values `"0"`, `"1"`, and
+  `"false"` in host and standalone. Every stale-key arm must equal the absent
+  arm on the promised semantic and artifact projections. Do not keep a second
+  historical checkout or a permanent legacy-withdrawal oracle in the focused
+  test: after retirement, the old key has no authority and the tracked tree
+  must not preserve its literal spelling.
+- Run the simple numeric point, mixed string/number user, and chained
+  `vec2/add` fixtures over that complete target × optimization × arm matrix.
+  Compare against literal, source-qualified expected projections rather than
+  `.has(...)`, `arrayContaining`, module-global `f64` regexes, or cross-arm
+  equality alone. Require exact TypeMap rows and atoms; the exact intended
+  selection set with no extra unit; exactly one outcome per expected unit with
+  exact identity, kind/reason/stage and body flags; empty post-claim errors;
+  exact import/export sets; WAT struct-field identity and body-to-struct
+  linkage; byte-identical binary hashes where promised; `WebAssembly.validate`;
+  and exact exported runtime results. The standalone projection must remain
+  host-free, every positive body must remain IR-only, and its exact body must
+  contain no box/unbox call.
+- Make the oracle reject a wrong TypeMap atom/source/unit, missing/duplicate or
+  foreign selected unit/outcome, wrong outcome identity/reason/stage/body flag,
+  import/export drift, WAT body/struct reassociation, binary drift, and runtime
+  drift. Direct-body poison remains necessary but is not a substitute for
+  these independent mutations.
+- Keep the full conservative matrix non-vacuous: polymorphic call sites,
+  open-world exported input, empty/spread/method/accessor/computed/duplicate
+  object literals, missing fields, optional property access, optional element
+  access, union/dynamic receivers, and depth-four shapes must retain their
+  exact current `dynamic` or unclaimed projection and refusal reason. Preserve
+  accepted identifier, string-literal, and numeric-literal object keys; accept
+  only string-literal or no-substitution-template element access; and refuse
+  numeric, dynamic, computed, or other nonliteral element keys independently.
+  Preserve every primitive, `any`, `unknown`, `never`, union, enum, and fallback
+  branch byte-for-byte. Poison the direct body for positive fixtures so a
+  hidden legacy compilation cannot satisfy the runtime oracle.
+- Exercise the third consumer directly in the owned focused test through the
+  existing `buildIrUnitTypeMap(..., propagationOptions)` boundary. Supply a
+  source-local `resolveFnctorAdmission` test resolver for one exact
+  `NewExpression`, require its fixed `{ input: string }` atom with the computed
+  stale key absent and set to `"0"`, and require resolver absence plus wrong
+  expression/source/constructor proofs to retain their current refusal. Do not
+  invent or take ownership of `makeIrFnctorPropagationAdmissionResolver`,
+  linked-Parser, or fnctor-admission files that are absent from the rebased
+  parent. If parallel #3521 work lands those controls first, run them unchanged
+  as downstream regressions rather than editing them in this slice.
+- Repository-wide tracked-file grep for the retired environment identifier must
+  be exactly zero. Also require zero `objectShapesEnabled` and
+  `withoutObjectShapes` identifiers, including rollout comments that would
+  survive a mechanical helper/call deletion. The only retained stale-key
+  representation is a computed literal-fragment assembly in the focused
+  retirement test. Update this record, #1235, #1574, sprint 47, #4522, and
+  #3518, and `plan/agent-context/dev-1231.md` by paraphrasing historical rollout
+  facts without preserving a usable configuration name.
+
+### Files and dependency order
+
+The implementation owns only `src/ir/propagate.ts`,
+`tests/issue-1231.test.ts`, this issue,
+`plan/issues/1235-ci-prevent-baseline-drift-false.md`,
+`plan/issues/1574-ir-improvement-spec.md`, `plan/issues/sprints/47.md`, and the
+single #4522 inventory row/summary plus
+`plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md` and
+`plan/agent-context/dev-1231.md`. The
+shared documents land in this exact order:
+
+1. the approved Math retirement lands with a live 15-switch
+   `JS2WASM_IR_*`/R9 denominator that still includes object shapes;
+2. #1231 rebases onto it, removes only the object-shape row, and records
+   15→14 in both #4522 and #3518;
+3. #4584 rebases onto #1231 and records the next R9 14→13 transition.
+
+This branch remains plan-only until the Math checkpoint lands; then merge
+current main normally and preserve both inventories. Do not duplicate or
+conflict with the parallel Claude ProgramABI, multi-prepared publication, or
+mixed-conditional work.
+
+### Validation and landing
+
+Run the focused #1231 suite, including the direct propagation-options control,
+and every target × optimization × arm projection above. Run any linked-Parser
+or fnctor controls already present on the rebased parent unchanged, followed by
+TS7 and TS5, IR layering, fallback and IR-only policy gates, targeted Biome,
+Prettier, diff-check, and host/standalone equivalence. The protected merge
+queue supplies the full Test262 regression verdict; the branch must not lower
+the standalone host-free high-water mark. Every heavy command requires a
+finite, non-negative one-minute load strictly below logical cores minus two
+and an archive-backed temporary directory. Immediately before commit, run LOC
+and function-growth ratchets; keep the full precommit and prepush hooks
+enabled. Terra implements after the Math checkpoint; a fresh independent Sol
+review must approve the exact pushed SHA before the regular PR is marked ready
+or enqueued. No admin or direct merge is permitted.

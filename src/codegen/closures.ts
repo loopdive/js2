@@ -2062,6 +2062,19 @@ export function computeClosureWrapperSig(
     if (p.type === undefined && p.initializer === undefined && jsdocOptional) {
       wasmType = { kind: "externref" };
     }
+    // (#5221) NOT widened here, deliberately. `function (item, options = void 0)`
+    // has the same undefined-only parameter defect the declaration and
+    // class-method lanes fix (see `isUndefinedDefaultOnlyParam`), but a closure's
+    // signature is mirrored by at least three other derivations that this
+    // function does not own — the object-literal method pre-registration
+    // (codegen/index.ts, `methodParams`), its body-compile twin and fork-decision
+    // twin (literals.ts) — and a disagreement between them is not a wrong value
+    // but a failed `ref.test` on the stored closure: measured on
+    // `const O = { f: function (e, t = void 0) {…} }`, widening only here turned
+    // a wrong answer (`typeof t === "number"`) into a thrown "Cannot access
+    // property on null or undefined" at `O.f(…)`. Left for a follow-up that
+    // moves all four derivations onto one helper.
+    //
     // An unannotated JavaScript parameter whose default is object-valued is
     // still structurally open: callers may supply any property bag. TypeScript
     // infers the default's exact closed shape, but using that shape as the Wasm
