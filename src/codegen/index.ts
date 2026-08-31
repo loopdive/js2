@@ -3912,6 +3912,10 @@ interface IrFirstBodyRouting {
   readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
+  /** Exact free-function body authority for the direct declaration seam. */
+  readonly skipBodyUnitIds?: ReadonlySet<IrUnitId>;
+  /** Exact prepared free-function bodies whose installed IR bodies survive direct traversal. */
+  readonly preserveBodyUnitIds?: ReadonlySet<IrUnitId>;
   readonly skipBodies?: ReadonlySet<string>;
   readonly preserveBodies?: ReadonlySet<string>;
 }
@@ -4496,6 +4500,7 @@ function planIrFirstBodyRouting(
         return {
           requestedSkipProjection,
           preparedSelection: plan.safeSelection,
+          skipBodyUnitIds: requestedSkipUnitIds,
           skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
         };
       }
@@ -4598,8 +4603,8 @@ function planIrFirstBodyRouting(
       const preparedImplicitConstructorUnitIds = preparedBodies.implicitConstructorUnitIds;
       const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
-      for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
-        requestedSkipUnitIds.add(entry.unitId);
+      for (const unitId of preparedFreeFunctions.skipBodyUnitIds) {
+        requestedSkipUnitIds.add(unitId);
       }
       const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
         requestedSkipUnitIds,
@@ -4613,6 +4618,8 @@ function planIrFirstBodyRouting(
         ...(preparedImplicitConstructorUnitIds.size > 0 ? { preparedImplicitConstructorUnitIds } : {}),
         preparedReport,
         preparedSelection,
+        skipBodyUnitIds: requestedSkipUnitIds,
+        preserveBodyUnitIds: preparedFreeFunctions.preserveBodyUnitIds,
         skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
         preserveBodies: preparedFreeFunctions.preserveBodies,
       };
@@ -4631,6 +4638,7 @@ function planIrFirstBodyRouting(
   );
   return {
     requestedSkipProjection,
+    skipBodyUnitIds: requestedSkipUnitIds,
     skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     ...(finalizedSelection ? { preparedSelection: finalizedSelection } : {}),
   };
@@ -4651,14 +4659,19 @@ function compileIrRoutedDeclarations(input: {
   /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed. */
   readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  /** Compatibility/audit-only names; exact UnitIds below decide direct suppression. */
   readonly irSkipBodies?: ReadonlySet<string>;
   readonly irPreserveBodies?: ReadonlySet<string>;
+  readonly irSkipBodyUnitIds?: ReadonlySet<IrUnitId>;
+  readonly irPreserveBodyUnitIds?: ReadonlySet<IrUnitId>;
 }): {
   readonly actuallySkipped?: string[];
+  readonly functionUnitIds: readonly IrUnitId[];
   readonly classMemberUnitIds: readonly IrUnitId[];
   readonly implicitConstructorUnitIds: readonly IrUnitId[];
   readonly moduleInitNames: readonly string[];
 } {
+  const functionUnitIds: IrUnitId[] = [];
   const classMemberNames: string[] = [];
   const classMemberUnitIds: IrUnitId[] = [];
   const implicitConstructorUnitIds: IrUnitId[] = [];
@@ -4686,6 +4699,22 @@ function compileIrRoutedDeclarations(input: {
         skippedNames: moduleInitNames,
       }
     : undefined;
+  const hasNameFunctionRouting = input.irSkipBodies !== undefined || input.irPreserveBodies !== undefined;
+  const hasExactFunctionRouting = input.irSkipBodyUnitIds !== undefined;
+  if (hasNameFunctionRouting !== hasExactFunctionRouting) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "IR-first declaration compilation must route function bodies by both exact UnitId and compatibility projection",
+    );
+  }
+  const functionBodyRouting = input.irSkipBodyUnitIds
+    ? {
+        skipBodyUnitIds: input.irSkipBodyUnitIds,
+        preserveSkippedBodyUnitIds: input.irPreserveBodyUnitIds ?? new Set<IrUnitId>(),
+        skippedUnitIds: functionUnitIds,
+      }
+    : undefined;
   const previousClassBodyRouting = input.ctx.irClassBodyRouting;
   try {
     input.ctx.irClassBodyRouting = classBodyRouting;
@@ -4698,7 +4727,9 @@ function compileIrRoutedDeclarations(input: {
         classBodyRouting,
         "full",
         moduleInitBodyRouting,
+        functionBodyRouting,
       ),
+      functionUnitIds,
       classMemberUnitIds,
       implicitConstructorUnitIds,
       moduleInitNames,
@@ -5427,6 +5458,8 @@ export function generateModule(
     let irSkippedModuleInitUnitIds: ReadonlySet<IrUnitId> = new Set();
     let irSkipBodies: ReadonlySet<string> | undefined;
     let irPreserveBodies: ReadonlySet<string> | undefined;
+    let irSkipBodyUnitIds: ReadonlySet<IrUnitId> | undefined;
+    let irPreserveBodyUnitIds: ReadonlySet<IrUnitId> | undefined;
     if (irFirst) {
       irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!, { enableCountedStringAppendProof: true });
       const routing = planIrFirstBodyRouting(ctx, ast.sourceFile, irPlan, moduleInitPlanning);
@@ -5439,10 +5472,13 @@ export function generateModule(
       preparedSelection = routing.preparedSelection;
       irSkipBodies = routing.skipBodies;
       irPreserveBodies = routing.preserveBodies;
+      irSkipBodyUnitIds = routing.skipBodyUnitIds;
+      irPreserveBodyUnitIds = routing.preserveBodyUnitIds;
     }
     // Third pass: compile function bodies
     const {
       actuallySkipped,
+      functionUnitIds: actuallySkippedFunctionUnitIds,
       classMemberUnitIds: actuallySkippedClassMemberUnitIds,
       implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
       moduleInitNames: actuallySkippedModuleInit,
@@ -5460,6 +5496,8 @@ export function generateModule(
         preparedModuleInit,
         irSkipBodies,
         irPreserveBodies,
+        irSkipBodyUnitIds,
+        irPreserveBodyUnitIds,
       }),
     );
     if (irFirst) {
@@ -5471,9 +5509,36 @@ export function generateModule(
           "IR-first declaration compilation has no exact requested-skip projection",
         );
       }
-      const correlated = correlateIrSkippedFunctionNames(skipProjection, actuallySkipped ?? []);
-      irFirstSkipped = correlated.legacyNames;
-      irSkippedFunctionUnitIds = correlated.unitIds;
+      if (!irSkipBodyUnitIds) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          "IR-first declaration compilation has no exact function-body skip population",
+        );
+      }
+      const correlatedNames = correlateIrSkippedFunctionNames(skipProjection, actuallySkipped ?? []);
+      const correlatedUnitIds = correlateIrSkippedBodyUnitIds(
+        irSkipBodyUnitIds,
+        actuallySkippedFunctionUnitIds,
+        "function",
+      );
+      const projectedNames = actuallySkippedFunctionUnitIds.map(
+        (unitId) => skipProjection.requireUnit(unitId).legacyName,
+      );
+      if (
+        projectedNames.length !== correlatedNames.legacyNames.length ||
+        projectedNames.some((legacyName, index) => legacyName !== correlatedNames.legacyNames[index])
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          "IR-first exact function-body results disagree with the compatibility name projection",
+        );
+      }
+      // The exact direct-emitter receipt controls post-direct ownership. The
+      // public name list is only its deterministic, validated projection.
+      irFirstSkipped = Object.freeze(projectedNames);
+      irSkippedFunctionUnitIds = correlatedUnitIds;
       if (preparedClassMembers) {
         irSkippedClassMemberUnitIds = correlateIrSkippedBodyUnitIds(
           preparedClassMembers.skipBodyUnitIds,

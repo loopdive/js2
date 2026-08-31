@@ -11153,6 +11153,22 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-30T22:22:00.209Z",
+      "sourceRevision": "0a7ee88abdd900ce2c54622af9e27ad3e94c4ec8",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009114941920853284
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
