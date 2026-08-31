@@ -250,6 +250,7 @@ export function createCodegenContext(
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
+    classCtorHostRegistered: new Set(),
     classTagCounter: 0,
     classTagMap: new Map(),
     classExprNameMap: new Map(),
