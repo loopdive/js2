@@ -1222,3 +1222,37 @@ relationship before any truncation:
   bytes / worktree `27510` bytes; `0x7d` / `0x0a` terminal bytes.
 - `website/public/benchmarks/results/test262-standalone-report.json`: upstream
   `109257` bytes / worktree `109258` bytes; `0x7d` / `0x0a` terminal bytes.
+
+### Publication-scope repair proof
+
+The normal, unskipped cleanup commit restored all four mirrors and completed its
+full hook chain. Lint-staged invoked Prettier for the staged JSON set while the
+temporary unstaged ignore guard was present; the post-hook SHA-256 of every
+working and committed mirror matched its `upstream/main` blob exactly:
+
+- `test262-report.json` mirrors:
+  `15b50b2e0db0d0e70b3d344eac966abdf3edc07c21cfd8b74adb95972e9e1039`.
+- `test262-standalone-report.json` mirrors:
+  `4a8d03ef3900807921212a184e42fb602987c0560933733b180f1a7fb7e376be`.
+
+That hook also passed the LOC/function budget gates, the zero-growth oracle
+ratchet, and the one-fork focused expression-continuation suite at **27 / 27**
+(18.94 s total, 9.71 s tests). The worktree-only `.prettierignore` guard was
+then removed with a patch; it is byte-identical to both `upstream/main` and
+HEAD, and the worktree was clean before this evidence note.
+
+At that clean point, `git diff --name-only upstream/main...HEAD` contained
+exactly these five #680 paths:
+
+- `plan/issues/680-wasm-native-generators-state-machines.md`
+- `src/codegen/context/types.ts`
+- `src/codegen/expressions.ts`
+- `src/codegen/generators-native.ts`
+- `tests/issue-680-generator-expression-continuations.test.ts`
+
+The range had no `benchmarks/`, `public/benchmarks/`,
+`website/public/benchmarks/`, or `labs/` path. This tracker-only proof commit
+must pass the normal hook; after it, one final pre-push replay is planned using
+the actual `git rev-parse HEAD` in the synthetic new-branch ref with
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Its result is reported externally
+to avoid an evidence-commit loop. No GitHub issue was created.
