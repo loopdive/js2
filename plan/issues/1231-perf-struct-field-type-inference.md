@@ -1349,3 +1349,73 @@ changed exact debug artifacts. Point GC moved from WAT declaration ordinal
 annotated standalone remains 31. Every IR/legacy ABI-parity pair and every
 final-binary structural/link/direct-call projection stayed unchanged. The
 relocked merged suite passes 12/12; no expectation was weakened.
+
+### 2026-08-31 current-head CI repair plan — feature-aware final-byte disassembly
+
+Current pushed head `07f47c7ab3d8d4b473ad12e412ade8ea1cf15d3d`
+passed every completed lane except the changed-root step in `quality`. Ubuntu
+ran `tests/issue-1231.test.ts` under `JS2WASM_EVAL_ENGINE=interpreter`; 10/12
+rows passed, while the two rows that first disassemble the generic Point
+binary failed before any oracle assertion with Binaryen's
+`invalid type: distinct rec groups would be identical after binary writing
+(to resolve this, use --enable-gc) at index 4`. The final binary itself is not
+the defect: validation/runtime and all other current-head lanes passed.
+
+The local shared `node_modules` resolves Binaryen 125 even though the current
+manifest and lock require 132, which explains why the full local hooks did not
+expose the compatibility difference. Binaryen's JavaScript `readBinary`
+wrapper calls `_BinaryenModuleRead` before a returned module exists, so
+`module.setFeatures(...)` cannot enable GC for that parse. The same package
+ships the official `binaryen/bin/wasm-dis` entry point, whose supported
+`--all-features` option enables GC while reading an input binary.
+
+The repair remains test-and-record only:
+
+1. Replace the direct JavaScript `binaryen.readBinary(...).emitText()` call in
+   `tests/issue-1231.test.ts` with the package's exact `wasm-dis` executable,
+   resolved through `createRequire(import.meta.url)`. Invoke it through
+   `process.execPath`, pass the exact returned binary on stdin as bytes, and use
+   `- --all-features` so no temporary artifact or ambient CLI path is involved.
+2. Fail closed on resolution/spawn error, signal, nonzero status, empty output,
+   or malformed UTF-8/text before the existing selective S-expression oracle
+   runs. Preserve the SHA-256 cache key over the original binary bytes; the CLI
+   output is only a deterministic view of those bytes, not a replacement
+   artifact or acceptance authority.
+3. Retain every current structural, export/function, same-symbol
+   `struct.new`/`struct.get`, direct-call, ambiguity, and raw counterexample
+   assertion unchanged. Remove the now-unused Binaryen JavaScript default
+   import. Do not touch production, ProgramABI, prepared multi-source
+   publication, or mixed-primitive conditional work.
+4. Rerun the 12-row suite both in the normal local mode and with
+   `JS2WASM_EVAL_ENGINE=interpreter`, then TS7/TS5, formatting/lint/diff, LOC and
+   function ratchets immediately before a signed forward commit. Run the full
+   precommit and prepush hooks without bypass. Any new push invalidates the
+   in-flight exact-byte review, so a fresh Sol review of the new remote SHA is
+   mandatory before PR #5352 can leave draft.
+
+Terra Max owns only `tests/issue-1231.test.ts` for the implementation. Root
+owns this plan and all commit/publication actions.
+
+### 2026-08-31 feature-aware disassembly repair checkpoint
+
+Terra Max implemented the recorded compatibility repair only in
+`tests/issue-1231.test.ts` (+38/−7); production and every existing oracle,
+mutation, expected projection, and cache key remain unchanged. The test no
+longer imports Binaryen's JavaScript reader. It resolves the package-owned
+`binaryen/bin/wasm-dis` entry point, launches it through the current Node
+executable with `- --all-features`, and sends the exact returned
+`Uint8Array` on stdin. Resolution failure, spawn error, signal, nonzero exit,
+stderr diagnostic, empty output, non-UTF-8 output, and empty decoded text all
+fail closed. Successful text remains cached under SHA-256 of the original
+binary bytes before the selective structural/type/export/function oracle runs.
+
+Under the strict 10-core finite/non-negative load limit below 8, the normal
+focused suite passed 12/12 at load 6.502 and the exact CI evaluation mode
+`JS2WASM_EVAL_ENGINE=interpreter` passed 12/12 at load 5.063. TS7, TS5,
+targeted Biome, Prettier, and diff-check passed. The shared local install still
+contains Binaryen 125 while the frozen lock and CI install Binaryen 132, so the
+new pushed CI run remains the necessary independent proof that the official
+feature-aware reader closes the observed 132 failure. Root must still run the
+LOC and function ratchets immediately before the signed commit, run every
+precommit/prepush hook without bypass, push normally, update PR #5352's exact
+head/evidence, and request a fresh Sol review of that new remote SHA.

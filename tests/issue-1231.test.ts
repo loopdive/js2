@@ -3,9 +3,10 @@
 // #1231 — typed object-literal facts are unconditional. The retired control is
 // assembled below solely from fragments, leaving no live configuration spelling.
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 
-import binaryen from "binaryen";
 import { describe, expect, it } from "vitest";
 
 import { analyzeSource } from "../src/checker/index.js";
@@ -715,6 +716,14 @@ interface ResolvedFinalBinaryFunction {
 }
 
 const FINAL_BINARY_DISASSEMBLY_BY_SHA = new Map<string, BinaryenDisassembly>();
+const WASM_DIS_PATH = (() => {
+  try {
+    return createRequire(import.meta.url).resolve("binaryen/bin/wasm-dis");
+  } catch (error) {
+    throw new Error(`cannot resolve binaryen/bin/wasm-dis: ${String(error)}`);
+  }
+})();
+const WASM_DIS_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 function isBinaryenWatList(node: BinaryenWatNode): node is BinaryenWatList {
   return Array.isArray(node);
@@ -1082,14 +1091,36 @@ function disassembleFinalBinary(binary: Uint8Array): BinaryenDisassembly {
   const sha256 = createHash("sha256").update(binary).digest("hex");
   const cached = FINAL_BINARY_DISASSEMBLY_BY_SHA.get(sha256);
   if (cached) return cached;
-  const module = binaryen.readBinary(binary);
+  const result = spawnSync(process.execPath, [WASM_DIS_PATH, "-", "--all-features"], {
+    input: binary,
+    maxBuffer: WASM_DIS_MAX_OUTPUT_BYTES,
+  });
+  const stderr = result.stderr;
+  const diagnostic =
+    stderr.length === 0
+      ? "no stderr diagnostic"
+      : (() => {
+          try {
+            return new TextDecoder("utf-8", { fatal: true }).decode(stderr).trim() || "empty stderr diagnostic";
+          } catch {
+            return "non-UTF-8 stderr diagnostic";
+          }
+        })();
+  if (result.error) throw new Error(`wasm-dis spawn failed: ${result.error.message}; ${diagnostic}`);
+  if (result.signal) throw new Error(`wasm-dis terminated by ${result.signal}; ${diagnostic}`);
+  if (result.status !== 0) throw new Error(`wasm-dis exited ${String(result.status)}; ${diagnostic}`);
+  if (stderr.length !== 0) throw new Error(`wasm-dis reported a diagnostic: ${diagnostic}`);
+  if (result.stdout.length === 0) throw new Error("wasm-dis produced no stdout");
+  let wat: string;
   try {
-    const disassembly = { sha256, wat: module.emitText() };
-    FINAL_BINARY_DISASSEMBLY_BY_SHA.set(sha256, disassembly);
-    return disassembly;
-  } finally {
-    module.dispose();
+    wat = new TextDecoder("utf-8", { fatal: true }).decode(result.stdout);
+  } catch {
+    throw new Error("wasm-dis stdout is not valid UTF-8");
   }
+  if (wat.trim().length === 0) throw new Error("wasm-dis produced empty text");
+  const disassembly = { sha256, wat };
+  FINAL_BINARY_DISASSEMBLY_BY_SHA.set(sha256, disassembly);
+  return disassembly;
 }
 
 function inspectFinalBinary(
