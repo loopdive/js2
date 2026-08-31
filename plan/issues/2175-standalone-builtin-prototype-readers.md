@@ -4176,3 +4176,28 @@ repository-local issue file. No GitHub issue was created. The environment still
 requires explicit user authorization before this workspace's source/history
 may be pushed to `https://github.com/ttraenkler/js2`; no push or PR operation
 has occurred without that authorization.
+
+## Live-main integration plan — 2026-09-01
+
+Fresh `git fetch upstream main` resolves `loopdive/js2:main` to
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`, one commit ahead of this branch's
+integrated base `d1f2ed7d45b2c280cb5cea68266e73665a70f7f1`. The upstream delta contains
+only Test262 benchmark/report mirrors plus `scripts/loc-budget-baseline.json`;
+it has no direct overlap with the eight #2175-owned paths.
+
+The normal merge hook's blanket `*.json` lint-staged rule can reformat four
+generated report mirrors that upstream deliberately stores outside Prettier's
+shape. Before the no-commit merge, add those four exact paths to a temporary,
+worktree-only `.prettierignore` block via `apply_patch`; never stage or commit
+that block. This keeps the unskipped hook from manufacturing an unrelated PR
+diff while every semantic and quality gate still runs. After the attributed
+normal merge commit, remove the temporary block via `apply_patch` and prove
+`.prettierignore` is byte-identical to `HEAD` and the PR range still contains
+exactly the eight owned paths.
+
+Then repeat the integrated focused **30/30** controls, the #5239 bridge **2/2**,
+TS7/typecheck, and the complete synthetic-ref pre-push hook on the actual final
+HEAD. Stop on any regression or generated-path leak. Publication remains
+blocked pending explicit authorization to push this completed branch to the
+public `ttraenkler/js2` fork for a non-draft PR against `loopdive/js2:main`; no
+push or GitHub mutation is part of this integration plan.
