@@ -221,11 +221,20 @@ export function temporalStubSource(provider: TemporalProvider): string {
  * `const` (not `var`) so the binding SHADOWS any ambient `Temporal` for the
  * whole module — that shadowing is the entire mechanism by which the compiled
  * global replaces the "Temporal is not defined" host ambient.
+ *
+ * (#5248) NO TYPE ANNOTATION. It read `const Temporal: any = …` until the
+ * test262 wiring landed, which is a syntax error in a JavaScript entry file —
+ * every test262 row is `.js` under `allowJs`, so all five probe rows came back
+ * `compile_error: Type annotations can only be used in TypeScript files`. The
+ * annotation was never doing work: the stub declares the getter as returning
+ * `any`, so the inferred type of the binding is `any` either way. Keeping the
+ * prelude valid in BOTH dialects is the invariant — this is a general service,
+ * and its only two consumers today disagree about the entry's extension.
  */
 export function temporalPrelude(provider: TemporalProvider): string {
   return (
     `import { ${provider.getterField} } from "${TEMPORAL_STUB_KEY.replace(/\.ts$/, "")}"; ` +
-    `const ${TEMPORAL_EXPORT_NAME}: any = ${provider.getterField}();\n`
+    `const ${TEMPORAL_EXPORT_NAME} = ${provider.getterField}();\n`
   );
 }
 
