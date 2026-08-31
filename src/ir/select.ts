@@ -1389,12 +1389,15 @@ export function assessIrImplicitConstructorSubject(
  * Module-level for the same isPhase1* threading reason as
  * `currentHostGlobalResolver`. The `ReturnStatement` arm of
  * `isPhase1BodyStatement` accepts an early return only when
- *   - `earlyReturnLoopDepth > 0` — we are inside a C-style `while`/`for`/
- *     `do` body (the Wasm `return` op is exactly JS's early exit there), AND
+ *   - `earlyReturnLoopDepth > 0` — we are inside a return-ADMITTING body
+ *     buffer: a C-style `while`/`for`/`do` body, a switch clause, or
+ *     (#5165 S2) a finally-LESS try/catch region. The Wasm `return` op is
+ *     exactly JS's early exit in all three — it unwinds enclosing blocks,
+ *     loops and exception handlers natively, AND
  *   - `earlyReturnBarrierDepth === 0` — NO enclosing for-of body (iterator
- *     `return()` cleanup would be skipped), try/catch/finally body (inlined
- *     finally would be skipped), or constructor body (returns route through
- *     the implicit `return this` synthesis), AND
+ *     `return()` cleanup would be skipped), finally-BEARING try region
+ *     (the inlined finally would be skipped — #5165 S4), or constructor
+ *     body (returns route through the implicit `return this` synthesis), AND
  *   - the function is not a generator (`currentFnIsGenerator` — generator
  *     returns route through the buffer epilogue).
  * Mirrored by from-ast's `cx.noEarlyReturn` / `funcKind` guards so accepted
@@ -4065,16 +4068,14 @@ function isPhase1ThrowStatement(
  *   try { <body> } catch (id) { <handler> } finally { <cleanup> }
  *
  * Where `<body>`, `<handler>`, and `<cleanup>` are each Phase-1 body
- * statement lists (no early return / break / continue out of the try
- * region — slice 9 doesn't yet thread the finally-stack inlining for
- * abrupt completions).
+ * statement lists. (#5165 S2) An early `return` out of a finally-LESS
+ * try/catch is now admitted — see the barrier comment below.
  *
  * Rejected (deferred to slice 9.5):
  *   - destructuring catch param (`catch ({message})`).
  *   - `throw` with no expression (handled in `isPhase1ThrowStatement`).
  *   - `try` with neither catch nor finally (TS already rejects this).
- *   - early-return / break / continue inside try / catch / finally bodies
- *     (the body-statement recogniser doesn't allow them anyway).
+ *   - early return crossing a `finally` (#5165 S4).
  */
 function isPhase1TryStatement(
   stmt: ts.TryStatement,
@@ -4102,11 +4103,21 @@ function isPhase1TryStatementInScope(
 ): boolean {
   if (!stmt.catchClause && !stmt.finallyBlock) return shapeNo("try-missing-handler", stmt);
 
-  // (#2856 C1) try/catch/finally bodies are early-return BARRIERS: a Wasm
-  // `return` inside them would skip the inlined finally blocks. (#2952 s2's
-  // break/continue is different — its `br.label` lowering inlines crossed
-  // finallys, so `inLoop` propagates while the early-return arm stays barred.)
-  earlyReturnBarrierDepth++;
+  // (#2856 C1 / #5165 S2) A try region is an early-return barrier ONLY when it
+  // has a `finally`: a Wasm `return` is not intercepted by an exception
+  // handler, so from a finally-LESS try/catch it leaves the function exactly
+  // as JS does — the sole thing it could skip is an inlined finally. With no
+  // finally the region is instead an ordinary return-ADMITTING body buffer,
+  // the same role switch clauses take (see the `earlyReturnLoopDepth` bump in
+  // `isPhase1SwitchStatement`): the return lowers to `early.return`, not to a
+  // block terminator. Depth semantics do the rest — a finally-less try nested
+  // inside a finally-bearing try, a for-of body, or a constructor/module-init
+  // context still sees `earlyReturnBarrierDepth > 0` and stays barred.
+  // (#2952 s2's break/continue is different — its `br.label` lowering inlines
+  // crossed finallys, so `inLoop` propagates independently of both counters.)
+  const isBarrier = stmt.finallyBlock !== undefined;
+  if (isBarrier) earlyReturnBarrierDepth++;
+  else earlyReturnLoopDepth++;
   try {
     // Try body: must be a Phase-1 body statement list.
     const tryAccepted = withProjectionEvidenceScope(() =>
@@ -4162,7 +4173,8 @@ function isPhase1TryStatementInScope(
 
     return true;
   } finally {
-    earlyReturnBarrierDepth--;
+    if (isBarrier) earlyReturnBarrierDepth--;
+    else earlyReturnLoopDepth--;
   }
 }
 
@@ -5365,7 +5377,148 @@ function isPhase1Tail(
     if (!switchAllPathsTerminate(stmt)) return shapeNo("tail-switch-falls-through", stmt);
     return true;
   }
+  // #5165 S1 — a function ENDING in a C-style `for` / `while` / `do`. The
+  // loop lowers through the SAME `{while,for,do}.loop` IR instr as the
+  // non-tail form; body-position early returns already claim and lower
+  // (`early.return` → Wasm `return`, which unwinds the loop blocks
+  // natively), so the only new obligation is the after-loop completion.
+  if (ts.isForStatement(stmt) || ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
+    // Generators are OUT. Their IR lowering is EAGER — the body runs to
+    // completion into a yield buffer — so a tail loop with no normal
+    // completion (exactly what this arm proves) never terminates and blows the
+    // buffer, where the legacy lazy generator suspends per `next()`. Measured
+    // 2026-08-29: `function* g(n) { let i = n; while (true) { yield i; i++; } }`
+    // returns 5,6,7 on legacy and throws "Eager generator buffer exceeded
+    // 1000000 yields" if claimed here.
+    if (isGenerator) return shapeNo("tail-loop-generator", stmt);
+    const shapeOk = ts.isForStatement(stmt)
+      ? isPhase1ForStatement(stmt, scope, localClasses)
+      : ts.isWhileStatement(stmt)
+        ? isPhase1WhileStatement(stmt, scope, localClasses)
+        : isPhase1DoStatement(stmt, scope, localClasses);
+    if (!shapeOk) return shapeNo("tail-loop-shape", stmt);
+    // A void function may fall out of the loop into its implicit empty
+    // return, exactly like the `tail-if-noelse` / `tail-switch` void arms.
+    if (isVoidReturn) return true;
+    if (!loopNeverFallsThrough(stmt)) return shapeNo("tail-loop-falls-through", stmt);
+    return true;
+  }
+  // #5165 S3 — a function ENDING in a `try`. Same `IrInstrTry` lowering as
+  // the non-tail form; only the block terminator differs.
+  if (ts.isTryStatement(stmt)) {
+    // Generators are OUT for the same reason the loop arm excludes them: the
+    // eager buffer model does not carry a tail try's abrupt completion the way
+    // the legacy lazy generator does (measured 2026-08-29: a tail
+    // `try { throw "a" } catch (e) { throw "b" }` surfaces the raw
+    // `WebAssembly.Exception` instead of the thrown string).
+    if (isGenerator) return shapeNo("tail-try-generator", stmt);
+    if (!isPhase1TryStatement(stmt, scope, localClasses)) return shapeNo("tail-try-shape", stmt);
+    if (isVoidReturn) return true;
+    if (!tryAllPathsTerminate(stmt)) return shapeNo("tail-try-falls-through", stmt);
+    return true;
+  }
   return shapeNo("tail-unhandled", stmt);
+}
+
+/**
+ * #5165 S1 — can control reach the statement AFTER this loop?
+ *
+ * A non-void function ending in a loop has no implicit return to fall into,
+ * so the builder terminates the block with `unreachable`. That is sound only
+ * when the loop provably never completes normally. Two independent exits
+ * have to be ruled out:
+ *
+ *   1. **The condition** — `for (;;)` (absent condition, #3583) and a literal
+ *      `while (true)` / `do … while (true)` never test false. Anything else
+ *      may.
+ *   2. **`break`** — and THE BREAK SCAN MUST RESPECT NESTING. In
+ *      `while (true) { if (x) return 1; break; }` the `break` binds this
+ *      loop, so control DOES reach the fall-out; a condition-only check
+ *      would emit `unreachable` on a reachable path, i.e. a Wasm trap where
+ *      JS returns `undefined` — a silent runtime miscompile, not a
+ *      validation error. An unlabeled `break` binds the innermost enclosing
+ *      loop OR switch (§14.9), so one nested inside an inner loop/switch is
+ *      NOT this loop's exit; a LABELED `break` is this loop's exit unless
+ *      its label is bound strictly inside the body (any other label targets
+ *      this loop or something outside it — either way control leaves).
+ *
+ * `continue` never exits a loop, and function-like bodies are not descended
+ * into (a break may not cross a function boundary).
+ */
+function loopNeverFallsThrough(stmt: ts.ForStatement | ts.WhileStatement | ts.DoStatement): boolean {
+  const condition = ts.isForStatement(stmt) ? stmt.condition : stmt.expression;
+  if (condition !== undefined && condition.kind !== ts.SyntaxKind.TrueKeyword) return false;
+  return !bodyHasEscapingBreak(stmt.statement, new Set());
+}
+
+/** #5165 S1 — does `node` contain a `break` that leaves the loop being scanned? */
+function bodyHasEscapingBreak(node: ts.Node, boundLabels: ReadonlySet<string>): boolean {
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+  if (ts.isBreakStatement(node)) {
+    // Unlabeled here means no inner loop/switch captured it (those subtrees
+    // are handled by the `isBreakCapturingStatement` branch below).
+    return node.label === undefined || !boundLabels.has(node.label.text);
+  }
+  if (ts.isLabeledStatement(node)) {
+    const inner = new Set(boundLabels);
+    inner.add(node.label.text);
+    return bodyHasEscapingBreak(node.statement, inner);
+  }
+  if (isBreakCapturingStatement(node)) {
+    // A nested loop/switch swallows unlabeled breaks; only a labeled break
+    // whose label is not bound inside it can still escape.
+    return ts.forEachChild(node, (child) => bodyHasEscapingLabeledBreak(child, boundLabels)) === true;
+  }
+  return ts.forEachChild(node, (child) => (bodyHasEscapingBreak(child, boundLabels) ? true : undefined)) === true;
+}
+
+/** #5165 S1 — the nested-breakable variant: unlabeled breaks are captured. */
+function bodyHasEscapingLabeledBreak(node: ts.Node, boundLabels: ReadonlySet<string>): true | undefined {
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return undefined;
+  if (ts.isBreakStatement(node)) {
+    if (node.label === undefined) return undefined; // bound by the nested breakable
+    return boundLabels.has(node.label.text) ? undefined : true;
+  }
+  if (ts.isLabeledStatement(node)) {
+    const inner = new Set(boundLabels);
+    inner.add(node.label.text);
+    return bodyHasEscapingLabeledBreak(node.statement, inner);
+  }
+  return ts.forEachChild(node, (child) => bodyHasEscapingLabeledBreak(child, boundLabels));
+}
+
+/** #5165 S1 — statements that bind an UNLABELED `break` (§14.9). */
+function isBreakCapturingStatement(node: ts.Node): boolean {
+  return (
+    ts.isForStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isWhileStatement(node) ||
+    ts.isDoStatement(node) ||
+    ts.isSwitchStatement(node)
+  );
+}
+
+/**
+ * #5165 S3 — does EVERY path through this `try` leave the function?
+ *
+ * Same obligation as `switchAllPathsTerminate`, and the same reused
+ * `thenArmTerminates` model: the try block's last statement terminates, and
+ * so does the catch block's when one is present. A `finally` needs no arm of
+ * its own — a normally-completing finally passes the try/catch completion
+ * through unchanged, and the selector's own barrier means a return can never
+ * be the completion that crosses one (that is #5165 S4). A try with neither
+ * catch nor finally is already refused by `isPhase1TryStatement`.
+ */
+function tryAllPathsTerminate(stmt: ts.TryStatement): boolean {
+  if (!blockLastStatementTerminates(stmt.tryBlock)) return false;
+  if (stmt.catchClause && !blockLastStatementTerminates(stmt.catchClause.block)) return false;
+  return true;
+}
+
+function blockLastStatementTerminates(block: ts.Block): boolean {
+  const last = block.statements[block.statements.length - 1];
+  return last !== undefined && thenArmTerminates(last);
 }
 
 /**

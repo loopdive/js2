@@ -558,6 +558,18 @@ const MEMBRANE_OUTWARD_SOURCE = `
     ])) as number;
   } catch (e) { vInspect = -1; }
 
+  // The value bridge is type-driven, not descriptor-name-driven. Ordinary
+  // boolean fields must cross with both value and ToString semantics intact.
+  var vBooleanValues = 0;
+  try {
+    var boolBox: any = (0, eval)(joinSource(["globalThis.boolObj = { yes: tr", "ue, no: false }"]));
+    vBooleanValues =
+      ((boolBox as any).yes === true ? 1000 : 0) +
+      ((boolBox as any).no === false ? 100 : 0) +
+      (String((boolBox as any).yes) === "true" ? 10 : 0) +
+      (String((boolBox as any).no) === "false" ? 1 : 0);
+  } catch (e) { vBooleanValues = -1; }
+
   // A box returned to compiled code: read, then MUTATED BY A LATER EVAL.
   var vRead = 0;
   var vLive = 0;
@@ -618,6 +630,7 @@ const MEMBRANE_OUTWARD_SOURCE = `
   export function hasValueProbe(): number { return report.hasValue as number; }
   export function enumValProbe(): number { return (report.enumVal as string) === "true" ? 1 : 0; }
   export function cfgValProbe(): number { return (report.cfgVal as string) === "false" ? 1 : 0; }
+  export function booleanValuesProbe(): number { return vBooleanValues; }
   export function readProbe(): number { return vRead; }
   export function liveProbe(): number { return vLive; }
   export function writeBackProbe(): number { return vWriteBack; }
@@ -1124,6 +1137,10 @@ describe.skipIf(!enabled)("#4245 slice 1 — quickjs eval membrane (inward)", ()
     // reads `true` here.
     expect(outward.enumValProbe!()).toBe(1);
     expect(outward.cfgValProbe!()).toBe(1);
+  });
+
+  it("ordinary QuickJS boolean fields keep value and ToString semantics", () => {
+    expect(outward.booleanValuesProbe!()).toBe(1111);
   });
 
   it("a QuickJS object read by compiled code carries its properties", () => {

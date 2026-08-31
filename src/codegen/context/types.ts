@@ -643,6 +643,13 @@ export interface FunctionContext {
    * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
   mixedAssignmentCarrierVars?: Set<string>;
   /**
+   * Concrete object shapes whose values were written to a standalone RegExp's
+   * raw `lastIndex` slot in this function. Later ref→externref coercions in
+   * the same expression frame must retain that exact GC identity instead of
+   * making the normal ToPrimitive `$Object` value copy.
+   */
+  regexpLastIndexIdentityStructTypes?: Set<number>;
+  /**
    * Callback captures whose ABI deliberately remains externref.  Their
    * checker type may be a concrete array/object, but the value crossed a host
    * callback boundary and must stay dynamically dispatched rather than being
@@ -3755,6 +3762,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  runs it after `setExports` (symmetric with the standalone `_start` model).
    *  Default false. WASI is unaffected. */
   deferTopLevelInit: boolean;
+  /** (#5193) A host-lane call site needs compiled→host MARSHALLING to work while
+   *  the wasm `start` section runs — where `instance.exports` does not exist yet.
+   *  Set by `emitHostTaBufferConstruct`; consumed by
+   *  `emitInitMarshalHelperRegistration`, which emits the funcref self-registration
+   *  prologue on `__module_init`. Unset ⇒ byte-identical output. */
+  needsInitMarshalHelpers?: boolean;
   /** (#2179/#4745) True when the module body contains any `delete` of a
    *  property or element access (e.g. `delete o.a` / `delete o[k]`) or
    *  `Reflect.deleteProperty(o, k)`. Pre-scanned once at module setup. When

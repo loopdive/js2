@@ -68,11 +68,14 @@ import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
+import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../generic-struct-factory.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import {
+  canEmitAssertedStructExtension,
   canStructurallyProjectRef,
   coercionInstrs,
   defaultValueInstrs,
+  emitAssertedStructExtension,
   emitGuardedFuncRefCast,
   emitGuardedRefCast,
   getVecInfo,
@@ -131,6 +134,86 @@ import {
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
 
+function tryEmitGenericStructFactoryResult(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  call: ts.CallExpression,
+  actualReturn: ValType,
+): ValType | null {
+  const factory = genericStructFactoryCall(ctx, call);
+  if (!factory) return null;
+
+  const source = resolveWasmType(ctx, factory.sourceConstraint);
+  const target = resolveWasmType(ctx, factory.target);
+  if ((source.kind !== "ref" && source.kind !== "ref_null") || (target.kind !== "ref" && target.kind !== "ref_null")) {
+    return null;
+  }
+
+  const sourceCarrier: ValType = { kind: "ref_null", typeIdx: source.typeIdx };
+  const sameStruct = source.typeIdx === target.typeIdx;
+  if (!sameStruct && !canEmitAssertedStructExtension(ctx, sourceCarrier, target)) return null;
+
+  let carried: ValType;
+  if (actualReturn.kind === "externref" || actualReturn.kind === "ref_extern") {
+    // Nested generic functions retain an externref ABI, but this detector has
+    // proved that the value was freshly allocated as the constraint struct.
+    coerceType(ctx, fctx, { kind: "externref" }, sourceCarrier);
+    carried = sourceCarrier;
+  } else if (
+    (actualReturn.kind === "ref" || actualReturn.kind === "ref_null") &&
+    actualReturn.typeIdx === source.typeIdx
+  ) {
+    carried = actualReturn;
+  } else {
+    return null;
+  }
+
+  if (sameStruct) {
+    if (!valTypesMatch(carried, target)) coerceType(ctx, fctx, carried, target);
+    return target;
+  }
+
+  return emitAssertedStructExtension(ctx, fctx, carried, target) ? target : null;
+}
+
+/**
+ * Recover the concrete carrier hidden by an externref `T -> T` implementation
+ * ABI before applying the instantiated result type.
+ *
+ * TypeScript's `finishNode<T>(node: T): T` intentionally accepts every AST
+ * node layout through externref. In `parseTokenNode<TypeNode>()`, its argument
+ * is still statically a `Token`, while the surrounding assertion asks for the
+ * sibling `TypeNode` interface. Casting the opaque externref straight to
+ * TypeNode loses the valid Token and produces null. Decode the value through
+ * the proven identity parameter first; the ordinary typed-ref coercion can
+ * then perform its field-preserving structural projection (including erased
+ * `_...Brand` defaults).
+ */
+function tryEmitGenericIdentityResult(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  call: ts.CallExpression,
+  actualReturn: ValType,
+  instantiatedReturn: ts.Type,
+): ValType | null {
+  const parameterIndex = genericIdentityReturnParamIndex(ctx, call);
+  const argument = parameterIndex === undefined ? undefined : call.arguments[parameterIndex];
+  if (!argument || (actualReturn.kind !== "externref" && actualReturn.kind !== "ref_extern")) return null;
+
+  const source = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(argument));
+  const target = resolveWasmType(ctx, instantiatedReturn);
+  if ((source.kind !== "ref" && source.kind !== "ref_null") || (target.kind !== "ref" && target.kind !== "ref_null")) {
+    return null;
+  }
+
+  const sourceCarrier: ValType = { kind: "ref_null", typeIdx: source.typeIdx };
+  if (source.typeIdx !== target.typeIdx && !canStructurallyProjectRef(ctx, sourceCarrier, target)) return null;
+
+  coerceType(ctx, fctx, { kind: "externref" }, sourceCarrier);
+  if (!valTypesMatch(sourceCarrier, target)) coerceType(ctx, fctx, sourceCarrier, target);
+  return target;
+}
+
 /**
  * (#3912) Report the representation of `String(<number>)`'s result truthfully.
  *
@@ -162,6 +245,39 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
     ctx.runtimeEvalGlobalFunctionBindings ||
     (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);
   return hasModuleBinding && ctx.liveFuncBindingGlobals?.has(name) === true;
+}
+
+/**
+ * Does this binding hold the callable returned by an instantiated generic
+ * factory such as TypeScript's `memoize<T>(() => T): () => T`?
+ *
+ * The shared generic implementation necessarily carries its returned closure
+ * as externref, while the binding's apparent type is the instantiated callable
+ * (`() => ParenthesizerRules`).  Treating that value as the apparent wrapper
+ * directly guard-casts the real generic wrapper to an unrelated nominal
+ * closure struct and turns the subsequent `struct.get` into a null dereference.
+ * The multi-signature callable dispatch below can instead inspect the live
+ * funcref and project its externref result to the instantiated return carrier.
+ */
+function bindingIsGenericCallableFactoryResult(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declaration =
+    ctx.checker.getSymbolAtLocation(identifier)?.valueDeclaration ?? ctx.oracle.valueDeclarationOf(identifier);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+
+  let initializer = declaration.initializer;
+  while (
+    ts.isParenthesizedExpression(initializer) ||
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer) ||
+    ts.isNonNullExpression(initializer)
+  ) {
+    initializer = initializer.expression;
+  }
+  if (!ts.isCallExpression(initializer)) return false;
+
+  const implementation = ctx.checker.getResolvedSignature(initializer)?.declaration;
+  if (!implementation?.typeParameters?.length) return false;
+  return ctx.checker.getTypeAtLocation(identifier).getCallSignatures().length > 0;
 }
 
 /**
@@ -1166,15 +1282,7 @@ export function compileIdentifierCall(
         // explicit hint also keeps the dispatch table in
         // `__extern_method_call` honest for wasmGC structs that V8
         // can't introspect natively.
-        const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
-        if (toStrIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: toStrIdx });
-          // (#4174) `__extern_toString`'s string arm is identity — a rope comes
-          // back unchanged; flatten it here (acorn's `this.input = String(input)`).
-          emitStringExternResultFlatten(ctx, fctx);
-        }
-        return { kind: "externref" };
+        return emitToString(ctx, fctx, argType, argTsType, "string");
       }
 
       if (argType?.kind === "ref" || argType?.kind === "ref_null") {
@@ -1513,6 +1621,7 @@ export function compileIdentifierCall(
       calleeBindingDecl !== undefined &&
       ts.isVariableDeclaration(calleeBindingDecl) &&
       bindingMayReceiveHostCallable(ctx, calleeBindingDecl);
+    const calleeIsGenericCallableFactoryResult = bindingIsGenericCallableFactoryResult(ctx, expr.expression);
     const calleeIsParameterBinding =
       calleeBindingDecl !== undefined && (ts.isParameter(calleeBindingDecl) || ts.isBindingElement(calleeBindingDecl));
     // A redeclared `var` binding has multiple initializer-specific closure
@@ -1577,7 +1686,7 @@ export function compileIdentifierCall(
     // value instead. Immutable captures and ordinary locals retain the typed
     // call_ref path.
     const heterogeneousCallableCapture = fctx.boxedCaptures?.get(funcName)?.valType.kind === "externref";
-    if (closureInfo && !heterogeneousCallableCapture) {
+    if (closureInfo && !heterogeneousCallableCapture && !calleeIsGenericCallableFactoryResult) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
 
@@ -1936,6 +2045,7 @@ export function compileIdentifierCall(
               unboxNumberIdx: number | null;
             },
             allowProvenNumberUnbox: boolean,
+            allowGeneralRefExport: boolean,
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
             if (ctx.standalone || ctx.wasi) return null;
@@ -1962,7 +2072,7 @@ export function compileIdentifierCall(
             if (
               isHostExtern(from) &&
               (to.kind === "ref" || to.kind === "ref_null") &&
-              isErasedGenericRefCarrier(to.typeIdx)
+              (isErasedGenericRefCarrier(to.typeIdx) || sigParamWasmTypes.length === 0)
             ) {
               return [
                 { op: "any.convert_extern" },
@@ -1974,9 +2084,23 @@ export function compileIdentifierCall(
             }
             if (
               (from.kind === "ref" || from.kind === "ref_null") &&
-              (isErasedGenericRefCarrier(from.typeIdx) || sigParamWasmTypes.length === 0) &&
+              ((allowGeneralRefExport && from.typeIdx !== ctx.anyValueTypeIdx) ||
+                isErasedGenericRefCarrier(from.typeIdx) ||
+                sigParamWasmTypes.length === 0) &&
               isHostExtern(to)
             ) {
+              // `$AnyValue` is deliberately excluded from the new general
+              // argument widening: its tagged GC struct needs semantic
+              // projection rather than raw reference export.
+              // Widening a concrete WasmGC reference to externref is always
+              // lossless.  Keep the tuple/vec restriction on the reverse
+              // direction above, where an erased value would need a guarded
+              // downcast, but do not apply it here.  TypeScript's parent-fixup
+              // traversal is the production witness: visitNode supplies a
+              // concrete Node while its captured addWorkItem callback accepts
+              // Node | NodeArray<Node>.  The latter lowers to externref, and
+              // excluding that wrapper type made the callable dispatch end in
+              // its TypeError arm even though the callback was present.
               return [{ op: "extern.convert_any" }];
             }
 
@@ -2007,7 +2131,11 @@ export function compileIdentifierCall(
           };
           const argumentHasNumberBridgeProof = (index: number): boolean =>
             index >= expr.arguments.length || ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "number";
-          const theoreticalHelpers = { boxNumberIdx: 0, boxBooleanIdx: 0, unboxNumberIdx: 0 };
+          const theoreticalHelpers = {
+            boxNumberIdx: 0,
+            boxBooleanIdx: 0,
+            unboxNumberIdx: 0,
+          };
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
             const hasRest = info.hasRestParam === true;
@@ -2022,7 +2150,7 @@ export function compileIdentifierCall(
               const to = info.paramTypes[pi]!;
               if (scalarAbiTypesMatch(from, to)) continue;
               differs = true;
-              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi)) === null) {
+              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi), true) === null) {
                 compatible = false;
                 break;
               }
@@ -2032,7 +2160,7 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false) !== null;
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false) !== null;
             if (differs || returnDiffers) {
               needsScalarBridge = true;
               break;
@@ -2042,7 +2170,12 @@ export function compileIdentifierCall(
             addUnionImports(ctx);
             flushLateImportShifts(ctx, fctx);
           }
-          const dispatchBridgePlan = (from: ValType, to: ValType, allowProvenNumberUnbox: boolean): Instr[] | null =>
+          const dispatchBridgePlan = (
+            from: ValType,
+            to: ValType,
+            allowProvenNumberUnbox: boolean,
+            allowGeneralRefExport: boolean,
+          ): Instr[] | null =>
             scalarBridgePlan(
               from,
               to,
@@ -2052,6 +2185,7 @@ export function compileIdentifierCall(
                 unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
               },
               allowProvenNumberUnbox,
+              allowGeneralRefExport,
             );
 
           const funcCandidates: FuncCandidate[] = [
@@ -2107,6 +2241,7 @@ export function compileIdentifierCall(
                   sigParamWasmTypes[pi]!,
                   candidateParamTypes[pi]!,
                   argumentHasNumberBridgeProof(pi),
+                  true,
                 );
                 if (bridge === null) {
                   paramsMatch = false;
@@ -2124,7 +2259,7 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              dispatchBridgePlan(info.returnType, expectedReturn, false) === null &&
+              dispatchBridgePlan(info.returnType, expectedReturn, false, false) === null &&
               !declaredRefSubtypeOf(info.returnType, expectedReturn) &&
               !canProjectImplementationReturn(info.returnType, expectedReturn)
             ) {
@@ -2683,7 +2818,7 @@ export function compileIdentifierCall(
                 }
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
                 if (!scalarAbiTypesMatch(fromType, toType)) {
-                  const bridge = dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai));
+                  const bridge = dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai), true);
                   if (bridge === null) {
                     candidateArgsCoercible = false;
                     break;
@@ -2749,7 +2884,7 @@ export function compileIdentifierCall(
                 } else if (canProjectImplementationReturn(fc.returnType!, expectedReturn!)) {
                   fcCallBody.push(...coercionInstrs(ctx, fc.returnType!, expectedReturn!, fctx));
                 } else {
-                  const bridge = dispatchBridgePlan(fc.returnType!, expectedReturn!, false);
+                  const bridge = dispatchBridgePlan(fc.returnType!, expectedReturn!, false, false);
                   if (bridge !== null) {
                     fcCallBody.push(...bridge);
                   } else {
@@ -3075,7 +3210,7 @@ export function compileIdentifierCall(
         // live cell still contains null until the lazy materializer fills it.
         // Publish the value before passing the cell to the callee, matching
         // emitClosureConstruction's capture path.
-        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
         // #1177: TDZ check for captured let/const/using variables — fires
         // BEFORE the cap-prepend so we throw ReferenceError before the callee
         // observes an uninitialized value. Apply to BOTH the mutable and
@@ -3653,11 +3788,12 @@ export function compileIdentifierCall(
       // functions with Promise<void>), the TS type may be misleading
       if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
       // Use actual Wasm return type to avoid TS 'any' → externref mismatch
-      return brandExternMethodResult(
-        ctx,
-        retType,
-        getWasmFuncReturnType(ctx, finalFuncIdx) ?? resolveWasmType(ctx, retType),
-      );
+      const actualReturn = getWasmFuncReturnType(ctx, finalFuncIdx) ?? resolveWasmType(ctx, retType);
+      const factoryResult = tryEmitGenericStructFactoryResult(ctx, fctx, expr, actualReturn);
+      if (factoryResult !== null) return factoryResult;
+      const identityResult = tryEmitGenericIdentityResult(ctx, fctx, expr, actualReturn, retType);
+      if (identityResult !== null) return identityResult;
+      return brandExternMethodResult(ctx, retType, actualReturn);
     }
     return getWasmFuncReturnType(ctx, finalFuncIdx) ?? { kind: "f64" };
   }

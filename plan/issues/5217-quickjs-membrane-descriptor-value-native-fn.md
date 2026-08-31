@@ -1,10 +1,10 @@
 ---
 id: 5217
 title: "QuickJS eval membrane: a descriptor's `enumerable` value reads back as a native function, not `true` (regressed by #5202)"
-status: ready
+status: completed
 sprint: current
 created: 2026-08-30
-updated: 2026-08-30
+updated: 2026-08-31
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -158,3 +158,18 @@ Two traps that cost real time here:
   the four descriptor field names — the same path presumably mis-resolves any
   data property that collides with a native method name
 - A regression test that would fail on `598163a6` without the fix
+
+## Resolution
+
+Completed on 2026-08-31 while shepherding PR #5263.
+
+The outward mirror now stores canonical provider-to-caller value carriers
+instead of leaking provider-local primitive boxes. Booleans use a scalar-only
+intrinsic so their i32 payload enters the carrier before any module-local box is
+materialized; mirror push unwraps that carrier before writing back to QuickJS.
+The caller's dynamic `String(any)` lowering now recognizes rebuilt boolean
+boxes before the generic object/callable ToPrimitive path.
+
+Validation: `tests/quickjs-eval-membrane.test.ts` passes 58/58, including a
+new property-name-independent object with both `true` and `false` fields and
+their `String(...)` results.

@@ -2372,14 +2372,14 @@ export function ensureNativeErrorNativeProtoGlue(ctx: CodegenContext, builtinNam
 /**
  * (#2861) Register `Promise.prototype` glue (idempotent) and return its brand.
  * Scoped to the static `.prototype` VALUE read + method-closure value reads
- * (`then`/`catch`/`finally`) — the proto OBJECT is a pure value object
- * (member CSV only; `emitLazyNativeProtoGet` never re-emits a body that touches
- * the async-capability runtime state, which is what #1907 found to null-deref). */
+ * (`then`/`catch`/`finally`) and intrinsic `Symbol.toStringTag`; the proto
+ * OBJECT remains a pure value object (member CSV + tag), so lazy reads never
+ * touch async-capability runtime state (#1907). */
 export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | undefined {
   const brand = getBuiltinBrand(ctx, "Promise");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"));
   }
   return brand;
 }

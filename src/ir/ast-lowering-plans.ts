@@ -275,11 +275,6 @@ export function collectIrDirectCallLoweringPlansByIdentity(
         if (resolved) {
           const retained = targetsByLegacyName.get(resolved.targetName);
           if (retained) {
-            if (resolved.legacyProjection !== "unambiguous") {
-              directCallIdentityMismatch(
-                `target ${resolved.targetUnitId} cannot cross the legacy-name projection unambiguously`,
-              );
-            }
             const target = requireActiveDirectCallTerminal(
               identityContext,
               activeOwnerUnitIds,
