@@ -110,11 +110,11 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
   const mod: WasmModule = ctx.mod;
   const before = mod.exports.length;
   mod.exports = mod.exports.filter((ex) => {
-    // Authenticate recorded provenance before consulting either shared public
-    // namespace. A recorded constructor descriptor can be copied or renamed
-    // into the vec family by a late mutation; its identity must still win over
-    // the vec name-retention rule. The same ordering keeps the two sinks
-    // symmetric for cross-namespace descriptor mutations.
+    // Authenticate the recorded, context-bound object identity before either
+    // shared public namespace. That same record remains authoritative if a
+    // late mutation renames it into the vec family, while copies and donors
+    // never authenticate. The ordering keeps the two sinks symmetric for
+    // cross-namespace descriptor mutations.
     if (isCompilerOwnedCtorClosureHostBridgeExport(ctx, ex)) return false;
     if (isCompilerOwnedVecHostBridgeExport(ctx, ex)) return false;
     // Core vec names are a shared public namespace: only exact compiler
@@ -122,8 +122,9 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
     // must survive standalone/WASI stripping.
     if (isCoreVecHostBridgePublicName(ex.name)) return true;
     // Constructor-closure names are a separate shared namespace: only the
-    // recorded bit-17 descriptor or an exact allocator join authorizes
-    // removal. A same-spelled user export must survive standalone/WASI.
+    // recorded bit-17 descriptor authorizes removal. An exact allocator join
+    // is rejected by pre-freeze finalization, not used for removal
+    // authorization; a same-spelled user export survives standalone/WASI.
     if (isCoreCtorClosureHostBridgePublicName(ex.name)) return true;
     return !isHostBridgeExportName(ex.name);
   });
