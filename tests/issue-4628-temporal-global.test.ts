@@ -223,6 +223,15 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.staticFrom.value).toBe("2026-08-30");
     expect(s.staticFromField.value).toBe("2026");
     expect(s.staticCompare.value).toBe(-1);
+    // (#5243) The first Temporal ARITHMETIC row to answer correctly through the
+    // provider. On base it threw `Cannot destructure 'null' or 'undefined'`
+    // from the ISO calendar's `dateAdd(e, {years = 0, …}, i)`: the record
+    // `Wr(e) → { ...t.date, days: n }` is an object literal with a SPREAD, so
+    // it is built on the host and returns an `externref`, which `coerceType`
+    // then `ref.test`ed against `Wr`'s inferred `__anon_*` record type and, on
+    // failure, replaced with `ref.null`. The object-ARGUMENT rows
+    // (`add({days: 1})`) stay in knownGaps — that is #5225's seam, not this.
+    expect(s.arithmeticAddString.value).toBe("2020-03-05");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the

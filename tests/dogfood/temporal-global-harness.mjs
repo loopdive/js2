@@ -102,6 +102,15 @@ const SUPPORTED = {
   staticFrom: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
   staticFromField: `export function run() { return String(Temporal.PlainDate.from("2026-08-30").year); }`,
   staticCompare: `export function run() { return Temporal.PlainDate.compare(Temporal.PlainDate.from("2020-03-04"), Temporal.PlainDate.from("2021-03-04")); }`,
+  // (#5243) THE FIRST ARITHMETIC ROW THAT WORKS. `add("P1D")` reaches the ISO
+  // calendar's `dateAdd(e, {years = 0, …}, i)` exactly like `add({days: 1})`
+  // does; on base BOTH threw `Cannot destructure 'null' or 'undefined'` because
+  // the record `Wr(e) → { ...t.date, days: n }` built on the host path was
+  // null-cast back into its inferred struct type. This row's argument is a
+  // STRING, so the only object crossing the provider seam is that internal
+  // record — which is why it flips here while `add({days: 1})` (a user object
+  // literal crossing the seam, #5225's lane) stays in knownGaps.
+  arithmeticAddString: `export function run() { return Temporal.PlainDate.from("2020-03-04").add("P1D").toString(); }`,
 };
 
 /**
@@ -184,6 +193,39 @@ const KNOWN_GAPS = {
   // parameter-destructuring / argument-marshalling gap on the dynamic method
   // bridge, adjacent to #5221's destructuring work, not a residue of the
   // constructor path.
+  //
+  // (#5243) That null is FIXED, and the bridge was the messenger, not the
+  // cause. The polyfill's `Wr(e)` returns `{ ...t.date, days: n }`; an object
+  // literal with a spread has no statically closed shape, so it is built on
+  // the HOST and comes back as an `externref`, while `Wr`'s inferred return
+  // type is the concrete `__anon_37` record. `coerceType`'s `externref →
+  // ref/ref_null` arm `ref.test`ed that host object against the struct, failed,
+  // and pushed `ref.null`. Measured 2026-08-31, fresh JS2WASM_TEMPORAL_CACHE
+  // per lane, both sides of the change:
+  //
+  //   SINGLE-MODULE lane        base (#5243)                  after #5243
+  //     add({days:1})           destructure null           →  "2020-03-04" (wrong, see below)
+  //     subtract({days:1})      destructure null           →  "2020-03-04" (wrong)
+  //     add("P1D")              destructure null           →  "2020-03-04" (wrong)
+  //     with({year:2021})       "2021-03-04"                  "2021-03-04"  (unchanged)
+  //     new Duration(0,0,0,1)   "P1D"                         "P1D"         (unchanged)
+  //   PROVIDER lane
+  //     add("P1D")              destructure null           →  "2020-03-05" CORRECT
+  //                              (now asserted as `arithmeticAddString` above)
+  //     add({days:1})           WebAssembly.Exception         unchanged (#5225)
+  //     subtract / with         WebAssembly.Exception         unchanged (#5225)
+  //
+  // The single-module rows stop THROWING but answer the unchanged date,
+  // because a SECOND defect owns them and it is not this one: the polyfill's
+  // `sn(e)` (ToTemporalDuration) constructs through the intrinsics registry,
+  // `new (ce("%Temporal.Duration%"))(…)`, i.e. #5242's class-VALUE ctor mirror.
+  // Measured on the same build: the mirror's `[[Construct]]` trap receives the
+  // right ten arguments and resolves `__class_construct_Duration_10`, and
+  // calling that export DIRECTLY from JS yields a Duration reading
+  // "11,12,13,14,15" — but the instance the trap hands back to Wasm reads
+  // "11,0,0,0,0,0,0,0,0,0", every field after the first defaulted. Control:
+  // `new Temporal.Duration(11,…,20)` (statically resolved, no mirror) reads all
+  // ten correctly. That is #5244's lane, filed separately.
   arithmeticAddDuration: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
     note:
@@ -194,7 +236,10 @@ const KNOWN_GAPS = {
       "(#5242) This row is the CONTROL that attributes the remaining single-module failure: it never constructs a " +
       "Duration, yet it throws `Cannot destructure 'null' or 'undefined'` with an identical stack on both sides of " +
       "#5242 — the ISO calendar's `dateAdd(e, {years=0, …}, i)` destructuring parameter receives null through the " +
-      "dynamic method bridge. So that null is NOT a constructor-path residue",
+      "dynamic method bridge. So that null is NOT a constructor-path residue. " +
+      "(#5243) That null is FIXED (it was the host-path object SPREAD in `Wr`, null-cast back into its inferred " +
+      "record type — see the block above). This row's provider-lane throw is UNCHANGED and is #5225's; its " +
+      'single-module control now answers "2020-03-04" — no throw, wrong date — which is #5244',
   },
   arithmeticSubtract: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
@@ -203,7 +248,9 @@ const KNOWN_GAPS = {
       "fresh provider cache). The single-module control moved: it failed with `compiled class constructor Duration " +
       "bridge unavailable` on both sides of #5241, and #5242 fixed that — it now fails one layer deeper, on the " +
       "`dateAdd` destructuring-parameter null shared with `arithmeticAddDuration`. Provider-lane residue is the " +
-      "object-literal ARGUMENT crossing the seam, #5225's lane",
+      "object-literal ARGUMENT crossing the seam, #5225's lane. (#5243) Same as `arithmeticAddDuration`: the " +
+      'destructuring null is gone, the provider throw is unchanged, and the single-module control answers "2020-03-04" ' +
+      "(#5244)",
   },
   arithmeticWith: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
