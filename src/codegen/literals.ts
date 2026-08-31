@@ -103,6 +103,7 @@ import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
+import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -931,15 +932,8 @@ function compileObjectLiteralWithAccessors(
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
 ): ValType | null {
-  // 1. Tag the receiving variable BEFORE recursing into initializers — so
-  //    nested literals (e.g. spread sources) don't see a stale tag.
-  let parent: ts.Node | undefined = expr.parent;
-  while (parent && (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent))) {
-    parent = parent.parent;
-  }
-  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
-    ctx.externrefAccessorVars.add(parent.name.text);
-  }
+  // Tag the receiving variable before recursing into initializers.
+  tagAccessorObjectLiteralReceiver(ctx, expr);
 
   // 2. Create the plain JS host object.
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);

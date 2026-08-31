@@ -74,6 +74,7 @@ import {
   tryEmitArrayProtoIteratorReadDrive,
 } from "./destructuring.js";
 import { collectInstrs } from "./shared.js";
+import { emitForOfRestObjectNamedDefault } from "./for-of-rest-object-default.js";
 
 /**
  * Preserve §13.15.5 PutValue errors for identifier targets in an assignment
@@ -199,9 +200,8 @@ function emitGlobalSyncWriteback(
  * reads on that array: `length` → the vec's logical length, a non-negative
  * integer key → the element (out of range ⇒ `undefined`). The generic
  * struct-by-name object arm resolves fields by NAME and therefore dropped both.
- * Scope matches the binding-form helper: identifier / member targets keyed by
- * `length` or a non-negative integer; defaults and nested sub-patterns inside
- * the rest object stay out of scope.
+ * Array-like keys use direct vec reads; named-key defaults are handled by the
+ * dedicated assignment helper.
  */
 function emitAssignObjectPatternFromVec(
   ctx: CodegenContext,
@@ -229,7 +229,7 @@ function emitAssignObjectPatternFromVec(
     if (key === undefined || target === undefined) continue;
     const numKey = Number(key);
     const isIndexKey = Number.isInteger(numKey) && numKey >= 0 && String(numKey) === key;
-    if (key !== "length" && !isIndexKey) continue;
+    if (key !== "length" && !isIndexKey && emitForOfRestObjectNamedDefault(ctx, fctx, prop)) continue;
 
     const valueType: ValType = key === "length" ? { kind: "f64" } : elemWasmType;
     const tmp = allocLocal(fctx, `__forof_restobj_${fctx.locals.length}`, valueType);

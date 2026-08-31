@@ -9,6 +9,7 @@
 
 import { ts } from "../ts-api.js";
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
+import { isAccessorReceiver } from "./accessor-object-literal.js";
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -1089,9 +1090,7 @@ export function resolveStructNameForExpr(
   ) {
     bareIdent = (bareIdent as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
   }
-  if (ts.isIdentifier(bareIdent) && ctx.externrefAccessorVars.has(bareIdent.text)) {
-    return undefined;
-  }
+  if (isAccessorReceiver(ctx, bareIdent)) return undefined;
   const assertedCarrier = identityPreservingStructuralParamCarrier(ctx, bareIdent);
   if (assertedCarrier !== undefined) {
     return undefined;
