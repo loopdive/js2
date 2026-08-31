@@ -4157,3 +4157,22 @@ as non-evidence. The released post-green checks also exited 0:
 
 No compiler, Vitest, Test262, source/test change, hook, Git add, commit, push,
 or PR operation ran in this validation step.
+
+### Integrated commit and publication handoff (2026-08-31)
+
+The type-only repair and this issue record were committed at `73f9ac0bb3` on
+top of the reviewed implementation commit `18d4d05e37` and the normal upstream
+merge `ef9e5e274b` (whose upstream parent is current `d1f2ed7d45`). The normal
+commit hook passed `lint-staged`, all exact LOC/function budget grants, the
+focused #2175 file at **30 / 30**, and the oracle ratchet. The branch therefore
+retains the integrated exact Test262 **4 / 4** deterministic evidence, #5239
+**2 / 2**, and authoritative TS7 exit 0 above.
+
+This documentation checkpoint is followed by the repository's complete
+pre-push hook on its exact final head. Publication remains a separate,
+non-draft PR because the fix is locally mergeable; it must target
+`loopdive/js2:main`, use the fork branch only as the PR head, and cite this
+repository-local issue file. No GitHub issue was created. The environment still
+requires explicit user authorization before this workspace's source/history
+may be pushed to `https://github.com/ttraenkler/js2`; no push or PR operation
+has occurred without that authorization.
