@@ -46,13 +46,13 @@ import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-funct
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import {
   ASYNC_CPS_ENABLED,
-  analyzeAsyncBody,
   asyncFnNeedsCps,
   isEmitOperand,
   planAsyncCfg,
   type AsyncCfgPlan,
   type AsyncCfgState,
 } from "./async-cps.js";
+import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
   asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
@@ -62,6 +62,7 @@ import {
   emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
+import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -110,7 +111,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { transferredArrayLikeResultNeedsExternref } from "./statements/variables.js";
+import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -188,7 +189,7 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
-import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "./analysis/proxy-binding-escape.js";
+import * as proxy from "./analysis/proxy-binding-escape.js";
 import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
@@ -2255,11 +2256,15 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
- * Prepared top-level class declarations are byte-inert unless a computed
- * accessor name has source-ordered effects that module initialization must
- * preserve. The statement emitter consults the final IR skip set.
+ * Top-level class declarations are byte-inert unless computed-accessor or
+ * runtime-heritage effects require source-ordered module initialization. The
+ * statement emitter consults the final IR skip set.
  */
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
+  if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
+    ctx.moduleInitStatements.push(statement);
+    return true;
+  }
   if (
     !ts.isClassDeclaration(statement) ||
     !isBoundedPreparedAccessorClass(statement) ||
@@ -2448,7 +2453,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
     forEachChild(node, collectAnonymousClassesInNewExpr);
   }
-
   function collectClassesFromStatements(stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[]): void {
     for (const stmt of stmts) {
       // `class X` in a `.d.ts` file is implicitly ambient — only the type
@@ -2461,6 +2465,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // registration for these shapes. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
+        collectAnonymousClassesInNewExpr(stmt);
         // (#4618) A NESTED class declaration whose name is already taken by a
         // class in ANOTHER scope must get its own identity — collection is
         // name-keyed and collectClassDeclaration's structMap guard silently
@@ -3171,8 +3176,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (isDirectProxyConstruction(decl.initializer)) {
-      return !proxyModuleEscapeGateEnabled || !proxyBindingEscapesToCall(ctx, decl);
+    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+      return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
@@ -3275,7 +3280,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
-    if (transferredArrayLikeResultNeedsExternref(ctx, decl.initializer)) return { kind: "externref" };
+    if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
     // initializers can select either that externref or a compiled closure, so
@@ -3804,7 +3809,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ts.isClassExpression(declaration.initializer) &&
           (ctx.classExpressionStaticInitExprs.get(declaration.initializer)?.length ?? 0) > 0,
       );
-      if (hasNonClassDecl || hasClassExpressionStatics) {
+      if (hasNonClassDecl || hasClassExpressionStatics || proxy.variableStatementContainsPromiseSubclass(ctx, stmt)) {
         ctx.moduleInitStatements.push(stmt);
       }
       continue;
@@ -4612,18 +4617,6 @@ function scheduleGraphStaticInitializers(
   };
 }
 
-function graphAsyncSynthetic(statements: readonly ts.Statement[]): ts.FunctionDeclaration {
-  return ts.factory.createFunctionDeclaration(
-    [ts.factory.createModifier(ts.SyntaxKind.AsyncKeyword)],
-    undefined,
-    "__v8x_graph_eval_body",
-    undefined,
-    [],
-    undefined,
-    ts.factory.createBlock([...statements], true),
-  );
-}
-
 function addGraphExport(ctx: CodegenContext, name: string, results: ValType[], body: Instr[]): FuncHandle {
   const funcIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, funcIdx, {
@@ -4656,7 +4649,11 @@ function compileAsyncGraphModuleInit(
   statements: readonly ts.Statement[],
   staticEntries: readonly ModuleStaticInitEntry[],
   emitPrelude: (fctx: FunctionContext) => void,
-): AsyncGraphModuleInit {
+): AsyncGraphModuleInit | null {
+  const graphPlan = supportedAsyncGraphModulePlan(ctx, statements);
+  if (graphPlan === null) return null;
+  const { decl, plan } = graphPlan;
+
   const runtime = ensureAsyncDriveRuntime(ctx);
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
 
@@ -4672,8 +4669,6 @@ function compileAsyncGraphModuleInit(
     init: [{ op: "i32.const", value: 0 }],
   });
 
-  const decl = graphAsyncSynthetic(statements);
-  const plan = analyzeAsyncBody(ctx, decl);
   const graphStaticEntries = staticEntries.filter(isGraphTimelineStaticEntry);
   const startFuncIdx = mintDefinedFunc(ctx);
   const startFunc: WasmFunction = {
@@ -6105,9 +6100,9 @@ export function compileDeclarations(
       restorePropOrderState();
       compiledInitFctx = profilePhase("module-init-pass2", () => {
         if (!hasAsyncGraphInit) return compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
-        return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, (resumeFctx) => {
-          compileModuleInitBody(resumeFctx, false);
-        }).fctx;
+        const compileResume = (resumeFctx: FunctionContext) => compileModuleInitBody(resumeFctx, false);
+        const graph = compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, compileResume);
+        return graph?.fctx ?? compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
       });
       ctx.pendingInitBody = compiledInitFctx.body;
       dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before

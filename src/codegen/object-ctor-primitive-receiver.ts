@@ -150,13 +150,17 @@ function traceToProducer(ctx: CodegenContext, expr: ts.Expression): ts.Expressio
  * Arity is deliberately NOT pinned to 1 — §20.1.1.1 ignores the extra
  * arguments, and `new Object(1, 2, 3)` (S15.2.2.1_A6_T1) is in the corpus.
  */
-function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ts.isNewExpression(expr) && !ts.isCallExpression(expr)) return false;
+function objectCoercionArgument(ctx: CodegenContext, expr: ts.Expression): ts.Expression | undefined {
+  if (!ts.isNewExpression(expr) && !ts.isCallExpression(expr)) return undefined;
   const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || callee.text !== "Object") return false;
+  if (!ts.isIdentifier(callee) || callee.text !== "Object") return undefined;
   const decl = ctx.oracle.valueDeclarationOf(callee);
-  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return false;
-  const arg = expr.arguments?.[0];
+  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return undefined;
+  return expr.arguments?.[0];
+}
+
+function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const arg = objectCoercionArgument(ctx, expr);
   if (arg === undefined) return false;
   const tag = ctx.oracle.staticJsTypeOf(arg);
   return tag === "string" || tag === "number" || tag === "boolean";
@@ -179,14 +183,21 @@ export function objectCoercionObjectArgumentOf(
   recvExpr: ts.Expression,
 ): ts.Expression | undefined {
   const producer = traceToProducer(ctx, recvExpr);
-  if (producer === undefined || (!ts.isNewExpression(producer) && !ts.isCallExpression(producer))) return undefined;
-  const callee = producer.expression;
-  if (!ts.isIdentifier(callee) || callee.text !== "Object") return undefined;
-  const decl = ctx.oracle.valueDeclarationOf(callee);
-  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return undefined;
-  const argument = producer.arguments?.[0];
+  if (producer === undefined) return undefined;
+  const argument = objectCoercionArgument(ctx, producer);
   if (argument === undefined) return undefined;
   return isObjectLikeFact(ctx.oracle.typeFactOf(argument)) ? argument : undefined;
+}
+
+/** The BigInt argument wrapped by an ambient `Object(value)` coercion. */
+export function objectCoercionBigIntArgumentOf(
+  ctx: CodegenContext,
+  recvExpr: ts.Expression,
+): ts.Expression | undefined {
+  const producer = traceToProducer(ctx, recvExpr);
+  if (producer === undefined) return undefined;
+  const argument = objectCoercionArgument(ctx, producer);
+  return argument !== undefined && ctx.oracle.staticJsTypeOf(argument) === "bigint" ? argument : undefined;
 }
 
 /** Whether a TypeOracle fact proves a value is already an object identity. */
