@@ -1,10 +1,11 @@
 ---
 id: 5217
 title: "QuickJS eval membrane: a descriptor's `enumerable` value reads back as a native function, not `true` (regressed by #5202)"
-status: completed
+status: done
 sprint: current
 created: 2026-08-30
 updated: 2026-08-31
+completed: 2026-08-31
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -13,6 +14,14 @@ area: runtime
 language_feature: eval
 goal: runtime-eval
 related: [5202, 5263, 5260, 4245, 5148]
+loc-budget-allow:
+  # 2026-08-31 — the #5217 fix (78d58325, "preserve QuickJS boolean mirror
+  # values") lands in the boolean mirror path, which lives in this god-file:
+  # src/codegen/expressions/calls.ts 10304 -> 10339 (+35). The growth IS the
+  # fix, not incidental accretion, and splitting the mirror path out of
+  # calls.ts is a refactor this bugfix should not carry. Granted for this
+  # change-set only.
+  - src/codegen/expressions/calls.ts
 origin: "2026-08-30 bisect of the quickjs-wasi-artifact lane, which had been red since 2026-08-29 and was blocking #5260 and #5263 from auto-enqueue."
 ---
 
