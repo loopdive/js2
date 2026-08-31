@@ -4,7 +4,7 @@ title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflec
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-30
+updated: 2026-08-31
 priority: high
 horizon: l
 feasibility: hard
@@ -13,6 +13,7 @@ area: codegen, conformance
 es_edition: es6
 goal: standalone-mode
 related: [4444, 2159, 2175]
+active_branch: codex/4449-species-live-20260831
 loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
@@ -299,3 +300,136 @@ lanes remain capped at one worker each; when one returns, a Luna Max handoff on
 this existing markdown issue must rerun each path alone with one bounded
 compiler worker, record whether compilation or strict rerun stalls, and fix the
 shared lowering rather than increasing retry budgets.
+
+## Live d60 constructor-carrier/species reconstruction (2026-08-31)
+
+This is a repository-local markdown issue only; do not create a GitHub issue.
+The current narrow port is based on exact live `loopdive/js2` main
+`d60aa73f9b3405dcdc1f832a511acb2366c7de00` in
+`codex/4449-species-live-20260831`. It owns only these four paths:
+
+- `plan/issues/4449-typedarray-standalone-semantics-residual.md`;
+- `src/codegen/array-methods.ts`;
+- `src/codegen/builtin-static-globals.ts`; and
+- `tests/issue-4449-species-producers.test.ts`.
+
+The older recovery worktree
+`codex/4449-species-recovery-20260831` at
+`c39de6dac8c376482b4f2cd628e445c6d8441728` is read-only design evidence. Its
+tracked `benchmarks/results/test262-report.json` mode change is a
+runner-generated symlink side effect and is explicitly **not** part of this
+port. Do not copy, stage, or otherwise mutate that report path.
+
+### Preserved recovery evidence — diagnostic, not publication evidence
+
+On the unchanged recovery head, the one-fork focused species matrix passed
+**13/13**. The exact LF-normalized constructor/default eight-row manifest had
+SHA-256
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf`; its
+maintained host run `20260831-175504` passed **8/8**, and its pinned-QuickJS
+standalone run `20260831-175554` passed **8/8**, all with zero fail, compile
+error, or skip. Both runners reconciled eight callbacks and eight verdicts.
+Those results remain recovery-head evidence only and must not be promoted to
+the live d60 reconstruction.
+
+### Bounded d60 implementation plan
+
+1. Publish a fresh builtin TypedArray constructor carrier immediately after
+   allocation and before its own-property/prototype seed. Preserve d60's
+   `liveBodies.add(initBody)`/cleanup ordering so late-import index repair still
+   covers the detached initializer. This prevents a re-entrant native-prototype
+   companion from minting a second carrier and splitting `result.constructor`
+   identity.
+2. Thread `skipArraySpecies` only through the three nested dynamic TypedArray
+   materialized-vector re-entries (`map`, `filter`, `slice`). The outer
+   TypedArray species path owns result construction; the inner ordinary Array
+   lowering must produce only the f64 payload. Ordinary Array #5145 species
+   lowering remains enabled, including `concat`, `splice`, ordinary vectors,
+   `subarray`, detached-buffer, reflection, and BigInt paths.
+3. Retain the focused TypedArray custom/default species controls and add the
+   ordinary Array `map` custom-species control to prove the narrow suppression
+   does not disable #5145 outside those three inner calls. Preserve standalone
+   zero-`env` import assertions.
+4. Before publication, replay focused tests, the exact host and standalone
+   eight-row manifest, static/typecheck/hook gates, and required pre-push work
+   on the exact integrated live head. Do not broaden a policy baseline or
+   convert recovery results into a d60 claim.
+
+### Current-main overlap audit and handoff
+
+From recovery base `c39de6...` to d60, current main changes
+`array-methods.ts` only in the unrelated Temporal closure-safety set near line
+446. It changes `builtin-static-globals.ts` in the same initializer region by
+registering both `savedBody` and `initBody` in `liveBodies`; the port must
+preserve that #5239-safe bookkeeping while moving only publication order.
+Neither the #4449 tracker nor focused producer test changed upstream in that
+range. On the dirty d60 reconstruction, targeted `git diff --check`, Prettier,
+and Biome error-level lint all exited 0; the LOC and function budget gates also
+exited 0 using the existing #4449 allowance (`array-methods.ts` +70 LOC and
+`compileArrayMethodCall` +24 lines). The owned-path conflict-marker inventory
+is empty. No compiler, focused-test, Test262, TypeScript, hook, or policy
+command has run on d60. The resulting static snapshot requires independent
+review and an exact-head replay before any commit, push, or PR action.
+
+### Root d60 focused runtime checkpoint (2026-08-31)
+
+Root released one compiler lane and ran the two focused files serially from the
+unchanged d60 snapshot with `TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, one
+Vitest fork, and no file parallelism:
+
+- `tests/issue-4449-species-producers.test.ts`: **8 / 8 passed** in 29.06 s
+  total (12.41 s test time), including the new ordinary Array `map` species
+  guard;
+- `tests/issue-4449-species-controls.test.ts`: **5 / 5 passed** in 12.70 s
+  total (3.63 s test time), preserving own/inherited constructor and
+  `Symbol.species` lookup/abrupt behavior.
+
+The exact current-head focused denominator is therefore **13 / 13**, and the
+files' standalone zero-`env` assertions passed. One unrelated long-running
+optimizer occupied the other shared lane; root did not exceed the global
+two-worker limit. This is checkpoint evidence only: independent review, the
+exact eight-row host and pinned-QuickJS standalone manifests, TypeScript,
+hooks, pre-push checks, commit, push, and a separate non-draft PR remain
+required. No GitHub issue was created.
+
+### Root d60 exact eight-row replay (2026-08-31)
+
+The fresh worktree initially had an uninitialized Test262 gitlink. The harness
+self-controls both returned setup errors and correctly aborted before emitting
+any row result; that attempt is discarded and is not counted below. Root then
+attached the already-present exact repository gitlink
+`b363f29d3c43c626dc852744ad64a0b48a003693` as a detached local worktree. No
+corpus file was edited.
+
+The canonical LF-normalized manifest still has SHA-256
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf` and
+contains exactly the eight recorded constructor/default rows. Both valid runs
+used `TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, a 120 s per-row bound, the
+real assembled harness, its must-pass/must-fail structural controls, and a
+second execution of every row for determinism:
+
+- host: **8 / 8 pass**, zero fail/compile error/timeout/skip/error,
+  `nondeterministic: 0`, with eight callbacks and eight JSONL rows;
+- standalone: **8 / 8 pass**, zero fail/compile error/timeout/skip/error,
+  `nondeterministic: 0`, with eight callbacks and eight JSONL rows.
+
+The standalone run pinned
+`/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda`;
+`libquickjs.wasm` has SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+The local evidence files are `.tmp/4449-d60-host-8.jsonl` and
+`.tmp/4449-d60-standalone-8.jsonl`; they are diagnostic outputs, not tracked
+changes. Independent review and final quality/commit/publication gates still
+remain. No GitHub issue was created.
+
+### Pre-publication upstream advance (2026-08-31)
+
+Immediately after the d60 review and runtime replay, live `loopdive/js2` main
+advanced to `c281669805ea987c0c5c08e4681370d199b77a34`. The complete
+`d60aa73f9b..c281669805` delta changes only generated benchmark/npm-compat
+artifacts; it does not touch this issue's tracker, two source files, focused
+test, Test262 gitlink, runner, or quality configuration. The d60 results remain
+valid checkpoint evidence, but root must normally integrate c281 (or newer)
+without force operations, rerun the scoped static/focused/exact-row gates on
+the resulting head, and record that exact integrated SHA before publication.
+No GitHub issue was created.

@@ -1599,7 +1599,20 @@ function emitDynViewSpeciesMethodTwoArm(
     if (outputSpecies === undefined) return abandon();
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    // The outer TypedArray species path already owns result construction. This
+    // re-entry only materializes its f64 payload, so it must not run #5145's
+    // ArraySpeciesCreate over that temporary ordinary vector.
+    const r = compileArrayMethodCall(
+      ctx,
+      fctx,
+      propAccess,
+      callExpr,
+      receiverType,
+      methodName,
+      expectedType,
+      true,
+      true,
+    );
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const mapped = captureVec(r, "map_result");
@@ -1608,7 +1621,17 @@ function emitDynViewSpeciesMethodTwoArm(
   } else if (methodName === "filter") {
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileArrayMethodCall(
+      ctx,
+      fctx,
+      propAccess,
+      callExpr,
+      receiverType,
+      methodName,
+      expectedType,
+      true,
+      true,
+    );
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const filtered = captureVec(r, "filter_result");
@@ -1624,7 +1647,17 @@ function emitDynViewSpeciesMethodTwoArm(
   } else if (methodName === "slice") {
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileArrayMethodCall(
+      ctx,
+      fctx,
+      propAccess,
+      callExpr,
+      receiverType,
+      methodName,
+      expectedType,
+      true,
+      true,
+    );
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const sliced = captureVec(r, "slice_result");
@@ -1888,6 +1921,10 @@ export function compileArrayMethodCall(
   overrideMethodName?: string,
   expectedType?: ValType,
   skipDynViewWrap = false,
+  // True only for the materialized-vector re-entry inside
+  // emitDynViewSpeciesMethodTwoArm. Ordinary Array producers, including
+  // concat/splice and every non-dynamic TypedArray route, keep #5145 active.
+  skipArraySpecies = false,
 ): ValType | null | undefined | typeof VOID_RESULT {
   const methodName =
     overrideMethodName ?? (ts.isPropertyAccessExpression(propAccess) ? propAccess.name.text : undefined);
@@ -2298,7 +2335,7 @@ export function compileArrayMethodCall(
     case "slice":
       result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
         ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "slice")
-        : compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+        : compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, skipArraySpecies);
       break;
     case "concat":
       // Host methods such as String.prototype.split return ordinary JavaScript
@@ -2366,7 +2403,17 @@ export function compileArrayMethodCall(
     // plus ref/ref_null elements when the callback is a provable closure (#3126).
     case "filter":
       result = hofElemKindOk(elemType)
-        ? compileArrayFilter(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
+        ? compileArrayFilter(
+            ctx,
+            fctx,
+            methodAccess,
+            callExpr,
+            vecTypeIdx,
+            arrTypeIdx,
+            elemType,
+            receiverIsExternref,
+            skipArraySpecies,
+          )
         : undefined;
       break;
     case "map":
@@ -2384,7 +2431,17 @@ export function compileArrayMethodCall(
         elemType.kind === "externref" ||
         elemType.kind === "ref" ||
         elemType.kind === "ref_null"
-          ? compileArrayMap(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
+          ? compileArrayMap(
+              ctx,
+              fctx,
+              methodAccess,
+              callExpr,
+              vecTypeIdx,
+              arrTypeIdx,
+              elemType,
+              receiverIsExternref,
+              skipArraySpecies,
+            )
           : undefined;
       break;
     case "reduce":
@@ -4787,6 +4844,7 @@ function compileArraySlice(
   vecTypeIdx: number,
   arrTypeIdx: number,
   _elemType: ValType,
+  skipArraySpecies = false,
 ): ValType {
   const vecTmp = allocLocal(fctx, `__arr_slc_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
 
@@ -4826,7 +4884,16 @@ function compileArraySlice(
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     fctx.body.push({ op: "local.set", index: endTmp });
   }
-  return compileArraySliceFromVecLocal(ctx, fctx, vecTmp, vecTypeIdx, arrTypeIdx, startTmp, hasEnd ? endTmp : null);
+  return compileArraySliceFromVecLocal(
+    ctx,
+    fctx,
+    vecTmp,
+    vecTypeIdx,
+    arrTypeIdx,
+    startTmp,
+    hasEnd ? endTmp : null,
+    skipArraySpecies,
+  );
 }
 
 /**
@@ -4847,6 +4914,7 @@ export function compileArraySliceFromVecLocal(
   arrTypeIdx: number,
   startLocal: number,
   endLocal: number | null,
+  skipArraySpecies = false,
 ): ValType {
   const dataTmp = allocLocal(fctx, `__arr_slc_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const newData = allocLocal(fctx, `__arr_slc_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
@@ -4900,7 +4968,7 @@ export function compileArraySliceFromVecLocal(
   // (#5145) §23.1.3.25 step 8 — `A = ArraySpeciesCreate(O, count)`, emitted
   // BEFORE the element copy so an abrupt species completion beats it. Null
   // sentinel ⇒ the `struct.new $vec` below is the result, unchanged.
-  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesDeps = skipArraySpecies ? undefined : prepareArraySpeciesDeps(ctx, fctx);
   const speciesLocal =
     speciesDeps === undefined
       ? undefined
@@ -7139,6 +7207,7 @@ function compileArrayFilter(
   arrTypeIdx: number,
   elemType: ValType,
   receiverIsExternref = false,
+  skipArraySpecies = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.filter")) {
@@ -7174,7 +7243,7 @@ function compileArrayFilter(
   const boundTmp = overlay ? loop.logicalLenTmp : loop.lenTmp;
   // (#5145) §23.1.3.7 step 5 — `A = ArraySpeciesCreate(O, 0)`. Zero, not `len`:
   // `filter/create-species.js` asserts `args[0] === 0`.
-  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesDeps = skipArraySpecies ? undefined : prepareArraySpeciesDeps(ctx, fctx);
   const speciesLocal =
     speciesDeps === undefined
       ? undefined
@@ -7258,6 +7327,7 @@ function compileArrayMap(
   arrTypeIdx: number,
   elemType: ValType,
   receiverIsExternref = false,
+  skipArraySpecies = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.map")) {
@@ -7352,7 +7422,7 @@ function compileArrayMap(
   // (#5145) §23.1.3.19 step 5 — `A = ArraySpeciesCreate(O, len)`, BEFORE the
   // callback loop: `map/create-species-abrupt.js` and `-non-ctor.js` both
   // assert `callCount === 0` on an abrupt species completion.
-  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesDeps = skipArraySpecies ? undefined : prepareArraySpeciesDeps(ctx, fctx);
   const speciesLocal =
     speciesDeps === undefined
       ? undefined
