@@ -89,4 +89,31 @@ describe("host class static inheritance", () => {
     expect((instance.exports as { test: () => number }).test()).toBe(5);
     expect(Object.getOwnPropertyDescriptor(Array.prototype, "indices")).toBeUndefined();
   });
+
+  it("reads a mutable heritage binding at class evaluation time", async () => {
+    const result = await compile(
+      `
+        let LetParent = class extends RegExp {};
+        LetParent = Object;
+        class LetChild extends LetParent {}
+        var VarParent = class extends RegExp {};
+        VarParent = Object;
+        class VarChild extends VarParent {}
+
+        export function test(): number {
+          let passed = 0;
+          try { LetChild.input; passed++; } catch {}
+          try { VarChild.input; passed++; } catch {}
+          return passed;
+        }
+      `,
+      { fileName: "regexp-host-mutable-heritage.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const importObject = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, importObject);
+    (importObject as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    (instance.exports as { __module_init?: () => void }).__module_init?.();
+    expect((instance.exports as { test: () => number }).test()).toBe(2);
+  });
 });

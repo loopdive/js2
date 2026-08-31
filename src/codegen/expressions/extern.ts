@@ -25,6 +25,7 @@ import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.
 import { emitFuncRefAsClosure } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { classHasMutableHeritageBinding } from "../class-expression-identity.js";
 import type { InnerResult } from "../shared.js";
 import {
   coerceType,
@@ -69,6 +70,10 @@ function prepareBuiltinClassStaticParent(
   className: string,
 ): BuiltinClassStaticParentRegistration | undefined {
   if (ctx.standalone || ctx.wasi) return undefined;
+  // A mutable heritage identifier must be read at the class declaration's
+  // runtime evaluation point; its initializer's builtin ancestry is not the
+  // class's necessarily-current static parent.
+  if (classHasMutableHeritageBinding(ctx, className)) return undefined;
   const parentName = ctx.classBuiltinParentMap.get(className);
   if (parentName === undefined) return undefined;
   addHostStringConstantGlobal(ctx, parentName);
@@ -736,7 +741,8 @@ export function emitRegisterDynamicClassParent(
 ): void {
   if (ctx.standalone || ctx.wasi) return;
   const className = classNameOverride ?? decl.name?.text;
-  if (className === undefined || ctx.classParentMap.has(className)) return;
+  if (className === undefined) return;
+  if (ctx.classParentMap.has(className) && !classHasMutableHeritageBinding(ctx, className)) return;
   if (decl.heritageClauses === undefined) return;
   let heritageExpr: ts.Expression | undefined;
   for (const clause of decl.heritageClauses) {
