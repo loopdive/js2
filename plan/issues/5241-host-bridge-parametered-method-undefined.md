@@ -20,6 +20,10 @@ loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/index.ts
   - src/runtime.ts
+  # +1 line: the linked-import accessor prefixes move to their own module
+  # (src/linked-import-getter-names.ts) so codegen can RECOGNISE the shape the
+  # linker GENERATES. One import statement; the four builders shrink.
+  - src/package-linker.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/index.ts::emitIteratorMethodExport
