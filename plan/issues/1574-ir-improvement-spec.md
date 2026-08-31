@@ -91,11 +91,11 @@ cap to guarantee termination.
    function boundaries (e.g. when `x` is later passed to another local
    function), the fact is lost.
 
-6. **Object-shape inference is opt-in by env var.** `objectShapesEnabled()`
-   in `propagate.ts:163` reads `JS2WASM_IR_OBJECT_SHAPES=0` as an emergency
-   off-switch. Default ON as of #1231 Phase 2. Most graduates inherit shape
-   widening when an unannotated `{x, y}` is returned; without shape
-   inference, the returned IR type collapses to `dynamic` and the function
+6. **Object-shape inference formerly carried a default-on emergency
+   rollback.** #1231 retired that frontend fact-changing switch on 2026-08-31;
+   unannotated `{x, y}` returns now always use the bounded shape inference.
+   The conservative widening rules remain: when the inference cannot prove a
+   closed shape, the returned IR type collapses to `dynamic` and the function
    falls back.
 
 7. **Class types are nominal-only.** `classShapeEquals` (`nodes.ts:302-304`)

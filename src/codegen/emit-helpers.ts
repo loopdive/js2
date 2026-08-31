@@ -50,23 +50,3 @@ export function isSyntheticStructName(structName: string): boolean {
 export function exportFunc(mod: WasmModule, name: string, funcIdx: number): void {
   mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
 }
-
-/**
- * (#4491) Does a struct field name denote a REAL own property the reflective
- * surfaces should enumerate?
- *
- * The two closed-struct enumeration collectors each carried
- * `if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__"))`,
- * and the falsy test is true for a field literally named `""` — a perfectly
- * ordinary own property (`{ "": 1 }`). So
- * `Object.getOwnPropertyNames({ "": "empty", a: 1 })` answered `["a"]` while
- * `Object.keys`, `for…in` and `hasOwnProperty("")` on the same object all saw
- * the empty key, and the dynamic (non-literal) receiver answered it correctly.
- *
- * ABSENT (`undefined`) is the only name that is not a property. The `$` / `__`
- * screens keep hiding compiler-internal slots, and `""` passes both unchanged.
- */
-export function isEnumerableOwnFieldName(name: string | undefined): name is string {
-  if (name === undefined) return false;
-  return !name.startsWith("$") && !name.startsWith("__");
-}

@@ -1664,6 +1664,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       emitThrowTypeError(ctx, closureFctx, `${key} is not yet implemented in --target standalone`);
     }
 
+    // Several first-class builtin bodies register late runtime imports after
+    // emitting their target guards (notably extracted Reflect methods). Shift
+    // every already-emitted call before publishing the closure; otherwise the
+    // guard calls the pre-import function index and rejects every target.
+    flushLateImportShifts(ctx, closureFctx);
+
     funcIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, funcIdx, {
       name: funcName,
