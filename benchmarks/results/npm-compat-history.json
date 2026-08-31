@@ -11335,6 +11335,66 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-31T12:54:22.374Z",
+      "sourceRevision": "f74d5629d9d4edb7df7bcbfa01f1bd71884dc4d7",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHost": {
+            "dynamic": 0.10021128138034446
+          },
+          "standalone": {}
+        },
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0024213303834978227
+          },
+          "standalone": {
+            "static": 265697.31982450443,
+            "dynamic": 0.11877599671898688
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0027203715541855526
+          },
+          "standalone": {
+            "static": 650.0212181492113,
+            "dynamic": 0.19832940086209097
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.06765819352092146
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.0029771071765048993
+          },
+          "standalone": {
+            "static": 14.954432658982691
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.0029730553466908397
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.00207489556526233
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
