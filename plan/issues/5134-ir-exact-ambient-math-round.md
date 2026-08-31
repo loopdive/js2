@@ -111,8 +111,8 @@ instructions inside the helper; they are not callable provider dependencies.
    with a unary-f64 signature and dependency-free `selfhost.math.round`
    provider.
 3. Add `round` to `IR_MATH_METHOD_TABLE`, reuse the generic selection,
-   from-AST, manifest, and materialization path, and add the independent
-   `JS2WASM_IR_MATH_ROUND=0` rollback.
+   from-AST, manifest, and materialization path; initial rollout added the
+   independent per-method rollback.
 4. Widen #3526 exhaustive vocabulary, integration, linear-legality, and
    neutrality evidence from twenty-seven to twenty-eight source Math
    intrinsics. Refresh stale tests that still describe `round` as a legacy
@@ -140,8 +140,8 @@ instructions inside the helper; they are not callable provider dependencies.
   native linear Math intrinsics.
 - Coercive and all other excluded shapes preserve direct behavior and decline
   before claim without invariants or post-claim errors.
-- The narrow rollback, affected regressions, TypeScript 7, and all pre-push
-  gates pass.
+- The former narrow rollback was validated alongside the affected regressions,
+  TypeScript 7, and all pre-push gates.
 
 ## Implementation outcome and validation
 
@@ -185,5 +185,12 @@ instructions inside the helper; they are not callable provider dependencies.
 The primary risks are accidentally canonicalizing NaN, losing negative zero,
 or using the wrong tie rule while moving the established direct schedule into
 source. Raw-bit direct/IR parity is the migration invariant.
-`JS2WASM_IR_MATH_ROUND=0` provides narrow rollback;
+The rollout-only per-method withdrawal provided narrow rollback;
 `JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

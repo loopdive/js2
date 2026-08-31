@@ -17,7 +17,12 @@ export const LANDING_WASMTIME_COMPILE_OPTIONS = Object.freeze({
   optimize: 3,
 });
 
-export const LANDING_WASM_OPT_ARGS = Object.freeze(["--all-features", "--disable-custom-descriptors", "-O3"]);
+export const LANDING_WASM_OPT_ARGS = Object.freeze([
+  "--all-features",
+  "--disable-custom-descriptors",
+  "--disable-compact-imports",
+  "-O3",
+]);
 export const LANDING_WASMTIME_WARM_VALIDATION_EXPORT = "landing_validate";
 export const LANDING_FOUR_LANE_INNER_WARMUP_CALLS = 6;
 export const LANDING_FOUR_LANE_INNER_MEASURED_CALLS = 9;
