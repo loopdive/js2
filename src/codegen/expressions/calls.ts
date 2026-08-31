@@ -26,6 +26,7 @@ import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; /
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
+import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
@@ -3824,6 +3825,13 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   const usedAsValueFunctions =
     registrationState.__funcValueWrapperFunctionExpressions ??
     (registrationState.__funcValueWrapperFunctionExpressions = new Set<ts.FunctionExpression | ts.ArrowFunction>());
+  const observeMinimumArgumentCount = (
+    wrapper: NonNullable<ReturnType<typeof getOrCreateFuncRefWrapperTypes>>,
+    minimumArgumentCount: number,
+  ): void => {
+    const current = wrapper.closureInfo.minimumArgumentCount ?? wrapper.closureInfo.paramTypes.length;
+    wrapper.closureInfo.minimumArgumentCount = Math.min(current, minimumArgumentCount);
+  };
 
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -3890,7 +3898,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     if ((captures?.length ?? 0) === 0 && funcIdx !== undefined) {
       const sig = getFuncSignature(ctx, funcIdx);
       if (sig) {
-        getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
+        const wrapper = getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
+        if (wrapper && expectedArgumentCountOfParams(declaration.parameters) < sig.params.length) {
+          observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
+        }
         continue;
       }
     }
@@ -3904,22 +3915,32 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     const { params, returnType } = computeClosureWrapperSig(ctx, declaration);
     const allExternref = params.every((p) => p.kind === "externref");
     const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-    // A zero-argument callback cannot trigger the speculative
-    // over-arity numeric-parameter hazard described below.  Register it early
+    const hasOmittableTrailingParams = expectedArgumentCountOfParams(declaration.parameters) < params.length;
+    // A callback whose entire parameter ABI is externref can safely be
+    // registered before its value site: omitted trailing parameters are
+    // materialized as JavaScript `undefined` by the dynamic dispatcher below.
+    // Register it early
     // so generic helpers such as TypeScript's `speculationHelper<T>(() => T)`
     // and `parseListElement<T>(() => T)` can discover later-compiled boolean
     // predicates and GC-reference parsers. The dynamic-call bridge preserves
     // the boolean brand or losslessly exports the GC ref when the generic
     // result carrier is externref.
-    const safeZeroArgErasedReturn =
-      params.length === 0 &&
+    // Scalar erased returns remain zero-argument-only: widening that older
+    // exception would admit speculative numeric signatures whose argument
+    // bridges are not proven here.
+    const safeErasedReturn =
       returnType !== null &&
-      ((returnType.kind === "i32" && returnType.boolean === true) ||
-        (returnType.kind === "f64" && returnType.undefSentinel !== true) ||
-        returnType.kind === "ref" ||
-        returnType.kind === "ref_null");
-    if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) continue;
-    getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+      (params.length === 0
+        ? returnType.kind === "ref" ||
+          returnType.kind === "ref_null" ||
+          (returnType.kind === "i32" && returnType.boolean === true) ||
+          (returnType.kind === "f64" && returnType.undefSentinel !== true)
+        : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
+    if (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) continue;
+    const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+    if (wrapper && hasOmittableTrailingParams) {
+      observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
+    }
   }
 
   // (#2939) Nested-scope function-expression / arrow callbacks. A callback like
@@ -3983,15 +4004,20 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
       // via the array-method path, never this inline dispatcher.)
       const allExternref = params.every((p) => p.kind === "externref");
       const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-      const safeZeroArgErasedReturn =
-        params.length === 0 &&
+      const hasOmittableTrailingParams = expectedArgumentCountOfParams(node.parameters) < params.length;
+      const safeErasedReturn =
         returnType !== null &&
-        ((returnType.kind === "i32" && returnType.boolean === true) ||
-          (returnType.kind === "f64" && returnType.undefSentinel !== true) ||
-          returnType.kind === "ref" ||
-          returnType.kind === "ref_null");
-      if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) return;
-      getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+        (params.length === 0
+          ? returnType.kind === "ref" ||
+            returnType.kind === "ref_null" ||
+            (returnType.kind === "i32" && returnType.boolean === true) ||
+            (returnType.kind === "f64" && returnType.undefSentinel !== true)
+          : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
+      if (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) return;
+      const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+      if (wrapper && hasOmittableTrailingParams) {
+        observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(node.parameters));
+      }
     };
     for (const node of usedAsValueFunctions) usedAsValueFn(node);
   }

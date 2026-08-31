@@ -2238,9 +2238,23 @@ export function compileIdentifierCall(
             // formal prefix in the dispatch arm below.
             const hasRestParam = info.hasRestParam === true || restFuncTypeIdxs?.has(info.funcTypeIdx) === true;
             const fixedParamCount = hasRestParam ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
-            if (!hasRestParam && info.paramTypes.length > sigParamCount) continue;
+            // A runtime function may declare optional parameters that are not
+            // present in the callable's public signature. JavaScript still
+            // invokes that function and supplies `undefined` for each omitted
+            // argument. Admit only the representation-safe erased suffix here;
+            // numeric/reference pads need declaration-specific default rules.
+            if (
+              !hasRestParam &&
+              info.paramTypes.length > sigParamCount &&
+              ((info.minimumArgumentCount ?? info.paramTypes.length) > sigParamCount ||
+                info.paramTypes.slice(sigParamCount).some((type) => type.kind !== "externref"))
+            ) {
+              continue;
+            }
             if (hasRestParam && fixedParamCount > sigParamCount) continue;
-            const candidateParamTypes = hasRestParam ? info.paramTypes.slice(0, fixedParamCount) : info.paramTypes;
+            const candidateParamTypes = (
+              hasRestParam ? info.paramTypes.slice(0, fixedParamCount) : info.paramTypes
+            ).slice(0, sigParamCount);
             if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
             let paramsMatch = true;
             for (let pi = 0; pi < candidateParamTypes.length; pi++) {
@@ -2309,6 +2323,22 @@ export function compileIdentifierCall(
                 });
               }
             }
+          }
+
+          // Preserve the JavaScript distinction between an omitted argument
+          // and null. A preregistered callback with optional externref formals
+          // can be wider than the public callable signature, so keep one
+          // canonical `undefined` value for those trailing call_ref operands.
+          let missingExternrefLocal: number | undefined;
+          if (
+            funcCandidates.some(
+              (candidate) =>
+                candidate.hasRestParam !== true && candidate.paramTypes.length > matchedClosureInfo.paramTypes.length,
+            )
+          ) {
+            pushDefaultValue(fctx, { kind: "externref" }, ctx);
+            missingExternrefLocal = allocLocal(fctx, `__missing_carg_${fctx.locals.length}`, { kind: "externref" });
+            fctx.body.push({ op: "local.set", index: missingExternrefLocal });
           }
 
           // Compile the callee to get the value on the stack
@@ -2812,8 +2842,20 @@ export function compileIdentifierCall(
               // Push args
               let candidateArgsCoercible = true;
               for (let ai = 0; ai < fcFixedParamCount; ai++) {
-                const fromType = matchedClosureInfo.paramTypes[ai]!;
                 const toType = fc.paramTypes[ai]!;
+                if (ai >= matchedClosureInfo.paramTypes.length) {
+                  // The candidate scan only admits an externref suffix. Use a
+                  // real surplus call-site argument when one exists; otherwise
+                  // pass the canonical JavaScript `undefined` captured above.
+                  const argLocal = ai < expr.arguments.length ? actualArgExternLocals[ai] : missingExternrefLocal;
+                  if (toType.kind !== "externref" || argLocal === undefined) {
+                    candidateArgsCoercible = false;
+                    break;
+                  }
+                  fcCallBody.push({ op: "local.get", index: argLocal });
+                  continue;
+                }
+                const fromType = matchedClosureInfo.paramTypes[ai]!;
                 // A missing dynamic argument is materialized as host
                 // `undefined`. Unboxing that value produces an ordinary NaN,
                 // but a compiled f64 parameter uses the signalling-NaN payload

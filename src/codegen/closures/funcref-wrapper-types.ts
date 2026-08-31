@@ -187,6 +187,7 @@ export function getOrCreateConstructibleFuncRefWrapperTypes(
     funcTypeIdx: base.liftedFuncTypeIdx,
     returnType: resultTypes.length > 0 ? resultTypes[0]! : null,
     paramTypes: userParams,
+    minimumArgumentCount: base.closureInfo.minimumArgumentCount,
   };
   ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
   ctx.constructibleFuncRefWrapperCache.set(sigKey, closureInfo);

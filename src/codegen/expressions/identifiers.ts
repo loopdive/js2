@@ -1133,7 +1133,21 @@ function compileIdentifierCore(
 
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
-    materializeHoistedFunctionValueBinding(ctx, fctx, name);
+    const localDeclaration = ctx.oracle.valueDeclarationOf(id);
+    const stableHoistedFunctionValue =
+      localDeclaration !== undefined &&
+      ts.isFunctionDeclaration(localDeclaration) &&
+      !ctx.reassignedFunctionDeclarations?.has(localDeclaration) &&
+      fctx.directEvalBindingNames?.has(name) !== true;
+    // Compilation visits conditional arms in source order, but execution may
+    // enter only a later arm. A first value read in an earlier arm therefore
+    // does not dominate this read. Stable FunctionDeclaration bindings may
+    // safely publish their memoized closure at every value-read site; a
+    // reassigned declaration must retain its live binding instead. Direct eval
+    // can perform the same replacement without a static assignment target, so
+    // any binding exposed to this activation's eval environment is mutable for
+    // the purpose of re-emission too.
+    materializeHoistedFunctionValueBinding(ctx, fctx, name, stableHoistedFunctionValue);
     const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagIdx !== undefined) {
       const tdzResult = analyzeTdzAccess(ctx, id);

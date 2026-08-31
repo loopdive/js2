@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-08-30
+updated: 2026-08-31
 priority: high
 feasibility: hard
 model: fable
@@ -57,6 +57,7 @@ loc-budget-allow:
   # constructor-ABI, nullable-result, and fresh generic-factory handling at the
   # compiler frontiers documented in the current handoff below.
   - src/codegen/expressions.ts
+  - src/codegen/generic-callback-result.ts
   - src/codegen/generic-struct-factory.ts
   - src/codegen/module-scale-profile.ts
   - src/codegen/native-construct.ts
@@ -84,6 +85,7 @@ func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/statements.ts::compileStatementInner
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
   - src/codegen/member-set-dispatch.ts::fillMemberSetDispatch
   - src/codegen/expressions/calls.ts::compileIIFE
   - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
@@ -118,6 +120,7 @@ oracle-ratchet-allow:
   - src/codegen/literals.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/property-access.ts
+  - src/codegen/generic-callback-result.ts
   - src/codegen/generic-struct-factory.ts
   # 2026-08-30: distinguishing a compiled Scanner implementation from an
   # ambient object requires checker-backed declaration and initializer
@@ -643,22 +646,80 @@ Size follow-up priorities, in order, are:
 
 ### Exact remaining work
 
-1. Add the missing focused Identifier witness: a multi-file, two-activation
-   `createNodeFactory` graph with typed ObjectAllocator constructors, generic
-   `countNode<T>`, the five BaseNodeFactory arrows, destructured
-   `factoryCreateIdentifier`, and `factoryCreateIdentifier("")`. Individual
-   allocator and structural-extension shapes already pass; their combined
-   per-activation/candidate shape is the narrow untested frontier.
-2. Use that witness to determine whether the callable BaseNodeFactory resolves
-   to the wrong carrier or whether Node-to-Identifier structural extension is
-   skipped. Make it fail before changing compiler code.
-3. Reduce the `corePublic.ts` two-argument method-cast separately; do not fold
-   it into the Identifier fix without a shared root-cause proof.
-4. Make all three invocations return the expected fingerprints above, then run
+1. Reduce the remaining `builderStatePublic.ts` / `performanceCore.ts`
+   `undefined.length` failure through `unescapeLeadingUnderscores` and
+   `parseErrorForMissingSemicolonAfter` (`utilitiesPublic.ts:851:5`). The
+   optional-argument closure metadata now survives captured and constructible
+   subtypes, so this later parser-list carrier miss needs a focused trace rather
+   than another broad arity exception.
+2. Reduce the independent `corePublic.ts` two-argument method cast in
+   `parseBinaryExpressionRest` / `__call_fn_method_2`.
+3. Make all three invocations return the expected fingerprints above, then run
    the strict 3-file / 11-callback upstream suite.
 
 This is a real-package compile/validation milestone, not a claim that the
 three AST fingerprints or the whole TypeScript unit suite pass yet.
+
+## Runtime carrier follow-up handoff (2026-08-31)
+
+Branch: `codex/1058-typescript5-runtime-followup`, synchronized to the actual
+`loopdive/js2` `main` at
+`adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2`. This supersedes the earlier
+handoff's `origin/main` wording; that remote points at the legacy
+`loopdive/js2wasm` repository.
+
+The final post-sync diagnostic run compiled and validated the canonical
+TypeScript 5.9.3 parser graph. It produced an **84,901,009-byte** Wasm module in
+434,487 ms worker time / 435,823 ms wall time from 30 source files, 34 Program
+files, and 4,284 functions. Peak RSS was **4,072.7 MiB**, below the 4 GiB
+worker cap, and the result retained 16 non-fatal IR/projection warnings.
+`compileSuccess` and `WebAssembly.validate` are both true. The diagnostic Wasm
+and source map are at
+`/private/tmp/ts2wasm-typescript-parser-latest.wasm{,.map}`.
+
+### Compiler fixes in this follow-up
+
+- Fail-closed semantic recognition of generic callback-result helpers now
+  preserves `<T>(callback: () => T): T` across nested/lifted declarations,
+  runtime namespaces, forwarded scanner methods, and constraint-backed
+  `current as T` parser fallbacks. `parseListElement` no longer freezes its
+  result ABI to the first `Statement` instantiation and nulls a later sibling
+  `VariableDeclaration`.
+- Closure metadata records the minimum accepted source arity. Dynamic callback
+  dispatch pads only proven omitted `externref` suffixes with the canonical
+  JavaScript `undefined`, and captured/constructible closure subtypes preserve
+  that metadata. Callable-property dispatch likewise accepts safe shorter
+  runtime arities without widening scalar suffixes.
+- Fresh generic Node/token factories preserve their declared source carrier,
+  project concrete sibling results at the call site, and allow only proven
+  fresh, non-escaping structural extensions. Arbitrary constructors,
+  conditional fallthrough, nested mutator captures, and returned-factory
+  escapes all fail closed in focused negative tests.
+- Nested FunctionDeclaration result lowering, first-void runtime-namespace
+  registration, lossless asserted reference-field export, and immutable
+  hoisted-function rematerialization were repaired. Reassignment discovery now
+  includes destructuring, updates, and loop assignment targets so a live
+  replacement is not overwritten by a later rematerialization.
+
+The former `createIdentifier`/factory failure and the later
+`parseVariableDeclarationList` null dereference are both cleared. Runtime
+fingerprint equivalence is still open:
+
+- `builderStatePublic.ts` and `performanceCore.ts` stop with
+  `TypeError: Cannot read properties of undefined (reading 'length')` through
+  `unescapeLeadingUnderscores`, `parseErrorForMissingSemicolonAfter`, and
+  `parseListElement` (source-map location `utilitiesPublic.ts:851:5`, Wasm
+  offset 1,764,823).
+- `corePublic.ts` advances through `parseVariableDeclarationList`, then reaches
+  the known `illegal cast` in `__call_fn_method_2` from
+  `parseBinaryExpressionRest` (Wasm offset 83,123,160; the retained source-map
+  fallback anchor is `parser.ts:10709:1`).
+
+All **56** `tests/issue-1058-*.test.ts` files pass (**285/285 tests**). The four
+merge-sensitive dynamic-dispatch suites add **65/65** passing tests. TS5 and
+TS7 typechecks pass. This remains a compile/validation and runtime-frontier
+advance, not a claim that the three AST fingerprints or TypeScript's upstream
+unit tests pass.
 
 ## Acceptance criteria
 

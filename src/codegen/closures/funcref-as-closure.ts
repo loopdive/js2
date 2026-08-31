@@ -548,6 +548,7 @@ export function emitFuncRefAsClosure(
       funcTypeIdx: wrapperTypes.closureInfo.funcTypeIdx,
       returnType: results.length > 0 ? results[0]! : null,
       paramTypes: userParams,
+      minimumArgumentCount: wrapperTypes.closureInfo.minimumArgumentCount,
       ...(ownerHasRest ? { hasRestParam: true } : {}),
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
