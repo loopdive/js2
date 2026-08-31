@@ -422,6 +422,7 @@ import {
   addImport,
   addStringConstantGlobal,
   ensureExnTag,
+  exportedExnTagIndex,
   localGlobalIdx,
   nextModuleGlobalIdx,
   // #808 — moved to registry/imports.ts; imported back for index.ts's own callers.
@@ -6457,11 +6458,7 @@ export function generateModule(
     // Export the exception tag so the exec worker can extract thrown payloads
     // via WebAssembly.Exception.getArg(tag, 0).
     if (ctx.exnTagIdx >= 0) {
-      const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-      mod.exports.push({
-        name: "__exn_tag",
-        desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-      });
+      mod.exports.push({ name: "__exn_tag", desc: { kind: "tag", index: exportedExnTagIndex(ctx, mod) } });
     }
 
     // Mark leaf struct types as final for V8 devirtualization (#594).
@@ -11062,11 +11059,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // via WebAssembly.Exception.getArg(tag, 0).
     profilePhase("export-exception-tag", () => {
       if (ctx.exnTagIdx >= 0) {
-        const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-        mod.exports.push({
-          name: "__exn_tag",
-          desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-        });
+        mod.exports.push({ name: "__exn_tag", desc: { kind: "tag", index: exportedExnTagIndex(ctx, mod) } });
       }
     });
 
