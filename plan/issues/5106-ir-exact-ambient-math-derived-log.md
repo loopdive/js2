@@ -72,8 +72,8 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
    each provider.
 3. Add both methods to `IR_MATH_METHOD_TABLE` and reuse the generic selector,
    call-graph walker, from-AST emitter, manifest, and provider materializer.
-4. Add independent `JS2WASM_IR_MATH_LOG10=0` and
-   `JS2WASM_IR_MATH_LOG1P=0` rollbacks so either claim can be withdrawn alone.
+4. Initial rollout added independent per-method rollbacks so either claim could
+   be withdrawn alone.
 5. Widen #3526 exhaustive vocabulary, dependency, integration,
    linear-legality, and neutrality evidence from sixteen to eighteen source
    Math intrinsics.
@@ -90,7 +90,7 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
   provider and requests no host capability.
 - Host and zero-import standalone execution preserve direct-path behavior and
   stay inside explicit native-Math absolute/ULP regression bounds.
-- Each rollback withdraws only its corresponding method.
+- During initial rollout, each per-method rollback withdrew only its corresponding method.
 - Excluded shapes decline before claim without invariants or post-claim errors.
 - Affected #3526 suites, TypeScript 7, and all pre-push gates pass.
 
@@ -103,8 +103,7 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
   callables, declares `math.log` as each provider's sole dependency, and
   materializes that dependency once. No Math algorithm or direct-codegen file
   changed.
-- Independent `JS2WASM_IR_MATH_LOG10=0` and
-  `JS2WASM_IR_MATH_LOG1P=0` controls withdraw only their corresponding claim.
+- Independent per-method controls withdrew only their corresponding claim.
   Shadowed, aliased, computed, optional-invocation, optional-receiver,
   wrong-arity, spread, and non-number forms all decline before claim.
 - Four focused/affected suites pass 36/36. They cover host and zero-import
@@ -133,6 +132,13 @@ computed, shadowed, coercive, spread, and wrong-arity forms remain direct.
 
 The principal risk is dependency or numerical-evidence drift. Both semantic
 features must depend on `math.log` without duplicating its provider, and the
-shared table must remain the sole grammar contract. Independent environment
-flags provide narrow checkpoint rollback; `JS2WASM_IR_FIRST=0` remains the
-global control.
+shared table must remain the sole grammar contract. During initial rollout,
+independent per-method withdrawals provided narrow rollback;
+`JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawals are retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

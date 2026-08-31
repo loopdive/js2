@@ -1100,6 +1100,35 @@ const STANDALONE_DOM_EXTERN_POSITION_CLASSES = new Set(["Document", "HTMLElement
  * return `null`; the caller then throws so the function falls back to
  * the legacy path.
  */
+/**
+ * (#5166) Nested-array element carrier. A `number[][]` position has an
+ * element that `resolvePositionType` resolves to a LOGICAL `irVec` — a kind
+ * that matches no element-ValType arm, so the array arms threw and the
+ * function demoted at `resolve`.
+ *
+ * Legacy `resolveWasmType` does not have this gap: it recurses, so the inner
+ * array arrives as a CONCRETE ref (`ref null $__vec_f64`) and the outer vec is
+ * `__vec_ref_<inner>` whose Wasm array element IS that ref. Mirror exactly that
+ * — no anyref, no cast-on-get — by registering the inner physical vec here and
+ * handing its `ref_null` back to the EXISTING `ref_<idx>` elemKey path. The
+ * result is that `number[][]` resolves the same way `string[][]` already did
+ * (whose inner `string[]` was already a physical ref), and both share the
+ * legacy vec identity via `getOrRegisterVecType`.
+ *
+ * Returns `null` for anything that is not a logical vec over an `f64`/`i32`
+ * element, which keeps the caller's throw for genuinely unrepresentable
+ * elements. `irVec` is produced by this function only for `f64`/`i32`
+ * elements, so that restriction is exact rather than conservative.
+ */
+function nestedVecElementValType(elemIr: IrType, ctx: CodegenContext): ValType | null {
+  if (elemIr.kind !== "vec") return null;
+  const inner = asVal(elemIr.elementType);
+  if (!inner || (inner.kind !== "f64" && inner.kind !== "i32")) return null;
+  // Use ref_null so an element slot default-initializes to null, matching
+  // legacy's vec-element carrier (see `resolveWasmType`'s Array arm).
+  return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, inner.kind, inner) };
+}
+
 function resolvePositionType(
   node: ts.TypeNode | undefined,
   mapped: LatticeType | undefined,
@@ -1152,7 +1181,8 @@ function resolvePositionType(
           ? elemIr.val
           : elemIr.kind === "string" || elemIr.kind === "dynamic"
             ? ({ kind: "externref" } as ValType)
-            : null;
+            : // (#5166) `number[][]` — carry the inner array as a concrete ref.
+              nestedVecElementValType(elemIr, ctx);
       if (!elemVal) {
         throw new Error(
           `array element TypeNode ${ts.SyntaxKind[node.elementType.kind]} could not be lowered to a primitive ValType`,
@@ -1207,7 +1237,8 @@ function resolvePositionType(
               ? elemIr.val
               : elemIr.kind === "string" || elemIr.kind === "dynamic"
                 ? ({ kind: "externref" } as ValType)
-                : null;
+                : // (#5166) `Array<Array<number>>` — same concrete-ref carrier.
+                  nestedVecElementValType(elemIr, ctx);
           if (!elemVal) {
             throw new Error(
               `Array<T> element TypeNode ${ts.SyntaxKind[typeArgs[0]!.kind]} could not be lowered to a primitive ValType`,

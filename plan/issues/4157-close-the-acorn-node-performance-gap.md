@@ -4,7 +4,7 @@ title: "umbrella: close the acorn-vs-Node performance gap — representation fir
 status: ready
 sprint: current
 created: 2026-08-04
-updated: 2026-08-12
+updated: 2026-08-30
 priority: high
 horizon: xl
 feasibility: hard
@@ -5042,3 +5042,27 @@ benchmark artifact is refreshed on merge to `main` and read by humans. A
 per-program regression gate on `wasm-host-wasmtime-hot-runtime.json` — comparing
 within a runner class, keyed on the JS lane as the machine fingerprint — is the
 missing check. Filed as a follow-up rather than bundled here.
+
+## 2026-08-30 (50) — Binaryen 132 made `--all-features` emit unsupported compact imports
+
+The first post-upgrade `Refresh Benchmarks` run failed while optimizing the
+landing `fib` module. Binaryen was installed and `wasm-opt` completed; the
+reported “wasm-opt not available” warning was the fallback's misleading final
+diagnostic after the optimized output failed `WebAssembly.validate`.
+
+Binaryen 132 added the proposed `compact-imports` encoding to
+`--all-features`. It rewrote ordinary imports to kind byte `0x7e`, which Node
+25.7 and the current Wasmtime lane do not accept. Exact reproduction:
+
+- raw `fib`: 9,779 bytes, valid;
+- previous Binaryen 132 flags: 6,358 bytes, invalid (`unknown import kind 0x7e`);
+- plus `--disable-compact-imports`: 6,779 bytes, valid.
+
+The portable feature set now keeps `--all-features` for parsing js2wasm's
+post-MVP instructions while excluding both proposal encodings Binaryen can
+introduce during rewriting: custom descriptors/exact references and compact
+imports. The same flags cover the compiler optimizer, static npm-package
+bundler, and landing Wasmtime normalization. A focused optimizer test forces
+the bundled Binaryen CLI path and requires the previously failing class-union
+module to remain optimized and loadable. Rejected CLI output also retains the
+runtime validator's detail instead of degrading to “wasm-opt not available”.
