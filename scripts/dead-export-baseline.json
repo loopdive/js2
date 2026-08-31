@@ -10,6 +10,7 @@
   "src/codegen/fallback-telemetry.ts#totalFallbackHits",
   "src/codegen/fnctor-field-provenance.ts#fnctorFieldProvenanceRecords",
   "src/codegen/fnctor-field-provenance.ts#resetFnctorFieldProvenance",
+  "src/codegen/generic-callback-result.ts#genericCallbackResultCall",
   "src/codegen/program-abi-callable-roles.ts#programAbiCallableRoleOrdinalsAreDistinct",
   "src/codegen/program-abi-module-callable-alias-planning.ts#assertPreparedModuleCallableAliasDescriptorCurrent",
   "src/codegen/program-abi-module-callable-alias-planning.ts#preparedModuleCallableAliasBindings",
