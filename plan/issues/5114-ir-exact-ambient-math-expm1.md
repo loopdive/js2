@@ -71,7 +71,7 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
    dependency.
 3. Add `expm1` to `IR_MATH_METHOD_TABLE` and reuse the generic selector,
    call-graph walker, from-AST emitter, manifest, and provider materializer.
-4. Add an independent `JS2WASM_IR_MATH_EXPM1=0` rollback.
+4. Initial rollout added an independent per-method rollback.
 5. Widen #3526 exhaustive vocabulary, dependency, integration,
    linear-legality, and neutrality evidence from twenty-two to twenty-three
    source Math intrinsics.
@@ -92,7 +92,8 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
   infinities.
 - A native-Math oracle pins explicit Taylor/general accuracy bounds while
   separately proving the oracle ran on an IR-only body.
-- The narrow rollback and all excluded shapes decline before claim without
+- The former narrow rollback was validated alongside excluded shapes, which
+  decline before claim without
   invariants or post-claim errors.
 - Affected regressions, TypeScript 7, and all pre-push gates pass.
 
@@ -104,7 +105,7 @@ shadowed, coercive, spread, and wrong-arity forms remain direct.
 - The frozen manifest attaches the existing host-free `Math_expm1` callable,
   closes it over exactly one shared `math.exp` dependency, and requests no
   host capability. No Math algorithm or direct-codegen file changed.
-- `JS2WASM_IR_MATH_EXPM1=0` withdraws only this claim. Shadowed, aliased,
+- The per-method rollback withdrew only this claim. Shadowed, aliased,
   computed, optional-invocation, optional-receiver, wrong-arity, spread, and
   non-number forms all decline before claim without invariants or post-claim
   errors.
@@ -156,5 +157,12 @@ the shared numerical algorithm remains separate from this ownership-only PR.
 The principal risks are cancellation near zero and behavior at the strict
 `|x| < 1e-5` Taylor boundary. Direct-path bit identity remains the hard
 migration invariant and native Math supplies method-specific independent
-accuracy bounds. The method-specific environment flag provides narrow
+accuracy bounds. The rollout-only per-method withdrawal provided narrow
 rollback; `JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.
