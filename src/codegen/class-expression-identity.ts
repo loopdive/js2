@@ -57,9 +57,15 @@ export function resolveClassHeritageAlias(
   identifier: ts.Identifier,
   seen = new Set<ts.Declaration>(),
 ): string | undefined {
+  const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  // A local `let`/`var` initialized with a class expression can be reassigned
+  // before the heritage clause runs.  Do not let its checker type freeze the
+  // initializer as the runtime parent; only an immutable local binding may use
+  // the exact class-expression identity shortcut.  Import bindings retain the
+  // existing #4291 declaration-identity path.
+  if (heritageIdentifierHasMutableBinding(ctx, identifier)) return undefined;
   const exactClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(identifier));
   if (exactClassName !== undefined) return exactClassName;
-  const declaration = ctx.oracle.valueDeclarationOf(identifier);
   if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) {
     return resolveBuiltinCtorAliasName(ctx, identifier, undefined);
   }
@@ -81,4 +87,19 @@ export function resolveClassHeritageAlias(
     return className !== undefined && ctx.classSet.has(className) ? className : undefined;
   }
   return undefined;
+}
+
+/** Whether a compiled class's `extends` identifier can change at runtime. */
+export function classHasMutableHeritageBinding(ctx: CodegenContext, className: string): boolean {
+  const declaration = ctx.classDeclarationMap.get(className);
+  const heritage = declaration?.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+  const base = heritage?.types[0]?.expression;
+  return base !== undefined && ts.isIdentifier(base) && heritageIdentifierHasMutableBinding(ctx, base);
+}
+
+function heritageIdentifierHasMutableBinding(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return false;
+  if (ts.isVariableDeclaration(declaration)) return ctx.oracle.constInitializerOf(identifier) === undefined;
+  return ts.isParameter(declaration) || ts.isBindingElement(declaration);
 }

@@ -20,6 +20,7 @@ import { compileExpression, resolveComputedKeyExpression, skipTransparentExpress
 import type { InnerResult } from "./shared.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { localGlobalIdx } from "./registry/imports.js";
+import { classHasMutableHeritageBinding } from "./class-expression-identity.js";
 
 /** Annex B B.2.2 legacy RegExp accessor names, including their aliases. */
 export const STANDALONE_REGEXP_LEGACY_STATIC_NAMES: ReadonlySet<string> = new Set([
@@ -221,6 +222,7 @@ function isRegExpSubclass(ctx: CodegenContext, className: string): boolean {
   let current: string | undefined = className;
   while (current !== undefined && !seen.has(current)) {
     seen.add(current);
+    if (classHasMutableHeritageBinding(ctx, current)) return false;
     if (ctx.classBuiltinParentMap.get(current) === "RegExp") return true;
     current = ctx.classParentMap.get(current);
   }
