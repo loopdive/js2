@@ -28,7 +28,7 @@ import {
   patternIteratorStepCount,
 } from "../destructuring-params.js";
 import { emitAssignToTarget, isStrictContext } from "../expressions/assignment.js";
-import { analyzeTdzAccess, emitStaticTdzThrow } from "../expressions/identifiers.js";
+import { emitIdentifierAssignmentTdzGuard } from "../expressions/identifier-assignment.js";
 import {
   emitUndefined,
   ensureLateImport,
@@ -40,7 +40,7 @@ import {
   findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
 } from "../expressions/unresolvable-assign.js";
-import { emitCoercedLocalSet, emitThrowTypeError } from "../expressions/helpers.js";
+import { emitCoercedLocalSet, emitThrowTypeError, isConstIdentifierAssignmentTarget } from "../expressions/helpers.js";
 import {
   emitCaptureGlobalEnvironmentHasBinding,
   emitGlobalEnvironmentKey,
@@ -74,7 +74,6 @@ import {
   tryEmitArrayProtoIteratorReadDrive,
 } from "./destructuring.js";
 import { collectInstrs } from "./shared.js";
-import { emitTdzCheck } from "./tdz.js";
 
 /**
  * Preserve §13.15.5 PutValue errors for identifier targets in an assignment
@@ -83,23 +82,14 @@ import { emitTdzCheck } from "./tdz.js";
  * must precede the const check: an uninitialised lexical binding is a
  * ReferenceError even when its declaration is const.
  */
-function emitForOfAssignmentTargetGuard(ctx: CodegenContext, fctx: FunctionContext, target: ts.Identifier): boolean {
+export function emitForOfAssignmentTargetGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.Identifier,
+): boolean {
   const name = target.text;
-  if (ctx.tdzGlobals.has(name)) {
-    const tdzResult = analyzeTdzAccess(ctx, target);
-    if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, name);
-      return true;
-    }
-    if (tdzResult === "check") emitTdzCheck(ctx, fctx, name, true);
-  }
-  const declaration = ctx.oracle.variableDeclarationOf(target);
-  const isConst =
-    fctx.constBindings?.has(name) === true ||
-    (declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      (declaration.parent.flags & ts.NodeFlags.Const) !== 0);
-  if (!isConst) return false;
+  if (emitIdentifierAssignmentTdzGuard(ctx, fctx, target)) return true;
+  if (!isConstIdentifierAssignmentTarget(ctx, fctx, target)) return false;
   emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
   fctx.body.push({ op: "unreachable" });
   return true;

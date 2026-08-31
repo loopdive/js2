@@ -21,9 +21,11 @@ related: [1190, 1222, 1142, 1143, 1144]
 Three consecutive PRs (#142, #143, #144) all showed 22–28 "real" (wasm_change)
 regressions simultaneously, even though:
 
-- PR #143 was **entirely env-gated** (`JS2WASM_IR_OBJECT_SHAPES=1`): zero lines
-  of production codegen changed. It is impossible for it to produce real Wasm
-  regressions. Yet CI reported 27 `regressions_wasm_change`.
+- PR #143 was **entirely behind the then-temporary object-shape rollout
+  switch**: zero lines of production codegen changed. It is impossible for it
+  to produce real Wasm regressions. Yet CI reported 27
+  `regressions_wasm_change`. That rollout switch was retired by #1231 on
+  2026-08-31.
 - All three PRs showed the same 22–28 range, which is a symmetric pattern
   across unrelated branches.
 

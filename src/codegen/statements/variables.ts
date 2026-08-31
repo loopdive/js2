@@ -74,6 +74,7 @@ import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extract
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
+import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 
 /**
  * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
@@ -319,6 +320,7 @@ function tryCompileUniformSplitLengthBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
@@ -413,6 +415,7 @@ function tryCompileDerivedSubstringBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) {
     return false;
   }
@@ -614,6 +617,7 @@ function tryCompileUniformIndexPresenceBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
@@ -1359,6 +1363,11 @@ function isBindCarrierCall(expr: ts.Expression): boolean {
 }
 
 export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.VariableStatement): void {
+  // A chunk helper may not retain a source binding solely in `fctx` locals:
+  // the following complete entry starts in a different Wasm function. The
+  // normal module-global branch below remains correct; only local-only scalar
+  // substitutions and buffer representations are withdrawn.
+  const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
       compileObjectDestructuring(ctx, fctx, decl);
@@ -1396,7 +1405,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // otherwise the inner declaration aliases and corrupts the module binding.
     // (The module-init body compiles with an empty `localMap`, so this stays
     // false there and the module-global store path is preserved.)
-    const hasLocalShadow = fctx.localMap.has(name);
+    // A physical module-init chunk owns only temporary lowering locals. They
+    // cannot shadow a module binding in a later source entry: for example, a
+    // completed top-level block may have used the same local name before the
+    // following source-level `let` must initialize its module global.
+    const hasLocalShadow = !chunkedModuleInit && fctx.localMap.has(name);
     // A lexical declaration nested in a top-level block is still local to that
     // block. `moduleGlobals` is keyed only by name, so an outer Script-level
     // binding with the same name must not make this declaration take the
@@ -1425,10 +1438,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
       }
     }
-    if (tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryAsciiCase(ctx, fctx, stmt, decl) || tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
+    if (!chunkedModuleInit && tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (!chunkedModuleInit && tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (
+      !chunkedModuleInit &&
+      (tryAsciiCase(ctx, fctx, stmt, decl) || tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl))
+    ) {
+      continue;
+    }
+    if (!chunkedModuleInit && tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
 
     // #1210: string-builder rewrite for `let s = "";` followed by an
     // accumulating loop. Detected pre-pass populates `pendingStringBuilders`;
@@ -1438,7 +1456,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // route through `fctx.stringBuilders` instead). The TDZ flag is also
     // not allocated, since the variable is always logically initialised
     // immediately after the buffer is created.
-    if (fctx.pendingStringBuilders?.has(decl)) {
+    if (!chunkedModuleInit && fctx.pendingStringBuilders?.has(decl)) {
       // Native string helpers (incl. __str_buf_next_cap and __str_flatten)
       // must be available before any append site emits a call to them. The
       // detector only fires under nativeStrings; ensure here too in case the
@@ -1467,6 +1485,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     if (
       decl.initializer &&
       ts.isNewExpression(decl.initializer) &&
+      !chunkedModuleInit &&
       tryEmitLinearU8New(ctx, fctx, decl.name, decl.initializer)
     ) {
       emitTdzInit(ctx, fctx, name);

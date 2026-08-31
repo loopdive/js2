@@ -112,6 +112,9 @@ describe("compileMulti deferred-finalizer parity", () => {
         `,
         "./entry.js": `
           import { installed } from "./override.js";
+          export function installedOnly() {
+            return installed;
+          }
           export function test() {
             const values = [5, 6];
             const [first, second] = values;
@@ -125,6 +128,9 @@ describe("compileMulti deferred-finalizer parity", () => {
     const imports = buildRuntimeImports(result.imports, undefined, result.stringPool);
     const instance = await WebAssembly.instantiate(module, imports);
     imports.setExports?.(instance.exports as Record<string, Function>);
+    // The CPR slot must be populated by the imported module's initializer; this
+    // distinguishes a stale post-flush slot index from a missing init statement.
+    expect((instance.exports.installedOnly as () => number)()).toBe(1);
     expect((instance.exports.test as () => number)()).toBe(192);
   });
 
