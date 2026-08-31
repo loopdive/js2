@@ -35,6 +35,31 @@ async function runSelfNamespace(target: "gc" | "standalone"): Promise<number> {
   return (instance.exports as Record<string, () => number>).test();
 }
 
+async function runEmptySelfNamespace(target: "gc" | "standalone"): Promise<void> {
+  const entry = "./entry.js";
+  const source = `
+    import * as self from "./entry.js";
+    if (Object.setPrototypeOf(self, null) !== self) {
+      throw new Error("self namespace identity was not preserved");
+    }
+  `;
+  const result = await compileMulti({ [entry]: source }, entry, {
+    target,
+    allowJs: true,
+    skipSemanticDiagnostics: true,
+    deferTopLevelInit: true,
+  });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  if (!result.success) return;
+
+  const imports = (result.importObject ?? {}) as Record<string, unknown>;
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  const setInstance = imports.__setInstance ?? imports.setInstance;
+  if (typeof setInstance === "function") (setInstance as (instance: WebAssembly.Instance) => void)(instance);
+  const moduleInit = (instance.exports as Record<string, unknown>).__module_init;
+  if (typeof moduleInit === "function") (moduleInit as () => void)();
+}
+
 describe("#4759 module namespace self-import linking", () => {
   it("recognizes only a static relative self-import", () => {
     const path = "language/module-code/namespace/Symbol.iterator.js";
@@ -47,5 +72,9 @@ describe("#4759 module namespace self-import linking", () => {
 
   it.each(["gc", "standalone"] as const)("resolves the self namespace in %s", async (target) => {
     await expect(runSelfNamespace(target)).resolves.toBe(42);
+  });
+
+  it.each(["gc", "standalone"] as const)("materializes an empty self namespace in %s", async (target) => {
+    await expect(runEmptySelfNamespace(target)).resolves.toBeUndefined();
   });
 });
