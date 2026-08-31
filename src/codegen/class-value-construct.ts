@@ -28,13 +28,32 @@
 //
 // One export per registered class:
 //
-//     __class_construct_<Class>_<arity>(a0, …, aN-1) -> externref
+//     __class_construct_<Class>_<arity>(argc, a0, …, aN-1) -> externref
 //
-// `(externref × arity) -> externref`, the same ABI the #5204 externref-backed
-// METHOD bridges use, with the same per-parameter coercion (a numeric formal is
-// unboxed at the boundary) and the same result boxing. The arity is in the NAME
-// so the runtime can discover the bridge without a second metadata export —
-// there is exactly one constructor per class, so the family has one member.
+// `(i32, externref × arity) -> externref` — the #5204 externref-backed METHOD
+// bridge ABI plus a leading ARGUMENT COUNT, with the same per-parameter
+// coercion (a numeric formal is unboxed at the boundary) and the same result
+// boxing. The arity is in the NAME so the runtime can discover the bridge
+// without a second metadata export — there is exactly one constructor per
+// class, so the family has one member.
+//
+// ## Why `argc` is part of the ABI and not an afterthought
+//
+// A fixed-arity bridge has to pad missing arguments, and padding erases the
+// one thing `<Class>_new` needs to apply parameter DEFAULTS: whether an
+// argument was supplied at all. The compiler answers that with the mutable
+// module global `__argc` (`-1` = "caller unknown"), written by each call site
+// and consumed once in the callee prologue.
+//
+// The first cut of this bridge did not write it, and the consequence was worse
+// than "defaults do not fire": the global simply held whatever the previously
+// compiled call site left there. With `-1` the omitted arguments came through
+// as `undefined` and unboxed to NaN (`new Defaulted(11,12)` → `11,12,NaN,NaN`);
+// with a stale small count the check `argc !== -1 && argc <= i` fired for every
+// parameter past the first, so the REAL arguments were thrown away in favour
+// of the initializers (`new Duration(11,…,20)` read back `11,0,0,0,…`). Same
+// omission, two unrelated-looking symptoms, both silent. Threading the real
+// count makes the bridge behave exactly like a compiled call site.
 //
 // ## Gate
 //
@@ -52,6 +71,7 @@ import { classMemberFuncKey } from "./class-member-keys.js";
 import { exportFunc } from "./emit-helpers.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { noJsHost } from "./js-errors.js";
+import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { addFuncType } from "./registry/types.js";
 
 /** Prefix of the per-class constructor bridge; the runtime resolves by it. */
@@ -101,15 +121,26 @@ export function emitClassValueConstructExports(ctx: CodegenContext, helpers: Cla
     if (ctx.funcMap.has(exportName)) continue;
 
     const body: Instr[] = [];
+    // Local 0 is the caller's ARGUMENT COUNT; the declared formals start at 1.
     for (let index = 0; index < params.length; index++) {
-      body.push({ op: "local.get", index }, ...coercions[index]!);
+      body.push({ op: "local.get", index: index + 1 }, ...coercions[index]!);
     }
+    // (#5242, second cut) Publish `__argc` immediately before the call — after
+    // the arguments are on the stack, so nothing a coercion calls can clobber
+    // it in between. `<Class>_new` reads this global to tell an OMITTED
+    // argument from an explicit `undefined` (`cacheParamDefaultArgc`), and it
+    // is a MODULE GLOBAL: a bridge that does not set it leaves whatever the
+    // last compiled call site wrote. That is not "no defaults", it is
+    // arbitrary defaults — a stale `1` makes every parameter after the first
+    // take its initializer while the real arguments are discarded, which is
+    // exactly how `new Duration(11,…,20)` read back `11,0,0,0,…`.
+    body.push({ op: "local.get", index: 0 }, { op: "global.set", index: ensureArgcGlobal(ctx) });
     body.push({ op: "call", funcIdx: ctorIdx });
     if (!helpers.boxResult(ctx, body, ctorType.results.length > 0 ? ctorType.results[0] : undefined)) continue;
 
     const typeIdx = addFuncType(
       ctx,
-      params.map(() => ({ kind: "externref" as const })),
+      [{ kind: "i32" as const }, ...params.map(() => ({ kind: "externref" as const }))],
       [{ kind: "externref" }],
       `$${exportName}_type`,
     );
