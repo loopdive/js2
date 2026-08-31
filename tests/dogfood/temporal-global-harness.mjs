@@ -247,6 +247,45 @@ const KNOWN_GAPS = {
   // "11,0,0,0,0,0,0,0,0,0", every field after the first defaulted. Control:
   // `new Temporal.Duration(11,…,20)` (statically resolved, no mirror) reads all
   // ten correctly. That is #5244's lane, filed separately.
+  //
+  // (#5244) The single-module lane is now CORRECT for the whole arithmetic
+  // family, and the answer was two codegen defects rather than the reported
+  // one. Measured 2026-08-31, fresh JS2WASM_TEMPORAL_CACHE per lane:
+  //
+  //   SINGLE-MODULE lane        base (#5244)      after #5244
+  //     Duration.from({days:1}) "PT0S"         →  "P1D"
+  //     Duration.from("P1D")    "PT0S"         →  "P1D"
+  //     add({days:1})           "2020-03-04"   →  "2020-03-05"
+  //     subtract({days:1})      "2020-03-04"   →  "2020-03-03"
+  //     add("P1D")              "2020-03-04"   →  "2020-03-05"
+  //     add({months:2})         "2020-03-04"   →  "2020-05-04"
+  //     until(…) / since(…)     THREW          →  "P1D"
+  //     with({year:2021})       "2021-03-04"      unchanged (control)
+  //     new Duration(0,0,0,1)   "P1D"             unchanged (control)
+  //   PROVIDER lane             every row below BYTE-IDENTICAL on both sides
+  //
+  //   1. The dynamic-`new` dispatch ladder (`emitDynamicNewFallback`) never
+  //      published `__argc`. The STATIC `new C(…)` site does; the ladder's arms
+  //      did not, and `__argc` is a module GLOBAL — so a constructor with
+  //      parameter defaults read whatever the previously compiled call site had
+  //      left there, and a stale small count discarded the arguments the arm
+  //      had just coerced onto the stack in favour of the initializers. That is
+  //      the "every argument after the first is lost" symptom; the host-side
+  //      twin of the same omission was fixed in #5242's bridge.
+  //   2. `__sset_<field>` (`buildSetterNestedIfElse`) appended its #2009 shape
+  //      / #4618 class-tag refinement to the arm condition with `i32.and`.
+  //      `i32.and` evaluates BOTH operands, so the refinement's `ref.cast` ran
+  //      for receivers `ref.test` had just rejected — an unconditional trap,
+  //      swallowed by `_safeSet`'s "not a field of this struct's runtime type"
+  //      catch. The setter aborted at its first guarded arm, the write landed
+  //      in the JS sidecar, and a compiled `struct.get` read the untouched
+  //      slot. It needs two struct types sharing the field name to bite, which
+  //      is why no small reduction showed it and the polyfill (dozens of
+  //      records with a `days` field) always did.
+  //
+  //   STILL BROKEN, single-module, unchanged on both sides and NOT triaged:
+  //     Duration.from({hours:25}).total({unit:"hours"})  → WebAssembly.Exception
+  //     Duration.from({hours:25}).round({largestUnit:"days"}) → same
   arithmeticAddDuration: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
     note:
@@ -260,7 +299,14 @@ const KNOWN_GAPS = {
       "dynamic method bridge. So that null is NOT a constructor-path residue. " +
       "(#5243) That null is FIXED (it was the host-path object SPREAD in `Wr`, null-cast back into its inferred " +
       "record type — see the block above). This row's provider-lane throw is UNCHANGED and is #5225's; its " +
-      'single-module control now answers "2020-03-04" — no throw, wrong date — which is #5244',
+      'single-module control now answers "2020-03-04" — no throw, wrong date — which was #5244. ' +
+      '(#5244) FIXED in the single-module lane: it answers "2020-03-05". Two codegen defects, neither of them in ' +
+      "the polyfill. The dynamic-`new` dispatch ladder never published `__argc`, so a defaulted constructor reached " +
+      "through a class VALUE re-defaulted arguments that were genuinely passed; and `__sset_<field>` appended its " +
+      "shape/tag refinement with `i32.and`, whose eager `ref.cast` trapped on every receiver `ref.test` had just " +
+      "rejected, so a computed-key write never reached the struct slot (the `ToTemporalDuration` accumulation loop). " +
+      "THIS PROVIDER ROW IS UNCHANGED — measured 2026-08-31 on both sides with a fresh JS2WASM_TEMPORAL_CACHE — and " +
+      "stays #5225's: the object-literal ARGUMENT crossing the seam",
   },
   arithmeticSubtract: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
@@ -271,7 +317,8 @@ const KNOWN_GAPS = {
       "`dateAdd` destructuring-parameter null shared with `arithmeticAddDuration`. Provider-lane residue is the " +
       "object-literal ARGUMENT crossing the seam, #5225's lane. (#5243) Same as `arithmeticAddDuration`: the " +
       'destructuring null is gone, the provider throw is unchanged, and the single-module control answers "2020-03-04" ' +
-      "(#5244)",
+      '(#5244). (#5244) FIXED single-module: it answers "2020-03-03". Provider row UNCHANGED (measured 2026-08-31, ' +
+      "fresh provider cache, both sides) and stays #5225's",
   },
   arithmeticWith: {
     source: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
