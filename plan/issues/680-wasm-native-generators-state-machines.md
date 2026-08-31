@@ -3,7 +3,7 @@ id: 680
 title: "Wasm-native generators (state machines) with optional JS host fallback"
 status: ready
 created: 2026-03-20
-updated: 2026-08-31
+updated: 2026-09-01
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -1256,3 +1256,130 @@ must pass the normal hook; after it, one final pre-push replay is planned using
 the actual `git rev-parse HEAD` in the synthetic new-branch ref with
 `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Its result is reported externally
 to avoid an evidence-commit loop. No GitHub issue was created.
+
+### Current-main integration plan — c1120626 (2026-09-01)
+
+Fresh `git fetch upstream main` resolved the live `loopdive/js2:main` tip to
+`c11206262088a69815d6126787b10942df148b6d`, **55 commits** beyond the prior
+integrated upstream base `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`.
+The completed #680 branch head is
+`57cfa31558c6e357c3fc3572fffc000c424d3b47`; its intended range remains exactly
+the tracker plus `src/codegen/context/types.ts`, `src/codegen/expressions.ts`,
+`src/codegen/generators-native.ts`, and
+`tests/issue-680-generator-expression-continuations.test.ts`.
+
+Read-only three-way inventory finds one direct owned-path overlap:
+`src/codegen/context/types.ts`. The normal merge must retain upstream's current
+context shape and reapply #680's expression-continuation metadata without
+discarding either side. Upstream's remaining delta is disjoint from the four
+other #680 implementation/test paths. No newly introduced generated
+benchmark/public/website/labs mirror appears in the fresh upstream delta, so
+no report-guard or mirror repair is authorized for this integration.
+
+Integration and exact-head gate plan:
+
+1. A normal `git merge --no-commit --no-ff upstream/main` now has
+   `MERGE_HEAD=c11206262088a69815d6126787b10942df148b6d`. Git merged
+   `context/types.ts` automatically: the indexed result retains upstream's
+   `classCtorHostRegistered` context field and #680's two
+   `nativeGenerator*ValueLocals` fields. The predicted post-commit PR range is
+   exactly the five intended #680 paths and contains no benchmark, public,
+   website, or labs path.
+2. After a host-visible process audit grants one lane, run exactly one focused
+   single-fork replay of
+   `tests/issue-680-generator-expression-continuations.test.ts` with an
+   explicit **27 / 27** floor. Then run direct TypeScript 7, targeted
+   Prettier/Biome/diff and relevant issue-budget/oracle gates against the
+   merged head; stop and record any failure rather than retrying.
+3. Record the integrated evidence and resulting exact head in this tracker
+   before the final documentation-only commit. The normal hook and the final
+   synthetic pre-push ref must use the actual `git rev-parse HEAD`,
+   `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`, and the repository's root Node
+   PATH. Report the final pre-push result externally; do not create a GitHub
+   issue, push, or mutate a PR without separate authorization.
+
+The resolved no-commit merge remains deliberately open while global test
+capacity is occupied. No hook, compiler, TypeScript, Vitest, Test262, commit,
+push, or GitHub operation has occurred for this c112 integration; only the
+normal merge index and this tracker handoff are staged.
+
+### Publication authorization recorded (2026-09-01)
+
+The user explicitly authorized pushing completed branches to
+`https://github.com/ttraenkler/js2` for pull requests against
+`loopdive/js2:main`. For this #680 branch, that authorization clears the
+future publication step only after live-main exact-head validation succeeds:
+the eventual pull request must be a separate **non-draft** PR against upstream
+main, with no GitHub issue creation or mutation. It does not authorize an
+early commit, push, validation bypass, or any action while this integration's
+runtime lanes remain occupied.
+
+### Commit-hook tooling provenance (2026-09-01)
+
+The normal c112 merge commit first reached `.husky/pre-commit` but stopped
+before lint-staged because this Codex host has no ambient `npx`; the repository
+dependency surface itself is present at
+`/Users/thomas/Code/js2/node_modules/.bin/lint-staged`. For the normal,
+unskipped hook replay, this worktree uses ignored `.tmp/bin/npx`, a fail-closed
+local wrapper that accepts only `npx lint-staged` and directly executes that
+installed binary. Any other invocation exits 127. No package download,
+dependency installation, signing/configuration change, `--no-verify`, or hook
+bypass is used. This is infrastructure provenance only; the merge commit and
+all validation results remain to be recorded after their normal completion.
+
+### c112 merge-commit hook attempt — incomplete, no publication evidence (2026-09-01)
+
+The normal hook-running merge commit was attempted with the fail-closed local
+`npx lint-staged` wrapper and active repository signing configuration. The
+hook completed lint-staged (Prettier plus Biome), `check:loc-budget`, and
+`check:func-budget` successfully. It then entered `test:changed-root`, printed
+the six selected files (including
+`tests/issue-680-generator-expression-continuations.test.ts`) and started
+Vitest `v3.2.4`; the captured command ended before a test denominator, exit
+summary, or commit SHA was emitted.
+
+The authoritative state check immediately afterward found
+`HEAD=57cfa31558c6e357c3fc3572fffc000c424d3b47` unchanged and
+`MERGE_HEAD=c11206262088a69815d6126787b10942df148b6d` still present, with no
+remaining git/husky/Vitest child. Therefore this is **not** a successful merge
+commit or validation result, and must not be retried blindly or cited as a
+focused 27/27 pass. The next owner must obtain the exact changed-root failure
+or a fresh explicit validation release, record its real exit/denominator, and
+only then retry the normal signed commit. No push or PR creation is authorized
+from the current open-merge state.
+
+### c112 merge-commit hook retry — blocked by stale unrelated #4628 cache (2026-09-01)
+
+The one authorized observable retry used the same normal `git commit` command,
+the fail-closed local `npx lint-staged` wrapper, and the active repository
+signing configuration. `lint-staged` (Prettier and Biome), `check:loc-budget`,
+and `check:func-budget` completed successfully. `test:changed-root` then
+started its six-file selected set and exited **1** after
+`tests/issue-4628-temporal-global.test.ts` reported **10 passed, 1 failed**
+(32.56 s; the failing heavy provider case itself took 14.78 s).
+
+The failure is not in a #680-owned path or control: #4628 reported its linked
+Temporal provider came from a **25.4-hour-old cache** and explicitly instructed
+that `JS2WASM_TEMPORAL_CACHE` be pointed at a fresh directory before treating
+the `protoMethodCall`/null-pointer failures as a regression. The normal merge
+commit therefore did not land:
+`HEAD=57cfa31558c6e357c3fc3572fffc000c424d3b47` remains unchanged and
+`MERGE_HEAD=c11206262088a69815d6126787b10942df148b6d` remains open. This is the
+real failure required to classify the prior transport-loss attempt; it is not
+#680 validation evidence. Per the one-retry rule, do not rerun the commit or
+publication gates until a fresh owner records/cache-repairs the unrelated
+#4628 blocker and receives a new explicit release. No push or PR is ready.
+
+### Fresh Temporal-cache hook recovery plan (2026-09-01)
+
+The only real c112 hook failure was the #4628 fixture's explicitly identified
+25.4-hour-old linked-provider cache, not a #680 control. The next and only
+root-cause-addressed hook replay will set
+`JS2WASM_TEMPORAL_CACHE=.tmp/temporal-cache-c112`, a new worktree-local ignored
+directory, so the heavy #4628 provider is rebuilt by this worktree rather than
+served from that stale cache. It will use the same normal, unsigned-bypass-free
+`git commit` with the fail-closed local `npx lint-staged` wrapper and full
+repository runtime PATH. A detached local wrapper will retain a log, PID, and
+actual exit-status file through any tool-session loss. The result remains
+authoritative only if the wrapper records a complete process exit; any real
+fresh-cache failure stops publication without another retry.

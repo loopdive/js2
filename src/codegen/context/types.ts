@@ -3000,6 +3000,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * for subclasses of host-constructible builtins.
    */
   classExternrefBackedSet: Set<string>;
+  /**
+   * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
+   * class OBJECT can cross to the host and be constructed there. Exactly the
+   * set that needs a `__class_construct_<Class>_<arity>` bridge; every other
+   * module keeps byte-identical output.
+   */
+  classCtorHostRegistered: Set<string>;
   /** Counter for assigning unique class tags (for instanceof support) */
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
