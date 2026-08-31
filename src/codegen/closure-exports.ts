@@ -209,20 +209,18 @@ function resolveCtorClosureHostBridgeExportTarget(ctx: CodegenContext, entry: Wa
 }
 
 /**
- * Authenticate a constructor-closure export by descriptor provenance.
+ * Authenticate a constructor-closure export by context-bound publication
+ * identity.
  *
- * A compiler descriptor is authoritative by object identity. A copied
- * descriptor may still be authenticated only inside the bounded namespace,
- * and only when its live or stable handle resolves to the exact classifier
- * allocator captured at publication.
+ * The recorded descriptor object is the capability issued by this publishing
+ * context. A replacement or copy cannot prove that it belongs to this module;
+ * before the freeze boundary, finalization instead rejects any unrecorded
+ * exact-namespace descriptor that resolves to a recorded allocator.
  */
 export function isCompilerOwnedCtorClosureHostBridgeExport(ctx: CodegenContext, entry: WasmExport): boolean {
   const published = publishedCtorClosureHostBridgeExports.get(ctx);
   if (!published) return false;
-  if (published.some((candidate) => candidate.entry === entry)) return true;
-  if (!isCoreCtorClosureHostBridgePublicName(entry.name)) return false;
-  const target = resolveCtorClosureHostBridgeExportTarget(ctx, entry);
-  return target !== undefined && published.some((candidate) => candidate.func === target);
+  return published.some((candidate) => candidate.entry === entry);
 }
 
 /**
@@ -255,6 +253,17 @@ export function finalizeCtorClosureHostBridgeExports(ctx: CodegenContext): void 
     if (resolveCtorClosureHostBridgeExportTarget(ctx, entry) !== func) {
       throw new Error(
         `constructor-closure host bridge export descriptor ${name} resolves to a different allocator function`,
+      );
+    }
+  }
+  const recordedEntries = new Set(published.map((candidate) => candidate.entry));
+  const recordedFuncs = new Set(published.map((candidate) => candidate.func));
+  for (const entry of ctx.mod.exports) {
+    if (recordedEntries.has(entry) || !isCoreCtorClosureHostBridgePublicName(entry.name)) continue;
+    const target = resolveCtorClosureHostBridgeExportTarget(ctx, entry);
+    if (target !== undefined && recordedFuncs.has(target)) {
+      throw new Error(
+        `unrecorded constructor-closure host bridge export descriptor ${entry.name} resolves to a recorded allocator function`,
       );
     }
   }

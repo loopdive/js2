@@ -103,8 +103,8 @@ export function isHostBridgeExportName(name: string): boolean {
  */
 export function stripHostBridgeExports(ctx: CodegenContext): number {
   // The internal policy sink runs before index-space freeze. Validate the
-  // recorded constructor descriptors there, while allowing post-generation
-  // callers to exercise the provenance sink with copied descriptors.
+  // recorded constructor descriptors there; post-generation copies have no
+  // context-bound provenance and remain noncompiler entries.
   if (!ctx.indexSpaceFrozen) finalizeCtorClosureHostBridgeExports(ctx);
   if (ctx.emitHostBridge) return 0;
   const mod: WasmModule = ctx.mod;

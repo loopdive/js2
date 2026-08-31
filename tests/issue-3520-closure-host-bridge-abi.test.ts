@@ -898,7 +898,7 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     assertBoxedObject(externrefForge);
   });
 
-  it("strips a copied descriptor only when it targets the exact classifier allocator", () => {
+  it("does not grant post-freeze replacement copies constructor provenance", () => {
     const { registry, result } = generateWithCapturedRegistry(
       CONSTRUCTIBLE_CLOSURE_SOURCE,
       "closure-ctor-cloned-descriptor.ts",
@@ -909,14 +909,15 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     if (entryIndex < 0) throw new Error("missing compiler-owned constructor classifier descriptor");
     const entry = result.module.exports[entryIndex]!;
     if (entry.desc.kind !== "func") throw new Error("constructor classifier descriptor changed export kind");
+    expect(registry.ctx.indexSpaceFrozen).toBe(true);
     const clone: WasmExport = { name: entry.name, desc: { kind: "func", index: entry.desc.index } };
     result.module.exports[entryIndex] = clone;
     const originalEmitHostBridge = registry.ctx.emitHostBridge;
     try {
       registry.ctx.emitHostBridge = false;
-      expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, clone)).toBe(true);
+      expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, clone)).toBe(false);
       expect(stripHostBridgeExports(registry.ctx)).toBeGreaterThan(0);
-      expect(result.module.exports).not.toContain(clone);
+      expect(result.module.exports).toContain(clone);
     } finally {
       registry.ctx.emitHostBridge = originalEmitHostBridge;
     }
@@ -1002,6 +1003,38 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
           result.module.exports.push(entry);
         },
         expected: /appears more than once in the module/,
+      },
+      {
+        name: "cloned-extra",
+        mutate: (registry, result, entry) => {
+          const clone: WasmExport = { name: entry.name, desc: { ...entry.desc } };
+          result.module.exports.push(clone);
+          expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, clone)).toBe(false);
+        },
+        expected:
+          /unrecorded constructor-closure host bridge export descriptor .* resolves to a recorded allocator function/,
+      },
+      {
+        name: "foreign-context-donor",
+        mutate: (registry, result, entry) => {
+          const donor = generateWithCapturedRegistry(
+            CONSTRUCTIBLE_CLOSURE_SOURCE,
+            "closure-ctor-identically-laid-out-donor.ts",
+          );
+          const donorEntry = donor.result.module.exports.find(
+            (candidate) => candidate.name === "__is_ctor_closure" && candidate.desc.kind === "func",
+          );
+          if (!donorEntry || donorEntry.desc.kind !== "func" || entry.desc.kind !== "func") {
+            throw new Error("missing function descriptor for constructor classifier donor mutation");
+          }
+          expect(donorEntry).not.toBe(entry);
+          expect(donorEntry.desc.index).toBe(entry.desc.index);
+          expect(isCompilerOwnedCtorClosureHostBridgeExport(donor.registry.ctx, donorEntry)).toBe(true);
+          expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, donorEntry)).toBe(false);
+          result.module.exports.push(donorEntry);
+        },
+        expected:
+          /unrecorded constructor-closure host bridge export descriptor .* resolves to a recorded allocator function/,
       },
       {
         name: "name-changed",

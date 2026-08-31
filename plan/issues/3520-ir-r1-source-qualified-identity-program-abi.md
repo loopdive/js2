@@ -3882,15 +3882,26 @@ Export one predicate for the bounded shared namespace: exact
 Near spellings such as `$ch0`, `$chi`, `$ch_extra`, and
 `__is_ctor_closure_extra` are not in this namespace.
 
-Authenticate an entry as compiler-owned when it is one recorded bit-17
-descriptor, regardless of later spelling, or when a replacement/copy in the
-exact namespace is a function descriptor resolving to the captured allocator
-object. Resolve live descriptors using the current module function-import
-prefix; resolve stable handles with `definedFuncAt`. Never fall through from an
-invalid live lookup to the stable regime, repair an index, consult `funcMap`, or
-infer ownership from spelling alone. A same-spelled descriptor targeting a
-different user allocator remains user-owned. A near-spelled descriptor is not
-inferred compiler-owned merely because it targets the classifier.
+Authenticate an entry as compiler-owned only when it is one recorded bit-17
+descriptor from the same publishing `CodegenContext`, regardless of later
+spelling. Descriptor identity is the context-bound capability: an unrecorded
+replacement/copy has no authority to claim the classifier, including when it
+was donated from an identically laid-out module.
+
+Before the index-space freeze, finalization must census every entry in the exact
+constructor-closure namespace. Resolve each unrecorded function descriptor
+through the live or stable handle regime; if it resolves to any captured bit-17
+allocator, reject it rather than reinterpreting it as local compiler output.
+This catches cloned extras and foreign-context donations while retaining genuine
+user descriptors, including same-spelled entries targeting a different user
+allocator and near spellings. Never fall through from an invalid live lookup to
+the stable regime, repair an index, consult `funcMap`, or infer ownership from
+spelling alone.
+
+The normal policy sink runs before the freeze boundary. A direct post-freeze
+replacement copy cannot prove context ownership, so it remains a noncompiler
+exact-namespace entry rather than being silently stripped; this is intentionally
+fail-closed, not a second authentication path.
 
 `stripHostBridgeExports(...)` must remove authenticated bit-17 entries first,
 then retain noncompiler entries in the exact constructor-closure namespace,
@@ -3918,11 +3929,13 @@ other closure family, direct/IR routing, or fallback.
 4. In a fixture with no constructible closure, exact user logical/physical
    spoof exports survive standalone/WASI and no ordinal-14 Program ABI row or
    constructor-classifier family is created.
-5. Direct mutations must prove: a copied descriptor targeting the classifier
-   remains removable; the same spelling targeting a different user allocator
-   survives; a near-prefix targeting the classifier is not reclassified; and
-   recorded name/kind/target/lost-function/duplicate mutations still fail
-   closed before final publication.
+5. Direct mutations must prove: an unrecorded extra clone and a descriptor
+   donated from an identically laid-out second context are both rejected before
+   final publication; a post-freeze replacement copy has no compiler
+   provenance and is retained; the same spelling targeting a different user
+   allocator survives; a near-prefix targeting the classifier is not
+   reclassified; and recorded name/kind/target/lost-function/duplicate
+   mutations still fail closed before final publication.
 6. Preserve the complete C31 closure suite, C37 vec suite, and #4035 policy
    suite as controls. Update a marker/census only if required to make the
    existing test truthful; do not change #4035's ceiling or characterize the
