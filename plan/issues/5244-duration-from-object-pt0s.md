@@ -150,6 +150,31 @@ a rejected candidate yields `0` and the chain continues to the next arm.
 - `#5243`'s `buildRecordFromExternref` — gated to `__anon_*`, never fires on
   a class instance.
 
+### The "arity-independent first-call-wins latch" (dev-5243, `bc979fb1d4`)
+
+dev-5243 characterised the bound-spelling symptom as a latch: a ten-argument
+bound construct that itself answers `1…10` still poisons the NEXT ten-argument
+bound construct of the same class down to `11,0,0,…`, so it could not be a
+cache carrying the first call's arity, nor the `__call_fn_<N>` clamp, nor the
+`__construct_closure` struct route — and, they concluded, not ambient `__argc`
+either, because a ten-argument interposer leaving `__argc` at 10 did not repair
+it.
+
+That last elimination does not hold: an interposer only leaves `__argc` at 10
+if `maybeSetArgcForKnownCall` fires for the interposer's own callee, which it
+does only for a callee with optionals or `arguments`. The observed behaviour is
+the stale-global one — "first call wins, degraded to exactly arity 1" is what a
+global pinned by whatever ran before looks like from the outside.
+
+Measured here, on this branch and on the reverted base: the ladder publishing
+`__argc` FIXES exactly that symptom in the polyfill —
+`Duration.from(new Duration(0,0,0,1))` moves `"PT0S"` → `"P1D"`, and so does
+the hand-inlined `new t(re(e,Y), …, re(e,U))` head of `ToTemporalDuration`.
+The synthetic two-construct reduction (`.tmp/probe-latch.mts`: three ten-arg
+bound constructs of one class in sequence) answers `1…10 | 11…20 | 21…30`
+correctly on BOTH sides, i.e. it does not reproduce the latch at all — which is
+the same reduction gap recorded above.
+
 ## Acceptance criteria
 
 1. `Temporal.Duration.from({days: 1}).toString()` → `"P1D"`; several field
