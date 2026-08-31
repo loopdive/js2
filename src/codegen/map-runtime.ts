@@ -1113,11 +1113,15 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
   // ── __map_iter_next(it) -> ref $MapIterResult ───────────────────────────
   // Walks the entries vector from it.index, skipping tombstones. Produces a
   // {value, done} result. Entry-kind iteration must return a FRESH [key,value]
-  // pair on every poll (§24.1.5.2); the pair is an open `$ObjVec` so the
-  // dynamic spread reader can consume it without importing a JS array.
+  // pair on every poll (§24.1.5.2). Use the canonical `$Vec` carrier so
+  // native-first values-only Map iteration does not initialize the object
+  // runtime just to keep this otherwise-dead entries arm available.
   {
-    // locals: m(1), idx(2), entries(3), entry(4), pair(5)
-    const objVecBuilders = ensureObjVecBuilders(ctx);
+    // locals: m(1), idx(2), entries(3), entry(4), pair data(5)
+    const pairVecTypeIdx = getOrRegisterVecType(ctx, "externref", {
+      kind: "externref",
+    });
+    const pairArrTypeIdx = getArrTypeIdxFromVec(ctx, pairVecTypeIdx);
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       {
@@ -1216,11 +1220,15 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                     op: "if",
                     blockType: { kind: "val", type: anyref },
                     then: [
-                      // pair = __objvec_new(); append key and value as
-                      // externrefs, then return pair as anyref.
-                      { op: "call", funcIdx: objVecBuilders.newIdx },
+                      // Allocate a fresh canonical two-slot vec for [key,
+                      // value]. Strict native iterator consumers already
+                      // understand this carrier, while the old ObjVec path
+                      // reached the compatibility iterator bridge.
+                      { op: "i32.const", value: 2 },
+                      { op: "array.new_default", typeIdx: pairArrTypeIdx },
                       { op: "local.set", index: 5 },
                       { op: "local.get", index: 5 },
+                      { op: "i32.const", value: 0 },
                       { op: "local.get", index: 4 },
                       {
                         op: "struct.get",
@@ -1228,8 +1236,9 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                         fieldIdx: F_KEY,
                       },
                       { op: "extern.convert_any" },
-                      { op: "call", funcIdx: objVecBuilders.pushIdx },
+                      { op: "array.set", typeIdx: pairArrTypeIdx },
                       { op: "local.get", index: 5 },
+                      { op: "i32.const", value: 1 },
                       { op: "local.get", index: 4 },
                       {
                         op: "struct.get",
@@ -1237,9 +1246,10 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                         fieldIdx: F_VALUE,
                       },
                       { op: "extern.convert_any" },
-                      { op: "call", funcIdx: objVecBuilders.pushIdx },
+                      { op: "array.set", typeIdx: pairArrTypeIdx },
+                      { op: "i32.const", value: 2 },
                       { op: "local.get", index: 5 },
-                      { op: "any.convert_extern" },
+                      { op: "struct.new", typeIdx: pairVecTypeIdx },
                     ],
                     else: [
                       { op: "local.get", index: 4 },
@@ -1274,7 +1284,7 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
         { name: "idx", type: i32 },
         { name: "entries", type: entriesRef },
         { name: "entry", type: entryRef },
-        { name: "pair", type: { kind: "externref" } },
+        { name: "pairData", type: { kind: "ref", typeIdx: pairArrTypeIdx } },
       ],
       body,
     );

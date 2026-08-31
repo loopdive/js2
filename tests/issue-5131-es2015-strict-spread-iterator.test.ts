@@ -392,6 +392,38 @@ export function optionalIteratorParameter(): number {
 `;
 
 describe("#5131 strict spread iterator provider", () => {
+  it("native-first: keeps Map values iteration off the compatibility iterator bridge", async () => {
+    const compiled = await compile(
+      `
+        export function run(): number {
+          const values = new Map<string, number>();
+          values.set("a", 1); values.set("b", 2);
+          let total = 0;
+          for (const value of values.values()) total += value;
+          return total;
+        }
+      `,
+      {
+        fileName: "issue-5131-native-first-map-values.ts",
+        semanticProviders: "native-first",
+      },
+    );
+    expect(compiled.success, compiled.success ? "" : compiled.errors.map((error) => error.message).join("\n")).toBe(
+      true,
+    );
+    if (!compiled.success) return;
+
+    const inventory = compiled.hostImportInventory ?? [];
+    // This must stay non-vacuous: native Map values iteration has a concrete
+    // JS-value bridge surface, but never the permissive compatibility iterator.
+    expect(inventory.length).toBeGreaterThan(0);
+    expect(inventory.some((entry) => entry.family === "js-value-bridge")).toBe(true);
+    expect(inventory.some((entry) => entry.module === "env" && entry.name === "__iterator")).toBe(false);
+    expect(
+      inventory.filter((entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown"),
+    ).toEqual([]);
+  }, 180_000);
+
   for (const lane of ["host", "standalone"] as const) {
     it(`${lane}: strict acquisition, step, projection, and materialization controls`, async () => {
       const { result, imports } = await run(MATRIX_SOURCE, lane, `issue-5131-${lane}.ts`);

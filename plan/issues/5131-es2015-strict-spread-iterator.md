@@ -4,7 +4,7 @@ title: "ES2015 strict native spread iterator materializer"
 status: in-progress
 sprint: current
 created: 2026-08-28
-updated: 2026-08-30
+updated: 2026-08-31
 priority: high
 horizon: l
 feasibility: hard
@@ -16,6 +16,7 @@ language_feature: spread-getiterator-iteratorresult
 goal: standalone-mode
 assignee: "ttraenkler/codex-es2015-strict-spread-iterator"
 branch: codex/5131-es2015-strict-spread-iterator
+recovery_branch: codex/5131-host-policy-recovery-20260831
 pr: 5272
 related: [5122, 681, 1592, 1970, 2159, 2651, 3643, 4275, 4768]
 required_by: [5122]
@@ -25,6 +26,7 @@ files:
   - src/codegen/map-runtime.ts
   - src/codegen/expressions/new-builtin-globals.ts
   - src/runtime.ts
+  - src/runtime/strict-iterator-host.ts
   - tests/issue-5131-es2015-strict-spread-iterator.test.ts
   - plan/issues/5131-es2015-strict-spread-iterator.md
 loc-budget-allow:
@@ -901,3 +903,540 @@ pre-integration Terra evidence. Only the final normal-hook documentation
 commit, complete pre-push gate, exact-head push, and PR shepherd transition
 remain. PR 5272 stays draft until those gates finish. No GitHub issue was
 created.
+
+### Environment-reset recovery plan (2026-08-31)
+
+The uncommitted host-import-policy repair and its temporary QuickJS artifact
+were lost when `/private/tmp` was cleared. The published PR head
+`8e029466fc4a1bdb403b5d7dc4d5e913829414b0` remains intact, but the repair
+must be reconstructed in the persistent worktree on
+`codex/5131-host-policy-recovery-20260831`. Results recorded before the reset
+are design and regression evidence only; none count as publication evidence.
+
+Implementation is deliberately bounded to the reviewed repair:
+
+1. Make the kind-2 Map entry projection allocate a fresh canonical two-slot
+   `$Vec` containing `[key, value]`, eliminating `$ObjVec` reachability that
+   pins the legacy `env::__iterator` import in a native-first Map program.
+2. Add a non-vacuous focused import-inventory assertion for Map values:
+   native-first output may use the JS-value bridge but must contain neither
+   `env::__iterator` nor any legacy or unknown import.
+3. Extract the strict iterator host implementation from `runtime.ts` into
+   `src/runtime/strict-iterator-host.ts`, injecting its existing operations and
+   delegating the strict imports plus the four array-iteration handlers. This
+   is a behavior-preserving source-budget repair; it must not change an import
+   name, ABI, dispatch condition, or compatibility behavior.
+4. Do not change a host-policy baseline, allowance, threshold, or unrelated
+   runtime/codegen path. Reconcile the tracker file list and measured LOC and
+   function budgets against the reconstructed diff.
+
+Acceptance requires a current-tree full `check:host-import-policy` run, the
+focused host/standalone issue suite, all four owned Test262 target rows, TS7
+typecheck, target static/format gates, and the complete normal commit and
+pre-push hooks. Before any compiler/test lane, audit the full process tree and
+keep the repository-wide worker count at two or fewer. Rebuild and pin a fresh
+QuickJS artifact; the deleted artifact must not be referenced. After merging
+the latest `loopdive/js2` main without force, replay every acceptance gate on
+the exact integrated head. Only then may the repaired exact head be pushed to
+the existing PR 5272 branch and marked ready if GitHub reports it mergeable.
+No GitHub issue was created.
+
+### Persistent-worktree reconstruction checkpoint (2026-08-31)
+
+The reviewed repair has been reconstructed only in the persistent recovery
+worktree on `codex/5131-host-policy-recovery-20260831`, based on the published
+head `8e029466fc4a1bdb403b5d7dc4d5e913829414b0`. The owned source/test changes
+are exactly:
+
+- `src/codegen/map-runtime.ts`: kind-2 Map iterator projection now allocates a
+  fresh canonical two-slot externref `$Vec` `[key, value]`, removing the eager
+  `$ObjVec` builder reachability that pins compatibility `env::__iterator` for
+  values-only native-first Map programs;
+- `src/runtime/strict-iterator-host.ts`: a new injected strict-provider
+  subsystem owns strict GetIterator, IteratorNext, bounded drain, and the four
+  `__array_from_iter*` handlers;
+- `src/runtime.ts`: delegates only strict iterator and array-materialization
+  imports to that subsystem, leaving the compatibility `__iterator` bridge
+  unchanged;
+- `tests/issue-5131-es2015-strict-spread-iterator.test.ts`: adds a non-vacuous
+  native-first Map-values inventory control requiring a JS-value bridge surface
+  while forbidding `env::__iterator`, legacy-semantic, and unknown imports.
+
+No host-policy baseline, allowance, threshold, import name, ABI, or unrelated
+runtime/codegen path was changed. Cheap static checks pass: `git diff --check`
+and direct repository Prettier `--check` over all owned files. The worktree's
+`pnpm exec` preflight attempted an interactive dependency purge and was not
+used; direct Prettier did not alter dependency state. Static source counts are
+`runtime.ts` **18,645** lines and `resolveImport` **7,480** lines, below the
+fixed maxima of 18,776 and 7,680. The persistent QuickJS artifact has been
+verified at
+`/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda` with
+the pinned `libquickjs.wasm` and `qjs-abi.json` SHA-256 values stated above.
+
+At the time of this reconstruction checkpoint, no compiler, Vitest, Test262,
+typecheck, hook, commit, push, or PR mutation had run from the reconstructed
+tree. The next step was a root-audited, one-worker
+`check:host-import-policy` validation lane.
+
+### Policy-launch setup failure (2026-08-31, zero evidence)
+
+After a fresh full-process audit showed one external
+`check-host-import-policy.ts` process and no second external compiler/test
+lane, the released recovery command was launched with
+`TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, and the required bundled PATH:
+`pnpm run check:host-import-policy`. It exited **1** during pnpm's dependency
+preflight before the policy script or a compiler child started:
+
+```text
+ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY
+Aborted removal of modules directory due to no TTY
+```
+
+This produced no policy probes, import inventory, budget metrics, or gate
+verdict, and is therefore a separate **zero-evidence setup failure**, not a
+host-policy pass or fail. The recovery worktree's dependency view points at
+the shared repository `node_modules`; no `CI=true` purge, dependency rewrite,
+alternate runner, or policy workaround has been attempted. The next step is
+root direction for a safe dependency preflight or an explicitly approved
+equivalent launcher, followed by a freshly audited one-worker policy run.
+
+### Direct host-import-policy result (2026-08-31)
+
+With the recovery worktree still at source head
+`8e029466fc4a1bdb403b5d7dc4d5e913829414b0` and only the five owned
+reconstruction/tracker paths dirty, the root-approved direct package payload
+ran successfully after a clear full-process audit:
+
+```text
+TEST262_WORKERS=1 COMPILER_POOL_SIZE=1 PATH=/private/tmp/codex-pnpm10/node_modules/.bin:… \
+  node --import tsx scripts/check-host-import-policy.ts
+```
+
+This direct invocation is the exact `check:host-import-policy` script payload
+and avoids only pnpm's unrelated interactive dependency-preflight refusal. The
+policy process was observed as PID `26044` (parent `962`); a subsequent audit
+confirmed it exited cleanly. It ran alongside at most one unrelated Test262
+driver lane, with no third lane observed. Exit status was **0**.
+
+The authoritative JSON result was non-vacuous and passed every policy gate:
+
+- native-first: **33 probes**, **395 imports**, **0** legacy-semantic, and
+  **0** unknown imports;
+- `mapIteration`: **3** imports, all value-adapter / `js-value-bridge`, with
+  no compatibility `env::__iterator` reachability;
+- compatibility legacy-semantic debt remained **23**;
+- fixed budget metrics: `runtimeTsLines=18645` (maximum 18776),
+  `resolveImportLines=7479` (maximum 7680), `resolveImportCases=15`,
+  `ownedAdapterLines=819`, and `explicitCapabilityLines=1194`.
+
+No baseline, allowance, policy condition, import ABI, compatibility bridge, or
+budget maximum was changed. Focused Vitest, owned Test262 rows, TS7, hooks,
+commit, push, and PR mutation remain unrun from this recovery worktree and
+require separate root-audited releases.
+
+### Focused standalone validation blocker (2026-08-31)
+
+The released pinned-artifact, one-fork focused suite ran as PID chain
+`29236 → 29243 → 29252`, alongside only one unrelated cargo-test lane. It
+completed in 12.54 s with exit **1** and a real **2/3** result:
+
+- the non-vacuous native-first Map inventory control passed (734 ms);
+- the host strict acquisition/step/projection/materialization control passed
+  (520 ms);
+- the standalone control failed during Wasm instantiation (588 ms), before its
+  host-import assertion could run:
+
+```text
+WebAssembly.instantiate(): Compiling function #314:"__iterator_next" failed:
+any.convert_extern[0] expected type externref, found struct.new of type
+(ref 2) @+138418
+```
+
+This is not an import-policy regression or a Test262 verdict: the standalone
+module is invalid before execution. No owned Test262 row, TS7, hook, commit,
+push, or PR mutation was started after this failure. The bounded static repair
+plan is to trace the moved strict iterator host callback boundary and restore
+the pre-extraction reference conversion/order for the `__iterator_next` Wasm
+path, without changing native-first import inventory, the compatibility
+bridge, baselines, allowances, ABI, or strict provider selection. After a
+reviewed source fix, replay the full host-policy gate before requesting a new
+focused lane.
+
+Static type-path audit confirmed the narrow cause and repair. Before the
+recovery change, the kind-2 arm returned an `$ObjVec` as an `externref`, so its
+tail `any.convert_extern` was required to meet the enclosing `anyref` result.
+The reconstructed arm instead ends in `struct.new $Vec`, which is already a
+WasmGC `(ref $Vec)` subtype of `anyref`; applying the inherited conversion made
+the module invalid because `any.convert_extern` accepts only `externref`.
+The repair removes that single stale conversion and leaves the fresh canonical
+pair allocation and every other branch unchanged. The existing
+`mapProjection()` control uses `[...map]` (the native Map default iterator,
+kind 2) and checks distinct `[key, value]` pairs in both host and standalone,
+so it directly covers this repaired path without adding a second duplicate
+case. Only diff/format/static checks have run after the source edit; runtime
+validation remains root-released.
+
+### Post-fix policy replay capacity race (2026-08-31)
+
+After the stale conversion removal, the direct one-worker policy replay began
+as PID `30496` while the only audited external lane was cargo
+`29184 → 30048`. A during-run audit then observed a newly started external
+debug/Test262 lane (`30519`, with runner children `30510` and `30525`), so the
+global cap was exceeded. A SIGINT was sent only to the verified #5131 terminal
+session immediately; the policy had already completed before delivery and
+returned exit **0** with complete JSON output.
+
+That output repeated the expected non-vacuous result: native-first **33**
+probes / **395** imports / **0** legacy-semantic / **0** unknown;
+`mapIteration` **3** JS-value-bridge imports; compatibility debt **23**; and
+`runtimeTsLines=18645`, `resolveImportLines=7479`,
+`resolveImportCases=15`, `ownedAdapterLines=819`, and
+`explicitCapabilityLines=1194`. Because it completed during a capacity race,
+the race and verified own-session stop provenance are retained separately.
+Root reviewed the complete output and exit status and accepted this as the
+valid clean post-fix policy replay: the result had completed before SIGINT
+delivery, so no partial output was promoted. No focused suite or owned row
+followed it.
+
+### Post-fix focused replay (2026-08-31)
+
+With the pinned QuickJS artifact directory
+`/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda`,
+`TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, and Vitest restricted to one
+fork/no file parallelism, the exact focused suite passed **3/3** (exit **0**)
+in 13.48 s. Its PID chain was `54326 → 54400 → 54521`; a during-run full audit
+showed only the unrelated release cargo lane beside it.
+
+- native-first Map import-inventory control: **pass**, 843 ms. Its non-vacuous
+  JS-value-bridge assertion passed while `env::__iterator`, legacy-semantic,
+  and unknown imports were absent;
+- host strict acquisition/step/projection/materialization control: **pass**,
+  580 ms;
+- standalone strict acquisition/step/projection/materialization control:
+  **pass**, 686 ms. The `imports === []` assertion passed, as did
+  `mapProjection()`'s direct `[...map]` kind-2 fresh `[key, value]` pair
+  checks.
+
+This validates the one-instruction stale-conversion repair as well as the
+native-first import fix and strict-host extraction under both host and
+standalone targets. Owned Test262 rows, TS7, hooks, commit, push, and PR
+mutation remain separately gated and unrun after this replay.
+
+### Post-fix owned Test262 host rows (2026-08-31)
+
+The approved isolated helper ran the two host-owned rows serially with the
+pinned QuickJS artifact and one effective worker. Its verified terminal
+session was `55796`. A during-run audit observed a capacity race: the existing
+release cargo lane was joined by two unrelated Test262 scripts (`65712` and
+`67141`), so SIGINT was sent only to the #5131 session. The helper had already
+finished with exit **0** and complete JSON before signal delivery. Root
+reviewed and accepted the completed result as valid, while retaining the race
+and own-stop provenance.
+
+| Row | Target | Status | Total | Compile | Instantiate | Execute | Wasm SHA |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| `spread-sngl-empty.js` | host | pass | 1848.08 ms | 1804.68 ms | 8.79 ms | 5.13 ms | `f41aeebb8d8f` |
+| `spread-mult-empty.js` | host | pass | 2402.31 ms | 2356.79 ms | 12.44 ms | 6.06 ms | `7695ae27ead5` |
+
+There were no compile errors, timeouts, skips, or runner errors. The two
+standalone rows, TS7, hooks, commit, push, and PR mutation remain held for
+separate root-audited releases.
+
+### Post-fix owned Test262 standalone rows (2026-08-31)
+
+After a fresh broad audit found one unrelated one-fork Vitest lane, the
+isolated helper ran only the standalone target with the same pinned artifact,
+one-worker environment, and approved PATH. The run completed exit **0** with
+both full result JSON records; no capacity race occurred and no further
+validation command followed it.
+
+| Row | Target | Status | Total | Compile | Instantiate | Execute | Wasm SHA |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| `spread-sngl-empty.js` | standalone | pass | 2495.78 ms | 2470.66 ms | 4.05 ms | 16.17 ms | `ac2af3ffa2bf` |
+| `spread-mult-empty.js` | standalone | pass | 2402.32 ms | 2378.12 ms | 3.64 ms | 16.24 ms | `54271b4fb43b` |
+
+Together with the accepted host replay, the exact issue-owned matrix is
+**4/4 pass**: no compile errors, timeouts, skips, runner errors, or standalone
+host imports. TS7, final static/pre-push hooks, commit, push, and PR mutation
+remain separately gated and have not been started.
+
+### TS7 typecheck capacity-race result (2026-08-31)
+
+The exact package `typecheck` payload
+`node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json` began
+in verified #5131 session `11285` after an audit that showed only the external
+release cargo lane. A during-run audit then found the cargo lane plus a new
+unrelated six-fork Vitest pool (`79121` and children), exceeding the global
+cap. SIGINT was sent only to session `11285`; it subsequently exited **0**
+with no diagnostics or output. The command had therefore completed cleanly,
+but a silent exit after SIGINT cannot establish whether `tsc` completed before
+the interrupt. This is explicitly **non-authoritative / zero publication
+evidence** and must be rerun in a clean slot; it is not an acceptance result.
+No subsequent validation command was launched.
+
+### Independent Terra review and P2 resolution (2026-08-31)
+
+Independent Terra review found no P0 or P1 findings. Its sole P2 noted that
+the recovery-plan wording said the native-first inventory assertion covered
+Map values/entries, while the focused assertion intentionally compiles only
+`values.values()`. The wording above now precisely says **Map values**; no
+test scope was expanded. Default Map entries remain separately exercised by
+the host/standalone `mapProjection()` matrix through `[...map]`, including its
+fresh `[key, value]` pair checks. This resolves the documentation overclaim
+without changing implementation, policy, acceptance scope, or behavior.
+
+### Post-review static source gates (2026-08-31)
+
+After the P2 wording correction, the static-only checks passed without
+starting a compiler, Vitest, Test262, or hook worker:
+
+- `git diff --check`: pass;
+- targeted Prettier check over every owned source/test/tracker file: pass;
+- LOC budget: pass, with no unallowed growth in six changed source files
+  (`net +2147 LOC` against the configured merge-base and only the existing
+  #5131 change-scoped grants);
+- function budget: pass, with no unallowed growth in six changed source files
+  and only the existing #5131 change-scoped grants;
+- static #5131 import-inventory source contract: pass. It confirms the
+  focused probe is precisely `Map.values()`; its non-vacuous JS-value bridge
+  requirement and `env::__iterator`/legacy/unknown exclusions remain present;
+  default Map entries are separately covered by `mapProjection()`; the
+  `__map_iter_next` source region uses the canonical `$Vec` without the eager
+  `$ObjVec` dependency or stale `any.convert_extern`; and the strict-provider
+  wiring remains distinct from the compatibility `__iterator` bridge.
+
+The static inventory check originally used an overbroad source-region boundary
+that included later unrelated `Map` helpers; it was corrected to the actual
+`__map_iter_next` region before passing. This was a checker-boundary adjustment
+only, not a source or behavior change. The clean uninterrupted TS7 rerun is
+still the next runtime gate and requires a fresh empty-worker audit.
+
+### Current-main reconciliation audit (2026-08-31)
+
+This persistent recovery worktree remains on published PR/recovery head
+`8e029466fc4a1bdb403b5d7dc4d5e913829414b0`; fresh upstream/main is
+`c97a51a7bd039d543b232a2735a6ec6afe487bb4`. Their merge base is
+`275216c74c7299ea07a72c8d5479f7e1a477000c`; the exact divergence count is
+**14** commits unique to the old PR head and **102** commits unique to current
+main. No merge, rebase, cherry-pick, push, or PR mutation was attempted here.
+
+The initial two-tip diff was corrected with a three-way path audit. Relative
+to merge base `275216…`, the old PR head changes the tracker, `map-runtime.ts`,
+and `runtime.ts`, and **adds** the focused test; current main changes
+**only** `src/runtime.ts` among these paths. Thus current main did not delete
+the focused test or modify the tracker/map runtime: the test is branch-only,
+introduced by old-PR commit
+`6bc798395864b95cee1ef354c80507473a620b30`
+(`fix(iterators): enforce strict spread materialization ✓`), and absent from
+main because that commit is not merged. Likewise,
+`strict-iterator-host.ts` is a recovery-only new file, absent from both
+committed sides rather than removed upstream.
+
+The sole committed three-way conflict risk is `src/runtime.ts`. Current-main
+commits touching it are:
+`73200f1b004f7a578edbe4ccee2f3eb45b86deec` (#5203),
+`34f48c3df2d6a9f4d94e28bc63c063fb1f2009aa` (#5204),
+`fb1b49883057479cd8a97aeac21be9d973b082a0` (#5205),
+`3d8b21ea625062a3f9ea7635b05608239e82b5d7` (#5209),
+`3a320a8e7ffa35d91adcc18162f13116865ed2f3` (#5211),
+`05ea44e818c6242695611fec181fd76d205e7d47` (#4628),
+`62d5174e5d75c22a58c5f2b9564da322e2193997` (#5222), and
+`df90a2c17de6b8ac67c0bc8753caac226e866e25` (linked-provider boundary
+reconciliation). Read-only `git merge-tree --trivial-merge` reports exactly
+one `changed in both`: `src/runtime.ts`, base blob
+`b4382f21ed83ae28c1fc07d4629d414173587792`, old-PR blob
+`988c17e8713a22d7027d265c1a30cf91a40f199d`, and current-main blob
+`4ca156d4c4ca822637961fc4191f0f3bfbbcb082`. The map, tracker, and test are
+not current-main textual conflicts in that committed three-way merge.
+
+Current main does retain the older host strict materializer:
+`__array_from_iter_strict` / `__array_from_iter_n_strict` feed
+`_arrayFromIter(..., true)`, and `new-builtin-globals.ts` uses that host
+fallback. It has no `__iterator_strict`, `__iterator_next_strict`,
+`__call_@@iterator_strict`, or `__call_next_strict` source occurrence, and it
+still emits the standalone diagnostic that dynamic/nested Proxy spreads are
+not available without the strict iterator provider. Its `__map_iter_next`
+kind-2 arm returns the value field with entry packing deferred, not a fresh
+canonical pair. Therefore the recovery's semantic requirements remain: native
+strict-provider wiring for standalone/dynamic spread, fresh canonical Map
+entry pairs, and the values-only import-inventory regression control. They
+must be reconstructed against the linked-provider runtime changes, not copied
+blindly as old runtime hunks.
+
+Ancestry checks return false in both directions (`8e029…` is not an ancestor
+of `c97a…`, and `c97a…` is not an ancestor of `8e029…`), so PR #5272 cannot
+fast-forward to current main. A normal update would require at least the
+documented `runtime.ts` three-way resolution, while the uncommitted recovery
+repair is outside that virtual merge. The safe course is a fresh
+current-main-based reconstruction/new integration head; the existing PR may
+only be updated after that deliberate normal merge/rebase and exact-head
+replay, never by blindly carrying forward the old head.
+
+The recovery worktree currently has only its five owned paths dirty: tracker,
+`map-runtime.ts`, `runtime.ts`, new `strict-iterator-host.ts`, and the focused
+test. It must not be published from this old head. After root integrates the
+bounded repair with exact current main (or a newer recorded main), rerun on
+that exact integrated SHA: full host-import policy, focused host/standalone
+suite, four owned Test262 rows, uninterrupted TS7, targeted static gates,
+normal hooks, and the required pre-push suite. Earlier evidence remains
+diagnostic only until that exact-head replay completes.
+
+The required post-reconciliation static replay also passed on the recovery
+tree: `git diff --check`; targeted Prettier; LOC budget (no unallowed growth
+in six changed source files, `net +2147 LOC` against its configured base);
+function budget (no unallowed growth in six changed source files); and the
+source-only #5131 import-inventory contract. The latter confirms the exact
+values-only probe, separate `mapProjection()` entry coverage, canonical `$Vec`
+pair/no eager `$ObjVec` dependency, no stale conversion, strict-provider
+wiring, and preserved compatibility bridge. These source checks do not resolve
+the current-main runtime conflict and are not substitutes for the required
+exact-integrated-head runtime replay.
+
+A fresh broad post-static census was not clean, so TS7 was deliberately not
+started: an external runtime-provider compiler (PID `5443`), standalone
+Test262 driver `7664 → 15845`, and a live ES5 census `11540` with four active
+row children (`15847`–`15850`) were already active. This worktree remains
+process-free; the earlier interrupted TS7 result remains non-authoritative.
+
+### Second TS7 release capacity race (2026-08-31, zero evidence)
+
+An initial release audit observed a standalone Test262 driver (PID `22093`),
+so no TS7 process was launched at that point. Root confirmed that a single
+external lane may coexist with #5131 under the two-lane cap. The immediate
+follow-up full census was clear, and the exact direct TS7 payload then began
+as verified own PID `22953` (terminal session `87989`):
+
+```text
+PATH=/private/tmp/codex-pnpm10/node_modules/.bin:... \
+  node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+```
+
+A during-run census then found two independent external Vitest lanes
+(`23025 → 23031` and `23397 → 23405`) plus a cargo test lane
+(`23408 → 23412`), exceeding the global cap. SIGINT was sent only to the
+verified #5131 session. The session disappeared before an exit status,
+diagnostic stream, or trustworthy elapsed duration could be collected.
+Consequently this attempt is explicitly **non-authoritative / zero publication
+evidence**; it does not count as a TS7 pass and must be rerun uninterrupted on
+the eventual exact current-main integration head. No subsequent #5131
+validation command was started.
+
+### Integration-review P1: strict-host marshal authority (2026-08-31)
+
+Independent integration review identified a P1 in any naïve current-main
+reconstruction. The strict-iterator host extraction must not give its
+`_wrapForHost`, Wasm-`$Vec`, native-carrier, or empty-tuple marshalling paths
+only the raw `state.getExports()` view. That view is intentionally a
+post-instantiation protocol-availability channel: it is appropriate for
+strict `__call_*` / iterator dispatch once instance exports exist, but it is
+undefined while a module start function is running.
+
+The current-main reconstruction must instead inject a distinct,
+`marshalExports`-backed view into `createStrictIteratorHostRuntime` for all of
+those marshalling operations. This retains the init-registered helper fallback
+needed before `WebAssembly.instantiate` returns, while leaving direct
+`state.getExports()` restricted to the post-instantiation iterator protocol
+paths. In particular it must preserve the start-export behavior supplied by
+#5203 and #5209, rather than treating a temporarily unavailable direct export
+view as evidence that a Wasm value is not a vec/carrier/empty tuple.
+
+This is a reconstruction requirement, not a source edit to the stale recovery
+head. The rebuilt `runtime.ts` must also retain every one of the eight
+current-main fixes listed in the reconciliation audit above: #5203, #5204,
+#5205, #5209, #5211, #4628, #5222, and the linked-provider boundary
+reconciliation (`df90a2c7…`). The integration review otherwise found no new
+runtime source patch to apply here; current-main reconstruction and the full
+exact-head replay remain mandatory.
+
+### Third TS7 release capacity race (2026-08-31, zero evidence)
+
+Root released one second lane while the sole external family was the one-fork
+Vitest run `39768 → 39773 → 39781`. The mandatory #5131 re-audit confirmed
+that topology, then the exact direct TS7 payload started as verified own PID
+`40257` in terminal session `56358`. A during-run census immediately found
+additional independent compiler/test lanes: TypeScript processes `40261` and
+`40267`, plus new Vitest families rooted at `40268`, `40271`, and `40272`
+(with their respective fork children). SIGINT was sent only to the verified
+#5131 session.
+
+The own PID subsequently vanished and the terminal session later returned a
+silent exit `0`, with no diagnostics or complete timing/output evidence. Since
+the interruption raced the command, that silent status cannot establish a
+completed TS7 check. This third attempt is therefore **non-authoritative / zero
+publication evidence**, not a TS7 pass; the exact current-main integration
+head still requires a clean uninterrupted TS7 replay. No further #5131
+validation command was launched.
+
+### Current-tip reconciliation update: `b9952e3` (2026-08-31)
+
+Upstream/main advanced from
+`c97a51a7bd039d543b232a2735a6ec6afe487bb4` to
+`b9952e353cc1616933b2b035b4d49b33350e86df`. The recovery worktree remains
+at old PR head `8e029466fc4a1bdb403b5d7dc4d5e913829414b0`; its merge base with
+the new main remains `275216c74c7299ea07a72c8d5479f7e1a477000c`. Exact
+divergence is now **14** old-PR commits versus **117** main commits. The
+incremental `c97a…b995` range contains 15 commits, headed by merge #5340 and
+including CI/QuickJS-worker caps, npm-compat artifact refreshes, issue/docs
+filings, baseline retry automation, the website refresh, and
+`78d583250bcfa7a123c09655da1c9a0727c2b5e7`
+(`fix(runtime): preserve QuickJS boolean mirror values`).
+
+The complete incremental name-status list changes CI workflows, npm-compat
+benchmarks and website mirrors, issue/log markdown, the QuickJS provider,
+QuickJS/test262 tests, and only these codegen paths:
+`src/codegen/coercion-engine.ts`,
+`src/codegen/expressions/call-identifier.ts`, and
+`src/codegen/expressions/calls.ts`. There is **no** `c97a…b995` path overlap
+with the #5131 tracker, `map-runtime.ts`, `runtime.ts`, recovery-only
+`strict-iterator-host.ts`, or the focused test (`git diff --quiet` over those
+paths exits 0).
+
+The three changed codegen files belong solely to `78d583…`: native dynamic
+boolean `ToString` handling and the runtime-eval boolean result carrier. Their
+source diff contains no #5131 map iterator, strict iterator provider,
+strict-host-runtime, compatibility `env::__iterator`, `mapProjection`, or
+spread lowering change. The #5131 values-only native-first inventory control
+uses `Map.values()` / numeric accumulation rather than those `String` or
+runtime-eval paths, so this range does not alter the recovery tree's static
+source claims. It can still affect global generated-code/ratchet state, so it
+does not replace any exact-head policy, focused, Test262, or TS7 replay.
+
+The committed three-way topology is unchanged: `git merge-tree` still reports
+only `src/runtime.ts` as `changed in both`, with the same main blob
+`4ca156d4c4ca822637961fc4191f0f3bfbbcb082`; none of the #5131
+map/tracker/test paths newly conflict. The current-main reconstruction must
+therefore retain the documented marshal-authority P1 and all eight existing
+main fixes, integrate against `b9952…` (or a newer recorded main), and rerun
+the complete acceptance set on that exact integrated SHA. No merge, rebase,
+or validation command was performed for this static reconciliation.
+
+### Fourth TS7 direct-gate result (2026-08-31, pre-integration evidence)
+
+The released pre-launch census had one external Test262 family
+(`48388 → 48564`). The exact direct payload then started as verified own PID
+`49140` in terminal session `93912`:
+
+```text
+PATH=/private/tmp/codex-pnpm10/node_modules/.bin:... \
+  node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+```
+
+The ordered during-run census observed PID `49140` at `00:12` elapsed. At that
+moment the released Test262 lane had exited and no other compiler/test lane
+was visible (only Codex sandbox control processes, which are not test
+workers). The next ordered session poll returned normal exit **0**, with empty
+diagnostics/output and no SIGINT. The direct payload emits no elapsed-time
+summary, so the only observed timing is the `00:12` in-flight census; its exact
+completion duration is not available from the executor result.
+
+The immediate post-exit census showed new unrelated work: `test:changed-root`
+PID `49668` (`00:27` then), Vitest `49793 → 49799 → 49808` (`00:15` then),
+and TypeScript PID `49813` (`00:12` then), along with an unrelated stack-balance
+check. Those PIDs had exited before a follow-up `ps -o lstart` query, and the
+earlier tool outputs contain no absolute wall timestamps. Their start times
+relative to the final seconds of PID `49140` are therefore indeterminate.
+
+Root classifies the normal no-signal exit as **authoritative pre-integration
+TS7 command evidence**, but explicitly not as a clean/uncontended lane. It
+does not discharge the mandatory uninterrupted TS7 replay on the eventual
+exact current-main integration head.
