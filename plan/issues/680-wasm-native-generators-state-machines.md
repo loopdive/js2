@@ -1153,3 +1153,72 @@ the zero-growth oracle and coercion ratchets, numeric-local IR parity **18 /
 and working-tree issue integrity. This final evidence note must now pass the
 normal commit hook and the resulting documentation-only head must repeat the
 same pre-push gate before publication.
+
+### Publication-scope repair plan: generated mirror formatting drift
+
+The checked-out final handoff is
+`ac787c9645c8a023f1ee36492beccaa028d771ee`. A prior synthetic pre-push ref
+record incorrectly used a nonexistent expanded SHA; the hook itself ran against
+this cwd HEAD. Future synthetic refs must use the exact value returned by
+`git rev-parse HEAD`, without expansion or substitution.
+
+The PR-range comparison against upstream/main
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` also carries formatting-only
+drift in four generated mirrors that are outside this slice:
+
+- `public/benchmarks/results/test262-report.json`
+- `public/benchmarks/results/test262-standalone-report.json`
+- `website/public/benchmarks/results/test262-report.json`
+- `website/public/benchmarks/results/test262-standalone-report.json`
+
+1. Restore those four files byte-for-byte to the upstream/main blobs using
+   patch-only edits; do not regenerate a benchmark or alter the #680 source,
+   test, or acceptance evidence.
+2. While the normal unskipped commit hook runs, keep a worktree-only
+   `.prettierignore` entry for precisely those four mirrors so lint-staged does
+   not recreate formatting drift. Stage only the tracker and restored mirrors;
+   remove the temporary ignore entries immediately after the commit, without
+   staging them.
+3. Prove `.prettierignore` again equals upstream/main, the worktree is clean,
+   and `upstream/main...HEAD` contains exactly the five #680 paths and no
+   benchmark or labs artifacts. Record that proof in a final tracker-only
+   commit, using the normal hook again.
+4. Run the full pre-push hook once with the final actual HEAD in the synthetic
+   new-branch ref and `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Report that
+   final hook externally rather than creating another tracker commit. No GitHub
+   issue or GitHub mutation is created by this repair.
+
+### Approved EOF-byte exception: pre-mutation proof
+
+`apply_patch` reconstructs Add/Update files with a terminating LF, while each
+upstream generated mirror below ends in byte `0x7d` (`}`). The branch worktree
+version of each ends in `0x0a`; consequently the normal patch-only formatting
+reversion cannot make the blobs byte-identical. The coordination lead has
+authorized one mechanical exception solely for this already-proven final-byte
+difference:
+
+- `public/benchmarks/results/test262-report.json`
+- `public/benchmarks/results/test262-standalone-report.json`
+- `website/public/benchmarks/results/test262-report.json`
+- `website/public/benchmarks/results/test262-standalone-report.json`
+
+After patch-only restoration of textual formatting, each path is read-only
+validated independently for its exact path, byte size, upstream terminal
+`0x7d`, and working terminal `0x0a`. Only then may a literal
+`truncate -s -1 <exact-path>` remove that one final LF—no variable, glob,
+substitution, checkout, restore, copy, Perl, Python, or broader rewrite. Each
+result is then SHA-256 compared byte-for-byte with
+`git show upstream/main:<path>` before any staging. This exception is not a
+source or benchmark regeneration and creates no GitHub issue.
+
+Read-only preflight after textual restoration recorded the one-byte-only
+relationship before any truncation:
+
+- `public/benchmarks/results/test262-report.json`: upstream `27509` bytes /
+  worktree `27510` bytes; `0x7d` / `0x0a` terminal bytes.
+- `public/benchmarks/results/test262-standalone-report.json`: upstream
+  `109257` bytes / worktree `109258` bytes; `0x7d` / `0x0a` terminal bytes.
+- `website/public/benchmarks/results/test262-report.json`: upstream `27509`
+  bytes / worktree `27510` bytes; `0x7d` / `0x0a` terminal bytes.
+- `website/public/benchmarks/results/test262-standalone-report.json`: upstream
+  `109257` bytes / worktree `109258` bytes; `0x7d` / `0x0a` terminal bytes.
