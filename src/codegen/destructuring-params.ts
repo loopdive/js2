@@ -869,7 +869,7 @@ export function destructureParamObjectExternref(
 
     addStringConstantGlobal(ctx, propNameText);
     const strGlobalIdx = ctx.stringGlobalMap.get(propNameText);
-    if (strGlobalIdx === undefined) continue;
+    if (strGlobalIdx === undefined && !ctx.nativeStrings) continue;
 
     getIdx = ctx.funcMap.get("__extern_get");
     if (getIdx === undefined) continue;

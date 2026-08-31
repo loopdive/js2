@@ -20,6 +20,7 @@ import {
   emitArraySpeciesCreate,
   emitArraySpeciesResultSwap,
   prepareArraySpeciesDeps,
+  withArraySpeciesSuppressed,
 } from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
@@ -1584,6 +1585,11 @@ function emitDynViewSpeciesMethodTwoArm(
     emitTaDynViewWriteF64Vec(ctx, fctx, resultDv, source.local, source.typeIdx, source.elemType, countLocal);
   };
 
+  const compileMaterializedMethod = () =>
+    withArraySpeciesSuppressed(fctx, () =>
+      compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true),
+    );
+
   let outputSpecies: number | undefined;
   if (methodName === "map") {
     const sourceLen = allocLocal(fctx, `__dvs_map_len_${fctx.locals.length}`, { kind: "i32" });
@@ -1599,7 +1605,7 @@ function emitDynViewSpeciesMethodTwoArm(
     if (outputSpecies === undefined) return abandon();
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileMaterializedMethod();
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const mapped = captureVec(r, "map_result");
@@ -1608,7 +1614,7 @@ function emitDynViewSpeciesMethodTwoArm(
   } else if (methodName === "filter") {
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileMaterializedMethod();
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const filtered = captureVec(r, "filter_result");
@@ -1624,7 +1630,7 @@ function emitDynViewSpeciesMethodTwoArm(
   } else if (methodName === "slice") {
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileMaterializedMethod();
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const sliced = captureVec(r, "slice_result");
@@ -4772,12 +4778,6 @@ function compileArrayUnshift(
  * `slice/S15.4.4.10_A1.1_T4.js` is downstream — the test calls
  * `Object.prototype.toString.call(arr)` which needs the $vec brand to
  * resolve to "[object Array]". That's #1334 territory.
- *
- * #1359 Slice B (@@species): receiver-type-driven dispatch. When the
- * receiver's static type is a known `__vec_*`, `Array[@@species] ===
- * Array` so `struct.new $vec` is correct. For subclass / proxy
- * receivers (rare; mainly test262), needs `__array_species_create`
- * host helper. Tracked as #1359B follow-up.
  */
 function compileArraySlice(
   ctx: CodegenContext,
