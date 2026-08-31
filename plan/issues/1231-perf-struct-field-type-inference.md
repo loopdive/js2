@@ -1101,3 +1101,72 @@ and function-growth ratchets; keep the full precommit and prepush hooks
 enabled. Terra implements after the Math checkpoint; a fresh independent Sol
 review must approve the exact pushed SHA before the regular PR is marked ready
 or enqueued. No admin or direct merge is permitted.
+
+### 2026-08-31 implementation checkpoint — exact parent/candidate evidence
+
+Signed implementation commit
+`8295270f16b0724a642b1bd670c873fff46c0b8f` deletes only the three
+frontend rollback consumers described above. `src/ir/propagate.ts` shrinks by
+23 net lines; no selector, lowering, emitter, ProgramABI, direct-frontend,
+#3525 ("IR-only R5: whole-program single- and multi-source Prepared
+ownership"), or #5092 ("IR mixed-primitive conditional-expression ownership")
+file changed. The R9 inventory moves exactly 15→14 while retaining all fourteen
+independently owned readers. Repository-wide tracked source and plan scans find
+zero literal occurrences of the retired environment identifier, production
+predicate, and focused-test rollback helper. The sole stale-setting oracle
+constructs its 24-byte key from fragments and pins its SHA-256 without
+preserving the retired literal spelling.
+
+The non-vacuity A/B used both host and standalone lanes, both optimization
+arms, and the focused Vitest harness:
+
+```text
+pnpm exec vitest run tests/issue-1231.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+```
+
+The before side was exact parent
+`d3a4b4165c857fdb39e753c9fdff6761be42be93` with only the final test file
+from candidate commit `8295270f16b0724a642b1bd670c873fff46c0b8f`
+applied. It failed exactly 4/11 rows and passed 7/11: each of the three fixture
+matrices widened its object facts to `dynamic`, and the exact source-local
+fnctor admission likewise widened to `dynamic`. The candidate commit passed
+11/11 rows. Its three fixture rows cover 48 exact compile projections:
+three fixtures × two targets × two optimization arms × four absent/stale
+settings. The separate propagation-options row proves the third deleted reader
+under absent and stale-zero settings. This is the exact kill-switch-removal
+signal; the seven passing parent controls show that the harness itself remains
+usable.
+
+Validation used a fresh 10-core strict load gate before every heavy command,
+requiring a finite, non-negative one-minute sample below 8:
+
+- TS7 and TS5 typechecks passed.
+- IR layering passed at 86 imports against baseline 86.
+- The direct fallback-policy checker reported no unintended, post-claim, or
+  module-level increase; deferred string-builder stayed 2→2 and module units
+  stayed 2 claimable / 11 empty.
+- The direct IR-only checker reported host and standalone READY with 5/5
+  entries, 38 terminals and emitted IR bodies, and zero unsupported rows,
+  invariants, or legacy bodies.
+- The equivalence gate reported 1,718 passing and the same 24/24 known
+  failures, with zero new regressions.
+- Targeted Biome lint, Prettier, diff-check, issue integrity, and the exact-zero
+  retired-spelling scan passed.
+- The full precommit hook passed lint-staged, the −23 LOC ratchet, the
+  function-growth ratchet, the 11/11 changed-root suite, and the checker-oracle
+  ratchet without any skip or bypass.
+
+The two package wrappers for the fallback and IR-only policy scripts could not
+start their `tsx` IPC server in this long worktree path (`EINVAL`, then `EPERM`
+through a short symlink) and therefore do not count as checker runs. The exact
+same tracked scripts passed through their direct Node `tsx` loaders under the
+same archive-backed temporary directory. This is recorded as an environmental
+wrapper limitation rather than laundering the failed wrappers into green
+evidence.
+
+The issue stays `in-progress` until this implementation merges. Plan PR #5327
+is still ahead in the protected queue, so the implementation remains a stacked
+draft; after that prerequisite lands, claim #1231, sync protected main, rerun
+the changed bytes, push once, and require a fresh independent Sol review of the
+exact pushed SHA before marking the PR ready.
