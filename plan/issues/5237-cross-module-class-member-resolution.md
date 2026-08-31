@@ -10,6 +10,16 @@ goal: core-semantics
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-31
+# 2026-08-31 (#5237): runtime.ts +14 / resolveImport +1 vs main's post-#5334
+# refreshed baseline — the mirror-preserving `__extern_method_call` exit
+# un-marshal and `selectBridgeReceiver`'s `this` handling. The original grant
+# was measured against the pre-merge base; main's baseline refresh re-exposed
+# it (stranded-grant class, CLAUDE.md "Simulate CI's base too"), restated here
+# in the file this PR owns.
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 # #5237 — cross-module compiled-class member resolution

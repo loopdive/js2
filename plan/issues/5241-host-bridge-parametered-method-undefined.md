@@ -17,6 +17,11 @@ created: 2026-08-31
 # entries are that INHERITED set (this fix touches none of class-bodies.ts or
 # runtime.ts); the annotated ones below are this fix's own.
 loc-budget-allow:
+  # 2026-08-31 (#5241): +16 vs main's post-#5334 refreshed baseline — the
+  # program-wide anti-hijack refusal (`programDeclaresClassMethod` call sites +
+  # `receiverOriginRejectsExternBinding` wiring). Stranded-grant restatement
+  # against main's refreshed baseline (CLAUDE.md "Simulate CI's base too").
+  - src/codegen/expressions/calls-closures.ts
   - src/codegen/class-bodies.ts
   - src/codegen/index.ts
   - src/runtime.ts
@@ -31,6 +36,10 @@ loc-budget-allow:
   # marker all along; hoisting it out would separate the pair.
   - src/codegen/closed-method-dispatch.ts
 func-budget-allow:
+  # 2026-08-31 (#5241): tryExternClassMethodOnAny +15 vs main's refreshed
+  # baseline — the two refusals live at the binding decision they veto.
+  # Stranded-grant restatement, same rationale as the loc grant above.
+  - src/codegen/expressions/calls-closures.ts::tryExternClassMethodOnAny
   # Same change, seen per-function. `emitMethodDispatch` +12 is the identical
   # arm in the OTHER bridge (`appendResultBoxing`); `fillClosedMethodDispatch`
   # +1 is the single `boxBoolIdx` initializer. Splitting either for one boxing

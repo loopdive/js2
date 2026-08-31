@@ -1,6 +1,18 @@
 type ClassMethodExports = Record<string, Function>;
 type ClassMethodCallbackState = { getExports: () => ClassMethodExports | undefined };
 
+/** Resolve and invoke a compiled coercion method; `miss` means no callable member (#5239). */
+export function callResolvedClassPrimitive(
+  resolver: (obj: any, key: any, exports: ClassMethodExports | undefined) => any,
+  raw: any,
+  name: string,
+  exports: ClassMethodExports,
+  miss: unknown,
+): any {
+  const member = resolver(raw, name, exports);
+  return member !== miss && typeof member === "function" ? member.call(raw) : miss;
+}
+
 export interface ClassMethodHostBridgeDeps {
   miss: unknown;
   canBeWeakKey(value: unknown): boolean;
