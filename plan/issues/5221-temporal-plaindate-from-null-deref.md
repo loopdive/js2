@@ -22,6 +22,8 @@ created: 2026-08-30
 # a two-line guard into a new module would hide the reason from the code that
 # depends on it. `closures.ts` grows by comment ONLY — no code change there.
 loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/class-bodies.ts
   - src/codegen/destructuring-params.ts
   - src/codegen/declarations.ts
   - src/codegen/expressions/calls-closures.ts
@@ -37,6 +39,7 @@ func-budget-allow:
   - src/codegen/statements.ts::compileStatementInner
   - src/codegen/expressions/calls-closures.ts::tryExternClassMethodOnAny
   - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/destructuring-params.ts::destructureParamObject
 ---
 
