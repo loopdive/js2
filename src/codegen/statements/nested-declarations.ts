@@ -84,6 +84,7 @@ import {
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
 import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
+import { genericCallbackResultDeclaration } from "../generic-callback-result.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -920,6 +921,13 @@ function compileNestedFunctionDeclarationInScope(
     // The checker resolved this function's returned NAME against the binding the
     // `with` receiver shadows, so its inferred return type describes the wrong
     // value (see `functionReturnsThroughWithScope`). Carry it as `any`.
+    returnType = { kind: "externref" };
+  } else if (genericCallbackResultDeclaration(ctx, stmt)) {
+    // (#1058) A nested `<T>(callback: () => T): T` declaration cannot use the
+    // checker's abstract `T` as its physical Wasm result. TypeScript's parser
+    // feeds both scalar predicates and concrete AST structs through the same
+    // lifted speculation helper; externref is the common identity-preserving
+    // carrier. Keep this identical to the Phase-0 sibling reservation below.
     returnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
@@ -2616,6 +2624,11 @@ export function hoistFunctionDeclarations(
       } else if (asyncDecision !== null) {
         resultType = { kind: "externref" };
       } else if (foreignNoSig) {
+        resultType = { kind: "externref" };
+      } else if (genericCallbackResultDeclaration(ctx, stmt)) {
+        // Mirror the real lifted-body signature above. Forward/recursive
+        // sibling calls compile against this bodyless reservation first, so a
+        // stale abstract-T carrier here survives even when the body is fixed.
         resultType = { kind: "externref" };
       } else if (sig) {
         let rt = ctx.checker.getReturnTypeOfSignature(sig);

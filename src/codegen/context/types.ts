@@ -361,6 +361,8 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  /** Smallest source-level argument count accepted before optional parameters. */
+  minimumArgumentCount?: number;
   nativeProtoVariadic?: boolean;
   /**
    * True only while every concrete allocation of this wrapper/subtype is a
