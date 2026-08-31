@@ -372,8 +372,8 @@ evidence-only source material; the five owned paths were reconciled onto d60
 instead of copied or rebased. No GitHub issue was created.
 
 The current post-review replay target is upstream main
-`932341cc7d01547bf6b0065d766a31cdf3478d9f`. The complete
-`d60aa73f9b3405dcdc1f832a511acb2366c7de00..932341cc7d01547bf6b0065d766a31cdf3478d9f`
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`. The complete
+`d60aa73f9b3405dcdc1f832a511acb2366c7de00..a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`
 span contains benchmark artifacts plus the unrelated #5247 tracker filing, and
 has no overlap with these five owned paths; the final clean-head integration
 must nevertheless replay the focused gate.
@@ -1116,3 +1116,25 @@ only generated `node_modules` content from 819 cached packages. The regenerated
 shims resolve `lint-staged 16.4.0` and `prettier 3.8.1` from the repository;
 `package.json` and `pnpm-lock.yaml` remain unchanged. The temporary launcher is
 removed, so the next retry uses the repository's normal hook environment.
+
+### Integrated checkpoint handoff
+
+The normal implementation commit is
+`2e43d9d93916ea958c33db8dc2ad791558a32dec` (`fix(generators): lower
+suspended expression continuations ✓`). Its unskipped commit hook passed
+Prettier, error-level Biome, the three exact LOC grants, the three exact
+function-budget grants, all **27 / 27** focused controls in one Vitest fork,
+and the oracle ratchet at `getTypeAtLocation +0`, `ctx.checker +0`.
+
+Fresh `git fetch upstream main` resolved loopdive/js2 main to
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`, eleven commits ahead of the d60
+reconstruction base. The upstream delta has no direct overlap with the five
+owned #680 paths; its changed LOC baseline was retained. The attributed normal
+merge commit is `1c9b69faf1` (`merge(upstream): sync #680 with main ✓`). That
+merge hook independently repeated the exact gates and passed all **27 / 27**
+controls (20.15 s total, 11.15 s test time) plus the zero-growth oracle ratchet.
+
+Publication remains pending final exact-head pre-push validation and explicit
+authorization to push this completed branch to the public `ttraenkler/js2`
+fork for a non-draft PR against `loopdive/js2:main`. No push or GitHub mutation
+has occurred.
