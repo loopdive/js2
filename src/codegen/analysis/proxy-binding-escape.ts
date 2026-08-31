@@ -26,6 +26,81 @@ function enclosingExecutableOrSource(node: ts.Node): ts.Node | undefined {
   return undefined;
 }
 
+/**
+ * `proxyBindingIsTarget` is queried for every variable declaration, including
+ * both module-global declaration passes.  Index actual Proxy targets once per
+ * source instead of walking an enclosing scope for every queried declaration.
+ *
+ * The cached raw-text checks keep the overwhelmingly common no-Proxy query
+ * path constant-time after one cheap source prefilter. A `\u` spelling still
+ * needs the scanner because escaped identifiers such as `P\u0072oxy` have the
+ * normalized AST text `Proxy`. Raw-text false positives only trigger the exact
+ * cached AST scan and cannot change the semantic answer.
+ */
+const sourceHasProxyIdentifierCache = new WeakMap<ts.SourceFile, boolean>();
+const proxyTargetBindingsByContext = new WeakMap<
+  CodegenContext,
+  WeakMap<ts.SourceFile, WeakSet<ts.VariableDeclaration>>
+>();
+
+function sourceHasProxyIdentifier(sourceFile: ts.SourceFile): boolean {
+  const cached = sourceHasProxyIdentifierCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+
+  const text = sourceFile.text;
+  let found = text.includes("Proxy");
+  if (!found && text.includes("\\u")) {
+    const scanner = ts.createScanner(sourceFile.languageVersion, true, sourceFile.languageVariant, text);
+    for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+      if (token === ts.SyntaxKind.Identifier && scanner.getTokenValue() === "Proxy") {
+        found = true;
+        break;
+      }
+    }
+  }
+  sourceHasProxyIdentifierCache.set(sourceFile, found);
+  return found;
+}
+
+function proxyTargetBindings(ctx: CodegenContext, sourceFile: ts.SourceFile): WeakSet<ts.VariableDeclaration> {
+  let bySource = proxyTargetBindingsByContext.get(ctx);
+  if (bySource === undefined) {
+    bySource = new WeakMap();
+    proxyTargetBindingsByContext.set(ctx, bySource);
+  }
+  const cached = bySource.get(sourceFile);
+  if (cached !== undefined) return cached;
+
+  const targets = new WeakSet<ts.VariableDeclaration>();
+  bySource.set(sourceFile, targets);
+  if (!sourceHasProxyIdentifier(sourceFile)) return targets;
+
+  const visit = (node: ts.Node): void => {
+    let target: ts.Expression | undefined;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
+      target = node.arguments?.[0];
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Proxy" &&
+      node.expression.name.text === "revocable"
+    ) {
+      target = node.arguments[0];
+    }
+    if (target !== undefined) {
+      const candidate = innermostTransparentExpression(target);
+      if (ts.isIdentifier(candidate)) {
+        const declaration = ctx.oracle.valueDeclarationOf(candidate);
+        if (declaration !== undefined && ts.isVariableDeclaration(declaration)) targets.add(declaration);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return targets;
+}
+
 function isTransparentWrapperOf(parent: ts.Node, child: ts.Expression): parent is ts.Expression {
   return (
     (ts.isParenthesizedExpression(parent) ||
@@ -41,6 +116,20 @@ function outermostTransparentExpression(expression: ts.Expression): ts.Expressio
   let current = expression;
   while (current.parent !== undefined && isTransparentWrapperOf(current.parent, current)) {
     current = current.parent;
+  }
+  return current;
+}
+
+function innermostTransparentExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
   }
   return current;
 }
@@ -194,43 +283,7 @@ export function proxyBindingEscapesToCall(ctx: CodegenContext, declaration: ts.V
  */
 export function proxyBindingIsTarget(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
   if (!ts.isIdentifier(declaration.name)) return false;
-  const scope = enclosingExecutableOrSource(declaration);
-  if (scope === undefined) return false;
-
-  const unwrap = (expression: ts.Expression): ts.Expression => {
-    let current = expression;
-    while (current.parent !== undefined && isTransparentWrapperOf(current.parent, current)) {
-      current = current.parent as ts.Expression;
-    }
-    return current;
-  };
-
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    let target: ts.Expression | undefined;
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
-      target = node.arguments?.[0];
-    } else if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Proxy" &&
-      node.expression.name.text === "revocable"
-    ) {
-      target = node.arguments[0];
-    }
-    if (target !== undefined) {
-      const candidate = unwrap(target);
-      if (ts.isIdentifier(candidate) && ctx.oracle.valueDeclarationOf(candidate) === declaration) {
-        found = true;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  visit(scope);
-  return found;
+  return proxyTargetBindings(ctx, declaration.getSourceFile()).has(declaration);
 }
 
 /** Tag direct Proxy results and target aliases for dynamic module storage. */
