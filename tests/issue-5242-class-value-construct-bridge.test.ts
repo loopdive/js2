@@ -72,6 +72,29 @@ export class K {
 }
 registry.set("%K%", K);
 
+/*
+ * DEFAULT parameters — Temporal's Duration shape, and the reason the bridge
+ * carries an explicit argc. <Class>_new tells an omitted argument from an
+ * explicit undefined through the mutable module global __argc; a bridge that
+ * does not write it inherits whatever the last compiled call site left there.
+ * Both stale values are silently wrong and look unrelated: -1 means "caller
+ * unknown" so nothing defaults and the padding arrives as NaN, while a stale
+ * small count defaults every parameter past the first and DISCARDS the real
+ * arguments.
+ */
+export class D {
+  constructor(a = 0, b = 0, c = 0, d = 0, e = 0, f = 0) {
+    this.a = a; this.b = b; this.c = c; this.d = d; this.e = e; this.f = f;
+  }
+  read() { return [this.a, this.b, this.c, this.d, this.e, this.f].join(","); }
+}
+registry.set("%D%", D);
+
+export function defaultedDynamicFull() { const C = intrinsic("%D%"); return new C(11, 12, 13, 14, 15, 16).read(); }
+export function defaultedDynamicPartial() { const C = intrinsic("%D%"); return new C(11, 12).read(); }
+export function defaultedDirectFull() { return new D(11, 12, 13, 14, 15, 16).read(); }
+export function defaultedDirectPartial() { return new D(11, 12).read(); }
+
 /** The minified-bundle shape: the class is a VALUE. */
 export function makeDynamic(base) {
   const C = intrinsic("%K%");
@@ -97,6 +120,10 @@ export function viaRegistryAtInit() { return initConstructed(); }
 export function directLabel() { return makeDirect(1).label(); }
 export function directGetter() { return String(makeDirect(1).sum); }
 export function directToString() { return String(makeDirect(1)); }
+export function defaultedFull() { return defaultedDynamicFull(); }
+export function defaultedPartial() { return defaultedDynamicPartial(); }
+export function defaultedFullControl() { return defaultedDirectFull(); }
+export function defaultedPartialControl() { return defaultedDirectPartial(); }
 `;
 
 /** Every probe's expected answer. Identical for both lanes — that is the point. */
@@ -109,6 +136,12 @@ const EXPECTED: Record<string, unknown> = {
   directLabel: "K1|2|3|4|5|6",
   directGetter: "21",
   directToString: "T1",
+  // Parameter defaults must behave EXACTLY as they do on the direct-`new`
+  // control — same values supplied, same values omitted.
+  defaultedFull: "11,12,13,14,15,16",
+  defaultedPartial: "11,12,0,0,0,0",
+  defaultedFullControl: "11,12,13,14,15,16",
+  defaultedPartialControl: "11,12,0,0,0,0",
 };
 
 function readAll(exports: Record<string, unknown>): Record<string, unknown> {
@@ -129,7 +162,7 @@ describe("#5242 — constructing a compiled class reached as a value", () => {
     const result = await compileMulti(
       {
         "/provider.js": PROVIDER_SOURCE,
-        [entry]: `import { makeDynamic, makeDirect, initConstructed } from "./provider";\n${CONSUMER_PROBES}`,
+        [entry]: `import { makeDynamic, makeDirect, initConstructed, defaultedDynamicFull, defaultedDynamicPartial, defaultedDirectFull, defaultedDirectPartial } from "./provider";\n${CONSUMER_PROBES}`,
       },
       entry,
       { allowJs: true, skipSemanticDiagnostics: true },
@@ -156,7 +189,10 @@ describe("#5242 — constructing a compiled class reached as a value", () => {
     );
     writeFileSync(join(packageRoot, "index.js"), PROVIDER_SOURCE);
     const entry = join(root, "main.js");
-    writeFileSync(entry, `import { makeDynamic, makeDirect, initConstructed } from "cv5242";\n${CONSUMER_PROBES}`);
+    writeFileSync(
+      entry,
+      `import { makeDynamic, makeDirect, initConstructed, defaultedDynamicFull, defaultedDynamicPartial, defaultedDirectFull, defaultedDirectPartial } from "cv5242";\n${CONSUMER_PROBES}`,
+    );
 
     const result = await compileProject(entry, {
       allowJs: true,

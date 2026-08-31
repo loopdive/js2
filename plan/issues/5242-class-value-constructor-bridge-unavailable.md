@@ -109,6 +109,60 @@ be closed before Temporal's `Duration` could be constructed:
   still answers during init, so init-window behaviour is unchanged).
   `_resolveClassConstructBridge` resolves and caches the bridge per export view.
 
+### Second cut — the bridge must publish `__argc` (2026-08-31, found by dev-5243)
+
+The first cut of the bridge was silently wrong for any constructor with
+DEFAULT parameters, which is Temporal's `Duration` and most of the polyfill.
+
+`<Class>_new` distinguishes an omitted argument from an explicit `undefined`
+through the mutable module global `__argc` (`-1` = "caller unknown"), written
+by each compiled call site and consumed once in the callee prologue
+(`cacheParamDefaultArgc`). A fixed-arity bridge has to pad, so without that
+count the callee cannot tell padding from a real argument — and because
+`__argc` is a GLOBAL, "not writing it" does not mean "no defaults", it means
+**whatever the previously compiled call site left there**. Two unrelated-looking
+symptoms, one omission, both silent:
+
+| stale `__argc` | effect | observed |
+| --- | --- | --- |
+| `-1` | nothing defaults; padding arrives as `undefined` → NaN | `new Defaulted(11,12)` → `11,12,NaN,NaN,NaN,NaN` |
+| small count `n` | `argc !== -1 && argc <= i` fires for every param past `n`; the REAL arguments are discarded for the initializers | `new Duration(11,…,20)` → `11,0,0,0,0,0,0,0,0,0` |
+
+The second row is what dev-5243 reported as "every constructor argument after
+the first is lost". Their two disproofs were both correct and both consistent
+with this: the emitted bridge IS right when called directly from JS (it never
+consulted `__argc`), and only one arity is emitted. What they could not see
+from outside is that the callee's behaviour depended on a global neither the
+bridge nor the direct JS call had set.
+
+Fix: the ABI gains a leading argument count —
+`__class_construct_<Class>_<arity>(argc, a0, …)` — and the bridge does
+`global.set __argc` immediately before `call <Class>_new`, after the arguments
+are already on the stack so no coercion call can clobber it. The runtime passes
+`min(args.length, arity)`, matching `maybeSetArgcForKnownCall`. Changing the
+export's shape is free: it is new in this same PR and nothing else consumes it.
+
+Also fixed in the same commit: the trap called the bridge with a SPREAD
+(`fn(...dense)`), which routes through `Array.prototype[Symbol.iterator]` — the
+exact hazard `_denseOwnWasmArgs` / `_applyWithPrefix` exist to avoid (#4758).
+Now `_applyWithPrefix(fn, undefined, [argc], dense)`.
+
+Measured after, in `tests/issue-5242-class-value-construct-bridge.test.ts`
+(both lanes) and on the real polyfill:
+
+| probe | first cut | after |
+| --- | --- | --- |
+| `new D(11,12)` via value | `11,12,NaN,NaN,NaN,NaN` | `11,12,0,0,0,0` (= control) |
+| `new Duration(11,…,20)` via value | `11,12,…,20` | unchanged |
+| `new Duration(0,0,0,1)` via value | `0,0,0,0,…` / `PT0S` | `0,0,0,1,…` / `P1D` (= control) |
+
+**Process note worth keeping.** This defect existed for the whole first cut and
+every gate was green: the equivalence gate, the ratchet gates, and #5242's own
+test, which used a class with NO default parameters. A bridge that pads
+arguments must be tested against a callee that can TELL — the six-parameter
+class proved arity and the export view, and proved nothing about defaults. The
+regression rows are now in the test with a direct-`new` control beside each.
+
 ### Deliberately NOT done
 
 - **Rest-parameter constructors** (`constructor(...args)`) and constructors with
