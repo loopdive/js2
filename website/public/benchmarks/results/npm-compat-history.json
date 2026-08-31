@@ -11456,6 +11456,99 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-31T16:12:58.235Z",
+      "sourceRevision": "e38fc06da3a77122a9bc5068dcb6d43e32293139",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.011713444540575343
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-31T17:15:22.210Z",
+      "sourceRevision": "bdd5478d83cf4625b751f193c4587cc64719b66c",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009854333372654204
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-31T18:23:07.494Z",
+      "sourceRevision": "207793dd444e17215db38c955ce3baaca5f85c7a",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHost": {
+            "dynamic": 0.10919502510290656
+          },
+          "standalone": {}
+        },
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.002212320033391078
+          },
+          "standalone": {
+            "static": 78726.20031205179,
+            "dynamic": 0.12799827824056736
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.00211466512259614
+          },
+          "standalone": {
+            "static": 534.654451958102,
+            "dynamic": 0.2101530209343331
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.06625754081308156
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.003202952702734914
+          },
+          "standalone": {
+            "static": 17.317745245370816,
+            "dynamic": 0.14148699515525168
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.0017478303660807169
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.0016984135229594927
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
