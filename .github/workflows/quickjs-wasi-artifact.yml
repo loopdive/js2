@@ -265,6 +265,15 @@ jobs:
       - name: Kept native interpreter path remains selectable
         env:
           JS2WASM_EVAL_ENGINE: interpreter
+          # Same worker-heap exhaustion as the quickjs step above, wearing a
+          # different mask: here it surfaces as
+          # `[vitest-worker]: Timeout calling "onTaskUpdate"` with every test
+          # PASSING (6 files, 77 passed / 1 skipped) and vitest still exiting 1.
+          # Reproduced locally: the worker OOMs inside V8's
+          # `JsonStringifier::Stringify` — i.e. while the reporter RPC serializes
+          # a task update — so the "timeout" is the OOM, not a slow runner. Same
+          # command with this cap set exits 0.
+          VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
         run: |
           npx vitest run \
             tests/issue-2928-refusal-provider.test.ts \
