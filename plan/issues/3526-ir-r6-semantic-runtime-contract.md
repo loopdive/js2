@@ -1401,6 +1401,39 @@ overlaps the eleven owned files.
    (`pnpm run check:ir-fallbacks`) is **unchanged, output-identical**, with all
    unintended, module-level and post-claim buckets still empty.
 
+### The async-prepare join needed the resolved policy, not a shape match
+
+The Sol correction called the `async-prepare` numeric-return roundtrip a
+*mechanical* substitution. It is not, and CI proved it: the standalone IR
+cutover corpus failed with `compile/async expected derivedUnitCount=12,
+observed 11`.
+
+Cause: before this slice, from-ast emitted `env.__unbox_number` on the host lane
+and the union-native runtime symbol on native-first, so `async-prepare`'s
+raw-import match **also encoded "this is a host owner"** — and the elision is
+only validated against the host Promise ABI. A provider-free intrinsic carries
+no lane fact (freeze runs after async preparation), so a plain shape match is
+not equivalent to what it replaced. Both naive options were measured and both
+change behaviour:
+
+| approach | standalone cutover corpus | host (#4106) |
+| --- | --- | --- |
+| match the intrinsic unconditionally | **FAIL** — derived 18/19, elision fires where it never did | pass |
+| match only the raw-import form | pass — derived 19/19 | **FAIL** — resume function regains the unbox call |
+
+Resolved by threading the caller's **already-resolved** `NumberBoundaryPolicy`
+— the same frozen fact manifest freeze consumes — from `compileIrPathFunctions`
+through `prepareSuspendingAsyncLowering` into `prepareSingleAwaitIrFunction`.
+The intrinsic form is admitted iff `unbox === "host"`, which is exactly the
+population the import form matched. Both lanes are now neutral: corpus
+`derived=19/19`, #4106 green. The parameter defaults to
+`NUMBER_BOUNDARY_POLICY_DISABLED`, so an uninformed caller keeps its
+continuation rather than silently eliding.
+
+This is the one place where F1-S1's goal (a lane-free front-end node) and an
+existing consumer genuinely conflict; the policy hand-off is the narrow fix. A
+cleaner long-term home is a post-freeze pass that reads the attached provider.
+
 ### `check:ir-kind-neutrality` baseline refresh
 
 The `quality` lane initially failed on `check:ir-kind-neutrality`. **This was

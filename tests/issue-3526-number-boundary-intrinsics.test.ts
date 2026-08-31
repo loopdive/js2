@@ -609,15 +609,25 @@ describe("#3526 F1-S1 async-prepare join", () => {
     resultType: F64,
   };
 
-  it("elides the numeric carrier round trip for BOTH the intrinsic and the raw-import form", () => {
+  it("elides the round trip for the intrinsic form exactly where the raw-import form applied", () => {
     // A one-instruction externref→f64 tail is an identity continuation, so the
-    // prepared plan needs exactly one state function. The intrinsic form is
-    // what from-ast emits now (provider-free: freeze runs after preparation);
-    // the raw-import form is retained for legacy owners.
-    for (const tail of [UNBOX_INTRINSIC, UNBOX_IMPORT]) {
-      const prepared = prepareSingleAwaitIrFunction(asyncOwner(tail));
-      expect(prepared?.stateFunctions).toHaveLength(1);
+    // prepared plan needs exactly one state function instead of two.
+    //
+    // The raw-import form is retained unconditionally for legacy owners. The
+    // intrinsic form is admitted ONLY under a host unbox policy — because the
+    // import form it replaces was itself only ever emitted on the host lane,
+    // and the elision is validated against the host Promise ABI. Admitting it
+    // unconditionally would fire the elision on standalone owners for the
+    // first time and drop a derived unit from the standalone cutover corpus.
+    expect(prepareSingleAwaitIrFunction(asyncOwner(UNBOX_IMPORT))?.stateFunctions).toHaveLength(1);
+    expect(prepareSingleAwaitIrFunction(asyncOwner(UNBOX_INTRINSIC), HOST_BOUNDARY)?.stateFunctions).toHaveLength(1);
+
+    // Native-first and disabled policies keep their continuation, exactly as
+    // the runtime-target form did before this slice.
+    for (const boundary of [NATIVE_FIRST_BOUNDARY, NUMBER_BOUNDARY_POLICY_DISABLED, undefined]) {
+      expect(prepareSingleAwaitIrFunction(asyncOwner(UNBOX_INTRINSIC), boundary)?.stateFunctions).toHaveLength(2);
     }
+
     // A tail that is NOT the exact roundtrip still needs its continuation.
     const other: IrInstr = {
       kind: "unary",
@@ -626,6 +636,6 @@ describe("#3526 F1-S1 async-prepare join", () => {
       result: asValueId(2),
       resultType: F64,
     };
-    expect(prepareSingleAwaitIrFunction(asyncOwner(other))?.stateFunctions.length ?? 0).not.toBe(1);
+    expect(prepareSingleAwaitIrFunction(asyncOwner(other), HOST_BOUNDARY)?.stateFunctions).toHaveLength(2);
   });
 });

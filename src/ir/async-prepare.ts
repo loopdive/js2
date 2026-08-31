@@ -7,6 +7,7 @@ import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan } from "./async-
 import { irUnitFuncRef } from "./callable-bindings.js";
 import { createDerivedIrUnitId, type IrDerivedUnitProvenance } from "./identity.js";
 import { INTRINSIC_SIGNATURE_VERSION } from "./intrinsics.js";
+import { NUMBER_BOUNDARY_POLICY_DISABLED, type NumberBoundaryPolicy } from "./runtime-manifest.js";
 import {
   asBlockId,
   asValueId,
@@ -674,9 +675,14 @@ export function prepareFinalMainIrFunction(fn: IrFunction): PreparedSingleAwaitI
 }
 
 /** Dispatch the closed prepared async source families. */
-export function prepareSuspendingIrFunction(fn: IrFunction): PreparedSingleAwaitIrFunction | null {
+export function prepareSuspendingIrFunction(
+  fn: IrFunction,
+  numberBoundary?: NumberBoundaryPolicy,
+): PreparedSingleAwaitIrFunction | null {
   return (
-    prepareSequentialCountedLoopIrFunction(fn) ?? prepareFinalMainIrFunction(fn) ?? prepareSingleAwaitIrFunction(fn)
+    prepareSequentialCountedLoopIrFunction(fn) ??
+    prepareFinalMainIrFunction(fn) ??
+    prepareSingleAwaitIrFunction(fn, numberBoundary)
   );
 }
 
@@ -736,7 +742,10 @@ function remapUsedSlots(
  * backend only needs to invoke it, suspend on its Promise result, and settle
  * the source function with the delivered value.
  */
-export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwaitIrFunction | null {
+export function prepareSingleAwaitIrFunction(
+  fn: IrFunction,
+  numberBoundary?: NumberBoundaryPolicy,
+): PreparedSingleAwaitIrFunction | null {
   if (fn.funcKind !== "async" || fn.asyncPlan || fn.blocks.length !== 1 || fn.resultTypes.length !== 1) return null;
   const block = fn.blocks[0]!;
   if (block.blockArgs.length !== 0 || block.terminator.kind !== "return" || block.terminator.values.length !== 1) {
@@ -801,14 +810,25 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
   const returned = block.terminator.values[0]!;
   const fulfillmentType = fn.resultTypes[0]!;
   const carrierUnbox = suffix.instrs.length === 1 ? suffix.instrs[0] : undefined;
-  // The exact numeric-return roundtrip this optimization recognizes has two
-  // shapes now. (#3526 F1-S1) from-ast emits the semantic `js.number.unbox`
-  // intrinsic — provider-free at this point, since manifest freeze runs after
-  // async preparation — while legacy owners still reach here as the raw
-  // `env.__unbox_number` import call. Both are the same one-instruction
-  // externref→f64 tail; matching only the raw form would silently stop the
-  // elision from firing and reintroduce the redundant round trip.
+  // (#3526 F1-S1) The exact numeric-return roundtrip this optimization
+  // recognizes now has two shapes, and the split between them is load-bearing.
+  //
+  // from-ast used to emit `env.__unbox_number` on the host lane and the
+  // union-native runtime symbol on native-first, so the raw-import match below
+  // ALSO encoded "this is a host owner" — and the elision was only ever
+  // validated against the host Promise ABI. from-ast now emits the semantic
+  // `js.number.unbox` intrinsic, which is provider-free at this point (manifest
+  // freeze runs after async preparation), so the node no longer carries that
+  // lane fact. Matching the intrinsic unconditionally would fire the elision on
+  // standalone owners for the first time (measured: it drops one derived unit
+  // from the standalone cutover corpus); refusing to match it at all would lose
+  // the elision on host owners (measured: #4106's resume function regains the
+  // unbox call). The caller therefore hands in its already-resolved
+  // number-boundary policy — the SAME frozen fact the runtime manifest uses —
+  // so the intrinsic form is admitted exactly where the raw-import form was.
+  const hostNumberUnbox = (numberBoundary ?? NUMBER_BOUNDARY_POLICY_DISABLED).unbox === "host";
   const elidesNumericCarrierRoundTripAsIntrinsic =
+    hostNumberUnbox &&
     carrierUnbox?.kind === "intrinsic" &&
     carrierUnbox.id === "js.number.unbox" &&
     carrierUnbox.version === INTRINSIC_SIGNATURE_VERSION &&

@@ -432,9 +432,10 @@ function prepareSuspendingAsyncLowering(
   ownerUnitId: IrUnitId,
   name: string,
   suspendingOwners: ReadonlySet<IrUnitId> | undefined,
+  numberBoundary: NumberBoundaryPolicy,
 ): LoweredFunctionResult {
   if (!suspendingOwners?.has(ownerUnitId)) return lowered;
-  const prepared = prepareSuspendingIrFunction(lowered.main);
+  const prepared = prepareSuspendingIrFunction(lowered.main, numberBoundary);
   if (!prepared) {
     throw new IrUnsupportedError(
       "body-shape-rejected",
@@ -2310,6 +2311,9 @@ export function compileIrPathFunctions(
           ownerUnitId,
           name,
           loweringPlans?.suspendingAsyncUnitIds,
+          // (#3526 F1-S1) The same resolved fact manifest freeze consumes, so
+          // the numeric-tail elision keeps its exact pre-F1-S1 population.
+          integrationNumberBoundaryPolicy(ctx),
         );
         if (result.main.unitId !== ownerUnitId) {
           throw new IrInvariantError(
