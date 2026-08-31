@@ -1225,7 +1225,7 @@ export async function instantiateLinkedProject(
     new WebAssembly.Module(result.binary as unknown as BufferSource),
     rootImports,
   );
-  wireCompiledInstance(rootImports, instance);
+  wireCompiledInstance(rootImports, instance, providerExports.size > 0);
   return { instance, providers: providerExports };
 }
 
