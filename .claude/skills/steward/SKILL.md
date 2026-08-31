@@ -37,18 +37,47 @@ not to push it into the queue.
 - **Do not read `mergeStateStatus` as the enqueue gate at all.** Since **#4094**
   `enqueueEligibility()` in `scripts/enqueue-green-prs.mjs` decides from four
   real signals only — not draft, no hold label, `mergeable === "MERGEABLE"`
-  (the field, not the status string), and every *required* check green. The
+  (the field, not the status string), and `classifyChecks()` green. The
   function's own comment is explicit: *"`mergeStateStatus` is deliberately NOT
   a parameter. It cannot be consulted even by accident."* The old
   `ENQUEUEABLE = {CLEAN, HAS_HOOKS}` set is **vestigial** — read lines 631 and
   1276, both of which say "Was `!ENQUEUEABLE.has(...)`".
 
-  Consequences, both the opposite of the pre-#4094 folklore (which still
-  survives in `CLAUDE.md`): a red **non-required** check does not block enqueue,
-  and neither does being behind main. `mergeStateStatus` is also *stale* —
-  measured on the same PR minutes apart with no push, and a PR 4 commits behind
-  reading `CLEAN` while one 0 commits behind read `UNSTABLE`. Diagnose from the
-  check runs and `mergeable`, never from the summary string.
+  Being **behind main** does not block enqueue. `mergeStateStatus` is also
+  *stale* — measured on the same PR minutes apart with no push, and a PR 4
+  commits behind reading `CLEAN` while one 0 commits behind read `UNSTABLE`.
+  Diagnose from the check runs and `mergeable`, never from the summary string.
+- **A red NON-REQUIRED check DOES block enqueue.** This file claimed the
+  opposite until 2026-08-29, and it is the costlier error of the two: it tells
+  you to stand down on the one signal that will strand the PR forever, because
+  nothing retries a non-required lane on its own.
+
+  `classifyChecks()` applies its **zero-FAILURE rule before** the required-name
+  filter, so the required list never gets consulted for a failing row:
+
+  ```js
+  // Zero-FAILURE rule: applies to EVERY check, required or not (#3878/#3904).
+  if (!PASSING_CHECK_STATES.has(state) && !PENDING_CHECK_STATES.has(state)) {
+    failures.push(`${name}: ${state}`);
+    continue;                       // ← returns green:false regardless of `required`
+  }
+  if (!required.has(name)) continue; // ← only reached by passing/pending rows
+  ```
+
+  `PASSING_CHECK_STATES` is `{pass, skipping}` and `PENDING_CHECK_STATES` is
+  `{pending, queued, in_progress}` — every other state is a failure, whoever
+  published it.
+
+  Observed on PR #5260 (2026-08-29): all six required checks green or skipped,
+  `mergeable: true`, no `hold` — and the `auto-enqueue` run logged
+  `- #5260 skip (failing-checks: quickjs eval-engine lane (non-required): fail)`
+  on every sweep. Read the `auto-enqueue` run's own log when a PR looks ready
+  and is not moving; it names the reason verbatim.
+
+  So a red non-required lane is **work**, not noise. Treat it like any other CI
+  red under §CI red: rule out that it is not this PR's, re-run once if you have
+  the means, and if you do not, say so and keep the PR watched — it will not
+  clear itself.
 - **`BEHIND` → do NOTHING. Let the PR's CI finish.** This is the one that looks
   most like a call to action and is not. Behind-ness does **not** block enqueue:
   `scripts/enqueue-green-prs.mjs` derives eligibility from checks + draft +

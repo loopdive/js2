@@ -101,6 +101,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_promote:
+        description: "Measure only: run the shard matrix but NEVER promote. Use for bisects and any manual rerun on a non-tip ref. Unlike ir_first / layout_emit / eval_engine=interpreter — the three existing promote suppressors — this changes NOTHING about how the corpus is compiled or run, so its merged report is directly comparable to the published QuickJS baseline. Without it, a workflow_dispatch measures an arbitrary ref and then overwrites loopdive/js2wasm-baselines (the regression-gate baseline EVERY open PR is diffed against) with that ref's numbers, re-stamps the #2097 high-water mark and redeploys Pages."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -2525,6 +2530,7 @@ jobs:
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
       !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.skip_promote) &&
       !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')
     name: promote merged report to main baseline
     # Explicit interpreter dispatches are anti-rot measurements for the kept
