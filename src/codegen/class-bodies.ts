@@ -920,7 +920,8 @@ export function collectClassDeclaration(
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = clause.types[0]!.expression;
-        if (!ts.isIdentifier(baseExpr) && !ctx.standalone && !ctx.wasi) hasDynamicHostParent = true;
+        if (!ctx.standalone && !ctx.wasi)
+          hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
         if (ts.isIdentifier(baseExpr)) {
           // (#4291) The local import spelling is not the class identity. Hono's
           // published base is declared as `var Hono = class _Hono {}`, exported
@@ -1034,19 +1035,18 @@ export function collectClassDeclaration(
             ctx.classBuiltinParentMap.set(className, builtinAncestor);
             ctx.classExternrefBackedSet.add(className);
           }
-          // Mark parent struct as non-final so it can be extended
-          if (parentStructTypeIdx !== undefined) {
-            const parentTypeDef = ctx.mod.types[parentStructTypeIdx] as StructTypeDef;
-            if (parentTypeDef && parentTypeDef.superTypeIdx === undefined) {
-              // Mark parent as extensible (superTypeIdx = -1 means "sub with no super")
-              parentTypeDef.superTypeIdx = -1;
-            }
+        } else if (ts.isClassExpression(baseExpr)) {
+          parentClassName = ctx.anonClassExprNames.get(baseExpr);
+          if (parentClassName && parentClassName !== className) {
+            parentStructTypeIdx = ctx.structMap.get(parentClassName);
+            parentFields = ctx.structFields.get(parentClassName) ?? [];
+            ctx.classParentMap.set(className, parentClassName);
           }
         }
       }
     }
   }
-
+  if (parentStructTypeIdx !== undefined) (ctx.mod.types[parentStructTypeIdx] as StructTypeDef).superTypeIdx ??= -1;
   // Pre-register the struct type index BEFORE resolving field types.
   // This allows self-referencing fields (e.g. `next: ListNode | null` in class ListNode)
   // to resolve to `ref null $structTypeIdx` instead of falling back to externref.

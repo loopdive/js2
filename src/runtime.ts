@@ -13402,6 +13402,7 @@ assert._isSameValue = isSameValue;
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
           try {
+            if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
             Object.defineProperty(obj, prop, desc);
           } catch (e) {
             if (e instanceof TypeError) {
@@ -13410,7 +13411,6 @@ assert._isSameValue = isSameValue;
               if (msg.includes("opaque") || msg.includes("WebAssembly")) {
                 // (#3116) Array exotic receiver: element/length defines apply
                 // into the vec itself (§10.4.2) so vec-lane reads observe them.
-                if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
                 // WasmGC struct — validate against sidecar descriptors, then store.
                 // Pass existing sidecar value for SameValue check on non-writable props.
                 const sDescs = _getSidecarDescs(obj);
@@ -13461,6 +13461,7 @@ assert._isSameValue = isSameValue;
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
           try {
+            if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
             Object.defineProperty(obj, prop, desc);
           } catch (e) {
             if (e instanceof TypeError) {
@@ -13469,7 +13470,6 @@ assert._isSameValue = isSameValue;
                 // (#3116) Array exotic receiver: index-keyed accessor defines
                 // route through §10.4.2 so the validation matrix (shrink
                 // blocking, redefinition rules) sees them.
-                if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
                 // WasmGC struct — store accessor in sidecar
                 const sDescs = _getSidecarDescs(obj);
                 const nProp = _normalizeDescKey(prop);

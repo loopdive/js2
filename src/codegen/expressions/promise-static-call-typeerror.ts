@@ -35,6 +35,13 @@ function isStaticNonConstructorReceiver(ctx: CodegenContext, receiver: ts.Expres
   while (ts.isAsExpression(expr) || ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr)) {
     expr = expr.expression;
   }
+  // A symbol variable is still a primitive even when its initializer is no
+  // longer syntactically visible at the call site (for example, `const s =
+  // Symbol(); Promise.resolve.call(s, value)`).  Keep this proof aligned with
+  // the oracle's JS value tag so the standalone path emits the required
+  // IsConstructor TypeError instead of treating the native symbol carrier as
+  // an opaque constructor candidate.
+  if (ctx.oracle.staticJsTypeOf(expr) === "symbol") return true;
   if (ts.isNumericLiteral(expr) || ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return true;
   if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
   if (expr.kind === ts.SyntaxKind.NullKeyword) return true;

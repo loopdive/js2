@@ -2448,7 +2448,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
     forEachChild(node, collectAnonymousClassesInNewExpr);
   }
-
   function collectClassesFromStatements(stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[]): void {
     for (const stmt of stmts) {
       // `class X` in a `.d.ts` file is implicitly ambient — only the type
@@ -2461,6 +2460,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // registration for these shapes. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
+        collectAnonymousClassesInNewExpr(stmt);
         // (#4618) A NESTED class declaration whose name is already taken by a
         // class in ANOTHER scope must get its own identity — collection is
         // name-keyed and collectClassDeclaration's structMap guard silently
