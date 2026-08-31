@@ -209,6 +209,7 @@ export function emitBuiltinConstructorIdentity(
   const savedBody = fctx.body;
   fctx.body = initBody;
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   try {
     pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
     fctx.body.push({ op: "local.get", index: objLocal });
@@ -216,6 +217,7 @@ export function emitBuiltinConstructorIdentity(
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });
@@ -508,9 +510,11 @@ export function emitBuiltinNamespaceObject(
   // swap. `emitBuiltinStaticMethodValue` below can trigger a late import (e.g.
   // a host builtin), and `shiftLateImportIndices` only walks `fctx.body` (=
   // initBody here) plus the registered body sets — NOT this raw local. Register
-  // it in `liveBodies` so any `call` funcIdx already accumulated in the outer
-  // body is shifted too; otherwise a late import here would over-shift it.
+  // both arrays in `liveBodies` so a nested closure helper that flushes with
+  // its own FunctionContext still repairs the detached namespace initializer
+  // as well as the outer body.
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   try {
     for (const prop of props) {
       fctx.body.push({ op: "local.get", index: objLocal });
@@ -539,6 +543,7 @@ export function emitBuiltinNamespaceObject(
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });

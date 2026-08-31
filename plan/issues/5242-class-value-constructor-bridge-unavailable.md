@@ -11,6 +11,15 @@ goal: core-semantics
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-31
+# 2026-08-31 (#5242): types.ts +7 / createCodegenContext +1 vs main's
+# post-#5343 refreshed baseline — the `classCtorHostRegistered` context field
+# and its initializer. Stranded-grant restatement (CLAUDE.md "Simulate CI's
+# base too"): the original grant was measured against the pre-merge base and
+# main's baseline refresh re-exposed it.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #5242 — dynamic class-value construction has no constructor bridge
@@ -218,17 +227,39 @@ one, delivering exactly one correct argument regardless of either call's width,
 of the global's state, and of which dispatchers the module emits. Start at
 whatever is cached per class on that first construct.
 
-**The authoritative #5244 handoff lives in dev-5243's own issue file**, which
-carries the full per-width table. (Not linked by path here: that file is on the
-#5243 branch, not this one, and the issue-integrity gate correctly rejects a
-path that does not resolve on the branch citing it.) This section is the
-#5242-side summary; if the two ever disagree, that one is the record.
+**The authoritative #5244 handoff is
+`plan/issues/5243-dynamic-method-bridge-object-arg-null.md`**, which carries
+dev-5243's full per-width table; `plan/issues/5244-duration-from-object-pt0s.md`
+is the lane itself. This section is the #5242-side summary; if they ever
+disagree, those are the record.
 
 Filed as its own lane (#5244 territory). Pinned in this issue rather than in the
 test's expectations because the test's own reduction does not reproduce it (its
 registry is a plain `Map`, which routes to the class mirror for both spellings);
 the `defaultedInline` row was added so the spelling that IS covered is covered
 explicitly rather than by accident.
+
+### Provenance of merge `8251510f63` — the coordinator, not an unknown actor
+
+Commit `56333d3892`'s message records that the 12:23 merge onto this branch
+"was not mine" without naming who made it, which invites exactly the
+investigation it was meant to save. Correcting it here, since the commit message
+is published and must not be rewritten:
+
+**It was the coordinator's shepherd loop.** All six chain PRs went `DIRTY` when
+main's docs merges landed, so it refreshed the whole stack in land order —
+`origin/issue-5241-parametered-bridge-calls @ 442d0cbfb4` (carrying
+`origin/main @ 3193ca1668`) into this branch — after running the fresh-cache
+Temporal harness (11/11), this branch's own #5242 test, and every gate including
+`LOC_GATE_BASE=origin/main`. Same operation on the #5243 branch. No third party
+touched either branch, and the coordinator will now message the owning dev when
+it advances a branch that is actively being worked.
+
+**The re-validation was still right, and its reason is not the attribution.**
+New code arriving after a branch's numbers were taken makes those numbers stale
+until re-taken, *whoever* moved the tip. That is why the post-merge re-run
+(typecheck, #5242/#5239/#5241/#5237, five ratchet gates, equivalence at the
+24-failure baseline) was worth its cost — not because the merge looked unowned.
 
 ### Deliberately NOT done
 

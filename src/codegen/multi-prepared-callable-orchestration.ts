@@ -752,16 +752,16 @@ function publishCallableAttemptCensus(
   return Object.freeze({ attempted, preflightDeclarationNodesByUnitId });
 }
 
-/** Reconcile every selected graph edge against its source overlay evidence. */
+/** Reconcile every fully selected component's graph edges against its cached source evidence. */
 function assertCallableGraphUsesMatchCachedPlans(
   input: MultiPreparedCallableOrchestrationInput,
   graph: IrProgramCallableBindingGraph,
   records: ReadonlyMap<IrBindingId, ProgramCallableRecord>,
   plans: ReadonlyMap<ts.SourceFile, IrOverlayPlan>,
-  preflightComponents: readonly (readonly CallablePreflightMember[])[],
+  selectedComponents: readonly (readonly CallablePreflightMember[])[],
 ): void {
   const selected = new Map(
-    preflightComponents.flatMap((group) => group.map((member) => [member.unitId, member] as const)),
+    selectedComponents.flatMap((group) => group.map((member) => [member.unitId, member] as const)),
   );
   const localCalleesBySource = new Map<ts.SourceFile, ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>>();
   const importedCallsBySource = new Map<ts.SourceFile, ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>>();
@@ -898,7 +898,6 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
     graph,
     preflightComponents,
   );
-  assertCallableGraphUsesMatchCachedPlans(input, graph, records, plans, preflightComponents);
 
   // Dedicated planning runs before the aggregate census and can project a
   // same-spelled function out of its source selection. Re-open only the exact
@@ -1053,6 +1052,14 @@ export function planMultiPreparedCallableComponents(input: MultiPreparedCallable
       );
     }
   }
+  // The graph census deliberately includes every exact connected callable,
+  // including legacy-only siblings. A component can be prepared only when all
+  // of those members survive the cached selector/safety proof. Reconcile call
+  // rows only for that complete selected component: a missing or unsafe member
+  // otherwise declines the whole component without turning direct fallback
+  // into an invariant failure.
+  const selectedComponents = preflightComponents.filter((group) => group.every(({ unitId }) => candidates.has(unitId)));
+  assertCallableGraphUsesMatchCachedPlans(input, graph, records, plans, selectedComponents);
   const components: MultiPreparedProgramCallableComponent[] = [];
   try {
     for (const [groupIndex, preflightGroup] of preflightComponents.entries()) {
