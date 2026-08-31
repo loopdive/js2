@@ -463,3 +463,14 @@ update changes documentation only; the accepted code/test tree is exactly the
 tested d03d merge. A fresh upstream-head check, required pre-push hook, remote
 push, compliant PR body, and independent PR shepherd remain before
 publication. No GitHub issue was created.
+
+### Final documentation-only main sync (2026-08-31)
+
+The last pre-push check found upstream
+`207793dd444e17215db38c955ce3baaca5f85c7a`. Its sole change from c281 is the
+new unrelated repository-local `plan/issues/5247-uncaught-throw-host-bare-exception.md`;
+no #4449 source, test, runner, corpus, configuration, or evidence path changed.
+Root merged it normally as `59bb198317da139e912cd4c98c7a7613bb759760`.
+The accepted code/test tree is therefore byte-identical to tested merge
+`d03d77e419bfcb4e46edc1699c662b606330bb08`; the later commits add only this
+issue's evidence and unrelated upstream markdown. No GitHub issue was created.
