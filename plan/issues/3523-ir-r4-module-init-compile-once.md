@@ -1500,3 +1500,109 @@ Focused suite + `tests/issue-3523-ir-module-init-compile-once.test.ts` +
 `tests/issue-3523-module-init-single-pass.test.ts`; `pnpm run check:ir-only`
 (regenerated baseline); `pnpm run check:ir-fallbacks` bare; typecheck; ratchet
 chain bare + `LOC_GATE_BASE` CI-base simulation; hooks without bypass.
+
+## 2026-08-31 gap-4 checkpoint note — probes P1–P3 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap4-outcome-row`, grounded on `origin/main` at
+`bdd5478d`. Probes run on the **unmodified** tree before any edit.
+
+### P1 — does the identity inventory mint a module-init unit for an empty population?
+
+**No. `unitId` is structurally ABSENT for every non-executable source.**
+
+`IrUnitInventoryScanner` mints the module-init terminal only under
+`modulePopulation.length > 0 || firstStaticInitialization`
+(`src/ir/identity.ts:878`), and `collectModuleInitPopulation`
+(`src/ir/module-init.ts:9`) excludes function/class/interface/type-alias/
+import/export/empty statements. Measured across six shapes
+(`buildIrUnitInventory` → `buildIrPlanningIdentityContext` →
+`buildIrModuleInitPlan`, `target: "host"`):
+
+| shape | `plan.executable` | `plan.unitId` | inventory unit | seeds | evals |
+| --- | --- | --- | --- | --- | --- |
+| function-only | false | null | none | 0 | 0 |
+| type-only | false | null | none | 0 | 0 |
+| truly-empty | false | null | none | 0 | 0 |
+| class-no-static | false | null | none | 0 | 0 |
+| class-static-only | **true** | set | set | 0 | 1 |
+| executable control | **true** | set | set | 0 | 1 |
+
+**`executable === false` ⟺ `plan.unitId === null` ⟺ no inventory module-init
+unit**, with no divergence in any probed shape — including both class shapes,
+which were the plausible counterexample (a static initializer makes the source
+*executable*, so it keeps its unit and its existing row; it is NOT gap-4
+population).
+
+**Identity contract, therefore fail-closed in the direction P1 measured:** a
+`non-executable` row carries `sourceId` and **must NOT carry `unitId`**. This is
+encoded as a validator, not a convention — `nonExecutableOutcomeDefect` rejects
+a `non-executable` row bearing a `unitId`, and the recording site is guarded by
+`plan.executable === false && plan.unitId === null` so a future divergence
+between the two cannot silently mint a row with borrowed identity. The
+executable→unit invariant stays one-directional as it was; this adds the
+non-executable→no-unit direction rather than widening the existing one.
+
+### P2 — the fail-closed surface an injected row hits
+
+A well-formed synthetic `non-executable` row injected into the real five-entry
+ledger on the unmodified tree fires exactly these, and no others:
+
+1. **`evaluateIrOutcomePolicy` (`src/ir/outcomes.ts:333`)** — blocker under
+   `ir-only` (`ready=false`, 1 blocker, the synthetic row), **not** a blocker
+   under `hybrid` (`ready=true`). It reaches the ir-only fallthrough and is
+   caught by `!outcome.irBodyEmitted`. This is the arm the contract adds
+   explicitly; note the row is *already* correctly policy-neutral under hybrid,
+   so only the ir-only path needs the new arm.
+2. **`scripts/check-ir-only.ts:377`** — `single-host: IR emitted 38/39 terminal
+   source units`. The compile-once assertion equates `irBodyEmitted` with
+   `terminalUnits`, so a row that by construction has no IR body to emit breaks
+   it. The census must subtract the non-executable rows from the *expected IR
+   body* side while still counting them as recorded rows.
+3. **`src/codegen/legacy-body-audit.ts:421`** — `unknown-outcome-unit`
+   (`"<module-init> has no exact terminal inventory identity"`), because the
+   join is keyed on `outcome.unitId` being present in `terminalByUnitId`. Per
+   the plan this is asserted, not skipped: the new arm is admitted only when the
+   source genuinely has zero module-init terminal and zero
+   `compileModuleInitBody` root.
+
+Nothing else fired. In particular the duplicate-key, `legacyBodyEmitted`-boolean,
+`emitted`-without-IR-body, non-emitted-claiming-IR-body,
+`unsupported`-without-legacy-body, `irCompiledFuncs`/`irFirstSkipped`
+cross-checks and the invariant ceiling were all silent on the injected row.
+
+### P3 — `check:ir-only` denominator BEFORE
+
+`pnpm run check:ir-only` on `bdd5478d`, verdict **READY**, both lanes identical:
+
+```
+entries 5/5 · terminal units 38 · emitted 38 · unsupported 0 · invariants 0
+legacy body emitted 0 · IR body emitted 38
+by unit kind {"function":26,"module-init":2,"class-member":10}
+```
+
+**Gap-4 population, measured per entry** (module-init rows today):
+
+| entry | rows | module-init |
+| --- | --- | --- |
+| `dom/calendar.ts` | 10 | 1 |
+| `js/algorithms.ts` | 7 | 1 |
+| `js/async.ts` | 6 | **0** ← gap-4 |
+| `js/builtins.ts` | 4 | **0** ← gap-4 |
+| `js/classes.ts` | 11 | **0** ← gap-4 |
+
+So the expected after-delta is **+3 rows per lane** (38 → 41 terminal units,
+`non-executable` 3), `emitted` and `IR body emitted` unchanged at 38. That is a
+measured prediction from the before-state, and the regenerated baseline is the
+check on it — not an assertion.
+
+### Divergences from the plan
+
+None falsifying. Two refinements the probes forced, both narrowing:
+
+- The plan left P1's answer open ("required or structurally absent"); it is
+  **structurally absent**, so the contract is a *prohibition* on `unitId`.
+- The plan's "exactly ONE such row per source whose module-init plan says
+  `executable: false`" is implemented as `executable === false && unitId ===
+  null`. P1 measured these to be the same set, and the conjunction is the
+  fail-closed spelling: were they ever to diverge, the source keeps its existing
+  unit row and gains no second row, rather than double-counting.
