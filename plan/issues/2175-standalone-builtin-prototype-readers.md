@@ -3896,3 +3896,264 @@ not resolve `typescript`. No compiler/test lane or commit ran, the
 A direct `import("typescript")` probe now resolves version 5.9.3 from the same
 worktree, so the retry remains the complete normal hook chain rather than a
 skipped or substituted gate.
+
+### Integrated merge-head replay plan (2026-08-31)
+
+The validation head is merge commit
+`ef9e5e274b9c2208ea33ed01193a410eacac90be`, with upstream parent
+`d1f2ed7d45b2c280cb5cea68266e73665a70f7f1`. The merged upstream delta is
+documentation/artifact-only for this slice; it has no owned D5 source or test
+overlap. This plan therefore replays the already reviewed D5 behavior at the
+integrated head without copying, merging, or changing any implementation.
+
+The integrated-head normal hook has already passed the focused #2175 **30 / 30**
+proof, targeted lint/format, LOC/function budgets, and oracle ratchet. That is
+recorded evidence and will not be rerun in this lane. The remaining commands
+are strictly serial, with at most one compiler/test process:
+
+1. Run the exact sorted four-row standalone manifest with
+   `harness-flip-probe --check-determinism`, which first executes its mandatory
+   must-pass and must-fail controls. Write a fresh ignored artifact at
+   `.tmp/2175-d5-null-proto-rows-integrated-ef9.jsonl`, preserving both earlier
+   JSONL artifacts. Reconcile the byte-sorted LF manifest SHA-256
+   `ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`, two
+   deterministic measurements per row, exactly four callbacks/rows, all-four
+   `standalone` pass results, and the exact requested paths.
+2. Only if that replay is fully green, run
+   `tests/issue-5239-object-create-class-prototype.test.ts` in one Vitest fork
+   with file parallelism disabled; expected result is **2 / 2**.
+3. Only if #5239 is green, run the documented TS7 typecheck
+   (`node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`) and
+   `git diff --check` serially. The hook evidence above substitutes for another
+   focused replay, Prettier/Biome, budget, or oracle invocation.
+
+Stop at the first real failure, retain its fresh artifact/output, and record
+the exact command and result here. No source/test edit, Test262 corpus update,
+commit, push, PR, or GitHub issue is authorized by this replay.
+
+No GitHub issue was created.
+
+### Integrated four-row standalone replay: PASS at 4 / 4 (2026-08-31)
+
+At integrated merge head `ef9e5e274b9c2208ea33ed01193a410eacac90be`, with
+the local corpus still detached at
+`b363f29d3c43c626dc852744ad64a0b48a003693`, exactly one harness process ran:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows-integrated-ef9.jsonl
+~~~
+
+Exact harness output was: `control: must-pass -> pass`; `control: must-fail ->
+fail (Test262Error: this comparison must fail Expected SameValue(«1», «2») to
+be true | at L13: assert.sameValue(1, 2, "this c)`; `control: OK — instrument
+reports both directions.`; `running 4 file(s) through the assembled harness...`;
+`{"pass":4}`; `total: 4 (counts verified to sum)`; `nondeterministic: 0`; and
+`wrote 4 rows to .tmp/2175-d5-null-proto-rows-integrated-ef9.jsonl`.
+
+The byte-sorted LF manifest SHA-256 is
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+The fresh ignored JSONL has exactly four rows/results (one for each requested
+callback), each with `target: standalone` and `status: pass`; its sorted paths
+are exactly the requested four distinct paths, one record each. That reconciles
+the four callbacks, four requested rows, four JSONL records, and harness total
+without replacing either preserved historical artifact.
+
+### Integrated #5239 bridge regression: PASS at 2 / 2 (2026-08-31)
+
+Only after the integrated four-row manifest was fully green, exactly one Vitest
+fork ran:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-5239-object-create-class-prototype.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+It exited 0: one test file passed and **2 / 2** tests passed. Vitest reported
+**9.77 s** total duration (`transform 6.34 s`, `collect 8.66 s`, tests
+`840 ms`, `prepare 49 ms`). This preserves the #5239 class-prototype bridge
+regression boundary; neither that source nor test changed in this D5 replay.
+The TS7 typecheck and `git diff --check` are now the remaining released serial
+checks. No source or test changed, and no GitHub issue was created.
+
+### Integrated TS7 typecheck: BLOCK (2026-08-31)
+
+After the integrated four-row **4 / 4** replay and #5239 **2 / 2** regression
+were both green, the next single process ran:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+~~~
+
+It exited **1** after **13.82 s**. Exact output follows:
+
+~~~text
+src/codegen/object-runtime.ts(2298,7): error TS2322: Type '{ op: "local.get"; index: number; } | { op: "call"; funcIdx: number; } | { op: "local.tee"; index: number; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | { op: "if"; blockType: { kind: "empty"; }; then: ({ ...; } | { ...; })[]; } | ... 9 more ... | Instr' is not assignable to type 'Instr'.
+  Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+    Types of property 'op' are incompatible.
+      Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2314,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2315,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2316,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2317,7): error TS2322: Type '{ op: "local.get"; index: number; } | { op: "call"; funcIdx: number; } | { op: "local.tee"; index: number; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | { op: "if"; blockType: { kind: "empty"; }; then: ({ ...; } | { ...; })[]; } | ... 9 more ... | Instr' is not assignable to type 'Instr'.
+  Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+    Types of property 'op' are incompatible.
+      Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2323,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2325,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2444,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2588,7): error TS2322: Type '{ op: string; index: number; } | { op: string; funcIdx: number; } | { op: string; blockType: { kind: string; type: { kind: string; }; }; then: Instr[]; else: Instr[]; } | Instr' is not assignable to type 'Instr'.
+  Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+    Types of property 'op' are incompatible.
+      Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(4641,11): error TS2322: Type '({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | ... 7 more ... | { ...; })[]; } | { ...; } | { ...; } | { ...; } | Instr)[]' is not assignable to type 'Instr[]'.
+  Type '{ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | ... 7 more ... | { ...; })[]; } | { ...; } | { ...; } | { ...; } | Instr' is not assignable to type 'Instr'.
+    Type '{ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | { op: "ref.is_null"; } | ... 6 more ... | { ...; })[]; }' is not assignable to type 'Instr'.
+      Types of property 'then' are incompatible.
+        Type '({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | ... 5 more ... | { ...; })[]' is not assignable to type 'Instr[]'.
+          Type '{ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | ... 5 more ... | { ...; }' is not assignable to type 'Instr'.
+            Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+              Types of property 'op' are incompatible.
+                Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+~~~
+
+This is a real static failure in existing #2175-owned
+`src/codegen/object-runtime.ts` emission-array typing, concentrated at lines
+2298, 2314–2317, 2323, 2325, 2444, 2588, and 4641. Per the integrated replay
+plan, the sequence stops here: `git diff --check` and all remaining checks were
+not run, no source/test was altered, and the fresh green Test262 JSONL remains
+preserved. No GitHub issue was created.
+
+### TS7 merge-block repair plan (2026-08-31)
+
+This is a merge-blocking static regression, not a runtime/Test262 behavior
+failure. Read-only source inspection reduces the nine TS2322 locations to two
+native emission bodies: `__extern_get` at 2275 and `__extern_has` at 4641. The
+new D5 receiver-aware companion tails contain exactly three conditional literal
+instruction arrays that lack an `Instr[]` contextual check: the get tail at
+2588 and the fnctor/direct has tails at 4777 and 4845. TS7 consequently widens
+their `{ op: ... }` literals to `string`; that widened branch contaminates each
+containing body, producing the apparent errors at earlier ordinary instructions
+as well.
+
+The bounded repair is type-only and preserves emitted instruction order,
+branches, locals, helper calls, and runtime behavior: wrap only those three
+literal tail alternatives in `satisfies Instr[]`. It uses neither `any` nor a
+cast, does not change the `Instr` union, and keeps the existing explicit-null,
+ordinary terminal, fnctor, Proxy, and #5239 control flow byte-for-byte at
+runtime. The direct acceptance controls are the prior integrated Test262 **4 /
+4**, #5239 **2 / 2**, and focused **30 / 30** evidence; after the edit, run
+only targeted Prettier/Biome and `git diff --check`. An independent reviewer
+must rerun TS7 before this blocker is cleared; no compiler, Vitest, Test262,
+TS7 rerun, hook, or Git mutation is authorized in this repair lane.
+
+Risks are limited to accidentally widening the annotation beyond the three D5
+tail arrays or changing their evaluation order. The patch will avoid both, and
+the follow-up review must verify that all three source alternatives still emit
+the same direct `local.get`/predicate/call/`if` sequence.
+
+No GitHub issue was created.
+
+### TS7 merge-block repair: static checkpoint (2026-08-31)
+
+The repair changed only `src/codegen/object-runtime.ts` at the three planned
+D5 companion tails:
+
+- `__extern_get` terminal get-miss alternative (2588):
+  `: ([…] satisfies Instr[])`;
+- `__extern_has` approved-fnctor terminal has-miss alternative (4777):
+  `: ([…] satisfies Instr[])`; and
+- `__extern_has` direct-$Object terminal has-miss alternative (4845):
+  `: ([…] satisfies Instr[])`.
+
+Each is a contextual type constraint on the existing literal array, not a
+cast. The emitted `local.get`, terminal-predicate call, and value-producing
+`if` remain in the same order with the same operands; no `any`, `Instr`-union,
+control-flow, helper, local, source test, or Test262 row changed.
+
+The only permitted post-edit static gates passed:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/prettier/bin/prettier.cjs --check \
+  plan/issues/2175-standalone-builtin-prototype-readers.md \
+  src/codegen/object-runtime.ts
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/@biomejs/biome/bin/biome lint --diagnostic-level=error \
+  src/codegen/object-runtime.ts
+git diff --check
+~~~
+
+Prettier reported `All matched files use Prettier code style!`; Biome checked
+one file with no errors or fixes; and `git diff --check` exited 0. The dirty
+inventory is now exactly this tracker and `src/codegen/object-runtime.ts`.
+TS7, compiler, Vitest, Test262, hooks, and Git mutations remain deliberately
+unrun after this repair. The next required step is independent review followed
+by an authorized TS7 rerun; until then the prior TS7 BLOCK is not cleared.
+
+No GitHub issue was created.
+
+### Independent TS7 repair review and released replay plan (2026-08-31)
+
+An independent read-only review accepted the bounded repair. The unstaged
+source delta adds exactly three `satisfies Instr[]` contextual checks, at the
+`__extern_get` terminal get-miss alternative and the approved-fnctor/direct
+`__extern_has` terminal has-miss alternatives. Those are the three literal
+arrays identified as the source of all nine TS2322 diagnostics. `Instr`
+requires nested `if.then`/`if.else` values to be `Instr[]`, so the contextual
+checks also validate the nested arrays rather than concealing a heterogeneous
+instruction. The delta adds no `as`/`any`, helper, local, branch, or emitted
+instruction; `satisfies` is type-only.
+
+The index is empty. The dirty inventory remains exactly this tracker and
+`src/codegen/object-runtime.ts`; staged and unstaged targeted `git diff --check`
+both exit 0. The released replay is one direct TypeScript 7 process:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+~~~
+
+Only after a clean exit may the targeted tracker/source `git diff --check`,
+Prettier, and Biome checks run. No compiler, Vitest, Test262, source/test edit,
+or Git mutation is part of this replay.
+
+### TS7 replay attempt — non-authoritative wrapper loss (2026-08-31)
+
+The released direct Node command was launched once and occupied the lane for
+13.9 seconds with no TypeScript diagnostics printed. The timing wrapper then
+attempted to assign zsh's read-only special parameter `status` after Node
+returned, producing `zsh: read-only variable: status` before it could capture
+the compiler's actual exit code. That shell failure is not evidence of a
+TypeScript failure, but it also prevents claiming a clean TypeScript exit.
+This attempt is therefore non-authoritative. No post-green diff, Prettier, or
+Biome gate ran; the approved next action is one exact direct TS7 rerun with a
+nonreserved result variable, followed by those static gates only on exit 0.
+
+### Released TS7 replay: PASS (2026-08-31)
+
+The authorized clean replay ran exactly:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+~~~
+
+It exited **0** after **13 seconds** with no diagnostics. This is the
+authoritative result; the preceding wrapper-loss attempt remains recorded only
+as non-evidence. The released post-green checks also exited 0:
+
+- targeted `git diff --check` on this tracker and
+  `src/codegen/object-runtime.ts` produced no whitespace errors;
+- Prettier reported `All matched files use Prettier code style!`; and
+- Biome checked the one TypeScript source file with no errors or fixes.
+
+No compiler, Vitest, Test262, source/test change, hook, Git add, commit, push,
+or PR operation ran in this validation step.

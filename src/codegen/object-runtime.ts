@@ -2587,7 +2587,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // an own entry (even one holding `undefined`) still shadows (§7.3.2).
       ...(objectProtoIndexGetMiss === undefined
         ? getMiss()
-        : [
+        : ([
             // An explicitly null final terminal has no implicit
             // Object.prototype companion. This narrow terminal gate applies to
             // real `$Object` walks (direct or fnctor); an unrooted non-$Object
@@ -2600,7 +2600,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               then: objectProtoIndexGetMiss,
               else: getMiss(),
             },
-          ]),
+          ] satisfies Instr[])),
     ];
     registerNative(
       "__extern_get",
@@ -4776,7 +4776,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // compatibility answer.
           ...(fnctorProtoIndexHasMiss === undefined
             ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
-            : [
+            : ([
                 { op: "local.get", index: nullProtoRootLocal! },
                 { op: "call", funcIdx: objectTerminalAllowsImplicitProtoIdx },
                 {
@@ -4785,7 +4785,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   then: fnctorProtoIndexHasMiss,
                   else: [{ op: "i32.const", value: 0 }],
                 },
-              ]),
+              ] satisfies Instr[])),
           { op: "return" },
         ],
       },
@@ -4844,7 +4844,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // non-$Object callers retain their prior permissive companion behavior.
       ...(objectProtoIndexHasMiss === undefined
         ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
-        : [
+        : ([
             { op: "local.get", index: nullProtoRootLocal! },
             { op: "call", funcIdx: objectTerminalAllowsImplicitProtoIdx },
             {
@@ -4853,7 +4853,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               then: objectProtoIndexHasMiss,
               else: [{ op: "i32.const", value: 0 }],
             },
-          ]),
+          ] satisfies Instr[])),
     ];
     registerNative(
       "__extern_has",
