@@ -953,353 +953,449 @@ function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   return { pc: bestPc, reg: bestReg };
 }
 
+/**
+ * Mutable execution state shared by the outlined opcode-family dispatchers.
+ * Keeping the cache in one carrier preserves the original frame-stack machine
+ * while keeping `run` itself small enough for the self-compiled runtime
+ * provider's Wasm tiering pipeline.
+ */
+class DispatchState {
+  readonly frames: Frame[] = [];
+  readonly callSites: number[] = [];
+  frame: Frame;
+  meta: FuncMeta;
+  code: number[];
+  consts: JSValue[];
+  regs: Regs;
+  pc: number;
+  acc: JSValue;
+  curInstrPc: number;
+  steps: number;
+
+  constructor(bottom: Frame) {
+    this.frame = bottom;
+    this.meta = bottom.meta;
+    this.code = bottom.meta.code;
+    this.consts = bottom.meta.consts;
+    this.regs = bottom.regs;
+    this.pc = bottom.pc;
+    this.acc = undefined;
+    this.curInstrPc = 0;
+    this.steps = 0;
+  }
+}
+
+/** Refresh the cache after a Call, Return, or exception-table unwind. */
+function installActiveFrame(state: DispatchState, frame: Frame, pc: number): void {
+  state.frame = frame;
+  state.meta = frame.meta;
+  state.code = frame.meta.code;
+  state.consts = frame.meta.consts;
+  state.regs = frame.regs;
+  state.pc = pc;
+}
+
+// These intentionally remain separate, substantial opcode-family functions.
+// The runtime-eval provider self-compiles this interpreter; folding every
+// opcode back into `run` creates a Wasm body too large for V8's optimizing tier.
+function dispatchValueAndOperatorOp(state: DispatchState, op: number, a: number, b: number): void {
+  const consts = state.consts;
+  const regs = state.regs;
+  let acc = state.acc;
+
+  switch (op) {
+    // ── const / register moves ──
+    case Op.LdaConst:
+      acc = consts[a];
+      break;
+    case Op.LdaUndef:
+      acc = undefined;
+      break;
+    case Op.LdaNull:
+      acc = null;
+      break;
+    case Op.LdaTrue:
+      acc = true;
+      break;
+    case Op.LdaFalse:
+      acc = false;
+      break;
+    case Op.LdaZero:
+      acc = 0;
+      break;
+    case Op.Star:
+      regs[a] = acc;
+      break;
+    case Op.Ldar:
+      acc = regs[a];
+      break;
+    case Op.Mov:
+      regs[b] = regs[a];
+      break;
+
+    // ── arithmetic / comparison (acc = op(regs[a], acc)) ──
+    case Op.Add:
+      acc = anyAdd(regs[a], acc);
+      break;
+    case Op.Sub:
+      acc = anySub(regs[a], acc);
+      break;
+    case Op.Mul:
+      acc = anyMul(regs[a], acc);
+      break;
+    case Op.Div:
+      acc = anyDiv(regs[a], acc);
+      break;
+    case Op.Mod:
+      acc = anyMod(regs[a], acc);
+      break;
+    case Op.Shl:
+      acc = anyShl(regs[a], acc);
+      break;
+    case Op.Shr:
+      acc = anyShr(regs[a], acc);
+      break;
+    case Op.ShrU:
+      acc = anyShrU(regs[a], acc);
+      break;
+    case Op.BitOr:
+      acc = anyBitOr(regs[a], acc);
+      break;
+    case Op.BitAnd:
+      acc = anyBitAnd(regs[a], acc);
+      break;
+    case Op.BitXor:
+      acc = anyBitXor(regs[a], acc);
+      break;
+    case Op.Neg:
+      acc = anyNeg(acc);
+      break;
+    case Op.Not:
+      acc = anyLogicalNot(acc);
+      break;
+    case Op.TypeOf:
+      acc = runtimeEvalEnvironment(state.frame.envRec, acc) === null ? anyTypeof(acc) : "function";
+      break;
+    case Op.Eq:
+      acc = anyLooseEq(regs[a], acc);
+      break;
+    case Op.StrictEq:
+      acc = anyStrictEq(regs[a], acc);
+      break;
+    case Op.Lt:
+      acc = anyLt(regs[a], acc);
+      break;
+    case Op.Le:
+      acc = anyLe(regs[a], acc);
+      break;
+    case Op.Gt:
+      acc = anyGt(regs[a], acc);
+      break;
+    case Op.Ge:
+      acc = anyGe(regs[a], acc);
+      break;
+    default:
+      throw new InterpInternalError(`unexpected value/operator opcode ${op} at pc ${state.curInstrPc}`);
+  }
+
+  state.acc = acc;
+}
+
+function dispatchPropertyAndEnvironmentOp(state: DispatchState, op: number, a: number, b: number): void {
+  const frame = state.frame;
+  const meta = state.meta;
+  const consts = state.consts;
+  const regs = state.regs;
+  let acc = state.acc;
+
+  switch (op) {
+    // ── property (the shared dynamic MOP) ──
+    case Op.GetProp:
+      acc = interpretedPropertyGet(frame.envRec, acc, consts[a]);
+      break;
+    case Op.GetElem:
+      acc = interpretedPropertyGet(frame.envRec, acc, regs[a]);
+      break;
+    case Op.SetProp:
+      acc = anySet(regs[b], consts[a], acc);
+      mirrorMappedArgumentsWrite(frame.envRec, regs[b], consts[a], acc);
+      break;
+    case Op.SetElem:
+      acc = anySet(regs[b], regs[a], acc);
+      mirrorMappedArgumentsWrite(frame.envRec, regs[b], regs[a], acc);
+      break;
+    case Op.DeleteProp: {
+      const object = acc;
+      const deleted = deletePropertyWithMappedArguments(frame.envRec, object, consts[a]);
+      if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
+      acc = deleted;
+      break;
+    }
+    case Op.DeleteElem: {
+      const object = acc;
+      const key = regs[a];
+      const deleted = deletePropertyWithMappedArguments(frame.envRec, object, key);
+      if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
+      acc = deleted;
+      break;
+    }
+    case Op.DeleteName:
+      acc = envDelete(frame.envRec, consts[a]);
+      break;
+
+    // ── variables (env-record chain, doc §14) ──
+    case Op.LdGlobal:
+    case Op.LdName:
+      acc = envLookup(frame.envRec, consts[a]);
+      break;
+    case Op.StGlobal:
+    case Op.StName:
+      envAssign(frame.envRec, consts[a], acc, (meta.flags & FLAG_STRICT) !== 0);
+      break;
+    case Op.InitName:
+      envInitialize(frame.envRec, consts[a], acc);
+      break;
+    default:
+      throw new InterpInternalError(`unexpected property/environment opcode ${op} at pc ${state.curInstrPc}`);
+  }
+
+  state.acc = acc;
+}
+
+function dispatchCallOp(state: DispatchState, op: number, a: number, b: number): void {
+  const frame = state.frame;
+  const regs = state.regs;
+  let acc = state.acc;
+
+  switch (op) {
+    case Op.Call: {
+      const base = a;
+      const argc = b;
+      const originalCallee = acc;
+      const evalEnv = runtimeEvalEnvironment(frame.envRec, originalCallee);
+      const callee = evalEnv === null ? __runtime_eval_unwrap_interpreted_callback(originalCallee) : originalCallee;
+      if (evalEnv !== null) {
+        const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(evalEnv.backing as object);
+        if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
+        acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, evalEnv.backing, false);
+      } else if (isInterpClosure(callee)) {
+        const binding = INTERP_BINDINGS.get(callee as object)!;
+        const cm = binding.meta;
+        if ((cm.flags & FLAG_RUNTIME_EVAL) !== 0) {
+          const globalEnv = globalEnvironment(binding.envRec);
+          if (globalEnv === null) throw new InterpInternalError("runtime eval closure has no realm");
+          const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(globalEnv.backing as object);
+          if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
+          acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, globalEnv.backing, false);
+        } else if ((cm.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
+          const globalEnv = globalEnvironment(binding.envRec);
+          if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
+          const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
+          if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
+          const args: JSValue[] = new Array(argc);
+          for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
+          acc = hook(args);
+        } else if ((cm.flags & FLAG_CLASS_CONSTRUCTOR) !== 0) {
+          throw new TypeError("Class constructor cannot be invoked without 'new'");
+        } else {
+          const cregs: Regs = new Array(cm.regCount);
+          for (let i = 0; i < cm.regCount; i += 1) cregs[i] = undefined;
+          cregs[0] = (cm.flags & FLAG_STRICT) !== 0 ? regs[base] : normalizeSloppyThis(binding.envRec, regs[base]);
+          const np = argc < cm.paramCount ? argc : cm.paramCount;
+          for (let i = 0; i < np; i += 1) cregs[1 + i] = regs[base + 1 + i];
+          // Suspend the caller, install the callee frame (no host recursion).
+          frame.pc = state.pc;
+          state.frames.push(frame);
+          state.callSites.push(state.curInstrPc);
+          installActiveFrame(state, new Frame(cm, 0, cregs, binding.envRec, frame), 0);
+        }
+      } else {
+        // Host boundary (E1↔E2 SEAM #2). TypeError on a non-callable is a
+        // real JS exception → routed through the exn table.
+        if (typeof callee !== "function") {
+          throw new TypeError(`${describe(callee)} is not a function`);
+        }
+        const recv = regs[base];
+        const args: JSValue[] = new Array(argc);
+        for (let i = 0; i < argc; i += 1) {
+          // A closure written through the erased register vector can be carried
+          // as `$AnyValue` in a standalone build. Normalize that carrier before
+          // testing the provider-local closure identity; otherwise an inline HOF
+          // callback crosses as a non-callable raw value instead of its marker.
+          const arg = __runtime_eval_unwrap_interpreted_callback(regs[base + 1 + i]);
+          args[i] = isInterpClosure(arg) ? exposeRuntimeEvalValue(arg) : arg;
+        }
+        acc = __runtime_eval_apply_callable(callee as (...a: JSValue[]) => JSValue, recv, args);
+      }
+      break;
+    }
+    case Op.Construct: {
+      const base = a;
+      const argc = b;
+      const originalCallee = acc;
+      const args: JSValue[] = new Array(argc);
+      for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
+      if (runtimeEvalEnvironment(frame.envRec, originalCallee) !== null) {
+        throw new TypeError("eval is not a constructor");
+      }
+      const callee = __runtime_eval_unwrap_interpreted_callback(originalCallee);
+      if (isInterpClosure(callee)) {
+        const binding = INTERP_BINDINGS.get(callee as object)!;
+        if ((binding.meta.flags & FLAG_RUNTIME_EVAL) !== 0) {
+          throw new TypeError("eval is not a constructor");
+        }
+        if ((binding.meta.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
+          const globalEnv = globalEnvironment(binding.envRec);
+          if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
+          const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
+          if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
+          acc = hook(args);
+        } else {
+          const proto = (callee as { prototype?: JSValue }).prototype;
+          const self: JSValue = Object.create(proto && typeof proto === "object" ? proto : Object.prototype);
+          const r = interpEnter(binding.meta, binding.envRec, self, args); // boundary recursion (Phase 1)
+          acc = r !== null && (typeof r === "object" || typeof r === "function") ? r : self;
+        }
+      } else if (typeof callee === "function") {
+        acc = constructValue(callee, args);
+      } else {
+        throw new TypeError(`${describe(callee)} is not a constructor`);
+      }
+      break;
+    }
+    case Op.CallBuiltin: {
+      const builtinId = a;
+      const base = b;
+      const argc = state.code[state.pc]!;
+      state.pc += 1;
+      acc = callBuiltin(builtinId, regs, base, argc, frame);
+      break;
+    }
+    default:
+      throw new InterpInternalError(`unexpected call opcode ${op} at pc ${state.curInstrPc}`);
+  }
+
+  state.acc = acc;
+}
+
+/** Return true only when the bottom activation has completed. */
+function dispatchControlOp(state: DispatchState, op: number, a: number): boolean {
+  switch (op) {
+    // ── control (absolute PCs; jumps are always WIDE so `a` = target) ──
+    case Op.Jump:
+      state.pc = a;
+      return false;
+    case Op.JumpIfTrue:
+      if (isTruthy(state.acc)) state.pc = a;
+      return false;
+    case Op.JumpIfFalse:
+      if (!isTruthy(state.acc)) state.pc = a;
+      return false;
+    case Op.Return: {
+      const result = state.acc;
+      if (state.frames.length === 0) return true;
+      const caller = state.frames.pop()!;
+      state.callSites.pop();
+      installActiveFrame(state, caller, caller.pc);
+      state.acc = result; // callee's result becomes the caller's acc
+      return false;
+    }
+    // ── exceptions ──
+    case Op.Throw:
+      throw new ThrowSignal(state.acc);
+    default:
+      throw new InterpInternalError(`unexpected control opcode ${op} at pc ${state.curInstrPc}`);
+  }
+}
+
+/** Decode and execute one bytecode instruction. Returns true on bottom Return. */
+function dispatchNext(state: DispatchState): boolean {
+  state.steps += 1;
+  if (state.steps > MAX_STEPS) throw new InterpInternalError("step budget exceeded (malformed bytecode?)");
+  state.curInstrPc = state.pc;
+  const word = state.code[state.pc]!;
+  state.pc += 1;
+  const op = word & OP_MASK;
+  const b = (word >>> 20) & OPERAND_MASK;
+  let a: number;
+  if ((word & WIDE_FLAG) !== 0) {
+    a = state.code[state.pc]!;
+    state.pc += 1;
+  } else {
+    a = (word >>> 8) & OPERAND_MASK;
+  }
+
+  if (
+    op <= Op.Le ||
+    op === Op.Gt ||
+    op === Op.Ge ||
+    op === Op.Shl ||
+    op === Op.Shr ||
+    op === Op.BitOr ||
+    op === Op.BitAnd ||
+    op === Op.BitXor ||
+    op === Op.ShrU
+  ) {
+    dispatchValueAndOperatorOp(state, op, a, b);
+    return false;
+  }
+  if (
+    (op >= Op.GetProp && op <= Op.StName) ||
+    op === Op.InitName ||
+    op === Op.DeleteProp ||
+    op === Op.DeleteElem ||
+    op === Op.DeleteName
+  ) {
+    dispatchPropertyAndEnvironmentOp(state, op, a, b);
+    return false;
+  }
+  if (op >= Op.Call && op <= Op.CallBuiltin) {
+    dispatchCallOp(state, op, a, b);
+    return false;
+  }
+  if (op >= Op.Jump && op <= Op.Throw) {
+    return dispatchControlOp(state, op, a);
+  }
+  throw new InterpInternalError(`unknown opcode ${op} at pc ${state.curInstrPc}`);
+}
+
+/** Route a guest exception through handlers or caller call sites, then resume. */
+function routeException(state: DispatchState, e: unknown): void {
+  if (e instanceof InterpInternalError) throw e; // never route interpreter bugs
+  const value: JSValue = e instanceof ThrowSignal ? e.value : e;
+  // Unwind: scan the current frame, then callers (at their call-site PCs).
+  let throwPc = state.curInstrPc;
+  for (;;) {
+    const h = findHandler(state.meta.exnTable, throwPc);
+    if (h.pc >= 0) {
+      state.regs[h.reg] = value;
+      state.pc = h.pc;
+      return;
+    }
+    if (state.frames.length === 0) {
+      // Escape across the host boundary (E4 replaces this with a Wasm EH tag).
+      // Rethrow the RAW value so a host `try/catch` sees the real exception.
+      throw value;
+    }
+    const caller = state.frames.pop()!;
+    const cs = state.callSites.pop()!;
+    installActiveFrame(state, caller, caller.pc);
+    throwPc = cs;
+  }
+}
+
 /** Run a whole activation to completion, returning its `Return` value. */
 function run(bottom: Frame): JSValue {
   // Explicit frame stack (suspended callers) + parallel call-site PCs (needed for
   // correct exn-region coverage on unwind — the return PC is one past the Call,
   // which would fall on `tryEnd` and miss the half-open interval).
-  const frames: Frame[] = [];
-  const callSites: number[] = [];
-
-  let frame = bottom;
-  let meta = frame.meta;
-  let code = meta.code;
-  let consts = meta.consts;
-  let regs = frame.regs;
-  let pc = frame.pc;
-  let acc: JSValue = undefined;
-  let curInstrPc = 0;
-  let steps = 0;
+  const state = new DispatchState(bottom);
 
   for (;;) {
     try {
-      for (;;) {
-        steps += 1;
-        if (steps > MAX_STEPS) throw new InterpInternalError("step budget exceeded (malformed bytecode?)");
-        curInstrPc = pc;
-        const word = code[pc]!;
-        pc += 1;
-        const op = word & OP_MASK;
-        const b = (word >>> 20) & OPERAND_MASK;
-        let a: number;
-        if ((word & WIDE_FLAG) !== 0) {
-          a = code[pc]!;
-          pc += 1;
-        } else {
-          a = (word >>> 8) & OPERAND_MASK;
-        }
-
-        switch (op) {
-          // ── const / register moves ──
-          case Op.LdaConst:
-            acc = consts[a];
-            break;
-          case Op.LdaUndef:
-            acc = undefined;
-            break;
-          case Op.LdaNull:
-            acc = null;
-            break;
-          case Op.LdaTrue:
-            acc = true;
-            break;
-          case Op.LdaFalse:
-            acc = false;
-            break;
-          case Op.LdaZero:
-            acc = 0;
-            break;
-          case Op.Star:
-            regs[a] = acc;
-            break;
-          case Op.Ldar:
-            acc = regs[a];
-            break;
-          case Op.Mov:
-            regs[b] = regs[a];
-            break;
-
-          // ── arithmetic / comparison (acc = op(regs[a], acc)) ──
-          case Op.Add:
-            acc = anyAdd(regs[a], acc);
-            break;
-          case Op.Sub:
-            acc = anySub(regs[a], acc);
-            break;
-          case Op.Mul:
-            acc = anyMul(regs[a], acc);
-            break;
-          case Op.Div:
-            acc = anyDiv(regs[a], acc);
-            break;
-          case Op.Mod:
-            acc = anyMod(regs[a], acc);
-            break;
-          case Op.Shl:
-            acc = anyShl(regs[a], acc);
-            break;
-          case Op.Shr:
-            acc = anyShr(regs[a], acc);
-            break;
-          case Op.ShrU:
-            acc = anyShrU(regs[a], acc);
-            break;
-          case Op.BitOr:
-            acc = anyBitOr(regs[a], acc);
-            break;
-          case Op.BitAnd:
-            acc = anyBitAnd(regs[a], acc);
-            break;
-          case Op.BitXor:
-            acc = anyBitXor(regs[a], acc);
-            break;
-          case Op.Neg:
-            acc = anyNeg(acc);
-            break;
-          case Op.Not:
-            acc = anyLogicalNot(acc);
-            break;
-          case Op.TypeOf:
-            acc = runtimeEvalEnvironment(frame.envRec, acc) === null ? anyTypeof(acc) : "function";
-            break;
-          case Op.Eq:
-            acc = anyLooseEq(regs[a], acc);
-            break;
-          case Op.StrictEq:
-            acc = anyStrictEq(regs[a], acc);
-            break;
-          case Op.Lt:
-            acc = anyLt(regs[a], acc);
-            break;
-          case Op.Le:
-            acc = anyLe(regs[a], acc);
-            break;
-          case Op.Gt:
-            acc = anyGt(regs[a], acc);
-            break;
-          case Op.Ge:
-            acc = anyGe(regs[a], acc);
-            break;
-
-          // ── property (the shared dynamic MOP) ──
-          case Op.GetProp:
-            acc = interpretedPropertyGet(frame.envRec, acc, consts[a]);
-            break;
-          case Op.GetElem:
-            acc = interpretedPropertyGet(frame.envRec, acc, regs[a]);
-            break;
-          case Op.SetProp:
-            acc = anySet(regs[b], consts[a], acc);
-            mirrorMappedArgumentsWrite(frame.envRec, regs[b], consts[a], acc);
-            break;
-          case Op.SetElem:
-            acc = anySet(regs[b], regs[a], acc);
-            mirrorMappedArgumentsWrite(frame.envRec, regs[b], regs[a], acc);
-            break;
-          case Op.DeleteProp: {
-            const object = acc;
-            const deleted = deletePropertyWithMappedArguments(frame.envRec, object, consts[a]);
-            if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
-            acc = deleted;
-            break;
-          }
-          case Op.DeleteElem: {
-            const object = acc;
-            const key = regs[a];
-            const deleted = deletePropertyWithMappedArguments(frame.envRec, object, key);
-            if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
-            acc = deleted;
-            break;
-          }
-          case Op.DeleteName:
-            acc = envDelete(frame.envRec, consts[a]);
-            break;
-
-          // ── variables (env-record chain, doc §14) ──
-          case Op.LdGlobal:
-          case Op.LdName:
-            acc = envLookup(frame.envRec, consts[a]);
-            break;
-          case Op.StGlobal:
-          case Op.StName:
-            envAssign(frame.envRec, consts[a], acc, (meta.flags & FLAG_STRICT) !== 0);
-            break;
-          case Op.InitName:
-            envInitialize(frame.envRec, consts[a], acc);
-            break;
-          // ── calls ──
-          case Op.Call: {
-            const base = a;
-            const argc = b;
-            const originalCallee = acc;
-            const evalEnv = runtimeEvalEnvironment(frame.envRec, originalCallee);
-            const callee =
-              evalEnv === null ? __runtime_eval_unwrap_interpreted_callback(originalCallee) : originalCallee;
-            if (evalEnv !== null) {
-              const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(evalEnv.backing as object);
-              if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
-              acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, evalEnv.backing, false);
-            } else if (isInterpClosure(callee)) {
-              const binding = INTERP_BINDINGS.get(callee as object)!;
-              const cm = binding.meta;
-              if ((cm.flags & FLAG_RUNTIME_EVAL) !== 0) {
-                const globalEnv = globalEnvironment(binding.envRec);
-                if (globalEnv === null) throw new InterpInternalError("runtime eval closure has no realm");
-                const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(globalEnv.backing as object);
-                if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
-                acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, globalEnv.backing, false);
-              } else if ((cm.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
-                const globalEnv = globalEnvironment(binding.envRec);
-                if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
-                const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
-                if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
-                const args: JSValue[] = new Array(argc);
-                for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
-                acc = hook(args);
-              } else if ((cm.flags & FLAG_CLASS_CONSTRUCTOR) !== 0) {
-                throw new TypeError("Class constructor cannot be invoked without 'new'");
-              } else {
-                const cregs: Regs = new Array(cm.regCount);
-                for (let i = 0; i < cm.regCount; i += 1) cregs[i] = undefined;
-                cregs[0] =
-                  (cm.flags & FLAG_STRICT) !== 0 ? regs[base] : normalizeSloppyThis(binding.envRec, regs[base]);
-                const np = argc < cm.paramCount ? argc : cm.paramCount;
-                for (let i = 0; i < np; i += 1) cregs[1 + i] = regs[base + 1 + i];
-                // Suspend the caller, install the callee frame (no host recursion).
-                frame.pc = pc;
-                frames.push(frame);
-                callSites.push(curInstrPc);
-                frame = new Frame(cm, 0, cregs, binding.envRec, frame);
-                meta = cm;
-                code = cm.code;
-                consts = cm.consts;
-                regs = cregs;
-                pc = 0;
-              }
-            } else {
-              // Host boundary (E1↔E2 SEAM #2). TypeError on a non-callable is a
-              // real JS exception → routed through the exn table.
-              if (typeof callee !== "function") {
-                throw new TypeError(`${describe(callee)} is not a function`);
-              }
-              const recv = regs[base];
-              const args: JSValue[] = new Array(argc);
-              for (let i = 0; i < argc; i += 1) {
-                // A closure written through the erased register vector can be
-                // carried as `$AnyValue` in a standalone build. Normalize that
-                // carrier before testing the provider-local closure identity;
-                // otherwise an inline HOF callback crosses as a non-callable
-                // raw value instead of its interpreted-callback marker.
-                const arg = __runtime_eval_unwrap_interpreted_callback(regs[base + 1 + i]);
-                args[i] = isInterpClosure(arg) ? exposeRuntimeEvalValue(arg) : arg;
-              }
-              acc = __runtime_eval_apply_callable(callee as (...a: JSValue[]) => JSValue, recv, args);
-            }
-            break;
-          }
-          case Op.Construct: {
-            const base = a;
-            const argc = b;
-            const originalCallee = acc;
-            const args: JSValue[] = new Array(argc);
-            for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
-            if (runtimeEvalEnvironment(frame.envRec, originalCallee) !== null) {
-              throw new TypeError("eval is not a constructor");
-            }
-            const callee = __runtime_eval_unwrap_interpreted_callback(originalCallee);
-            if (isInterpClosure(callee)) {
-              const binding = INTERP_BINDINGS.get(callee as object)!;
-              if ((binding.meta.flags & FLAG_RUNTIME_EVAL) !== 0) {
-                throw new TypeError("eval is not a constructor");
-              }
-              if ((binding.meta.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
-                const globalEnv = globalEnvironment(binding.envRec);
-                if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
-                const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
-                if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
-                acc = hook(args);
-              } else {
-                const proto = (callee as { prototype?: JSValue }).prototype;
-                const self: JSValue = Object.create(proto && typeof proto === "object" ? proto : Object.prototype);
-                const r = interpEnter(binding.meta, binding.envRec, self, args); // boundary recursion (Phase 1)
-                acc = r !== null && (typeof r === "object" || typeof r === "function") ? r : self;
-              }
-            } else if (typeof callee === "function") {
-              acc = constructValue(callee, args);
-            } else {
-              throw new TypeError(`${describe(callee)} is not a constructor`);
-            }
-            break;
-          }
-          case Op.CallBuiltin: {
-            const builtinId = a;
-            const base = b;
-            const argc = code[pc]!;
-            pc += 1;
-            acc = callBuiltin(builtinId, regs, base, argc, frame);
-            break;
-          }
-
-          // ── control (absolute PCs; jumps are always WIDE so `a` = target) ──
-          case Op.Jump:
-            pc = a;
-            break;
-          case Op.JumpIfTrue:
-            if (isTruthy(acc)) pc = a;
-            break;
-          case Op.JumpIfFalse:
-            if (!isTruthy(acc)) pc = a;
-            break;
-          case Op.Return: {
-            const result = acc;
-            if (frames.length === 0) return result;
-            const caller = frames.pop()!;
-            callSites.pop();
-            frame = caller;
-            meta = caller.meta;
-            code = meta.code;
-            consts = meta.consts;
-            regs = caller.regs;
-            pc = caller.pc;
-            acc = result; // callee's result becomes the caller's acc
-            break;
-          }
-
-          // ── exceptions ──
-          case Op.Throw:
-            throw new ThrowSignal(acc);
-
-          default:
-            throw new InterpInternalError(`unknown opcode ${op} at pc ${curInstrPc}`);
-        }
-      }
+      if (dispatchNext(state)) return state.acc;
     } catch (e) {
-      if (e instanceof InterpInternalError) throw e; // never route interpreter bugs
-      const value: JSValue = e instanceof ThrowSignal ? e.value : e;
-      // Unwind: scan the current frame, then callers (at their call-site PCs).
-      let throwPc = curInstrPc;
-      for (;;) {
-        const h = findHandler(meta.exnTable, throwPc);
-        if (h.pc >= 0) {
-          regs[h.reg] = value;
-          pc = h.pc;
-          break; // resume dispatch at the handler
-        }
-        if (frames.length === 0) {
-          // Escape across the host boundary (E4 replaces this with a Wasm EH tag).
-          // Rethrow the RAW value so a host `try/catch` sees the real exception.
-          throw value;
-        }
-        const caller = frames.pop()!;
-        const cs = callSites.pop()!;
-        frame = caller;
-        meta = caller.meta;
-        code = meta.code;
-        consts = meta.consts;
-        regs = caller.regs;
-        throwPc = cs;
-      }
-      // loop back to the outer `for`, re-entering dispatch at the handler pc
+      routeException(state, e);
     }
   }
 }
