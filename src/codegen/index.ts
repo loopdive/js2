@@ -7350,6 +7350,18 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
         );
       } else if (resultType.kind === "i32") {
+        // (#5241) A BOOLEAN return lowers to `i32` too, and the ValType carries
+        // the `boolean` marker that the closed-method dispatcher's ARGUMENT
+        // coercion already honours. Boxing it as a number made this bridge
+        // answer `1`/`0` where the same call on a TYPED receiver answered
+        // `true`/`false`. Falls back to number boxing when `__box_boolean` is
+        // not imported — this runs at finalize, where adding an import would
+        // shift every function index.
+        const boxBooleanIdx = (resultType as { boolean?: true }).boolean ? ctx.funcMap.get("__box_boolean") : undefined;
+        if (boxBooleanIdx !== undefined) {
+          instrs.push({ op: "call", funcIdx: boxBooleanIdx });
+          return;
+        }
         const boxIdx = ctx.funcMap.get("__box_number");
         instrs.push(
           ...(boxIdx !== undefined

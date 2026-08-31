@@ -24,7 +24,19 @@ loc-budget-allow:
   # (src/linked-import-getter-names.ts) so codegen can RECOGNISE the shape the
   # linker GENERATES. One import statement; the four builders shrink.
   - src/package-linker.ts
+  # +14 lines: the boolean-result boxing arm in the closed-method dispatcher's
+  # result coercion (an `if` around the existing number-boxing lines plus the
+  # comment that records the measurement). It belongs next to the ARGUMENT
+  # coercion three lines above, which has honoured the same `boolean` ValType
+  # marker all along; hoisting it out would separate the pair.
+  - src/codegen/closed-method-dispatch.ts
 func-budget-allow:
+  # Same change, seen per-function. `emitMethodDispatch` +12 is the identical
+  # arm in the OTHER bridge (`appendResultBoxing`); `fillClosedMethodDispatch`
+  # +1 is the single `boxBoolIdx` initializer. Splitting either for one boxing
+  # choice is #3399's job, not this fix's.
+  - src/codegen/index.ts::emitMethodDispatch
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/index.ts::emitIteratorMethodExport
   - src/codegen/index.ts::generateModule

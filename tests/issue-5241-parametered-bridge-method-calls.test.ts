@@ -39,6 +39,16 @@
 // puts it on a different path) but `has` answers `false` — the `env::Set_has`
 // binding. Both lanes answer the table above after the fix.
 //
+// A second, PRE-EXISTING defect surfaced while measuring this one and is fixed
+// here because the fix above widens its reach: the class-method bridges boxed
+// an `i32` result with `__box_number`, so a BOOLEAN-returning method answered
+// `1`/`0` across the bridge (`String(inst.bigger(0))` → `"1"` on an `any`
+// receiver, `"true"` on a typed one — measured on base, where `bigger` collides
+// with nothing and so was never hijacked). Both bridges now honour the
+// `boolean` marker the ValType already carries, which the closed dispatcher's
+// ARGUMENT coercion honoured all along. Without it this PR would have turned
+// `Temporal.PlainDate.from(…).equals(…)` from `true` into `1`.
+//
 // The `plainCollections` probe is the counter-control: a genuine Map/Set in the
 // same program must keep working, since the fix DECLINES the extern binding for
 // these names program-wide and lets the runtime-shape dispatch resolve them.
@@ -67,6 +77,9 @@ export class K {
   /** No extern class declares these: the control for "not an arity bug". */
   subtract(n) { const s = slots.get(this); return "S" + ((s ? s.v : 0) - n); }
   two(a, b) { const s = slots.get(this); return "T" + ((s ? s.v : 0) + a + b); }
+  /** BOOLEAN returns: the bridge boxed these as numbers (see boolean probes). */
+  equals(n) { const s = slots.get(this); return (s ? s.v : 0) === n; }
+  bigger(n) { const s = slots.get(this); return (s ? s.v : 0) > n; }
 
   /** The hand-written spelling, lowered to \`struct.new\` before #5239. */
   static makeStatic(v) { const o = Object.create(K.prototype); slots.set(o, { v: v }); return o; }
@@ -86,6 +99,9 @@ export function dynamicZero() { return K.makeDynamic(1).zero(); }
 export function dynamicAdd() { return K.makeDynamic(1).add(2); }
 export function dynamicHas() { return K.makeDynamic(1).has(2); }
 export function dynamicTwo() { return K.makeDynamic(1).two(2, 3); }
+export function staticEquals() { return String(K.makeStatic(1).equals(1)); }
+export function staticBigger() { return String(K.makeStatic(1).bigger(0)); }
+export function typedEquals() { const o = new K(); return String(o.equals(0)); }
 export function newAdd() { const o = new K(); return o.add(2); }
 export function typeofAdd() { return typeof K.makeStatic(1).add; }
 export function plainCollections() {
@@ -107,6 +123,9 @@ const EXPECTED: Record<string, unknown> = {
   dynamicAdd: "A3",
   dynamicHas: "H3",
   dynamicTwo: "T6",
+  staticEquals: "true",
+  staticBigger: "true",
+  typedEquals: "true",
   newAdd: "A2",
   typeofAdd: "function",
   plainCollections: "true/9/1",

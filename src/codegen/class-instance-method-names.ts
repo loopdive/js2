@@ -106,18 +106,27 @@ export function programDeclaresClassMethod(ctx: ClassNameSets, name: string): bo
  *    syntactic scan on the file that declares the value. This is the
  *    same-program / bundled case, where the provider's source is visible.
  *
- * 2. **The origin IS a linked import.** In a `separate` link plan the linker
- *    has already rewritten `import { K } from "pkg"` to
- *    `const K = __js2wasm_get_K_<hash>()`, so the provider's declarations are
- *    not in the consumer's program at all — measured: the consumer's `K`
- *    resolves to a `VariableDeclaration` in its OWN file. Nothing at compile
- *    time can say which members that value has, and guessing "the first ambient
- *    extern class declaring this name" is exactly the wrong guess: it produced
- *    `env::Set_has` for a provider class's `has(n)`, answering `false` where the
- *    single-module control answered `"H3"`. Declining sends the call to the
- *    generic `__extern_method_call` bridge, which resolves by runtime shape
- *    across the seam — demonstrably the working path, since the non-colliding
- *    sibling `subtract` took it and answered correctly on base.
+ * 2. **The origin is a linked import AND the name is a branded-collection
+ *    member.** In a `separate` link plan the linker has already rewritten
+ *    `import { K } from "pkg"` to `const K = __js2wasm_get_K_<hash>()`, so the
+ *    provider's declarations are not in the consumer's program at all —
+ *    measured: the consumer's `K` resolves to a `VariableDeclaration` in its
+ *    OWN file. Nothing at compile time can say which members that value has,
+ *    and guessing "the first ambient extern class declaring this name" produced
+ *    `env::Set_has` for a provider class's `has(n)`: `false`, where the
+ *    single-module control answered `"H3"`.
+ *
+ *    This arm is deliberately restricted to `BRANDED_COLLECTION_MEMBERS`
+ *    (`get`/`set`/`has`/`add`/`delete`/`clear` — the same family #3309 already
+ *    refuses under standalone) rather than applied to every name, and the
+ *    restriction is a MEASURED one: an unrestricted version changed
+ *    `Temporal.PlainDate.from(…).equals("2020-03-04")` from `true` to `1`
+ *    through the provider. Declining the extern binding also changes the
+ *    RESULT MARSHALLING (extern signature → generic bridge), so widening this
+ *    to names that are not receiver-branded trades a real bug for a different
+ *    one. The branded family is where the extern binding is not merely
+ *    imprecise but semantically wrong: `Set.prototype.has` on a non-Set cannot
+ *    answer anything useful.
  *
  * Ambient lib declarations are unaffected by (1): `sourceDefinesFunctionMember`
  * counts `ts.MethodDeclaration`s (and function-valued assignments/properties),
@@ -125,6 +134,8 @@ export function programDeclaresClassMethod(ctx: ClassNameSets, name: string): bo
  * `Set` or `Map` still answers false and keeps its extern binding. (2) is
  * likewise inert outside a linked build — nothing else produces those names.
  */
+const BRANDED_COLLECTION_MEMBERS = new Set(["get", "set", "has", "add", "delete", "clear"]);
+
 export function receiverOriginRejectsExternBinding(
   oracle: { valueDeclarationOf(node: ts.Node): ts.Declaration | undefined },
   receiver: ts.Expression,
@@ -136,7 +147,7 @@ export function receiverOriginRejectsExternBinding(
     if (ts.isIdentifier(node)) {
       const declaration = oracle.valueDeclarationOf(node);
       if (declaration === undefined) return false;
-      if (isLinkedImportBinding(declaration)) return true;
+      if (BRANDED_COLLECTION_MEMBERS.has(name) && isLinkedImportBinding(declaration)) return true;
       return sourceDefinesFunctionMember(declaration.getSourceFile(), name);
     }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) node = node.expression;
