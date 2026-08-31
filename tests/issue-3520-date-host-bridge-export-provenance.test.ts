@@ -114,6 +114,21 @@ const MULTI_HOST_IMPORT_CENSUS = Object.freeze([
     name: "\0js2_data_struct_host_bridge_token",
     desc: { kind: "global", type: { kind: "externref" }, mutable: false },
   },
+  // (#5239-family) The provider mints its Date carrier DURING module init
+  // (`providedDateValue` is a top-level `new Date(...)` read), so the #5202
+  // init-window channel registers the carrier's decoder exports before
+  // `getExports()` resolves. The name-list global + registration import are
+  // that channel, not Date-descriptor provenance.
+  {
+    module: "string_constants",
+    name: "__is_data_struct,__sget_timestamp,__struct_field_names",
+    desc: { kind: "global", type: { kind: "externref" }, mutable: false },
+  },
+  {
+    module: "env",
+    name: "__register_init_class_export",
+    desc: { kind: "func", typeIdx: 7 },
+  },
 ] as const);
 
 const DATE_SOURCE = `

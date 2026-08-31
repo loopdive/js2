@@ -233,6 +233,15 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // was measured about each. Asserting only their presence keeps the list
     // honest without pinning today's failure text.
     expect(Object.keys(report.knownGaps).sort()).toEqual([
+      // (#5241) The arithmetic family joined the list. It is NOT a new
+      // regression: these throw identically on #5241's base through the
+      // provider. They are recorded because #5241 changed what they do in the
+      // single-module control — `undefined` (never called) became a real
+      // in-polyfill TypeError — which is the evidence that the extern-class
+      // hijack is gone and the residual belongs elsewhere. See the harness.
+      "arithmeticAddDuration",
+      "arithmeticSubtract",
+      "arithmeticWith",
       "instanceToStringTag",
       "nowPlainDateISOCall",
       "nowTimeZoneIdCall",
