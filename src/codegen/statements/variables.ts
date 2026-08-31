@@ -84,6 +84,11 @@ import {
   tryCompileClassExpressionBindingValue,
   tryEmitPromiseSubclassClassExpressionValue,
 } from "../expressions/promise-subclass.js";
+import {
+  hostRegExpMatchResultNeedsExternref,
+  isStaticRegExpExpression,
+  stripInferenceWrapper,
+} from "../regexp-host-match.js";
 
 /**
  * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
@@ -129,6 +134,7 @@ export function transferredArrayLikeResultNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
+  if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
   if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
@@ -977,41 +983,6 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
     default:
       return null;
   }
-}
-
-function stripInferenceWrapper(expr: ts.Expression): ts.Expression {
-  while (
-    ts.isParenthesizedExpression(expr) ||
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    expr = (
-      expr as
-        | ts.ParenthesizedExpression
-        | ts.AsExpression
-        | ts.TypeAssertion
-        | ts.SatisfiesExpression
-        | ts.NonNullExpression
-    ).expression;
-  }
-  return expr;
-}
-
-function isStaticRegExpExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const unwrapped = stripInferenceWrapper(expr);
-  if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
-  if (ts.isNewExpression(unwrapped) || (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken)) {
-    const callee = stripInferenceWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && callee.text === "RegExp";
-  }
-  if (ts.isIdentifier(unwrapped)) {
-    const sym = ctx.checker.getSymbolAtLocation(unwrapped);
-    const decl = sym?.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    return decl?.initializer !== undefined && isStaticRegExpExpression(ctx, decl.initializer);
-  }
-  return false;
 }
 
 function nativeStringVecType(ctx: CodegenContext): ValType | null {

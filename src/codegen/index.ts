@@ -13975,7 +13975,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         // initializer's externref is ref.cast to it at runtime (cast fails →
         // `b.x` reads NaN/null). Mirrors statements/variables.ts; inlined to
         // avoid an index↔literals import cycle.
-        let initIsHostSpreadLiteral = false;
+        let initRequiresExternref = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
         if (
           !initIsAccessorLiteral &&
           decl.initializer !== undefined &&
@@ -13983,7 +13983,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer.properties.some((p) => ts.isSpreadAssignment(p))
         ) {
           const spreadCtxType = ctx.checker.getContextualType(decl.initializer);
-          initIsHostSpreadLiteral =
+          initRequiresExternref ||=
             !spreadCtxType ||
             (spreadCtxType.flags & ts.TypeFlags.Any) !== 0 ||
             (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
@@ -14021,7 +14021,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
-          initIsHostSpreadLiteral ||
+          initRequiresExternref ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
           initIsRedeclaredObjectIdentityLiteral ||

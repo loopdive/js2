@@ -71,7 +71,7 @@ function prepareBuiltinClassStaticParent(
   if (ctx.standalone || ctx.wasi) return undefined;
   const parentName = ctx.classBuiltinParentMap.get(className);
   if (parentName === undefined) return undefined;
-  addStringConstantGlobal(ctx, parentName);
+  addHostStringConstantGlobal(ctx, parentName);
   const registerClassParentIdx = ensureLateImport(
     ctx,
     "__register_class_parent",

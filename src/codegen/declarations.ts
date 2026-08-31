@@ -4862,23 +4862,6 @@ function compileAsyncGraphModuleInit(
   return { fctx };
 }
 
-function compileAsyncGraphOrLegacy(
-  ctx: CodegenContext,
-  statements: readonly ts.Statement[],
-  staticEntries: readonly ModuleStaticInitEntry[],
-  compileBody: (
-    targetFctx?: FunctionContext,
-    includeModuleStatements?: boolean,
-    chunkModuleInitEntries?: boolean,
-  ) => FunctionContext,
-  chunkModuleInitEntries: boolean,
-): FunctionContext {
-  const graph = compileAsyncGraphModuleInit(ctx, statements, staticEntries, (resumeFctx) => {
-    compileBody(resumeFctx, false);
-  });
-  return graph?.fctx ?? compileBody(undefined, true, chunkModuleInitEntries);
-}
-
 /** Prepare-before-direct ownership for the exact source module initializer. */
 export interface ModuleInitBodyCompileRouting {
   readonly skipBody: boolean;
@@ -6112,13 +6095,9 @@ export function compileDeclarations(
       restorePropOrderState();
       compiledInitFctx = profilePhase("module-init-pass2", () => {
         if (!hasAsyncGraphInit) return compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
-        return compileAsyncGraphOrLegacy(
-          ctx,
-          ctx.moduleInitStatements,
-          ctx.staticInitExprs,
-          compileModuleInitBody,
-          moduleInitChunkingRequired,
-        );
+        const compileResume = (resumeFctx: FunctionContext) => compileModuleInitBody(resumeFctx, false);
+        const graph = compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, compileResume);
+        return graph?.fctx ?? compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
       });
       ctx.pendingInitBody = compiledInitFctx.body;
       dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before

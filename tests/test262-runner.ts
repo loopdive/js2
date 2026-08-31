@@ -13,7 +13,7 @@ import { join, relative } from "path";
 import { createHash } from "crypto";
 import { createContext, runInContext } from "node:vm";
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { buildImports, markCoherentBuiltinRealm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
 // (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
@@ -146,6 +146,24 @@ function declaresTopLevelDone(body: string): boolean {
 /** A fresh realm for literal-harness execution; never reused across variants. */
 export function createTestSandbox(consoleProxy?: Console, exposeDone = true): Record<string, any> {
   return _buildFreshSandbox(consoleProxy, exposeDone);
+}
+
+/**
+ * Test262 property-descriptor rows are allowed to install a new intrinsic
+ * property without specifying `configurable: true`. Such a property cannot be
+ * removed by the in-process host snapshot, so the sloppy variant would poison
+ * the strict rerun before it starts. Run those rows with one coherent fresh
+ * VM realm for both the built-in globals and their constructed values.
+ *
+ * Keep this source classifier deliberately narrow: ordinary product/runtime
+ * builds retain the host-realm design, and descriptor checks on user objects
+ * do not need a separate intrinsic realm.
+ */
+const HOST_INTRINSIC_DEFINE_RE =
+  /\b(?:Object|Reflect)\.(?:defineProperty|defineProperties)\s*\(\s*(?:Object|Array|String|Number|Boolean|Function|RegExp|Map|Set|WeakMap|WeakSet|Promise|Date|ArrayBuffer|DataView|Int8Array|Uint8Array|Uint8ClampedArray|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)(?:\.prototype)?\b/;
+
+function requiresCoherentBuiltinRealm(source: string): boolean {
+  return HOST_INTRINSIC_DEFINE_RE.test(source);
 }
 
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
@@ -4321,6 +4339,8 @@ async function runOriginalHarnessVariant(
         consoleProxy,
         meta.flags?.includes("async") === true || declaresTopLevelDone(originalSource),
       );
+      const coherentBuiltinRealm = requiresCoherentBuiltinRealm(originalSource);
+      if (coherentBuiltinRealm) markCoherentBuiltinRealm(sandbox);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
       }) as any;
