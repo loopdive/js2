@@ -57,6 +57,36 @@ describe("#2931 — live binding for reassigned function declarations", () => {
     expect(ret).toBe(5);
   });
 
+  it("an object-destructuring reassignment is observed by later reads", async () => {
+    const ret = await runSingle(
+      `export function test(): number {
+         function fn(){ return 1; }
+         function replacement(){ return 9; }
+         const original: any = fn;
+         if (original() !== 1) return 100;
+         ({ current: fn } = { current: replacement });
+         const current: any = fn;
+         return current();
+       }`,
+    );
+    expect(ret).toBe(9);
+  });
+
+  it("a var declaration-list for-of target updates the hoisted function binding", async () => {
+    const ret = await runSingle(
+      `export function test(): number {
+         function fn(){ return 1; }
+         function replacement(){ return 9; }
+         const before: any = fn;
+         if (before() !== 1) return 100;
+         for (var fn of [replacement]) {}
+         const after: any = fn;
+         return after();
+       }`,
+    );
+    expect(ret).toBe(9);
+  });
+
   it("cross-module default import observes a reassignment of the default-exported function", async () => {
     // The #2900 shape (indirect default binding update), isolated to `.ts`
     // fixtures. The real test262 `.js` case additionally needs #2932.

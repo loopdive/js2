@@ -2184,6 +2184,10 @@ function nullableRefFieldWidening(from: ValType, to: ValType): number | undefine
   return from.kind === "ref_null" && to.kind === "ref" && from.typeIdx === to.typeIdx ? from.typeIdx : undefined;
 }
 
+function isLosslessAssertedFieldExport(from: ValType, to: ValType): boolean {
+  return (from.kind === "ref" || from.kind === "ref_null") && to.kind === "externref";
+}
+
 function assertedStructExtensionInfo(
   ctx: CodegenContext,
   from: ValType,
@@ -2206,7 +2210,8 @@ function assertedStructExtensionInfo(
       !destinationField ||
       destinationField.mutable !== sourceField.mutable ||
       (!samePhysicalValType(destinationField.type, sourceField.type) &&
-        nullableRefFieldWidening(sourceField.type, destinationField.type) === undefined)
+        nullableRefFieldWidening(sourceField.type, destinationField.type) === undefined &&
+        !isLosslessAssertedFieldExport(sourceField.type, destinationField.type))
     ) {
       return undefined;
     }

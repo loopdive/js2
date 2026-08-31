@@ -75,8 +75,22 @@ describe("#3521 linked Parser string ABI", () => {
       const stringToNumber = functionOutcome(result, "stringToNumber");
       const run = functionOutcome(result, "run");
       expect(parser).toMatchObject({ kind: "unsupported", legacyBodyEmitted: true, irBodyEmitted: false });
-      expect(readNumber).toMatchObject({ kind: "emitted", legacyBodyEmitted: true, irBodyEmitted: true });
-      expect(stringToNumber).toMatchObject({ kind: "emitted", legacyBodyEmitted: true, irBodyEmitted: true });
+      expect(readNumber).toMatchObject({
+        kind: "emitted",
+        prepareAttempts: 1,
+        directBodyEmissions: 1,
+        irBodyEmissions: 1,
+        legacyBodyEmitted: true,
+        irBodyEmitted: true,
+      });
+      expect(stringToNumber).toMatchObject({
+        kind: "emitted",
+        prepareAttempts: 1,
+        directBodyEmissions: 1,
+        irBodyEmissions: 1,
+        legacyBodyEmitted: true,
+        irBodyEmitted: true,
+      });
       expect(run).toMatchObject({ kind: "unsupported", legacyBodyEmitted: true, irBodyEmitted: false });
       expect(new Set([parser.sourceId, readNumber.sourceId, stringToNumber.sourceId, run.sourceId]).size).toBe(1);
       expect(new Set([parser.unitId, readNumber.unitId, stringToNumber.unitId, run.unitId]).size).toBe(4);

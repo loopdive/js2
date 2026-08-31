@@ -3838,3 +3838,128 @@ strictly below `logical cores - 2`; keep complete precommit and prepush hooks
 enabled. No baseline, LOC, function-size, binary-size, size-ceiling, or hook
 exception is authorized. The stacked PR remains draft until an independent Sol
 approves its exact pushed SHA; any later push invalidates that approval.
+
+## 2026-08-30 C38 implementation lock — constructor-closure export provenance
+
+This Sol-authored checkpoint was prepared on exact signed C37 head
+`438017216a585f6a4d3ece1ec51d2a32224e4902`. That reviewed head is now an exact
+ancestor of refreshed main `adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2`
+through merge commit `f6e86d09612581a4030d4d1635bf0773c39f615d`; the only
+later main commit is non-overlapping #5323 merge
+`adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2`. Re-anchor the isolated
+`codex/5298-c38-prep-438017` preparation to that exact main before its signed
+commit. Never amend or push C37, C36, or a queued parent, and repeat the complete
+validation/review cycle after re-anchoring. The unchanged #4035 size ceiling
+remains a control, not a new regression claim.
+
+### Deterministic false-pass
+
+#4661 added closure-host-bridge availability bit 17 with logical export
+`__is_ctor_closure` and compact family `$ch`. `stripHostBridgeExports(...)`
+still recognizes only `$c0` through `$cg`; none of its prefixes matches
+`__is_ctor_closure`. When `constructibleClosureTypeIdxs` is populated, both
+compiler-owned exports therefore survive `emitHostBridge=false` in standalone
+and WASI, retaining the classifier and its types through DCE. The closure ABI
+test also stops its physical census at `$cg`, and #4035's marker list omits both
+names, so the leak currently passes every control.
+
+Do not repair this by adding the two spellings to the legacy strip table. That
+would delete genuine user exports and repeat the ownership bug C37 just closed.
+
+### Exact ownership and provenance contract
+
+Own only:
+
+- this issue record;
+- `src/codegen/closure-exports.ts`;
+- `src/codegen/host-bridge-exports.ts`; and
+- `tests/issue-3520-closure-host-bridge-abi.test.ts`.
+
+At bit 17 publication, retain each compiler-published `WasmExport` descriptor
+beside the exact `WasmFunction` already captured for the availability manifest.
+Export one predicate for the bounded shared namespace: exact
+`__is_ctor_closure`, or `$ch` followed by zero or more literal `$` characters.
+Near spellings such as `$ch0`, `$chi`, `$ch_extra`, and
+`__is_ctor_closure_extra` are not in this namespace.
+
+Authenticate an entry as compiler-owned only when it is one recorded bit-17
+descriptor from the same publishing `CodegenContext`, regardless of later
+spelling. Descriptor identity is the context-bound capability: an unrecorded
+replacement/copy has no authority to claim the classifier, including when it
+was donated from an identically laid-out module.
+
+Before the index-space freeze, finalization must census every entry in the exact
+constructor-closure namespace. Resolve each unrecorded function descriptor
+through the live or stable handle regime; if it resolves to any captured bit-17
+allocator, reject it rather than reinterpreting it as local compiler output.
+This catches cloned extras and foreign-context donations while retaining genuine
+user descriptors, including same-spelled entries targeting a different user
+allocator and near spellings. Never fall through from an invalid live lookup to
+the stable regime, repair an index, consult `funcMap`, or infer ownership from
+spelling alone.
+
+The normal policy sink runs before the freeze boundary. A direct post-freeze
+replacement copy cannot prove context ownership, so it remains a noncompiler
+exact-namespace entry rather than being silently stripped; this is intentionally
+fail-closed, not a second authentication path.
+
+`stripHostBridgeExports(...)` must remove authenticated bit-17 entries first,
+then retain noncompiler entries in the exact constructor-closure namespace,
+then apply the existing legacy host-bridge name policy unchanged. This order
+must coexist with C37's vec provenance branch without coupling the two
+registries. Do not change closure allocation, manifest bits/table layout,
+Program ABI role/ordinal 14, runtime lookup, collision suffix allocation, any
+other closure family, direct/IR routing, or fallback.
+
+### Required focused matrix
+
+1. In host mode and `hostBridge: "always"`, prove the logical and terminal
+   physical compiler descriptors resolve to the same exact allocator, the
+   availability manifest binds bit 17, and the Program ABI entry remains
+   closure-host-bridge derived ordinal 14.
+2. In standalone and WASI, with tracking disabled and enabled, compile a
+   constructible-closure fixture and require compiler `__is_ctor_closure` and
+   every `$ch` family member to be absent, host imports empty, tracked/untracked
+   binaries byte-identical, the complete public-name census exact, and the
+   fixture's runtime value unchanged.
+3. Add user collisions for `__is_ctor_closure`, `$ch`, and sparse `$ch$$`.
+   Standalone/WASI must preserve their exact values while removing generated
+   gap/terminal aliases. Host mode must preserve all user values and publish
+   the compiler classifier only at free suffixes, with exact allocator joins.
+4. In a fixture with no constructible closure, exact user logical/physical
+   spoof exports survive standalone/WASI and no ordinal-14 Program ABI row or
+   constructor-classifier family is created.
+5. Direct mutations must prove: an unrecorded extra clone and a descriptor
+   donated from an identically laid-out second context are both rejected before
+   final publication; a post-freeze replacement copy has no compiler
+   provenance and is retained; the same spelling targeting a different user
+   allocator survives; a near-prefix targeting the classifier is not
+   reclassified; and recorded name/kind/target/lost-function/duplicate
+   mutations still fail closed before final publication.
+6. Preserve the complete C31 closure suite, C37 vec suite, and #4035 policy
+   suite as controls. Update a marker/census only if required to make the
+   existing test truthful; do not change #4035's ceiling or characterize the
+   already-present leak as a new size regression.
+
+Every target/tracking comparison must publish exact names, descriptor targets,
+runtime values, import census, and binary parity where specified. Prefix-only
+absence and compact counts are not acceptance evidence.
+
+### Dependencies and acceptance
+
+The open-PR and worktree audit found no other owner of `closure-exports.ts` or
+the focused closure ABI test. The parallel Claude lane owns ProgramABI, #3525,
+and #5092 work and currently overlaps none of these four C38 paths. This
+intentional child overlaps only `host-bridge-exports.ts` in its C37 base. Any
+newly observed overlap is a stop-and-report condition.
+
+Acceptance requires the focused closure and vec suites, #4035 policy controls,
+TypeScript 7, Prettier/Biome and `git diff --check`, IR fallback and issue
+integrity, IR layering/readiness, and applicable oracle/coercion/dead-export
+ratchets. Run every heavy command only after a finite, non-negative one-minute
+load sample is strictly below `logical cores - 2`. Immediately before every
+signed commit run both LOC and function regrowth ratchets, then let all
+precommit and prepush hooks run without bypass. No baseline, size, LOC,
+function, or hook exception is authorized. A Terra implementation remains draft
+until a separate Sol approves the exact pushed SHA; any later push invalidates
+that approval.

@@ -7,6 +7,7 @@ import {
   type IrOverlayIdentityPlan,
 } from "../src/codegen/ir-overlay-identity.js";
 import { auditIrSkippedFunctionSlots, reconcileIrOverlayOutcomes } from "../src/codegen/ir-overlay-outcomes.js";
+import type { IrDirectFunctionBodyReceiptAudit } from "../src/codegen/legacy-body-audit.js";
 import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
 import type { IrIntegrationError, IrIntegrationReport, IrIntegrationTerminalEvidence } from "../src/ir/integration.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../src/ir/outcomes.js";
@@ -78,14 +79,14 @@ function fixture(files: ReadonlyMap<string, string>): Fixture {
   return { context, sources, planned };
 }
 
-function functionUnitId(current: Fixture, fileName: string, functionName: string): IrUnitId {
+function functionUnitId(current: Fixture, fileName: string, functionName: string, occurrence = 0): IrUnitId {
   const sourceFile = current.sources.get(fileName);
-  const declaration = sourceFile?.statements.find(
+  const declaration = sourceFile?.statements.filter(
     (statement): statement is ts.FunctionDeclaration =>
       ts.isFunctionDeclaration(statement) && statement.name?.text === functionName,
-  );
+  )[occurrence];
   const unitId = declaration && current.context.unitIdByDeclaration.get(declaration);
-  if (!unitId) throw new Error(`missing unit ID for ${fileName}:${functionName}`);
+  if (!unitId) throw new Error(`missing unit ID for ${fileName}:${functionName}#${occurrence}`);
   return unitId;
 }
 
@@ -109,6 +110,29 @@ function failed(unitId: IrUnitId, legacyName: string): IrIntegrationTerminalEvid
   return { kind: "failed", unitId, legacyName, error, diagnosticVisibility: "report" };
 }
 
+function outcomeOnlyFailed(unitId: IrUnitId, legacyName: string): IrIntegrationTerminalEvidence {
+  const outcome: IrPreparationFailure = {
+    kind: "unsupported",
+    code: "late-preparation-unsupported",
+    stage: "resolve",
+    detail: `${legacyName} failed final-context preparation`,
+  };
+  const error: IrIntegrationError = {
+    func: legacyName,
+    message: outcome.detail,
+    kind: "resolve",
+    outcome,
+  };
+  return {
+    kind: "failed",
+    unitId,
+    legacyName,
+    error,
+    errors: [],
+    diagnosticVisibility: "outcome-only",
+  };
+}
+
 function reconcile(
   planned: PlannedSource,
   terminalEvidence: readonly IrIntegrationTerminalEvidence[],
@@ -117,9 +141,14 @@ function reconcile(
     readonly initialSelection?: TerminalSelection;
     readonly preparedSelection?: TerminalSelection;
     readonly preparationFailuresByUnitId?: ReadonlyMap<IrUnitId, IrPreparationFailure>;
+    readonly directFunctionBodyReceiptAudit?: IrDirectFunctionBodyReceiptAudit;
+    readonly existingOutcomes?: readonly IrObservedOutcome[];
+    readonly skippedBodyUnitIds?: ReadonlySet<IrUnitId>;
   } = {},
 ) {
-  const errors = terminalEvidence.flatMap((event) => (event.kind === "failed" ? [event.error] : []));
+  const errors = terminalEvidence.flatMap((event) =>
+    event.kind === "failed" && event.diagnosticVisibility === "report" ? [event.error] : [],
+  );
   const report: IrIntegrationReport = {
     compiled:
       options.compiled ?? terminalEvidence.flatMap((event) => (event.kind === "patched" ? [event.legacyName] : [])),
@@ -132,11 +161,24 @@ function reconcile(
     initialSelection: options.initialSelection ?? planned.selection,
     preparedSelection: options.preparedSelection ?? planned.selection,
     preparationFailuresByUnitId: options.preparationFailuresByUnitId ?? new Map(),
-    skippedBodyUnitIds: new Set(),
+    skippedBodyUnitIds: options.skippedBodyUnitIds ?? new Set(),
+    ...(options.directFunctionBodyReceiptAudit
+      ? { directFunctionBodyReceiptAudit: options.directFunctionBodyReceiptAudit }
+      : {}),
     report,
-    existingOutcomes: [],
+    existingOutcomes: options.existingOutcomes ?? [],
     target: "gc",
   });
+}
+
+function directReceiptAudit(
+  planned: PlannedSource,
+  countsByUnitId: ReadonlyMap<IrUnitId, number>,
+  violations: IrDirectFunctionBodyReceiptAudit["violations"] = [],
+): IrDirectFunctionBodyReceiptAudit {
+  const sourceId = planned.identityPlan.identityContext.sourceIdBySourceFile.get(planned.sourceFile);
+  if (!sourceId) throw new Error(`missing source identity for ${planned.sourceFile.fileName}`);
+  return { sourceId, countsByUnitId, violations };
 }
 
 function outcomeFor(outcomes: readonly IrObservedOutcome[], unitId: IrUnitId): IrObservedOutcome {
@@ -251,6 +293,267 @@ describe("#3520 exact-ID terminal outcome correlation", () => {
       code: "missing-terminal-outcome",
       irBodyEmitted: false,
     });
+  });
+
+  it("accounts an unpatched R2 terminal as one preparation attempt and no body emission", () => {
+    const current = fixture(
+      new Map([["/repo/unpatched.ts", "export function owner(value: number): number { return value + 1; }"]]),
+    );
+    const planned = current.planned.get("/repo/unpatched.ts")!;
+    const ownerId = functionUnitId(current, "/repo/unpatched.ts", "owner");
+    const result = reconcile(planned, [], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map()),
+      skippedBodyUnitIds: new Set([ownerId]),
+    });
+
+    expect(outcomeFor(result.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "unpatched-slot",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 0,
+      legacyBodyEmitted: false,
+      irBodyEmitted: false,
+    });
+  });
+
+  it("allows a post-prepared attempted IR patch on an invariant only without direct fallback", () => {
+    const current = fixture(
+      new Map([["/repo/post-prepared.ts", "export function owner(value: number): number { return value + 1; }"]]),
+    );
+    const planned = current.planned.get("/repo/post-prepared.ts")!;
+    const ownerId = functionUnitId(current, "/repo/post-prepared.ts", "owner");
+    const receipts = directReceiptAudit(planned, new Map());
+    const emitted = outcomeFor(
+      reconcile(planned, [patched(ownerId, "owner")], { directFunctionBodyReceiptAudit: receipts }).outcomes,
+      ownerId,
+    );
+    const result = reconcile(planned, [patched(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: receipts,
+      existingOutcomes: [emitted],
+    });
+
+    expect(outcomeFor(result.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "duplicate-unit-outcome",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+  });
+
+  it("fails closed on missing, duplicate, and foreign R2 body receipts", () => {
+    const current = fixture(
+      new Map([["/repo/receipts.ts", "export function owner(value: number): number { return value + 1; }"]]),
+    );
+    const planned = current.planned.get("/repo/receipts.ts")!;
+    const ownerId = functionUnitId(current, "/repo/receipts.ts", "owner");
+
+    const duplicateDirect = reconcile(planned, [patched(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map([[ownerId, 2]])),
+    });
+    expect(outcomeFor(duplicateDirect.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 2,
+      irBodyEmissions: 1,
+    });
+
+    const foreignDirect = reconcile(planned, [patched(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map([["ir-unit:foreign:owner" as IrUnitId, 1]])),
+    });
+    expect(outcomeFor(foreignDirect.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+    });
+
+    const missingDirectEmitted = reconcile(planned, [patched(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map()),
+    });
+    expect(outcomeFor(missingDirectEmitted.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+    });
+
+    const duplicateIr = reconcile(planned, [patched(ownerId, "owner"), patched(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map()),
+    });
+    expect(outcomeFor(duplicateIr.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 2,
+    });
+
+    const fallback = fixture(
+      new Map([["/repo/missing-direct.ts", "export function fallback(value: number = 1): number { return value; }"]]),
+    );
+    const fallbackPlan = fallback.planned.get("/repo/missing-direct.ts")!;
+    const fallbackId = functionUnitId(fallback, "/repo/missing-direct.ts", "fallback");
+    const missingDirect = reconcile(fallbackPlan, [], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(fallbackPlan, new Map()),
+    });
+    expect(outcomeFor(missingDirect.outcomes, fallbackId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 0,
+    });
+
+    const patchedFallback = reconcile(fallbackPlan, [patched(fallbackId, "fallback")], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(fallbackPlan, new Map([[fallbackId, 1]])),
+    });
+    expect(outcomeFor(patchedFallback.outcomes, fallbackId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 1,
+    });
+  });
+
+  it("publishes replacement accounting invariants and suppresses only unchanged report-visible failures", () => {
+    const current = fixture(
+      new Map([["/repo/diagnostic.ts", "export function owner(value: number): number { return value + 1; }"]]),
+    );
+    const planned = current.planned.get("/repo/diagnostic.ts")!;
+    const ownerId = functionUnitId(current, "/repo/diagnostic.ts", "owner");
+    const corruptedAudit = directReceiptAudit(planned, new Map([[ownerId, 1]]), [
+      {
+        code: "foreign-direct-function-body-receipt",
+        detail: "injected exact receipt mismatch",
+        unitId: ownerId,
+      },
+    ]);
+
+    for (const evidence of [outcomeOnlyFailed(ownerId, "owner"), failed(ownerId, "owner")]) {
+      const replaced = reconcile(planned, [evidence], {
+        directFunctionBodyReceiptAudit: corruptedAudit,
+      });
+      expect(outcomeFor(replaced.outcomes, ownerId)).toMatchObject({
+        kind: "invariant",
+        code: "body-emission-evidence",
+      });
+      expect(replaced.diagnostics).toEqual([
+        expect.stringContaining("IR outcome invariant [body-emission-evidence] for owner"),
+      ]);
+    }
+
+    const unchanged = reconcile(planned, [failed(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map()),
+      skippedBodyUnitIds: new Set([ownerId]),
+    });
+    expect(outcomeFor(unchanged.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "verifier-failure",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 0,
+    });
+    expect(unchanged.diagnostics).toEqual([]);
+  });
+
+  it("excludes shadowed duplicate declarations without accepting their direct receipts", () => {
+    const current = fixture(
+      new Map([
+        [
+          "/repo/duplicates.ts",
+          "function duplicate(value) { return value + 1; }\n" + "function duplicate(value) { return value + 2; }",
+        ],
+      ]),
+    );
+    const planned = current.planned.get("/repo/duplicates.ts")!;
+    const shadowedId = functionUnitId(current, "/repo/duplicates.ts", "duplicate", 0);
+    const physicalId = functionUnitId(current, "/repo/duplicates.ts", "duplicate", 1);
+    const result = reconcile(planned, [], {
+      directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map([[shadowedId, 1]])),
+    });
+
+    expect(outcomeFor(result.outcomes, shadowedId)).not.toHaveProperty("prepareAttempts");
+    expect(outcomeFor(result.outcomes, physicalId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 0,
+      detail: expect.stringContaining(shadowedId),
+    });
+  });
+
+  it("fails every source closed on unattributed direct receipt corruption", () => {
+    const current = fixture(
+      new Map([["/repo/unattributed.ts", "export function owner(value: number): number { return value + 1; }"]]),
+    );
+    const planned = current.planned.get("/repo/unattributed.ts")!;
+    const ownerId = functionUnitId(current, "/repo/unattributed.ts", "owner");
+    const audit: IrDirectFunctionBodyReceiptAudit = {
+      ...directReceiptAudit(planned, new Map([[ownerId, 1]])),
+      unattributedViolation: {
+        code: "missing-direct-function-body-identity",
+        detail: "an unattributed direct receipt cannot be assigned to one source",
+      },
+    };
+    const result = reconcile(planned, [patched(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: audit,
+    });
+
+    expect(outcomeFor(result.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+      detail: expect.stringContaining("unattributed direct receipt"),
+    });
+  });
+
+  it("builds the R2 source population once across a multi-source graph", () => {
+    const sourceCount = 12;
+    const files = new Map(
+      Array.from({ length: sourceCount }, (_, index) => [
+        `/repo/source-${index}.ts`,
+        `export function owner${index}(value: number): number { return value + ${index}; }`,
+      ]),
+    );
+    const current = fixture(files);
+    let terminalRecordReads = 0;
+    const terminalUnits = new Proxy(current.context.inventory.terminalUnits, {
+      get(target, property, receiver) {
+        if (typeof property === "string" && /^\d+$/.test(property)) terminalRecordReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const identityContext: IrPlanningIdentityContext = {
+      ...current.context,
+      inventory: { ...current.context.inventory, terminalUnits },
+    };
+
+    for (let index = 0; index < sourceCount; index += 1) {
+      const fileName = `/repo/source-${index}.ts`;
+      const original = current.planned.get(fileName)!;
+      const planned: PlannedSource = {
+        ...original,
+        identityPlan: { ...original.identityPlan, identityContext },
+      };
+      const unitId = functionUnitId(current, fileName, `owner${index}`);
+      reconcile(planned, [], {
+        directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map([[unitId, 1]])),
+      });
+    }
+
+    // Outcome/evidence collection has two pre-existing source-local scans.
+    // R2 accounting may add one graph-wide indexing pass, never another full
+    // terminal census for every source.
+    const terminalCount = current.context.inventory.terminalUnits.length;
+    expect(terminalRecordReads).toBeLessThanOrEqual(terminalCount * (sourceCount * 2 + 1));
   });
 
   it("keeps inventory-canonical output when terminal evidence order reverses", () => {

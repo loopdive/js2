@@ -71,6 +71,8 @@ import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
+import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
+import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
 import { noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
@@ -1596,18 +1598,34 @@ function resolveGenericDeclarationCallSiteTypes(
   });
   const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
+  const callbackResultCarrier = genericCallbackResultDeclaration(ctx, stmt)
+    ? ({ kind: "externref" } as const)
+    : undefined;
+  const freshFactorySource = genericStructFactorySourceResultAbi(ctx, stmt);
+  const freshFactoryCarrier = freshFactorySource ? resolveWasmType(ctx, freshFactorySource) : undefined;
   // (#1058) `finishNode<T extends Node>(node: T): T` is called with many
   // concrete TypeScript AST node layouts. Its parameter is already widened to
   // externref to preserve those identities, but the result used to retain the
   // first call site's nominal Node struct. Returning a later Identifier then
   // failed that stale cast and became null. The exact `T -> T` contract must
   // carry the same representation back out.
+  //
+  // A proven `<T>(callback: () => T): T` contract likewise owns one physical
+  // result even when call-site inference observed `void` first and returned an
+  // empty result vector. TypeScript's runtime Parser namespace has exactly that
+  // order: its reset callback precedes scalar and AST-producing callbacks.
   const results =
     resolved.results.length === 1 &&
-    identityCarrier !== undefined &&
-    (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
-      ? [identityCarrier]
-      : resolved.results;
+    freshFactoryCarrier !== undefined &&
+    (freshFactoryCarrier.kind === "ref" || freshFactoryCarrier.kind === "ref_null")
+      ? [freshFactoryCarrier]
+      : callbackResultCarrier !== undefined
+        ? [callbackResultCarrier]
+        : resolved.results.length === 1 &&
+            identityCarrier !== undefined &&
+            (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
+          ? [identityCarrier]
+          : resolved.results;
   return {
     params,
     results,

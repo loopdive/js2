@@ -1485,11 +1485,13 @@ export function registerClosureBindingInfo(
     ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && closureBodyUsesOwnArguments(arrow.body);
   // 8. Register closure info so call sites can emit call_ref
   const structDef = ctx.mod.types[structTypeIdx];
+  const inheritedInfo = ctx.closureInfoByTypeIdx.get(structTypeIdx);
   const closureInfo: ClosureInfo = {
     structTypeIdx,
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: closureReturnType,
     paramTypes: arrowParams,
+    minimumArgumentCount: inheritedInfo?.minimumArgumentCount,
     hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
     hasRestParam: params.some((p) => p.dotDotDotToken !== undefined),
     needsCallSiteArity:
