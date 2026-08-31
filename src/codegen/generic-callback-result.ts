@@ -689,7 +689,11 @@ function propertyIsStable(
       written = true;
       return;
     }
-    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && writeHits(node.operand)) {
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      writeHits(node.operand)
+    ) {
       written = true;
       return;
     }
@@ -802,6 +806,7 @@ function receiverUseIsClosed(
     }
     if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
       receiverPropertyWriteHitsSymbol(ctx.checker, node.operand, symbol)
     ) {
       closed = false;

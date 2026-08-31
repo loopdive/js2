@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { genericStructFactoryCall } from "../src/codegen/generic-struct-factory.js";
+import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../src/codegen/generic-struct-factory.js";
 import { compile, compileMulti, wrapExports } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
 
@@ -35,6 +35,47 @@ function typedSource(source: string): { checker: ts.TypeChecker; sourceFile: ts.
 }
 
 describe("#1058 generic base-node factories", () => {
+  it("rejects a non-generic call before scanning its binding across the program", () => {
+    const { checker, sourceFile } = typedSource(`
+      function ordinary(value: number): number { return value + 1; }
+      const result = ordinary(41);
+    `);
+    let call: ts.CallExpression | undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) call = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    expect(call).toBeDefined();
+
+    let symbolReads = 0;
+    const observedChecker = new Proxy(checker, {
+      get(target, property) {
+        if (property === "getSymbolAtLocation") {
+          return (node: ts.Node) => {
+            symbolReads++;
+            return target.getSymbolAtLocation(node);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const context = {
+      checker: observedChecker,
+      callableSourceFiles: [sourceFile],
+      oracle: {
+        valueDeclarationOf(): never {
+          throw new Error("non-generic resolved calls must not reach the oracle fallback");
+        },
+      },
+    } as unknown as Parameters<typeof genericStructFactoryCall>[0];
+
+    expect(genericStructFactoryCall(context, call!)).toBeNull();
+    expect(genericIdentityReturnParamIndex(context, call!)).toBeUndefined();
+    expect(symbolReads).toBe(0);
+  });
+
   it("does not treat an arbitrary constructor result as a fresh instantiated generic carrier", async () => {
     const { checker, sourceFile } = typedSource(`
       interface Node { kind: number; pos: number; }

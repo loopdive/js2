@@ -247,32 +247,41 @@ function bindingIsStable(ctx: CodegenContext, name: ts.Identifier): boolean {
   return stable;
 }
 
-function functionDeclarationForCall(ctx: CodegenContext, call: ts.CallExpression): ts.FunctionDeclaration | undefined {
+function functionDeclarationForCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+  genericOnly = false,
+): ts.FunctionDeclaration | undefined {
   const callee = unwrapExpression(call.expression);
-  if (!ts.isIdentifier(callee) || !bindingIsStable(ctx, callee)) return undefined;
+  if (!ts.isIdentifier(callee)) return undefined;
+  let declaration: ts.FunctionDeclaration | undefined;
   const resolvedDeclaration = ctx.checker.getResolvedSignature(call)?.getDeclaration();
   if (resolvedDeclaration && ts.isFunctionDeclaration(resolvedDeclaration)) {
-    if (resolvedDeclaration.body) return resolvedDeclaration;
-    const implementation = symbolAt(ctx, resolvedDeclaration.name!)
-      ?.getDeclarations()
-      ?.find(
-        (candidate): candidate is ts.FunctionDeclaration =>
-          ts.isFunctionDeclaration(candidate) && candidate.body !== undefined,
-      );
-    if (implementation) return implementation;
+    declaration = resolvedDeclaration.body
+      ? resolvedDeclaration
+      : symbolAt(ctx, resolvedDeclaration.name!)
+          ?.getDeclarations()
+          ?.find(
+            (candidate): candidate is ts.FunctionDeclaration =>
+              ts.isFunctionDeclaration(candidate) && candidate.body !== undefined,
+          );
   }
   // Prefer the checker symbol at this exact call site. Program-ABI replay can
   // compile nested same-named factories from different source components; the
   // lightweight binder's value declaration may then point at a sibling replay
   // declaration even though the checker still retains the source-qualified
   // identity (`baseNodeFactory.createBaseNode` vs nodeFactory's generic helper).
-  const checkerDeclaration = canonicalSymbol(ctx, ctx.checker.getSymbolAtLocation(callee))
+  declaration ??= canonicalSymbol(ctx, ctx.checker.getSymbolAtLocation(callee))
     ?.getDeclarations()
     ?.find((candidate): candidate is ts.FunctionDeclaration => ts.isFunctionDeclaration(candidate) && !!candidate.body);
-  if (checkerDeclaration) return checkerDeclaration;
-  const declaration = ctx.oracle.valueDeclarationOf(callee);
-  if (declaration && ts.isFunctionDeclaration(declaration)) return declaration;
-  return undefined;
+  const oracleDeclaration = declaration ? undefined : ctx.oracle.valueDeclarationOf(callee);
+  if (!declaration && oracleDeclaration && ts.isFunctionDeclaration(oracleDeclaration)) declaration = oracleDeclaration;
+  // The generic factory/identity detectors call this helper for every
+  // identifier call in a bundle. Resolve the declaration first, then reject
+  // the overwhelmingly common non-generic body before bindingIsStable's
+  // whole-program write scan. Non-generic identity helpers opt out below.
+  if (!declaration || (genericOnly && !declaration.typeParameters?.length)) return undefined;
+  return bindingIsStable(ctx, callee) ? declaration : undefined;
 }
 
 function directVariableBySymbol(
@@ -768,7 +777,7 @@ function contextualFreshNestedFactoryCall(
   factoryDeclaration: ts.FunctionDeclaration,
   factoryInvocation: ts.CallExpression,
 ): boolean {
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   if (!declaration?.body || declaration.parent !== factoryDeclaration.body) return false;
   const signature = ctx.checker.getSignatureFromDeclaration(declaration);
   const result = signature && eraseReadonlyView(ctx.checker.getReturnTypeOfSignature(signature));
@@ -1098,7 +1107,7 @@ function provenFreshFactoryCall(ctx: CodegenContext, call: ts.CallExpression): b
   }
 
   if (stableReturnedFactoryMethodCall(ctx, call)) return true;
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   return declaration !== undefined && genericStructFactoryDeclaration(ctx, declaration) !== null;
 }
 
@@ -1305,7 +1314,7 @@ function wrapperFactoryReturn(
   if (!ts.isIdentifier(local.name) || !local.initializer) return false;
   const initializer = unwrapExpression(local.initializer);
   if (!ts.isCallExpression(initializer)) return false;
-  const seedDeclaration = functionDeclarationForCall(ctx, initializer);
+  const seedDeclaration = functionDeclarationForCall(ctx, initializer, true);
   if (!seedDeclaration || !genericStructFactoryDeclaration(ctx, seedDeclaration)) return false;
 
   const seedSignature = ctx.checker.getResolvedSignature(initializer);
@@ -1428,7 +1437,7 @@ export function genericStructFactoryCall(
   ctx: CodegenContext,
   call: ts.CallExpression,
 ): GenericStructFactoryCall | null {
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   if (!declaration) return null;
   const factory = genericStructFactoryDeclaration(ctx, declaration);
   if (!factory) return null;
@@ -1473,7 +1482,7 @@ export function genericStructFactoryCall(
  * an unrelated nominal sibling.
  */
 export function genericIdentityReturnParamIndex(ctx: CodegenContext, call: ts.CallExpression): number | undefined {
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   if (!declaration?.typeParameters?.length) return undefined;
 
   let memo = identityReturnParamMemo.get(ctx);

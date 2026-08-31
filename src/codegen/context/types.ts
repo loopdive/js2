@@ -2490,6 +2490,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
   closureMap: Map<string, ClosureInfo>;
   closureInfoByTypeIdx: Map<number, ClosureInfo>;
+  /**
+   * Smallest observed source-level argument count for an exact lifted
+   * funcref ABI. Unlike `ClosureInfo`, this survives replacement of a shared
+   * wrapper's live registry record by a later closure allocation.
+   */
+  closureMinimumArgumentCountByFuncTypeIdx: Map<number, number>;
   maxHostDynamicMethodCallArity?: number;
   /**
    * Host-lane dynamic method names whose receiver may be a compiled class

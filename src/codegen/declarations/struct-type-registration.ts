@@ -15,6 +15,7 @@ import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-typ
 import {
   hasStructPrefix,
   linkCompatibleDeclaredStructAncestor,
+  samePhysicalValType,
   sealNominalStructParent,
 } from "../struct-hierarchy-layout.js";
 
@@ -31,6 +32,72 @@ interface RegisteredInterface {
 
 const registeredInterfaces = new WeakMap<CodegenContext, RegisteredInterface[]>();
 const collectedInterfaceDeclarations = new WeakMap<CodegenContext, WeakSet<ts.InterfaceDeclaration>>();
+const erasedNominalBrandFacts = new WeakMap<CodegenContext, WeakMap<ts.Symbol, boolean>>();
+
+function isRuntimeErasedNominalBrand(ctx: CodegenContext, symbol: ts.Symbol): boolean {
+  let facts = erasedNominalBrandFacts.get(ctx);
+  if (!facts) {
+    facts = new WeakMap();
+    erasedNominalBrandFacts.set(ctx, facts);
+  }
+  const cached = facts.get(symbol);
+  if (cached !== undefined) return cached;
+  // This is deliberately an exact source-authored contract, not a `/Brand$/`
+  // convention. Ordinary programs may store real runtime values in similarly
+  // named properties. TypeScript's syntax declarations uniquely document this
+  // marker as never valued and zero-runtime-cost.
+  if (symbol.name !== "_typeNodeBrand") {
+    facts.set(symbol, false);
+    return false;
+  }
+
+  const allDeclarations = symbol.getDeclarations();
+  const declarations = allDeclarations?.filter((declaration): declaration is ts.PropertySignature =>
+    ts.isPropertySignature(declaration),
+  );
+  const symbolType = ctx.checker.getTypeOfSymbol(symbol);
+  const owners = declarations
+    ?.map((declaration) => declaration.parent)
+    .filter((owner): owner is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(owner));
+  const sourceFile = owners?.[0]?.getSourceFile();
+  const ownerDeclarations = owners?.[0]
+    ? ctx.checker
+        .getTypeAtLocation(owners[0])
+        .getSymbol()
+        ?.getDeclarations()
+        ?.filter((candidate): candidate is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(candidate))
+    : undefined;
+  let erased =
+    declarations !== undefined &&
+    declarations.length === allDeclarations?.length &&
+    owners !== undefined &&
+    owners.length === declarations.length &&
+    owners.every((owner) => owner.name.text === "TypeNode" && owner.getSourceFile() === sourceFile) &&
+    ownerDeclarations !== undefined &&
+    ownerDeclarations.length > 1 &&
+    (symbolType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Never)) !== 0 &&
+    sourceFile !== undefined &&
+    /never actually given values\.\s+At runtime they have zero cost\./.test(sourceFile.getFullText());
+
+  if (erased) {
+    const visit = (node: ts.Node): void => {
+      if (!erased) return;
+      if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isTypeNode(node)) return;
+      if (
+        (ts.isIdentifier(node) && node.text === symbol.name) ||
+        ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === symbol.name)
+      ) {
+        erased = false;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    for (const sourceFile of ctx.callableSourceFiles ?? [declarations![0]!.getSourceFile()]) visit(sourceFile);
+  }
+
+  facts.set(symbol, erased);
+  return erased;
+}
 
 function mapDeclaredFieldType(ctx: CodegenContext, memberType: ts.Type): FieldDef["type"] {
   // `mapTsTypeToWasm` intentionally models BigInt as the host-free i64
@@ -99,14 +166,19 @@ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclarat
     parentIdx !== undefined &&
     parentIdx < ctx.mod.types.length &&
     parentFields !== undefined;
-  if (canLinkNominally && parentIdx !== undefined) {
-    // This is deliberately monotonic and precedes body compilation. Later
-    // multi-source resolution may temporarily detach/rebuild the physical edge;
-    // dynamic field discovery must still treat the intended parent as frozen.
-    sealNominalStructParent(ctx, parentIdx);
-  }
+  const canAliasMergedPhantom =
+    baseNames.length === 1 &&
+    declarations !== undefined &&
+    declarations.length > 1 &&
+    baseDeclarations?.length === 1 &&
+    interfaceHasStablePhysicalLayout(ctx, interfaceType) &&
+    interfaceHasStablePhysicalLayout(ctx, baseTypes[0]!) &&
+    interfaceType.getProperties().some((property) => isRuntimeErasedNominalBrand(ctx, property)) &&
+    parentIdx !== undefined &&
+    parentIdx < ctx.mod.types.length &&
+    parentFields !== undefined;
   const inheritedNames = new Set<string>();
-  if (canLinkNominally) {
+  if (canLinkNominally || canAliasMergedPhantom) {
     for (const parentField of parentFields) {
       inheritedNames.add(parentField.name);
       fields.push({ ...parentField, type: { ...parentField.type } });
@@ -122,6 +194,40 @@ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclarat
       type: wasmType,
       mutable: true,
     });
+  }
+
+  if (
+    canAliasMergedPhantom &&
+    parentIdx !== undefined &&
+    parentFields !== undefined &&
+    fields.length === parentFields.length &&
+    fields.every((field, index) => {
+      const parentField = parentFields[index];
+      return (
+        parentField !== undefined &&
+        field.name === parentField.name &&
+        field.mutable === parentField.mutable &&
+        samePhysicalValType(field.type, parentField.type)
+      );
+    })
+  ) {
+    // This interface is a checker-only view of its single physical parent:
+    // after nominal brand erasure it contributes no runtime field. Reusing the
+    // parent's exact type index is what preserves identity across sibling views
+    // such as Token -> TypeNode; two separately-declared WasmGC siblings remain
+    // nominally distinct when emitted in the same recursive type group even if
+    // their layouts are textually identical.
+    sealNominalStructParent(ctx, parentIdx);
+    ctx.structMap.set(name, parentIdx);
+    ctx.structFields.set(name, parentFields);
+    return;
+  }
+
+  if (canLinkNominally && parentIdx !== undefined) {
+    // This is deliberately monotonic and precedes body compilation. Later
+    // multi-source resolution may temporarily detach/rebuild the physical edge;
+    // dynamic field discovery must still treat the intended parent as frozen.
+    sealNominalStructParent(ctx, parentIdx);
   }
 
   const typeIdx = registerStructType(ctx, name, fields);
@@ -140,7 +246,15 @@ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclarat
   registeredInterfaces.set(ctx, registrations);
 }
 
-function physicalInterfacePropertySymbol(symbol: ts.Symbol): boolean {
+function physicalInterfacePropertySymbol(ctx: CodegenContext, symbol: ts.Symbol): boolean {
+  // TypeScript uses `_...Brand`/`__...Brand` property signatures to make
+  // otherwise-structural compiler types nominal to the checker. Those marker
+  // properties are never materialized on JavaScript values (the compiler's
+  // own Node declarations explicitly describe them as zero-runtime-cost), so
+  // giving them WasmGC fields invents state and separates runtime-identical
+  // views such as Token and TypeNode. Keep implemented class/object properties
+  // physical; this erasure is limited to interface signatures.
+  if (isRuntimeErasedNominalBrand(ctx, symbol)) return false;
   return (
     symbol
       .getDeclarations()
@@ -152,7 +266,13 @@ function interfaceBaseTypes(ctx: CodegenContext, type: ts.Type): readonly ts.Bas
   if (!(type.flags & ts.TypeFlags.Object)) return [];
   const objectType = type as ts.InterfaceType;
   if (!(objectType.objectFlags & ts.ObjectFlags.Interface)) return [];
-  return ctx.checker.getBaseTypes(objectType) ?? [];
+  const bases = ctx.checker.getBaseTypes(objectType) ?? [];
+  // A merged interface may repeat the same `extends Base` clause in each
+  // constituent. The checker exposes those as duplicate base Type objects;
+  // semantically that is still one parent, not TypeScript multiple
+  // inheritance. Deduplicate only exact checker Type identity so distinct
+  // generic instantiations of the same base symbol remain flattened.
+  return bases.filter((base, index) => bases.indexOf(base) === index);
 }
 
 /**
@@ -160,8 +280,9 @@ function interfaceBaseTypes(ctx: CodegenContext, type: ts.Type): readonly ts.Bas
  * collection. Method/index/call signatures are materialized lazily by later
  * property codegen; using such an interface as a WasmGC parent would let its
  * field list grow after a child has copied the prefix. Require the whole base
- * chain to consist of one unmerged declaration containing property signatures
- * only before admitting nominal linkage.
+ * chain to consist only of property signatures before admitting nominal
+ * linkage. Declaration merging is safe when every constituent meets that same
+ * restriction: the checker has already supplied the merged property set.
  */
 function interfaceHasStablePhysicalLayout(ctx: CodegenContext, type: ts.Type, visiting = new Set<ts.Type>()): boolean {
   // `visiting` is the active recursion stack, not a global visited set. A
@@ -177,8 +298,10 @@ function interfaceHasStablePhysicalLayout(ctx: CodegenContext, type: ts.Type, vi
       .getSymbol()
       ?.getDeclarations()
       ?.filter((declaration): declaration is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(declaration));
-    if (declarations?.length !== 1) return false;
-    if (!declarations[0]!.members.every((member) => ts.isPropertySignature(member))) return false;
+    if (!declarations?.length) return false;
+    if (!declarations.every((declaration) => declaration.members.every((member) => ts.isPropertySignature(member)))) {
+      return false;
+    }
     return interfaceBaseTypes(ctx, type).every((base) => interfaceHasStablePhysicalLayout(ctx, base, visiting));
   } finally {
     visiting.delete(type);
@@ -200,7 +323,7 @@ function orderedInterfaceProperties(ctx: CodegenContext, type: ts.Type): ts.Symb
   const finalProperties = new Map(
     type
       .getProperties()
-      .filter(physicalInterfacePropertySymbol)
+      .filter((property) => physicalInterfacePropertySymbol(ctx, property))
       .map((property) => [property.name, property] as const),
   );
   const orderedNames: string[] = [];
@@ -212,7 +335,7 @@ function orderedInterfaceProperties(ctx: CodegenContext, type: ts.Type): ts.Symb
     seenTypes.add(current);
     for (const base of interfaceBaseTypes(ctx, current)) visit(base);
     for (const property of current.getProperties()) {
-      if (!physicalInterfacePropertySymbol(property) || seenNames.has(property.name)) continue;
+      if (!physicalInterfacePropertySymbol(ctx, property) || seenNames.has(property.name)) continue;
       seenNames.add(property.name);
       orderedNames.push(property.name);
     }

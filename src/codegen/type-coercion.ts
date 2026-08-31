@@ -1763,13 +1763,17 @@ function emitSafeStructConversion(
   if (srcVec) {
     const tupleFields = getTupleFields(ctx, toTypeIdx);
     if (tupleFields) {
-      return emitVecToTupleBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, tupleFields);
+      return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+        emitVecToTupleBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, tupleFields);
+      });
     }
 
     // Case 2: vec -> vec (different element types)
     const dstVec = getVecInfo(ctx, toTypeIdx);
     if (dstVec && srcVec.elemType.kind !== dstVec.elemType.kind) {
-      return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+      return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+        emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+      });
     }
     // Also handle vec -> vec where both are ref but different typeIdx
     if (
@@ -1780,7 +1784,9 @@ function emitSafeStructConversion(
       const srcRefIdx = (srcVec.elemType as { typeIdx: number }).typeIdx;
       const dstRefIdx = (dstVec.elemType as { typeIdx: number }).typeIdx;
       if (srcRefIdx !== dstRefIdx) {
-        return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+        return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+          emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+        });
       }
     }
   }
@@ -1824,7 +1830,9 @@ function emitSafeStructConversion(
             ? (dstVec.elemType as { typeIdx: number }).typeIdx
             : undefined;
         if (vecShaped.elemType.kind !== dstVec.elemType.kind || srcRefIdx !== dstRefIdx) {
-          return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, vecShaped, dstVec);
+          return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+            emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, vecShaped, dstVec);
+          });
         }
       }
     }
@@ -1837,6 +1845,51 @@ function emitSafeStructConversion(
   }
 
   return false;
+}
+
+/**
+ * Preserve a nullable source while materializing a structurally different vec
+ * carrier. The non-null vec projectors immediately read the source length and
+ * data fields, so feeding them JavaScript's null-backed `undefined` traps
+ * before the surrounding optional call can observe it. Mirror struct
+ * narrowing's null arm: nullable destinations retain null unchanged, while a
+ * non-null destination performs the ordinary runtime non-null assertion.
+ */
+function emitNullableVecProjection(
+  fctx: FunctionContext,
+  fromTypeIdx: number,
+  toTypeIdx: number,
+  fromNullable: boolean,
+  toNullable: boolean,
+  emitNonNullProjection: () => void,
+): boolean {
+  if (!fromNullable) {
+    emitNonNullProjection();
+    return true;
+  }
+
+  const sourceLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: fromTypeIdx });
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+
+  if (toNullable) {
+    fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.is_null" });
+    const projection = captureBody(fctx, () => {
+      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+      emitNonNullProjection();
+    });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toTypeIdx } },
+      then: [{ op: "ref.null", typeIdx: toTypeIdx }],
+      else: projection,
+    });
+  } else {
+    fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+    emitNonNullProjection();
+  }
+
+  releaseTempLocal(fctx, sourceLocal);
+  return true;
 }
 
 /** Returns true if `fromTypeIdx` is a declared Wasm subtype of `toTypeIdx`
@@ -2236,6 +2289,13 @@ function assertedStructExtensionInfo(
 
 /** Pure preflight for callers that must choose a stack conversion first. */
 export function canEmitAssertedStructExtension(ctx: CodegenContext, from: ValType, to: ValType): boolean {
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    (to.kind === "ref" || to.kind === "ref_null") &&
+    isDeclaredStructSubtype(ctx, from.typeIdx, to.typeIdx)
+  ) {
+    return true;
+  }
   return assertedStructExtensionInfo(ctx, from, to) !== undefined;
 }
 
@@ -2323,6 +2383,14 @@ export function emitAssertedStructExtension(
   from: ValType,
   to: ValType,
 ): boolean {
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    (to.kind === "ref" || to.kind === "ref_null") &&
+    isDeclaredStructSubtype(ctx, from.typeIdx, to.typeIdx)
+  ) {
+    if (from.kind === "ref_null" && to.kind === "ref") fctx.body.push({ op: "ref.as_non_null" });
+    return true;
+  }
   const info = assertedStructExtensionInfo(ctx, from, to);
   if (!info) return false;
 

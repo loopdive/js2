@@ -356,6 +356,86 @@ const FRESH_BASE = `countNode({
 })`;
 
 describe("#1058 nominal token projection", () => {
+  it("preserves a shared token through TypeScript's merged brand-only TypeNode view", async () => {
+    const result = await compileMulti(
+      {
+        "./types.ts": `
+          export interface Node { kind: number; pos: number; end: number; }
+          export interface Token extends Node {}
+          // The brands are never actually given values. At runtime they have zero cost.
+          export interface TypeNode extends Node { _typeNodeBrand: any; }
+          export interface TypeNode extends Node { readonly kind: number; }
+        `,
+        "./factory.ts": `
+          import type { Node, Token } from "./types.js";
+          const shared: Token = { kind: 125, pos: -1, end: -1 };
+          export function createToken(): Token { return shared; }
+          export function mutateShared(): void { shared.kind = 126; }
+          export function isShared(node: Node): boolean { return node === shared; }
+        `,
+        "./entry.ts": `
+          import { createToken, isShared, mutateShared } from "./factory.js";
+          import type { Node, TypeNode } from "./types.js";
+          interface AsExpression { type: TypeNode; }
+          interface NodeFactory { createAsExpression(type: TypeNode): AsExpression; }
+          const factory: NodeFactory = {
+            createAsExpression(type: TypeNode): AsExpression { return { type }; },
+          };
+          function finishNode<T extends Node>(node: T, pos: number): T {
+            node.pos = pos;
+            node.end = pos + 1;
+            return node;
+          }
+          function parseTokenNode<T extends Node>(): T {
+            return finishNode(createToken(), 40) as T;
+          }
+          export function run(): number {
+            const node = parseTokenNode<TypeNode>();
+            const result = factory.createAsExpression(node);
+            mutateShared();
+            if (!isShared(result.type)) return -1;
+            return result.type.kind * 1000 + result.type.pos * 10 + result.type.end;
+          }
+        `,
+      },
+      "./entry.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { run(): number };
+
+    expect(exports.run()).toBe(126441);
+  });
+
+  it("keeps a value-observed TypeNode brand physical despite the zero-cost declaration contract", async () => {
+    const result = await compileMulti(
+      {
+        "./entry.ts": `
+          interface Base { value: number; }
+          // The brands are never actually given values. At runtime they have zero cost.
+          interface TypeNode extends Base { _typeNodeBrand: any; }
+          interface TypeNode extends Base { readonly value: number; }
+          const node: TypeNode = { value: 1, _typeNodeBrand: 9 };
+          export function run(): number { return node._typeNodeBrand as number; }
+        `,
+      },
+      "./entry.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { run(): number };
+
+    expect(exports.run()).toBe(9);
+  });
+
   it("follows an imported NodeFactory method to its concrete fresh base allocator", async () => {
     const exports = await compileEntry(FRESH_BASE);
     expect(exports.keywordKind()).toBe(125441);

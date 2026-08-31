@@ -2246,7 +2246,9 @@ export function compileIdentifierCall(
             if (
               !hasRestParam &&
               info.paramTypes.length > sigParamCount &&
-              ((info.minimumArgumentCount ?? info.paramTypes.length) > sigParamCount ||
+              ((ctx.closureMinimumArgumentCountByFuncTypeIdx.get(info.funcTypeIdx) ??
+                info.minimumArgumentCount ??
+                info.paramTypes.length) > sigParamCount ||
                 info.paramTypes.slice(sigParamCount).some((type) => type.kind !== "externref"))
             ) {
               continue;

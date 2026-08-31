@@ -88,6 +88,7 @@ func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
   - src/codegen/member-set-dispatch.ts::fillMemberSetDispatch
   - src/codegen/expressions/calls.ts::compileIIFE
+  - src/codegen/expressions/calls.ts::ensureFuncValueWrappersRegistered
   - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/function-body.ts::compileFunctionBody
@@ -720,6 +721,82 @@ merge-sensitive dynamic-dispatch suites add **65/65** passing tests. TS5 and
 TS7 typechecks pass. This remains a compile/validation and runtime-frontier
 advance, not a claim that the three AST fingerprints or TypeScript's upstream
 unit tests pass.
+
+## Current-main parser and size handoff (2026-08-31)
+
+The follow-up branch is now merged forward to `loopdive/js2` `main` at
+`f08c7c62ce96ce4cbfe8ec89dc7ec2e9a5d10dba` (merge commit
+`b8f25effd2826109075f5dba053b60b6841f68df`). The final post-merge canonical
+source probe still compiles TypeScript 5.9.3 successfully and emits valid Wasm.
+The latest run took 372,529 ms in the worker / 373,428 ms wall time, retained
+4,283 source functions after body compilation, and produced an
+**85,102,452-byte** module. Peak RSS was **4,379.1 MiB**: the worker completed
+within its configured 4,096 MiB V8 heap limit, but process RSS exceeded the 4
+GiB target and must not be reported as a memory-gate pass. Its SHA-256 is
+`fb1fbb02d76f1e2a514325154bfffec6f45d2b0c936cde1105d3e97ed33b73b0`;
+the artifact and source map are
+`/private/tmp/ts2wasm-typescript-parser-latest.wasm{,.map}`.
+
+The size is generated-code amplification, not 9 MB of source being copied into
+the module. In the measured 84.9 MB predecessor (the same retained source
+graph and code-generation regime), the code section was 82,807,923 bytes
+(97.53% of the whole module). `visitorPublic.ts` alone accounted for 589
+functions and 76,811,865 function-body bytes (90.47% of the module), while
+`parser.ts` accounted for 9,579 functions but only 3,667,500 bytes (4.32%).
+Exact duplicate function bodies represented 37,099,453 bytes (44.81% of all
+body bytes); gzip reduced the raw module to 14,153,303 bytes. This is why an
+approximately 100 KB hand-written QuickJS parser is not comparable to this raw
+artifact: js2 currently specializes TypeScript's large visitor callback table
+into hundreds of 0.5--0.87 MB closures and retains duplicate discovery/final
+cohorts. The result has not received whole-module unused-function elimination,
+identical-code folding, or ordinary Wasm optimization. Removing unused module
+elements alone previously reduced the artifact to about 41.1 MB, so the first
+size fix belongs in reachability/deduplication rather than parser semantics.
+
+This round added focused fixes for four concrete compiler gaps:
+
+- TypeScript's merged brand-only `TypeNode` interface now aliases its exact
+  physical `Node` parent under the source-authored zero-runtime brand contract.
+  Token identity and post-store mutations remain observable; spoofed or
+  value-read brands fail closed and retain a real field.
+- Generic factory/callback detectors avoid whole-program binding scans before
+  resolving a declaration and treat non-mutating unary property reads as reads,
+  not writes.
+- Nullable vec-to-vec/tuple projections preserve `undefined` before reading the
+  source length. This clears the `createInterfaceDeclaration` heritage-clause
+  null dereference while retaining populated element projection.
+- Minimum callback arity is persistent across replacement of a shared
+  `ClosureInfo` record. Optional declarations discovered before their source
+  function handle exists now remain in a small pending set; later calls revisit
+  only that set and register the exact capture/TDZ-stripped physical ABI.
+  Parameter-expanded linear `Uint8Array` ABIs retain both pointer and length
+  slots. This clears the former `parseIdentifierName` candidate miss.
+
+The three runtime fingerprints do **not** pass yet:
+
+- `builderStatePublic.ts` and `performanceCore.ts` clear the former
+  `parseModuleExportName` / `parseIdentifierName` miss. They now advance through
+  `parseImportSpecifier` and stop in `parseImportOrExportSpecifier` with a
+  terminal TypeError at `parser.ts:8614:13`. This later carrier/callable miss
+  needs its own focused trace; it is not evidence that the earlier callback
+  registration fix failed.
+- `corePublic.ts` cleared the former illegal cast and nullable heritage-array
+  dereference. It now finishes parsing and fails in `clearState`; the reported
+  `parser.ts:1784:32` location is one call early. Runtime instrumentation proves
+  `scanner.setOnError(undefined)` succeeds. The actual miss is the following
+  `scanner.setScriptKind(ScriptKind.Unknown)`: the live captured closure and its
+  finalized `__call_fn_1` arm work, but the earlier call-site-local ladder was
+  frozen before `createScanner` published that exact nominal trampoline type.
+  The sound follow-up is a deferred/finalized callable-property dispatcher, not
+  another eager signature guess or a `setOnError` special case.
+
+After the current edits, all **57** `tests/issue-1058-*.test.ts` files pass
+(**297/297 tests**), and both TS5 and TS7 typechecks pass. The bounded pinned
+TypeScript 5.9.3 upstream adapter also passes all **11/11** admitted original
+callbacks across its three selected files; **253** upstream files are explicitly
+deferred. These figures cover focused compiler regressions only. The adapter is
+not TypeScript's complete unit suite, and no full Wasm-backed TypeScript unit
+runner exists yet.
 
 ## Acceptance criteria
 
