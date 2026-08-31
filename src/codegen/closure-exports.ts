@@ -8,7 +8,8 @@
 // (generateModule), which imports these back.
 
 import { ts } from "../ts-api.js";
-import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../ir/types.js";
+import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
+import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { addUnionImports } from "./registry/imports.js";
@@ -36,7 +37,7 @@ import {
 } from "./program-abi-planning.js";
 import { recordClosureArgcDispatcher } from "./compiler-support-abi.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
-import { definedFuncHandleOf } from "./func-space.js";
+import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
 import {
   STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT,
   STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE,
@@ -59,6 +60,15 @@ const CLOSURE_HOST_BRIDGE_BINDINGS_PHYSICAL_BASE = "$cu";
 const CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const publishedClosureHostBridgeBits = new WeakMap<CodegenContext, number>();
 const publishedClosureHostBridgeFuncs = new WeakMap<CodegenContext, Map<number, WasmFunction>>();
+interface PublishedCtorClosureHostBridgeExport {
+  readonly entry: WasmExport;
+  readonly name: string;
+  readonly func: WasmFunction;
+}
+const publishedCtorClosureHostBridgeExports = new WeakMap<
+  CodegenContext,
+  readonly PublishedCtorClosureHostBridgeExport[]
+>();
 const publishedClosureHostBridgeManifests = new WeakSet<CodegenContext>();
 const publishedStandaloneTimerCallbackManifests = new WeakSet<CodegenContext>();
 
@@ -133,6 +143,16 @@ function publishClosureHostBridge(ctx: CodegenContext, func: WasmFunction, deriv
   const definition = closureHostBridgeDefinition(func.name);
   const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
   const physicalBase = definition.physicalBase;
+  const publishedCtorExports: PublishedCtorClosureHostBridgeExport[] | undefined =
+    definition.bit === 17 ? [] : undefined;
+  const publishExport = (name: string): void => {
+    const entry: WasmExport = {
+      name,
+      desc: { kind: "func", index: funcIdx },
+    };
+    ctx.mod.exports.push(entry);
+    publishedCtorExports?.push(Object.freeze({ entry, name, func }));
+  };
   let maxOccupiedSuffix = -1;
   for (const name of occupied) {
     if (!name.startsWith(physicalBase)) continue;
@@ -141,19 +161,13 @@ function publishClosureHostBridge(ctx: CodegenContext, func: WasmFunction, deriv
   }
   const logicalNameOccupied = occupied.has(func.name);
   if (!logicalNameOccupied) {
-    ctx.mod.exports.push({
-      name: func.name,
-      desc: { kind: "func", index: funcIdx },
-    });
+    publishExport(func.name);
     occupied.add(func.name);
   }
   for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
     const physicalName = `${physicalBase}${"$".repeat(suffixLength)}`;
     if (occupied.has(physicalName)) continue;
-    ctx.mod.exports.push({
-      name: physicalName,
-      desc: { kind: "func", index: funcIdx },
-    });
+    publishExport(physicalName);
     occupied.add(physicalName);
   }
   publishedClosureHostBridgeBits.set(ctx, (publishedClosureHostBridgeBits.get(ctx) ?? 0) | (1 << definition.bit));
@@ -163,7 +177,96 @@ function publishClosureHostBridge(ctx: CodegenContext, func: WasmFunction, deriv
     publishedClosureHostBridgeFuncs.set(ctx, publishedFuncs);
   }
   publishedFuncs.set(definition.bit, func);
+  if (publishedCtorExports) {
+    if (publishedCtorClosureHostBridgeExports.has(ctx)) {
+      throw new Error("constructor-closure host bridge exports were published more than once");
+    }
+    publishedCtorClosureHostBridgeExports.set(ctx, Object.freeze(publishedCtorExports));
+  }
   return funcIdx;
+}
+
+/**
+ * Exact public names reserved by the bit-17 constructor-closure classifier.
+ *
+ * The logical spelling is one exact name. Its compact physical family is the
+ * base `$ch` followed only by literal `$` suffixes; near-prefix user exports
+ * such as `$ch0` and `$ch_extra` are deliberately outside this namespace.
+ */
+export function isCoreCtorClosureHostBridgePublicName(name: string): boolean {
+  return name === "__is_ctor_closure" || (name.startsWith("$ch") && /^\$*$/.test(name.slice("$ch".length)));
+}
+
+/** Resolve a constructor-closure descriptor under its exact handle regime. */
+function resolveCtorClosureHostBridgeExportTarget(ctx: CodegenContext, entry: WasmExport): WasmFunction | undefined {
+  if (entry.desc.kind !== "func") return undefined;
+  if (entry.desc.index < STABLE_FUNC_BASE) {
+    const currentImportCount = ctx.mod.imports.filter((candidate) => candidate.desc.kind === "func").length;
+    const currentPosition = entry.desc.index - currentImportCount;
+    return currentPosition < 0 ? undefined : ctx.mod.functions[currentPosition];
+  }
+  return definedFuncAt(ctx, entry.desc.index);
+}
+
+/**
+ * Authenticate a constructor-closure export by context-bound publication
+ * identity.
+ *
+ * The recorded descriptor object is the capability issued by this publishing
+ * context. A replacement or copy cannot prove that it belongs to this module;
+ * before the freeze boundary, finalization instead rejects any unrecorded
+ * exact-namespace descriptor that resolves to a recorded allocator.
+ */
+export function isCompilerOwnedCtorClosureHostBridgeExport(ctx: CodegenContext, entry: WasmExport): boolean {
+  const published = publishedCtorClosureHostBridgeExports.get(ctx);
+  if (!published) return false;
+  return published.some((candidate) => candidate.entry === entry);
+}
+
+/**
+ * Validate every recorded bit-17 descriptor before the availability manifest
+ * is frozen. This is the mutation boundary: replacing, duplicating, renaming,
+ * retargeting, changing kind, or removing the allocator cannot be repaired by
+ * the later export sink.
+ */
+export function finalizeCtorClosureHostBridgeExports(ctx: CodegenContext): void {
+  const published = publishedCtorClosureHostBridgeExports.get(ctx);
+  if (!published) return;
+  for (const { entry, name, func } of published) {
+    if (ctx.mod.exports.indexOf(entry) < 0) {
+      throw new Error(`constructor-closure host bridge export descriptor ${name} disappeared before finalization`);
+    }
+    if (ctx.mod.exports.indexOf(entry) !== ctx.mod.exports.lastIndexOf(entry)) {
+      throw new Error(`constructor-closure host bridge export descriptor ${name} appears more than once in the module`);
+    }
+    if (entry.name !== name) {
+      throw new Error(
+        `constructor-closure host bridge export descriptor ${name} changed its published name to ${entry.name}`,
+      );
+    }
+    if (entry.desc.kind !== "func") {
+      throw new Error(`constructor-closure host bridge export descriptor ${name} changed kind to ${entry.desc.kind}`);
+    }
+    if (!ctx.mod.functions.includes(func)) {
+      throw new Error(`constructor-closure host bridge export descriptor ${name} lost its allocator function`);
+    }
+    if (resolveCtorClosureHostBridgeExportTarget(ctx, entry) !== func) {
+      throw new Error(
+        `constructor-closure host bridge export descriptor ${name} resolves to a different allocator function`,
+      );
+    }
+  }
+  const recordedEntries = new Set(published.map((candidate) => candidate.entry));
+  const recordedFuncs = new Set(published.map((candidate) => candidate.func));
+  for (const entry of ctx.mod.exports) {
+    if (recordedEntries.has(entry) || !isCoreCtorClosureHostBridgePublicName(entry.name)) continue;
+    const target = resolveCtorClosureHostBridgeExportTarget(ctx, entry);
+    if (target !== undefined && recordedFuncs.has(target)) {
+      throw new Error(
+        `unrecorded constructor-closure host bridge export descriptor ${entry.name} resolves to a recorded allocator function`,
+      );
+    }
+  }
 }
 
 /**
