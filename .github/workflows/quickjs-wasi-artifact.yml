@@ -275,7 +275,11 @@ jobs:
           # command with this cap set exits 0.
           VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
         run: |
-          npx vitest run \
+          # These compiler-heavy files all pass concurrently, but under CI load
+          # their reporter traffic can starve Vitest's worker RPC and make the
+          # step exit 1 with `Timeout calling "onTaskUpdate"`. Keep this canary
+          # deterministic by using one worker; semantic coverage is unchanged.
+          npx vitest run --pool=forks --poolOptions.forks.singleFork --no-file-parallelism \
             tests/issue-2928-refusal-provider.test.ts \
             tests/issue-2960.test.ts \
             tests/issue-2928-e6-provider-cache.test.ts \
