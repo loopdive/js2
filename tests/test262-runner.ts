@@ -4222,8 +4222,20 @@ function appendOriginalHarnessFailureContext(detail: string, source: string): st
 //     compile regression) must degrade to today's behaviour — the row reports
 //     its own failure — never take the whole lane down. The build is attempted
 //     once; the null is memoised with it.
-const TEMPORAL_PROVIDER_DISABLED = process.env.JS2WASM_TEST262_TEMPORAL === "0";
 let temporalProviderPromise: Promise<TemporalProvider | null> | undefined;
+
+/**
+ * `JS2WASM_TEST262_TEMPORAL=0` opts a consumer of this lane OUT of the provider.
+ *
+ * Read LAZILY, not into a module-scope const: a consumer that sets the variable
+ * in its own module body — `scripts/validate-test262-baseline.ts` does, for the
+ * lane-parity reason documented there — runs AFTER this module is evaluated,
+ * because ESM imports are hoisted. A hoisted `const` would capture the unset
+ * value and silently ignore the opt-out.
+ */
+function temporalProviderDisabled(): boolean {
+  return process.env.JS2WASM_TEST262_TEMPORAL === "0";
+}
 
 /**
  * Does this test need the real `Temporal` global?
@@ -4233,8 +4245,8 @@ let temporalProviderPromise: Promise<TemporalProvider | null> | undefined;
  * (e.g. `built-ins/Date/**` interop rows) declare `features: [Temporal]`
  * without living under such a directory.
  */
-function test262NeedsTemporalGlobal(filePath: string, meta: Test262Meta): boolean {
-  if (TEMPORAL_PROVIDER_DISABLED) return false;
+export function test262NeedsTemporalGlobal(filePath: string, meta: Test262Meta): boolean {
+  if (temporalProviderDisabled()) return false;
   if (/[\\/]Temporal[\\/]/.test(filePath)) return true;
   return meta.features?.includes("Temporal") === true;
 }
