@@ -145,6 +145,10 @@ Two semantics stated because they are not free:
 | provider `add("P1D")` | THREW `Cannot destructure 'null' or 'undefined'` | **`"2020-03-05"`** — promoted to the harness's asserted `SUPPORTED` set as `arithmeticAddString` |
 | provider `add({days:1})` / `subtract` / `with` | `WebAssembly.Exception` | unchanged — #5225's object-literal-across-the-seam lane |
 | single-module `add({days:1})` / `subtract({days:1})` / `add("P1D")` | THREW the destructure null | no longer throws; answers `"2020-03-04"` (unchanged date) — see below |
+
+This table isolates THIS change. On the branch as it now stands, #5242's
+`__argc` fix is merged in and single-module `add("P1D")` answers `"2020-03-05"`;
+the combined-branch numbers are in the correction block further down.
 | single-module `with({year:2021})` | `"2021-03-04"` | `"2021-03-04"` |
 | single-module `new Duration(0,0,0,1)` | `"P1D"` | `"P1D"` |
 
@@ -274,3 +278,35 @@ So two paths remain open, both #5244's, both now narrowed:
 
 Also unresolved and worth its own look: single-module `until(...)` throws a
 value with no `name` and no `message` (`THREW undefined: undefined`).
+
+## Validation of an unowned merge onto this branch (2026-08-31)
+
+A merge landed on this branch that this lane did not make — the branch tip moved
+from `15201ee8ee` to `f538269ddd` between two of this lane's own pushes, under
+the shared git identity. dev-5242b observed the same on its branch and flagged
+it, which is how it was caught. Nothing was lost (`15201ee8ee` is an ancestor)
+and none of this change's own files were touched: the diff over
+`src/codegen/type-coercion.ts`, `tests/issue-5243-*`,
+`tests/dogfood/temporal-global-harness.mjs`,
+`tests/issue-4628-temporal-global.test.ts` and this file is **empty**.
+
+But it brought `origin/main` plus #5241's runtime work — `src/runtime.ts`
+(+97/−…), `src/runtime/class-method-host-bridge.ts`, and a NEW
+`src/runtime/object-create-class-instance.ts` — i.e. code this lane did not
+write, arriving after every number this lane had reported. **A merge nobody made
+is a merge whose validation nobody owns**, so it was re-validated here rather
+than assumed:
+
+- `typecheck` clean.
+- All five ratchet gates green (LOC, function, coercion-sites, oracle, dead
+  exports).
+- 39 tests across issue-5243 / 5242 / 5241 / 5239 / 5237 / 5223 / 5221 / 5222.
+- `issue-4628-temporal-global` 11/11 on a **fresh** provider cache —
+  load-bearing here, because `src/runtime.ts` changed and a cache hit would have
+  served a provider built by the pre-merge compiler. This is exactly the hazard
+  the warning added above exists for.
+- Every Temporal row re-measured and **unchanged**: `add("P1D")` `"2020-03-05"`,
+  `add({days:1})` / `subtract({days:1})` `"2020-03-04"`, `with({year:2021})`
+  `"2021-03-04"`, `new Duration(0,0,0,1)` `"P1D"`, `Duration.from({days:1})`
+  `"PT0S"`.
+- Equivalence gate re-run at baseline.
