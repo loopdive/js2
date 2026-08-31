@@ -21,6 +21,13 @@ created: 2026-08-30
 loc-budget-allow:
   - src/codegen/property-access.ts
   - src/codegen/context/types.ts
+  # 2026-08-31 (#5223): index.ts +45 vs main's post-#5334 refreshed baseline —
+  # the accessor-read demand set's finalize intersection + entry-gate wiring
+  # (`dynamicClassAccessorReadKeys()` and its `emitClassMemberKindExports`
+  # feed). The grant lived only against the pre-merge base until main's
+  # baseline refresh re-exposed it (stranded-grant class, CLAUDE.md "Simulate
+  # CI's base too"); restated here in the file this PR owns.
+  - src/codegen/index.ts
 # 2026-08-30 (#5223): compileElementAccessBody +9 is the bracket twin of the
 # dot read's one-line registration (a literal-string-key guard + the call, with
 # the comment that says why it sits on the externref arm and not at the entry
@@ -32,6 +39,11 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
   - src/codegen/context/create-context.ts::createCodegenContext
+  # 2026-08-31 (#5223): +17 vs main's refreshed baseline — the accessor-read
+  # key emission sits in this finalize-sequence function beside the method-kind
+  # export emission it must stay ordered with. Same stranded-grant restatement
+  # as the index.ts loc grant above.
+  - src/codegen/index.ts::emitIteratorMethodExport
 ---
 
 # #5223 — compiled-class instance `toString` dispatch

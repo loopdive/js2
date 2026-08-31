@@ -95,8 +95,8 @@ Porffor remain rejected by legality before emission.
 1. Add `math.imul` to the certified Math ID/runtime-feature catalogues with the
    existing f64-binary signature and add dependency-free
    `backend.math.imul` composite provider metadata.
-2. Add a binary composite-marked selector plan and the narrow
-   `JS2WASM_IR_MATH_IMUL=0` rollback while retaining the shared ambient-binding,
+2. Initial rollout added a binary composite-marked selector plan and narrow
+   per-method rollback while retaining the shared ambient-binding,
    exact-arity, non-spread, and primitive-number admission gates.
 3. Extend the closed composite union and add an exact binary Wasm wrapper that
    uses one i32 rhs local plus #5136's reusable i64 coercion scratch.
@@ -124,7 +124,8 @@ Porffor remain rejected by legality before emission.
 - The provider is frozen, dependency-free, host-free, and emits right coercion,
   one i32 stash, left coercion, `i32.mul`, and `f64.convert_i32_s` in that order.
 - Missing/malformed providers and unsupported bytecode/Porffor consumers fail
-  closed; excluded/coercive shapes and rollback cleanly retain direct ownership.
+  closed; excluded/coercive shapes retain direct ownership, and the former
+  rollback was pre-claim only.
 
 ## Non-goals
 
@@ -142,7 +143,8 @@ The primary risk is reversing operands or destroying the left f64 while the
 right operand is coerced. Stack-shape assertions, non-commutative coercion edge
 vectors, and side-effect-order tests guard that seam. The second risk is using
 saturating conversion for huge values; #5136 regression vectors remain in the
-focused bundle. `JS2WASM_IR_MATH_IMUL=0` withdraws only this claim, while
+focused bundle. During initial rollout, the per-method control withdrew only
+this claim, while
 `JS2WASM_IR_FIRST=0` remains the global control.
 
 ## Outcome
@@ -152,8 +154,8 @@ semantic intrinsic backed by one dependency-free, host-free Wasm composite.
 The shared exact ToUint32 expansion coerces right then left, reuses the existing
 i64 scratch pool plus one lazy i32 rhs local, multiplies with `i32.mul`, and
 returns the signed Int32 result as f64. WasmGC and production linear emit the
-same closed body; bytecode and Porffor remain fail-closed, and
-`JS2WASM_IR_MATH_IMUL=0` provides the narrow rollback.
+same closed body; bytecode and Porffor remain fail-closed, and the per-method
+control provided the narrow rollback during initial rollout.
 
 Validation passed for the 14 focused #5126 cases, the #3526 linear,
 integration, and manifest suites, the #5136 exact-coercion prerequisite (30/30
@@ -161,3 +163,10 @@ tests total), TypeScript 7, lint, formatting, IR kind-neutrality, LOC/function
 budgets, oracle/coercion ratchets, and issue integrity. Luna Max architecture
 and test audits confirmed the stack discipline, provider boundary, and focused
 coverage with no checkpoint-scoped blockers.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

@@ -299,39 +299,6 @@ describe("#5106 exact ambient Math.log10/Math.log1p IR ownership", () => {
     }
   });
 
-  it.each([
-    ["log10", "JS2WASM_IR_MATH_LOG10", "log1p"],
-    ["log1p", "JS2WASM_IR_MATH_LOG1P", "log10"],
-  ] as const)("withdraws only %s through its narrow rollback", async (disabled, flag, retained) => {
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(
-        `
-          export function log10(value: number): number { return Math.log10(value); }
-          export function log1p(value: number): number { return Math.log1p(value); }
-        `,
-        { fileName: `issue-5106-${disabled}-rollback.ts`, experimentalIR: true, trackIrOutcomes: true },
-      );
-      expectSuccess(result);
-      expect(outcomeFor(result, disabled)).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(outcomeFor(result, retained)).toMatchObject({
-        kind: "emitted",
-        legacyBodyEmitted: false,
-        irBodyEmitted: true,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (_label, source) => {
     const result = await compile(source, {
       fileName: `issue-5106-${_label.replaceAll(" ", "-")}.ts`,

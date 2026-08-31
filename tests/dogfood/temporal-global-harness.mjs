@@ -22,6 +22,7 @@
 // sets, and the split is the point:
 //
 //   * `supported` — shapes that work today. The vitest wrapper asserts these.
+//     (#5222 moved the `Temporal.Now.*` probes from `knownGaps` to `supported`.)
 //   * `knownGaps`  — shapes that do NOT work today, WITH the measurement that
 //     says why they are not this change's fault. `Temporal.PlainDate.from(...)`
 //     fails identically when the polyfill is compiled as ONE module with no
@@ -76,6 +77,14 @@ const SUPPORTED = {
   // dispatch for a `new`-constructed provider instance. Promoted here so the
   // vitest wrapper asserts it and a regression is loud.
   instanceToString: `export function run() { return new Temporal.PlainDate(2020, 3, 4).toString(); }`,
+  // (#5222) `Now` is a plain NAMESPACE OBJECT of functions nested one level
+  // inside `Temporal`, so reaching its methods crosses the provider seam TWICE.
+  // On base the second crossing erased them: "undefined", and
+  // `Object.getOwnPropertyNames(Temporal.Now)` was empty.
+  nowKeys: `export function run() { return Object.getOwnPropertyNames(Temporal.Now).sort().join(","); }`,
+  nowInstantIsFunction: `export function run() { return typeof Temporal.Now.instant; }`,
+  nowInstantCallable: `export function run() { return typeof Temporal.Now.instant(); }`,
+  nowPlainDateISOIsFunction: `export function run() { return typeof Temporal.Now.plainDateISO; }`,
 };
 
 /**
@@ -97,12 +106,23 @@ const KNOWN_GAPS = {
       "resolution, not an accessor-demand gap — #5223's read-registration fix does NOT move this row (re-measured " +
       "after it, identical)",
   },
-  nowInstant: {
-    source: `export function run() { return typeof Temporal.Now.instant; }`,
+  // (#5222) `Temporal.Now.instant` moved to SUPPORTED above. These two are
+  // what is LEFT once the member loss is fixed, and they are different animals.
+  nowPlainDateISOCall: {
+    source: `export function run() { return typeof Temporal.Now.plainDateISO(); }`,
     note:
-      'answers "function" in the single-module shape but "undefined" through the provider — the polyfill\'s ' +
-      "`Now` is a plain object whose methods do not survive the cross-module value crossing. This one IS " +
-      "linking-specific and is the strongest candidate for the next follow-up",
+      "reachable and callable since #5222, but the CALL still throws (RuntimeError: dereferencing a null " +
+      "pointer) — identically in the single-module shape with no provider and no linking (measured " +
+      "2026-08-30, .tmp/probe-now-single.mts). Same pre-existing intrinsic/Object.create gap as " +
+      "`staticFrom`; owned by #5221, not a provider-seam defect",
+  },
+  nowTimeZoneIdCall: {
+    source: `export function run() { return typeof Temporal.Now.timeZoneId(); }`,
+    note:
+      'NEW, still linking-specific (measured 2026-08-30): answers "string" in the single-module shape but ' +
+      "throws (RuntimeError: dereferencing a null pointer) through the provider. Unlike the member loss " +
+      "#5222 fixed, this survives it — the residual is in what `timeZoneId` REACHES (the host " +
+      "`Intl.DateTimeFormat().resolvedOptions()` path, cf. #5206), not in the value crossing",
   },
   instanceToStringTag: {
     source: `export function run() { const d = new Temporal.PlainDate(2020, 3, 4); return String(d[Symbol.toStringTag]); }`,

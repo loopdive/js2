@@ -335,30 +335,6 @@ describe("#5135 exact ambient Math.fround IR ownership", () => {
     expect(() => lowerIrFunctionToWasm(malformed, minimalResolver())).toThrowError(/unsupported backend sequence/);
   });
 
-  it("withdraws only fround through its narrow rollback", async () => {
-    const flag = "JS2WASM_IR_MATH_FROUND";
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(SOURCE, {
-        fileName: "issue-5135-rollback.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expectSuccess(result);
-      expect(outcomeFor(result, "fround")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (label, source) => {
     const result = await compile(source, {
       fileName: `issue-5135-${label.replaceAll(" ", "-")}.ts`,

@@ -373,6 +373,36 @@ Two test262 workflows currently run on PRs:
 For one-off sharded runs outside the normal PR/merge_group path,
 `workflow_dispatch` is the supported entry point.
 
+**A bare dispatch PROMOTES. Pass `skip_promote: true` for any measurement.**
+`promote-baseline`'s `if:` admits `push || workflow_dispatch`, and its
+"Push baseline artifacts to js2wasm-baselines repo" step carries no guard of
+its own. So a dispatch on *any* ref overwrites `loopdive/js2wasm-baselines` —
+the regression-gate baseline every open PR is diffed against — with that ref's
+numbers, re-stamps the #2097 high-water mark, and can push a `[skip ci]` commit
+to `main` (the rebuild tax below) plus redeploy Pages.
+
+The trap is that it is inverted: promote runs only when `merge-report`
+**succeeds**, so the *clean* measurement — the one that finds nothing wrong —
+is exactly the one that overwrites. It never self-blocks.
+
+`skip_promote` is the only promote suppressor that leaves the measurement
+comparable to the published baseline; the other three each change what is being
+measured, so none of them can substitute for it:
+
+| input | suppresses promote | report comparable to the published QuickJS baseline |
+| ------------------------- | ------------------ | --------------------------------------------------- |
+| `ir_first` | yes | no — IR-first compile path |
+| `layout_emit` | yes | no — per-type layout emission |
+| `eval_engine: interpreter` | yes | no — different standalone eval lane |
+| `skip_promote` | yes | **yes** — identical compile, run and engine |
+
+Use it for bisects and for every manual rerun on a non-tip ref; the merged
+report artifact is the output. Gating that one job is sufficient — both write
+paths (the baselines-repo SSH push and the deploy-key push to `main`) live
+wholly inside `promote-baseline`, and `write-run-cache-bot`, the only other
+side-effecting job, is `push` + `github-merge-queue[bot]` only and never fires
+on a dispatch.
+
 ### Pushing to `main` from a workflow — the rebuild tax (#3915)
 
 Two facts about the merge queue that are non-obvious, and each of which sent

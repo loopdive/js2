@@ -98,9 +98,9 @@ Bytecode and Porffor remain rejected by legality before emission.
 1. Add `math.min` and `math.max` to the certified Math ID/runtime-feature
    catalogues with the existing f64-binary signature and add dependency-free
    `backend.math.min` / `backend.math.max` composite provider metadata.
-2. Add exact-binary composite selector plans plus narrow
-   `JS2WASM_IR_MATH_MIN=0` and `JS2WASM_IR_MATH_MAX=0` rollbacks while
-   retaining ambient-binding, exact-arity, non-spread, and primitive-number
+2. Initial rollout added exact-binary composite selector plans plus narrow
+   per-method rollbacks while retaining ambient-binding, exact-arity,
+   non-spread, and primitive-number
    admission gates.
 3. Extend the closed composite union and add one shared Wasm min/max emitter
    using two lazily allocated f64 locals, explicit ordered NaN guards, and the
@@ -130,8 +130,8 @@ Bytecode and Porffor remain rejected by legality before emission.
 - Each provider is frozen, dependency-free, host-free, and emits two stores,
   ordered NaN guards, then exactly one `f64.min` or `f64.max`.
 - Missing/malformed providers and unsupported bytecode/Porffor consumers fail
-  closed; excluded/coercive/variadic shapes and rollback retain direct
-  ownership.
+  closed; excluded/coercive/variadic shapes retain direct ownership and the
+  former rollback was pre-claim only.
 
 ## Non-goals
 
@@ -148,8 +148,9 @@ signed-zero differences. Ordered local-based guards and reciprocal-zero tests
 pin those semantics independently for each method. The second risk is
 short-circuiting right-argument evaluation when left is NaN; argument-order
 fixtures require both effects before the composite executes.
-`JS2WASM_IR_MATH_MIN=0` and `JS2WASM_IR_MATH_MAX=0` independently withdraw
-the claims, while `JS2WASM_IR_FIRST=0` remains the global control.
+During initial rollout, the per-method controls independently withdrew the
+claims, while
+`JS2WASM_IR_FIRST=0` remains the global control.
 
 ## Outcome
 
@@ -158,8 +159,8 @@ typed binary semantic intrinsics backed by dependency-free, host-free Wasm
 composites. Each composite stores both already-evaluated operands, propagates
 left then right NaN explicitly, and uses regular `f64.min` / `f64.max` for
 the required signed-zero ordering. WasmGC and production linear emit identical
-closed bodies; bytecode and Porffor remain fail-closed, and each method has an
-independent narrow rollback.
+closed bodies; bytecode and Porffor remain fail-closed, and each method had an
+independent narrow rollback during initial rollout.
 
 Validation passed for all 19 focused #5130 cases, the #3526 linear,
 integration, and manifest suites plus the #5126 prerequisite (27/27), and the
@@ -168,3 +169,10 @@ lint, formatting, IR kind-neutrality, LOC/function budgets, oracle/coercion
 ratchets, and issue integrity passed. Three Luna Max architecture and priority
 audits independently selected this exact checkpoint and found no
 checkpoint-scoped semantic blocker.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawals are retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

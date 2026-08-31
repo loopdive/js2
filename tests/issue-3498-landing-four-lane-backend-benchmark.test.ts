@@ -28,6 +28,7 @@ import {
 import {
   LANDING_FOUR_LANE_INNER_MEASURED_CALLS,
   LANDING_FOUR_LANE_INNER_WARMUP_CALLS,
+  LANDING_WASM_OPT_ARGS,
   landingFourLaneWasmtimeMedianWarmDriverSource,
 } from "../scripts/lib/landing-wasmtime-runtime.mjs";
 
@@ -54,6 +55,15 @@ afterAll(() => {
 });
 
 describe("#3498 landing four-lane backend benchmark", () => {
+  it("keeps Binaryen output on engine-supported import encodings", () => {
+    expect(LANDING_WASM_OPT_ARGS).toEqual([
+      "--all-features",
+      "--disable-custom-descriptors",
+      "--disable-compact-imports",
+      "-O3",
+    ]);
+  });
+
   it("pins and oracles the four exact landing source files without object-ops", async () => {
     expect(LANDING_BENCHMARK_PROGRAMS.map((program) => program.id)).toEqual([
       "fib",

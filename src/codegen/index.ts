@@ -1100,6 +1100,35 @@ const STANDALONE_DOM_EXTERN_POSITION_CLASSES = new Set(["Document", "HTMLElement
  * return `null`; the caller then throws so the function falls back to
  * the legacy path.
  */
+/**
+ * (#5166) Nested-array element carrier. A `number[][]` position has an
+ * element that `resolvePositionType` resolves to a LOGICAL `irVec` — a kind
+ * that matches no element-ValType arm, so the array arms threw and the
+ * function demoted at `resolve`.
+ *
+ * Legacy `resolveWasmType` does not have this gap: it recurses, so the inner
+ * array arrives as a CONCRETE ref (`ref null $__vec_f64`) and the outer vec is
+ * `__vec_ref_<inner>` whose Wasm array element IS that ref. Mirror exactly that
+ * — no anyref, no cast-on-get — by registering the inner physical vec here and
+ * handing its `ref_null` back to the EXISTING `ref_<idx>` elemKey path. The
+ * result is that `number[][]` resolves the same way `string[][]` already did
+ * (whose inner `string[]` was already a physical ref), and both share the
+ * legacy vec identity via `getOrRegisterVecType`.
+ *
+ * Returns `null` for anything that is not a logical vec over an `f64`/`i32`
+ * element, which keeps the caller's throw for genuinely unrepresentable
+ * elements. `irVec` is produced by this function only for `f64`/`i32`
+ * elements, so that restriction is exact rather than conservative.
+ */
+function nestedVecElementValType(elemIr: IrType, ctx: CodegenContext): ValType | null {
+  if (elemIr.kind !== "vec") return null;
+  const inner = asVal(elemIr.elementType);
+  if (!inner || (inner.kind !== "f64" && inner.kind !== "i32")) return null;
+  // Use ref_null so an element slot default-initializes to null, matching
+  // legacy's vec-element carrier (see `resolveWasmType`'s Array arm).
+  return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, inner.kind, inner) };
+}
+
 function resolvePositionType(
   node: ts.TypeNode | undefined,
   mapped: LatticeType | undefined,
@@ -1152,7 +1181,8 @@ function resolvePositionType(
           ? elemIr.val
           : elemIr.kind === "string" || elemIr.kind === "dynamic"
             ? ({ kind: "externref" } as ValType)
-            : null;
+            : // (#5166) `number[][]` — carry the inner array as a concrete ref.
+              nestedVecElementValType(elemIr, ctx);
       if (!elemVal) {
         throw new Error(
           `array element TypeNode ${ts.SyntaxKind[node.elementType.kind]} could not be lowered to a primitive ValType`,
@@ -1207,7 +1237,8 @@ function resolvePositionType(
               ? elemIr.val
               : elemIr.kind === "string" || elemIr.kind === "dynamic"
                 ? ({ kind: "externref" } as ValType)
-                : null;
+                : // (#5166) `Array<Array<number>>` — same concrete-ref carrier.
+                  nestedVecElementValType(elemIr, ctx);
           if (!elemVal) {
             throw new Error(
               `Array<T> element TypeNode ${ts.SyntaxKind[typeArgs[0]!.kind]} could not be lowered to a primitive ValType`,
@@ -2446,6 +2477,7 @@ function recordObservedIrOutcomes(
   const existingOutcomes = preparedCallableUnitIds
     ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
     : ctx.irOutcomes;
+  const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2453,6 +2485,7 @@ function recordObservedIrOutcomes(
     preparedSelection,
     preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
     skippedBodyUnitIds,
+    ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
     report,
     existingOutcomes,
     target,
@@ -9184,25 +9217,121 @@ function registerReassignedFunctionGlobals(
   const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
   const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
+  const varEnvironment = (node: ts.Node): ts.Node => {
+    for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+      if (ts.isFunctionLike(current) || ts.isModuleBlock(current) || ts.isSourceFile(current)) return current;
+    }
+    return node.getSourceFile();
+  };
+  const functionDeclarationsByEnvironment = new Map<ts.Node, Map<string, ts.FunctionDeclaration[]>>();
+  const collectFunctionDeclarations = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+      const environment = varEnvironment(node);
+      const directlyOwned =
+        node.parent === environment ||
+        (ts.isFunctionLike(environment) && ts.isBlock(node.parent) && node.parent.parent === environment);
+      if (directlyOwned) {
+        let names = functionDeclarationsByEnvironment.get(environment);
+        if (!names) {
+          names = new Map();
+          functionDeclarationsByEnvironment.set(environment, names);
+        }
+        const declarations = names.get(node.name.text) ?? [];
+        declarations.push(node);
+        names.set(node.name.text, declarations);
+      }
+    }
+    ts.forEachChild(node, collectFunctionDeclarations);
+  };
+  for (const sourceFile of sourceFiles) collectFunctionDeclarations(sourceFile);
+
+  const varDeclarationOf = (node: ts.Node): ts.VariableDeclaration | undefined => {
+    for (let current: ts.Node | undefined = node; current; current = current.parent) {
+      if (ts.isVariableDeclaration(current)) return current;
+      if (ts.isStatement(current) || ts.isFunctionLike(current) || ts.isSourceFile(current)) return undefined;
+    }
+    return undefined;
+  };
+  const recordIdentifier = (identifier: ts.Identifier): void => {
+    const oracleDeclaration = ctx.oracle.valueDeclarationOf(identifier);
+    let sym: ts.Symbol | undefined;
+    try {
+      sym = ctx.checker.getSymbolAtLocation(identifier);
+    } catch {
+      sym = undefined;
+    }
+    let decl = [oracleDeclaration, sym?.valueDeclaration, ...(sym?.declarations ?? [])].find(
+      (candidate): candidate is ts.FunctionDeclaration =>
+        candidate !== undefined && ts.isFunctionDeclaration(candidate) && candidate.body !== undefined,
+    );
+    if (!decl) {
+      // Under skipped diagnostics the checker gives `for (var fn of ...)` and
+      // `var fn = replacement` a VariableDeclaration symbol even though JS
+      // VarEnv semantics reuse the same-scope FunctionDeclaration binding.
+      const variable = varDeclarationOf(identifier);
+      const list = variable?.parent;
+      if (variable && list && ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.BlockScoped) === 0) {
+        const candidates = functionDeclarationsByEnvironment.get(varEnvironment(variable))?.get(identifier.text);
+        if (candidates?.length === 1) decl = candidates[0];
+      }
+    }
+    if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
+      reassigned.add(decl.name.text);
+      reassignedDeclarations.add(decl);
+    }
+  };
+  const recordTarget = (target: ts.Node): void => {
+    if (ts.isIdentifier(target)) {
+      recordIdentifier(target);
+      return;
+    }
+    // Recurse only through assignment patterns. A member target such as
+    // `fn.prop = value` changes the property, not the `fn` binding.
+    if (ts.isArrayLiteralExpression(target)) {
+      for (const element of target.elements) recordTarget(element);
+    } else if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isPropertyAssignment(property)) recordTarget(property.initializer);
+        else if (ts.isShorthandPropertyAssignment(property)) recordTarget(property.name);
+        else if (ts.isSpreadAssignment(property)) recordTarget(property.expression);
+      }
+    } else if (
+      ts.isSpreadElement(target) ||
+      ts.isParenthesizedExpression(target) ||
+      ts.isAsExpression(target) ||
+      ts.isTypeAssertionExpression(target) ||
+      ts.isNonNullExpression(target) ||
+      ts.isSatisfiesExpression(target)
+    ) {
+      recordTarget(target.expression);
+    } else if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      // A default value inside an assignment pattern, e.g. `[fn = fallback]`.
+      recordTarget(target.left);
+    }
+  };
   const scan = (node: ts.Node): void => {
-    // Simple / compound assignment (`fn = …`, `fn += …`, …) whose LHS is a
-    // bare identifier resolving to a function declaration.
-    if (
+    // Simple / compound assignment (`fn = …`, `fn += …`, …), including
+    // destructuring patterns whose targets resolve to function declarations.
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      // A same-scope `var fn = replacement` is an initialization write to the
+      // hoisted FunctionDeclaration binding even though no BinaryExpression is
+      // present in the AST. This also covers declaration-list loop targets.
+      recordTarget(node.name);
+    } else if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      ts.isIdentifier(node.left)
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     ) {
-      let sym: ts.Symbol | undefined;
-      try {
-        sym = ctx.checker.getSymbolAtLocation(node.left);
-      } catch {
-        sym = undefined;
+      recordTarget(node.left);
+    } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) {
+        recordTarget(node.operand);
       }
-      const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
-      if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
-        reassigned.add(decl.name.text);
-        reassignedDeclarations.add(decl);
+    } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+      if (ts.isVariableDeclarationList(node.initializer)) {
+        for (const declaration of node.initializer.declarations) recordTarget(declaration.name);
+      } else {
+        recordTarget(node.initializer);
       }
     }
     ts.forEachChild(node, scan);

@@ -71,6 +71,8 @@ import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
+import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
+import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
 import { noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
@@ -156,6 +158,7 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
+import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import {
@@ -1595,18 +1598,34 @@ function resolveGenericDeclarationCallSiteTypes(
   });
   const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
+  const callbackResultCarrier = genericCallbackResultDeclaration(ctx, stmt)
+    ? ({ kind: "externref" } as const)
+    : undefined;
+  const freshFactorySource = genericStructFactorySourceResultAbi(ctx, stmt);
+  const freshFactoryCarrier = freshFactorySource ? resolveWasmType(ctx, freshFactorySource) : undefined;
   // (#1058) `finishNode<T extends Node>(node: T): T` is called with many
   // concrete TypeScript AST node layouts. Its parameter is already widened to
   // externref to preserve those identities, but the result used to retain the
   // first call site's nominal Node struct. Returning a later Identifier then
   // failed that stale cast and became null. The exact `T -> T` contract must
   // carry the same representation back out.
+  //
+  // A proven `<T>(callback: () => T): T` contract likewise owns one physical
+  // result even when call-site inference observed `void` first and returned an
+  // empty result vector. TypeScript's runtime Parser namespace has exactly that
+  // order: its reset callback precedes scalar and AST-producing callbacks.
   const results =
     resolved.results.length === 1 &&
-    identityCarrier !== undefined &&
-    (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
-      ? [identityCarrier]
-      : resolved.results;
+    freshFactoryCarrier !== undefined &&
+    (freshFactoryCarrier.kind === "ref" || freshFactoryCarrier.kind === "ref_null")
+      ? [freshFactoryCarrier]
+      : callbackResultCarrier !== undefined
+        ? [callbackResultCarrier]
+        : resolved.results.length === 1 &&
+            identityCarrier !== undefined &&
+            (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
+          ? [identityCarrier]
+          : resolved.results;
   return {
     params,
     results,
@@ -5653,18 +5672,34 @@ export function compileDeclarations(
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#2965) Reset the program-order-sensitive property state to its
-    // pre-pass-1 value so this recompile does not treat pass 1's own
-    // defineProperty/freeze effects as pre-existing (see snapshot above).
-    restorePropOrderState();
-    compiledInitFctx = profilePhase("module-init-pass2", () => {
-      if (!hasAsyncGraphInit) return compileModuleInitBody();
-      return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
-        compileModuleInitBody(resumeFctx, false);
-      }).fctx;
-    });
-    ctx.pendingInitBody = compiledInitFctx.body;
-    dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
+    // call, so a population with no call anywhere recompiles to the body pass 1
+    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
+    // the end. Skipping then also skips `restorePropOrderState` (nothing
+    // recompiles; pass 1's end state is where pass 2 converged anyway) and
+    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
+    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // takes pass 2 (its lowering exists only there), stated explicitly rather
+    // than via the scan's AwaitExpression refusal. The env seam restores the
+    // unconditional recompile so tests can A/B against the two-pass body.
+    if (
+      process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
+      hasAsyncGraphInit ||
+      !moduleInitPopulationIsCallFree(ctx)
+    ) {
+      // (#2965) Reset the program-order-sensitive property state to its
+      // pre-pass-1 value so this recompile does not treat pass 1's own
+      // defineProperty/freeze effects as pre-existing (see snapshot above).
+      restorePropOrderState();
+      compiledInitFctx = profilePhase("module-init-pass2", () => {
+        if (!hasAsyncGraphInit) return compileModuleInitBody();
+        return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
+          compileModuleInitBody(resumeFctx, false);
+        }).fctx;
+      });
+      ctx.pendingInitBody = compiledInitFctx.body;
+      dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+    }
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)
