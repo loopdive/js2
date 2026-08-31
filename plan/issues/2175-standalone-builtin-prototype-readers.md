@@ -6,7 +6,7 @@ model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-08-25
+updated: 2026-09-01
 priority: high
 feasibility: hard
 model: fable
@@ -4233,3 +4233,125 @@ resulting actual HEAD must pass the complete synthetic-ref pre-push hook before
 publication. No push or GitHub mutation has occurred, and explicit
 authorization for the public fork remains the only publication-permission
 blocker.
+
+## c112 live-main integration plan — 2026-09-01
+
+Fresh upstream fetch resolves `upstream/main` to
+`c11206262088a69815d6126787b10942df148b6d`, 55 commits after the branch's
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` merge base. A read-only three-way
+`git merge-tree --trivial-merge a4d141321daf7f8874e540d7b75f58f8c3e2c2a7
+upstream/main HEAD` exits zero: Git predicts no conflict. Both sides modify
+`src/codegen/expressions/new-super.ts`, but #2175 owns the class-expression
+computed-accessor effect near `compileClassExpression`, while upstream #5244
+updates the later dynamic-`new` constructor arm and its `__argc` publication.
+The normal merge must retain both regions; do not resolve it by copying or
+replacing the whole file.
+
+The integration must preserve the D5 distinction between an implicit ordinary
+Object-prototype terminal and an explicit null terminal across `Object.create`,
+accepted/refused `Object.setPrototypeOf`, fixed-name `in`, and
+OrdinaryToPrimitive readers. It must also preserve the direct/fnctor/proxy
+routes, the existing #5239 class-instance bridge boundary, and upstream #5244
+dynamic-constructor default-argument behavior. No generated benchmark/report,
+website, public, `labs/`, or temporary `.prettierignore` path may enter the PR
+range.
+
+### Released-lane gate sequence
+
+Until root releases a global lane, do not stage, commit, merge, run a hook,
+compiler, TypeScript, Vitest, Test262, or any publication command. On release,
+fetch upstream again; if `upstream/main` is no longer c112, re-audit the exact
+new head before performing the normal merge. Then run, on the exact merged
+HEAD, in this order:
+
+1. the focused serial #2175 suite
+   `node node_modules/vitest/dist/cli.js run tests/issue-2175-null-proto-toprimitive.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot`, expecting **30 / 30**;
+2. the exact standalone deterministic four-row manifest, with the retained
+   byte-sorted LF SHA-256
+   `ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`,
+   expecting **4 / 4**, both harness controls, and `nondeterministic: 0`;
+3. the serial #5239 bridge suite, expecting **2 / 2**;
+4. direct TS7 `node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`;
+5. targeted static checks for the #2175 tracker and owned TypeScript paths,
+   including `git diff --check` and the repository formatting/lint gates;
+6. the complete synthetic-ref pre-push hook on that exact final head; and
+7. a no-leak audit: `git diff --name-only upstream/main...HEAD` must contain
+   only this tracker, the six #2175 implementation sources, and
+   `tests/issue-2175-null-proto-toprimitive.test.ts`.
+
+Stop on any failure, conflict, changed denominator, nondeterminism, or leaked
+path. Publication remains blocked even after all local gates: root must release
+the lane and the user must explicitly authorize a push to the public
+`ttraenkler/js2` fork and creation of the non-draft PR against
+`loopdive/js2:main`.
+
+### Publication authorization cleared — 2026-09-01
+
+The user explicitly authorized publication of completed branches to
+`https://github.com/ttraenkler/js2` for pull requests against
+`loopdive/js2:main`. This clears the external-destination authorization block,
+but does not waive the live-main validation sequence, exact-head pre-push gate,
+or no-leak audit above. After those gates succeed, publication is a separate
+non-draft upstream PR from the fork branch. No GitHub issue was created.
+
+### c112 intermediate merge / e904 follow-up handoff — 2026-09-01
+
+This worktree is intentionally stopped at the uncommitted normal merge of
+`c11206262088a69815d6126787b10942df148b6d`: `HEAD` remains
+`2918a145147c0c6d9e6287efe10f12e7ebd79d9b` and `MERGE_HEAD` is `c112`. At the
+read-only audit boundary there were no unmerged entries and no unstaged diff.
+The prospective #2175 delta measured against `MERGE_HEAD` was exactly these
+eight paths: this tracker; `binary-ops-in.ts`, `new-super.ts`,
+`object-runtime-prototype.ts`, `object-runtime.ts`,
+`nested-declarations.ts`, and `variables.ts`; plus
+`tests/issue-2175-null-proto-toprimitive.test.ts`. It contains no benchmark,
+public/website-report, or `labs/` path. The broader staged index also contains
+the incoming c112 files; those are merge inputs, not #2175 PR leakage.
+
+`upstream/main` subsequently advanced to
+`e904b5f4b254dc5ab667685b8493f250d177efda`. Its post-c112 delta overlaps the
+owned range only in `src/codegen/object-runtime.ts` and
+`src/codegen/statements/variables.ts`. The former is mechanically disjoint:
+retain e904's `fillExternSetVecArms` canonical out-of-bounds/inherited-setter
+decision and retain #2175's earlier D5 terminal marker, `__extern_get`,
+`__extern_has`, fixed-name `in`, and OrdinaryToPrimitive changes. Do not copy
+either whole file.
+
+`variables.ts` needs a semantic, not merely textual, resolution. Retain e904's
+central `tryCompileClassExpressionBindingValue`/Promise-subclass and
+proxy/RegExp helper refactor, while preserving #2175's
+`emitUnresolvedComputedAccessorNameEffects` exactly once at
+ClassDefinitionEvaluation. Do not call that emitter unconditionally before the
+helper: a helper fallback to `compileClassExpression` would then evaluate the
+same computed accessor name twice. Instead, make the selected fast path expose
+an on-handled/pre-materialization hook (including the Promise-subclass path),
+invoke it only after the path is known to handle the value and before its
+runtime constructor/singleton materialization, and retain the generic
+`new-super.ts` owner for every `undefined` fallback. This preserves effect
+order, avoids duplicate keys, and keeps e904's dynamic Proxy/class-expression
+representation fixes.
+
+Next owner: first make the attributed normal c112 merge commit; then, after a
+fresh read-only `upstream/main` check, perform a normal no-commit e904 merge
+and apply the two narrow reconciliations above. The historical integrated
+evidence remains focused #2175 **30 / 30**, standalone deterministic **4 / 4**
+with both controls and `nondeterministic: 0`, #5239 **2 / 2**, and TS7 exit 0;
+it is prior evidence only and must not be represented as c112/e904-head
+validation. On the final e904 head, rerun the released focused, four-row,
+#5239, TS7/static, full synthetic-ref pre-push, and exact no-leak gates before
+publishing one mergeable non-draft PR from `ttraenkler/js2` to
+`loopdive/js2:main`. User authorization for that destination is recorded
+above; no GitHub issue was created.
+
+### Local hook-runner provenance — 2026-09-01
+
+The first normal c112 merge-commit attempt stopped at
+`.husky/pre-commit: line 1: npx: command not found`; it created no commit and
+left the open merge index intact. No hook was skipped, weakened, or bypassed.
+For the normal retry this worktree uses the ignored, fail-closed
+`.tmp/bin/npx` wrapper: it accepts only `npx lint-staged`, delegates directly to
+the existing root `node_modules/.bin/lint-staged`, and exits 127 for every
+other invocation. The retry PATH prefixes that local directory and the
+prescribed existing runtime/root-node-modules paths; it neither downloads
+dependencies nor changes repository configuration. Stage this provenance note
+with the existing tracker before retrying the ordinary hook-running commit.

@@ -3656,6 +3656,12 @@ function emitDynamicNewFallback(
   const buildCtorArm = (className: string): Instr[] => {
     const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`))!;
     const paramTypes = getFuncParamTypes(ctx, ctorFuncIdx) ?? [];
+    // (#5244) The same admission `maybeSetArgcForKnownCall` applies: only a
+    // constructor with parameter defaults/optionals — or one that reads
+    // `arguments` — consults `__argc`, so every other class emits identical
+    // bytes.
+    const paramDefaultsNeedArgc =
+      ctx.funcUsesArguments.has(`${className}_new`) || ctx.funcOptionalParams.has(`${className}_new`);
     const arm: Instr[] = [];
     const savedBody = fctx.body;
     fctx.body = arm;
@@ -3713,6 +3719,35 @@ function emitDynamicNewFallback(
     // matches `getOrAssignClassNewTargetId(className)`. No-op unless the module
     // uses new.target (`ctx.usesNewTarget`), so zero cost otherwise.
     emitSetNewTargetBeforeCall(ctx, fctx.body, className);
+    // (#5244) Publish the call-site argument count, exactly as the STATIC
+    // `new C(…)` site does. `<Class>_init`'s parameter-default prologue reads
+    // `__argc` to tell an omitted slot from a supplied one, and `__argc` is a
+    // module GLOBAL: an arm that does not write it does not get "no defaults",
+    // it gets whatever the previously compiled call site left there. A stale
+    // small count makes `argc !== -1 && argc <= i` fire for every parameter
+    // past that count, so the arguments this arm just coerced onto the stack
+    // are silently replaced by the initializers —
+    // `const t = ce("%Temporal.Duration%"); new t(0,0,0,1,…)` built `PT0S`.
+    //
+    // Emitted last, after the arguments and after `new.target`, so nothing an
+    // argument expression calls can clobber it. Stack-neutral: `global.set`
+    // consumes exactly the i32 pushed for it and leaves the argument region
+    // below untouched.
+    if (paramDefaultsNeedArgc) {
+      if (useRuntimeArgv) {
+        // The count is only known at run time; clamp it to this arm's formal
+        // count, matching `maybeSetArgcForKnownCall`'s `min(actual, params)`.
+        fctx.body.push({ op: "local.get", index: argcLocal });
+        fctx.body.push({ op: "i32.const", value: paramTypes.length });
+        fctx.body.push({ op: "local.get", index: argcLocal });
+        fctx.body.push({ op: "i32.const", value: paramTypes.length });
+        fctx.body.push({ op: "i32.lt_s" });
+        fctx.body.push({ op: "select" });
+        fctx.body.push({ op: "global.set", index: ensureArgcGlobal(ctx) });
+      } else {
+        maybeSetArgcForKnownCall(ctx, fctx, `${className}_new`, argLocals.length, paramTypes.length);
+      }
+    }
     fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
     // Box the instance to externref to match the dispatch `if` block type. Most
     // `<Class>_new` return `(ref $structIdx)` (an anyref subtype) → wrap with
