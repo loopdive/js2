@@ -99,8 +99,13 @@ import {
 } from "./runtime/standalone-timer-callback-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
-import { createClassMemberResolver, createResolvedClassMethodInvoker } from "./runtime/class-method-host-bridge.js";
+import {
+  callResolvedClassPrimitive,
+  createClassMemberResolver,
+  createResolvedClassMethodInvoker,
+} from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
+import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
@@ -3584,27 +3589,9 @@ function _toPrimitive(
         }
       }
     }
-    // (#5239) A compiled class's own `toString` / `valueOf`, resolved through
-    // the SAME member surface `inst.toString()` uses. Everything above reaches
-    // only the sidecar and the struct's own fields, so a class method — which
-    // lives in the `__member_kind_*` / `__class_call_*` exports, never as a
-    // property of anything — was invisible here and every `String(inst)` on a
-    // raw compiled instance answered "[object Object]".
-    //
-    // The nearest existing arm, `exports["__call_toString"]`, is the
-    // ToPrimitive finalizer's own ZERO-ARGUMENT dispatcher: a method declared
-    // with a parameter (`toString(options)`, the shape every Temporal class
-    // uses) has no arm in it and the call traps. `_resolveClassMember` reads
-    // `__member_arity_*` and selects the arity-matched bridge, padding the
-    // omitted arguments, so the declared-parameter shape dispatches.
-    //
-    // Last, so an own sidecar override, a struct field, and the historical
-    // closure dispatchers all keep their existing precedence; a getter of the
-    // same name is deliberately not accepted (§7.1.1.1 calls a METHOD).
     if (exports) {
-      const member = _resolveClassMember(raw, name, exports);
-      if (member !== _MISS && typeof member === "function") {
-        const prim = (member as Function).call(raw);
+      const prim = callResolvedClassPrimitive(_resolveClassMember, raw, name, exports, _MISS);
+      if (prim !== _MISS) {
         if (prim == null || typeof prim !== "object") return prim;
         return _PRIM_ABSENT;
       }
@@ -5999,18 +5986,7 @@ function _safeSet(
  */
 const _hostProxyCache = new WeakMap<object, any>();
 const _hostProxyReverse = new WeakMap<object, any>();
-/** Host dictionaries created by compiled `Object.create`; values stay in their raw Wasm carrier internally. */
-const _compiledObjectCreateResults = new WeakSet<object>();
-/**
- * (#5239) `Object.create(<class value>.prototype)` results that were allocated
- * as REAL compiled instances (see the `__object_create` import). The struct
- * carries no host [[Prototype]], and unlike an explicit `setPrototypeOf` link
- * this record must NOT join `_wasmStructProto`: that map also drives the for-in
- * / read walks, and routing them through the prototype would enumerate class
- * methods that are spec-non-enumerable. `Object.getPrototypeOf` alone reads it,
- * so the requested prototype stays observable exactly where the program asks.
- */
-const _objectCreateClassInstanceProto = new WeakMap<object, any>();
+const _objectCreateRuntime = createObjectCreateClassInstanceRuntime(_canBeWeakKey, _isWasmStruct);
 const _fnctorInstanceofHooks: FnctorIoHooks = {
   rawInstance: (value) => _hostProxyReverse.get(value) ?? value,
   rawClosureTarget: (target) => _wasmClosureWrapperTargets.get(target),
@@ -11943,7 +11919,7 @@ assert._isSameValue = isSameValue;
               obj !== null &&
               typeof obj === "object" &&
               !_isWasmStruct(obj) &&
-              !_compiledObjectCreateResults.has(obj) &&
+              !_objectCreateRuntime.isDictionaryResult(obj) &&
               wrapExports !== undefined &&
               (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
             ) {
@@ -12014,7 +11990,7 @@ assert._isSameValue = isSameValue;
               obj !== null &&
               typeof obj === "object" &&
               !_isWasmStruct(obj) &&
-              !_compiledObjectCreateResults.has(obj) &&
+              !_objectCreateRuntime.isDictionaryResult(obj) &&
               wrapExports !== undefined &&
               (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
             ) {
@@ -12660,39 +12636,7 @@ assert._isSameValue = isSameValue;
           }
         };
       }
-      if (name === "__object_create")
-        return (proto: any) => {
-          // (#5239) `Object.create(<class value>.prototype)`. The syntactic
-          // spelling `Object.create(Foo.prototype)` is lowered to `struct.new
-          // $Foo` in codegen, so the created object IS a compiled instance;
-          // reached through a variable (every minified bundle) the call lands
-          // here instead and used to answer a plain host object whose
-          // [[Prototype]] is the opaque prototype struct — a dead end, because
-          // a compiled method's receiver is a concrete `(ref $Foo)` that no
-          // host object can ever satisfy. Ask the module whether this
-          // prototype is one of its own class prototypes and, if so, allocate
-          // the real instance. `__object_create_class_instance` answers null
-          // for every other prototype, and the probe itself is skipped unless
-          // `proto` is a compiled carrier, so the ordinary
-          // `Object.create(plainObject)` path pays nothing.
-          if (proto != null && typeof proto === "object" && _isWasmStruct(proto)) {
-            const make = marshalExports(callbackState)?.__object_create_class_instance as ((p: any) => any) | undefined;
-            if (typeof make === "function") {
-              try {
-                const instance = make(proto);
-                if (instance != null) {
-                  if (_canBeWeakKey(instance)) _objectCreateClassInstanceProto.set(instance, proto);
-                  return instance;
-                }
-              } catch {
-                /* not a class prototype of this module — fall through */
-              }
-            }
-          }
-          const value = Object.create(proto);
-          _compiledObjectCreateResults.add(value);
-          return value;
-        };
+      if (name === "__object_create") return (proto: any) => _objectCreateRuntime.create(proto, callbackState);
       if (name === "__new_plain_object") return (): any => ({});
       // (#4530) §7.1.18 ToObject for an any-typed `Object(v)` argument. The
       // static coercion in calls-guards.ts only recognizes statically-typed
@@ -13897,7 +13841,8 @@ assert._isSameValue = isSameValue;
             // (#5239) An `Object.create(<class value>.prototype)` result is a
             // real compiled instance, so the requested prototype is only
             // recoverable from the record `__object_create` kept.
-            if (_objectCreateClassInstanceProto.has(obj)) return _objectCreateClassInstanceProto.get(obj);
+            const objectCreateProto = _objectCreateRuntime.prototypeFor(obj);
+            if (objectCreateProto !== undefined) return objectCreateProto;
             const fnctorCtor = _fnctorInstanceCtor.get(obj);
             if (fnctorCtor != null) {
               const proto = _getOrVivifyFnPrototype(fnctorCtor, callbackState);
@@ -18021,7 +17966,7 @@ assert._isSameValue = isSameValue;
             obj !== null &&
             typeof obj === "object" &&
             !_isWasmStruct(obj) &&
-            !_compiledObjectCreateResults.has(obj) &&
+            !_objectCreateRuntime.isDictionaryResult(obj) &&
             wrapExports !== undefined &&
             (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
           ) {
@@ -18062,7 +18007,7 @@ assert._isSameValue = isSameValue;
             obj !== null &&
             typeof obj === "object" &&
             !_isWasmStruct(obj) &&
-            !_compiledObjectCreateResults.has(obj) &&
+            !_objectCreateRuntime.isDictionaryResult(obj) &&
             wrapExports !== undefined &&
             (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
           ) {
