@@ -50,7 +50,22 @@ export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
 
 export const NUMERIC_COERCION_INTRINSIC_IDS = Object.freeze(["js.to_uint32"] as const);
 
-export const INTRINSIC_IDS = Object.freeze([...NUMERIC_COERCION_INTRINSIC_IDS, ...PURE_MATH_INTRINSIC_IDS] as const);
+/**
+ * (#3526 F1-S1) The synchronous number boundary — the f64⇄externref carrier
+ * pair the front-end used to emit as a direct named call to
+ * `__box_number` / `__unbox_number` after reading a resolver mode predicate.
+ * The IDs name meaning only; which provider (host import vs union-native
+ * function) answers them is a frozen-manifest decision, not a front-end one.
+ */
+export const NUMBER_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+
+export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];
+
+export const INTRINSIC_IDS = Object.freeze([
+  ...NUMERIC_COERCION_INTRINSIC_IDS,
+  ...NUMBER_BOUNDARY_INTRINSIC_IDS,
+  ...PURE_MATH_INTRINSIC_IDS,
+] as const);
 
 export type IntrinsicId = (typeof INTRINSIC_IDS)[number];
 
@@ -97,13 +112,18 @@ export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
 
 export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"] as const);
 
+/** Feature rows mirror the number-boundary intrinsic IDs 1:1. */
+export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+
 export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
+  ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
 ] as const);
 
 export type PureMathRuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
 export type NumericCoercionRuntimeFeature = (typeof NUMERIC_COERCION_RUNTIME_FEATURES)[number];
+export type NumberBoundaryRuntimeFeature = (typeof NUMBER_BOUNDARY_RUNTIME_FEATURES)[number];
 export type RuntimeFeature = (typeof INTRINSIC_RUNTIME_FEATURES)[number];
 
 /**
@@ -167,6 +187,25 @@ const U32_TYPE = Object.freeze({
   signed: false as const,
 });
 
+const EXTERNREF_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "externref" as const }),
+});
+
+/** `(f64) -> externref` — the exact ABI of the `__box_number` carrier. */
+export const F64_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([F64_TYPE]),
+  result: EXTERNREF_TYPE,
+});
+
+/** `(externref) -> f64` — the exact ABI of the `__unbox_number` carrier. */
+export const EXTERNREF_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE]),
+  result: F64_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
@@ -192,6 +231,8 @@ function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: Run
 /** Exhaustive entry contract. Record typing makes an added ID fail closed. */
 export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
   "js.to_uint32": definition("js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE),
+  "js.number.box": definition("js.number.box", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.number.unbox": definition("js.number.unbox", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),

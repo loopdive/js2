@@ -13,6 +13,10 @@ import {
   type AsyncHostAdapter,
 } from "../src/ir/async-runtime-providers.js";
 import {
+  RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityRecord,
+} from "../src/ir/runtime-host-capabilities.js";
+import {
   PURE_MATH_RUNTIME_PROVIDERS,
   RUNTIME_PROVIDERS,
   RuntimeManifestBuilder,
@@ -44,13 +48,17 @@ function asyncProviderIdsForTarget(target: RuntimeTarget, features: ReadonlySet<
     .sort();
 }
 
+// (#3526 F1-S1) The catalogue the builder validates is the ONE central
+// host-capability table, not the async-only projection of it. Mutation
+// fixtures therefore start from the central records; the async rows inside are
+// the very same frozen objects, so the async projections below are unaffected.
 function capabilityCatalogWith(
   capability: AsyncHostAdapter["capability"],
   update: (record: AsyncHostAdapter) => unknown,
-): readonly AsyncHostAdapter[] {
-  return ASYNC_HOST_CAPABILITY_RECORDS.map((record) =>
-    record.capability === capability ? update(record) : record,
-  ) as readonly AsyncHostAdapter[];
+): readonly RuntimeHostCapabilityRecord[] {
+  return RUNTIME_HOST_CAPABILITY_RECORDS.map((record) =>
+    record.capability === capability ? update(record as AsyncHostAdapter) : record,
+  ) as readonly RuntimeHostCapabilityRecord[];
 }
 
 describe("#4103 IR async runtime provider schema", () => {
@@ -60,7 +68,7 @@ describe("#4103 IR async runtime provider schema", () => {
       { target: "host", backend: "wasmgc" },
       {
         providers: [...RUNTIME_PROVIDERS].reverse(),
-        hostCapabilityRecords: [...ASYNC_HOST_CAPABILITY_RECORDS].reverse(),
+        hostCapabilityRecords: [...RUNTIME_HOST_CAPABILITY_RECORDS].reverse(),
       },
     );
     requestAll(forward, ASYNC_RUNTIME_FEATURES);
@@ -295,18 +303,18 @@ describe("#4103 IR async runtime provider schema", () => {
   });
 
   it("rejects every malformed, incomplete, duplicated, or non-canonical capability catalog", () => {
-    const freezeWith = (hostCapabilityRecords: readonly AsyncHostAdapter[]) => {
+    const freezeWith = (hostCapabilityRecords: readonly RuntimeHostCapabilityRecord[]) => {
       const value = new RuntimeManifestBuilder({ target: "host", backend: "wasmgc" }, { hostCapabilityRecords });
       value.requestFeature("promise.react");
       return () => value.freeze();
     };
     const invalid = thrown("invalid-host-capability-catalog");
-    const callback = ASYNC_HOST_CAPABILITY_RECORDS[0]!;
+    const callback = RUNTIME_HOST_CAPABILITY_RECORDS[0]!;
     const resolve = ASYNC_HOST_CAPABILITY_RECORDS.find((record) => record.capability === "async.promise.resolve")!;
 
-    expect(freezeWith(ASYNC_HOST_CAPABILITY_RECORDS.slice(1))).toThrowError(invalid);
-    expect(freezeWith([...ASYNC_HOST_CAPABILITY_RECORDS, callback])).toThrowError(invalid);
-    expect(freezeWith([callback, callback, ...ASYNC_HOST_CAPABILITY_RECORDS.slice(2)])).toThrowError(invalid);
+    expect(freezeWith(RUNTIME_HOST_CAPABILITY_RECORDS.slice(1))).toThrowError(invalid);
+    expect(freezeWith([...RUNTIME_HOST_CAPABILITY_RECORDS, callback])).toThrowError(invalid);
+    expect(freezeWith([callback, callback, ...RUNTIME_HOST_CAPABILITY_RECORDS.slice(2)])).toThrowError(invalid);
     expect(
       freezeWith(
         capabilityCatalogWith("async.promise.resolve", (record) => ({
