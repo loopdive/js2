@@ -244,6 +244,30 @@ export async function run(): Promise<number> {
     expect(cached.bundleCacheKey).toBe(result.bundleCacheKey);
   });
 
+  it("keeps host imports in an optimized static package bundle engine-loadable", async () => {
+    const root = project("package-link-merge-host-import");
+    writePackage(root, "merge-inc", "export function inc(x: number): number { return x + 1; }\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { inc } from "merge-inc"; export function run(x: number): number { console.log(x); console.log("hello"); console.error(x); return inc(x); }\n',
+    );
+    const result = await compileProject(join(root, "main.ts"), {
+      emitWat: false,
+      optimize: 1,
+      packageCacheDir: join(root, ".cache"),
+      packageLinking: "merge",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.linkPlan?.mergeFallbackReason).toBeUndefined();
+    expect(result.linkPlan?.mode).toBe("merged");
+    const module = new WebAssembly.Module(result.binary);
+    const imports = WebAssembly.Module.imports(module);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.some((entry) => entry.module.startsWith("js2wasm:npm:"))).toBe(false);
+    await expect(WebAssembly.instantiate(module, result.importObject)).resolves.toBeDefined();
+  });
+
   it("reports an explicit separate-module fallback for merge-unsafe JavaScript values", async () => {
     const root = project("package-link-merge-value-fallback");
     writePackage(root, "merge-value", "export const answer = 42;\n");

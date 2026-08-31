@@ -298,30 +298,6 @@ describe("#5125 exact ambient Math.clz32 IR ownership", () => {
     expect(() => lowerIrFunctionToWasm(malformed, minimalResolver())).toThrowError(/unsupported backend composite/);
   });
 
-  it("withdraws only clz32 through its narrow rollback", async () => {
-    const flag = "JS2WASM_IR_MATH_CLZ32";
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(SOURCE, {
-        fileName: "issue-5125-rollback.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expectSuccess(result);
-      expect(outcomeFor(result, "clz32")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (label, source) => {
     const result = await compile(source, {
       fileName: `issue-5125-${label.replaceAll(" ", "-")}.ts`,

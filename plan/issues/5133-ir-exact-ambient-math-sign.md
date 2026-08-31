@@ -86,7 +86,7 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
    unary-f64 signature and a dependency-free `selfhost.math.sign` provider.
 3. Add `sign` to `IR_MATH_METHOD_TABLE` and reuse the generic selector,
    call-graph walker, from-AST emitter, manifest, and provider materializer.
-4. Add an independent `JS2WASM_IR_MATH_SIGN=0` rollback.
+4. Initial rollout added an independent per-method rollback.
 5. Widen #3526 exhaustive vocabulary, integration, linear-deferral, and
    neutrality evidence from twenty-six to twenty-seven source Math intrinsics.
 6. Add focused host/standalone ownership, dependency-free provider closure,
@@ -108,8 +108,8 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
   support is not mistaken for backend support.
 - Symbol/coercive and all other excluded shapes preserve direct behavior and
   decline before claim without invariants or post-claim errors.
-- The narrow rollback, affected regressions, TypeScript 7, and all pre-push
-  gates pass.
+- The former narrow rollback was validated alongside the affected regressions,
+  TypeScript 7, and all pre-push gates.
 
 ## Implementation outcome and validation
 
@@ -157,5 +157,12 @@ shadowed, coercive, Symbol, spread, and wrong-arity forms remain direct.
 The primary semantic risk is changing evaluation or bit identity for NaN and
 negative zero while adding the IR-owned self-hosted path. Exact direct/IR
 parity and existing Symbol-coercion tests are the hard boundaries.
-`JS2WASM_IR_MATH_SIGN=0` provides narrow rollback;
+The rollout-only per-method withdrawal provided narrow rollback;
 `JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

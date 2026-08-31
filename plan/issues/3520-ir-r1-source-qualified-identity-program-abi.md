@@ -3722,3 +3722,119 @@ run without bypass. No baseline, LOC, function-size, binary-size, or hook
 exception is authorized. A Luna implementation remains draft until an
 independent Sol review approves the exact pushed SHA; any later push invalidates
 that approval.
+
+## 2026-08-30 C37 implementation lock — preserve user-owned core vec exports
+
+This Sol-authored checkpoint is stacked only on the independently reviewed C36
+head `90fa59a6a771a1fe00fd7c57fdc9a4a2cbfe03fe` (PR #5294). Develop it on
+`codex/3520-c37-user-vec-export-provenance`; never push, amend, or otherwise
+rewrite the queued parent. Refreshed protected `origin/main` is
+`3e89b5f95318b45fd69c9cf8209da84a7a06351a`. After #5294 lands, verify its
+exact head is an ancestor of refreshed main, re-anchor this child through the
+normal signed workflow if required, and repeat collision, focused, ratchet,
+hook, and exact-SHA Sol-review evidence before making the child ready.
+
+The C36/C37 labels in the older #3521 linked-parser validation tracker refer to
+that tracker's signed prerequisite commits, not this prospective #3520
+checkpoint. Its final R2-v2 collector rerun is outside this slice. The unchanged
+#4035 size ceiling remains a control and must not be reported as a new
+regression.
+
+### Current deterministic false-pass
+
+`stripHostBridgeExports(...)` currently removes an export when either its
+descriptor is authenticated as a compiler-published vec bridge **or** its name
+matches the broad host-bridge namespace. Vec collision publication deliberately
+does not publish a compiler logical descriptor when the user already owns that
+name. The user descriptor is therefore absent from the compiler-owned WeakMap,
+but the second spelling test still deletes it in standalone and WASI.
+
+The false-pass covers the six core logical names (`__vec_len`, `__vec_get`,
+`__is_vec`, `__vec_mut_supported`, `__vec_push`, `__vec_pop`) and the exact
+physical families `$v0` through `$v5`. The focused test whose title claims user
+collisions survive exercises only `$v0$`, which the old exact-alias set never
+matched; it proves neither the logical names nor the unsuffixed physical names.
+Host mode appears correct because stripping is disabled there, masking the
+standalone/WASI loss.
+
+### Exact ownership and classification
+
+Own only:
+
+- this issue record;
+- `src/codegen/host-bridge-exports.ts`;
+- `src/codegen/vec-access-exports.ts`; and
+- `tests/issue-3520-vec-support-callable-abi.test.ts`.
+
+Derive and export one exact core-vec public-name predicate from the six frozen
+`VEC_HOST_BRIDGE_DEFINITIONS`: each definition's logical name plus its physical
+base `$v<ordinal>` followed by zero or more literal `$` suffix characters.
+Reject near-prefix spellings (`$v00`, `$v0x`, `$v6`, arbitrary `__vec_*`) from
+this exception. Do not copy a second name table into the stripping sink.
+
+For this bounded core-vec namespace, spelling is not ownership. Strip an entry
+only when exact provenance authenticates it as compiler-owned: the recorded
+descriptor identity remains authoritative, and a replacement/cloned function
+descriptor is also compiler-owned when its current live-or-stable handle
+resolves to one exact captured vec allocator function. A function descriptor
+resolving to a different, genuine user allocator is retained. Keep C36's dual
+handle interpretation and unconditional final allocator-identity checks; do
+not select a stable resolver merely because a live lookup is out of range,
+repair an invalid descriptor, infer ownership from the export name, or consult
+`funcMap`.
+
+`stripHostBridgeExports(...)` must apply that provenance result first. If a
+non-compiler entry has an exact core-vec public name, retain it. For every other
+host-bridge family and spelling, preserve the existing name-based removal
+unchanged; C37 is not a general host-export ownership migration. Memory,
+`_start`, `__exn_tag`, ordinary user exports, bridge markers, closure/struct/
+exception/stdout families, and their compact aliases keep their current policy.
+
+### Required focused matrix
+
+Extend the existing fixtures rather than replacing their host-mode coverage:
+
+1. Compile `ALL_PUBLIC_COLLISION_SOURCE` in standalone and WASI with tracking
+   both disabled and enabled. All eight user-owned collision exports survive
+   and return exactly `101` through `106`, `901`, and `902`; compiler-owned
+   physical successors are absent; the host-import list is empty; and the
+   tracked and untracked binaries are byte-identical for each target.
+2. Compile `PREFIX_ONLY_COLLISION_SOURCE` in standalone and WASI. User `$v0`
+   through `$v5` survive and return exactly `201` through `206`; no
+   compiler-owned successor for those occupied names remains public.
+3. Keep the existing `$v0$` standalone/WASI control green, proving a suffixed
+   user collision remains outside compiler provenance.
+4. Keep array-free logical and physical spoof fixtures host-free and public
+   without allocating or publishing a vec bridge family.
+5. Add a direct mutation that replaces one recorded descriptor object with a
+   clone targeting the same exact compiler allocator. The clone must still be
+   stripped under disabled policy (or rejected before publication); descriptor
+   replacement cannot reclassify compiler code as user-owned.
+6. Preserve the retarget/name/kind/lost-function matrix, C36's exact one-past
+   live mutation, and C36's disabled-policy survivor mutation. Host-mode
+   collision behavior and collision-free GC/standalone/WASI binaries remain
+   unchanged.
+
+Every tracked/untracked and target comparison must assert the complete public
+name/value census rather than only absence of the bridge prefix. No compact
+count may substitute for exact names, descriptor targets, or runtime values.
+The standalone and WASI controls must not introduce host imports merely to
+observe the exports.
+
+### Boundaries and acceptance
+
+This slice changes no vec allocator order, stable-handle minting, Program ABI,
+bridge bodies, collision suffix allocation, host runtime adapter, general
+host-bridge policy, direct/IR routing, or legacy fallback. It is intentionally
+stacked on C36 because both touch the vec ownership helper and focused test;
+it overlaps no other open PR or inspected parallel Claude lane.
+
+Acceptance requires the focused vec support callable-ABI suite, TypeScript
+typecheck, Prettier/Biome and `git diff --check`, IR fallback and issue
+integrity, plus relevant oracle/coercion/dead-export controls. Immediately
+before every signed commit, run both LOC and function regrowth ratchets. Run
+each heavy command only after a finite, non-negative one-minute load sample is
+strictly below `logical cores - 2`; keep complete precommit and prepush hooks
+enabled. No baseline, LOC, function-size, binary-size, size-ceiling, or hook
+exception is authorized. The stacked PR remains draft until an independent Sol
+approves its exact pushed SHA; any later push invalidates that approval.

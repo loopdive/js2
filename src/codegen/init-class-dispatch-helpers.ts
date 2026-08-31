@@ -148,11 +148,32 @@ const STRUCT_READ_EXPORT_PREFIXES: readonly string[] = ["__sget_"];
 /** Exact struct-read discriminator names the host probes. */
 const STRUCT_READ_EXPORT_NAMES: ReadonlySet<string> = new Set(["__struct_field_names", "__is_data_struct"]);
 
+/**
+ * (#5209) The CALLBACK-BRIDGE family — the fifth facet of the same window.
+ *
+ * `__make_callback(id, caps)` hands the host a JS function whose body is
+ * `exports.__cb_<id>(caps, …args)`. During init that export was unreachable, so
+ * `createNativeFunctionCallbackBridge` took its "park it until exports exist"
+ * arm: the bridge returned `undefined` IMMEDIATELY and ran the real callback
+ * later, out of order.
+ *
+ * For an ASYNCHRONOUS consumer (a settled-promise reaction — the case that arm
+ * was written for) that is fine. For a SYNCHRONOUS one it is silently wrong:
+ * `t.filter(cb)` at module top level saw `undefined` for every element, kept
+ * nothing, and returned `[]` — the Temporal polyfill's
+ * `n.filter((e) => null != e.reverseOf).length > 1` era guard read an empty
+ * table. Registering `__cb_*` here lets the bridge dispatch for real, in order,
+ * and leaves the defer as the fallback for a callback whose export genuinely is
+ * not reachable yet.
+ */
+const CALLBACK_BRIDGE_EXPORT_PREFIXES: readonly string[] = ["__cb_"];
+
 function isClassDispatchExport(name: string | undefined): name is string {
   if (name === undefined) return false;
   if (CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (CLOSURE_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (STRUCT_READ_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (CALLBACK_BRIDGE_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (STRUCT_READ_EXPORT_NAMES.has(name)) return true;
   return CLOSURE_DISPATCH_EXPORT_NAMES.has(name);
 }
