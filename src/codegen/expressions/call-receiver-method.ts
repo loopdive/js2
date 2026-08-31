@@ -952,7 +952,7 @@ export function compileReceiverMethodCall(
     const isAsyncGenRecv =
       recvSymName === "AsyncGenerator" || recvSymName === "AsyncIterableIterator" || recvSymName === "AsyncIterator";
     if (isAsyncGenRecv && propAccess.name.text === "next" && expr.arguments.length === 0) {
-      const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+      const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression, expr);
       if (dispatched !== null) return dispatched;
     }
     // (#3389 slice 2a) `.return(v)` / `.throw(e)` on a driven async-gen — the
@@ -3671,7 +3671,7 @@ export function compileReceiverMethodCall(
         // the miss arm preserves this site's original `__gen_next` behavior
         // (see tryEmitAsyncGenNextDispatch). Zero-arg only.
         if (expr.arguments.length === 0) {
-          const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+          const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression, expr);
           if (dispatched !== null) return dispatched;
         }
         const genNextIdx = ctx.funcMap.get("__gen_next");

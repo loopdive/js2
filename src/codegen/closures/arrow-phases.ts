@@ -37,6 +37,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
 import { emitBoundsCheckedArrayGet, valTypesMatch } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
+import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
@@ -1220,8 +1221,7 @@ export function emitClosureParamDestructuring(
         allocBindingLocals(param.name);
       }
     } else if (ts.isObjectBindingPattern(param.name)) {
-      // Object destructuring: function({a, b}) { ... }
-      let handled = false;
+      let handled = tryEmitNativeIteratorResultParam(ctx, liftedFctx, paramIdx, param.name, paramType);
 
       // Externref params (e.g. callback from JS host or `: any`-typed) need
       // the host-import-driven extraction path that mirrors the array case
@@ -1230,7 +1230,7 @@ export function emitClosureParamDestructuring(
       // default-zero/null value of the local instead of the property pulled
       // off the argument object. (#43 cluster — function-expression dstr
       // on `any` params)
-      if (paramType.kind === "externref") {
+      if (!handled && paramType.kind === "externref") {
         destructureParamObjectExternref(ctx, liftedFctx, paramIdx, param.name);
         handled = true;
       }

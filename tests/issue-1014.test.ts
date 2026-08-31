@@ -1,6 +1,8 @@
+import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { runTest262File } from "./test262-runner.js";
 
 describe("#1014 — async generator .next() returns Promise", () => {
   async function run(src: string): Promise<any> {
@@ -148,4 +150,12 @@ describe("#1014 — async generator .next() returns Promise", () => {
     `);
     expect(ret).toBe(1);
   });
+
+  it("standalone preserves async-generator IteratorResult destructuring after rejection", async () => {
+    const file = resolve(
+      "test262/test/language/expressions/async-generator/yield-star-getiter-sync-returns-undefined-throw.js",
+    );
+    const result = await runTest262File(file, "issue-1014-standalone", 120_000, "standalone");
+    expect(result.status, result.error ?? result.reason).toBe("pass");
+  }, 180_000);
 });

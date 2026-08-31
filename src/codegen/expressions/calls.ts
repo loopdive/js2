@@ -109,6 +109,13 @@ import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import { installableReceiverInstrs } from "../helpers/undefined-receiver.js"; // (#4555) runtime-eval receiver seam
+import {
+  consumeNativeIteratorResultBuffer,
+  enterNativeIteratorResultCallback,
+  markNativeIteratorResultBuffer,
+  nativeIteratorResultThenReceiver,
+} from "../promise-native-iterator-result.js";
+export { tryEmitAsyncGenNextDispatch } from "../promise-native-iterator-result.js";
 
 // (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
 // because call sites import it from `calls.ts`.
@@ -5073,6 +5080,7 @@ export function compilePromiseThenReceiverBuffer(
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
+  markNativeIteratorResultBuffer(liveBuffers, nativeIteratorResultThenReceiver(ctx, expr));
   return instrs;
 }
 
@@ -5089,6 +5097,7 @@ export function compileStandalonePromiseThenCallback(
   // handler with zero arguments and preserves the original settlement.
   opts?: { allowDynamic?: boolean },
 ): StandalonePromiseThenCallback | null {
+  const nativeIteratorResult = consumeNativeIteratorResultBuffer(liveBuffers);
   if (arg === undefined || isNullishPromiseThenCallbackArg(arg)) return null;
 
   const instrs: Instr[] = [];
@@ -5106,6 +5115,7 @@ export function compileStandalonePromiseThenCallback(
   // contextually-inferred tuple struct (combinator over a tuple input) can
   // never match the runtime results vec (see computeClosureWrapperSig).
   const savedWidenTuple = ctx.widenTupleCallbackParams;
+  const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);
   ctx.widenTupleCallbackParams = true;
   try {
     const type =
@@ -5139,6 +5149,7 @@ export function compileStandalonePromiseThenCallback(
     return { instrs, closureInfo };
   } finally {
     ctx.widenTupleCallbackParams = savedWidenTuple;
+    restoreNativeIteratorResult();
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
@@ -5233,83 +5244,6 @@ function emitHostPromiseThenFallback(
  * BEFORE reaching here and keep the original unconditional-cast lowering
  * for wasi untouched.
  */
-
-/**
- * (#2865) Zero-arg `.next()` on a possibly-DRIVEN async-generator receiver.
- * `g()` on a driven producer returns the `$AsyncFrame` carrier (a bare
- * externref); source-level `g().next()` / `it.next()` must route to the
- * per-gen re-entrant driver `__async_gen_next_<stem>(frame) ->
- * Promise<IteratorResult>`. The receiver is dispatched at RUNTIME by
- * `ref.test`ing each registered producer's frame struct (the chain shape
- * `buildNativeGeneratorDispatch` uses for sync gens).
- *
- * Miss arm (a receiver that is none of the driven frames): under BOTH
- * `--target standalone` and `--target wasi`, the legacy host `__gen_next` is
- * kept ONLY when a legacy buffer async gen was actually emitted in this module
- * (`asyncGenLegacyBufferEmitted`); otherwise a plain null result, so an
- * ALL-DRIVEN module stays host-free. (#3132) This dispatch is TYPE-gated to
- * `AsyncGenerator`/`AsyncIterableIterator`/`AsyncIterator` receivers (see the
- * call sites), never user objects or sync gens — so in a module with no legacy
- * buffer async gen, every reachable receiver IS one of the driven frames and
- * the `__gen_next` miss arm is provably DEAD. Dropping it (previously kept
- * unconditionally on standalone) removes the `env::__gen_next` import that
- * blocked these otherwise-driven async gens — consumed via `.next()` — from
- * counting toward the host-free standalone floor, the CONSUMER half of the
- * dstr-param slice. Mixed modules (a driven gen AND a legacy buffer async gen)
- * keep the fallback, exactly as before. Mirrors #2903's `.then` host-arm
- * de-leak; matches the well-tested wasi semantics byte-for-byte.
- *
- * Returns null (no emission) when the module has no driven producers or the
- * target is the JS-host lane — the caller falls through to its original
- * lowering, byte-identical.
- */
-export function tryEmitAsyncGenNextDispatch(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  receiverExpr: ts.Expression,
-): ValType | null {
-  const producers = ctx.asyncGenProducers;
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
-  if (producers === undefined || producers.size === 0) return null;
-  // Evaluate the receiver ONCE into an externref local (it may be a call).
-  const recvLocal = allocLocal(fctx, `__agen_recv_${fctx.locals.length}`, { kind: "externref" });
-  const rt = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
-  if (rt !== null && rt !== undefined && (rt as ValType).kind !== "externref") {
-    coerceType(ctx, fctx, rt as ValType, { kind: "externref" });
-  }
-  fctx.body.push({ op: "local.set", index: recvLocal });
-  // funcMap lookups happen AFTER the receiver compile (which may register late
-  // imports and shift defined indices).
-  const wantHostFallback = ctx.asyncGenLegacyBufferEmitted === true;
-  const hostGenNext = wantHostFallback ? ctx.funcMap.get("__gen_next") : undefined;
-  let chain: Instr[] =
-    hostGenNext !== undefined
-      ? [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: hostGenNext },
-        ]
-      : [{ op: "ref.null.extern" }];
-  for (const p of [...producers.values()].reverse()) {
-    const nextIdx = ctx.funcMap.get(p.nextHelperName);
-    if (nextIdx === undefined) continue;
-    chain = [
-      { op: "local.get", index: recvLocal },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: p.stateTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: nextIdx },
-        ],
-        else: chain,
-      },
-    ];
-  }
-  fctx.body.push(...chain);
-  return { kind: "externref" };
-}
 
 /**
  * (#3389 slice 2a) `.return(v)` / `.throw(e)` on a DRIVEN async-generator
@@ -5490,6 +5424,7 @@ export function emitStandaloneThenWithNativeFallback(
     }
     fctx.body.push({ op: "local.set", index: recvLocal });
 
+    compilePromiseThenReceiverBuffer(ctx, fctx, receiverExpr, liveBuffers);
     const onFulfilled =
       method === "then"
         ? compileStandalonePromiseThenCallback(ctx, fctx, onFulfilledArg, liveBuffers, { allowDynamic: true })
