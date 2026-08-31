@@ -2291,13 +2291,28 @@ export function tryExternClassMethodOnAny(
       compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
     }
     for (let i = expr.arguments.length; i < argCount; i++) {
-      fctx.body.push({ op: "ref.null.extern" });
+      // (#5221) An OMITTED argument is `undefined`, not `null` — the same rule
+      // #4644 states for synthesized zero-arg method calls. It matters here
+      // because this arm binds an `any` receiver to the FIRST extern class that
+      // declares the name, and that class's fixed arity is then padded out. For
+      // `a.sort()` on an `any` array the first match is
+      // `Uint8ClampedArray_sort(self, comparator)`, so the raw `ref.null.extern`
+      // reached the host as an EXPLICIT `null` comparator and native
+      // `Array.prototype.sort` threw "The comparison function must be either a
+      // function or undefined: null" (§23.1.3.30 step 1 accepts `undefined`, not
+      // `null`). That is the third of the three defects behind
+      // `Temporal.PlainDate.from({…})`: the polyfill's `PrepareCalendarFields`
+      // sorts its field-name list with a bare `a.sort()`.
+      pushDefaultValue(fctx, sig.params[i + 1] ?? { kind: "externref" }, ctx);
     }
     for (let i = argCount; i < expr.arguments.length; i++) {
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!);
       if (argType) fctx.body.push({ op: "drop" });
     }
-    fctx.body.push({ op: "call", funcIdx });
+    // `pushDefaultValue` may have registered `__get_undefined` as a late import,
+    // which shifts every function index above the import block — so re-read the
+    // callee rather than emitting the index captured before the padding.
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? funcIdx });
     if (sig.results.length === 0) return VOID_RESULT;
     return sig.results[0]!;
   }

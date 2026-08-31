@@ -272,7 +272,7 @@ const FIXTURES: readonly Fixture[] = [
       { name: "y", storage: "f64" },
     ],
     watRegistrationByTarget: {
-      gc: watRegistration(12),
+      gc: watRegistration(13),
       standalone: watRegistration(83),
     },
     finalBinaryByTarget: {
@@ -331,8 +331,16 @@ const FIXTURES: readonly Fixture[] = [
       { name: "run", kind: "emitted" },
     ],
     emitted: ["run"],
-    hostImports: ["env::__box_number", "env::__extern_get", "env::__unbox_number"],
-    hostExtraExports: ["__vec_len", "__vec_get", "__is_vec", "__vec_mut_supported", "__vec_push", "__vec_pop"],
+    hostImports: ["env::__box_number", "env::__extern_get", "env::__new_TypeError", "env::__unbox_number"],
+    hostExtraExports: [
+      "__vec_len",
+      "__vec_get",
+      "__is_vec",
+      "__vec_mut_supported",
+      "__vec_push",
+      "__vec_pop",
+      "__exn_tag",
+    ],
     standaloneExports: [
       "createPoint",
       "__box_number",
@@ -371,7 +379,7 @@ const FIXTURES: readonly Fixture[] = [
       { name: "name", storage: "(ref null 6)" },
     ],
     watRegistrationByTarget: {
-      gc: watRegistration(13),
+      gc: watRegistration(14),
       standalone: watRegistration(83),
     },
     hostFields: ["name", "age"],
@@ -397,8 +405,22 @@ const FIXTURES: readonly Fixture[] = [
       },
     ],
     emitted: [],
-    hostImports: ["env::__box_number", "env::__extern_get", "env::__get_undefined", "env::__unbox_number"],
-    hostExtraExports: ["__vec_len", "__vec_get", "__is_vec", "__vec_mut_supported", "__vec_push", "__vec_pop"],
+    hostImports: [
+      "env::__box_number",
+      "env::__extern_get",
+      "env::__get_undefined",
+      "env::__new_TypeError",
+      "env::__unbox_number",
+    ],
+    hostExtraExports: [
+      "__vec_len",
+      "__vec_get",
+      "__is_vec",
+      "__vec_mut_supported",
+      "__vec_push",
+      "__vec_pop",
+      "__exn_tag",
+    ],
     standaloneExports: [
       "createUser",
       "__box_number",

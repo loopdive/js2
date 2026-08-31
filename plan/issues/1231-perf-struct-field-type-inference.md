@@ -1337,3 +1337,15 @@ ratchet, and the function-growth ratchet also pass under the strict 10-core
 finite/non-negative one-minute load limit below 8. Root still must sync current
 protected main, rerun the changed-root and full hooks, push normally, and obtain
 fresh Sol approval of that exact remote SHA before changing PR readiness.
+
+### 2026-08-31 protected-main relock
+
+The repair commit was merged normally with protected main
+`fd3bdefb718780032d99da896654d5e23b89d864`. The merge was conflict-free and
+did not overlap a #1231 file, but main's additional GC type and error path
+changed exact debug artifacts. Point GC moved from WAT declaration ordinal
+12→13 and User GC from 13→14; both now import `env::__new_TypeError` and export
+`__exn_tag`. Point/User standalone ordinals remain 83, Vec2 remains 7/84, and
+annotated standalone remains 31. Every IR/legacy ABI-parity pair and every
+final-binary structural/link/direct-call projection stayed unchanged. The
+relocked merged suite passes 12/12; no expectation was weakened.
