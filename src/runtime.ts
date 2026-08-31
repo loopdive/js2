@@ -6207,11 +6207,13 @@ const _classCtorClosures = new WeakMap<object, any>();
  * object. The constructible mirror is built once and cached in
  * `_hostProxyCache` forever, but it captured a SNAPSHOT of `exports` — and for
  * a class declared at top level that snapshot is taken during the wasm `start`
- * section, where `getExports()` is `undefined` for every caller (#5193). So
- * the mirror's own `[[Construct]]` arm could never reach `__call_fn_N` and
- * threw "compiled class constructor <Name> bridge unavailable" for the whole
- * life of the module — the polyfill's `new (ce("%Temporal.Duration%"))(…)`.
- * Registering the live state here lets the mirror re-ask after instantiation.
+ * section, where the only view any caller can have is the partial #5202
+ * start-export registry (measured: 19 entries against the live view's 59), or
+ * nothing at all (#5193). Frozen, that view carries no constructor dispatcher,
+ * so the mirror's own `[[Construct]]` arm threw "compiled class constructor
+ * <Name> bridge unavailable" for the whole life of the module — the polyfill's
+ * `new (ce("%Temporal.Duration%"))(…)`. Registering the live state here lets
+ * the mirror re-ask once instantiation has returned.
  */
 const _classCtorCallbackStates = new WeakMap<object, MarshalExportSource>();
 const _classProtoStructs = new WeakMap<object, any>();
