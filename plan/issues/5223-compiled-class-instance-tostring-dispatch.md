@@ -32,6 +32,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/property-access.ts::compileElementAccessBody
   - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::emitIteratorMethodExport
 ---
 
 # #5223 — compiled-class instance `toString` dispatch
