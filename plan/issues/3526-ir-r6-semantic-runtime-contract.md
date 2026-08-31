@@ -1401,6 +1401,31 @@ overlaps the eleven owned files.
    (`pnpm run check:ir-fallbacks`) is **unchanged, output-identical**, with all
    unintended, module-level and post-claim buckets still empty.
 
+### `check:ir-kind-neutrality` baseline refresh
+
+The `quality` lane initially failed on `check:ir-kind-neutrality`. **This was
+caused by this change-set**, not pre-existing: the gate passes with exit 0 on a
+clean `origin/main` worktree (an earlier stash-based check wrongly suggested
+otherwise, and the wrong conclusion was reported before the worktree
+measurement corrected it).
+
+The cause is line-number drift in the baseline's `evidence` citations — this
+slice's edits moved three cited lines. No verdict, kind, placement, ratchet
+count or `settledBy` rationale changed:
+
+| kind | cited file | before → after |
+| --- | --- | --- |
+| `forof.string` | `src/ir/integration.ts` | 6001 → 6054 |
+| `string.len` | `src/ir/backend/linear-integration.ts` | 1611 → 1614 |
+| `vec.new_fixed` | `src/ir/from-ast.ts` | 4562 → 4542 |
+
+Refreshed per the gate's own instruction (`--update-on-decrease`, then commit
+the baseline diff for review). The three citations plus the `generated` date
+were patched surgically rather than committing the regenerator's output, which
+reflows every array and would have buried a 4-line semantic change in a
+356-line formatting diff. This is the gate's documented refresh flow and is
+distinct from `scripts/loc-budget-baseline.json`, which remains main's alone.
+
 ### Not touched (per the lock)
 
 `src/codegen/index.ts`, declarations, raw union registration (`addUnionImports`
