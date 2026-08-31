@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { createHash } from "crypto";
 import { createContext, runInContext } from "node:vm";
-import { compile } from "../src/index.js";
+import { compile, compileMulti } from "../src/index.js";
 import { buildImports, markCoherentBuiltinRealm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
@@ -25,6 +25,7 @@ import {
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-shared.ts. This lane used to instantiate the binary
 // directly, so a standalone module linking `js2wasm:runtime-eval` died at
@@ -4238,9 +4239,8 @@ async function runOriginalHarnessVariant(
   try {
     const compileStarted = performance.now();
     try {
-      result = await compile(variant.source, {
+      const compileOptions = {
         allowJs: true,
-        fileName,
         sourceMap: true,
         emitWat: false,
         skipSemanticDiagnostics: true,
@@ -4264,7 +4264,24 @@ async function runOriginalHarnessVariant(
         // collapse onto opaque labels. This is the harness opt-in the flag was
         // designed around; do not drop it to "shrink the test binaries".
         hostBridge: "always",
-      });
+      } as const;
+      // Test262's module-namespace cases intentionally self-import the entry
+      // (`import * as ns from './<own-file>.js'`) to obtain that module's
+      // namespace object. The ordinary single-source compiler has no module
+      // record for the edge, so the literal harness compile leaves `ns`
+      // unresolved and the row fails as `ns is not defined`. Keep the source
+      // byte-for-byte intact, but give this narrowly recognized graph shape
+      // its pinned virtual entry through compileMulti. This mirrors the
+      // sharded fixture path without changing any non-namespace test.
+      const relTestPath = relative(join(TEST262_ROOT, "test"), fileName).replaceAll("\\", "/");
+      const isModuleNamespaceTest = relTestPath.startsWith("language/module-code/namespace/");
+      const selfModuleImport = isModuleNamespaceTest && hasSelfModuleImport(relTestPath, originalSource);
+      if (selfModuleImport) {
+        const entryFile = `./${relTestPath}`;
+        result = await compileMulti({ [entryFile]: variant.source }, entryFile, compileOptions);
+      } else {
+        result = await compile(variant.source, { ...compileOptions, fileName });
+      }
     } catch (error) {
       compileMs = performance.now() - compileStarted;
       const detail = originalHarnessThrownText(error);

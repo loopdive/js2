@@ -7,6 +7,20 @@
 import { describe, expect, it } from "vitest";
 import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 import { compileMulti } from "../src/index.js";
+import { join } from "node:path";
+import { runTest262File } from "./test262-runner.js";
+
+const LITERAL_SELF_NAMESPACE_ROW = join(
+  import.meta.dirname ?? ".",
+  "..",
+  "test262",
+  "test",
+  "language",
+  "module-code",
+  "namespace",
+  "internals",
+  "set-prototype-of-null.js",
+);
 
 async function runSelfNamespace(target: "gc" | "standalone"): Promise<number> {
   const entry = "./entry.js";
@@ -77,4 +91,18 @@ describe("#4759 module namespace self-import linking", () => {
   it.each(["gc", "standalone"] as const)("materializes an empty self namespace in %s", async (target) => {
     await expect(runEmptySelfNamespace(target)).resolves.toBeUndefined();
   });
+
+  it.each(["gc", "standalone"] as const)(
+    "executes the literal Test262 row in %s",
+    async (target) => {
+      const result = await runTest262File(
+        LITERAL_SELF_NAMESPACE_ROW,
+        "issue-4759-literal",
+        120_000,
+        target === "standalone" ? target : undefined,
+      );
+      expect(result.status, result.error ?? `${result.file} did not pass`).toBe("pass");
+    },
+    180_000,
+  );
 });
