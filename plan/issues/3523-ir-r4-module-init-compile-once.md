@@ -1606,3 +1606,62 @@ None falsifying. Two refinements the probes forced, both narrowing:
   null`. P1 measured these to be the same set, and the conjunction is the
   fail-closed spelling: were they ever to diverge, the source keeps its existing
   unit row and gains no second row, rather than double-counting.
+
+### Consumer 3 (M0/M2 owner, `src/codegen/multi-prepared-program.ts`): UNTOUCHED, with evidence
+
+The plan allowed this to resolve either way. It resolves to **untouched**, and
+the evidence is structural rather than an absence of observed failures:
+
+- The owner's terminal census is keyed by `IrUnitId` throughout —
+  `#moduleInitAudit` iterates `preparation.sourcePlans` (`sourceId`/`unitId`/
+  `executable`), and `#recordModuleInitIrTelemetry` guards against a duplicate
+  row with `outcome.unitId === preparation.unitId || outcome.key ===
+  terminal.legacyKey`. Per P1 a `non-executable` row has NO `unitId`, so it
+  cannot enter either denominator.
+- The `key` half of that guard cannot collide either: both keys are prefixed by
+  their own source's `fileName`, and a source that owns a prepared module-init
+  terminal is excluded from the new row by construction. The two key spaces are
+  therefore disjoint by source, not by luck of ordering.
+- The publication prefix guard in `multi-prepared-callable-publication.ts`
+  (`#assertContextPrefixes`) asserts `ctx.irOutcomes` is unchanged in identity
+  AND contents across the publication window. The new row is appended in
+  `recordObservedIrOutcomes`, outside that window; measured on the two
+  multi-source graphs below, no publication error occurs.
+
+Measured (`compileMulti`, `trackIrOutcomes: true`):
+
+| graph | non-executable rows | distinct sourceIds | audit violations |
+| --- | --- | --- | --- |
+| empty dependency + executable entry | 1 (on `dep.ts`) | 1 | 1, **pre-existing on `origin/main`** |
+| two statement-free sources | 2 | 2 | 0 |
+
+The single violation in the first graph is
+`unresolved-legacy-entry: compileModuleInitBody __module_init has no exact
+source/unit/class identity`, and it is present **verbatim on `origin/main`**
+for the same input (measured by file-copy A/B). It belongs to gap 1's
+whole-program `__module_init`, not to this slice, and is left alone.
+
+### One narrowing forced by that measurement
+
+The audit-join guard's first cut counted a source as owning a physical module
+init from any `compileModuleInitBody` entry carrying a `sourceId`. That is
+unsound: the whole-program `__module_init` entry carries the *ambient* source
+being compiled, which the audit itself already reports as having no exact
+identity. It made the innocent empty dependency in graph 1 look like it owned a
+module-init body, producing a spurious second defect. The guard now counts only
+roots whose `unitId` resolves to a module-init terminal — exact identity, never
+ambient attribution. Using evidence the audit has already declared unresolved
+would have been the same class of error this slice is removing.
+
+### Test-surface changes (fix-on-touch)
+
+`tests/issue-3519-ir-outcomes.test.ts`'s `terminal()` helper now returns what
+its name always claimed — terminal-unit rows — and a companion `nonExecutable()`
+accessor plus one explicit test state the other half of the partition, so the
+file records the new rows rather than filtering them away. `issue-1231`'s
+`normalizeOutcome` stopped collapsing every non-`emitted` row into
+`"unsupported"`: leaving that in place would have reproduced, inside a test's
+own projection, exactly the untruth this slice removes from the ledger.
+`issue-3520` and `issue-3525` gained the row in their exact projections and an
+explicit terminal/non-executable partition respectively — in both cases keeping
+the assertion exact rather than loosening a count.

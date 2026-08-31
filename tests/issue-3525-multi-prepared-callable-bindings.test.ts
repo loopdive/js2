@@ -16,6 +16,7 @@ import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compileMulti } from "../src/index.js";
 import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
 import type { IrIntegrationReport } from "../src/ir/integration-report.js";
+import type { IrObservedOutcome } from "../src/ir/outcomes.js";
 import { compilePreparedProgramComponent, type IrIntegrationLoweringPlans } from "../src/ir/integration.js";
 import type { PendingPreparedProgramComponentReceipt } from "../src/ir/prepared-component-publication.js";
 import {
@@ -359,6 +360,28 @@ function exactOutcomes(generated: GeneratedMultiModule, unitIds: ReadonlySet<IrU
   );
 }
 
+/**
+ * (#3523 R4 gap 4) The ledger now also carries one unit-LESS `non-executable`
+ * row per source whose module init has nothing to do. These graphs are all
+ * function-only, so every source contributes one. Assert that partition
+ * explicitly instead of loosening the terminal-unit count: the point of the
+ * original assertion — every terminal unit has exactly one row and no row is
+ * unaccounted for — is preserved, with the new rows named rather than tolerated.
+ */
+function expectTerminalRowPartition(
+  generated: GeneratedMultiModule,
+  unitIds: ReadonlySet<IrUnitId>,
+): readonly IrObservedOutcome[] {
+  const allOutcomes = generated.irOutcomes ?? [];
+  const nonExecutable = allOutcomes.filter((outcome) => outcome.kind === "non-executable");
+  const terminalRows = allOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+  expect(nonExecutable.every((outcome) => outcome.unitId === undefined)).toBe(true);
+  expect(new Set(nonExecutable.map(({ sourceId }) => sourceId)).size).toBe(nonExecutable.length);
+  expect(terminalRows).toHaveLength(unitIds.size);
+  expect(new Set(terminalRows.map(({ unitId }) => unitId))).toEqual(unitIds);
+  return terminalRows;
+}
+
 function expectNoCallablePublication(
   generated: GeneratedMultiModule,
   unitIds: ReadonlySet<IrUnitId>,
@@ -366,9 +389,7 @@ function expectNoCallablePublication(
 ): void {
   expect(generated.multiPreparedProgramAudit).toBeUndefined();
   expect(generated.irCompiledFuncs ?? []).toEqual([]);
-  const allOutcomes = generated.irOutcomes ?? [];
-  expect(allOutcomes).toHaveLength(unitIds.size);
-  expect(new Set(allOutcomes.map(({ unitId }) => unitId))).toEqual(unitIds);
+  expectTerminalRowPartition(generated, unitIds);
   const outcomes = exactOutcomes(generated, unitIds);
   expect(outcomes).toHaveLength(unitIds.size);
   expect(
@@ -404,9 +425,7 @@ function expectDirectOwnedCallablePopulation(
   expect(new Set(generated.multiPreparedProgramAudit?.bodyPlan.terminalUnitIds)).toEqual(unitIds);
   expect(new Set(generated.multiPreparedProgramAudit?.bodyPlan.unreservedTerminalUnitIds)).toEqual(unitIds);
   expect(generated.irCompiledFuncs ?? []).toEqual([]);
-  const allOutcomes = generated.irOutcomes ?? [];
-  expect(allOutcomes).toHaveLength(unitIds.size);
-  expect(new Set(allOutcomes.map(({ unitId }) => unitId))).toEqual(unitIds);
+  expectTerminalRowPartition(generated, unitIds);
   const outcomes = exactOutcomes(generated, unitIds);
   expect(outcomes).toHaveLength(unitIds.size);
   expect(
