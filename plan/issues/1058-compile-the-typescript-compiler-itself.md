@@ -664,14 +664,14 @@ three AST fingerprints or the whole TypeScript unit suite pass yet.
 
 Branch: `codex/1058-typescript5-runtime-followup`, synchronized to the actual
 `loopdive/js2` `main` at
-`adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2`. This supersedes the earlier
+`b1085049ed2ed722c33480528b2741369ed73822`. This supersedes the earlier
 handoff's `origin/main` wording; that remote points at the legacy
 `loopdive/js2wasm` repository.
 
 The final post-sync diagnostic run compiled and validated the canonical
 TypeScript 5.9.3 parser graph. It produced an **84,901,009-byte** Wasm module in
-434,487 ms worker time / 435,823 ms wall time from 30 source files, 34 Program
-files, and 4,284 functions. Peak RSS was **4,072.7 MiB**, below the 4 GiB
+363,428 ms worker time / 364,469 ms wall time from 30 source files, 34 Program
+files, and 4,284 functions. Peak RSS was **4,027.9 MiB**, below the 4 GiB
 worker cap, and the result retained 16 non-fatal IR/projection warnings.
 `compileSuccess` and `WebAssembly.validate` are both true. The diagnostic Wasm
 and source map are at
