@@ -187,6 +187,10 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.classHasStatics.value).toBe("compare,from,length,name,prototype");
     expect(s.constructAndReadFields.value).toBe("2020/3/4");
     expect(s.aliasable.value).toBe("object");
+    // (#5223) Promoted out of knownGaps: the prototype `toString()` of a
+    // `new`-constructed provider instance dispatches, so the instance
+    // stringifies to its real ISO date instead of "[object Object]".
+    expect(s.instanceToString.value).toBe("2020-03-04");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the
@@ -196,6 +200,6 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // Known gaps are REPORTED, not asserted away — see the harness for what
     // was measured about each. Asserting only their presence keeps the list
     // honest without pinning today's failure text.
-    expect(Object.keys(report.knownGaps).sort()).toEqual(["instanceToString", "nowInstant", "staticFrom"]);
+    expect(Object.keys(report.knownGaps).sort()).toEqual(["instanceToStringTag", "nowInstant", "staticFrom"]);
   });
 });

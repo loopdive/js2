@@ -6963,6 +6963,30 @@ function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Inst
  * values before that shift would make the emitted bridge call the wrong
  * function.
  */
+/**
+ * (#5223) The property names read off a dynamic receiver that ARE a declared
+ * instance accessor of some class in this module. Intersecting here — at
+ * finalize, after every class body has been compiled — is what keeps the
+ * read-side registration free: a module that reads `.length` off an `any` and
+ * declares no `length` accessor contributes nothing, so its emitted bytes are
+ * unchanged. `classAccessorSet` is keyed `<Class>_<key>` (the accessor's
+ * emitted FUNCTION is `<Class>_get_<key>` — the two conventions differ, which
+ * is the pairing bug #5204 already had to correct once).
+ */
+function dynamicClassAccessorReadKeys(ctx: CodegenContext): Set<string> {
+  const keys = new Set<string>();
+  if (ctx.standalone || ctx.wasi || ctx.hostDynamicClassAccessorReads.size === 0) return keys;
+  for (const className of ctx.classSet) {
+    const accessorPrefix = `${className}_`;
+    for (const accessor of ctx.classAccessorSet) {
+      if (!accessor.startsWith(accessorPrefix)) continue;
+      const key = accessor.slice(accessorPrefix.length);
+      if (ctx.hostDynamicClassAccessorReads.has(key)) keys.add(key);
+    }
+  }
+  return keys;
+}
+
 function classBridgeNeedsNumberBox(ctx: CodegenContext): boolean {
   const numeric = new Set(["f64", "f32", "i32", "i64"]);
   // (#5204) An externref-backed class's OWN members are bridged regardless of
@@ -6978,7 +7002,11 @@ function classBridgeNeedsNumberBox(ctx: CodegenContext): boolean {
       if (accessor.startsWith(accessorPrefix)) externrefBackedKeys.add(accessor.slice(accessorPrefix.length));
     }
   }
-  const scanKeys = new Set<string>([...ctx.hostDynamicClassMethodNames, ...externrefBackedKeys]);
+  const scanKeys = new Set<string>([
+    ...ctx.hostDynamicClassMethodNames,
+    ...externrefBackedKeys,
+    ...dynamicClassAccessorReadKeys(ctx),
+  ]);
   for (const [structName] of ctx.structFields) {
     if (isSyntheticStructName(structName)) continue;
     for (const key of scanKeys) {
@@ -7032,7 +7060,17 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // READ of a getter registers no dynamic method name at all and used to bail
   // here, which is why `get g()` read NaN with no dispatch export emitted.
   const needsExternrefBackedClassBridges = !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.size > 0;
-  if (!needsIterator && !needsDynamicClassMembers && !needsExternrefBackedClassBridges) return;
+  // (#5223) A module whose ONLY host-side class access is a dynamic property
+  // READ of an accessor (`function f(a: any) { return a.g; }`) registers no
+  // method name and owns no externref-backed class, so it bailed here and the
+  // getter surface was never emitted — the read answered `undefined` while a
+  // method call on the same receiver worked. Positively filtered: the key set
+  // is empty unless some class in this module declares that accessor.
+  const accessorReadKeys = dynamicClassAccessorReadKeys(ctx);
+  const needsDynamicAccessorReads = accessorReadKeys.size > 0;
+  if (!needsIterator && !needsDynamicClassMembers && !needsExternrefBackedClassBridges && !needsDynamicAccessorReads) {
+    return;
+  }
 
   const mod = ctx.mod;
   // Rest-parameter class methods need a host bridge adapter: the Wasm ABI
@@ -7563,7 +7601,10 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (moduleHasFnctorSubclass(ctx) || needsDynamicClassMembers || needsExternrefBackedClassBridges)
+    (moduleHasFnctorSubclass(ctx) ||
+      needsDynamicClassMembers ||
+      needsExternrefBackedClassBridges ||
+      needsDynamicAccessorReads)
   ) {
     // The iterator protocol keys plus every instance method / accessor name
     // of the module's fnctor-subclass classes (a widened binding dispatches
@@ -7643,7 +7684,11 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         emitExternrefClassGetterDispatch(ctx, className, key);
       }
     }
-    emitClassMemberKindExports(ctx, dispatchTypeIdx, [...keys].sort());
+    // (#5223) Dynamic accessor READ keys join the member-kind surface ONLY —
+    // not the `keys` set above, which also drives the `__class_call_*` method
+    // bridges and their arity/rest admission. A read must publish the getter,
+    // never widen the method bridge surface.
+    emitClassMemberKindExports(ctx, dispatchTypeIdx, [...new Set([...keys, ...accessorReadKeys])].sort());
   }
 }
 

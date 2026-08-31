@@ -2496,6 +2496,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * older fnctor-subclass surface.
    */
   hostDynamicClassMethodNames: Set<string>;
+  /**
+   * (#5223) Property names READ off a dynamically-typed receiver. A read
+   * registers nothing in `hostDynamicClassMethodNames` — that set is demand
+   * from CALL and WRITE sites — so a class ACCESSOR reached only by
+   * `a.g` on an `any` never got a `__member_kind_g`/`__call_get_g` export and
+   * answered `undefined`. Kept SEPARATE from the method set on purpose: the
+   * method set also relaxes the arity/rest admission rules for `__class_call_*`
+   * bridges, and a bare read must not widen those. Finalization intersects
+   * this set against `classAccessorSet`, so a read of a name no class declares
+   * as an accessor emits nothing at all.
+   */
+  hostDynamicClassAccessorReads: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */

@@ -215,6 +215,7 @@ export function createCodegenContext(
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),
     hostDynamicClassMethodNames: new Set(),
+    hostDynamicClassAccessorReads: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),

@@ -313,6 +313,31 @@ function prototypeMutationNames(sourceFile: ts.SourceFile): ReadonlySet<string> 
  * sentinel before its method call. Keep this arm limited to checker-certified
  * function receivers; uncertain/object receivers retain the dynamic path.
  */
+/**
+ * (#5223) Record a property name read off a DYNAMICALLY typed receiver so
+ * finalization can publish the class-accessor dispatch surface for it.
+ *
+ * ROOT CAUSE this closes. `__member_kind_<key>` / `__call_get_<key>` are
+ * emitted only for keys some site put in `ctx.hostDynamicClassMethodNames`,
+ * and every writer of that set is a CALL site, a WRITE site, or a
+ * class-value crossing. A plain READ — `function f(a: any) { return a.g; }` —
+ * registered nothing, so the host resolver found no getter bridge and the
+ * read answered `undefined` while a method call on the same receiver worked.
+ * Measured on this base: `class P { get y() {…} }` with `f(a: any) => a.y`
+ * answered `undefined`; `f(a: any) => a.other()` answered correctly.
+ *
+ * Only externref-shaped receivers register: a statically resolved class
+ * receiver compiles to a direct getter call and needs no bridge, so its bytes
+ * stay identical. The set is intersected against `ctx.classAccessorSet` at
+ * finalize, so a name no class declares as an accessor emits nothing.
+ */
+export function recordDynamicClassAccessorRead(ctx: CodegenContext, receiverWasm: ValType, propName: string): void {
+  if (ctx.standalone || ctx.wasi) return;
+  if (propName.startsWith("__priv_")) return;
+  if (receiverWasm.kind !== "externref") return;
+  ctx.hostDynamicClassAccessorReads.add(propName);
+}
+
 function tryCompileStandaloneFunctionHasInstanceRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3946,6 +3971,8 @@ export function compilePropertyAccess(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
+  recordDynamicClassAccessorRead(ctx, resolveWasmType(ctx, objType), propName);
+
   // A JavaScript binding initialized from `new RegExp(...)` is commonly
   // widened to `any`, so its `.constructor` read cannot reach the later
   // statically-typed builtin dispatch. Let the native RegExp identity arm run
@@ -5425,6 +5452,15 @@ export function compileElementAccessBody(
 ): ValType | null {
   // Externref element access: obj[key] → host import __extern_get(obj, externref) → externref
   if (objType.kind === "externref") {
+    // (#5223) The bracket twin of the dot-read registration. `a["g"]` reaches
+    // the SAME host resolver as `a.g`, so a literal string key registers the
+    // same accessor demand. Registered here rather than at `compileElementAccess`
+    // because the receiver's Wasm kind is already resolved on this arm — the
+    // entry point would have to re-ask the checker for it. A computed key has
+    // no compile-time name and registers nothing.
+    if (ts.isStringLiteral(expr.argumentExpression)) {
+      recordDynamicClassAccessorRead(ctx, objType, expr.argumentExpression.text);
+    }
     // (#2784 S3) Native-vec-aware element read. A numeric `recv[i]` on an
     // `any`/externref receiver that is actually a NATIVE vec (a reconstructed-
     // fnctor `T[]` field read as externref — acorn's `this.scopeStack[i]`) MUST use
