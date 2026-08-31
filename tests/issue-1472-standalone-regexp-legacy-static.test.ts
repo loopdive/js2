@@ -39,6 +39,17 @@ let MutableSnapshotSource = RegExp;
 const StableSnapshotAlias = MutableSnapshotSource;
 MutableSnapshotSource = Object;
 class StableSnapshotChild extends StableSnapshotAlias {}
+let LateConstHeritageSource = RegExp;
+class LateConstHeritageChild extends LateStableAlias {}
+const LateStableAlias = LateConstHeritageSource;
+let LateLetHeritageSource = RegExp;
+class LateLetHeritageChild extends LateLetAlias {}
+let LateLetAlias = LateLetHeritageSource;
+class FutureVarHeritageChild extends FutureVarHeritageParent {}
+var FutureVarHeritageParent = RegExp;
+const FutureClassAlias = FutureClassBase;
+class FutureClassBase extends RegExp {}
+class FutureClassChild extends FutureClassAlias {}
 
 export function subclassLegacyNames(): number {
   let passed = 0;
@@ -127,6 +138,18 @@ export function topLevelHeritageSnapshotControls(): number {
   return passed;
 }
 
+export function laterHeritageAliasControls(): number {
+  let throws = 0;
+  try { LateConstHeritageChild.input; } catch { throws++; }
+  try { LateLetHeritageChild.input; } catch { throws++; }
+  try { FutureVarHeritageChild.input; } catch { throws++; }
+  return throws;
+}
+
+export function futureClassAliasControls(): number {
+  try { FutureClassChild.input; return 0; } catch { return 1; }
+}
+
 export function setterControls(): number {
   let result = 0;
   try { RegExp.input = "intrinsic"; if (RegExp.input === "intrinsic") result |= 1; } catch {}
@@ -160,6 +183,8 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
       aliasedHeritageRegExpStatics(): number;
       mutableHeritageAliasControls(): number;
       topLevelHeritageSnapshotControls(): number;
+      laterHeritageAliasControls(): number;
+      futureClassAliasControls(): number;
       setterControls(): number;
     };
     expect(exports.subclassLegacyNames()).toBe(19);
@@ -171,6 +196,32 @@ describe("#1472 — standalone inherited RegExp legacy statics", () => {
     expect(exports.aliasedHeritageRegExpStatics()).toBe(4);
     expect(exports.mutableHeritageAliasControls()).toBe(2);
     expect(exports.topLevelHeritageSnapshotControls()).toBe(2);
+    expect(exports.laterHeritageAliasControls()).toBe(0);
+    expect(exports.futureClassAliasControls()).toBe(0);
     expect(exports.setterControls()).toBe(63);
+  });
+
+  it("keeps a nested heritage read live across an outer-scope write", async () => {
+    const result = await compile(
+      `
+        let P = RegExp;
+        export function test(): number {
+          class NestedChild extends P {}
+          try { NestedChild.input; return 0; } catch { return 1; }
+        }
+        P = Object;
+      `,
+      {
+        allowJs: true,
+        deferTopLevelInit: true,
+        fileName: "issue-1472-standalone-nested-heritage.ts",
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    (instance.exports as { __module_init?: () => void }).__module_init?.();
+    expect((instance.exports as { test: () => number }).test()).toBe(0);
   });
 });

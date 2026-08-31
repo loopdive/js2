@@ -147,4 +147,63 @@ describe("host class static inheritance", () => {
     (instance.exports as { __module_init?: () => void }).__module_init?.();
     expect((instance.exports as { test: () => number }).test()).toBe(2);
   });
+
+  it("does not freeze heritage aliases whose initializers occur later", async () => {
+    const lateConst = await compile(
+      `
+        let P = RegExp;
+        class LateConstChild extends Stable {}
+        const Stable = P;
+        class LateLetChild extends Later {}
+        let Later = P;
+
+        export function test(): number { return 0; }
+      `,
+      { fileName: "regexp-host-late-const-heritage.ts", deferTopLevelInit: true, skipSemanticDiagnostics: true },
+    );
+    expect(lateConst.success, lateConst.errors.map((error) => error.message).join("\n")).toBe(true);
+    const lateConstImports = lateConst.importObject ?? {};
+    const { instance: lateConstInstance } = await WebAssembly.instantiate(lateConst.binary, lateConstImports);
+    lateConstImports.__setInstance?.(lateConstInstance);
+    expect(() => (lateConstInstance.exports as { __module_init?: () => void }).__module_init?.()).toThrow(
+      ReferenceError,
+    );
+
+    const futureVar = await compile(
+      `
+        class FutureVarChild extends FutureParent {}
+        var FutureParent = RegExp;
+
+        export function test(): number {
+          try { FutureVarChild.input; return 0; } catch { return 1; }
+        }
+      `,
+      { fileName: "regexp-host-future-var-heritage.ts", deferTopLevelInit: true, skipSemanticDiagnostics: true },
+    );
+    expect(futureVar.success, futureVar.errors.map((error) => error.message).join("\n")).toBe(true);
+    const futureVarImports = futureVar.importObject ?? {};
+    const { instance: futureVarInstance } = await WebAssembly.instantiate(futureVar.binary, futureVarImports);
+    futureVarImports.__setInstance?.(futureVarInstance);
+    expect(() => (futureVarInstance.exports as { __module_init?: () => void }).__module_init?.()).not.toThrow();
+    expect((futureVarInstance.exports as { test: () => number }).test()).toBe(0);
+
+    const futureClass = await compile(
+      `
+        const FutureClassAlias = FutureClassBase;
+        class FutureClassBase extends RegExp {}
+        class FutureClassChild extends FutureClassAlias {}
+
+        export function test(): number {
+          try { FutureClassChild.input; return 0; } catch { return 1; }
+        }
+      `,
+      { fileName: "regexp-host-future-class-heritage.ts", deferTopLevelInit: true, skipSemanticDiagnostics: true },
+    );
+    expect(futureClass.success, futureClass.errors.map((error) => error.message).join("\n")).toBe(true);
+    const futureClassImports = futureClass.importObject ?? {};
+    const { instance: futureClassInstance } = await WebAssembly.instantiate(futureClass.binary, futureClassImports);
+    futureClassImports.__setInstance?.(futureClassInstance);
+    expect(() => (futureClassInstance.exports as { __module_init?: () => void }).__module_init?.()).not.toThrow();
+    expect((futureClassInstance.exports as { test: () => number }).test()).toBe(0);
+  });
 });

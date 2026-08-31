@@ -72,16 +72,19 @@ export function resolveClassHeritageAlias(
   seen.add(declaration);
 
   // Import bindings and cross-file declarations retain the existing
-  // declaration-identity shortcut. Source-order write proofs only make sense
-  // for a variable binding declared in the same source file as this use.
+  // declaration-identity shortcut. Source-order proofs below apply only to
+  // local variable/class declarations in the same source file as this use.
   const isLocalVariable =
     ts.isVariableDeclaration(declaration) && declaration.getSourceFile() === identifier.getSourceFile();
-  if (!isLocalVariable) {
+  const isLocalClass = ts.isClassDeclaration(declaration) && declaration.getSourceFile() === identifier.getSourceFile();
+  if (!isLocalVariable && !isLocalClass) {
     const exactClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(identifier));
     if (exactClassName !== undefined) return exactClassName;
   }
 
   if (ts.isClassDeclaration(declaration) && declaration.name) {
+    const cutoff = evaluationNode ?? identifier;
+    if (isLocalClass && !sourceNodeIsBefore(declaration, cutoff)) return undefined;
     const className = ctx.anonClassExprNames.get(declaration) ?? declaration.name.text;
     return ctx.classSet.has(className) ? className : undefined;
   }
@@ -90,6 +93,7 @@ export function resolveClassHeritageAlias(
   const initializer = ctx.oracle.variableInitializerOf(identifier);
   if (initializer === undefined) return undefined;
   const cutoff = evaluationNode ?? identifier;
+  if (!sourceNodeIsBefore(initializer, cutoff, true)) return undefined;
   if (bindingHasWriteBefore(ctx, identifier, cutoff)) return undefined;
   const source = skipTransparentExpressions(initializer);
   if (ts.isIdentifier(source)) return resolveClassHeritageAlias(ctx, source, seen, initializer);
@@ -166,6 +170,7 @@ function heritageIdentifierHasWriteBefore(
   if (ts.isVariableDeclaration(declaration)) {
     const initializer = ctx.oracle.variableInitializerOf(identifier);
     if (initializer === undefined) return true;
+    if (!sourceNodeIsBefore(initializer, evaluationNode, true)) return true;
     const source = skipTransparentExpressions(initializer);
     const isConst =
       ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Const) !== 0;
@@ -196,6 +201,7 @@ function heritageIdentifierRequiresRuntimeRegistration(
   if (ts.isVariableDeclaration(declaration)) {
     const initializer = ctx.oracle.variableInitializerOf(identifier);
     if (initializer === undefined) return true;
+    if (!sourceNodeIsBefore(initializer, evaluationNode, true)) return true;
     const source = skipTransparentExpressions(initializer);
     const isConst =
       ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Const) !== 0;
@@ -211,5 +217,72 @@ function heritageIdentifierRequiresRuntimeRegistration(
     }
     return true;
   }
+  if (ts.isClassDeclaration(declaration) && declaration.name) {
+    return !sourceNodeIsBefore(declaration, evaluationNode);
+  }
   return ts.isParameter(declaration) || ts.isBindingElement(declaration);
+}
+
+/**
+ * Whether a source node is ordered before a heritage read.
+ *
+ * Comparing source offsets alone is not enough: an initializer in an outer
+ * scope, a different branch, or a nested function is not guaranteed to run
+ * before the class. Requiring both nodes to belong to the same direct
+ * statement-list owner gives the alias resolver a small, source-order proof
+ * while preserving TDZ/hoisting behavior for declarations that appear later.
+ * A class nested directly in a loop/control-flow statement is not a sibling
+ * evaluation, so the only same-statement exception is a multi-declarator
+ * `VariableStatement`, whose initializers are evaluated left-to-right.
+ */
+function sourceNodeIsBefore(candidate: ts.Node, evaluationNode: ts.Node, allowSameVariableStatement = false): boolean {
+  const sourceFile = candidate.getSourceFile();
+  if (sourceFile !== evaluationNode.getSourceFile()) return false;
+  const candidateStatement = directStatementChild(statementListOwner(candidate), candidate);
+  const evaluationStatement = directStatementChild(statementListOwner(evaluationNode), evaluationNode);
+  if (
+    candidateStatement === undefined ||
+    evaluationStatement === undefined ||
+    (!ts.isVariableStatement(candidateStatement) && !ts.isClassDeclaration(candidateStatement)) ||
+    candidateStatement.parent !== evaluationStatement.parent ||
+    (candidateStatement === evaluationStatement &&
+      (!allowSameVariableStatement || !ts.isVariableStatement(candidateStatement)))
+  ) {
+    return false;
+  }
+  let initializerStart: number;
+  let evaluationStart: number;
+  try {
+    initializerStart = candidate.getStart(sourceFile);
+    evaluationStart = evaluationNode.getStart(sourceFile);
+  } catch {
+    initializerStart = candidate.pos;
+    evaluationStart = evaluationNode.pos;
+  }
+  return initializerStart >= 0 && evaluationStart >= 0 && initializerStart < evaluationStart;
+}
+
+function statementListOwner(node: ts.Node): ts.Node | undefined {
+  for (let current: ts.Node | undefined = node; current !== undefined; current = current.parent) {
+    if (current !== node && (ts.isFunctionLike(current) || ts.isClassLike(current))) return undefined;
+    const parent = current.parent;
+    if (
+      parent !== undefined &&
+      (ts.isSourceFile(parent) ||
+        ts.isBlock(parent) ||
+        ts.isModuleBlock(parent) ||
+        ts.isCaseClause(parent) ||
+        ts.isDefaultClause(parent))
+    ) {
+      return parent;
+    }
+  }
+  return undefined;
+}
+
+function directStatementChild(container: ts.Node | undefined, node: ts.Node): ts.Statement | undefined {
+  if (container === undefined) return undefined;
+  let current = node;
+  while (current.parent !== undefined && current.parent !== container) current = current.parent;
+  return current.parent === container && ts.isStatement(current) ? current : undefined;
 }
