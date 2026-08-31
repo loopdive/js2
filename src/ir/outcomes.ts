@@ -283,7 +283,55 @@ export type IrObservedOutcome =
       readonly kind: "emitted";
       readonly stage: "patch";
     })
+  /**
+   * (#3523 R4 gap 4) A source whose module-init plan is `executable: false`
+   * has nothing to compile — no live seeds, no evaluations. Before this arm
+   * the ledger recorded NO row for such a source, so AC 7 ("counters reconcile
+   * for executable and empty modules") could not be met and every census
+   * denominator under-counted by omission.
+   *
+   * This is an OBSERVATIONAL row, not an ownership claim. It fabricates no
+   * prepared evidence and no terminal identity: the identity inventory mints
+   * no module-init unit for an empty population (measured 2026-08-31), so the
+   * row carries `sourceId` and deliberately NO `unitId`. `nonExecutableOutcomeDefect`
+   * enforces every one of these restrictions as a validator rather than a comment.
+   */
+  | (IrObservedOutcomeBase & {
+      readonly kind: "non-executable";
+      readonly stage: "select";
+    })
   | (IrObservedOutcomeBase & IrPreparationFailure);
+
+/**
+ * (#3523 R4 gap 4) Reject a `non-executable` row that is not restricted by
+ * construction. Returns the defect, or `undefined` when the row is well-formed.
+ *
+ * A malformed row is a blocker under BOTH policies: the arm exists to state
+ * "nothing to do" truthfully, so a row carrying body evidence, emission
+ * counters, a borrowed terminal identity, or a non-module-init unit kind is
+ * lying in exactly the way the arm was added to prevent.
+ */
+export function nonExecutableOutcomeDefect(outcome: IrObservedOutcome): string | undefined {
+  if (outcome.kind !== "non-executable") return undefined;
+  // The arm's literal `stage` narrows to `never` under a static comparison, but
+  // rows also arrive from the ledger and from tests that construct them by
+  // assertion. Read the discriminant through the widened base so the check is a
+  // real runtime validation rather than a type-level tautology.
+  const observed: { readonly stage: IrPreparationStage } = outcome;
+  if (observed.stage !== "select") return `stage ${observed.stage} is not select`;
+  if (outcome.unitKind !== "module-init") return `unit kind ${outcome.unitKind} is not module-init`;
+  if (outcome.unitId !== undefined) return `carries terminal unit identity ${outcome.unitId}`;
+  if (outcome.legacyBodyEmitted || outcome.irBodyEmitted) return "claims body emission evidence";
+  if (
+    outcome.prepareAttempts !== undefined ||
+    outcome.directBodyEmissions !== undefined ||
+    outcome.irBodyEmissions !== undefined
+  ) {
+    return "carries body-emission counters";
+  }
+  if (outcome.preparedComponentId !== undefined) return "claims a prepared component";
+  return undefined;
+}
 
 export type IrOutcomePolicy = "hybrid" | "ir-only";
 
@@ -329,6 +377,13 @@ export function evaluateIrOutcomePolicy(
     if (outcome.kind === "emitted" && !outcome.irBodyEmitted) return true;
     if (outcome.kind !== "emitted" && outcome.irBodyEmitted) return true;
     if (outcome.kind === "unsupported" && !outcome.legacyBodyEmitted) return true;
+    // (#3523 R4 gap 4) A non-executable module-init is policy-NEUTRAL, but only
+    // when it is well-formed. A malformed one is malformed evidence and blocks
+    // under both policies, like every other lying row above. This arm is stated
+    // explicitly BEFORE the ir-only fallthrough below, which would otherwise
+    // reject the row for the one property that is true of it by construction —
+    // having no IR body, because there was no body to emit.
+    if (outcome.kind === "non-executable") return nonExecutableOutcomeDefect(outcome) !== undefined;
     if (policy === "hybrid") return false;
     return outcome.kind === "unsupported" || outcome.legacyBodyEmitted || !outcome.irBodyEmitted;
   });
