@@ -6,8 +6,10 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import { compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
-import { resolvePromiseSubclassName } from "./promise-subclass.js";
+import { resolvesToAmbientGlobal, resolvesToNamedAmbientGlobal } from "./non-constructable.js";
+import { resolvePromiseSubclassIdentifier } from "./promise-subclass.js";
 
 const NON_CONSTRUCTOR_GLOBALS = new Set([
   "eval",
@@ -42,15 +44,35 @@ function isStaticNonConstructorReceiver(ctx: CodegenContext, receiver: ts.Expres
   }
   if (ts.isArrowFunction(expr)) return true;
   if (ts.isObjectLiteralExpression(expr) && expr.properties.length === 0) return true;
-  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Symbol") {
+  if (
+    ts.isCallExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    resolvesToNamedAmbientGlobal(ctx, expr.expression, "Symbol")
+  ) {
     return (
       expr.arguments.length === 0 || (expr.arguments.length === 1 && isSideEffectFreeLiteralArg(expr.arguments[0]!))
     );
   }
   if (!ts.isIdentifier(expr)) return false;
-  if (expr.text === "undefined") return true;
-  if (expr.text === "Promise" || resolvePromiseSubclassName(ctx, expr.text) !== undefined) return false;
-  return NON_CONSTRUCTOR_GLOBALS.has(expr.text);
+  if (expr.text === "undefined") return resolvesToNamedAmbientGlobal(ctx, expr, "undefined");
+  if (expr.text === "Promise" && resolvesToNamedAmbientGlobal(ctx, expr, "Promise")) return false;
+  if (resolvePromiseSubclassIdentifier(ctx, expr) !== undefined) return false;
+  return NON_CONSTRUCTOR_GLOBALS.has(expr.text) && resolvesToAmbientGlobal(ctx, expr);
+}
+
+/** Evaluate a `.call` argument list before the synthetic IsConstructor throw. */
+function emitCallArgumentsBeforeTypeError(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): void {
+  const receiver = expr.arguments[0];
+  for (const argument of expr.arguments) {
+    // The receiver is already proven to be a side-effect-free primitive or
+    // ambient callable. Evaluating an ambient `eval` identifier itself would
+    // nevertheless select the runtime-eval carrier, introducing a forbidden
+    // standalone import; preserve its evaluation semantics by eliding only
+    // this proven-pure read.
+    if (argument === receiver && isStaticNonConstructorReceiver(ctx, receiver)) continue;
+    const argumentType = compileExpression(ctx, fctx, argument);
+    if (argumentType !== null) fctx.body.push({ op: "drop" });
+  }
 }
 
 /** Emit the synchronous IsConstructor TypeError for `Promise.<static>.call`. */
@@ -63,9 +85,18 @@ export function tryEmitStandalonePromiseStaticCallTypeError(
   if (!isStandalonePromiseActive(ctx)) return undefined;
   const inner = propAccess.expression;
   if (!ts.isPropertyAccessExpression(inner)) return undefined;
-  if (!ts.isIdentifier(inner.expression) || inner.expression.text !== "Promise") return undefined;
+  if (!resolvesToNamedAmbientGlobal(ctx, inner.expression, "Promise")) return undefined;
   const method = inner.name.text;
   if (!PROMISE_STATIC_METHODS.has(method) || !isStaticNonConstructorReceiver(ctx, expr.arguments[0])) return undefined;
+  // ArgumentListEvaluation for a spread includes GetIterator/IteratorStep;
+  // this narrow arm only emits ordinary argument expressions. Let the generic
+  // spread lowering own that protocol rather than dropping the iteration.
+  if (expr.arguments.slice(1).some((argument) => ts.isSpreadElement(argument))) return undefined;
+
+  // Evaluate the MemberExpression's argument list before IsConstructor. The
+  // static guard replaces the eventual Promise method call, but it must not
+  // erase receiver/argument side effects or an earlier argument exception.
+  emitCallArgumentsBeforeTypeError(ctx, fctx, expr);
 
   const message = `Promise.${method} called on a non-constructor`;
   emitWasiErrorConstructor(ctx, "TypeError", 1);

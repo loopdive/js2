@@ -10,6 +10,7 @@
 // the gc/host lane is byte-identical.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 interface Ex {
   test: () => number;
@@ -40,6 +41,16 @@ async function envImports(src: string, target: "standalone" | "wasi" | undefined
   const r = await compile(src, { fileName: "test.ts", target });
   expect(r.success, r.success ? "" : JSON.stringify(r.errors?.slice(0, 3))).toBe(true);
   return (r.imports ?? []).map((i) => `${i.module}.${i.name}`).filter((n) => n.startsWith("env."));
+}
+
+async function runTarget(src: string, target: "gc" | "standalone"): Promise<number> {
+  const r = await compile(src, { fileName: "test.ts", target, skipSemanticDiagnostics: true });
+  expect(r.success, r.success ? "" : JSON.stringify(r.errors?.slice(0, 3))).toBe(true);
+  expect(WebAssembly.validate(r.binary)).toBe(true);
+  const imports = target === "standalone" ? {} : buildImports(r.imports, undefined, r.stringPool);
+  const { instance } = await WebAssembly.instantiate(r.binary, imports);
+  if ("setExports" in imports && typeof imports.setExports === "function") imports.setExports(instance.exports);
+  return (instance.exports as unknown as Ex).test();
 }
 
 describe("#3390 slices 1–2 — combinator .call receiver admission", () => {
@@ -143,4 +154,42 @@ describe("#3390 slice 3 — resolve/reject .call receiver admission", () => {
       expect(await throwsTypeError(`Promise.${method}.call(Symbol(), []);`)).toBe(2);
     }
   });
+
+  it("evaluates later call arguments, including an earlier thrown argument, before the receiver TypeError", async () => {
+    const source = `
+      let order = 0;
+      function mark(value: number): number { order = order * 10 + value; return value; }
+      function boom(): number { order = order * 10 + 3; throw new Error("boom"); }
+      export function test(): number {
+        try { Promise.resolve.call(undefined, mark(1), boom(), mark(4)); } catch (e) {}
+        const first = order;
+        let side = 0;
+        try { Promise.reject.call(undefined, 1, side = 7); } catch (e) {}
+        return first + side * 100;
+      }`;
+    // `mark(1)` and `boom()` run left-to-right (13); the later Promise.reject
+    // argument also runs before its synthetic receiver TypeError (700).
+    expect(await runTarget(source, "standalone")).toBe(713);
+    expect(await runTarget(source, "gc")).toBe(713);
+  }, 120_000);
+
+  it("does not classify shadowed constructible names as ambient non-constructors", async () => {
+    for (const declaration of [
+      "const undefined: any = class extends Promise {};",
+      "const parseInt: any = class extends Promise {};",
+    ]) {
+      const source = `${declaration}
+        export function test(): number {
+          try { Promise.resolve.call(${declaration.startsWith("const undefined") ? "undefined" : "parseInt"}, 1); return 1; }
+          catch (e) { return 0; }
+        }`;
+      expect(await runTarget(source, "standalone")).toBe(1);
+      const host = await compile(source, { fileName: "test.ts", target: "gc", skipSemanticDiagnostics: true });
+      expect(host.success, host.success ? "" : JSON.stringify(host.errors?.slice(0, 3))).toBe(true);
+      // The host lane keeps its generic Promise bridge for this dynamic
+      // constructor shape; it must not be claimed by the standalone-only
+      // static TypeError arm.
+      expect(host.imports?.some((entry) => entry.module === "env")).toBe(true);
+    }
+  }, 120_000);
 });
