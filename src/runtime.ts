@@ -99,8 +99,13 @@ import {
 } from "./runtime/standalone-timer-callback-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
-import { createClassMemberResolver, createResolvedClassMethodInvoker } from "./runtime/class-method-host-bridge.js";
+import {
+  callResolvedClassPrimitive,
+  createClassMemberResolver,
+  createResolvedClassMethodInvoker,
+} from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
+import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
@@ -3584,6 +3589,13 @@ function _toPrimitive(
         }
       }
     }
+    if (exports) {
+      const prim = callResolvedClassPrimitive(_resolveClassMember, raw, name, exports, _MISS);
+      if (prim !== _MISS) {
+        if (prim == null || typeof prim !== "object") return prim;
+        return _PRIM_ABSENT;
+      }
+    }
     return _PRIM_ABSENT;
   };
 
@@ -5974,8 +5986,7 @@ function _safeSet(
  */
 const _hostProxyCache = new WeakMap<object, any>();
 const _hostProxyReverse = new WeakMap<object, any>();
-/** Host dictionaries created by compiled `Object.create`; values stay in their raw Wasm carrier internally. */
-const _compiledObjectCreateResults = new WeakSet<object>();
+const _objectCreateRuntime = createObjectCreateClassInstanceRuntime(_canBeWeakKey, _isWasmStruct);
 const _fnctorInstanceofHooks: FnctorIoHooks = {
   rawInstance: (value) => _hostProxyReverse.get(value) ?? value,
   rawClosureTarget: (target) => _wasmClosureWrapperTargets.get(target),
@@ -11908,7 +11919,7 @@ assert._isSameValue = isSameValue;
               obj !== null &&
               typeof obj === "object" &&
               !_isWasmStruct(obj) &&
-              !_compiledObjectCreateResults.has(obj) &&
+              !_objectCreateRuntime.isDictionaryResult(obj) &&
               wrapExports !== undefined &&
               (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
             ) {
@@ -11979,7 +11990,7 @@ assert._isSameValue = isSameValue;
               obj !== null &&
               typeof obj === "object" &&
               !_isWasmStruct(obj) &&
-              !_compiledObjectCreateResults.has(obj) &&
+              !_objectCreateRuntime.isDictionaryResult(obj) &&
               wrapExports !== undefined &&
               (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
             ) {
@@ -12625,12 +12636,7 @@ assert._isSameValue = isSameValue;
           }
         };
       }
-      if (name === "__object_create")
-        return (proto: any) => {
-          const value = Object.create(proto);
-          _compiledObjectCreateResults.add(value);
-          return value;
-        };
+      if (name === "__object_create") return (proto: any) => _objectCreateRuntime.create(proto, callbackState);
       if (name === "__new_plain_object") return (): any => ({});
       // (#4530) §7.1.18 ToObject for an any-typed `Object(v)` argument. The
       // static coercion in calls-guards.ts only recognizes statically-typed
@@ -13832,6 +13838,11 @@ assert._isSameValue = isSameValue;
           // both — it sees an opaque null-proto object.
           if (_isWasmStruct(obj) && _canBeWeakKey(obj)) {
             if (_wasmStructProto.has(obj)) return _wasmStructProto.get(obj);
+            // (#5239) An `Object.create(<class value>.prototype)` result is a
+            // real compiled instance, so the requested prototype is only
+            // recoverable from the record `__object_create` kept.
+            const objectCreateProto = _objectCreateRuntime.prototypeFor(obj);
+            if (objectCreateProto !== undefined) return objectCreateProto;
             const fnctorCtor = _fnctorInstanceCtor.get(obj);
             if (fnctorCtor != null) {
               const proto = _getOrVivifyFnPrototype(fnctorCtor, callbackState);
@@ -17955,7 +17966,7 @@ assert._isSameValue = isSameValue;
             obj !== null &&
             typeof obj === "object" &&
             !_isWasmStruct(obj) &&
-            !_compiledObjectCreateResults.has(obj) &&
+            !_objectCreateRuntime.isDictionaryResult(obj) &&
             wrapExports !== undefined &&
             (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
           ) {
@@ -17996,7 +18007,7 @@ assert._isSameValue = isSameValue;
             obj !== null &&
             typeof obj === "object" &&
             !_isWasmStruct(obj) &&
-            !_compiledObjectCreateResults.has(obj) &&
+            !_objectCreateRuntime.isDictionaryResult(obj) &&
             wrapExports !== undefined &&
             (wrapExports.__is_closure as ((v: any) => number) | undefined)?.(wrappedVal) !== 1
           ) {

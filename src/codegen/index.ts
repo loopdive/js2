@@ -577,6 +577,7 @@ import {
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
+import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -5836,6 +5837,10 @@ export function generateModule(
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch on WasmGC structs
     emitIteratorMethodExport(ctx);
 
+    // (#5239) `Object.create(<class value>.prototype)` — the dynamic twin of
+    // the syntactic `Object.create(Foo.prototype)` fast path.
+    emitObjectCreateClassInstanceExport(ctx);
+
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
     // (#3100) vec-FAMILY normalization arms ($ObjVec + `__vec_<elemKind>` —
@@ -10835,6 +10840,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch.
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
+
+    // (#5239) See the single-source path — same placement, same gate.
+    profilePhase("emit-object-create-class-instance", () => emitObjectCreateClassInstanceExport(ctx));
 
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher

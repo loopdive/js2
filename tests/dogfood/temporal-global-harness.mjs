@@ -91,6 +91,17 @@ const SUPPORTED = {
   // answered 0.
   protoMethodCall: `export function run() { return Temporal.PlainDate.prototype.toString.call(new Temporal.PlainDate(2020, 3, 4)); }`,
   protoMemberCount: `export function run() { return Object.getOwnPropertyNames(Temporal.PlainDate.prototype).length; }`,
+  // (#5239) The last of the `staticFrom` family, and the one every earlier
+  // pass mis-attributed. `CreateTemporalDate` builds its instance as
+  // `Object.create(<class value>.prototype)`; the syntactic fast path only
+  // recognises the spelling `Object.create(Foo.prototype)`, so the minified
+  // bundle got a plain host object whose [[Prototype]] was an opaque WasmGC
+  // struct — a dead end for member dispatch. On base this answered
+  // "[object Object]", and `.year` answered undefined, IDENTICALLY in a
+  // single-module control with no linker at all.
+  staticFrom: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
+  staticFromField: `export function run() { return String(Temporal.PlainDate.from("2026-08-30").year); }`,
+  staticCompare: `export function run() { return Temporal.PlainDate.compare(Temporal.PlainDate.from("2020-03-04"), Temporal.PlainDate.from("2021-03-04")); }`,
 };
 
 /**
@@ -99,20 +110,6 @@ const SUPPORTED = {
  * the provider seam caused it.
  */
 const KNOWN_GAPS = {
-  staticFrom: {
-    source: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
-    note:
-      'answers "[object Object]"; `.year` answers undefined. NOT a provider-seam defect — re-measured 2026-08-31 ' +
-      "(#5237) against a SINGLE-MODULE control that compiles this same polyfill source and consumer into one " +
-      "module with no linker at all (`linkedModules === 0`), and it answers `[object Object]` / undefined " +
-      "IDENTICALLY. The earlier note here blamed cross-module member resolution; the control disproves that. " +
-      "What is actually left: `CreateTemporalDate` builds its instance as `Object.create(PlainDate.prototype)` " +
-      "and keeps the ISO fields in slots keyed by that HOST object, and a host object whose prototype is a " +
-      "WasmGC struct never reaches the prototype's accessors on a member read. #5237 did fix the two seam " +
-      "defects that shared these symptoms — `PlainDate.prototype.toString.call(inst)` went from THROWING to " +
-      '"2020-03-04", and `getOwnPropertyNames(PlainDate.prototype)` from 0 names to 31 — but neither moves this ' +
-      "row. Needs its own issue for the Object.create-instance member shape",
-  },
   // (#5222) `Temporal.Now.instant` moved to SUPPORTED above. These two are
   // what is LEFT once the member loss is fixed, and they are different animals.
   nowPlainDateISOCall: {
@@ -120,8 +117,10 @@ const KNOWN_GAPS = {
     note:
       "reachable and callable since #5222, but the CALL still throws (RuntimeError: dereferencing a null " +
       "pointer) — identically in the single-module shape with no provider and no linking (measured " +
-      "2026-08-30, .tmp/probe-now-single.mts). Same pre-existing intrinsic/Object.create gap as " +
-      "`staticFrom`; owned by #5221, not a provider-seam defect",
+      "2026-08-30, .tmp/probe-now-single.mts). RE-MEASURED 2026-08-31 after #5239 landed the Object.create " +
+      "instance fix, in both the provider and single-module lanes: it still throws the same null deref, so " +
+      "the earlier attribution to the `staticFrom` / Object.create family was WRONG — that family is now " +
+      "fixed and this row did not move. Owned by #5221, not a provider-seam defect",
   },
   nowTimeZoneIdCall: {
     source: `export function run() { return typeof Temporal.Now.timeZoneId(); }`,

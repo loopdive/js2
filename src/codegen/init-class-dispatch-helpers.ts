@@ -168,6 +168,16 @@ const STRUCT_READ_EXPORT_NAMES: ReadonlySet<string> = new Set(["__struct_field_n
  */
 const CALLBACK_BRIDGE_EXPORT_PREFIXES: readonly string[] = ["__cb_"];
 
+/**
+ * (#5239) The OBJECT-CREATE facet. A minified library builds its instances as
+ * `Object.create(<class value>.prototype)`, and the polyfill bundles that
+ * motivated this do it while their module is still initialising. The runtime's
+ * `__object_create` asks this export whether the requested prototype is one of
+ * the module's compiled class prototypes; unreachable during init, it would
+ * silently hand back a plain host object for every instance built at top level.
+ */
+const OBJECT_CREATE_EXPORT_NAMES: ReadonlySet<string> = new Set(["__object_create_class_instance"]);
+
 function isClassDispatchExport(name: string | undefined): name is string {
   if (name === undefined) return false;
   if (CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
@@ -175,6 +185,7 @@ function isClassDispatchExport(name: string | undefined): name is string {
   if (STRUCT_READ_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (CALLBACK_BRIDGE_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (STRUCT_READ_EXPORT_NAMES.has(name)) return true;
+  if (OBJECT_CREATE_EXPORT_NAMES.has(name)) return true;
   return CLOSURE_DISPATCH_EXPORT_NAMES.has(name);
 }
 
