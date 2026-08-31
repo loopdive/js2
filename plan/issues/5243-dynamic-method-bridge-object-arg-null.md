@@ -145,6 +145,10 @@ Two semantics stated because they are not free:
 | provider `add("P1D")` | THREW `Cannot destructure 'null' or 'undefined'` | **`"2020-03-05"`** — promoted to the harness's asserted `SUPPORTED` set as `arithmeticAddString` |
 | provider `add({days:1})` / `subtract` / `with` | `WebAssembly.Exception` | unchanged — #5225's object-literal-across-the-seam lane |
 | single-module `add({days:1})` / `subtract({days:1})` / `add("P1D")` | THREW the destructure null | no longer throws; answers `"2020-03-04"` (unchanged date) — see below |
+
+This table isolates THIS change. On the branch as it now stands, #5242's
+`__argc` fix is merged in and single-module `add("P1D")` answers `"2020-03-05"`;
+the combined-branch numbers are in the correction block further down.
 | single-module `with({year:2021})` | `"2021-03-04"` | `"2021-03-04"` |
 | single-module `new Duration(0,0,0,1)` | `"P1D"` | `"P1D"` |
 
@@ -274,3 +278,50 @@ So two paths remain open, both #5244's, both now narrowed:
 
 Also unresolved and worth its own look: single-module `until(...)` throws a
 value with no `name` and no `message` (`THREW undefined: undefined`).
+
+## Validation of a coordinator stack-refresh onto this branch (2026-08-31)
+
+The branch tip moved from `15201ee8ee` to `f538269ddd` between two of this
+lane's own pushes, under the shared git identity. **It has a known owner: the
+coordinator's shepherd loop.** All six chain PRs went `DIRTY` when main's docs
+merges landed, so the coordinator refreshed the whole stack in land order (the
+12:20 UTC cycle) — here, merging
+`origin/issue-5242-class-value-ctor-bridge @ bc979fb1d4` (which carries
+`origin/main` plus #5241's runtime work) into this branch, with the
+coordinator's committer stamp. The coordinator ran the fresh-cache harness
+(11/11), the branch's own tests and all gates including
+`LOC_GATE_BASE=origin/main` before pushing. No third party touches these
+branches.
+
+It was noticed because dev-5242b saw the same move on its branch and said so,
+and it was re-validated here before the provenance was known. **Re-validating a
+tip you did not move is the right default regardless of who moved it** — the
+cost is one test cycle, and the alternative is that a branch's numbers silently
+describe a tree that no longer exists.
+
+Nothing was lost (`15201ee8ee` is an ancestor) and none of this change's own
+files were touched: the diff over
+`src/codegen/type-coercion.ts`, `tests/issue-5243-*`,
+`tests/dogfood/temporal-global-harness.mjs`,
+`tests/issue-4628-temporal-global.test.ts` and this file is **empty**.
+
+But it brought `origin/main` plus #5241's runtime work — `src/runtime.ts`
+(+97/−…), `src/runtime/class-method-host-bridge.ts`, and a NEW
+`src/runtime/object-create-class-instance.ts` — i.e. code this lane did not
+write, arriving after every number this lane had reported. That makes the
+branch's measurements stale until re-taken, whoever moved the tip, so they were
+re-taken here rather than assumed:
+
+- `typecheck` clean.
+- All five ratchet gates green (LOC, function, coercion-sites, oracle, dead
+  exports).
+- 39 tests across issue-5243 / 5242 / 5241 / 5239 / 5237 / 5223 / 5221 / 5222.
+- `issue-4628-temporal-global` 11/11 on a **fresh** provider cache —
+  load-bearing here, because `src/runtime.ts` changed and a cache hit would have
+  served a provider built by the pre-merge compiler. This is exactly the hazard
+  the warning added above exists for.
+- Every Temporal row re-measured and **unchanged**: `add("P1D")` `"2020-03-05"`,
+  `add({days:1})` / `subtract({days:1})` `"2020-03-04"`, `with({year:2021})`
+  `"2021-03-04"`, `new Duration(0,0,0,1)` `"P1D"`, `Duration.from({days:1})`
+  `"PT0S"`.
+- Equivalence gate re-run at baseline.

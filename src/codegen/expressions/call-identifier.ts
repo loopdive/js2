@@ -111,6 +111,7 @@ import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
@@ -3143,7 +3144,11 @@ export function compileIdentifierCall(
 
     // Check if this function is eligible for call-site inlining
     const inlineInfo = ctx.inlinableFunctions.get(funcName);
-    if (inlineInfo && !expr.arguments.some((a: any) => ts.isSpreadElement(a))) {
+    if (
+      inlineInfo &&
+      !isModuleInitChunkFunctionContext(fctx) &&
+      !expr.arguments.some((a: any) => ts.isSpreadElement(a))
+    ) {
       // Inline the function body: compile arguments into temp locals, then emit body
       const inlineOptInfo = ctx.funcOptionalParams.get(funcName);
       const argLocals: number[] = [];

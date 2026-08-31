@@ -997,10 +997,47 @@ function installInlineCounter(ctx: CodegenContext, opts: InlineOptions): number 
   return globalIdx;
 }
 
+interface ModuleInitInlineBoundary {
+  caller(name: string): boolean;
+  callee(name: string): boolean;
+}
+
+/** Keep bounded module-init bodies opaque to the late user-function inliner. */
+function moduleInitInlineBoundary(helperNames: ReadonlySet<string>): ModuleInitInlineBoundary {
+  const hasChunks = helperNames.size > 0;
+  return {
+    caller: (name) => helperNames.has(name) || (hasChunks && name === "__module_init"),
+    callee: (name) => helperNames.has(name),
+  };
+}
+
+function shouldSkipInlineCaller(
+  callerPosition: number,
+  caller: WasmFunction,
+  boundary: ModuleInitInlineBoundary,
+  sharedFunctionPositions: ReadonlySet<number>,
+): boolean {
+  // A multiply-parented instruction array cannot be rewritten in one caller's
+  // local context; chunk dispatchers are deliberately opaque for the same
+  // reason, even when they have a single apparent caller.
+  return sharedFunctionPositions.has(callerPosition) || boundary.caller(caller.name);
+}
+
+function shouldSkipModuleInitInlineCallee(
+  callee: WasmFunction,
+  boundary: ModuleInitInlineBoundary,
+  declined: (name: string, reason: string) => void,
+): boolean {
+  if (!boundary.callee(callee.name)) return false;
+  declined(callee.name, "module-init-chunk-boundary");
+  return true;
+}
+
 export function inlineUserFunctions(ctx: CodegenContext): void {
   const opts = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
   if (!opts.enabled) return;
   const mod = ctx.mod;
+  const moduleInitBoundary = moduleInitInlineBoundary(ctx.moduleInitChunkHelperNames);
   let numImportFuncs = 0;
   for (const imp of mod.imports) if (imp.desc.kind === "func") numImportFuncs++;
 
@@ -1125,10 +1162,8 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   let growth = 0;
 
   for (const ci of callerOrder) {
-    // Rewriting a multiply-parented array would apply one caller/local context
-    // to every incoming occurrence. Keep the original graph untouched.
-    if (sharedFunctionPositions.has(ci)) continue;
     const caller = mod.functions[ci];
+    if (shouldSkipInlineCaller(ci, caller, moduleInitBoundary, sharedFunctionPositions)) continue;
     const callerType = funcTypeOf(caller);
     if (!callerType) continue;
 
@@ -1153,6 +1188,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
           continue;
         }
         const callee = mod.functions[cp];
+        if (shouldSkipModuleInitInlineCallee(callee, moduleInitBoundary, declined)) continue;
         if (sharedFunctionPositions.has(cp)) {
           declined(callee.name, "unsafe:shared-ir");
           continue;

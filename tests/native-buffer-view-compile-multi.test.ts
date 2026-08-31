@@ -3,9 +3,7 @@ import { describe, expect, it } from "vitest";
 import { compileMulti } from "../src/index.js";
 
 describe("native buffer/view brands across compileMulti", () => {
-  // TODO: Re-enable once an early function's `$__ta_view` result survives the
-  // graph-local call boundary after a later DataView source registers buffers.
-  it.skip("creates an early Uint8Array byte window over a later registered DataView", async () => {
+  it("creates an early Uint8Array byte window over a later registered DataView", async () => {
     const result = await compileMulti(
       {
         "./window.ts": `

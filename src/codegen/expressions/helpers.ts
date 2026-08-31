@@ -48,6 +48,42 @@ export {
 export type { JsErrorKind } from "../js-errors.js";
 
 /**
+ * Whether this exact identifier reference resolves to a const binding.
+ *
+ * `constBindings` models currently-active local scopes, while the oracle is
+ * necessary for a module lexical whose declaration was emitted by an earlier
+ * physical module-init helper.  Keep both halves together: a name-only carry
+ * between helpers would confuse an unrelated later binding with the same text.
+ */
+export function isConstIdentifierAssignmentTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
+  // The oracle is authoritative when it resolves the reference: an active
+  // same-text local set can belong to a different static block / namespace
+  // binding and must not override that identity. Its `variableDeclarationOf`
+  // intentionally declines destructured bindings, so walk a resolved
+  // BindingElement through its binding pattern to the owning declaration.
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  if (declaration !== undefined) {
+    let current: ts.Node | undefined = declaration;
+    while (current !== undefined && !ts.isVariableDeclaration(current)) {
+      if (!ts.isBindingElement(current) && !ts.isObjectBindingPattern(current) && !ts.isArrayBindingPattern(current)) {
+        return false;
+      }
+      current = current.parent;
+    }
+    return (
+      current !== undefined &&
+      ts.isVariableDeclarationList(current.parent) &&
+      (current.parent.flags & ts.NodeFlags.Const) !== 0
+    );
+  }
+  return fctx.constBindings?.has(id.text) === true;
+}
+
+/**
  * #1365 — Resolve the class struct that declared a `#name` PrivateIdentifier.
  *
  * Per ES2022 §15.7, a private name is lexically scoped to the class body that

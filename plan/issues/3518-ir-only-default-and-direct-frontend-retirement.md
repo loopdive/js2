@@ -209,11 +209,21 @@ literal retirement population to the production registry and rejects missing,
 duplicate, and synthetic foreign rows. Each positive cell uses the retained
 global `experimentalIR: false` compile of the same source as an observational
 direct oracle for runtime and public Wasm surface parity; it is not a production
-fallback. The current #4522 R9 environment denominator is fifteen readers:
-the four global controls, the separately owned exact mixed-primitive selector
-rollback, nine named Prepared cutovers, and the default-on linear direct-backend
-escape hatch. Diagnostics, self-checks, and codegen-only tuning remain separately
-classified. This full inventory stays owned by #4522 until the R9 policy flip.
+fallback. Before the #1231 retirement, the #4522 R9 environment denominator
+was fifteen readers: four global controls, the separately owned exact
+mixed-primitive selector rollback, nine named Prepared cutovers, and the
+default-on linear direct-backend escape hatch. Diagnostics, self-checks, and
+codegen-only tuning remain separately classified. This full inventory stays
+owned by #4522 until the R9 policy flip.
+
+### 2026-08-31 #1231 object-shape rollback checkpoint
+
+#1231 retires the one boxed-object representation escape hatch without changing
+the selector, lowering, emitters, or any other R9 reader. The exact live
+environment denominator is therefore now fourteen: three remaining global
+controls, the exact mixed-primitive selector rollback, nine Prepared cutovers,
+and the linear direct-backend reader. This is the bounded **15→14** transition;
+it is not an IR-only policy flip.
 
 ## Program rules
 

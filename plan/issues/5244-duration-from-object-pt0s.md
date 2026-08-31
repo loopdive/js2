@@ -212,3 +212,41 @@ the same reduction gap recorded above.
 - Found by dev-5242b (PR #5354), widened by dev-5243 (PR #5357).
 - Id reserved with a degraded PR scan; manually checked against open PR head
   branches 2026-08-31.
+
+## Re-triage against #5243 — DONE, and the answer is "not the same defect"
+
+Measured 2026-08-31 by the #5243 lane on a tree carrying **both** #5243's
+`buildRecordFromExternref` and #5242's `__argc` constructor-bridge fix
+(single-module lane, fresh `JS2WASM_TEMPORAL_CACHE`):
+
+| row | result |
+| --- | --- |
+| `Temporal.Duration.from({days:1})` | `"PT0S"` — **unchanged** by either fix |
+| `Temporal.PlainDate.from("2020-03-04").add("P1D")` | `"2020-03-05"` — fixed |
+| `new Temporal.Duration(0,0,0,1)` | `"P1D"` — control, always correct |
+
+So the Direction section's first hypothesis is **retired**: this is not the
+#5243 null-argument defect, and not the constructor path either.
+
+**Where it actually is.** The polyfill's `sn(e)` (ToTemporalDuration) object
+branch is a computed-key copy into a statically-shaped record:
+
+```js
+const n = { years: 0, months: 0, …, nanoseconds: 0 };
+let r = kt(e);
+for (let i = 0; i < st.length; i++) { const t = st[i], o = r[t]; if (o !== undefined) n[t] = o; }
+return new Duration(n.years, …, n.nanoseconds);
+```
+
+That shape was reduced in isolation — computed-key READ (`r[k]`) plus
+computed-key WRITE (`n[k] = o`) into a three-field record, with a static-write
+control and a read-only control — and it answers **correctly** (`"0/0/1"`,
+`"0/1"`, `"1"`). So the generic computed-key machinery is fine and
+member-set dispatch is **not** the place to look. The loss is in `kt(e)` (the
+ToObject/copy of the user's object) or in `st` (the key list), i.e. upstream of
+the copy loop.
+
+Full context, and the separate class-value construct latch that is NOT this
+row, are in
+`plan/issues/5243-dynamic-method-bridge-object-arg-null.md` under
+"Reported, NOT fixed".

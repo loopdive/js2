@@ -400,7 +400,6 @@ export function emitArrayProtoIteratorDrive(
 ): number {
   let iteratorIdx: number | undefined;
   let overrideGlobalIdx = overrideGlobalIdxBeforeSettlement;
-  let driverIdx: number;
   if (ctx.standalone) {
     // #1719 standalone contract: `__iterator_next` accepts only a canonical
     // `$IterRec`, while the captured generator override returns a raw
@@ -413,22 +412,36 @@ export function emitArrayProtoIteratorDrive(
     if (iteratorIdx === undefined) {
       throw new Error("#1719 standalone CPR normalizer '__iterator' could not be resolved");
     }
-    const settledOverrideGlobalIdx = arrayIteratorOverrideGlobalIdx(ctx);
-    if (settledOverrideGlobalIdx === undefined) {
-      throw new Error("#1719 CPR override global could not be resolved after iterator settlement");
-    }
-    overrideGlobalIdx = settledOverrideGlobalIdx;
     reserveProtoIteratorDriver(ctx);
-    const settledDriverIdx = ctx.funcMap.get(DRIVE_PROTO_ITERATOR);
-    if (settledDriverIdx === undefined) {
-      throw new Error("#1719 CPR driver could not be resolved after iterator settlement");
-    }
-    driverIdx = settledDriverIdx;
   } else {
-    // Preserve the established GC/WASI path literally: its caller-resolved
-    // global and the direct reserve result remain authoritative.
-    driverIdx = reserveProtoIteratorDriver(ctx);
+    reserveProtoIteratorDriver(ctx);
   }
+
+  // Constructing the missing-iterator throw may add its error/string imports
+  // and flush their index shifts. Do that before retaining any absolute CPR
+  // global or driver function index. Otherwise the already-emitted null check
+  // is repaired by the shift walker while the later closure `global.get` /
+  // driver `call` still use a stale local copy (the multi-source host failure).
+  const missingIteratorThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: Array.prototype[Symbol.iterator] is not a function",
+    { flush: fctx },
+  );
+  overrideGlobalIdx = arrayIteratorOverrideGlobalIdx(ctx) ?? overrideGlobalIdx;
+  const driverIdx = ctx.funcMap.get(DRIVE_PROTO_ITERATOR);
+  if (driverIdx === undefined) {
+    throw new Error("#1719 CPR driver could not be resolved after iterator error settlement");
+  }
+  if (ctx.standalone) {
+    iteratorIdx = ctx.funcMap.get("__iterator");
+    if (iteratorIdx === undefined) {
+      throw new Error(
+        "#1719 standalone CPR normalizer '__iterator' could not be resolved after iterator error settlement",
+      );
+    }
+  }
+
   // (#5154 cluster A) §7.4.2 GetIterator: an EMPTY override slot means the
   // program removed `Array.prototype[@@iterator]` (`delete …`), so the method
   // is `undefined` and calling it is a TypeError. Check before the drive so the
@@ -440,9 +453,7 @@ export function emitArrayProtoIteratorDrive(
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Array.prototype[Symbol.iterator] is not a function", {
-      flush: fctx,
-    }),
+    then: missingIteratorThrow,
     else: [],
   });
   // Stack: [vec-ref]. Convert to the array-as-`this` externref.

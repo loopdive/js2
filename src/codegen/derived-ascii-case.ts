@@ -16,6 +16,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureNativeStringHelpers, flatStringType } from "./native-strings.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { emitTdzInit } from "./statements/tdz.js";
+import { isModuleInitChunkFunctionContext } from "./module-init-chunks.js";
 
 export function tryCompileDerivedAsciiCaseBinding(
   ctx: CodegenContext,
@@ -23,6 +24,7 @@ export function tryCompileDerivedAsciiCaseBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (
     process.env.JS2WASM_NATIVE_ASCII_CASE_SCALAR === "0" ||
     !ctx.nativeStrings ||

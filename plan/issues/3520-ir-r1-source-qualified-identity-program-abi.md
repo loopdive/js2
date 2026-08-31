@@ -3963,3 +3963,207 @@ precommit and prepush hooks run without bypass. No baseline, size, LOC,
 function, or hook exception is authorized. A Terra implementation remains draft
 until a separate Sol approves the exact pushed SHA; any later push invalidates
 that approval.
+
+## 2026-08-31 C39 implementation lock — Date carrier export provenance
+
+This Sol-authored checkpoint is stacked on the exact independently reviewed
+C38 commit `f8eefc6e9a7e379238bfe06d406f82de779cfd1f` (PR #5342), whose tree is
+`8dae802f55f37e5b932bef34f06905ce2f07e99a`. The current protected-main
+snapshot is `f6de3f79deabfc722368c3e3aaaa83bd8514c5d7`; it does not yet contain C38,
+so C39 is not eligible to leave draft. Develop on
+`codex/3520-c39-date-carrier-provenance-final`, then, after #5342 merges,
+re-anchor without rewriting the reviewed parent, rerun every gate on refreshed
+main, and obtain a new Sol review of the final pushed SHA. Any later push
+invalidates that review. The earlier draft PR #5301 and its allocator-authority
+design are superseded and must never be advanced or copied as an acceptance
+oracle.
+
+### Deterministic false-pass
+
+`emitDateHostBridge(...)` publishes three NUL-named compiler functions whenever
+the native `__Date` carrier exists:
+
+- `__\0js2_is_date`;
+- `__\0js2_date_value`; and
+- `__\0js2_date_set_value`.
+
+The #4035 policy sink does not recognize those spellings. They match neither
+the legacy bridge prefixes nor the `host_bridge` infix, so standalone and WASI
+retain all three exports even when `emitHostBridge` is false. Those exports are
+GC roots and keep the Date classifier/accessors, carrier type, and their
+dependency closure live. Adding these strings to the legacy strip table would
+create the same false ownership inference fixed by C37 and C38: an ordinary
+user can publish an exact same-spelled export, and spelling is not proof that
+the compiler produced its descriptor.
+
+The superseded C39 draft compounded that error by treating an unrecorded exact
+name plus a matching allocator target as compiler ownership. A copied
+descriptor, or a descriptor donated by an identically laid-out second context,
+can resolve to the recipient's allocator by numeric coincidence. Resolution is
+therefore validation evidence only. It must never authorize removal.
+
+### Exact ownership and file boundary
+
+The implementation owns only:
+
+- this issue record (Sol only);
+- `src/codegen/date-host-bridge.ts`;
+- `src/codegen/host-bridge-exports.ts`; and
+- `tests/issue-3520-date-host-bridge-export-provenance.test.ts`.
+
+The Terra implementer must not edit, stage, or restore C38's closure registry,
+C37's vec registry, Program ABI, #3525 publication files, #5092 selector work,
+compiler timing, runtime adapters, baselines, ratchet allowlists, or unrelated
+tests. Parallel Claude work is present; a newly observed path or semantic
+overlap is a stop-and-report condition, not permission to reconcile it.
+
+At Date publication, retain an immutable three-row context-local record. Each
+row binds the exact `WasmExport` descriptor object, its exact published name,
+and the exact `WasmFunction` allocator object. The descriptor identity issued
+by that `CodegenContext` is the sole capability that authorizes policy removal.
+The three names form one exact shared public namespace; there are no suffix or
+prefix members. Near spellings, compact `$d*` names, and any other NUL name are
+outside this C39 namespace.
+
+`isCompilerOwnedDateHostBridgeExport(ctx, entry)` must answer true only for a
+recorded descriptor object from that exact context. It must not consult the
+entry name, numeric index, function map, structural equality, another context,
+or a live/stable allocator match as a fallback. A recorded entry remains owned
+if it is renamed after the validated pre-freeze boundary; an unrecorded copy
+never becomes owned.
+
+### Pre-freeze namespace census
+
+Before the export-policy sink can return for either enabled or disabled host
+bridge policy, validate the current complete Date publication state. Do not
+memoize a successful validation in a way that lets a later pre-freeze mutation
+bypass a second check. The validation must fail closed, before rewriting the
+export array, unless all of the following are true:
+
+1. The context has either no Date publication at all or exactly three immutable
+   publication rows, one for each exact name.
+2. Every recorded descriptor and allocator object is unique; every exact name
+   appears exactly once in the record; and each recorded descriptor appears
+   exactly once in `ctx.mod.exports`.
+3. Every recorded descriptor retains its published name and `func` kind, its
+   allocator remains present exactly once in `ctx.mod.functions`, and its
+   descriptor resolves to that same allocator object.
+4. Live handles are interpreted only against the current function-import
+   prefix. A negative or out-of-range live position fails; it must not fall
+   through into stable resolution. Stable handles use `definedFuncAt(...)`.
+   No check may repair an index, consult `funcMap`, or reconstruct a target by
+   name.
+5. Every current export in the exact three-name Date namespace is examined.
+   For each unrecorded descriptor, resolution to any recorded Date allocator is
+   an invariant violation. This rejects same-context clones and a foreign
+   descriptor donated by an identically laid-out context. An unrecorded exact
+   name resolving to a distinct user allocator is legitimate and remains
+   user-owned.
+
+An entry outside the exact three-name namespace is not reclassified merely
+because it targets a Date allocator. In particular, a near spelling targeting
+the compiler function remains noncompiler. A post-freeze replacement copy of a
+recorded exact-name descriptor has no context-bound provenance and must be
+retained; no late validation or allocator fallback may silently strip it.
+
+### Shared policy-sink composition
+
+`stripHostBridgeExports(...)` must compose C39 with the exact reviewed C38/C37
+ordering. While the index space is still open, run the constructor-closure and
+Date pre-freeze validators before the `emitHostBridge` early return. When
+stripping is enabled, apply the predicates in this order:
+
+1. recorded Date descriptor identity;
+2. recorded constructor-closure descriptor identity;
+3. recorded vec descriptor identity;
+4. exact Date public-name retention for all remaining entries;
+5. exact vec public-name retention;
+6. exact constructor-closure public-name retention; and
+7. the unchanged legacy name policy.
+
+The first three identity checks intentionally precede every public-namespace
+retention rule. Thus a recorded Date descriptor renamed after validation into a
+vec or constructor spelling is still removed, while the genuine user entry at
+that spelling survives. Conversely, an unrecorded exact Date descriptor is
+retained even if its numeric target resembles compiler output; a pre-freeze
+allocator collision is rejected by the census, not converted into ownership.
+Do not add the Date names to `BRIDGE_PREFIXES`, `BRIDGE_ALIASES`, or the generic
+infix rule.
+
+### Required mutation and control matrix
+
+Build the focused test from production-shaped contexts and complete output
+censuses. It must cover all of the following without vacuous prefix checks:
+
+1. Exact namespace predicate: all three Date names are accepted; suffixes,
+   prefixes, `$d*` aliases, and near NUL spellings are rejected.
+2. Host `auto` and `always`: require the exact three descriptor names, distinct
+   exact function targets, expected parameter/result types and bodies, no hard
+   diagnostics, and runtime `dateValue() === 5`.
+3. Standalone and WASI, each with `auto` and `off`, each with IR-outcome
+   tracking disabled and enabled: all authenticated Date exports are absent,
+   host-import census is empty, complete public export census is exact,
+   tracked/untracked generated surfaces and binaries are byte-identical, and
+   runtime remains `5`.
+4. Standalone and WASI with `hostBridge: "always"`: all three authenticated
+   descriptors remain with exact targets/types; tracked/untracked binaries are
+   identical; runtime remains `5`.
+5. Date-free source: no Date publication record, functions, carrier census, or
+   Date exports. The finalizer and sink are true no-ops for this context.
+6. Multi-source provider/entry source order: Date may be materialized in a
+   non-entry provider, yet host/standalone/WASI and tracking matrices retain the
+   same exact policy, import, binary-parity, and runtime evidence.
+7. Genuine same-spelled user descriptor targeting a distinct user allocator is
+   retained. A near spelling targeting a recorded Date allocator is retained.
+8. A same-context exact-name clone targeting a recorded allocator is rejected
+   before any policy rewrite. A descriptor donated by a second, identically
+   laid-out context is likewise rejected in the recipient context. Assert the
+   export array remains byte/object-identical after each rejection.
+9. After one successful pre-freeze validation, a replacement copy inserted
+   only after `indexSpaceFrozen = true` remains unowned and retained. This is
+   the explicit no-fallback control and replaces the superseded draft's
+   copy-strip expectation.
+10. Recorded descriptor mutations fail closed before publication: missing,
+    duplicate object, renamed, kind-changed, retargeted, one-past live handle,
+    invalid live handle despite an available stable ordinal, allocator removed,
+    allocator duplicated, incomplete publication census, and duplicate/unknown
+    recorded names where a bounded test seam can express them.
+11. After a successful pre-freeze validation and freeze, a recorded Date
+    descriptor renamed into the vec namespace and one renamed into the
+    constructor-closure namespace are removed by Date identity, while genuine
+    user descriptors at those names remain. No other family registry changes.
+12. Preserve the full C38 constructor-closure suite, C37 vec suite, and #4035
+    policy suite as controls. The unchanged #4035 size ceiling is inherited
+    evidence, not a new C39 regression; do not change or relabel it.
+
+For every mutation, distinguish validation failure from policy removal and
+assert zero partial rewrite. For every target/tracking comparison, publish the
+complete export names/descriptors, import census, runtime value, and binary
+parity where specified. Counts without identities, prefix-only absence, and a
+successful compile without runtime evidence are not acceptance evidence.
+
+### Non-goals, validation, and publication
+
+C39 changes no Date helper body/type/order, `__Date` carrier layout, allocator
+order, stable-handle minting, late-import shifting, Program ABI, bridge
+manifest, runtime lookup, target selection, DCE algorithm, direct/IR routing,
+fallback behavior, or generic host-bridge spelling policy. It creates no
+compact Date alias family and no new test-only production authority.
+
+Validation requires the focused C39 suite plus the complete C38 closure, C37
+vec, and #4035 policy controls; TypeScript 7; targeted Biome and Prettier;
+`git diff --check`; issue integrity; IR fallback/layering/readiness; and all
+applicable oracle, coercion, dead-export, LOC, and function regrowth ratchets.
+Run every heavy command only after a finite, non-negative one-minute load
+sample is strictly below `logical cores - 2`. Immediately before the signed
+commit, rerun both LOC and function ratchets. Keep the complete precommit and
+prepush hooks enabled; no baseline, size, LOC, function, load, or hook exception
+is authorized.
+
+Commit and push a small checkpoint only after the exact owned diff is clean and
+all gates pass. The implementation PR remains draft while stacked or failing a
+gate. After #5342 merges, rebase/merge current protected main according to the
+repository workflow, rerun the entire matrix and hooks, push once, then obtain
+an independent Sol exact-byte/SHA review. Only that reviewed pushed head may be
+marked ready and entered into the protected merge queue. Close #5301 as
+superseded only after the replacement PR preserves its historical discussion.
