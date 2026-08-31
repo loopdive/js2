@@ -72,6 +72,7 @@ import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -472,6 +473,46 @@ export function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
     default:
       return undefined;
   }
+}
+
+/** Evaluate both operands left-to-right and delegate a BigInt operation to JS. */
+function emitHostBigIntOperation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  opcode?: number,
+  negateEquality = false,
+): ValType | null {
+  const externref: ValType = { kind: "externref" };
+  const leftType = compileExpression(ctx, fctx, expr.left, externref);
+  if (!leftType) return null;
+  if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
+  const leftTmp = allocTempLocal(fctx, externref);
+  fctx.body.push({ op: "local.set", index: leftTmp });
+
+  const rightType = compileExpression(ctx, fctx, expr.right, externref);
+  if (!rightType) {
+    releaseTempLocal(fctx, leftTmp);
+    return null;
+  }
+  if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
+  const rightTmp = allocTempLocal(fctx, externref);
+  fctx.body.push({ op: "local.set", index: rightTmp });
+
+  const importName = opcode === undefined ? "__host_eq" : "__host_bigint_binop";
+  const params: ValType[] = opcode === undefined ? [externref, externref] : [{ kind: "i32" }, externref, externref];
+  const imported = ensureLateImport(ctx, importName, params, [opcode === undefined ? { kind: "i32" } : externref]);
+  flushLateImportShifts(ctx, fctx);
+  const finalIdx = ctx.funcMap.get(importName) ?? imported;
+  if (finalIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${importName}`);
+
+  if (opcode !== undefined) fctx.body.push({ op: "i32.const", value: opcode });
+  fctx.body.push({ op: "local.get", index: leftTmp }, { op: "local.get", index: rightTmp });
+  releaseTempLocal(fctx, rightTmp);
+  releaseTempLocal(fctx, leftTmp);
+  fctx.body.push({ op: "call", funcIdx: finalIdx });
+  if (negateEquality) fctx.body.push({ op: "i32.eqz" });
+  return opcode === undefined ? { kind: "i32", boolean: true } : externref;
 }
 
 /**
@@ -974,6 +1015,21 @@ export function compileBinaryExpression(
       fctx.body.push({ op: "f64.const", value: folded });
       return { kind: "f64" };
     }
+  }
+
+  // `Object(2n)` is typed as `any`, so an operation whose other operand is an
+  // object has no checker-visible BigInt side. Keep it out of the f64 deferred
+  // ToNumeric path: the JS host must unwrap both objects before deciding
+  // whether this is valid BigInt arithmetic or a mixed-type TypeError.
+  const boxedBigIntOpcode = bigIntHostBinopOpcode(op);
+  if (
+    usesHostBigIntCarrier(ctx) &&
+    ctx.anyValueTypeIdx < 0 &&
+    boxedBigIntOpcode !== undefined &&
+    (objectCoercionBigIntArgumentOf(ctx, expr.left) !== undefined ||
+      objectCoercionBigIntArgumentOf(ctx, expr.right) !== undefined)
+  ) {
+    return emitHostBigIntOperation(ctx, fctx, expr, boxedBigIntOpcode);
   }
 
   // §13.15.2 evaluates both ExponentiationExpression operands before either
@@ -1615,40 +1671,8 @@ export function compileBinaryExpression(
       // (and standalone lane) defines it as an unsigned i64 shift.
       const hostOpcode =
         op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ? undefined : bigIntHostBinopOpcode(op);
-      if (isEq || hostOpcode !== undefined) {
-        const externref: ValType = { kind: "externref" };
-        const leftType = compileExpression(ctx, fctx, expr.left, externref);
-        if (!leftType) return null;
-        if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
-        const leftTmp = allocTempLocal(fctx, externref);
-        fctx.body.push({ op: "local.set", index: leftTmp });
-
-        const rightType = compileExpression(ctx, fctx, expr.right, externref);
-        if (!rightType) {
-          releaseTempLocal(fctx, leftTmp);
-          return null;
-        }
-        if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
-        const rightTmp = allocTempLocal(fctx, externref);
-        fctx.body.push({ op: "local.set", index: rightTmp });
-
-        const importName = isEq ? "__host_eq" : "__host_bigint_binop";
-        const params: ValType[] = isEq ? [externref, externref] : [{ kind: "i32" }, externref, externref];
-        const results: ValType[] = isEq ? [{ kind: "i32" }] : [externref];
-        const imported = ensureLateImport(ctx, importName, params, results);
-        flushLateImportShifts(ctx, fctx);
-        const finalIdx = ctx.funcMap.get(importName) ?? imported;
-        if (finalIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${importName}`);
-
-        if (!isEq) fctx.body.push({ op: "i32.const", value: hostOpcode! });
-        fctx.body.push({ op: "local.get", index: leftTmp });
-        fctx.body.push({ op: "local.get", index: rightTmp });
-        releaseTempLocal(fctx, rightTmp);
-        releaseTempLocal(fctx, leftTmp);
-        fctx.body.push({ op: "call", funcIdx: finalIdx });
-        if (isNeq) fctx.body.push({ op: "i32.eqz" });
-        return isEq ? { kind: "i32", boolean: true } : externref;
-      }
+      if (isEq) return emitHostBigIntOperation(ctx, fctx, expr, undefined, isNeq);
+      if (hostOpcode !== undefined) return emitHostBigIntOperation(ctx, fctx, expr, hostOpcode);
     }
 
     // Mixed BigInt + Number/String: comparison and equality operators (#227, #228, #295)
@@ -1876,56 +1900,7 @@ export function compileBinaryExpression(
         (nonBigIntTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0;
       const hostBinopCode = bigIntHostBinopOpcode(op);
       if (!noJsHost3481 && ctx.anyValueTypeIdx < 0 && nonBigIntIsObjectish && hostBinopCode !== undefined) {
-        // Evaluate operands left→right, box each to externref, store in temps.
-        // A host BigInt must be compiled directly as an externref: forcing a
-        // wide literal through i64 here wraps it modulo 2^64 before
-        // __host_bigint_binop sees it. Keep the historical i64 hint for the
-        // standalone/WASI lanes, whose BigInt carrier is intentionally i64.
-        const hostBigIntCarrier = usesHostBigIntCarrier(ctx);
-        const lHint: ValType = leftIsBigInt
-          ? hostBigIntCarrier
-            ? { kind: "externref" }
-            : { kind: "i64" }
-          : { kind: "externref" };
-        const lType = compileExpression(ctx, fctx, expr.left, lHint);
-        if (!lType) return null;
-        if (lType.kind === "i64") {
-          coerceType(ctx, fctx, { kind: "i64", bigint: true }, { kind: "externref" });
-        } else if (lType.kind !== "externref") {
-          coerceType(ctx, fctx, lType, { kind: "externref" });
-        }
-        const lTmp = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: lTmp });
-        const rHint: ValType = rightIsBigInt
-          ? hostBigIntCarrier
-            ? { kind: "externref" }
-            : { kind: "i64" }
-          : { kind: "externref" };
-        const rType = compileExpression(ctx, fctx, expr.right, rHint);
-        if (!rType) return null;
-        if (rType.kind === "i64") {
-          coerceType(ctx, fctx, { kind: "i64", bigint: true }, { kind: "externref" });
-        } else if (rType.kind !== "externref") {
-          coerceType(ctx, fctx, rType, { kind: "externref" });
-        }
-        const rTmp = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: rTmp });
-        const hostIdx = ensureLateImport(
-          ctx,
-          "__host_bigint_binop",
-          [{ kind: "i32" }, { kind: "externref" }, { kind: "externref" }],
-          [{ kind: "externref" }],
-        );
-        flushLateImportShifts(ctx, fctx);
-        const finalIdx = ctx.funcMap.get("__host_bigint_binop") ?? hostIdx;
-        if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_bigint_binop");
-        fctx.body.push({ op: "i32.const", value: hostBinopCode });
-        fctx.body.push({ op: "local.get", index: lTmp });
-        fctx.body.push({ op: "local.get", index: rTmp });
-        releaseTempLocal(fctx, rTmp);
-        releaseTempLocal(fctx, lTmp);
-        fctx.body.push({ op: "call", funcIdx: finalIdx });
-        return { kind: "externref" };
+        return emitHostBigIntOperation(ctx, fctx, expr, hostBinopCode);
       }
       // Compile both sides for side effects, drop their values, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);

@@ -66,7 +66,7 @@
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
-import { closurePrototypeEdgeGetArm, fnctorPrototypeValueGlobalIdxs } from "./closure-prototype-edge.js"; // (#2660 M3)
+import { closurePrototypeEdgeGetArm } from "./closure-prototype-edge.js"; // (#2660 M3)
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -333,12 +333,13 @@ function buildFnctorPrototypeWriteArm(
   setOwnIdx: number | undefined,
   setResultGlobalIdx: number | undefined,
 ): Instr[] {
-  const fnctorValueGlobals = fnctorPrototypeValueGlobalIdxs(ctx);
-  if (fnctorValueGlobals.length === 0 || ctx.nativeStrings !== true || ctx.nativeStrTypeIdx < 0) return [];
+  const constructibleTypeIdxs = [...ctx.constructibleClosureTypeIdxs];
+  if (constructibleTypeIdxs.length === 0 || ctx.nativeStrings !== true || ctx.nativeStrTypeIdx < 0) return [];
 
   if (sharedSetAvailable && (setOwnIdx === undefined || setResultGlobalIdx === undefined)) return [];
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const writeOwn = (): Instr[] =>
-    sharedSetAvailable
+    defineValueIdx !== undefined
       ? [
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: bagEnsureIdx },
@@ -346,18 +347,39 @@ function buildFnctorPrototypeWriteArm(
           { op: "local.get", index: 3 },
           { op: "local.get", index: 1 },
           { op: "local.get", index: 2 },
-          { op: "call", funcIdx: setOwnIdx! },
-          { op: "global.set", index: setResultGlobalIdx! },
+          // `prototype` is the mandatory own data property created for every
+          // ordinary function. Materialize its exact descriptor while changing
+          // only [[Value]]: writable=true, enumerable/configurable=false. The
+          // host flag word also marks all three attributes and value specified.
+          { op: "f64.const", value: 0xb9 },
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" },
+          ...(sharedSetAvailable
+            ? ([
+                { op: "i32.const", value: 1 }, // SET_RESULT_SUCCESS
+                { op: "global.set", index: setResultGlobalIdx! },
+              ] satisfies Instr[])
+            : []),
           { op: "return" },
         ]
-      : [
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: bagEnsureIdx },
-          { op: "local.get", index: 1 },
-          { op: "local.get", index: 2 },
-          { op: "call", funcIdx: externSetIdx },
-          { op: "return" },
-        ];
+      : sharedSetAvailable
+        ? [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: bagEnsureIdx },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setOwnIdx! },
+            { op: "global.set", index: setResultGlobalIdx! },
+            { op: "return" },
+          ]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: bagEnsureIdx },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: externSetIdx },
+            { op: "return" },
+          ];
   return [
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
@@ -375,23 +397,14 @@ function buildFnctorPrototypeWriteArm(
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            ...fnctorValueGlobals.flatMap((valueGlobalIdx): Instr[] => [
+            ...constructibleTypeIdxs.flatMap((typeIdx): Instr[] => [
               { op: "local.get", index: 0 },
               { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+              { op: "ref.test", typeIdx },
               {
                 op: "if",
                 blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 0 },
-                  { op: "any.convert_extern" },
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                  { op: "global.get", index: valueGlobalIdx },
-                  { op: "any.convert_extern" },
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                  { op: "ref.eq" },
-                  { op: "if", blockType: { kind: "empty" }, then: writeOwn() },
-                ],
+                then: writeOwn(),
               },
             ]),
           ],
@@ -1055,7 +1068,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
         ];
     setBody(
       CLOSURE_PROP_SET,
-      sharedSetAvailable
+      sharedSetAvailable || fnctorProtoWriteArm.length > 0
         ? [
             { name: "__bag", type: { kind: "externref" } },
             { name: "__decision", type: { kind: "i32" } },

@@ -5,7 +5,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { collectInstrs } from "./statements/shared.js";
-import { coerceType, compileExpression } from "./shared.js";
+import { coerceType, compileExpression, emitDefaultValueCheck } from "./shared.js";
 
 const callbackContext = new WeakMap<CodegenContext, boolean>();
 const nativeNextCalls = new WeakMap<CodegenContext, WeakSet<ts.CallExpression>>();
@@ -139,7 +139,19 @@ export function tryEmitNativeIteratorResultParam(
         fctx.body.push({ op: "any.convert_extern" });
         fctx.body.push({ op: "ref.cast", typeIdx });
         fctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
-        fctx.body.push({ op: "local.set", index: localIdx });
+        if (element.initializer !== undefined) {
+          emitDefaultValueCheck(
+            ctx,
+            fctx,
+            nativeType.fields[fieldIdx]!.type,
+            localIdx,
+            element.initializer,
+            undefined,
+            true,
+          );
+        } else {
+          fctx.body.push({ op: "local.set", index: localIdx });
+        }
       }
     }),
   );

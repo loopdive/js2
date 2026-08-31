@@ -42,4 +42,13 @@ describe("ES5 standalone regression recovery", () => {
 
     await expect(runStandalone(source)).resolves.toBe(1);
   });
+
+  it("uses the last duplicate nested object-literal property", async () => {
+    const source = `
+      const { w: { y } } = { w: { x: 1 }, w: { y: 2 } };
+      export function test(): number { return y === 2 ? 1 : 0; }
+    `;
+
+    await expect(runStandalone(source)).resolves.toBe(1);
+  });
 });

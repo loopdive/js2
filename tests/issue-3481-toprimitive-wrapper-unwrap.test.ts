@@ -111,6 +111,15 @@ describe("#3481 — shapes that already worked keep working", () => {
     expect(exports.test()).toBe(4n);
   });
 
+  it("unwraps a boxed BigInt before an object that reduces to BigInt", async () => {
+    const exports = await run(`return Object(2n) * { valueOf: function () { return 2n; } };`);
+    expect(exports.test()).toBe(4n);
+  });
+
+  it("rejects a boxed BigInt mixed with an object that reduces to Number", async () => {
+    expect(await throwsWith(`return Object(2n) * { valueOf: function () { return 1; } };`)).toBe("TypeError");
+  });
+
   it("valueOf returning a BigInt", async () => {
     const exports = await run(`return { valueOf: function () { return 2n; } } * 2n;`);
     expect(exports.test()).toBe(4n);

@@ -33,15 +33,20 @@ function nestedObjectLiteralCarrier(
   if (node === undefined) return undefined;
   const initializer = node.initializer;
   if (initializer === undefined || !ts.isObjectLiteralExpression(initializer)) return undefined;
-  const property = initializer.properties.find((candidate): candidate is ts.PropertyAssignment => {
-    if (!ts.isPropertyAssignment(candidate)) return false;
+  // Object literals use last-definition-wins semantics. Scan in evaluation
+  // order backwards so a duplicate key cannot reuse the first literal's
+  // carrier. A spread or computed key to the right may also overwrite the
+  // requested property at runtime, so leave those cases to the generic path.
+  for (let i = initializer.properties.length - 1; i >= 0; i--) {
+    const candidate = initializer.properties[i]!;
+    if (ts.isSpreadAssignment(candidate) || ts.isComputedPropertyName(candidate.name)) return undefined;
     const name = candidate.name;
-    return (
-      (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) && name.text === propertyKey
-    );
-  });
-  if (property === undefined || !ts.isObjectLiteralExpression(property.initializer)) return undefined;
-  return carriersByContext.get(ctx)?.get(property.initializer);
+    if (!(ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))) return undefined;
+    if (name.text !== propertyKey) continue;
+    if (!ts.isPropertyAssignment(candidate) || !ts.isObjectLiteralExpression(candidate.initializer)) return undefined;
+    return carriersByContext.get(ctx)?.get(candidate.initializer);
+  }
+  return undefined;
 }
 
 export function nestedObjectPatternCarrier(ctx: CodegenContext, pattern: ts.ObjectBindingPattern): number | undefined {
