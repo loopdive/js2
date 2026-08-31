@@ -1,10 +1,11 @@
 ---
 id: 4470
-title: "ir: adopt destructuring for-of heads — BLOCKED on the nested-vec element carrier (measured)"
-status: blocked
+title: "ir: adopt destructuring for-of heads — DONE, unblocked by the #5166 nested-vec element carrier"
+status: done
+completed: 2026-08-29
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-29
 assignee: ttraenkler/opus-4470
 priority: medium
 horizon: s
@@ -12,7 +13,7 @@ feasibility: hard
 task_type: adoption
 area: ir
 goal: ir-full-coverage
-related: [3518, 3583, 2952, 2379]
+related: [3518, 3583, 2952, 2379, 5166, 4486]
 ---
 
 # #4470 — IR adoption of destructuring for-of heads
@@ -203,3 +204,81 @@ and were):
 | `pnpm run check:ir-fallbacks`       | no growth                     |
 | `node scripts/gen-ir-adoption.mjs --check` | clean                  |
 | `pnpm run check:ir-only`            | host 37/37, floors unchanged  |
+
+---
+
+## Resolution (2026-08-29) — adopted, via #5166
+
+The blocker analysis above was right and it held: the head change alone was
+never the constraint, and lifting `nontail-forof` before the carrier existed
+would have shipped the five-program regression table above. #5166 built the
+carrier (a vec-typed element travels as a CONCRETE ref to the inner vec struct,
+which is legacy's own carrier), and the head lift then landed in the SAME PR,
+after it — carrier first, head second, exactly as the "What would unblock this"
+list ordered it.
+
+### What landed
+
+- **Selector** — `isPhase1ForOfInScope` accepts an `ArrayBindingPattern` head
+  gated on the existing `isPhase1BindingPattern`, and adds the leaf names to
+  the inner scope. Object patterns reject on `forof-head-object-pattern`, wider
+  array patterns on `forof-head-pattern-complex`, exactly as the prototype
+  matrix in this file predicted.
+- **Lowering** — `lowerForOfVec` takes the pattern, restricts the ROW leaf to
+  f64/i32, declares one slot per leaf outside the body collector, and writes
+  them inside it ahead of the user statement, so the reads re-run per
+  iteration. A pattern head on the string / iter-host arms demotes: a `(ref
+  $AnyString)` char and an opaque externref are not indexable, as item 2 of the
+  unblock list required.
+
+### Three corrections to this issue's own lowering sketch, all measured
+
+1. **`lowerArrayPattern` is NOT reusable as-is.** Item 2 above proposed calling
+   it directly. Its `vec.get` is UNCHECKED and traps on a short row — measured
+   on unmodified main, the already-claimed VariableStatement row `const [a, b]
+   = xs` over `[1]` gives `RuntimeError: array element access out of bounds` on
+   the IR path while legacy answers correctly. Reusing it would have turned
+   `for (const [a, b] of rows)` over ragged data from a working legacy program
+   into a runtime trap. Leaves go through `emitSafeVecGet` instead. (The
+   trapping var-decl row is pre-existing and is left as a follow-up on #5166.)
+2. **The out-of-bounds value is the element ZERO.** `emitSafeVecGet`'s NaN
+   default is right for an `arr[i]` read but wrong here: legacy binds `0` for a
+   missing leaf. It gained an `oobOverride` for this. Section B of
+   `tests/issue-4470.test.ts` asserted the Node answer (`undefined`) for that
+   case and was RED on unmodified main; it now pins the measured value with
+   Node's recorded alongside, so a real IR-vs-legacy difference can never hide
+   behind it.
+3. **Leaves are SLOTS, not SSA locals.** `for (let [a, b] of m) { a = a + 1; …
+   }` — which the prototype matrix listed as CLAIM — is a HARD error with local
+   bindings (`assignment to non-slot binding "a"`). Slots also match what the
+   identifier head already does.
+
+### Measured — heads, after
+
+15 lanes base-vs-change, IR vs legacy vs Node: **0 mismatches, 0 hard CEs.**
+
+| head shape | claims | emits | note |
+| --- | --- | --- | --- |
+| `[a, b]` / `[a]` / `[, b]` / `let [a, b]` | yes | yes | values identical to legacy |
+| `[a, b]` + break/continue, empty iterable, short row | yes | yes | |
+| `boolean[][]` leaves, nested for-of (ident outside) | yes | yes | |
+| `[a = 1]` / `[a, ...r]` / `[[a]]` | no | — | `forof-head-pattern-complex` |
+| `{ x }` | no | — | `forof-head-object-pattern` |
+| pattern head over a `string[][]` row | claims | no | soft demote at build (f64/i32 leaves only) |
+| pattern head over a flat `number[]` | claims | no | soft demote — leaf not indexable |
+
+### The regression table at the top no longer applies
+
+All five `string[][]` programs compile and run on both front-ends. The two that
+became HARD CEs under the prototype ("count iterations, leaves unused" and
+"bind first leaf, return it") were casualties of the missing carrier, not of
+the head change — the first now EMITS, and the second demotes softly because
+its row leaf is a string.
+
+### Adjacent defects listed here
+
+1. **`string[][]` for-of is a hard CE** — filed as #4486, fixed (typed demote),
+   and now EMITS under #5166.
+2. **`.length` on an externref-carried string leaf** — still open, still
+   pre-existing, and it is exactly why pattern heads are restricted to f64/i32
+   row leaves.

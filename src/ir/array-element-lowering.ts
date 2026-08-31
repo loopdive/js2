@@ -501,10 +501,21 @@ export function emitSafeVecGet(
   idxI32: IrValueId,
   elemValType: ValType,
   host: Pick<ArrayElementLoweringHost, "builder" | "resolver" | "funcName">,
+  /**
+   * (#4470/#5166) Override the out-of-bounds value for callers whose JS
+   * semantics differ from an `arr[i]` READ. A destructuring-pattern LEAF is
+   * the one such caller: legacy binds the element type's ZERO for a missing
+   * leaf (measured — `for (const [a, b] of [[1], [2, 3]])` sums to 3 and
+   * `b !== b` is false, so the missing `b` is `0`, not NaN), while a plain
+   * read's `undefined` correctly becomes NaN in a numeric slot. Passing the
+   * override keeps the IR claim observationally identical to the legacy body
+   * it replaces. Omitted, the backend/default behaviour is unchanged.
+   */
+  oobOverride?: IrConst,
 ): IrValueId {
   const elemIr = irVal(elemValType);
   let makeOobDefault: (() => IrValueId) | null = null;
-  const backendDefault = host.resolver?.resolveVecOutOfBoundsConst?.(elemValType);
+  const backendDefault = oobOverride ?? host.resolver?.resolveVecOutOfBoundsConst?.(elemValType);
   if (backendDefault) {
     makeOobDefault = () => host.builder.emitConst(backendDefault, elemIr);
   } else {
