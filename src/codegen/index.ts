@@ -11953,10 +11953,9 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
 
     // `readonly T[]` / `ReadonlyArray<T>` lower to `T[]`; otherwise fields fall
     // through to a mismatched anonymous struct (#1748).
-    // #5190: host-native match arrays must retain their native result fields.
+    // Match-result subtypes retain their specialized fields and carriers.
     const inheritedArrayElement =
-      builtinSymName === "Array" ||
-      builtinSymName === "ReadonlyArray" ||
+      ["Array", "ReadonlyArray", "RegExpIndicesArray"].includes(builtinSymName ?? "") ||
       (!ctx.nativeStrings && (sym?.name === "RegExpExecArray" || sym?.name === "RegExpMatchArray"))
         ? undefined
         : inheritedArrayElementType(ctx.checker, tsType);

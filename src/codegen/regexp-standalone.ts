@@ -3456,13 +3456,13 @@ function coercedNstrToExternref(ctx: CodegenContext, fctx: FunctionContext, nstr
   return buf;
 }
 
+const CREATE_DATA_PROPERTY_FLAGS = 0xbf; // Full value + writable/enumerable/configurable descriptor.
+
 /**
  * #2588 — build the named-groups result object (`m.groups`) and leave it on the
- * stack as an **externref** (`$Object`), or a null externref when `groupNames`
- * is empty. The object is built INLINE via `__new_plain_object` +
- * `__extern_set` (the same path object literals use), so `m.groups.<name>`
- * reads flow through the existing standalone `$Object` property read (no new
- * dispatch).
+ * stack as an **externref** (`$Object`), or null when `groupNames` is empty.
+ * Named captures are installed with CreateDataProperty semantics so
+ * an inherited setter cannot intercept them.
  */
 function emitRegexGroupsObjectExternref(
   ctx: CodegenContext,
@@ -3478,14 +3478,14 @@ function emitRegexGroupsObjectExternref(
     return;
   }
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
-  const setIdx = ensureLateImport(
+  const defineIdx = ensureLateImport(
     ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
+    "__defineProperty_value",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
   );
   flushLateImportShifts(ctx, fctx);
-  if (newObjIdx === undefined || setIdx === undefined) {
+  if (newObjIdx === undefined || defineIdx === undefined) {
     fctx.body.push({ op: "ref.null.extern" });
     return;
   }
@@ -3500,7 +3500,9 @@ function emitRegexGroupsObjectExternref(
     addStringConstantGlobal(ctx, name);
     for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
     pushCaptureValueExternref(ctx, fctx, idx, subjectLocal, capsLocal, strTypeIdx, i32Arr);
-    fctx.body.push({ op: "call", funcIdx: setIdx });
+    fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
   }
   fctx.body.push({ op: "local.get", index: objLocal });
 }
@@ -3535,10 +3537,6 @@ function emitRegexIndicesArrayExternref(
   );
   const newGroupsIdx =
     groupNames.size > 0 ? ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]) : undefined;
-  const setGroupsIdx =
-    groupNames.size > 0
-      ? ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], [])
-      : undefined;
   const defineIdx = ensureLateImport(
     ctx,
     "__defineProperty_value",
@@ -3572,7 +3570,7 @@ function emitRegexIndicesArrayExternref(
   const indicesGroupsLocal = allocLocal(fctx, `__re_indices_groups_${fctx.locals.length}`, {
     kind: "externref",
   });
-  if (groupNames.size === 0 || newGroupsIdx === undefined || setGroupsIdx === undefined || getIdx === undefined) {
+  if (groupNames.size === 0 || newGroupsIdx === undefined || defineIdx === undefined || getIdx === undefined) {
     fctx.body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]));
     fctx.body.push({ op: "local.set", index: indicesGroupsLocal });
   } else {
@@ -3586,7 +3584,9 @@ function emitRegexIndicesArrayExternref(
       fctx.body.push({ op: "local.get", index: outerLocal });
       fctx.body.push({ op: "f64.const", value: captureIdx });
       fctx.body.push({ op: "call", funcIdx: getIdx });
-      fctx.body.push({ op: "call", funcIdx: setGroupsIdx });
+      fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
     }
   }
   if (defineIdx !== undefined) {
@@ -3595,7 +3595,7 @@ function emitRegexIndicesArrayExternref(
     fctx.body.push(...stringConstantExternrefInstrs(ctx, "groups"));
     fctx.body.push({ op: "local.get", index: indicesGroupsLocal });
     // value + writable/enumerable/configurable, all explicitly specified.
-    fctx.body.push({ op: "f64.const", value: 0xbf });
+    fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
     fctx.body.push({ op: "call", funcIdx: defineIdx });
     fctx.body.push({ op: "drop" });
   }
@@ -3741,7 +3741,7 @@ export function emitRegexExecArrayCall(
       addStringConstantGlobal(ctx, name);
       fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
       fctx.body.push(...value);
-      fctx.body.push({ op: "f64.const", value: 0xbf });
+      fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
       fctx.body.push({ op: "call", funcIdx: defineIdx });
       fctx.body.push({ op: "drop" });
     };
