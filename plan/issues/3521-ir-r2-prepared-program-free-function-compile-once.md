@@ -29,9 +29,12 @@ loc-budget-allow:
   - src/ir/select.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/index.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/legacy-body-audit.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
+  - src/ir/outcomes.ts
   - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
   - src/ir/backend/porffor/assembler.ts
@@ -97,8 +100,12 @@ files:
   - src/codegen/context/create-context.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/legacy-body-audit.ts
   - src/index.ts
   - src/compiler.ts
+  - src/ir/outcomes.ts
+  - tests/issue-3520-outcome-correlation-identity.test.ts
   - tests/issue-3521-prepared-ir-program.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
@@ -2922,8 +2929,84 @@ legacy name sets remain deterministic compatibility/telemetry projections and
 must agree with the exact receipts or fail closed. It changes neither selector
 population nor the legacy-body count.
 
+## 2026-08-30 — production R2 body-emission accounting checkpoint
+
+This follow-up remains bounded to same-source, top-level free-function terminal
+outcomes. It does not alter selector population, Wasm ABI/layout, direct body
+emission, class/member accounting, module-init accounting, or the legacy body
+count.
+
+The outcome ledger now records `prepareAttempts`, `directBodyEmissions`, and
+`irBodyEmissions` for the bounded production population. Direct counts come
+only from exact `compileFunctionBody` AST-entry receipts keyed by `IrUnitId`;
+IR counts come only from exact terminal `patched` evidence. Compatibility
+booleans are derived from these counts and policy validation rejects partial,
+impossible, duplicate, or boolean-inconsistent accounting.
+
+The direct receipt census deliberately ignores known nonterminal/support,
+runtime-namespace, and synthetic function bodies. Unknown, mismatched, or
+foreign identities remain fatal evidence. Reconciliation validates/indexes the
+direct receipt census and raw terminal patch receipts once per source, then
+uses constant-time per-terminal lookups. A skip receipt supplies only the
+expected route: skipped emitted owners require direct `0`; non-skipped emitted
+late-overlay owners require direct `1`.
+
+Required terminal shapes are therefore explicit:
+
+- prepare-before-direct success: `(1, 0, 1)`;
+- typed direct fallback: `(1, 1, 0)`;
+- ordinary prepared invariant/unpatched: `(1, 0, 0)` and fatal; and
+- intentional post-direct linked-overlay success: `(1, 1, 1)`.
+
+Receipt corruption cannot be normalized: missing, duplicate, foreign, or
+impossible direct/IR evidence becomes a typed invariant (or an existing trusted
+boundary invariant), retaining the observed count for diagnosis.
+
+### 2026-08-30 — independent review corrections
+
+The R2 denominator now mirrors the physical top-level declaration contract:
+for a duplicate named Script declaration it contains only the last body-bearing
+declaration that the direct emitter can compile. Shadowed declarations retain
+their existing public outcome rows but do not receive R2 counters. A receipt
+for one of those excluded UnitIds is still foreign to the exact denominator and
+fails the physically accountable owner closed.
+
+Accounting diagnostics now compare the final invariant with the exact
+report-visible failure. Only an unchanged report-visible invariant suppresses a
+second diagnostic. If body accounting replaces either outcome-only or
+report-visible failed evidence, the synthesized `body-emission-evidence`
+invariant emits one public accounting diagnostic.
+
+The direct dispatcher indexes each receipt into its source bucket at record
+time, with one graph-global fail-closed sentinel for evidence that cannot be
+attributed safely. Source audits no longer scan the graph entry ledger. The
+physical R2 terminal populations are likewise cached once per authoritative
+planning context, so the added graph accounting is linear with constant-time
+per-terminal reconciliation.
+
 ## Test Results
 
 - Focused exact-routing plus fast-scalar/route-off/direct-negative subset: 6 passed.
 - TypeScript 7 validation, changed-file lint/format, IR fallback/layering, and
   LOC/function budget ratchets: passed.
+- 2026-08-30 production body-accounting controls:
+  - `tests/issue-3520-outcome-correlation-identity.test.ts`: 9 passed
+    (normal triples plus missing, duplicate, foreign, and impossible receipts).
+  - Four focused `issue-3521-prepared-free-function-routing` controls passed:
+    support-body scoping, direct fallback `(1,1,0)`, prepared success
+    `(1,0,1)`, and prepared invariant `(1,0,0)`.
+  - `tests/issue-3521-linked-string-parser-abi.test.ts`: 4 passed, including
+    the intentional post-direct linked-overlay `(1,1,1)` route.
+  - TypeScript 7, changed-file Biome lint and Prettier check, IR
+    layering/dialect/kind-neutrality/fallback/IR-only readiness, adoption,
+    optimization-retirement, oracle, and LOC/function budget gates: passed.
+- 2026-08-30 independent-review correction:
+  - Six focused regressions first failed against `0e5fbac` (replacement
+    diagnostic, duplicate denominator/foreign receipt, unattributed corruption,
+    source-population indexing, source-local direct indexing, and the production
+    duplicate Script compile), then passed after the correction.
+  - Scoped #3520/#3521 reconciliation, routing, and linked-parser validation:
+    23 passed, 36 skipped across 3 files. The linked-parser controls remain 4/4.
+  - TypeScript 7, changed-file Biome lint and Prettier check, `git diff --check`,
+    IR layering/dialect/kind-neutrality/fallback/IR-only readiness, adoption,
+    optimization-retirement, oracle, and LOC/function budget gates: passed.
