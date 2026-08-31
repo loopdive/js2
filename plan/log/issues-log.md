@@ -540,6 +540,7 @@ sprint: 0
 | 4747 | 2026-08-26 | ES2015 StringIteratorPrototype now has the exact Symbol.toStringTag value and descriptor in standalone, with host Test262 realm restoration parity | Current |
 | 4758 | 2026-08-26 | ES2015 destructuring residual compile-timeout cluster now survives deleted Array iterators in worker cleanup and host callback dispatch; exact 40/40 host pins pass and standalone parity is recorded for integration into #5010 | Current |
 | 5137 | 2026-08-30 | ES2015 DataView setter expressions now return canonical undefined across direct/helper routes; exact 14/14 host and 14/14 standalone rows pass | Current |
+| 5217 | 2026-08-31 | QuickJS mirrored objects now preserve boolean values and dynamic String coercion through canonical linked-module carriers; membrane suite passes 58/58 | Current |
 
 > **IR retirement checkpoint:** #3518 remains in progress; #3520 is ready as
 > the next R1 slice. R2–R8 remain blocked on the dependency spine.

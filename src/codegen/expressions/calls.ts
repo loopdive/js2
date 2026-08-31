@@ -6685,6 +6685,28 @@ function emitRuntimeEvalResultBoundaryWrap(ctx: CodegenContext, fctx: FunctionCo
   return externref;
 }
 
+/** Marshal an i32 boolean without first materializing the provider module's
+ * private boolean box. Mirrored object fields live past the call boundary, so
+ * their primitive payload must enter the canonical value carrier directly. */
+function emitRuntimeEvalBooleanBoundaryWrap(ctx: CodegenContext, fctx: FunctionContext): ValType {
+  const externref: ValType = { kind: "externref" };
+  const booleanLocal = allocLocal(fctx, `__runtime_eval_boolean_${fctx.locals.length}`, {
+    kind: "i32",
+    boolean: true,
+  });
+  fctx.body.push(
+    { op: "local.set", index: booleanLocal },
+    { op: "i32.const", value: RUNTIME_EVAL_VALUE_KIND_BOOLEAN },
+    { op: "local.get", index: booleanLocal },
+    { op: "f64.const", value: 0 },
+    { op: "i64.const", value: 0n },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: ensureRuntimeEvalValueType(ctx) },
+    { op: "extern.convert_any" },
+  );
+  return externref;
+}
+
 /** Provider-local inverse of the canonical result carrier. This is used by
  * canaries that exercise an exported envelope from inside the provider; user
  * modules decode the same shape in emitRuntimeEvalResultUnwrap. */
@@ -6786,18 +6808,31 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const unwraps = calleeName === "__runtime_eval_unwrap_interpreted_callback";
   const testsIntrinsic = calleeName === "__runtime_eval_is_intrinsic_callback";
   const wrapsResult = calleeName === "__runtime_eval_wrap_result";
+  const wrapsBooleanResult = calleeName === "__runtime_eval_wrap_boolean_result";
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
   const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
-    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult && !testsAotCallable) ||
+    (!wraps &&
+      !unwraps &&
+      !testsIntrinsic &&
+      !wrapsResult &&
+      !wrapsBooleanResult &&
+      !unwrapsResult &&
+      !testsAotCallable) ||
     (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
   ) {
     return undefined;
   }
 
   const externref: ValType = { kind: "externref" };
+  if (wrapsBooleanResult) {
+    const booleanType: ValType = { kind: "i32", boolean: true };
+    const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, booleanType);
+    if (valueType && valueType.kind !== "i32") coerceType(ctx, fctx, valueType, booleanType);
+    return emitRuntimeEvalBooleanBoundaryWrap(ctx, fctx);
+  }
   const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
   if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
   if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);
