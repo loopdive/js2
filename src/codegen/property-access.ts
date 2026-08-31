@@ -110,6 +110,7 @@ import {
   tryCompileStandaloneRegExpMatchResultRead,
   tryCompileStandaloneRegExpPropertyRead,
 } from "./regexp-standalone.js";
+import { tryCompileStandaloneRegExpLegacyStaticRead } from "./regexp-legacy-static.js";
 import {
   emitLazyNativeProtoGet,
   ensureStandaloneNativeMethodClosure,
@@ -5009,13 +5010,11 @@ export function compileElementAccess(
 
   const arrayIteratorRead = tryCompileStandaloneArrayIteratorRead(ctx, fctx, expr);
   if (arrayIteratorRead !== undefined) return arrayIteratorRead;
-
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;
   // every other receiver falls through to the GC element-access path unchanged.
   const linU8Get = tryEmitLinearU8ElementGet(ctx, fctx, expr);
   if (linU8Get !== null) return linU8Get;
-
   // Handle super[expr] — access parent class property via computed key on `this`
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return compileSuperElementAccess(ctx, fctx, expr);
@@ -5067,7 +5066,6 @@ export function compileElementAccess(
     fctx.body.push({ op: "call", funcIdx: ctx.wasiEnvGetStrIdx });
     return { kind: "externref" };
   }
-
   // Handle ClassName[key] for static accessors and static properties (#848)
   // Must intercept before compiling the object expression, since the class
   // identifier doesn't compile to a useful runtime value for struct access.
@@ -5077,6 +5075,8 @@ export function compileElementAccess(
     const resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
     if (ctx.classSet.has(resolvedClass)) {
       const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
+      const legacyStaticRead = tryCompileStandaloneRegExpLegacyStaticRead(ctx, fctx, expr);
+      if (legacyStaticRead !== undefined) return legacyStaticRead;
       if (key !== undefined) {
         // Check static accessor first
         const accessorKey = `${resolvedClass}_${key}`;

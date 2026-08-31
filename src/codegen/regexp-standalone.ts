@@ -84,6 +84,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
+import { tryCompileStandaloneRegExpLegacyStaticRead } from "./regexp-legacy-static.js";
 import {
   resolveAssignedTransferredProtoMember,
   tryEmitTransferredObjectToStringCall,
@@ -4784,6 +4785,8 @@ export function tryCompileStandaloneRegExpPropertyRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null | undefined {
+  const legacyStaticRead = tryCompileStandaloneRegExpLegacyStaticRead(ctx, fctx, expr);
+  if (legacyStaticRead !== undefined) return legacyStaticRead;
   if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
   // `var re = new RegExp(); re.constructor` is still a RegExp constructor
@@ -4806,14 +4809,11 @@ export function tryCompileStandaloneRegExpPropertyRead(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const nonNull = objType.getNonNullableType?.() ?? objType;
   if (!isGlobalRegExpType(nonNull)) return undefined;
-
   const loaded = loadStandaloneRegExpStruct(ctx, fctx, expr.expression);
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
-
   return emitRegExpReflectionFieldRead(ctx, fctx, propName, regexpLocal, structTypeIdx);
 }
-
 /**
  * Shared core for §22.2.6.14 `RegExp.prototype.toString()` rendering of a
  * static / backend-created RegExp *receiver expression* — `"/" + source + "/" +
