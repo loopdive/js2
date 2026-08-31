@@ -218,11 +218,11 @@ one, delivering exactly one correct argument regardless of either call's width,
 of the global's state, and of which dispatchers the module emits. Start at
 whatever is cached per class on that first construct.
 
-**The authoritative #5244 handoff lives in dev-5243's own issue file**, which
-carries the full per-width table. (Not linked by path here: that file is on the
-#5243 branch, not this one, and the issue-integrity gate correctly rejects a
-path that does not resolve on the branch citing it.) This section is the
-#5242-side summary; if the two ever disagree, that one is the record.
+**The authoritative #5244 handoff is
+`plan/issues/5243-dynamic-method-bridge-object-arg-null.md`**, which carries
+dev-5243's full per-width table; `plan/issues/5244-duration-from-object-pt0s.md`
+is the lane itself. This section is the #5242-side summary; if they ever
+disagree, those are the record.
 
 Filed as its own lane (#5244 territory). Pinned in this issue rather than in the
 test's expectations because the test's own reduction does not reproduce it (its
