@@ -14,6 +14,7 @@ import {
   isNumberWrapperType,
   isPromiseType,
   isStringType,
+  isUndefinedDefaultOnlyParam,
   isVoidType,
   mapTsTypeToWasm,
   resolveBindingElementType,
@@ -1337,6 +1338,12 @@ function lowerParamType(
   if (nativeParam === null && parameterMayBeOmitted(param)) {
     wasmType = { kind: "externref" };
   }
+  // (#5221) A parameter whose only type evidence is an `undefined` default —
+  // see `isUndefinedDefaultOnlyParam` for the full rationale and the measured
+  // Temporal witness.
+  if (isUndefinedDefaultOnlyParam(param, paramType)) {
+    wasmType = { kind: "externref" };
+  }
   if (nativeParam === null) {
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
@@ -1391,9 +1398,25 @@ function lowerParamType(
       // numeric, string, vec, and declared nominal inference remain unchanged.
       // A computed-access parameter likewise stays dynamic unless inference
       // proved the indexed vec/array family rather than one incidental object.
+      //
+      // (#5221) The `__anon_*` withdrawal above was gated on `ctx.standalone`
+      // until now. The gate was wrong: the unsoundness is the SAME on the host
+      // lane, only the symptom differs. Host-lane, the mismatched value is
+      // coerced at the CALL with `ref.test` + `else ref.null`, so a caller
+      // holding a different shape silently passes **null** — no trap, no
+      // diagnostic, a wrong answer several frames later. Measured on
+      // `@js-temporal/polyfill`: `CreateTemporalDate(isoDate, calendar)` forwards
+      // its untyped `isoDate` to `setSlots`, whose parameter this inference had
+      // pinned to ONE call site's object literal; every other `CreateTemporalDate`
+      // caller's record went null and `Temporal.PlainDate.from({…})` failed with
+      // "Cannot destructure 'null' or 'undefined'" three frames down, inside a
+      // nested-pattern parameter that never saw the real record. Forwarding
+      // chains like that are exactly the case the standalone note already
+      // describes; the lane it runs in does not change whether one observed
+      // literal proves the parameter's whole runtime domain.
       if (
         !(needsDynamicObjectCarrier && !inferredIndexedCarrier && !inferredPrimitiveCarrier) &&
-        !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
+        !inferredStructName?.startsWith("__anon_") &&
         !inferredEscapingAnonymousObject
       ) {
         wasmType = inferred;

@@ -201,6 +201,10 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.nowInstantIsFunction.value).toBe("function");
     expect(s.nowPlainDateISOIsFunction.value).toBe("function");
     expect(s.nowInstantCallable.value).toBe("object");
+    // (#5223) Promoted out of knownGaps: the prototype `toString()` of a
+    // `new`-constructed provider instance dispatches, so the instance
+    // stringifies to its real ISO date instead of "[object Object]".
+    expect(s.instanceToString.value).toBe("2020-03-04");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the
@@ -211,7 +215,7 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // was measured about each. Asserting only their presence keeps the list
     // honest without pinning today's failure text.
     expect(Object.keys(report.knownGaps).sort()).toEqual([
-      "instanceToString",
+      "instanceToStringTag",
       "nowPlainDateISOCall",
       "nowTimeZoneIdCall",
       "staticFrom",
