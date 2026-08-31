@@ -716,7 +716,16 @@ describe("#3523 Calendar final ten-body retirement gate", () => {
       ...STATIC_DERIVED_CALLBACK_NAMES,
     ]);
     const directAggregate = bodySizeMetrics(direct, [...FUNCTION_TERMINALS, "__module_init", ...DIRECT_CALLBACK_NAMES]);
-    expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(151);
+    // Direct-lane reference, re-measured 2026-08-29. It was 151 when this gate
+    // landed (`0f4d0be94`, 2026-08-20) and moved to 160 at `6ae4ddc15`
+    // ("preserve ordinary string coercion carriers", 2026-08-26), whose
+    // closed-indexed-field widening added 9 locals to the DIRECT
+    // `__module_init` (4 → 13). Bisected, and the drift is confined to that one
+    // body: all nine function terminals and all seven `__cb_*` callbacks are
+    // unchanged, `renderCal` still 66. The IR ceilings below are the gate's
+    // teeth and all still hold — this line only keeps the comparison baseline
+    // honest, so a silent direct-lane move cannot pass unnoticed.
+    expect(directAggregate.locals, "direct Calendar aggregate local-count reference").toBe(160);
     expect(irAggregate.locals, "IR Calendar aggregate local-pressure no-regression ceiling").toBeLessThanOrEqual(137);
     expect(irAggregate.locals, "IR Calendar aggregate local-pressure direct parity").toBeLessThanOrEqual(
       directAggregate.locals,

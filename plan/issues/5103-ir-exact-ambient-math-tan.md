@@ -79,8 +79,8 @@ the direct path.
 3. Add `tan` to `IR_MATH_METHOD_TABLE`; reuse the generic selector,
    call-graph walker, from-AST intrinsic emitter, manifest preparation, and
    provider materializer.
-4. Add narrow rollback `JS2WASM_IR_MATH_TAN=0` without withdrawing any other
-   Math intrinsic.
+4. Initial rollout added a temporary per-method withdrawal without withdrawing
+   any other Math intrinsic.
 5. Widen #3526 exhaustive vocabulary, dependency, integration, and neutrality
    evidence from thirteen to fourteen source-level Math intrinsics.
 6. Add focused tests for host and zero-import standalone ownership, semantic
@@ -98,7 +98,7 @@ the direct path.
   capabilities.
 - Host and standalone execution match the direct path, and standalone imports
   remain empty.
-- `JS2WASM_IR_MATH_TAN=0` keeps only `Math.tan` on the direct path.
+- The temporary per-method withdrawal kept only `Math.tan` on the direct path.
 - Every excluded form declines before claim with no invariant or post-claim
   failure.
 - Affected #3526 suites, TypeScript 7, and all pre-push gates pass.
@@ -113,7 +113,7 @@ the direct path.
   `math.tan -> [math.cos, math.sin]`, and deduplicates the transitive
   `math.reduce-trig` dependency. The existing provider materializer emits the
   established helper family; no algorithm or direct-codegen file changed.
-- `JS2WASM_IR_MATH_TAN=0` withdraws only the new claim. Shadowed, aliased,
+- The temporary per-method withdrawal withdrew only the new claim. Shadowed, aliased,
   wrong-arity, spread, and non-number forms all decline before claim.
 - Four focused/affected suites pass 23/23, including host and zero-import
   standalone execution, exact semantic/provider evidence, dependency closure,
@@ -138,5 +138,12 @@ the direct path.
 The principal risk is manifest/provider drift: `Math_tan` requires both
 `Math_sin` and `Math_cos`, which share `math.reduce-trig`. The frozen manifest
 must express that graph and prove deterministic deduplication. The shared Math
-table remains the sole source grammar contract. `JS2WASM_IR_MATH_TAN=0` is the
+table remains the sole source grammar contract. The per-method withdrawal was the
 checkpoint rollback; `JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.
