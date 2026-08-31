@@ -12,7 +12,12 @@ import {
   PROVIDER_LINKER_ABI_VERSION,
   type ProviderManifestV1,
 } from "./provider-manifest.js";
-import { buildCompiledImports as buildCompiledImportsRuntime, wrapLinkedProviderValue } from "./runtime.js";
+import {
+  buildCompiledImports as buildCompiledImportsRuntime,
+  registerLinkedConsumerModule,
+  registerLinkedProviderModule,
+  wrapLinkedProviderValue,
+} from "./runtime.js";
 
 function wasmBytes(binary: Uint8Array): BufferSource {
   return binary as unknown as BufferSource;
@@ -197,6 +202,11 @@ export function instantiateLinkedProviders(
     wireProviderInstance(artifact, providerImports, instance);
     const manifest = decodeLinkedProviderManifest(artifact);
     const rawExports = instance.exports as Record<string, Function>;
+    // (#5225) Register unconditionally: a provider whose whole export surface is
+    // plain FUNCTIONS never reaches `wrapLinkedProviderValue` (the loop below
+    // skips `kind === "function"`), yet its `__extern_get` is exactly where a
+    // consumer-minted argument arrives undecodable.
+    registerLinkedProviderModule(rawExports);
     const exposedExports: Record<string, any> = { ...rawExports };
     for (const boundary of Object.values(manifest.exportBoundaries)) {
       if (boundary.kind === "function") continue;
@@ -213,7 +223,14 @@ export function instantiateLinkedProviders(
 }
 
 /** Wire root runtime lifecycle state after a consumer instance is created. */
-export function wireCompiledInstance(imports: WebAssembly.Imports, instance: WebAssembly.Instance): void {
+export function wireCompiledInstance(
+  imports: WebAssembly.Imports,
+  instance: WebAssembly.Instance,
+  // (#5225) Only a LINKED consumer joins the cross-module decoder registry; a
+  // lone module must keep the registry empty so every read stays byte-identical.
+  linked = false,
+): void {
   const setInstance = (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance;
   setInstance?.(instance);
+  if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>);
 }

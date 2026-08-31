@@ -577,3 +577,168 @@ This handoff note must pass the normal commit hook, after which the complete
 synthetic-ref pre-push hook must pass on the actual final HEAD. No push or
 GitHub mutation has occurred; explicit public-fork authorization remains the
 only publication-permission blocker.
+
+## c112 live-main integration plan — 2026-09-01
+
+Fresh fetch resolves `upstream/main` to
+`c11206262088a69815d6126787b10942df148b6d`, 55 commits beyond the branch's
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` merge base. The upstream range has
+no change in the four #4449-owned paths (this tracker,
+`src/codegen/array-methods.ts`, `src/codegen/builtin-static-globals.ts`, and
+`tests/issue-4449-species-producers.test.ts`). A read-only three-way
+`git merge-tree --trivial-merge a4d141321daf7f8874e540d7b75f58f8c3e2c2a7
+upstream/main HEAD` exits zero, so Git predicts no conflict.
+
+The normal merge must retain the dynamic TypedArray species boundary: the outer
+`map`/`filter`/`slice`/`subarray` path constructs the requested species result
+once, while its materialized temporary vector does not run a second
+ArraySpeciesCreate. It must retain #5145's ordinary Array producer behavior,
+including the ordinary Array `map` custom-species control, and preserve the
+builtin-static global publication ordering. Keep the standalone zero-`env`
+import assertions, host behavior, the canonical constructor/default manifest,
+and the pinned QuickJS artifact unchanged.
+
+### Released-lane gate sequence
+
+External lanes are saturated. Until root releases one, do not stage, commit,
+merge, run a hook, compiler, TypeScript, Vitest, Test262, or publication
+command. On release, fetch upstream again and re-audit if `upstream/main` has
+moved beyond c112; only then normally merge the exact live head. On that exact
+merged HEAD, require all of the following before any publication work:
+
+1. serial focused species controls and producers: **13 / 13**, preserving the
+   standalone zero-`env` assertions;
+2. the canonical host constructor/default manifest: **8 / 8** pass, eight
+   callbacks/rows, both harness controls, and `nondeterministic: 0`;
+3. the canonical pinned-QuickJS standalone manifest: **8 / 8** pass, eight
+   callbacks/rows, both harness controls, and `nondeterministic: 0`, using
+   `/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda`
+   with `libquickjs.wasm` SHA-256
+   `073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`;
+4. the LF-normalized eight-row manifest SHA-256
+   `619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf`;
+5. direct TS7 `node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`;
+6. targeted formatting/lint/budget checks plus `git diff --check`; and
+7. the complete synthetic-ref pre-push hook on the actual final head.
+
+The no-leak audit is mandatory: `git diff --name-only upstream/main...HEAD`
+must contain exactly these four #4449 paths, with no benchmark, report, public,
+website, `labs/`, generated evidence, or temporary `.prettierignore` path.
+Stop on a conflict, failed row/control, altered denominator, nondeterminism,
+quality failure, or leak.
+
+Publication remains blocked after local success until root releases the lane
+and the user explicitly authorizes pushing this completed branch to the public
+`ttraenkler/js2` fork and creating the non-draft PR against
+`loopdive/js2:main`. No push or GitHub mutation is authorized by this plan.
+
+### Merge-boundary correction before integration — 2026-09-01
+
+The first integration audit used `HEAD..upstream/main`, which compares the two
+tips' complete content and therefore lists this branch's own four #4449 paths.
+That is not an incoming-overlap test. The authoritative boundary is the exact
+merge base `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`: the scoped
+`git diff --name-only a4d141321daf7f8874e540d7b75f58f8c3e2c2a7..upstream/main --`
+over the tracker, two implementation files, and focused producer test is
+empty at `c11206262088a69815d6126787b10942df148b6d`. Conversely,
+`git diff --name-only upstream/main...HEAD` is exactly those four owned paths.
+There is no actual upstream overlap; proceed with the normal no-commit merge
+and retain the four-path no-leak audit after it.
+
+### Publication authorization cleared — 2026-09-01
+
+The user explicitly authorized publication of the completed branch to the
+public `ttraenkler/js2` fork for a PR against `loopdive/js2:main`. This clears
+only the external-destination authorization: publication still follows the
+released live-main validation sequence and four-path no-leak audit above.
+After those gates, publish this work as its own ready (non-draft) upstream PR.
+No GitHub issue was created.
+
+### Open c112 merge and e904 publication handoff — 2026-09-01
+
+Publication preparation is complete, but validation/publication remains blocked
+while #680 owns the second shared lane. The normal c112 integration is already
+open and resolved, not committed: branch
+`codex/4449-species-live-20260831` has `HEAD` `62ce4a558c`, active
+`MERGE_HEAD` `c11206262088a69815d6126787b10942df148b6d`, no unresolved paths,
+and no unstaged change before this tracker note. The staged prospective range
+against exact c112 is **exactly four paths**:
+
+1. `plan/issues/4449-typedarray-standalone-semantics-residual.md`
+2. `src/codegen/array-methods.ts`
+3. `src/codegen/builtin-static-globals.ts`
+4. `tests/issue-4449-species-producers.test.ts`
+
+It contains no benchmark, public/website, labs, generated-report, or unrelated
+source path; staged `git diff --check` and the conflict-marker inventory are
+clean. The eleven candidate commits beyond c112 all have author
+`Thomas Tränkler <git@thomas.traenkler.com>` and exactly one
+`Co-authored-by: Codex <codex@openai.com>` trailer. The user has already
+authorized publication to the public `ttraenkler/js2` fork, but that clears
+only destination authority: this still needs the released validation lane,
+final exact-head audit, and a ready/non-draft PR. No GitHub action occurred.
+
+#### Later e904-or-newer normal-merge resolution plan
+
+Live `upstream/main` is currently
+`e904b5f4b254dc5ab667685b8493f250d177efda`. Its post-c112 commits
+`cf6f2c3de14d` and `faf97eee1976` both touch
+`src/codegen/array-methods.ts`, including the same three materialized
+dynamic-TypedArray `map`/`filter`/`slice` calls. This is a genuine semantic
+overlap, not a reason to choose either side wholesale.
+
+On the later normal merge, retain upstream's scoped
+`withArraySpeciesSuppressed(fctx, ...)` helper and its `try/finally` lifetime:
+factor the three inner materialized-vector calls through that helper, retain
+the outer #4449 `emitTaDynSpeciesCreate` allocation and copy-back exactly once,
+and remove the local `skipArraySpecies` boolean parameter/plumbing from
+`compileArrayMethodCall`, slice, map, and filter. The helper makes
+`prepareArraySpeciesDeps` decline only during the temporary ordinary-vector
+re-entry. Therefore dynamic TypedArray result identity stays with the outer
+TypedArray species constructor, while upstream #5145 ordinary Array species
+and the new ordinary `flatMapSpeciesResult` behavior remain active outside
+that scope. Preserve the upstream imports (`withArraySpeciesSuppressed` and
+`flatMapSpeciesResult`) and do not suppress species around the outer producer,
+concat/splice, ordinary vectors, or standalone-unrelated paths.
+
+After a root-released lane permits the e904-or-newer merge, repeat the focused
+13/13 producer suite, exact host 8/8 manifest, pinned-QuickJS standalone 8/8
+manifest, TS7, scoped formatting/lint/diff checks, normal pre-push, and the
+final `upstream/main...HEAD` four-path/no-leak audit. Stop on a conflict that
+cannot retain both semantics, a denominator change, a non-deterministic row,
+or any generated-path leak.
+
+#### Prepared c112 merge commit message
+
+```text
+merge(upstream): sync #4449 with c112 main ✓
+
+Integrate loopdive/js2 main at c11206262088a69815d6126787b10942df148b6d after
+confirming the resolved prospective PR range contains only the #4449 tracker,
+two implementation files, and focused producer test.
+
+Preserve dynamic TypedArray species identity, ordinary Array species behavior,
+and the existing standalone zero-import validation boundary.
+
+# Codex session
+Co-authored-by: Codex <codex@openai.com>
+```
+
+#### Prepared ready/non-draft PR package (do not submit until gates pass)
+
+Title: `fix(typedarray): preserve dynamic species identity`
+
+```markdown
+## Description
+
+Preserve dynamic TypedArray species identity by publishing the builtin TypedArray constructor before re-entrant prototype seeding and by suppressing ArraySpeciesCreate only while map, filter, or slice materializes the temporary vector beneath the outer TypedArraySpeciesCreate; ordinary Array species behavior, including flatMap, remains active outside that narrow scope.
+
+## CLA
+
+Please read the [Contributor License Agreement](../blob/main/CLA.md) and check the box:
+
+- [x] I have read and agree to the CLA
+```
+
+The PR must be created as ready/non-draft against `loopdive/js2:main` from the
+authorized `ttraenkler/js2` fork only after the exact-head gates above pass.
