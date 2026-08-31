@@ -1,10 +1,9 @@
 ---
 id: 1616
 title: "Flatten issue files into a stable location; sprint membership via frontmatter only"
-status: done
+status: ready
 created: 2026-05-24
-updated: 2026-05-24
-completed: 2026-05-24
+updated: 2026-08-31
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -12,7 +11,7 @@ task_type: infrastructure
 area: tooling
 language_feature: n/a
 goal: process
-sprint: 55
+sprint: current
 ---
 # Issue #1616 — Flatten issue files into a stable location; sprint membership via frontmatter only
 
@@ -361,3 +360,36 @@ dashboard build on every push.
 - [ ] All 10 tools/workflows updated or confirmed-unaffected per the table.
 - [ ] Validation plan steps 1–8 all pass; CI green.
 - [ ] Rename-safety lint in place (broken-link check wired into `quality`).
+
+## 2026-08-31 — reopened: canonical-set and flatten acceptance remain unmet
+
+The migration mostly landed, but a current-source audit found concrete
+residuals against the unchecked acceptance list above:
+
+1. Three numbered issue files remain nested under `plan/issues/backlog/`:
+   #1446, #1447, and #1449. No flat counterparts exist.
+2. The generated backlog index links them as `../<basename>`, which resolves to
+   nonexistent flat paths.
+3. Tool populations disagree: `check-issue-ids.mjs` scans **4,259** flat IDs,
+   while committed integrity and `update-issues` see **4,260** canonical issue
+   records recursively.
+4. `website/dashboard/build-data.js:53-55,136-146` accepts any digit-prefixed
+   Markdown basename instead of the canonical predicate. A fresh build admits
+   three planning/non-issue documents as ready issues: `sprints/0.md`,
+   `sprints/73-plan.md`, and `1578-test262-analysis.md`. It produces **4,263**
+   dashboard entries for **4,260** canonical issues.
+
+Move the three legacy records to flat paths, then share one canonical issue
+predicate (or require valid, matching `id:` frontmatter) across integrity,
+index, and dashboard tooling. #5234 separately owns the freshness/ownership of
+the tracked dashboard snapshots; this issue owns which files count as issues.
+
+### Reopened acceptance criteria
+
+- [ ] Zero numbered issue records remain below backlog/wont-fix/sprint
+      subdirectories.
+- [ ] Every generated issue link resolves to a canonical flat record.
+- [ ] Workspace, committed-integrity, update, and dashboard scanners return the
+      same identity set and count.
+- [ ] `sprints/0.md`, `sprints/73-plan.md`, and
+      `1578-test262-analysis.md` are negative regression fixtures, not cards.
