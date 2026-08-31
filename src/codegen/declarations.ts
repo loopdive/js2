@@ -46,13 +46,13 @@ import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-funct
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import {
   ASYNC_CPS_ENABLED,
-  analyzeAsyncBody,
   asyncFnNeedsCps,
   isEmitOperand,
   planAsyncCfg,
   type AsyncCfgPlan,
   type AsyncCfgState,
 } from "./async-cps.js";
+import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
   asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
@@ -4612,18 +4612,6 @@ function scheduleGraphStaticInitializers(
   };
 }
 
-function graphAsyncSynthetic(statements: readonly ts.Statement[]): ts.FunctionDeclaration {
-  return ts.factory.createFunctionDeclaration(
-    [ts.factory.createModifier(ts.SyntaxKind.AsyncKeyword)],
-    undefined,
-    "__v8x_graph_eval_body",
-    undefined,
-    [],
-    undefined,
-    ts.factory.createBlock([...statements], true),
-  );
-}
-
 function addGraphExport(ctx: CodegenContext, name: string, results: ValType[], body: Instr[]): FuncHandle {
   const funcIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, funcIdx, {
@@ -4656,7 +4644,11 @@ function compileAsyncGraphModuleInit(
   statements: readonly ts.Statement[],
   staticEntries: readonly ModuleStaticInitEntry[],
   emitPrelude: (fctx: FunctionContext) => void,
-): AsyncGraphModuleInit {
+): AsyncGraphModuleInit | null {
+  const graphPlan = supportedAsyncGraphModulePlan(ctx, statements);
+  if (graphPlan === null) return null;
+  const { decl, plan } = graphPlan;
+
   const runtime = ensureAsyncDriveRuntime(ctx);
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
 
@@ -4672,8 +4664,6 @@ function compileAsyncGraphModuleInit(
     init: [{ op: "i32.const", value: 0 }],
   });
 
-  const decl = graphAsyncSynthetic(statements);
-  const plan = analyzeAsyncBody(ctx, decl);
   const graphStaticEntries = staticEntries.filter(isGraphTimelineStaticEntry);
   const startFuncIdx = mintDefinedFunc(ctx);
   const startFunc: WasmFunction = {
@@ -4870,6 +4860,23 @@ function compileAsyncGraphModuleInit(
     savedBodies: [],
   };
   return { fctx };
+}
+
+function compileAsyncGraphOrLegacy(
+  ctx: CodegenContext,
+  statements: readonly ts.Statement[],
+  staticEntries: readonly ModuleStaticInitEntry[],
+  compileBody: (
+    targetFctx?: FunctionContext,
+    includeModuleStatements?: boolean,
+    chunkModuleInitEntries?: boolean,
+  ) => FunctionContext,
+  chunkModuleInitEntries: boolean,
+): FunctionContext {
+  const graph = compileAsyncGraphModuleInit(ctx, statements, staticEntries, (resumeFctx) => {
+    compileBody(resumeFctx, false);
+  });
+  return graph?.fctx ?? compileBody(undefined, true, chunkModuleInitEntries);
 }
 
 /** Prepare-before-direct ownership for the exact source module initializer. */
@@ -6105,9 +6112,13 @@ export function compileDeclarations(
       restorePropOrderState();
       compiledInitFctx = profilePhase("module-init-pass2", () => {
         if (!hasAsyncGraphInit) return compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
-        return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, (resumeFctx) => {
-          compileModuleInitBody(resumeFctx, false);
-        }).fctx;
+        return compileAsyncGraphOrLegacy(
+          ctx,
+          ctx.moduleInitStatements,
+          ctx.staticInitExprs,
+          compileModuleInitBody,
+          moduleInitChunkingRequired,
+        );
       });
       ctx.pendingInitBody = compiledInitFctx.body;
       dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
