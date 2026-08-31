@@ -33,7 +33,7 @@
 //
 // Invoke:  node --import tsx tests/dogfood/temporal-global-harness.mjs [--json]
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +102,44 @@ const SUPPORTED = {
   staticFrom: `export function run() { return Temporal.PlainDate.from("2026-08-30").toString(); }`,
   staticFromField: `export function run() { return String(Temporal.PlainDate.from("2026-08-30").year); }`,
   staticCompare: `export function run() { return Temporal.PlainDate.compare(Temporal.PlainDate.from("2020-03-04"), Temporal.PlainDate.from("2021-03-04")); }`,
+  // (#5243) THE FIRST ARITHMETIC ROW THAT WORKS. `add("P1D")` reaches the ISO
+  // calendar's `dateAdd(e, {years = 0, …}, i)` exactly like `add({days: 1})`
+  // does; on base BOTH threw `Cannot destructure 'null' or 'undefined'` because
+  // the record `Wr(e) → { ...t.date, days: n }` built on the host path was
+  // null-cast back into its inferred struct type. This row's argument is a
+  // STRING, so the only object crossing the provider seam is that internal
+  // record — which is why it flips here while `add({days: 1})` (a user object
+  // literal crossing the seam, #5225's lane) stays in knownGaps.
+  arithmeticAddString: `export function run() { return Temporal.PlainDate.from("2020-03-04").add("P1D").toString(); }`,
+  // (#5225) THE OBJECT-ARGUMENT FAMILY. Every row below hands the provider a
+  // value the CONSUMER minted, which is the inbound twin of #5222: a raw WasmGC
+  // struct carries no decoder, and every runtime read path resolved
+  // `__struct_field_names` / `__sget_<field>` from whichever module was
+  // RUNNING. Inside the polyfill that is the provider, which names none of the
+  // consumer's fields — so the object presented as empty ("year is required")
+  // and, once the field-name list was borrowed from the owner but the getter
+  // was not, as all-zeroes ("Cannot convert a number less than one to a
+  // positive integer", "PT0S"). Measured on base 2026-08-31 with a fresh
+  // JS2WASM_TEMPORAL_CACHE (cacheHit=false), then again after the fix:
+  //
+  //   row                        base                          after #5225
+  //   staticFromObject           TypeError year is required →  "2020-03-04"
+  //   durationFromObject         TypeError invalid            "P1D"
+  //                              duration-like             →
+  //   arithmeticAddDuration      WebAssembly.Exception     →  "2020-03-05"
+  //   arithmeticSubtract         WebAssembly.Exception     →  "2020-03-03"
+  //   arithmeticWith             WebAssembly.Exception     →  "2021-03-04"
+  //   staticFromString (control) "2020-03-04"                 unchanged
+  //   arithmeticAddString (ctl)  "2020-03-05"                 unchanged
+  //
+  // The partial-object controls answer the SPEC's errors rather than a seam
+  // failure: `from({year, month})` says "day is required" and
+  // `from({month, day})` says "year is required" (both measured after).
+  staticFromObject: `export function run() { return Temporal.PlainDate.from({ year: 2020, month: 3, day: 4 }).toString(); }`,
+  durationFromObject: `export function run() { return Temporal.Duration.from({ days: 1 }).toString(); }`,
+  arithmeticAddDuration: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
+  arithmeticSubtract: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
+  arithmeticWith: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
 };
 
 /**
@@ -155,27 +193,134 @@ const KNOWN_GAPS = {
   // bridge for `Duration`, and a null destructure inside the polyfill's options
   // handling. Through the PROVIDER the throw predates and survives #5241, which
   // is why these stay here rather than being promoted.
-  arithmeticAddDuration: {
-    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
-    note:
-      "throws through the provider, identically on the #5241 base (measured 2026-08-31, fresh provider cache). " +
-      "In the SINGLE-MODULE control the same call moved from `undefined` (the #5241 hijack: `add` first-matched " +
-      "`Set.prototype.add`) to a real TypeError from inside the polyfill, so the call now happens. Residual is " +
-      "not the extern-binding defect; the object-literal ARGUMENT crossing the provider seam is #5225's lane",
-  },
-  arithmeticSubtract: {
-    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
-    note:
-      "same provider-lane throw, unchanged by #5241. Single-module control fails with `compiled class constructor " +
-      "Duration bridge unavailable` on BOTH sides of #5241 — a missing constructor bridge for a compiled class " +
-      "reached as a value, adjacent to #5239's instance minting but on the CONSTRUCT path",
-  },
-  arithmeticWith: {
-    source: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
-    note:
-      'throws through the provider on both sides of #5241, but ANSWERS "2021-03-04" in the single-module control ' +
-      "on both sides too — so this row isolates the provider SEAM specifically, unlike the two above",
-  },
+  //
+  // (#5242) The FIRST of those two is now fixed — a compiled class reached as a
+  // VALUE has a real constructor bridge (`__class_construct_<Class>_<arity>`),
+  // so `compiled class constructor Duration bridge unavailable` no longer
+  // appears anywhere. Re-measured 2026-08-31 with a fresh JS2WASM_TEMPORAL_CACHE
+  // per lane, on both sides of the change:
+  //
+  //   SINGLE-MODULE lane        base (#5242)                    after #5242
+  //     add({days:1})           destructure null                destructure null   (unchanged)
+  //     add("P1D")              Duration bridge unavailable  →  destructure null
+  //     subtract({days:1})      Duration bridge unavailable  →  destructure null
+  //     subtract("P1D")         Duration bridge unavailable  →  destructure null
+  //     with({year:2021})       "2021-03-04"                    "2021-03-04"       (unchanged)
+  //     new Duration(0,0,0,1)   "P1D"                           "P1D"              (unchanged)
+  //   PROVIDER lane             every arithmetic row throws identically on both
+  //                             sides (WebAssembly.Exception) — measured, not
+  //                             inherited; the whole `knownGaps` block below is
+  //                             byte-identical between the two runs.
+  //
+  // HOW TO ASSEMBLE THE SINGLE-MODULE CONTROL — one line decides what you
+  // measure, and getting it wrong looks like a PASS (#5243, 2026-08-31). The
+  // polyfill bundle ends with `export{qi as Temporal}`: an export ALIAS, not a
+  // top-level binding. So concatenating the bundle with a consumer that says
+  // bare `Temporal` leaves that identifier UNBOUND, and the #661 syntactic
+  // native lowering answers the spelling instead — the compiled polyfill is
+  // never entered. Measured with both bindings in ONE module:
+  //
+  //                          bare `Temporal`            `const T = qi`
+  //     typeof               "undefined"                "object"
+  //     .PlainDate.name      THREW "Temporal is not     "PlainDate"
+  //                           defined"
+  //     add({days:1})        "2020-03-05"               THREW destructure null
+  //     with({year:2021})    THREW "with is not a       "2021-03-04"
+  //                           function"
+  //
+  // `typeof Temporal === "undefined"` while `Temporal.PlainDate.from(…).add(…)`
+  // returns a correct date is the tell. Bind the namespace —
+  // `const Temporal = qi;` — or you are measuring the native lowering, whose
+  // gaps (no `with`) are the exact INVERSE of the polyfill's.
+  //
+  // What is LEFT in the single-module lane is ONE defect, and it is not this
+  // change's: the ISO calendar's `dateAdd(e, {years=0, months=0, weeks=0,
+  // days=0}, i)` has a DESTRUCTURING PARAMETER, and its second argument arrives
+  // null through the dynamic method bridge (`__extern_method_call` →
+  // `__call_fn_method_3` → `__anon_0_dateAdd`). Control: `add({days:1})` — which
+  // never constructs a Duration at all — fails with the SAME message and the
+  // SAME stack on base, where no constructor bridge was involved. So it is a
+  // parameter-destructuring / argument-marshalling gap on the dynamic method
+  // bridge, adjacent to #5221's destructuring work, not a residue of the
+  // constructor path.
+  //
+  // (#5243) That null is FIXED, and the bridge was the messenger, not the
+  // cause. The polyfill's `Wr(e)` returns `{ ...t.date, days: n }`; an object
+  // literal with a spread has no statically closed shape, so it is built on
+  // the HOST and comes back as an `externref`, while `Wr`'s inferred return
+  // type is the concrete `__anon_37` record. `coerceType`'s `externref →
+  // ref/ref_null` arm `ref.test`ed that host object against the struct, failed,
+  // and pushed `ref.null`. Measured 2026-08-31, fresh JS2WASM_TEMPORAL_CACHE
+  // per lane, both sides of the change:
+  //
+  //   SINGLE-MODULE lane        base (#5243)                  after #5243
+  //     add({days:1})           destructure null           →  "2020-03-04" (wrong, see below)
+  //     subtract({days:1})      destructure null           →  "2020-03-04" (wrong)
+  //     add("P1D")              destructure null           →  "2020-03-04" (wrong)
+  //     with({year:2021})       "2021-03-04"                  "2021-03-04"  (unchanged)
+  //     new Duration(0,0,0,1)   "P1D"                         "P1D"         (unchanged)
+  //   PROVIDER lane
+  //     add("P1D")              destructure null           →  "2020-03-05" CORRECT
+  //                              (now asserted as `arithmeticAddString` above)
+  //     add({days:1})           WebAssembly.Exception         unchanged (#5225)
+  //     subtract / with         WebAssembly.Exception         unchanged (#5225)
+  //
+  // The single-module rows stop THROWING but answer the unchanged date,
+  // because a SECOND defect owns them and it is not this one: the polyfill's
+  // `sn(e)` (ToTemporalDuration) constructs through the intrinsics registry,
+  // `new (ce("%Temporal.Duration%"))(…)`, i.e. #5242's class-VALUE ctor mirror.
+  // Measured on the same build: the mirror's `[[Construct]]` trap receives the
+  // right ten arguments and resolves `__class_construct_Duration_10`, and
+  // calling that export DIRECTLY from JS yields a Duration reading
+  // "11,12,13,14,15" — but the instance the trap hands back to Wasm reads
+  // "11,0,0,0,0,0,0,0,0,0", every field after the first defaulted. Control:
+  // `new Temporal.Duration(11,…,20)` (statically resolved, no mirror) reads all
+  // ten correctly. That is #5244's lane, filed separately.
+  //
+  // (#5244) The single-module lane is now CORRECT for the whole arithmetic
+  // family, and the answer was two codegen defects rather than the reported
+  // one. Measured 2026-08-31, fresh JS2WASM_TEMPORAL_CACHE per lane:
+  //
+  //   SINGLE-MODULE lane        base (#5244)      after #5244
+  //     Duration.from({days:1}) "PT0S"         →  "P1D"
+  //     Duration.from("P1D")    "PT0S"         →  "P1D"
+  //     add({days:1})           "2020-03-04"   →  "2020-03-05"
+  //     subtract({days:1})      "2020-03-04"   →  "2020-03-03"
+  //     add("P1D")              "2020-03-04"   →  "2020-03-05"
+  //     add({months:2})         "2020-03-04"   →  "2020-05-04"
+  //     until(…) / since(…)     THREW          →  "P1D"
+  //     with({year:2021})       "2021-03-04"      unchanged (control)
+  //     new Duration(0,0,0,1)   "P1D"             unchanged (control)
+  //   PROVIDER lane             every row below BYTE-IDENTICAL on both sides
+  //
+  //   1. The dynamic-`new` dispatch ladder (`emitDynamicNewFallback`) never
+  //      published `__argc`. The STATIC `new C(…)` site does; the ladder's arms
+  //      did not, and `__argc` is a module GLOBAL — so a constructor with
+  //      parameter defaults read whatever the previously compiled call site had
+  //      left there, and a stale small count discarded the arguments the arm
+  //      had just coerced onto the stack in favour of the initializers. That is
+  //      the "every argument after the first is lost" symptom; the host-side
+  //      twin of the same omission was fixed in #5242's bridge.
+  //   2. `__sset_<field>` (`buildSetterNestedIfElse`) appended its #2009 shape
+  //      / #4618 class-tag refinement to the arm condition with `i32.and`.
+  //      `i32.and` evaluates BOTH operands, so the refinement's `ref.cast` ran
+  //      for receivers `ref.test` had just rejected — an unconditional trap,
+  //      swallowed by `_safeSet`'s "not a field of this struct's runtime type"
+  //      catch. The setter aborted at its first guarded arm, the write landed
+  //      in the JS sidecar, and a compiled `struct.get` read the untouched
+  //      slot. It needs two struct types sharing the field name to bite, which
+  //      is why no small reduction showed it and the polyfill (dozens of
+  //      records with a `days` field) always did.
+  //
+  //   STILL BROKEN, single-module, unchanged on both sides and NOT triaged:
+  //     Duration.from({hours:25}).total({unit:"hours"})  → WebAssembly.Exception
+  //     Duration.from({hours:25}).round({largestUnit:"days"}) → same
+  //
+  // (#5225) `arithmeticAddDuration`, `arithmeticSubtract` and `arithmeticWith`
+  // were the three rows this block ended with, and all three are now in
+  // SUPPORTED above: the provider-lane throw was the consumer's object
+  // ARGUMENT reaching the polyfill undecodable. The history above stays
+  // because it is what attributed each earlier layer to its own issue.
   instanceToStringTag: {
     source: `export function run() { const d = new Temporal.PlainDate(2020, 3, 4); return String(d[Symbol.toStringTag]); }`,
     note:
@@ -219,6 +364,40 @@ export async function runTemporalGlobalHarness({ quiet = false, cacheDir } = {})
     `[temporal-global] provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +
       `built in ${provider.buildMs}ms cacheHit=${provider.cacheHit}`,
   );
+  // (#5227 / #5243) A CACHE HIT IS NOT FREE INFORMATION — SAY SO.
+  //
+  // The provider cache is content-addressed on the POLYFILL source, which a
+  // compiler change does not touch. So a hit serves a provider binary built by
+  // whatever compiler ran last in this container, against a consumer compiled
+  // by yours, and the mismatch surfaces as `RuntimeError: dereferencing a null
+  // pointer` in rows that have nothing to do with your change.
+  //
+  // Cost of not saying it, measured 2026-08-31: a 17-hour-old
+  // `$TMPDIR/js2wasm-temporal-cache` made FIVE asserted `supported` rows fail
+  // at once — `protoMethodCall`, `staticFrom`, `staticFromField`,
+  // `staticCompare`, `arithmeticAddString` — in a pre-commit hook run, on a
+  // branch where every one of them passes with a fresh cache. The vitest
+  // wrapper reports only the first, so it reads as one specific regression in
+  // somebody's recent work rather than as a stale artifact.
+  //
+  // Rule: after ANY `src/` edit, point `JS2WASM_TEMPORAL_CACHE` at a fresh
+  // directory. The age below is printed so a surprising row can be checked
+  // against it before it is attributed to a code change.
+  let providerCacheAgeHours = null;
+  if (provider.cacheHit) {
+    try {
+      providerCacheAgeHours =
+        Math.round(((Date.now() - statSync(join(providerCacheDir, "providers")).mtimeMs) / 3_600_000) * 10) / 10;
+    } catch {
+      /* cache layout differs — the warning below still stands */
+    }
+    log(
+      `[temporal-global] WARNING: served a CACHED provider${providerCacheAgeHours === null ? "" : `, ${providerCacheAgeHours}h old`}` +
+        ` from ${providerCacheDir}. It was NOT built by the compiler in this working tree. A failing row may be ` +
+        `this, not your change — re-run with JS2WASM_TEMPORAL_CACHE pointing at a fresh directory before ` +
+        `attributing it.`,
+    );
+  }
 
   const report = {
     issue: 4628,
@@ -230,6 +409,9 @@ export async function runTemporalGlobalHarness({ quiet = false, cacheDir } = {})
       binaryBytes: provider.artifact.binary.length,
       buildMs: provider.buildMs,
       cacheHit: provider.cacheHit,
+      // (#5227 / #5243) Non-null ONLY on a cache hit. A reader diagnosing a
+      // failed row should check this before attributing it to a code change.
+      cacheAgeHours: providerCacheAgeHours,
     },
     supported: {},
     knownGaps: {},
