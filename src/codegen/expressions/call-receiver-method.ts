@@ -177,7 +177,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
+import { resolveStructName, resolveStructNameForExpr, tryCompileCallableStaticField } from "./misc.js";
 
 /**
  * A source-level delete removes the builtin prototype member before the call
@@ -1673,15 +1673,9 @@ export function compileReceiverMethodCall(
     // namespace.  `typeof C` has construct signatures; `new C()` instances do
     // not.  This keeps inherited/virtual dispatch on the instance side while
     // preserving ordinary static calls through a class value.
-    // Bundled JavaScript compiled with `allowJs` can give a class-valued
-    // module binding the *instance* class type (the declaration has no
-    // `typeof` annotation), even though the property access is on the
-    // constructor object.  The declaration pass still records that binding
-    // in classExprNameMap, which is a stronger identity signal than the
-    // checker-side construct-signature result here.  Without this fallback a
-    // detached conditional such as `flag ? Lexer.lex : Lexer.lexInline`
-    // enters the instance dispatcher, drops the static method's return, and
-    // materializes null for the caller.
+    // Bundled JavaScript can type a class-valued binding as an instance even
+    // when the access is on the constructor; classExprNameMap is the stronger
+    // identity signal, so detached conditional static calls retain their value.
     const staticReceiverExpr = skipTransparentExpressions(propAccess.expression);
     const mappedStaticReceiver = ts.isIdentifier(staticReceiverExpr)
       ? ctx.classExprNameMap.get(staticReceiverExpr.text)
@@ -1689,6 +1683,8 @@ export function compileReceiverMethodCall(
     const receiverIsClassObject =
       (receiverType.getConstructSignatures?.().length ?? 0) > 0 || mappedStaticReceiver === receiverClassName;
     const receiverMemberKind = receiverIsClassObject ? "static" : "instance";
+    if (receiverIsClassObject && tryCompileCallableStaticField(ctx, fctx, expr, propAccess, fullName))
+      return { kind: "externref" };
     const hasReceiverMember = receiverIsClassObject
       ? ctx.staticMethodSet.has(fullName)
       : ctx.classMethodSet.has(fullName);

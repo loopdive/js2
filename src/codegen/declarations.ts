@@ -110,7 +110,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { transferredArrayLikeResultNeedsExternref } from "./statements/variables.js";
+import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -188,7 +188,7 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
-import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "./analysis/proxy-binding-escape.js";
+import * as proxy from "./analysis/proxy-binding-escape.js";
 import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
@@ -3171,8 +3171,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (isDirectProxyConstruction(decl.initializer)) {
-      return !proxyModuleEscapeGateEnabled || !proxyBindingEscapesToCall(ctx, decl);
+    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+      return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
@@ -3275,7 +3275,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
-    if (transferredArrayLikeResultNeedsExternref(ctx, decl.initializer)) return { kind: "externref" };
+    if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
     // initializers can select either that externref or a compiled closure, so
@@ -3804,7 +3804,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ts.isClassExpression(declaration.initializer) &&
           (ctx.classExpressionStaticInitExprs.get(declaration.initializer)?.length ?? 0) > 0,
       );
-      if (hasNonClassDecl || hasClassExpressionStatics) {
+      if (hasNonClassDecl || hasClassExpressionStatics || proxy.variableStatementContainsPromiseSubclass(ctx, stmt)) {
         ctx.moduleInitStatements.push(stmt);
       }
       continue;

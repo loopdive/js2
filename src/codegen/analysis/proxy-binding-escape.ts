@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+export { variableStatementContainsPromiseSubclass } from "../expressions/promise-subclass.js";
 
 /** The two direct initializer shapes whose result carrier is Proxy-owned. */
 export function isDirectProxyConstruction(expression: ts.Expression): boolean {
@@ -178,4 +179,68 @@ export function proxyBindingEscapesToCall(ctx: CodegenContext, declaration: ts.V
   };
   visit(scope);
   return escapes;
+}
+
+/**
+ * Whether a binding is passed directly as the target of a Proxy in the same
+ * executable scope.
+ *
+ * ProxyConstructor is typed to return its target's structural type, but the
+ * runtime value is an externref Proxy carrier.  A target binding therefore
+ * has to stay on the dynamic object carrier too: a closed-struct slot would
+ * split the object from the Proxy's target and make later reads/writes miss
+ * the Proxy's MOP.  Keep this identity proof next to the escape analysis so
+ * module and function declaration paths use the same rule.
+ */
+export function proxyBindingIsTarget(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  const scope = enclosingExecutableOrSource(declaration);
+  if (scope === undefined) return false;
+
+  const unwrap = (expression: ts.Expression): ts.Expression => {
+    let current = expression;
+    while (current.parent !== undefined && isTransparentWrapperOf(current.parent, current)) {
+      current = current.parent as ts.Expression;
+    }
+    return current;
+  };
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    let target: ts.Expression | undefined;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
+      target = node.arguments?.[0];
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Proxy" &&
+      node.expression.name.text === "revocable"
+    ) {
+      target = node.arguments[0];
+    }
+    if (target !== undefined) {
+      const candidate = unwrap(target);
+      if (ts.isIdentifier(candidate) && ctx.oracle.valueDeclarationOf(candidate) === declaration) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  return found;
+}
+
+/** Tag direct Proxy results and target aliases for dynamic module storage. */
+export function proxyBindingNeedsExternref(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  const target = proxyBindingIsTarget(ctx, declaration);
+  const result =
+    declaration.initializer !== undefined &&
+    isDirectProxyConstruction(declaration.initializer) &&
+    !proxyBindingEscapesToCall(ctx, declaration);
+  if (target || result) ctx.externrefAccessorVars.add(declaration.name.text);
+  return target || result;
 }

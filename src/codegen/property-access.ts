@@ -2491,7 +2491,7 @@ export function compileOptionalPropertyAccess(
     elseResultType = { kind: "i32" };
   } else {
     // General struct field access: look up the struct type and field index
-    const structName = resolveStructName(ctx, tsObjType);
+    const structName = objType.kind === "externref" ? undefined : resolveStructName(ctx, tsObjType);
     if (structName) {
       const structTypeIdx = ctx.structMap.get(structName);
       const fields = ctx.structFields.get(structName);

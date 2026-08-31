@@ -64,7 +64,12 @@ import {
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
 import { declarationReadsStructuralObjectFromRealmGlobal } from "../analysis/realm-global-structural-carrier.js";
-import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "../analysis/proxy-binding-escape.js";
+import {
+  isDirectProxyConstruction,
+  proxyBindingEscapesToCall,
+  proxyBindingIsTarget,
+  proxyBindingNeedsExternref,
+} from "../analysis/proxy-binding-escape.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -75,6 +80,10 @@ import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
 import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import {
+  tryCompileClassExpressionBindingValue,
+  tryEmitPromiseSubclassClassExpressionValue,
+} from "../expressions/promise-subclass.js";
 
 /**
  * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
@@ -195,6 +204,10 @@ export function transferredArrayLikeResultNeedsExternref(
   };
   visit(receiver.getSourceFile());
   return !bailed && matchingWrite !== undefined;
+}
+
+export function proxyOrTransferredResultNeedsExternref(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  return proxyBindingNeedsExternref(ctx, decl) || transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
 }
 
 function symbolIsReadOnlyThroughLength(
@@ -1253,81 +1266,6 @@ function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
  * both host and standalone emit a Proxy externref, so both need the override.
  */
 /**
- * Does this binding become the target of a native Proxy in its lexical scope?
- * A Proxy can mutate that target through a trap or an absent-trap forward, so
- * later reads through any source alias must not be frozen into a direct
- * closed-struct field load. Keep the binding on the dynamic object carrier
- * from construction time; the Proxy and the alias then share one object rather
- * than copying into a shadow representation.
- */
-function bindingIsProxyTarget(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name)) return false;
-  const scope = findEnclosingFunctionOrSource(decl);
-  if (!scope) return false;
-
-  const unwrap = (expr: ts.Expression): ts.Expression => {
-    let current = expr;
-    while (
-      ts.isParenthesizedExpression(current) ||
-      ts.isAsExpression(current) ||
-      ts.isTypeAssertionExpression(current) ||
-      ts.isNonNullExpression(current) ||
-      ts.isSatisfiesExpression(current)
-    ) {
-      current = current.expression;
-    }
-    return current;
-  };
-
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    let target: ts.Expression | undefined;
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
-      target = node.arguments?.[0];
-    } else if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Proxy" &&
-      node.expression.name.text === "revocable"
-    ) {
-      target = node.arguments[0];
-    }
-    if (target) {
-      const candidate = unwrap(target);
-      if (ts.isIdentifier(candidate) && ctx.oracle.valueDeclarationOf(candidate) === decl) {
-        found = true;
-        return;
-      }
-    }
-    node.forEachChild(visit);
-  };
-  visit(scope);
-  return found;
-}
-
-function findEnclosingFunctionOrSource(node: ts.Node): ts.Node | undefined {
-  let n: ts.Node | undefined = node.parent;
-  while (n) {
-    if (
-      ts.isFunctionDeclaration(n) ||
-      ts.isFunctionExpression(n) ||
-      ts.isArrowFunction(n) ||
-      ts.isMethodDeclaration(n) ||
-      ts.isConstructorDeclaration(n) ||
-      ts.isGetAccessorDeclaration(n) ||
-      ts.isSetAccessorDeclaration(n) ||
-      ts.isSourceFile(n)
-    ) {
-      return n;
-    }
-    n = n.parent;
-  }
-  return undefined;
-}
-
-/**
  * (#1337/#4397) Check if an initializer is a `Function.prototype.bind` call.
  * Its result is an externref carrier rather than the target's closure struct:
  * a real JS bound-function exotic under the compatibility provider, or the
@@ -1556,19 +1494,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // callable → `proxy-class` broke when this was applied globally). Falls
       // back to `compileExpression` for a class with no singleton (externref-
       // backed builtin subclass) or an unresolved synthetic name.
-      let actualType: ValType | null;
-      const classInitializer = ts.isClassExpression(decl.initializer) ? decl.initializer : undefined;
-      const clsSynth = classInitializer ? ctx.anonClassExprNames.get(classInitializer) : undefined;
-      if (
-        classInitializer !== undefined &&
-        clsSynth !== undefined &&
-        ctx.classObjectGlobals?.has(clsSynth) &&
-        emitLazyClassObjectGet(ctx, fctx, clsSynth)
-      ) {
-        actualType = emitClassExpressionStaticsBeforeValue(ctx, fctx, classInitializer, { kind: "externref" });
-      } else {
-        actualType = compileExpression(ctx, fctx, decl.initializer);
-      }
+      const actualType =
+        tryCompileClassExpressionBindingValue(ctx, fctx, decl.initializer, { kind: "externref" }) ??
+        compileExpression(ctx, fctx, decl.initializer);
       const closureType = actualType ?? { kind: "externref" as const };
 
       // If this is a module-level variable, also store in the module global
@@ -1788,7 +1716,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       if (decl.initializer) {
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
-        compileExpression(ctx, fctx, decl.initializer, wasmType);
+        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined)
+          compileExpression(ctx, fctx, decl.initializer, wasmType);
         const initLocal = allocLocal(fctx, `__module_global_init_${fctx.locals.length}`, wasmType);
         fctx.body.push({ op: "local.set", index: initLocal });
         emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, initLocal, wasmType);
@@ -1970,8 +1899,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       isDirectProxyConstruction(decl.initializer) &&
       ts.isIdentifier(decl.name) &&
       !proxyBindingEscapesToCall(ctx, decl);
-    const isProxyTargetBinding = bindingIsProxyTarget(ctx, decl);
-    if (isProxyTargetBinding) ctx.externrefAccessorVars.add(name);
+    const isProxyTargetBinding = proxyBindingIsTarget(ctx, decl);
+    if (isProxyTargetBinding || initIsProxy) ctx.externrefAccessorVars.add(name);
     const initIsPropertyDescriptorResult = isPropertyDescriptorResultExpression(decl.initializer);
     const initIsTransferredArrayLikeResult = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
     // (#3037 CS1a) A spread-free, data-only object literal produced into an

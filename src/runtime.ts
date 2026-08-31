@@ -2369,17 +2369,14 @@ function _wrapVoidHostCallback(
  * (#860) Wrap a Wasm closure stored as a property value so JS callers can
  * invoke it. Unlike `_maybeWrapCallable`, the arity is not known from
  * context — a value-typed property doesn't say how the host will eventually
- * call it. We use `__is_closure` as the authoritative closure discriminator
- * (avoids wrapping vec wrappers, named structs, plain objects) and the
- * highest available `__call_fn_<arity>` export as the dispatcher.
+ * call it. We use `__is_closure` plus the highest available dispatcher.
  *
  * The `__call_fn_N` dispatcher (emitClosureCallExportN in codegen) iterates
  * closures of arity ≤ N; lower-arity closures see their extra args dropped
  * at the wasm-side dispatch arm. So wrapping with the max arity is safe and
  * forwards a reasonable arg count for any caller.
  *
- * Returns the value unchanged when it is not a closure, when callbackState
- * is unavailable, or when no `__call_fn_*` export was emitted.
+ * Returns unchanged when it is not a closure or no callback/export is available.
  */
 function _maybeWrapCallableUnknownArity(
   val: any,
@@ -2404,6 +2401,8 @@ function _maybeWrapCallableUnknownArity(
   } catch {
     return val;
   }
+  if (wsh.hasUserCallableSidecarProps(_wasmStructProps.get(val), _wasmStructAccessors.has(val)))
+    return _wrapCallableForHost(val, callbackState) ?? val;
   return _wrapWasmClosureUnknownArity(val, callbackState) ?? val;
 }
 
@@ -5662,7 +5661,7 @@ function _safeSet(
   // (#1712) A vec read through `_wrapForHost` may return its real-array Proxy
   // view. Numeric writes must target the canonical raw WasmGC vec so the
   // module's element-set dispatcher can mutate the backing array.
-  obj = _unwrapForHost(obj);
+  obj = (_wasmClosureWrapperTargets.has(obj) && Reflect.set(obj, key, val, obj), _unwrapForHost(obj));
   const accessorKey = typeof key === "number" && Number.isInteger(key) ? String(key) : key;
   const scAccessor = typeof accessorKey === "string" ? _wasmStructProps.get(obj) : undefined;
   if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
@@ -9170,7 +9169,7 @@ function _buildProxyBridgeHandler(
       const nativeTarget = args[0];
       if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
       else if (substituteTarget && args.length > 0) args[0] = rawTarget;
-      const result = (callable as Function).apply(handler, args);
+      const result = wsh.ownKeysResult(name, callable.apply(handler, args), callbackState, _materializeIterable);
       return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
@@ -9254,7 +9253,7 @@ function _buildLazyProxyBridgeHandler(
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
       }
-      const result = (callable as Function).apply(handler, args);
+      const result = wsh.ownKeysResult(name, callable.apply(handler, args), callbackState, _materializeIterable);
       return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
