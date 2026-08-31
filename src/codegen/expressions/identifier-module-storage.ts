@@ -123,9 +123,22 @@ export function emitLiveIdentifierGlobalRead(
   return global.type;
 }
 
+/** Resolve a destructured binding element to its owning variable declaration. */
+function enclosingVariableDeclaration(declaration: ts.Declaration): ts.VariableDeclaration | undefined {
+  let current: ts.Node | undefined = declaration;
+  while (current !== undefined && !ts.isVariableDeclaration(current)) {
+    if (!ts.isBindingElement(current) && !ts.isObjectBindingPattern(current) && !ts.isArrayBindingPattern(current)) {
+      return undefined;
+    }
+    current = current.parent;
+  }
+  return current;
+}
+
 function isCurrentSourceRuntimeVariable(declaration: ts.Declaration, sourceFile: ts.SourceFile): boolean {
-  if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return false;
-  const list = declaration.parent;
+  const variable = enclosingVariableDeclaration(declaration);
+  if (variable === undefined) return false;
+  const list = variable.parent;
   if (!ts.isVariableDeclarationList(list) || declaration.getSourceFile() !== sourceFile) return false;
   const statement = list.parent;
   if ((list.flags & LEXICAL_FLAGS) !== 0) {
@@ -163,6 +176,55 @@ function resolvedDeclaration(
   );
 }
 
+function isTopLevelLexicalOwner(ctx: CodegenContext, id: ts.Identifier, declaration: ts.Declaration): boolean {
+  const variable = enclosingVariableDeclaration(declaration);
+  const sourceFile = declaration.getSourceFile();
+  return (
+    (!ctx.sourceIsModule || sourceFile === id.getSourceFile()) &&
+    variable !== undefined &&
+    isCurrentSourceRuntimeVariable(declaration, sourceFile) &&
+    ts.isVariableDeclarationList(variable.parent) &&
+    (variable.parent.flags & LEXICAL_FLAGS) !== 0
+  );
+}
+
+function rejectsModuleTdzOwnership(ctx: CodegenContext, id: ts.Identifier, declaration: ts.Declaration): boolean {
+  return (
+    ts.isImportSpecifier(declaration) ||
+    ts.isImportClause(declaration) ||
+    ts.isNamespaceImport(declaration) ||
+    ts.isImportEqualsDeclaration(declaration) ||
+    declaration.getSourceFile().isDeclarationFile ||
+    (ctx.sourceIsModule && declaration.getSourceFile() !== id.getSourceFile())
+  );
+}
+
+/** Resolve the exact pattern sidecar or a proven same-source direct lexical. */
+export function moduleTdzGlobalIndexForIdentifier(ctx: CodegenContext, id: ts.Identifier): number | undefined {
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  if (declaration !== undefined) {
+    if (rejectsModuleTdzOwnership(ctx, id, declaration)) return undefined;
+    if (ts.isBindingElement(declaration)) {
+      // A pattern binding never consults graph-name state: another module may
+      // own an unrelated same-spelled lexical flag.
+      return isTopLevelLexicalOwner(ctx, id, declaration) ? ctx.modulePatternTdzGlobals.get(declaration) : undefined;
+    }
+    return ts.isVariableDeclaration(declaration) && isTopLevelLexicalOwner(ctx, id, declaration)
+      ? ctx.tdzGlobals.get(id.text)
+      : undefined;
+  }
+
+  // A checker query can be unresolved before a pattern declaration. Registration
+  // records a unique source-local leaf so this still reaches its exact flag.
+  const pattern = ctx.modulePatternTdzBindings.get(id.getSourceFile())?.get(id.text);
+  if (pattern !== undefined) return pattern === null ? undefined : ctx.modulePatternTdzGlobals.get(pattern);
+
+  // Preserve the established direct-lexical path only after proving ownership
+  // from the current source AST; never fall through to a graph-wide bare name.
+  const direct = directUnresolvedTopLevelVariable(ctx, id);
+  return direct !== undefined && isTopLevelLexicalOwner(ctx, id, direct) ? ctx.tdzGlobals.get(id.text) : undefined;
+}
+
 /** Resolve the flat compatibility map only for this source's runtime binding. */
 export function currentSourceModuleGlobalIndex(
   ctx: CodegenContext,
@@ -177,7 +239,20 @@ export function currentSourceModuleGlobalIndex(
   const sourceFile = id.getSourceFile();
   if (sourceFile.isDeclarationFile) return undefined;
   const declaration = resolvedDeclaration(ctx, id, allowUnresolvedTopLevelVariable);
-  if (!declaration || declaration.getSourceFile() !== sourceFile) return undefined;
+  if (!declaration) {
+    // Pattern leaves can be checker-unresolved before their declaration is
+    // emitted. The TDZ registration already records an exact source-local
+    // leaf for lexical patterns; use that identity to keep an assignment
+    // target in its module global instead of inventing a helper-local slot.
+    const pattern = ctx.modulePatternTdzBindings.get(sourceFile)?.get(id.text);
+    return pattern && pattern !== null && isCurrentSourceRuntimeVariable(pattern, sourceFile)
+      ? ctx.moduleGlobals.get(id.text)
+      : undefined;
+  }
+  if (declaration.getSourceFile() !== sourceFile) return undefined;
+  if (ts.isBindingElement(declaration) && isCurrentSourceRuntimeVariable(declaration, sourceFile)) {
+    return ctx.moduleGlobals.get(id.text);
+  }
   if (ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name) && declaration.name.text === id.text) {
     const projectedIdx = ctx.moduleGlobals.get(id.text);
     if (projectedIdx === undefined) return undefined;
@@ -213,15 +288,3 @@ export function currentSourceModuleGlobalIndex(
 }
 
 /** Exact same-source runtime top-level lexical identity. */
-export function identifierResolvesToCurrentTopLevelLexical(
-  ctx: CodegenContext,
-  id: ts.Identifier,
-  allowUnresolvedTopLevelVariable = false,
-): boolean {
-  const declaration = resolvedDeclaration(ctx, id, allowUnresolvedTopLevelVariable);
-  return (
-    declaration !== undefined &&
-    isCurrentSourceRuntimeVariable(declaration, id.getSourceFile()) &&
-    (declaration.parent.flags & LEXICAL_FLAGS) !== 0
-  );
-}

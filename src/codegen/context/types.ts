@@ -612,6 +612,13 @@ export interface FunctionContext {
   /** Function name */
   name: string;
   /**
+   * Physical module-init helper context. Its `name` intentionally remains
+   * `__module_init` so source lowering selects module-global semantics; this
+   * separate marker disables representations whose value lives only in Wasm
+   * locals and therefore cannot cross a helper call boundary.
+   */
+  moduleInitChunk?: boolean;
+  /**
    * Source-level function represented by this body.  Present only for
    * ECMAScript functions (not compiler/runtime helpers); used by the ES5
    * Function `caller` poison lowering to recognize a self-reference.
@@ -1412,6 +1419,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   useUsageInfer: boolean;
   /** Map from function name to its absolute index (imports + locals) */
   funcMap: Map<string, number>;
+  /** Exact compiler-owned private bodies in the module-init chunk call tree. */
+  moduleInitChunkHelperNames: Set<string>;
   /** Source-qualified realm builtins whose names may also occur in package
    * modules. Kept separate from funcMap so a user function named parseInt does
    * not steal a call through an ambient-builtin alias. */
@@ -4221,6 +4230,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   strictNoHostImports: boolean;
   /** Map from let/const module global variable name → TDZ flag global index */
   tdzGlobals: Map<string, number>;
+  /** Exact TDZ flag globals for top-level destructuring binding leaves. */
+  modulePatternTdzGlobals: Map<ts.BindingElement, number>;
+  /** Source-local names for exact top-level destructuring TDZ sidecars. */
+  modulePatternTdzBindings: Map<ts.SourceFile, Map<string, ts.BindingElement | null>>;
   /** Set of let/const module global variable names */
   tdzLetConstNames: Set<string>;
   /** Compile-time property descriptor flags */

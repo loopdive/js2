@@ -40,7 +40,7 @@ import {
   isShadowStaticArmFor,
   withShadowReadSuppressed,
 } from "../fn-global-shadow.js"; // (#4630 / #4648)
-import { emitTdzCheck, emitTdzCheckAtGlobal } from "../statements.js";
+import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -80,6 +80,7 @@ import {
 } from "./promise-subclass.js";
 import {
   emitLiveIdentifierGlobalRead,
+  moduleTdzGlobalIndexForIdentifier,
   tryEmitAmbientRegistryCollisionRead,
   tryEmitExplicitHostAmbientValueRead,
 } from "./identifier-module-storage.js";
@@ -830,18 +831,21 @@ function shouldUseRuntimeEvalGlobalLexicalRead(
   );
 }
 
+function emitModuleTdzReadCheck(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): void {
+  const flagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
+  if (flagIdx === undefined) return;
+  const tdzResult = analyzeTdzAccess(ctx, id);
+  if (tdzResult === "check") emitTdzCheckAtGlobal(ctx, fctx, flagIdx, id.text, noJsHost(ctx));
+  else if (tdzResult === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
+}
+
 function compileCapturedGlobalRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
   name: string,
 ): ValType {
-  const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-  if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-  } else if (tdzResult === "throw") {
-    emitStaticTdzThrow(ctx, fctx, id.text);
-  }
+  emitModuleTdzReadCheck(ctx, fctx, id);
   const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
   if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
     fctx.body.push({ op: "ref.as_non_null" });
@@ -1398,12 +1402,7 @@ function compileIdentifierCore(
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
   const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     return emitCapturedBoxGlobalRead(ctx, fctx, capturedBox);
   }
 
@@ -1428,12 +1427,7 @@ function compileIdentifierCore(
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {

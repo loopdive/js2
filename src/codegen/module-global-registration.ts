@@ -239,6 +239,32 @@ export function registerModuleTdzGlobal(
   }
 }
 
+/** Allocate an exact TDZ sidecar for one top-level destructuring leaf. */
+export function registerModulePatternTdzGlobal(ctx: CodegenContext, binding: ts.BindingElement): void {
+  if (!ctx.modulePatternTdzGlobals.has(binding)) {
+    let suffix = ctx.modulePatternTdzGlobals.size;
+    let name = `__tdz_pattern_${suffix}`;
+    while (ctx.mod.globals.some((global) => global.name === name)) name = `__tdz_pattern_${++suffix}`;
+    const flagGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name,
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+    ctx.modulePatternTdzGlobals.set(binding, flagGlobalIdx);
+  }
+  if (!ts.isIdentifier(binding.name)) return;
+  const sourceFile = binding.getSourceFile();
+  let bindings = ctx.modulePatternTdzBindings.get(sourceFile);
+  if (!bindings) {
+    bindings = new Map();
+    ctx.modulePatternTdzBindings.set(sourceFile, bindings);
+  }
+  const previous = bindings.get(binding.name.text);
+  bindings.set(binding.name.text, previous === undefined || previous === binding ? binding : null);
+}
+
 /**
  * Materialize the top-level TDZ globals that both body emitters reference.
  * Safe to call before IR preparation and again from the direct declaration

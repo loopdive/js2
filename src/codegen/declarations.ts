@@ -168,11 +168,18 @@ import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneo
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
+import {
+  MODULE_INIT_CHUNK_MAX_ENTRIES,
+  moduleInitChunksRequired,
+  planModuleInitChunks,
+  reserveModuleInitChunkHelperName,
+} from "./module-init-chunks.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import {
   prepareModuleTdzGlobals,
   registerModuleGlobal,
+  registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
 } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -3081,7 +3088,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
   // Fourth: collect module-level variable declarations as wasm globals
   /** Register binding names from destructuring patterns as module globals. */
-  function registerBindingNames(pattern: ts.BindingPattern): void {
+  function registerBindingNames(pattern: ts.BindingPattern, lexical = false): void {
     for (const element of pattern.elements) {
       if (ts.isOmittedExpression(element)) continue;
       if (ts.isIdentifier(element.name)) {
@@ -3095,8 +3102,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // mismatched global.set.
         const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
         registerModuleGlobal(ctx, element.name.text, wasmType);
+        if (lexical && ctx.moduleGlobals.has(element.name.text)) registerModulePatternTdzGlobal(ctx, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-        registerBindingNames(element.name);
+        registerBindingNames(element.name, lexical);
       }
     }
   }
@@ -3756,7 +3764,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.tdzLetConstNames.add(decl.name.text);
           }
         } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
-          registerBindingNames(decl.name);
+          registerBindingNames(decl.name, isLetOrConst);
         }
       }
       // Collect the statement for init compilation. A class-expression binding
@@ -4329,6 +4337,11 @@ export function moduleInitHasTopLevelAwait(statements: readonly ts.Statement[]):
 }
 
 type ModuleStaticInitEntry = CodegenContext["staticInitExprs"][number];
+
+/** One complete source-order unit of synchronous module evaluation. */
+type OrderedModuleInitEntry =
+  | { readonly kind: "static"; readonly node: ts.Node; readonly entry: ModuleStaticInitEntry }
+  | { readonly kind: "statement"; readonly node: ts.Statement; readonly statement: ts.Statement };
 
 function moduleStaticInitNode(entry: ModuleStaticInitEntry): ts.Node | undefined {
   return entry.staticBlock ?? entry.initializer;
@@ -5457,7 +5470,7 @@ export function compileDeclarations(
   //   - no `__tdz_<name>` flag global is allocated below,
   //   - `emitTdzInit` becomes a no-op (no `i32.const 1; global.set` writes
   //     in `__module_init`),
-  //   - `emitTdzCheck` becomes a no-op (no runtime check at reads).
+  //   - identifier reads find no flag and emit no runtime check.
   // Genuinely dynamic / ambiguous cases (e.g. function declarations that
   // could be called before the variable's initializer runs) are preserved
   // because `analyzeTdzAccess` conservatively returns "check" for them.
@@ -5572,7 +5585,138 @@ export function compileDeclarations(
     return groups.find((group) => group.block === stmt.parent);
   }
 
-  function compileModuleInitBody(targetFctx?: FunctionContext, includeModuleStatements = true): FunctionContext {
+  /**
+   * Class evaluation and ordinary module statements share one source-order
+   * timeline. The two collectors retain separate payloads, so merge them by
+   * linked-source ordinal and AST position before emitting `__module_init`.
+   * This is observable whenever a static field reads an earlier module binding
+   * (or a later statement reads the static field), and across files because
+   * dependencies must finish evaluation before their importers.
+   */
+  function orderedModuleInitEntries(): OrderedModuleInitEntry[] {
+    const orderedInitEntries: OrderedModuleInitEntry[] = [];
+    for (const entry of ctx.staticInitExprs) {
+      if (!isGraphTimelineStaticEntry(entry)) continue;
+      const node = moduleStaticInitNode(entry);
+      if (node) orderedInitEntries.push({ kind: "static", node, entry });
+    }
+    for (const statement of ctx.moduleInitStatements) {
+      orderedInitEntries.push({ kind: "statement", node: statement, statement });
+    }
+    orderedInitEntries.sort((left, right) => {
+      const sourceDelta =
+        moduleInitSourceOrdinal(ctx, left.node.getSourceFile()) -
+        moduleInitSourceOrdinal(ctx, right.node.getSourceFile());
+      if (sourceDelta !== 0) return sourceDelta;
+      const positionDelta = left.node.pos - right.node.pos;
+      if (positionDelta !== 0) return positionDelta;
+      if (left.kind === right.kind) return 0;
+      return left.kind === "statement" ? -1 : 1;
+    });
+    return orderedInitEntries;
+  }
+
+  /**
+   * Explicit-resource-management disposal is scoped to the complete module
+   * evaluation, not merely to the source statement which creates the resource.
+   * Its lowering is allowed to use FunctionContext-local bookkeeping, so do
+   * not split a module-scope `using`/`await using` declaration until it has an
+   * explicit cross-helper disposal protocol. Nested uses remain inside their
+   * enclosing complete entry and therefore do not cross this boundary.
+   */
+  function hasModuleScopeUsingEntry(entries: readonly OrderedModuleInitEntry[]): boolean {
+    return entries.some(
+      (entry) =>
+        entry.kind === "statement" &&
+        ts.isVariableStatement(entry.statement) &&
+        // `AwaitUsing` includes the `Const` bit in TypeScript's NodeFlags;
+        // `Using` is the shared resource-management bit for both forms.
+        (entry.statement.declarationList.flags & ts.NodeFlags.Using) !== 0 &&
+        (ts.isSourceFile(entry.statement.parent) || ts.isModuleBlock(entry.statement.parent)),
+    );
+  }
+
+  /** Compile one complete top-level entry without changing its source order. */
+  function compileOrderedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
+    if (initEntry.kind === "static") {
+      emitModuleStaticInitialization(ctx, fctx, initEntry.entry);
+      return;
+    }
+
+    const group = runtimeModuleGroupForStatement(initEntry.statement);
+    if (group) {
+      withRuntimeModuleBindings(ctx, group, exactRuntimeModuleFunctionEntries(ctx, group), () => {
+        compileStatement(ctx, fctx, initEntry.statement);
+      });
+    } else {
+      compileStatement(ctx, fctx, initEntry.statement);
+    }
+  }
+
+  /**
+   * Deliberately retain the compile-time `__module_init` identity for every
+   * chunk. Several lowering paths use that name to select top-level/global
+   * semantics; only the materialized Wasm helper receives a private name.
+   */
+  function createModuleInitFunctionContext(moduleInitChunk = false): FunctionContext {
+    return {
+      name: "__module_init",
+      ...(moduleInitChunk ? { moduleInitChunk: true } : {}),
+      params: [],
+      locals: [],
+      localMap: new Map(),
+      returnType: null,
+      body: [],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+  }
+
+  /**
+   * Keep the public initializer a compact dispatcher even for a graph with so
+   * many chunks that one direct call per chunk would itself become a large
+   * Cranelift body. Every intermediate node stays private and `[] -> []`.
+   */
+  function appendModuleInitChunkDispatch(
+    initFctx: FunctionContext,
+    initialHandles: readonly FuncHandle[],
+    helperTypeIdx: number,
+  ): void {
+    let handles = [...initialHandles];
+    let level = 0;
+    let ordinal = 0;
+    while (handles.length > MODULE_INIT_CHUNK_MAX_ENTRIES) {
+      const nextLevel: FuncHandle[] = [];
+      for (let start = 0; start < handles.length; start += MODULE_INIT_CHUNK_MAX_ENTRIES) {
+        const body: Instr[] = handles
+          .slice(start, start + MODULE_INIT_CHUNK_MAX_ENTRIES)
+          .map((funcIdx) => ({ op: "call", funcIdx }));
+        // Build the full body before minting the handle. This keeps the helper
+        // safe even if a future dispatch-body extension emits dependencies.
+        const funcIdx = mintDefinedFunc(ctx);
+        pushDefinedFunc(ctx, funcIdx, {
+          name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal++}`),
+          typeIdx: helperTypeIdx,
+          locals: [],
+          body,
+          exported: false,
+        });
+        nextLevel.push(funcIdx);
+      }
+      handles = nextLevel;
+      level++;
+    }
+    for (const funcIdx of handles) initFctx.body.push({ op: "call", funcIdx });
+  }
+
+  function compileModuleInitBody(
+    targetFctx?: FunctionContext,
+    includeModuleStatements = true,
+    chunkModuleInitEntries = false,
+  ): FunctionContext {
     ctx.irBodyRouteAuditSession?.recordRoot("compileModuleInitBody", "__module_init", sourceFile);
     if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
       throw new Error("injected direct module-init body poison");
@@ -5589,19 +5733,7 @@ export function compileDeclarations(
     ctx.capturedGlobalsWidened.clear();
     ctx.capturedBoxGlobals?.clear();
     ctx.capturedGlobalsOwner?.clear();
-    const initFctx: FunctionContext = targetFctx ?? {
-      name: "__module_init",
-      params: [],
-      locals: [],
-      localMap: new Map(),
-      returnType: null,
-      body: [],
-      blockDepth: 0,
-      breakStack: [],
-      continueStack: [],
-      labelMap: new Map(),
-      savedBodies: [],
-    };
+    const initFctx: FunctionContext = targetFctx ?? createModuleInitFunctionContext();
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
 
@@ -5685,54 +5817,59 @@ export function compileDeclarations(
       return initFctx;
     }
 
-    // Class evaluation and ordinary module statements share one source-order
-    // timeline. The two collectors retain separate payloads, so merge them by
-    // linked-source ordinal and AST position before emitting `__module_init`.
-    // This is observable whenever a static field reads an earlier module
-    // binding (or a later statement reads the static field), and across files
-    // because dependencies must finish evaluation before their importers.
-    type OrderedInitEntry =
-      | { readonly kind: "static"; readonly node: ts.Node; readonly entry: ModuleStaticInitEntry }
-      | { readonly kind: "statement"; readonly node: ts.Statement; readonly statement: ts.Statement };
-    const orderedInitEntries: OrderedInitEntry[] = [];
-    for (const entry of ctx.staticInitExprs) {
-      if (!isGraphTimelineStaticEntry(entry)) continue;
-      const node = moduleStaticInitNode(entry);
-      if (node) orderedInitEntries.push({ kind: "static", node, entry });
-    }
-    for (const statement of ctx.moduleInitStatements) {
-      orderedInitEntries.push({ kind: "statement", node: statement, statement });
-    }
-    orderedInitEntries.sort((left, right) => {
-      const sourceDelta =
-        moduleInitSourceOrdinal(ctx, left.node.getSourceFile()) -
-        moduleInitSourceOrdinal(ctx, right.node.getSourceFile());
-      if (sourceDelta !== 0) return sourceDelta;
-      const positionDelta = left.node.pos - right.node.pos;
-      if (positionDelta !== 0) return positionDelta;
-      if (left.kind === right.kind) return 0;
-      return left.kind === "statement" ? -1 : 1;
-    });
+    const orderedInitEntries = orderedModuleInitEntries();
+    const chunks = chunkModuleInitEntries ? planModuleInitChunks(orderedInitEntries) : [];
+    if (chunks.length > 1) {
+      // While a chunk is the current compilation frame, the outer prelude and
+      // dispatcher are detached from `ctx.currentFunc`. Keep them live so late
+      // global/function index repairs still visit their already-emitted refs.
+      const outerBodyWasLive = ctx.liveBodies.has(initFctx.body);
+      if (!outerBodyWasLive) ctx.liveBodies.add(initFctx.body);
+      try {
+        const chunkHandles: FuncHandle[] = [];
+        let chunkTypeIdx: number | undefined;
+        let chunkOrdinal = 0;
+        for (const chunk of chunks) {
+          const chunkFctx = createModuleInitFunctionContext(true);
+          ctx.currentFunc = chunkFctx;
+          for (const initEntry of chunk) compileOrderedModuleInitEntry(chunkFctx, initEntry);
+          if (chunkFctx.body.length === 0) continue;
 
-    for (const initEntry of orderedInitEntries) {
-      if (initEntry.kind === "static") {
-        emitModuleStaticInitialization(ctx, initFctx, initEntry.entry);
-        continue;
+          // Dependencies are emitted while compiling the complete source
+          // entries above. Only then mint and push this helper's stable handle,
+          // so no late helper registration can steal its function slot.
+          chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
+          const funcIdx = mintDefinedFunc(ctx);
+          pushDefinedFunc(ctx, funcIdx, {
+            name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_${chunkOrdinal++}`),
+            typeIdx: chunkTypeIdx,
+            locals: chunkFctx.locals,
+            body: chunkFctx.body,
+            exported: false,
+          });
+          chunkHandles.push(funcIdx);
+        }
+        ctx.currentFunc = initFctx;
+        if (chunkTypeIdx !== undefined) appendModuleInitChunkDispatch(initFctx, chunkHandles, chunkTypeIdx);
+      } finally {
+        if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }
-
-      const group = runtimeModuleGroupForStatement(initEntry.statement);
-      if (group) {
-        withRuntimeModuleBindings(ctx, group, exactRuntimeModuleFunctionEntries(ctx, group), () => {
-          compileStatement(ctx, initFctx, initEntry.statement);
-        });
-      } else {
-        compileStatement(ctx, initFctx, initEntry.statement);
-      }
+    } else {
+      for (const initEntry of orderedInitEntries) compileOrderedModuleInitEntry(initFctx, initEntry);
     }
 
     ctx.currentFunc = previousFunc;
     return initFctx;
   }
+
+  // Pass 1 remains one body for closure/setup discovery. A large synchronous
+  // population needs an emitting pass 2 even when it happens to be call-free,
+  // because only that final pass materializes the private chunk helpers.
+  const orderedInitEntriesForChunking = orderedModuleInitEntries();
+  const moduleInitChunkingRequired =
+    !hasAsyncGraphInit &&
+    !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
+    moduleInitChunksRequired(orderedInitEntriesForChunking);
 
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
   // skipped only in `"skip"` mode, where an earlier source already ran it over
@@ -5936,6 +6073,7 @@ export function compileDeclarations(
     if (
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
+      moduleInitChunkingRequired ||
       !moduleInitPopulationIsCallFree(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
@@ -5943,7 +6081,7 @@ export function compileDeclarations(
       // defineProperty/freeze effects as pre-existing (see snapshot above).
       restorePropOrderState();
       compiledInitFctx = profilePhase("module-init-pass2", () => {
-        if (!hasAsyncGraphInit) return compileModuleInitBody();
+        if (!hasAsyncGraphInit) return compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
         return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, (resumeFctx) => {
           compileModuleInitBody(resumeFctx, false);
         }).fctx;

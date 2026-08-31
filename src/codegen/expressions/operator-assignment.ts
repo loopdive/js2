@@ -93,6 +93,7 @@ import {
   isNonWritableDataProperty,
   isStrictContext,
 } from "./assignment.js";
+import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
@@ -1856,20 +1857,6 @@ function tryCompileHostBigIntCompoundAssignment(
   return result === VOID_RESULT ? null : result;
 }
 
-function tryCompileConstCompoundAssignment(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  name: string,
-  right: ts.Expression,
-): ValType | undefined {
-  if (!fctx.constBindings?.has(name)) return undefined;
-  const rhsType = compileExpression(ctx, fctx, right);
-  if (rhsType) fctx.body.push({ op: "drop" });
-  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-  fctx.body.push({ op: "unreachable" });
-  return { kind: "f64" };
-}
-
 export function compileCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1916,8 +1903,7 @@ export function compileCompoundAssignment(
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  const constCompound = tryCompileConstCompoundAssignment(ctx, fctx, name, expr.right);
-  if (constCompound !== undefined) return constCompound;
+  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
 
   // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
   const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);

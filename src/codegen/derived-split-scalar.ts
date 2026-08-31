@@ -7,6 +7,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureNativeStringHelpers, flatStringType } from "./native-strings.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { emitTdzInit } from "./statements/tdz.js";
+import { isModuleInitChunkFunctionContext } from "./module-init-chunks.js";
 
 const splitTailLengthLocals = new WeakMap<FunctionContext, Map<ts.Declaration, number>>();
 
@@ -16,6 +17,7 @@ export function tryCompileSingleUnitSplitLengthBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (
     !ctx.nativeStrings ||
     ctx.anyStrTypeIdx < 0 ||

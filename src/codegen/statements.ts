@@ -78,7 +78,7 @@ export {
 export { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 export { emitArgumentsObject, hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 export { collectInstrs } from "./statements/shared.js";
-export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
+export { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 
 // ---------------------------------------------------------------------------
 // Dispatcher helpers
