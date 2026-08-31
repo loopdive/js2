@@ -155,3 +155,36 @@ invalidated by compiler changes):
 | `Object.getOwnPropertyNames(PlainDate.prototype).length` | 0 | 31 |
 | `new PlainDate(2020,3,4).toString()` | "2020-03-04" | "2020-03-04" |
 | `Temporal.Now.plainDateISO()` / `timeZoneId()` | throws | throws (#5221 family, unchanged) |
+
+Both moved rows are promoted into the harness SUPPORTED set
+(`protoMethodCall`, `protoMemberCount`) and asserted in
+`tests/issue-4628-temporal-global.test.ts` (11/11, fresh cache), so a
+regression is loud.
+
+### Regression runs
+
+One vitest process per file. Passing: issue-4628 (11), issue-5221 (19),
+issue-5222 (2), issue-5223 (9), issue-5237 (2), package-linking (21),
+provider-manifest (5), linker (13), issue-3451 (6), issue-3765 (4 + 18),
+issue-3782 (2), issue-3521 ×4 (4 + 35 + 19 + 22), issue-2928-e6-provider-cache
+(8), issue-2928-refusal-provider (3), 61 of 68 issue-3520 files.
+`equivalence-gate` 24 failing / 1718 passing / 24 known — no new regressions.
+
+Failing IDENTICALLY on base (each re-run with only `src/` reverted, same counts
+and same errors): issue-2928 (`ERR_IPC_CHANNEL_CLOSED`),
+issue-2928-direct-eval-state-pool (2), issue-2928-runtime-acorn (1),
+issue-2928-runtime-link (1), issue-3521-prepared-free-function-routing,
+issue-4260 (2), and 7 issue-3520 files (compiler-support-abi,
+imported-global-abi, lifted-program-abi, monomorph-program-abi,
+program-abi-type-remap, support-callable-abi, type-class-abi). The dispatch
+brief predicted issue-3451 (3) would fail; it passes 6/6 on this base.
+
+### Other things reported, not fixed
+
+- `Object.getOwnPropertyNames(C.prototype)` omits `"constructor"` in BOTH
+  lanes, so the reduction's control pins the shared answer rather than the spec
+  one. General compiled-class gap.
+- `Temporal.Now.plainDateISO()` / `timeZoneId()` still throw "dereferencing a
+  null pointer" — the #5221 family, already knownGaps, untouched here.
+- Nothing was blocked by #5225 (consumer-literal args) or #5226 (error
+  identity); neither was reached.
