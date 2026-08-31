@@ -10921,11 +10921,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
  *      element kind (string/ref/bool/f32/i64) has no unbox arm → the store is a
  *      no-op for that carrier (same as before the fill).
  *
- * SCOPE: this is the IN-BOUNDS OVERWRITE half. GROWTH (`a[len] = v`,
- * `new Array()` then writes) needs the resizable-vec representation, which the
- * dynamic path does not drive — deferred (see #3190 "Grow" note). Standalone
- * only (gated on `ctx.externGetIdxReserved`, set when the trio was registered
- * with the standalone arms); host output untouched.
+ * SCOPE: in-bounds and canonical OOB writes; OOB checks inherited descriptors
+ * before resizable growth. Standalone only (gated on `ctx.externGetIdxReserved`,
+ * set when the trio was registered with the standalone arms); host untouched.
  */
 export function fillExternSetVecArms(ctx: CodegenContext): void {
   if (!ctx.externGetIdxReserved) return; // host owns the write path
@@ -11184,7 +11182,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
                       {
                         op: "if",
                         blockType: { kind: "empty" },
-                        then: growCarrierArms,
+                        then: [...buildNumericMissDecision(), ...growCarrierArms],
                         else: [
                           // The signed i32 conversion above cannot represent
                           // the high half of the canonical array-index domain.
@@ -11212,11 +11210,10 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
                       },
                     ],
             },
-            // NUMERIC key on a vec: handled here terminally — in-bounds stored
-            // above (each carrier arm returns), OOB/grow/unsupported kind stays
-            // the deferred no-op (#3190 "Grow" note). Never reaches the bag:
-            // numeric keys are vec ELEMENTS, and bagging them would be
-            // incoherent with `__extern_get_idx` element reads.
+            // NUMERIC key on a vec: in-bounds values store; canonical OOB checks
+            // inherited descriptors before growth. Unsupported/non-index keys
+            // are no-ops and never reach the bag: numeric keys are vec ELEMENTS
+            // whose reads use `__extern_get_idx`.
             { op: "return" },
           ],
         },

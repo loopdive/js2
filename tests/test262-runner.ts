@@ -13,12 +13,12 @@ import { join, relative } from "path";
 import { createHash } from "crypto";
 import { tmpdir } from "node:os";
 import { createContext, runInContext } from "node:vm";
-import { compile } from "../src/index.js";
+import { compile, compileMulti } from "../src/index.js";
 // (#5248) The compile-once `Temporal` provider (#4628). Source ACQUISITION is
 // not imported here — `tests/dogfood/setup-temporal-polyfill.mjs` owns the
 // pinned-tarball contract and is loaded lazily, only when a Temporal row runs.
 import { buildTemporalProvider, compileWithTemporalGlobal, type TemporalProvider } from "../src/temporal-provider.js";
-import { buildImports } from "../src/runtime.js";
+import { buildImports, markCoherentBuiltinRealm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
 // (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
@@ -30,6 +30,7 @@ import {
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-shared.ts. This lane used to instantiate the binary
 // directly, so a standalone module linking `js2wasm:runtime-eval` died at
@@ -151,6 +152,24 @@ function declaresTopLevelDone(body: string): boolean {
 /** A fresh realm for literal-harness execution; never reused across variants. */
 export function createTestSandbox(consoleProxy?: Console, exposeDone = true): Record<string, any> {
   return _buildFreshSandbox(consoleProxy, exposeDone);
+}
+
+/**
+ * Test262 property-descriptor rows are allowed to install a new intrinsic
+ * property without specifying `configurable: true`. Such a property cannot be
+ * removed by the in-process host snapshot, so the sloppy variant would poison
+ * the strict rerun before it starts. Run those rows with one coherent fresh
+ * VM realm for both the built-in globals and their constructed values.
+ *
+ * Keep this source classifier deliberately narrow: ordinary product/runtime
+ * builds retain the host-realm design, and descriptor checks on user objects
+ * do not need a separate intrinsic realm.
+ */
+const HOST_INTRINSIC_DEFINE_RE =
+  /\b(?:Object|Reflect)\.(?:defineProperty|defineProperties)\s*\(\s*(?:Object|Array|String|Number|Boolean|Function|RegExp|Map|Set|WeakMap|WeakSet|Promise|Date|ArrayBuffer|DataView|Int8Array|Uint8Array|Uint8ClampedArray|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)(?:\.prototype)?\b/;
+
+function requiresCoherentBuiltinRealm(source: string): boolean {
+  return HOST_INTRINSIC_DEFINE_RE.test(source);
 }
 
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
@@ -4317,7 +4336,6 @@ async function runOriginalHarnessVariant(
       // reads the ORIGINAL assembly, so its line numbers never shift.
       const compileOptions = {
         allowJs: true,
-        fileName,
         sourceMap: true,
         emitWat: false,
         skipSemanticDiagnostics: true,
@@ -4340,11 +4358,27 @@ async function runOriginalHarnessVariant(
         // explicitly or those two channels vanish and the conformance numbers
         // collapse onto opaque labels. This is the harness opt-in the flag was
         // designed around; do not drop it to "shrink the test binaries".
-        hostBridge: "always" as const,
-      };
-      result = temporal
-        ? await compileWithTemporalGlobal(variant.source, temporal, compileOptions)
-        : await compile(variant.source, compileOptions);
+        hostBridge: "always",
+      } as const;
+      // Test262's module-namespace cases intentionally self-import the entry
+      // (`import * as ns from './<own-file>.js'`) to obtain that module's
+      // namespace object. The ordinary single-source compiler has no module
+      // record for the edge, so the literal harness compile leaves `ns`
+      // unresolved and the row fails as `ns is not defined`. Keep the source
+      // byte-for-byte intact, but give this narrowly recognized graph shape
+      // its pinned virtual entry through compileMulti. This mirrors the
+      // sharded fixture path without changing any non-namespace test.
+      const relTestPath = relative(join(TEST262_ROOT, "test"), fileName).replaceAll("\\", "/");
+      const isModuleNamespaceTest = relTestPath.startsWith("language/module-code/namespace/");
+      const selfModuleImport = isModuleNamespaceTest && hasSelfModuleImport(relTestPath, originalSource);
+      if (temporal) {
+        result = await compileWithTemporalGlobal(variant.source, temporal, { ...compileOptions, fileName });
+      } else if (selfModuleImport) {
+        const entryFile = `./${relTestPath}`;
+        result = await compileMulti({ [entryFile]: variant.source }, entryFile, compileOptions);
+      } else {
+        result = await compile(variant.source, { ...compileOptions, fileName });
+      }
     } catch (error) {
       compileMs = performance.now() - compileStarted;
       const detail = originalHarnessThrownText(error);
@@ -4419,6 +4453,8 @@ async function runOriginalHarnessVariant(
         consoleProxy,
         meta.flags?.includes("async") === true || declaresTopLevelDone(originalSource),
       );
+      const coherentBuiltinRealm = requiresCoherentBuiltinRealm(originalSource);
+      if (coherentBuiltinRealm) markCoherentBuiltinRealm(sandbox);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
       }) as any;

@@ -1306,9 +1306,9 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         [{ kind: "externref" }],
       );
       if (gopdIdx === undefined) return null;
-      closureFctx.body.push({ op: "local.get", index: 1 });
-      closureFctx.body.push({ op: "local.get", index: 2 });
-      closureFctx.body.push({ op: "call", funcIdx: gopdIdx });
+      flushLateImportShifts(ctx, closureFctx);
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertyDescriptor") ?? gopdIdx });
     } else if (key === "Object.hasOwn") {
       const hasOwnIdx = ensureLateImport(
         ctx,

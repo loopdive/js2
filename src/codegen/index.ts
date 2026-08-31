@@ -11963,13 +11963,12 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // program resolves byte-identically.
     const builtinSymName = symbolShadowsBuiltinGlobal(sym) ? undefined : sym?.name;
 
-    // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
-    // is a TS-only modifier with no runtime representation. Without this, a
-    // ReadonlyArray-typed struct field falls through to the anonymous-struct /
-    // externref path and mismatches the vec the array literal builds, trapping
-    // on indexed read (#1748).
+    // `readonly T[]` / `ReadonlyArray<T>` lower to `T[]`; otherwise fields fall
+    // through to a mismatched anonymous struct (#1748).
+    // Match-result subtypes retain their specialized fields and carriers.
     const inheritedArrayElement =
-      builtinSymName === "Array" || builtinSymName === "ReadonlyArray"
+      ["Array", "ReadonlyArray", "RegExpIndicesArray"].includes(builtinSymName ?? "") ||
+      (!ctx.nativeStrings && (sym?.name === "RegExpExecArray" || sym?.name === "RegExpMatchArray"))
         ? undefined
         : inheritedArrayElementType(ctx.checker, tsType);
     if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray" || inheritedArrayElement) {
@@ -13988,7 +13987,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         // initializer's externref is ref.cast to it at runtime (cast fails →
         // `b.x` reads NaN/null). Mirrors statements/variables.ts; inlined to
         // avoid an index↔literals import cycle.
-        let initIsHostSpreadLiteral = false;
+        let initRequiresExternref = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
         if (
           !initIsAccessorLiteral &&
           decl.initializer !== undefined &&
@@ -13996,7 +13995,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer.properties.some((p) => ts.isSpreadAssignment(p))
         ) {
           const spreadCtxType = ctx.checker.getContextualType(decl.initializer);
-          initIsHostSpreadLiteral =
+          initRequiresExternref ||=
             !spreadCtxType ||
             (spreadCtxType.flags & ts.TypeFlags.Any) !== 0 ||
             (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
@@ -14034,7 +14033,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
-          initIsHostSpreadLiteral ||
+          initRequiresExternref ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
           initIsRedeclaredObjectIdentityLiteral ||

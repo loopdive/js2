@@ -475,11 +475,10 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
 
   shiftModuleGlobalExportIndices(ctx, threshold, delta);
-
-  function shiftMap<Key>(map: Map<Key, number>): void {
-    for (const [key, idx] of map) {
+  function shiftMap<Key>(map: Map<Key, number> | undefined): void {
+    for (const [key, idx] of map ?? []) {
       if (idx >= threshold) {
-        map.set(key, idx + delta);
+        map?.set(key, idx + delta);
       }
     }
   }
@@ -521,6 +520,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
   shiftMap(ctx.tdzGlobals);
   shiftMap(ctx.modulePatternTdzGlobals);
+  shiftMap(ctx.builtinFnSingletonGlobalByTypeIdx);
 
   // (#1749) The CPR proto-override records (Array.prototype[@@iterator] /
   // .values) root each lifted override closure in a module-defined `mut
