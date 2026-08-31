@@ -279,13 +279,28 @@ So two paths remain open, both #5244's, both now narrowed:
 Also unresolved and worth its own look: single-module `until(...)` throws a
 value with no `name` and no `message` (`THREW undefined: undefined`).
 
-## Validation of an unowned merge onto this branch (2026-08-31)
+## Validation of a coordinator stack-refresh onto this branch (2026-08-31)
 
-A merge landed on this branch that this lane did not make — the branch tip moved
-from `15201ee8ee` to `f538269ddd` between two of this lane's own pushes, under
-the shared git identity. dev-5242b observed the same on its branch and flagged
-it, which is how it was caught. Nothing was lost (`15201ee8ee` is an ancestor)
-and none of this change's own files were touched: the diff over
+The branch tip moved from `15201ee8ee` to `f538269ddd` between two of this
+lane's own pushes, under the shared git identity. **It has a known owner: the
+coordinator's shepherd loop.** All six chain PRs went `DIRTY` when main's docs
+merges landed, so the coordinator refreshed the whole stack in land order (the
+12:20 UTC cycle) — here, merging
+`origin/issue-5242-class-value-ctor-bridge @ bc979fb1d4` (which carries
+`origin/main` plus #5241's runtime work) into this branch, with the
+coordinator's committer stamp. The coordinator ran the fresh-cache harness
+(11/11), the branch's own tests and all gates including
+`LOC_GATE_BASE=origin/main` before pushing. No third party touches these
+branches.
+
+It was noticed because dev-5242b saw the same move on its branch and said so,
+and it was re-validated here before the provenance was known. **Re-validating a
+tip you did not move is the right default regardless of who moved it** — the
+cost is one test cycle, and the alternative is that a branch's numbers silently
+describe a tree that no longer exists.
+
+Nothing was lost (`15201ee8ee` is an ancestor) and none of this change's own
+files were touched: the diff over
 `src/codegen/type-coercion.ts`, `tests/issue-5243-*`,
 `tests/dogfood/temporal-global-harness.mjs`,
 `tests/issue-4628-temporal-global.test.ts` and this file is **empty**.
@@ -293,9 +308,9 @@ and none of this change's own files were touched: the diff over
 But it brought `origin/main` plus #5241's runtime work — `src/runtime.ts`
 (+97/−…), `src/runtime/class-method-host-bridge.ts`, and a NEW
 `src/runtime/object-create-class-instance.ts` — i.e. code this lane did not
-write, arriving after every number this lane had reported. **A merge nobody made
-is a merge whose validation nobody owns**, so it was re-validated here rather
-than assumed:
+write, arriving after every number this lane had reported. That makes the
+branch's measurements stale until re-taken, whoever moved the tip, so they were
+re-taken here rather than assumed:
 
 - `typecheck` clean.
 - All five ratchet gates green (LOC, function, coercion-sites, oracle, dead
