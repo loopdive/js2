@@ -918,17 +918,21 @@ edit the owned source or focused test; do not widen into those files.
 ### 2026-08-31 post-Math authoritative remeasurement
 
 The Math dependency is now satisfied on protected `origin/main` at exact merge
-`f08c7c62ce96ce4cbfe06d406f82de779cfd1f` (tree
+`f08c7c62ce96ce4cbfe8ec89dc7ec2e9a5d10dba` (tree
 `0f3770a0d69394edeb9f00f61159492c7c5cec32`). The exact retired environment
 identifier occurs 24 times across seven tracked files: six in this issue, one
 in #1235, one in #1574, three in #4522, one in sprint 47, three in
-`src/ir/propagate.ts`, and nine in `tests/issue-1231.test.ts`. The union of
-that identifier with `objectShapesEnabled` and `withoutObjectShapes` is
-exactly 36 occurrences across eight tracked files; the eighth file is
-`plan/agent-context/dev-1231.md`. These are the authoritative deletion and
-documentation-rewrite denominators for the implementation. An implementation
-that reports the earlier 25/eight historical count, drops the dev record, or
-leaves any literal spelling is stale and must fail review.
+`src/ir/propagate.ts`, and nine in `tests/issue-1231.test.ts`. The
+three-pattern union of that key with `objectShapesEnabled` and
+`withoutObjectShapes` contains 37 literal occurrences on 36 matching lines
+across eight tracked files at that base. This Sol plan itself adds seven
+literal helper-name references on seven lines, so the implementation starts
+from exactly 44 literal occurrences on 43 matching lines across the same eight
+files; the eighth file is `plan/agent-context/dev-1231.md`. These are the
+authoritative deletion and documentation-rewrite denominators. An
+implementation that reports the earlier 25/eight historical count, conflates
+matching lines with literal occurrences, drops the dev record, or leaves any
+literal spelling is stale and must fail review.
 
 The merged #4522/#3518 inventory now names exactly fifteen live
 `retire-at-R9` route/representation readers. This slice owns only the
