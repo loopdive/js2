@@ -228,6 +228,45 @@ export function isVoidType(type: ts.Type): boolean {
 }
 
 /**
+ * (#5221) True for a parameter whose ONLY type evidence is an `undefined`
+ * default — `function f(item, options = void 0)` / `= undefined`.
+ *
+ * The checker types such a parameter `undefined`, and `resolveWasmType` maps
+ * `void`/`undefined` to the scalar `i32` (correct for a RESULT, where it means
+ * "no value"). As a PARAMETER that lowering is unsound in both directions: it
+ * cannot carry any value a JS caller passes, and the slot does not even carry
+ * `undefined` faithfully — it reads back as the number `0`. Measured on
+ * `@js-temporal/polyfill`: `Temporal.PlainDate.from(item, opts)` reached
+ * `GetOptionsObject` as the number 0 and threw "Options parameter must be an
+ * object, not number", BOTH when options were omitted (spec: `undefined` ⇒ a
+ * fresh null-prototype object) and when a real object was passed.
+ *
+ * An undefined-only parameter type is an ABSENCE of information, not a scalar
+ * contract, so callers widen it to the undefined-capable `externref` domain —
+ * the same conclusion `parameterMayBeOmitted` reaches for `?`/JSDoc-optional
+ * parameters, which it deliberately does not extend to defaulted ones.
+ *
+ * Explicit annotations (`t: undefined`, a JSDoc type) are excluded: there the
+ * lowering was chosen, not inferred from a default. That also covers the native
+ * `type i32 = number` pins — `nativeTypeOfDeclaration` reads ONLY `decl.type`,
+ * so `param.type === undefined` already implies no native annotation, and
+ * callers do not need a separate guard for it.
+ *
+ * **Every site that lowers a parameter list MUST apply this identically** —
+ * class methods register their signature in one pass and build the function
+ * context in another, and a disagreement between the two is invalid Wasm, not
+ * a wrong value.
+ */
+export function isUndefinedDefaultOnlyParam(param: ts.ParameterDeclaration, paramType: ts.Type): boolean {
+  return (
+    param.initializer !== undefined &&
+    param.type === undefined &&
+    ts.getJSDocType(param) === undefined &&
+    isVoidType(paramType)
+  );
+}
+
+/**
  * Resolve the Wasm type of a destructuring binding element's local (#821).
  *
  * For `{ s: t = counter() }` where `counter()` returns `void`, TS infers `t`'s
