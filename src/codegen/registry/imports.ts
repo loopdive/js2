@@ -2176,8 +2176,18 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
 
 /** Register the iterator protocol host imports if not already registered */
 export function addIteratorImports(ctx: CodegenContext): void {
-  // Guard: only register once
-  if (ctx.funcMap.has("__iterator")) return;
+  // Guard: only register the common iterator imports once.  The throw
+  // operation was added after the original four-name bundle; retain the
+  // idempotent fast path while allowing an older caller that already installed
+  // `__iterator`/`__iterator_next` to acquire the new operation.
+  if (ctx.funcMap.has("__iterator")) {
+    if (!ctx.funcMap.has("__iterator_throw") && !ctx.standalone && !ctx.wasi) {
+      const ER: ValType = { kind: "externref" };
+      ensureLateImport(ctx, "__iterator_throw", [ER, ER], [{ kind: "i32" }, ER]);
+      flushLateImportShifts(ctx, ctx.currentFunc);
+    }
+    return;
+  }
 
   // (#2689) Add via the late-import batch (`ensureLateImport`) + an IMMEDIATE
   // `flushLateImportShifts`. This helper has TWO call contexts: the EARLY
@@ -2200,6 +2210,10 @@ export function addIteratorImports(ctx: CodegenContext): void {
   // see #1620 BLOCKED). The two primitives (i32 + externref) cross the JS↔Wasm
   // multi-value ABI cleanly, eliminating __iterator_done / __iterator_value.
   ensureLateImport(ctx, "__iterator_next", [ER], [{ kind: "i32" }, ER]);
+  // __iterator_throw: (externref, externref) → (i32 done, externref value) —
+  // forwards an abrupt completion to the delegate's `throw` method, applying
+  // IteratorClose when that method is absent (§14.4.14 / §27.5.3.7).
+  ensureLateImport(ctx, "__iterator_throw", [ER, ER], [{ kind: "i32" }, ER]);
   // __iterator_return: (externref) → void — calls iter.return() if it exists
   ensureLateImport(ctx, "__iterator_return", [ER], []);
   // __iterator_rest: (externref) → externref — drains a partially-consumed

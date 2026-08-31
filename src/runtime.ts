@@ -16865,6 +16865,94 @@ assert._isSameValue = isSameValue;
           // Multi-value ABI: return an iterable of [i32 done, externref value].
           return [done ? 1 : 0, value];
         };
+      if (name === "__iterator_throw")
+        // #1691 — yield*'s abrupt delegation arm. The import receives the
+        // already-materialized iterator object (the host lane does not wrap it
+        // in the native $__IterRec), forwards the original error to `throw`,
+        // and returns the IteratorResult as the same multi-value pair as
+        // __iterator_next. A missing throw method performs IteratorClose via
+        // return() and then raises the required TypeError.
+        return (iter: any, error: any): [number, any] => {
+          const exports = callbackState?.getExports();
+          // Keep protocol TypeErrors in the test/module realm. Host-lane
+          // catches compare `caught.constructor` with the sandbox's
+          // `TypeError`; constructing with the runtime realm's global would
+          // produce a distinct constructor identity at that boundary.
+          const throwTypeError = (message: string): never => {
+            const TypeErrorCtor = globalSandbox?.TypeError;
+            if (typeof TypeErrorCtor === "function") throw new TypeErrorCtor(message);
+            throw new TypeError(message);
+          };
+          const getMethod = (receiver: any, key: string): any => {
+            // Iterator records/results can be opaque WasmGC structs. Reading
+            // them through `receiver[key]` bypasses the runtime sidecar and
+            // generated field readers, so accessor-backed `throw`/`return`
+            // properties look absent in the host lane. `_safeGet` is the
+            // shared [[Get]] boundary for ordinary JS objects and opaque
+            // carriers, and preserves abrupt getter completions.
+            let method = _safeGet(receiver, key, callbackState);
+            if (method === undefined) method = _sidecarGet(receiver, key);
+            if (method === undefined) method = (exports as any)?.[`__sget_${key}`]?.(receiver);
+            return method;
+          };
+          const callMethod = (method: any, receiver: any, args: any[]): any => {
+            if (typeof method === "function") return method.apply(receiver, args);
+            if (_isWasmStruct(method)) {
+              if (args.length === 0) {
+                const callFn0 = (exports as any)?.__call_fn_0;
+                if (typeof callFn0 === "function") return callFn0(method);
+              } else if (args.length === 1) {
+                const callFnM1 = (exports as any)?.__call_fn_method_1;
+                if (typeof callFnM1 === "function") return callFnM1(receiver, method, args[0]);
+                const callFn1 = (exports as any)?.__call_fn_1;
+                if (typeof callFn1 === "function") return callFn1(method, args[0]);
+              }
+            }
+            throwTypeError("Iterator method is not callable");
+          };
+          const readResult = (result: any): [number, any] => {
+            if (result === null || (typeof result !== "object" && typeof result !== "function")) {
+              throwTypeError("Iterator result is not an object");
+            }
+            // A returned closed struct does not expose its fields through
+            // ordinary host property syntax, while an accessor in its sidecar
+            // must run before any generated static-field fallback. Read the
+            // completion flag through the same canonical boundary as method
+            // lookup; IteratorValue is intentionally lazy for a non-done
+            // throw result (§14.4.14).
+            const readField = (key: string): any => {
+              let value = _safeGet(result, key, callbackState);
+              if (value === undefined) value = (exports as any)?.[`__sget_${key}`]?.(result);
+              return value;
+            };
+            let done = readField("done");
+            if (done === undefined) done = _sidecarGet(result, "done");
+            if (done === undefined) done = (exports as any)?.__sget_done?.(result);
+            let value: any = undefined;
+            if (done) {
+              value = readField("value");
+              if (value === undefined) value = _sidecarGet(result, "value");
+              if (value === undefined) value = (exports as any)?.__sget_value?.(result);
+            }
+            return [done ? 1 : 0, value];
+          };
+
+          const throwMethod = getMethod(iter, "throw");
+          if (throwMethod !== undefined && throwMethod !== null) {
+            return readResult(callMethod(throwMethod, iter, [error]));
+          }
+
+          const returnMethod = getMethod(iter, "return");
+          if (returnMethod === undefined || returnMethod === null) {
+            throwTypeError("The iterator does not provide a 'throw' method");
+          }
+          const closeResult = callMethod(returnMethod, iter, []);
+          if (closeResult === null || (typeof closeResult !== "object" && typeof closeResult !== "function")) {
+            throwTypeError("Iterator result is not an object");
+          }
+          throwTypeError("The iterator does not provide a 'throw' method");
+          return [1, undefined];
+        };
       if (name === "__iterator_rest")
         return (iter: any) => {
           // #1052 — drain an already-partially-consumed iterator into an Array

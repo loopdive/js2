@@ -15,6 +15,20 @@ goal: spec-completeness
 parent: 1665
 assignee: ttraenkler/codex-es6-yieldstar-throw
 related: [1042, 1665, 2170, 2173, 3711]
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+  - src/codegen/iterator-native.ts
+  - src/codegen/registry/imports.ts
+  - src/runtime.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - src/codegen/generators-native.ts::compileState
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
+  - src/runtime.ts::resolveImport
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 ---
 # #1691 — yield* does not delegate throw()/return() to the inner iterator
 
@@ -222,6 +236,71 @@ bounded protocol-completion slice.
    gates. Record artifacts, counts, root cause, residual ownership, commit SHA,
    and handoff here.
 
+### Checkpoint evidence — 2026-08-27
+
+The exact candidate list is the 13 sorted files matching
+`language/expressions/yield/star-rhs-iter-thrw-` in the pinned Test262 checkout
+at `b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+- Host lane, maintained runner `20260827-134605`: **0/13 pass, 13/13 fail**;
+  all rows reached execution through the eager/native host helpers. The report
+  is `benchmarks/results/test262-report-20260827-134605.json`.
+- Standalone lane, maintained runner `20260827-134804`: **0/13 pass,
+  13/13 compile_error**. Every row was rejected by the generic `#680`
+  complex-native-generator-shape diagnostic before execution. The report is
+  `benchmarks/results/test262-standalone-report-20260827-134804.json`.
+  Both runs used LLVM 18, two workers, and the pinned QuickJS artifact
+  `/private/tmp/js2-quickjs-artifact-2e2d7736713beeda` (sha256 prefix
+  `073742801ba76347`).
+
+The first native protocol prototype reached execution after widening the
+post-hoc `Symbol.iterator` proof to the enclosing source file. Exact standalone
+runner `20260827-145641` measured **1/13 pass, 2/13 assertion failures, and
+10/13 wasm_compile failures** (the latter were resume branch-depth validation
+errors in `__gen_resume_g`; the two runtime residuals were delegate completion
+value/access-order cases). The generated report is
+`benchmarks/results/test262-standalone-report-20260827-145641.json`.
+
+The current checkpoint additionally fixes the shared resume branch-depth
+calculation and validates the formerly failing `thrw-call-non-obj.js` binary
+directly; the exact 13-row regression is intentionally still pending. The
+remaining semantic work is to preserve the delegate's non-done result identity
+while keeping `IteratorValue` lazy, and to complete the throw/return fallback
+and host-lane parity checks.
+
+The bounded exact regression was rerun after the branch-depth and native
+IteratorResult validation changes. Maintained runner `20260827-154226` (the
+standalone/QuickJS lane) records **7/13 pass, 6/13 assertion failures, 0
+compile errors, 0 timeouts, and 0 skips**. Maintained runner `20260827-154404`
+(the host/GC lane) records **3/13 pass, 10/13 assertion failures, 0 compile
+errors, 0 timeouts, and 0 skips**. Both reports contain exactly the 13 filtered
+candidate rows; the empty local shard files are harness noise and are not part
+of the denominator. The standalone failures now execute far enough to expose
+the remaining semantic cases (primitive result/error propagation, lazy
+`value`/getter observation, and return fallback); the host failures remain the
+pre-existing native-host parity residuals. The generated reports are
+`benchmarks/results/test262-standalone-report-20260827-154226.json` and
+`benchmarks/results/test262-report-20260827-154404.json`.
+
+The next bounded checkpoint (2026-08-27, after the shared value/getter/return
+seam changes) used the same pinned 13-row list and the maintained assembled
+harness in both lanes. Host is now **13/13 pass, 0 assertion failures, 0
+compile errors, 0 timeouts, and 0 skips**; the local JSONL is
+`/private/tmp/js2-1691-host-exact-after-accessors.jsonl`. Standalone is
+**9/13 pass, 4 assertion failures, 0 compile errors, 0 timeouts, and 0
+skips**; the local JSONL is
+`/private/tmp/js2-1691-standalone-exact-after-accessors.jsonl`.
+
+The four standalone residuals are `thrw-call-non-obj` (the delegated
+non-object result's `value` observation), `violation-no-rtrn` (missing
+`throw` getter/fallback count), `violation-rtrn-call-non-obj` (caught
+TypeError visibility), and `violation-rtrn-invoke` (missing `throw` getter
+count). The `res-done-no-value` and `res-value-err` accessor-order rows now
+pass in standalone. The host lane's corresponding four rows pass after
+routing module-global externref receivers through the dynamic property path
+and constructing protocol TypeErrors in the test realm. This checkpoint is
+committed separately from the remaining standalone work.
+
 ### Resume acceptance
 
 - The current candidate denominator and both-lane baseline are exact.
@@ -231,3 +310,42 @@ bounded protocol-completion slice.
   rewrite, runner exemption, or host-oracle dependency is introduced.
 - The upstream PR uses the exact Description/CLA template and remains draft
   until the scoped fix is complete, current-main based, CI-green, and mergeable.
+
+### Closeout handoff — 2026-08-27
+
+The final bounded rerun used the exact 13-row list above, the pinned Test262
+checkout, the maintained assembled harness, the pinned QuickJS artifact
+`/private/tmp/js2-quickjs-artifact-2e2d7736713beeda`, LLVM 18, and two workers.
+The fresh local JSONL artifacts are:
+
+- host: `/private/tmp/js2-1691-host-exact-closeout.jsonl` — **13/13 pass**;
+  0 assertion failures, 0 compile errors, 0 timeouts, 0 skips;
+- standalone: `/private/tmp/js2-1691-standalone-exact-closeout.jsonl` —
+  **9/13 pass**, 4 assertion failures, 0 compile errors, 0 timeouts, 0 skips.
+
+The four standalone residuals are:
+
+- `star-rhs-iter-thrw-thrw-call-non-obj.js`: the delegated primitive result
+  reaches the protocol path, but the caught native `TypeError` is observed as
+  `undefined`;
+- `star-rhs-iter-thrw-violation-no-rtrn.js`: the missing-`throw` getter/fallback
+  count remains `0`;
+- `star-rhs-iter-thrw-violation-rtrn-call-non-obj.js`: the caught native
+  `TypeError` is observed as `undefined`;
+- `star-rhs-iter-thrw-violation-rtrn-invoke.js`: the missing-`throw` getter
+  count remains `0`.
+
+The current source checkpoint is `66d8238c4` (`fix(generators): preserve
+yield-star throw protocol results ✓`), with a clean worktree. It is retained
+because it is materially above the prior 548b34de2 checkpoint: host **13/13**
+and standalone **9/13** on the exact cohort. No additional uncommitted
+experiment is being carried forward.
+
+The host lane is complete for this slice. The remaining standalone failures
+are handed off as a substrate follow-up: native `$Error_struct` payloads do not
+survive the standardized `try_table` catch binding in the generic standalone
+path, and the native plain-object fallback does not observe the accessor
+method reads in these two return-fallback rows. Fixing those requires a
+separate standalone exception/property-dispatch investigation; no further
+scope expansion is made here. Keep the implementation PR draft/hold until
+that follow-up (or an explicitly narrowed acceptance decision) is resolved.

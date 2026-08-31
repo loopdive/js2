@@ -4490,8 +4490,24 @@ export function finalizeStructAndDynamicMemberGet(
   // For externref objects (e.g. results of host calls like RegExp.exec()),
   // use __extern_get(obj, key) to dynamically read the property at runtime.
   {
+    // A module-level binding may retain an externref carrier even when the
+    // checker reports `undefined` (the common `var caught;` catch-observation
+    // shape). The checker-derived wasm type is then i32, and the old fallback
+    // treated `caught.constructor` as a constant null instead of reading the
+    // actual caught value. Recover the physical module-global type before
+    // choosing the dynamic property path; local bindings shadowing the same
+    // name remain governed by their local slot type below.
+    const moduleGlobalExternrefReceiver =
+      ts.isIdentifier(expr.expression) &&
+      (() => {
+        if (fctx.localMap.has(expr.expression.text)) return false;
+        const globalIdx = ctx.moduleGlobals.get(expr.expression.text);
+        if (globalIdx === undefined) return false;
+        return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
+      })();
     const objWasmType =
-      typeName && !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName)
+      moduleGlobalExternrefReceiver ||
+      (typeName && !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName))
         ? ({ kind: "externref" } as const)
         : resolveWasmType(ctx, objType);
     // (#4249) A direct-eval accessor assignment can widen a function-local
@@ -4507,6 +4523,7 @@ export function finalizeStructAndDynamicMemberGet(
       ts.isIdentifier(expr.expression) && ctx.evalAccessorObjectVars.has(expr.expression.text);
     const isExternObj =
       isEvalAccessorReceiver ||
+      moduleGlobalExternrefReceiver ||
       objWasmType.kind === "externref" ||
       // (#3033 Bug 2b) CHAINED dynamic read: the receiver is itself a purely-
       // undefined-typed member read off an externref receiver (`this.type` in

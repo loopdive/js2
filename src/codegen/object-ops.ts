@@ -19,7 +19,7 @@ import {
 } from "./closures.js";
 import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
-import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
@@ -28,7 +28,7 @@ import { resolveStructName } from "./expressions/misc.js";
 import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import type { InnerResult } from "./shared.js";
@@ -1453,7 +1453,6 @@ export function compileObjectDefineProperty(
   // `emitExternDefinePropertyNoValue` → `__defineProperty_accessor` path). Splitting
   // on this bit fixes the `const o:any` accessor-get bug without regressing the
   // statically struct-typed (class-instance) accessor path.
-  const receiverIsStaticStruct = structName !== undefined;
   // #4504: `C.prototype` is an inherited-descriptor owner, never the
   // instance's physical struct.  The historical static-struct accessor path
   // recorded `${C}_p` in `classAccessorSet`, which later made the closed-field
@@ -1509,6 +1508,27 @@ export function compileObjectDefineProperty(
       }
     }
   }
+
+  // `resolveStructName` describes the checker shape, but a host-mode object
+  // literal carrying a callable field can deliberately lower to an open
+  // `$Object`/externref carrier. In that case a descriptor accessor cannot use
+  // the closed-struct fast path: its generated `${struct}_get_<prop>` function
+  // is invisible to host [[Get]] (and to iterator protocol helpers). Recover
+  // the actual binding slot type so fallback-resolved shapes do not select the
+  // static accessor path when the value is carried as externref.
+  const receiverCarrierType = (() => {
+    if (!ts.isIdentifier(objArg)) return undefined;
+    const localIdx = fctx.localMap.get(objArg.text);
+    if (localIdx !== undefined) return getLocalType(fctx, localIdx);
+    const globalIdx = ctx.moduleGlobals.get(objArg.text);
+    if (globalIdx !== undefined) return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+    return undefined;
+  })();
+  const receiverIsStaticStruct =
+    structName !== undefined &&
+    (receiverCarrierType === undefined ||
+      receiverCarrierType.kind === "ref" ||
+      receiverCarrierType.kind === "ref_null");
 
   const structTypeIdx = structName ? ctx.structMap.get(structName) : undefined;
   const fields = structName ? ctx.structFields.get(structName) : undefined;
