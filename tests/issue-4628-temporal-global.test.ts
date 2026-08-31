@@ -213,6 +213,16 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // keys — its Proxy target is a bare `Object.create(null)` and only
     // `get`/`has` were trapped.
     expect(s.protoMemberCount.value).toBe(31);
+    // (#5239) Promoted out of knownGaps. The polyfill's `CreateTemporalDate`
+    // builds its instance as `Object.create(<class value>.prototype)`, which
+    // missed codegen's SYNTACTIC `Object.create(Foo.prototype)` fast path and
+    // produced a plain host object no compiled method could ever receive. On
+    // base these answered "[object Object]" and "undefined" — identically in a
+    // single-module control with no linker, which is what disproved the
+    // cross-module theory #5237 had been given.
+    expect(s.staticFrom.value).toBe("2026-08-30");
+    expect(s.staticFromField.value).toBe("2026");
+    expect(s.staticCompare.value).toBe(-1);
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the
@@ -226,7 +236,6 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
       "instanceToStringTag",
       "nowPlainDateISOCall",
       "nowTimeZoneIdCall",
-      "staticFrom",
     ]);
   });
 });
