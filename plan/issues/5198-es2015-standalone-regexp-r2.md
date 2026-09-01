@@ -351,6 +351,162 @@ lanes before any reconciled source change. A fresh runner measurement and the
 host result matrix will be appended below before a source owner is asked to
 resume implementation.
 
+## Result-carrier reconciliation audit (2026-09-01)
+
+### Current provenance and transfer boundary
+
+This reconciliation is isolated at
+`/Users/thomas/Code/js2/.codex-worktrees/issue-5198-carrier-reconcile-20260901`
+on `codex/5198-regexp-carrier-reconcile-7fff-20260901`, created directly from
+the current upstream `main` merge commit
+`7fffec534b44e344f9c2b2b310b346084eaa66b6`. The candidate's parent
+`1c0ac753d65a939d268560776eb0591e18ceb6b9` is an ancestor of that pinned
+base, so this is a clean-current-base reconciliation rather than a replay onto
+an unrelated history.
+
+The unmerged local branch `codex/latest-regexp-carrier-review` has exactly two
+candidate-only commits when compared with `upstream/main`: `+b85e2e51b05d75d5fbb40c4b3ab2623f2bdadea7`
+and `+c86c1d3b0591fcc007e0f3dad40a51988b19f82e`; its intermediate
+`4f7be4fb2d6bc33c27e830984fa36dbc94d1e208` is already upstream-equivalent.
+No remote ref contains `b85`. Ownership transferred here is **only** the
+RegExp result-carrier candidate `b85` for audit and possible narrow
+reapplication; it is not an adoption of the branch or its later destructuring
+work.
+
+The separate draft checkpoint remains read-only at
+`/Users/thomas/Code/js2/.codex-worktrees/issue-5198-regexp-exec-r2-20260901`
+on `codex/5198-regexp-exec-slice-b-checkpoint-20260901`
+(`8e078c61cadbd553b87e9b112ab7e628b068579a`). Its delta from this base is
+only this issue markdown and `tests/issue-5198-es2015-regexp-r2.test.ts`.
+It is now the upstream draft PR [#5393](https://github.com/loopdive/js2/pull/5393).
+Its eleven pre-loop Slice-B rows deliberately contain **1 pass / 10 fail** in
+standalone pending common RegExpExec work; they are controls and are not to be
+made green, changed, or claimed by this carrier reconciliation.
+
+### Exact `b85` audit and exclusions
+
+`b85` changes four production files only (`61` additions, `41` deletions) and
+contains no test, issue update, baseline artifact, or explicit Test262-row
+claim. Its commit message claims only three semantic hypotheses. Until a
+fresh current-base A/B proves a status change, it therefore has **zero credited
+ES2015 baseline non-pass rows** and is not independently mergeable for #5198.
+
+The reconciliation also found that the candidate has already landed through
+different history: upstream ancestor
+`9dcc873416983b4b763b4146ade92214376997c0` has the same subject/body and the
+same four-file carrier bundle (`60` additions, `40` deletions). The new helper
+and `regexp-standalone.ts` blobs are byte-identical between `b85` and `9dcc`;
+the corresponding `RegExpIndicesArray`, bare-`any`, and data-property anchors
+remain present in pinned `7fff` after later unrelated evolution of
+`index.ts`/`literals.ts`. Replaying `b85` would consequently duplicate already
+shipped behavior rather than create a valid current-base A/B.
+
+| Candidate file                             | Exact candidate change                                                                                                                                                              | Audit disposition                                                                                                                         |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/codegen/array-literal-any-carrier.ts` | Adds `bareAnyArrayLiteralNeedsExternref`, which widens every contextual bare-`any` literal unless all elements are ordinary numbers.                                                | Generic array policy; do not retain unless an owned RegExp row demonstrably needs it and a narrower result-local alternative cannot work. |
+| `src/codegen/index.ts`                     | Excludes the nominal `RegExpIndicesArray` spelling from `inheritedArrayElementType` before array routing.                                                                           | Candidate result-type carrier correction; measure its effect separately.                                                                  |
+| `src/codegen/literals.ts`                  | Uses the new generic helper in `compileArrayLiteral`, replacing the previous standalone-only closed-struct predicate name.                                                          | Coupled to the generic policy above; test as a separate kill-switch, not as an assumed RegExp requirement.                                |
+| `src/codegen/regexp-standalone.ts`         | Replaces `__extern_set` with `__defineProperty_value` for named `groups` and `indices.groups`, using descriptor flags `0xbf`; shares that constant for match-result own properties. | Candidate RegExp-local CreateDataProperty correction; measure named-capture and inherited-setter behavior independently.                  |
+
+The following are explicitly excluded:
+
+- `c86c1d3` and all of its destructuring-only files:
+  `src/codegen/destructuring-missing-field.ts`,
+  `src/codegen/destructuring-params.ts`,
+  `src/codegen/statements/destructuring.ts`, and `tests/issue-3024.test.ts`.
+- The existing Slice-B issue/test checkpoint and its deliberately red rows.
+- Slice-B custom-`exec` dispatch, symbol-method loops, dynamic flags,
+  SpeciesConstructor, String protocol dispatch, and all unrelated `b85`
+  ancestry. This audit must neither demote a compile error to `fail` nor turn a
+  passing current control non-pass.
+
+### Causal row matrix and source-adoption gate
+
+The candidate is split into three independently togglable causal hypotheses;
+the runner must record the exact path, `status`, error text, host-import list,
+and before/after commit for every row. The `165`-row list is the issue's
+authoritative denominator; a non-duplicate candidate would need a fresh
+current-base `7fff` A/B rather than an inference from the stale commit message.
+For b85, that comparison is inapplicable because its canonical bundle is
+already an upstream ancestor.
+
+| Hypothesis / toggle                                                                   | Target population and positive control                                                                                                                                            | Required result to retain it                                                                                                                                          |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nominal `RegExpIndicesArray` routing (`index.ts`)                                     | Post-ES2015 `regexp-match-indices` (`d`-flag) controls only; `indices.groups` requires named groups too. No Slice-B custom-`exec` row constructs this builtin carrier.            | Cannot be credited to #5198 unless a specific ES2015 row is shown to execute this path; none is named by `b85`.                                                       |
+| Bare contextual-`any` array widening (`array-literal-any-carrier.ts` + `literals.ts`) | A direct non-RegExp `any` array tag/identity control covering number, `undefined`, object, and nested arrays. Slice-B's raw custom-`exec` object is a negative control.           | It needs a named failing row after result-local alternatives; otherwise it is too generic to retain in this issue.                                                    |
+| Named groups / `indices.groups` data-property creation (`regexp-standalone.ts`)       | Post-ES2015 `regexp-named-groups`/`regexp-match-indices` descriptor and inherited-setter controls; ordinary unnamed `exec` and the nine green Slice-A rows are negative controls. | Cannot be credited to #5198 without a named ES2015 transition; a setter must not run and every created property must be own, writable, enumerable, configurable data. |
+| Combined candidate                                                                    | The exact 11 Slice-B custom-`exec` rows, then the issue's historical 165-row denominator in isolated standalone and host lanes.                                                   | Every credited transition is `fail`/`compile_error` → `pass`; no `pass` → non-pass transition. A duplicate upstream bundle with no Slice-B transition is rejected.    |
+
+The exact Slice-B rows are the eleven `Symbol.match`/`Symbol.replace`/
+`Symbol.search` custom-`exec` Get/call/return-validation rows in draft PR
+#5393. They do not enter `emitRegexExecArrayCall` for their successful custom
+`exec` result, whereas b85 changes only result-carrier construction there.
+Accordingly b85 claims **zero of the eleven exact Slice-B rows**, as well as
+zero explicit ES2015 baseline rows. If no row changes, or a row improves only
+with the generic array policy but no RegExp-local proof, the generic helper is
+rejected and no source patch is retained.
+
+### Pinned-base measurements and blocker evidence
+
+Every compiler/test lane below was preceded by a clear process census and used
+one isolated worker at a time.
+
+- The exact standalone Slice-B list from draft PR #5393 was measured through
+  `scripts/run-test262-paths.mts --standalone --isolate` on `7fff`: **1 pass /
+  10 fail / 0 compile_error**. The ten failures and their error text exactly
+  match the published intentionally-red matrix; b85 therefore contributes no
+  transition, and in particular no `compile_error` was merely demoted to
+  `fail`.
+- A bounded post-ES2015 result-shape control list measured the actual b85
+  feature families. The `regexp-match-indices` and named-groups descriptor
+  rows are outside ES2015: eight pass; named-groups
+  `groups-object-undefined.js` still fails its `Array.prototype` result-carrier
+  assertion; duplicate named indices remains the known unrelated compile error.
+  This is evidence for a later-edition result-shape owner, not an ES2015 claim.
+- The current focused Slice-A test,
+  `tests/issue-5198-es2015-regexp-r2.test.ts`, was run directly with Vitest in
+  one fork. It returned **18 pass / 2 fail**: standalone
+  `exec/failure-lastindex-access.js` and `exec/success-lastindex-access.js`
+  both observe an unexpected object in the `lastIndex` identity assertion. The
+  nine host rows, seven other standalone Slice-A rows, and the two zero-import
+  standalone identity controls passed. This current-base control regression is
+  not attributed to b85 by this audit (the bundle is already upstream), but it
+  blocks any claim that a carrier replay is independently mergeable.
+
+No production source was edited, no candidate was cherry-picked, and no
+standalone import surface changed. The generic bare-`any` helper is already
+present upstream and has no named #5198 row that requires it; retaining or
+replaying it in this issue would be an unjustified global array-policy change.
+
+### Validation and handoff plan
+
+1. Take a fresh process census before each compiler/test lane; use at most one
+   local compiler/test worker and do not overlap a second lane while the global
+   two-worker allowance may be occupied by #2046.
+2. Establish the pinned-base outcomes with a known passing control through the
+   same per-process `runTest262File` path. Because `9dcc` is already an ancestor
+   of `7fff`, do not replay `b85`; compare the four current semantic anchors and
+   reject the duplicate rather than introduce a non-actionable source diff.
+3. For every claimed row, rerun isolated standalone and host mode, inspect
+   emitted imports for zero standalone host imports, and run the 165-row
+   regression sweep. Preserve the nine Slice-A rows and the existing
+   Slice-B-red matrix as separate controls.
+4. Validate the retained scope with focused Vitest, TS5/TS7, Prettier, lint,
+   LOC/function budgets, oracle/coercion ratchets, numeric-local parity, and
+   issue integrity. Do not commit, push, or open a PR from this reconciliation;
+   the handoff must state exact before/after rows and whether the narrowed
+   carrier is independently mergeable.
+
+### Reconciliation disposition
+
+**Do not reapply b85.** Its canonical carrier bundle is already upstream as
+`9dcc`; it improves none of the exact #5393 Slice-B rows, names no ES2015
+baseline row, and the pinned base currently has two failing Slice-A controls.
+The carrier is therefore **not independently mergeable as a new #5198 patch**.
+Handoff the two Slice-A failures to the current RegExp result/`lastIndex`
+owner for a separate source-level regression diagnosis, and leave draft PR
+#5393's common custom-`exec` work isolated from this duplicate carrier history.
+
 ## Acceptance criteria
 
 - All 165 exact rows pass standalone with zero host imports; interim PRs pass
