@@ -40,12 +40,34 @@ loc-budget-allow:
   - src/package-linker.ts
   - src/runtime.ts
   - src/codegen/index.ts
+  # (2026-09-01) Merge-group park fix, this PR's own growth: two small helpers
+  # (`liveSyncGlobalIdx` / `emitGlobalSyncWritebackFor`) plus the comment that
+  # says why an index copied into a `let` goes stale. See the section below.
+  - src/codegen/statements/for-of-destructuring.ts
+  # RESTATED, not this PR's work — the predecessor stack's growth, granted in
+  # its own issue file, stranded because the gate resolves the change-set from
+  # the files THIS PR touches (same mechanism as the src/runtime.ts note above).
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/package-linker.ts::compileLinkedProject
   - src/codegen/index.ts::generateMultiModule
   # restated, same reason as above — #5241's growth, not this PR's
   - src/runtime.ts::resolveImport
+  # (2026-09-01) Merge-group park fix: +1/+2/+2 lines, one live-index re-read
+  # per boxed-capture `global.set` in each of these.
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuring
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfIteratorAssignDestructuring
+  # restated, predecessor stack's growth (see loc-budget-allow note)
+  - src/codegen/context/create-context.ts::createCodegenContext
+# (2026-09-01) Merge-group park fix for run 33442432133 — see "Merge-group park:
+# stale module-global index in for-of assignment destructuring" below.
+trap-growth-allow:
+  count: 1
+  reason: "#3596 reclassification (fail -> fail, trap flavour only; the test has never passed). The merge_group run reported illegal_cast 35 -> 38 alongside the 18-file `immutable global` cluster. Fixing the stale module-global index in `for-of-destructuring.ts` returns 2 of those 3 to their pre-chain flavour — `async-{func,gen}-decl-dstr-array-elem-init-fn-name-class.js` go back to `Test262Error: name descriptor value should be cls` (measured 2026-09-01: pre-chain main a4d141321d and this branch produce the identical Test262Error). The third is NOT this defect: `Array/prototype/toLocaleString/invoke-element-tolocalestring.js` is a residual of #5243's `buildRecordFromExternref` arm, which is what that commit set out to change — its `for (const { label, args } of testCases)` binding destructure read `Cannot destructure 'null' or 'undefined'` on pre-chain main (a4d141321d) and reads `illegal cast` from d41376f94d onward, with or without the index fix. Baseline status is `fail` in both states, so no row changes pass/fail; chasing it means re-opening the exact coercion arm that parked this stack, and it is tracked separately rather than widened into a park fix."
+  tests:
+    - test/built-ins/Array/prototype/toLocaleString/invoke-element-tolocalestring.js
 ---
 
 # #5226 — provider seam: error identity does not cross
@@ -177,3 +199,83 @@ Known container-environmental, fails on base too:
   runner wiring for #4628 acceptance criterion 2.
 - Id reserved with a degraded PR scan; manually checked against open PR head
   branches 2026-08-30.
+
+## Merge-group park: stale module-global index in for-of assignment destructuring
+
+The chain's merge_group (run 33442432133, "check for test262 regressions") flipped
+18 rows `pass → compile_error`, one cluster:
+`test/language/statements/for-await-of/async-{func,gen}-decl-dstr-{array-elem,array-rest,obj-prop}-*`,
+all reading `immutable global #107 cannot be assigned`. It also grew the
+uncatchable-trap ratchet `illegal_cast` 35 → 38.
+
+### Root cause
+
+`src/codegen/statements/for-of-destructuring.ts`. The assignment-destructuring
+paths resolved the target's module global **once** and then emitted `global.set`
+with that snapshot:
+
+```
+const globalIdx = ctx.moduleGlobals.get(targetEl.text);   // ~L1791, snapshot
+…compile the element read / default init / TDZ guard…     // may INTERN strings
+fctx.body.push({ op: "global.set", index: vecSyncGlobalIdx });   // ~L1874/L1954
+```
+
+Every string constant interned in that window adds an **imported** global, and
+imported globals precede module-defined ones in the index space, so
+`fixupModuleGlobalIndices` shifts `ctx.moduleGlobals` and every already-emitted
+`global.get`/`global.set` — but it cannot reach an index a caller copied into a
+`let`. #4447 fixed exactly this for two object-pattern sites by carrying the
+NAME; the array / tuple / vec / rest / externref / iterator twins kept the
+snapshot. On the repro the target was `let x`, whose TDZ guard interns
+`"x is not defined"` inside that window; 18 imports of drift later, index 107
+named `string_constants.IsHTMLDDA` (verified by disassembling the emitted
+module) instead of `x`'s slot at 125. Imports are immutable ⇒ instantiate
+rejects the module.
+
+**Exposed by, not caused by, #5243.** `git archive`-per-commit bisection on
+`async-func-decl-dstr-array-elem-nested-array.js`: pass at the #5242 tip
+`c4c3dbdc98`, fail at the #5243 tip `5805690814`; inside that link the only
+source commit is `d41376f94d` (`buildRecordFromExternref`), which interns one
+string constant per record field name and so moved enough imports into the
+snapshot→writeback window to make the latent staleness reachable. The
+staleness itself predates it.
+
+### Fix
+
+Carry the target NAME instead of the index and resolve at emit time —
+`liveSyncGlobalIdx` + `emitGlobalSyncWritebackFor`, applied to the nine
+writeback sites and the five raw boxed-capture `global.set` pushes. No behaviour
+change where nothing interned: `ctx.moduleGlobals.get(name)` returns the
+snapshot's own (possibly shifted) index.
+
+### Measurements (2026-09-01)
+
+Base runs executed here, not inherited:
+
+| tree | `async-func-decl-dstr-array-elem-nested-array.js` |
+| --- | --- |
+| pre-chain main `a4d141321d` | **pass** |
+| chain tip `c838cea6b8` | fail, `immutable global #107 cannot be assigned` |
+| current `origin/main` `e904b5f4b2` | fail, identical (PR #5365 already landed the exposing commit — **this defect is on main now**) |
+| this branch + fix | **pass** |
+
+Same three-way result for `async-gen-decl-dstr-array-rest-elision.js`. Cluster
+sample all pass with the fix: `async-func-decl-dstr-array-elem-nested-obj`,
+`async-func-decl-dstr-array-rest-nested-array`,
+`async-{func,gen}-decl-dstr-obj-prop-elem-init-evaluation`.
+
+`illegal_cast` +3 → +1. Two of the three
+(`async-{func,gen}-decl-dstr-array-elem-init-fn-name-class.js`) return to their
+pre-chain `Test262Error: name descriptor value should be cls`. The third is
+covered by the `trap-growth-allow` above — see its `reason` for why it is
+#5243's residual and not this defect.
+
+### Reported, not fixed
+
+`test/built-ins/Array/prototype/toLocaleString/invoke-element-tolocalestring.js`
+still traps `illegal cast` (baseline `fail`, so no row changes verdict).
+Bound: one test, one category, `fail → fail`. It is a residual of #5243's
+`buildRecordFromExternref` arm — pre-chain it read
+`Cannot destructure 'null' or 'undefined'`, which is precisely what that commit
+set out to fix — and chasing it means re-opening the coercion arm that parked
+this stack.

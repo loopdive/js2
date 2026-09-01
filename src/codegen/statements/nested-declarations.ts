@@ -43,6 +43,7 @@ import {
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
+import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
@@ -72,12 +73,14 @@ import {
 import { getVecInfo } from "../type-coercion.js";
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
+  coerceType,
   compileExpression,
   compileStatement,
   ensureLateImport,
   flushLateImportShifts,
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
+  resolveComputedKeyExpression,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
@@ -192,54 +195,34 @@ function emitNestedDeclarationStaticInitializers(
 }
 
 /**
- * Emit the runtime evaluation of computed names whose accessor bodies are
- * owned by the exact prepared-IR route.
+ * Emit the runtime evaluation of unresolved computed accessor names.
  *
- * Class shape preparation resolves the semantic key, but it must never execute
- * the source expression: assignments and other effects belong in the enclosing
- * function at ClassDefinitionEvaluation. The exact skip set is the gate, so a
- * dynamic/unsupported computed name keeps the legacy route untouched. Walking
- * `decl.members` preserves source order and evaluates a getter/setter pair's
- * two computed names independently, as JavaScript requires.
+ * Class shape preparation must never execute the source expression: assignments
+ * and other effects belong in the enclosing function at
+ * ClassDefinitionEvaluation. Both direct and prepared class-body routes share
+ * this emitter, while their distinct evaluation owners invoke it exactly once.
+ * Walking `decl.members` preserves source order and evaluates a getter/setter
+ * pair's two computed names independently, as JavaScript requires.
  */
-export function emitPreparedAccessorComputedNameEffects(
+export function emitUnresolvedComputedAccessorNameEffects(
   ctx: CodegenContext,
   fctx: FunctionContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): void {
-  const routing = ctx.irClassBodyRouting;
-  const identity = ctx.irPlanningIdentityContext;
-  if (!routing?.skipBodyUnitIds || !identity) return;
-  const classId = identity.classIdByDeclaration.get(decl);
-  if (classId === undefined || identity.declarationByClassId.get(classId) !== decl) return;
-
   for (const member of decl.members) {
     if (
       (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) ||
-      !ts.isComputedPropertyName(member.name)
+      !ts.isComputedPropertyName(member.name) ||
+      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
     ) {
       continue;
     }
-    const unitId = identity.unitIdByDeclaration.get(member);
-    if (unitId === undefined || routing.skipBodyUnitIds.has(unitId) !== true) continue;
-    const terminal = identity.terminalByUnitId.get(unitId);
-    const callable = ctx.programAbiClassCallables?.functionForUnit(unitId);
-    const accessor =
-      terminal?.kind === "class-instance-getter" ||
-      terminal?.kind === "class-static-getter" ||
-      terminal?.kind === "class-instance-setter" ||
-      terminal?.kind === "class-static-setter";
-    if (
-      !terminal ||
-      !accessor ||
-      terminal.lexicalOwnerId !== classId ||
-      identity.declarationByUnitId.get(unitId) !== member ||
-      !callable
-    ) {
-      throw new Error(`exact prepared computed accessor ${unitId} has no matching class/callable identity`);
+    const resultType = compileExpression(ctx, fctx, member.name.expression, { kind: "externref" });
+    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) {
+      if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+      emitToPropertyKeyOnce(ctx, fctx);
+      fctx.body.push({ op: "drop" });
     }
-    const resultType = compileExpression(ctx, fctx, member.name.expression);
-    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
   }
 }
 
@@ -345,7 +328,7 @@ export function compileNestedClassDeclaration(
         }
       }
     }
-    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl);
     emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
     return;
   }
@@ -401,9 +384,10 @@ export function compileNestedClassDeclaration(
       funcByName.set(ctx.mod.functions[i]!.name, i);
     }
 
-    // Computed-name expressions execute in the enclosing frame at runtime,
-    // immediately before this class's prepared bodies are installed/materialized.
-    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    // A declaration's computed accessor names execute in this enclosing frame
+    // at ClassDefinitionEvaluation. Class-expression owners emit the same
+    // shared effect from their own expression route below.
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl);
 
     // Compile constructor and method bodies
     compileClassBodies(ctx, decl, funcByName, syntheticName, ctx.irClassBodyRouting);

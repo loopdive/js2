@@ -759,6 +759,16 @@ export interface FunctionContext {
    */
   asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
   /**
+   * (#680) Sent values for original bare-yield AST nodes while a native
+   * generator continuation state recompiles its containing expression.
+   */
+  nativeGeneratorYieldValueLocals?: Map<ts.YieldExpression, number>;
+  /**
+   * (#680) One-time pre-yield operand values for original expression AST nodes
+   * while a native generator continuation state recompiles that expression.
+   */
+  nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
+  /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
    * named local in the body prologue). The async drive lane compiles the body
