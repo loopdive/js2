@@ -733,6 +733,10 @@ Title: `fix(typedarray): preserve dynamic species identity`
 
 Preserve dynamic TypedArray species identity by publishing the builtin TypedArray constructor before re-entrant prototype seeding and by suppressing ArraySpeciesCreate only while map, filter, or slice materializes the temporary vector beneath the outer TypedArraySpeciesCreate; ordinary Array species behavior, including flatMap, remains active outside that narrow scope.
 
+## Quality
+
+Exact three-path live-base diff: this tracker, `src/codegen/builtin-static-globals.ts`, and `tests/issue-4449-species-producers.test.ts`; no benchmark, public, website, or labs paths.
+
 ## CLA
 
 Please read the [Contributor License Agreement](../blob/main/CLA.md) and check the box:
@@ -742,3 +746,45 @@ Please read the [Contributor License Agreement](../blob/main/CLA.md) and check t
 
 The PR must be created as ready/non-draft against `loopdive/js2:main` from the
 authorized `ttraenkler/js2` fork only after the exact-head gates above pass.
+
+### c112 merged full-hook evidence — 2026-09-01
+
+Root normally committed the c112 integration as
+`f105f115e3`. Its full unskipped hook passed the #4449 producer controls
+**8 / 8**, fresh Temporal controls **11 / 11**, #5225 **2 / 2**, #5242
+**2 / 2**, #5243 **1 / 1**, and #5244 **9 / 9**. The applicable budgets and
+oracle checks were also green. This is c112-head evidence only: before
+publication, fetch and normally merge the current live upstream, resolve the
+documented `array-methods.ts` semantic overlap, and rerun the exact merged-head
+gates. No push or GitHub action is implied by this checkpoint.
+
+### c372 live-main absorption and resolved merge handoff — 2026-09-01
+
+Fresh upstream/main is `c372457da1ffd39b87bebf235aac115a27657abf`. The
+normal no-commit/no-ff merge has one semantic overlap, in
+`src/codegen/array-methods.ts`, and it is now resolved by retaining current
+main's scoped `withArraySpeciesSuppressed` implementation. A byte-for-byte
+comparison establishes that upstream independently absorbed the #4449
+array-methods change: the resolved file is identical to `upstream/main` and
+therefore intentionally does not remain in the prospective PR.
+
+The exact current live-base scope is consequently **three paths**:
+
+1. `plan/issues/4449-typedarray-standalone-semantics-residual.md`
+2. `src/codegen/builtin-static-globals.ts`
+3. `tests/issue-4449-species-producers.test.ts`
+
+The remaining implementation change is behaviorally necessary. It publishes
+the builtin TypedArray constructor carrier before native-prototype companion
+seeding can re-enter its initializer; without that ordering, the re-entry can
+mint a second carrier and split constructor identity. The focused producer
+controls still distinguish this condition: the nullish-species case requires
+the published original constructor identity, while the dynamic producer cases
+require one outer TypedArray species allocation and the ordinary Array custom
+species control protects the unsuppressed Array/flatMap boundary. No test or
+hook was run for this c372 merge checkpoint; the prior c112 full-hook evidence
+above is retained only as pre-merge evidence.
+
+The merge index is resolved and staged for the durable normal commit. After
+that commit, rerun the exact merged-head gates and publish only if the
+three-path live-base/no-leak audit remains true.

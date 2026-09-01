@@ -25,6 +25,7 @@ import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
+export { tryCompileCallableStaticField } from "./static-callable-field.js";
 
 function compileConditionalExpression(
   ctx: CodegenContext,

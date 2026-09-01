@@ -362,7 +362,7 @@ export interface IrExternClassMeta {
  * (#2955) The raw `nativeStrings()` mode discriminator is deliberately NOT
  * on this interface anymore: every former from-ast mode read is now a
  * narrow resolver-owned capability/rep/strategy query (`stringIsExternref`,
- * `hasHostNumberBox`, `hasHostBooleanBox`, `hasHostNumberToString`, `stringMethodPlan`,
+ * `hasHostBooleanBox`, `hasHostNumberToString`, `stringMethodPlan`,
  * `stringForOfPlan`). Keeping the raw discriminator off the front-end
  * surface makes a new representation-polymorphic IR-build branch a compile
  * error instead of a drift channel. (`IrLowerResolver` still carries it —
@@ -412,24 +412,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   resolveDynamic?(): ValType;
   /**
-   * (#2955 number-box slice) Capability predicate: does this compile's lane
-   * own the `__box_number` / `__unbox_number` host imports (the f64⇄externref
-   * boxing pair legacy registers via `addUnionImports`)? The two from-ast
-   * boxing arms (`coerceToExpectedExtern` f64→externref, `coerceReturnValue`
-   * externref→f64) previously read `nativeStrings?.() === false` as a PROXY
-   * for this — a mode read the #2955 grep gate wants out of the front-end.
-   * The mode knowledge now lives on the resolver/lower side
-   * (`integration.ts`); from-ast only asks "can I box here?" and demotes when
-   * the answer is no. The implementation is intentionally `!ctx.nativeStrings`
-   * today (byte-inert relocation); widening it (native-strings host compiles,
-   * standalone `$AnyValue` boxing) is a semantic follow-up tracked in #2955.
-   */
-  hasHostNumberBox?(): boolean;
-  /**
    * Does this compile's lane own the host `__box_boolean` import? Boolean
    * values use the same i32 carrier as integer-shaped numbers, so this
-   * capability is deliberately separate from `hasHostNumberBox`: callers
-   * must prove the boolean brand before selecting the boolean boxer.
+   * capability is deliberately separate from the number boundary (#3526 F1-S1
+   * `js.number.box`): callers must prove the boolean brand before selecting
+   * the boolean boxer.
    */
   hasHostBooleanBox?(): boolean;
   /**
@@ -445,8 +432,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * question and demotes (or takes the native fold path) when the answer
    * is no. The answer MUST stay a build-time answer: the native arm of
    * `coerceToExpectedExtern` is a demote throw (claim/demote decisions
-   * have no lower-time channel — same constraint as `stringMethodPlan` /
-   * `hasHostNumberBox`). Implementation is intentionally
+   * have no lower-time channel — same constraint as `stringMethodPlan`).
+   * Implementation is intentionally
    * `!ctx.nativeStrings` today (byte-inert relocation); a native string
    * (`(ref $AnyString)`) can NEVER satisfy an externref host-arg position,
    * so unlike the number-box capability there is no widening follow-up on
@@ -461,8 +448,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * in source)? The from-ast `<number>.toString()` arm previously read
    * `nativeStrings?.() === false` as a PROXY for this — the import is
    * host-lane-only AND its return is host-mode's string carrier
-   * (externref), so the mode read was doing capability duty. Same shape as
-   * `hasHostNumberBox`: the answer MUST stay a build-time answer (the
+   * (externref), so the mode read was doing capability duty. The answer MUST
+   * stay a build-time answer (the
    * native arm is a demote — no lower-time demote channel), the
    * implementation is intentionally `!ctx.nativeStrings` today (byte-inert
    * relocation), and widening (a native number formatter whose return is
@@ -645,13 +632,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * import into a standalone module.
    */
   externIsUndefinedIsNative?(): boolean;
-  /**
-   * (#4461) True when `__unbox_number` exists as a NATIVE function on this
-   * lane. Complementary to `hasHostNumberBox`: standalone registers the same
-   * name/signature through `addUnionImports`'s native-provider arm, so an
-   * externref carrying a boxed number can be unboxed without a host import.
-   */
-  hasNativeNumberUnbox?(): boolean;
   /**
    * (#2856) Console-argument variant selection for `console.<m>(arg)` —
    * returns the import-name suffix (`console_<m>_<variant>`). MUST use the
@@ -7230,24 +7210,16 @@ function coerceToExpectedExtern(
   if (expected.kind === "externref" && t.kind === "extern") {
     return value;
   }
-  // (#2856 C3) f64 → externref: box through the `__box_number` host import —
-  // the exact coercion legacy's `coerceType` emits for the same site (so the
-  // import is registered by legacy's own compile of the function in the
-  // dual-compile model). Gated on the resolver's number-box CAPABILITY
-  // (#2955): standalone has no `__box_number` (its boxing is the `$AnyValue`
-  // family), so the predicate is false there and we fall to the demote throw.
-  if (
-    expected.kind === "externref" &&
-    got !== null &&
-    got.kind === "f64" &&
-    cx.resolver?.hasHostNumberBox?.() === true
-  ) {
-    const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_number"), [value], irVal({ kind: "externref" }));
-    if (boxed === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __box_number produced no result in ${cx.funcName}`);
-    }
-    return boxed;
+  // (#2856 C3 / #3526 F1-S1) f64 → externref: the semantic number boundary.
+  // This used to emit a direct `env.__box_number` call gated on the resolver
+  // predicate `hasHostNumberBox()` — a lane/mode read in the front-end. It now
+  // emits the provider-FREE `js.number.box` intrinsic; whether this lane has a
+  // provider at all (host-only in F1-S1) is decided once, at manifest freeze,
+  // from the caller-resolved number-boundary policy. A lane without one
+  // classifies the OWNER as `late-preparation-unsupported` in preparation —
+  // exactly the population that fell through to the demote throw below.
+  if (expected.kind === "externref" && got !== null && got.kind === "f64" && t.kind === "val" && (t.signed ?? true)) {
+    return cx.builder.emitIntrinsic("js.number.box", [value]);
   }
   // Boolean-branded i32 -> externref: preserve JS identity by using the
   // boolean boxer. An unbranded i32 is intentionally not accepted here: that
@@ -9552,24 +9524,17 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     const actualT = cx.builder.typeOf(value);
     const actualV = asVal(actualT);
     if (actualV && actualV.kind === "externref") {
-      // (#4461) Both lanes own a `__unbox_number` with the same
+      // (#4461 / #3526 F1-S1) Both lanes own a `__unbox_number` with the same
       // `(externref) -> f64` signature; only the PROVIDER differs (host import
       // vs the native function `addUnionImports` registers under
-      // `semanticProviders: "native-first"`). A host-free `Map.get` result
-      // reaches this site with a boxed number inside an externref, so the
-      // native arm is what makes `return hit;` lower instead of demoting.
-      const provider = cx.resolver?.hasHostNumberBox?.()
-        ? irImportFuncRef("env", "__unbox_number")
-        : cx.resolver?.hasNativeNumberUnbox?.()
-          ? irRuntimeFuncRef("__unbox_number")
-          : null;
-      if (provider !== null) {
-        const unboxed = cx.builder.emitCall(provider, [value], irVal({ kind: "f64" }));
-        if (unboxed === null) {
-          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: __unbox_number produced no result in ${cx.funcName}`);
-        }
-        return unboxed;
+      // `semanticProviders: "native-first"`). That choice used to be inlined
+      // here behind two resolver mode predicates. It is now a frozen-manifest
+      // decision: from-ast emits the provider-free `js.number.unbox` intrinsic
+      // and reads no lane fact. A lane that resolves the arm to unsupported
+      // classifies the owner in preparation instead of silently returning the
+      // unconverted externref into an f64 result.
+      if (actualT.kind === "val" && (actualT.signed ?? true)) {
+        return cx.builder.emitIntrinsic("js.number.unbox", [value]);
       }
     }
     return value;

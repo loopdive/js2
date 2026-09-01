@@ -1,6 +1,8 @@
+import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { runTest262File } from "./test262-runner.js";
 
 describe("#1014 — async generator .next() returns Promise", () => {
   async function run(src: string): Promise<any> {
@@ -147,5 +149,42 @@ describe("#1014 — async generator .next() returns Promise", () => {
       }
     `);
     expect(ret).toBe(1);
+  });
+
+  it("standalone preserves async-generator IteratorResult destructuring after rejection", async () => {
+    const file = resolve(
+      "test262/test/language/expressions/async-generator/yield-star-getiter-sync-returns-undefined-throw.js",
+    );
+    const result = await runTest262File(file, "issue-1014-standalone", 120_000, "standalone");
+    expect(result.status, result.error ?? result.reason).toBe("pass");
+  }, 180_000);
+
+  it("standalone applies defaults in native IteratorResult destructuring", async () => {
+    const result = await compile(
+      `
+        let observed = 0;
+        async function* gen() { return undefined; }
+        export function test(): void {
+          gen().next().then(({ done, value = 42 }: any) => {
+            observed = done === true && value === 42 ? 1 : -1;
+          });
+        }
+        export function probe(): number { return observed; }
+      `,
+      { target: "standalone", fileName: "native-iterator-result-default.ts", deferTopLevelInit: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.imports).toHaveLength(0);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    const exports = instance.exports as WebAssembly.Exports & {
+      __module_init?: () => void;
+      __drain_microtasks?: () => void;
+      test: () => void;
+      probe: () => number;
+    };
+    exports.__module_init?.();
+    exports.test();
+    exports.__drain_microtasks?.();
+    expect(exports.probe()).toBe(1);
   });
 });

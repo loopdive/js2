@@ -19,11 +19,11 @@
 //      a concrete object struct ref — §22.1.3.x requires ToString(this)
 //      (dispatching the object's own toString) before the native helper.
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "fs";
+import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { compile } from "../src/index.js";
-import { parseMeta, wrapTest } from "./test262-runner.js";
+import { runTest262File } from "./test262-runner.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST262 = process.env.TEST262_ROOT ?? join(REPO_ROOT, "test262");
@@ -43,14 +43,11 @@ describe("#2934 s3 — object-toString string coercion is valid standalone Wasm"
     await expect(WebAssembly.compile(r.binary)).resolves.toBeDefined();
   });
 
-  it("S15.5.4.6_A4_T2 compiles to valid standalone Wasm", async () => {
+  it("S15.5.4.6_A4_T2 passes through the original standalone harness", async () => {
     const abs = join(TEST262, "test/built-ins/String/prototype/concat/S15.5.4.6_A4_T2.js");
     if (!existsSync(abs)) return;
-    const src = readFileSync(abs, "utf-8");
-    const wrapped = wrapTest(src, parseMeta(src)).source;
-    const r = await compileStandalone(wrapped);
-    expect(r.success).toBe(true);
-    await expect(WebAssembly.compile(r.binary)).resolves.toBeDefined();
+    const result = await runTest262File(abs, "issue-2934", 30_000, "standalone");
+    expect(result.status, result.error).toBe("pass");
   });
 
   it("throwing toString in concat arg propagates its exception", async () => {
