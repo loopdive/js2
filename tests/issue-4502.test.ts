@@ -44,9 +44,16 @@ async function build(source: string, target: "standalone" | "gc" = "standalone")
 }
 
 function outcomeCodes(outcomes: readonly IrObservedOutcome[] | undefined): string[] {
-  return (outcomes ?? [])
-    .filter((o) => o.kind !== "emitted")
-    .map((o) => `${o.kind}/${o.stage}/${"code" in o ? o.code : "?"}`);
+  return (
+    (outcomes ?? [])
+      // (#3523 R4 gap 4) `non-executable` is not a capability gap — it is the row
+      // a source records when its module init has nothing to do. This helper pins
+      // DEMOTES, and a `code: null` row above asserts "no non-emitted outcome at
+      // all", so counting an observational row here would read a closed gap as
+      // reopened.
+      .filter((o) => o.kind !== "emitted" && o.kind !== "non-executable")
+      .map((o) => `${o.kind}/${o.stage}/${"code" in o ? o.code : "?"}`)
+  );
 }
 
 /**
