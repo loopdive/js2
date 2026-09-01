@@ -1892,20 +1892,25 @@ IR-level assertion is.
    assertion. Every #3526 F1-S1 test and both async suites are otherwise
    green and untouched.
 2. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned
-   exception, handled exactly as the F1-S1 checkpoint prescribes. Three cited
-   lines moved and the `generated` date advanced; no verdict, kind, placement,
-   ratchet count or `settledBy` rationale changed:
+   exception, handled exactly as the F1-S1 checkpoint prescribes. No verdict,
+   kind, placement, ratchet count or `settledBy` rationale changed — only
+   citation line numbers moved.
 
-   | kind | cited file | before → after |
-   | --- | --- | --- |
-   | `forof.string` | `src/ir/integration.ts` | 6058 → 6112 |
-   | `string.len` | `src/ir/backend/linear-integration.ts` | 1614 → 1617 |
-   | `vec.new_fixed` | `src/ir/from-ast.ts` | 4542 → 4534 |
+   Pre-merge this branch carried three drifted citations plus the `generated`
+   date (`forof.string` `integration.ts` 6058→6112; `string.len`
+   `linear-integration.ts` 1614→1617; `vec.new_fixed` `from-ast.ts`
+   4542→4534). Main's own refresh has since absorbed two of them, so **the
+   shipped diff is ONE line**: `forof.string`'s `src/ir/integration.ts`
+   citation, 6051 (main's value) → **6105**.
 
-   Patched surgically (a 4-line diff) rather than by committing the
-   regenerator's output, which reflows every array into a 528-line diff. The
-   semantic delta was established by normalising both JSON documents and
-   diffing those, so "only these four lines" is measured, not assumed.
+   That final number is neither side's, which is the trap this note exists to
+   flag: main moved the line one way and this branch's +56 LOC in the same
+   file moves it the other, so the merge resolution had to RE-DERIVE it from
+   the gate rather than pick a side or do arithmetic. Patched surgically in
+   both rounds rather than by committing the regenerator's output, which
+   reflows every array (measured: a 354-line diff for a 1-line change). The
+   semantic delta was established each time by normalising both JSON
+   documents and diffing those, so "only this line" is measured, not assumed.
 
 ### Reachability, stated as a limit rather than a claim
 
