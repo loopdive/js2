@@ -35,7 +35,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { getOrRegisterDvWindowType } from "../dataview-native.js";
+import { isViewRefTestInstrs } from "../dataview-native.js";
 import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
 import { GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES, resolvesToAmbientGlobal } from "./non-constructable.js"; // (#5158)
 import { emitNativeReflectTargetGuard } from "../reflect-target-guard.js";
@@ -662,21 +662,12 @@ export function compileNamespaceStaticCall(
       // breaks the whole module). Most isView call sites are statically typed.
       const at = compileExpression(ctx, fctx, arg0, { kind: "externref" });
       if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
-      const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
-      const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
       const anyTmp = allocLocal(fctx, `__isview_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
       fctx.body.push({ op: "any.convert_extern" });
       fctx.body.push({ op: "local.set", index: anyTmp });
-      let emitted = false;
-      for (const vi of vecTypeIdxs) {
-        fctx.body.push({ op: "local.get", index: anyTmp });
-        fctx.body.push({ op: "ref.test", typeIdx: vi });
-        if (emitted) fctx.body.push({ op: "i32.or" });
-        emitted = true;
-      }
-      fctx.body.push({ op: "local.get", index: anyTmp });
-      fctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx });
-      if (emitted) fctx.body.push({ op: "i32.or" });
+      // (#5150) The chain moved to `isViewRefTestInstrs` (dataview-native.ts) so
+      // the first-class `ArrayBuffer.isView` VALUE answers identically.
+      fctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
       return { kind: "i32" };
     }
     const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
