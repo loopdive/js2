@@ -23,6 +23,8 @@ export interface ProgramAbiModuleBindingObservation {
   readonly tdz?: GlobalDef;
 }
 
+type ProgramAbiModuleDeclaration = ts.VariableDeclaration | ts.BindingElement;
+
 function displayName(name: string, finalIndex: number): string {
   return name.length > 0 ? name : `global#${finalIndex}`;
 }
@@ -37,7 +39,7 @@ function displayName(name: string, finalIndex: number): string {
  * the final Wasm global index space without consulting moduleGlobals or names.
  */
 export class ProgramAbiGlobalRegistry {
-  private readonly moduleBindings = new Map<ts.VariableDeclaration, ProgramAbiModuleBindingObservation>();
+  private readonly moduleBindings = new Map<ProgramAbiModuleDeclaration, ProgramAbiModuleBindingObservation>();
   private planned = false;
 
   constructor(
@@ -48,12 +50,12 @@ export class ProgramAbiGlobalRegistry {
   }
 
   /** Observe one exact module declaration's allocator-owned value global. */
-  observeModuleValue(declaration: ts.VariableDeclaration, displayName: string, value: GlobalDef): void {
+  observeModuleValue(declaration: ProgramAbiModuleDeclaration, displayName: string, value: GlobalDef): void {
     this.observeModuleBinding(declaration, displayName, value, "value");
   }
 
   /** Observe one exact module declaration's allocator-owned TDZ state global. */
-  observeModuleTdz(declaration: ts.VariableDeclaration, displayName: string, value: GlobalDef): void {
+  observeModuleTdz(declaration: ProgramAbiModuleDeclaration, displayName: string, value: GlobalDef): void {
     this.observeModuleBinding(declaration, displayName, value, "tdz");
   }
 
@@ -70,12 +72,12 @@ export class ProgramAbiGlobalRegistry {
    * Deliberately a cheap map probe: the caller runs it per TDZ name per module,
    * so it must not do the `mod.globals.includes` scan `moduleBinding` performs.
    */
-  hasModuleValue(declaration: ts.VariableDeclaration): boolean {
+  hasModuleValue(declaration: ProgramAbiModuleDeclaration): boolean {
     return this.moduleBindings.has(declaration);
   }
 
   /** Resolve one exact module declaration without consulting compatibility names. */
-  moduleBinding(declaration: ts.VariableDeclaration): ProgramAbiModuleBindingObservation | undefined {
+  moduleBinding(declaration: ProgramAbiModuleDeclaration): ProgramAbiModuleBindingObservation | undefined {
     const observation = this.moduleBindings.get(declaration);
     if (!observation || !this.ctx.mod.globals.includes(observation.value)) return undefined;
     if (observation.tdz && !this.ctx.mod.globals.includes(observation.tdz)) {
@@ -221,7 +223,7 @@ export class ProgramAbiGlobalRegistry {
   }
 
   private observeModuleBinding(
-    declaration: ts.VariableDeclaration,
+    declaration: ProgramAbiModuleDeclaration,
     displayName: string,
     value: GlobalDef,
     role: "value" | "tdz",

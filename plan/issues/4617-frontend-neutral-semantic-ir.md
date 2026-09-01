@@ -24,18 +24,21 @@ files:
   - src/compiler.ts
   - src/ts-api.ts
   - src/ir/identity.ts
+  - src/ir/integration.ts
   - src/ir/planning-identity.ts
   - src/ir/semantic-declaration-snapshot.ts
   - src/ir/semantic-function-value-route-facts.ts
   - src/ir/semantic-function-value-source-projection.ts
   - src/ir/program.ts
   - src/ir/prepared-component-sealing.ts
+  - src/codegen/certified-function-value-authority.ts
   - src/codegen/certified-function-value-materialization.ts
   - src/codegen/closures.ts
   - src/codegen/closures/method-trampolines.ts
   - src/codegen/declarations.ts
   - src/codegen/function-instance-meta.ts
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-overlay-outcomes.ts
   - src/codegen/legacy-body-audit.ts
@@ -1161,15 +1164,32 @@ The implementation owns only:
 - two new focused neutral modules,
   `src/ir/semantic-function-value-route-facts.ts` and
   `src/ir/semantic-function-value-source-projection.ts`;
-- one new codegen-local, frontend-free lifecycle module,
+- two new codegen-local, frontend-free dependency leaves:
+  `src/codegen/certified-function-value-authority.ts`, which owns only the
+  exact Program-ABI currentness joins and private lifecycle brands enumerated
+  by the 2026-09-01 D1a amendment below, and
   `src/codegen/certified-function-value-materialization.ts`, which registers,
-  consumes, audits, and aborts the one authenticated direct-materialization
-  receipt without importing TypeScript or an IR backend;
+  consumes, audits, publishes, settles, and aborts the one authenticated
+  direct-materialization receipt without importing TypeScript or an IR
+  backend;
 - `src/checker/oracle-declaration-snapshot.ts`;
 - `src/codegen/multi-prepared-function-value-declaration-replay.ts`;
 - `src/codegen/multi-prepared-function-value-import-target.ts`;
 - the exact function-value and route-claim sections of
-  `src/codegen/multi-prepared-scalar-leaf.ts`;
+  `src/codegen/multi-prepared-scalar-leaf.ts`, including the exact target-
+  UnitId-keyed prepared-install request carrier, one-entry callback lookup,
+  and post-prepare exact consumed-request census;
+- only one optional structurally neutral
+  `onPreparedUnitCallableInstalled(artifactUnitId)` field in
+  `IrIntegrationOptions` and one invocation in `src/ir/integration.ts` after
+  the normal non-deferred `replaceUnitCallableAt` succeeds and before
+  `settlePreparedDerivedCallable`; no codegen type, request, map, receipt, or
+  D1 import crosses into IR, and the deferred/publication and orphan-stub
+  branches are unchanged;
+- only the matching optional callback input and exact forwarding into the
+  sealed `compileIrPathFunctions` call in `prepareIrBodies` in
+  `src/codegen/ir-prepared-free-functions.ts`; no selection, lowering,
+  withdrawal, routing, or fallback behavior changes;
 - only a two-symbol import/export seam in `src/codegen/closures.ts` and a
   certified-metadata overload plus shared allocation core beside
   `ensureFuncClosureSingleton` in
@@ -1203,7 +1223,10 @@ The implementation owns only:
 - only the support allocator split, exact multi-program callback, the
   target-UnitId-keyed read-only late support reauthentication branch, and the
   complete D1 function-value selection/currentness branch of
-  `compileMultiIrOverlaySource`, and the D1 neutral skipped-slot audit/outcome
+  `compileMultiIrOverlaySource`, including exact early owner-UnitId threading,
+  registration of the one prepared-install request, and sealing of the exact
+  expected receipt census before `prepareIrBodies`; and the D1 neutral
+  skipped-slot audit/outcome
   calls in `consumeIrOverlayReport` / `recordObservedIrOutcomes` in
   `src/codegen/index.ts`; plus only the D1 receipt-conditional pre/post
   trampoline-finalization assertions surrounding the primary multi-source
@@ -1237,7 +1260,8 @@ The implementation owns only:
   `tests/issue-4617-declaration-replay-mutations.test.ts`, and
   `tests/issue-4590-bench-loop-prepared-cutover.test.ts`.
 
-Do not edit `src/ir/select.ts`, `src/codegen/ir-prepared-free-functions.ts`,
+Do not edit `src/ir/select.ts`, `src/codegen/ir-prepared-free-functions.ts`
+outside the exact neutral callback transport above,
 function-instance metadata outside the exact two-step recipe seam above, any
 async-analysis module, Program-ABI session/publication
 modules, any callable/module-init orchestration outside the single callback
@@ -1261,18 +1285,22 @@ support site's read-only reauthentication of that same allocation, the shared
 singleton allocation core and two-step metadata recipe needed to make their
 physical artifacts agree, the two raw absolute-global side-table value shifts
 (`fnInstanceMetaGlobalByKey` and `nativeStrLiteralGlobals`), the codegen-local
-one-shot direct-materialization registry/emitter handoff and post-DCE
-settlement, the #1916 stable-handle assertions at those exact sites, the two
+one-shot direct-materialization registry/emitter handoff, its dependency-only
+current-authority leaf, the exact neutral post-replacement callback transport,
+and post-DCE settlement, the #1916 stable-handle
+assertions at those exact sites, the two
 multi-source trampoline-finalizer boundary pairs and three pre-consumer
 revision-0 assertions, and the terminal post-fixup audit enumerated above, the #4590
 fixture/tests, and remeasured pins. Its receipt is authorized by the existing
 C1 AST-backed candidate proof; it does not add the neutral schema or route
 lifecycle. D1b owns the remaining
-files and behavior listed above. The new
-direct-materialization registry is a dependency leaf: it may import codegen/Wasm
-data types, but it imports no TypeScript, checker, frontend, IR backend, or
-`method-trampolines` module; `method-trampolines.ts` imports the registry, never
-the reverse.
+files and behavior listed above. The new direct-materialization lifecycle
+module and current-authority module are two dependency leaves with the exact
+split below. The lifecycle leaf may import codegen/Wasm data types and the
+authority leaf; the authority leaf imports only its enumerated
+Program-ABI/current-layout dependencies. Neither imports TypeScript, checker,
+frontend, an IR backend, or `method-trampolines`; `method-trampolines.ts`
+imports the lifecycle leaf, never the reverse.
 
 ### The exact authority being retired
 
@@ -3089,8 +3117,8 @@ type indices must be constructible; and the subtype/family edges must be
 exactly base→allocation and allocation→metadata-field. Unrelated registry rows
 remain allowed.
 
-The `late` descriptor is not the last revision-0 registry check. Add a
-frontend-free
+The `late` descriptor is not the last revision-0 registry check. Keep a
+frontend-free lifecycle facade
 `assertCertifiedFunctionInstancePreDceRegistriesCurrent(ctx, receipt,
 consumer)` in the certified-materialization module and call it immediately
 before each later load-bearing consumer: `fillReflectIsConstructor`,
@@ -3099,8 +3127,12 @@ before each later load-bearing consumer: `fillReflectIsConstructor`,
 entire raw/root/constructible/metadata projection above from the authenticated
 layout cell and current module objects; it may not reuse the `late` descriptor,
 a prior scan, or generated helper bodies as evidence. The assertion performs
-no allocation or repair. Thus a mutation after `sealRoutesComplete` but before
-any finalizer fails at that consumer boundary with no helper/publication prefix.
+no allocation or repair. The materialization facade owns only receipt/lifecycle
+phase routing; it delegates every Program-ABI, locator, current-index,
+canonical-signature, stable-handle, and live-layout join to private authority
+implemented in `certified-function-value-authority.ts`. Thus a mutation after
+`sealRoutesComplete` but before any finalizer fails at that consumer boundary
+with no helper/publication prefix.
 
 After DCE these type-index-keyed maps are not current authority:
 revision 1 instead authenticates the exact emitted initializer, final type
@@ -3561,3 +3593,138 @@ TypeScript can be unloaded, that body construction/type semantics are
 frontend-neutral, that the prepared body is serialized, that Acorn or
 TypeScript 7 is supported, that every frontend fact is neutral, or that direct
 codegen can be deleted. Those remain Phase E and later checkpoints.
+
+## 2026-09-01 D1a amendment — split physical lifecycle from current authority
+
+The first D1a implementation review made one ownership detail non-optional.
+The one-shot physical lifecycle and the independent Program-ABI currentness
+authority cannot remain both auditable in the single
+`certified-function-value-materialization.ts` file under the repository's
+1,500-line hard ceiling. Compressing the full draft below that ceiling would
+hide phase transitions and repeat currentness joins instead of simplifying
+them. D1a therefore owns one additional dependency leaf:
+
+- `src/codegen/certified-function-value-authority.ts` owns only the exact
+  Program-ABI draft, structural-order, reverse-reference, locator,
+  current-index, canonical-callable-signature, and stable-handle joins, plus
+  private `WeakMap`/`WeakSet` brands for allocation, support, owner-transition,
+  trampoline-finalization, and final-layout authority;
+- `src/codegen/certified-function-value-materialization.ts` owns the exact
+  non-empty receipt census, pending→taken→emitted→settled/aborted lifecycle,
+  atomic publication of one freshly built initializer into the exact live
+  owner body, recursive exact-one body census, and the sole
+  revision-0→revision-1 layout-cell transition. It retains canonical and body-
+  census evidence, never a detached initializer as authority; and
+- `src/codegen/closures/method-trampolines.ts` remains the sole legacy/frontend
+  boundary. It authenticates declaration→UnitId→stable-handle→function and
+  the in-progress `FunctionContext` body before asking the two neutral leaves
+  to bind the current owner transition. Neither neutral leaf may inspect
+  `sourceFunction`, a TypeScript declaration, checker/oracle state, source-file
+  maps, or a `FunctionContext`.
+
+The dependency direction is strict: method trampolines may import the lifecycle
+leaf; the lifecycle leaf may import the authority leaf; neither leaf may import
+method trampolines, `src/codegen/index.ts`, `func-space.ts`,
+`program-abi-planning.ts`, `registry/imports.ts`, a multi-prepared owner, a
+frontend, or an IR backend. Runtime imports from apparently neutral IR binding
+helpers are also forbidden when their transitive graph reaches `ts-api`.
+Stable function joins use `absoluteFuncIndex` from
+`src/emit/resolve-layout.ts`. Callable-signature comparisons use canonical
+semantic equality because `currentCallableSignature()` returns a fresh frozen
+object. `resolveCurrentIndex` receives the current module, never a locator;
+exact locator identity is checked independently.
+
+Authority is phase-specific and cannot be synthesized from caller-supplied
+opaque objects or caller-supplied canonical strings:
+
+1. allocation authenticates the exact target UnitId/binding/key, source
+   callable object and stable handle, current callable signature,
+   candidate-scoped absence of the exact trampoline/cache IDs, locators, and
+   registry rows, and allocation-era type/global objects before the first
+   write. Unrelated support artifacts remain valid;
+2. the post-allocation support result independently rejoins the exact target,
+   one `function-value-trampoline` support callable, and one
+   `function-value-cache` support global against their Program-ABI drafts,
+   structural roles, locators, current positions, and retained objects before
+   the singleton receipt is minted;
+3. early registration records the exact expected legacy owner
+   UnitId/handle/function and issues one one-shot branded owner-transition
+   request. A generally callable leaf API may not mint authority from a plain
+   owner tuple. At take, the method-owned boundary consumes that exact request,
+   proves the same owner plus `ctx.currentFunc === fctx` and the exact compiling
+   body, and returns it to the authority leaf, which rejoins the submitted
+   neutral tuple to the stored early owner. Final settlement requires that
+   exact function to own that exact body after normal body installation;
+4. prepared-target installation and trampoline finalization are authenticated
+   one-shot transitions over retained array identities and lifecycle-derived
+   canonical bytes, never callbacks that canonicalize their own values; and
+5. post-DCE settlement derives the current metadata type index from the final
+   module, proves the remapped `$fnmeta` field points to that index, rejoins all
+   current locators/signatures/handles/globals/types and the exact-one owner
+   initializer, then performs the sole layout-cell mutation.
+
+Prepared-target installation crosses one narrow neutral callback seam. Early
+D1 registration returns an opaque prepared-install request only after the
+exact target and legacy-owner UnitIds have both joined the certified candidate.
+The codegen owner retains that request in its existing support receipt, keyed
+by the exact target UnitId, and seals the one-receipt expected census before
+entering `prepareIrBodies`. Before IR's patch loop starts, codegen must prove
+that every retained request key is one exact selected physical target and that
+no request is missing, duplicated, foreign, already consumed, or associated
+with a deferred component.
+
+`IrIntegrationOptions` gains only this optional structurally neutral hook:
+
+```ts
+readonly onPreparedUnitCallableInstalled?: (
+  artifactUnitId: IrUnitId,
+) => void;
+```
+
+The normal non-deferred patch branch invokes it exactly once, immediately
+after `replaceUnitCallableAt(...)` returns the installed callable and before
+`settlePreparedDerivedCallable(...)` or compiled/evidence bookkeeping. The
+hook is not called by orphan-stub recovery, failed/withdrawn patches, or
+`deferPreparedPublication`; it receives no function, array, index, receipt,
+request, context, or canonical string. `prepareIrBodies` merely forwards the
+hook. A codegen closure looks up the UnitId in its private request map and asks
+the lifecycle leaf to stage the live target; unrelated successfully installed
+units are ignored, while the exact target must consume its request once. After
+`prepareIrBodies` returns, codegen requires that exact one-entry request census
+to be fully consumed. A callback throw is an invariant failure of the compile
+invocation, never a typed legacy fallback or permission to continue emitting a
+direct owner against an unstaged target.
+
+The D1 route does not use aggregate/deferred cross-source publication. Deferred
+patches install later through prepared-component publication and therefore
+must never consume a D1 request through this seam. Supporting that lane would
+require a separately planned publication-time neutral capability after the
+aggregate ABI commit; it is not D1a scope. Add non-vacuous controls for a
+missing exact callback, wrong/foreign target key, duplicate invocation,
+invocation before replacement, replay after staging, and an unrelated installed
+unit beside the exact target. Every failure leaves the legacy owner body and
+D1 lifecycle state unchanged; no failure may publish a compiled/evidence row
+for the exact target.
+
+The bounded authority leaf may document the existing
+`function-value-cache` global-role ordinal `2` locally and must validate it
+through a fresh `structuralOrder.forUnit` result. It must not import the general
+Program-ABI planner merely to read that constant. Extracting all global-role
+constants into another shared module is follow-up refactoring, not D1a scope.
+
+Add non-vacuous mutations for an unbranded/cross-context allocation proof, a
+no-op or foreign support observation, a real nonidentity metadata-type DCE
+remap, nested instruction and initializer drift between prepare and publish, a
+foreign/duplicate/shared-body owner, a self-certifying phase/final proof, and
+two parent edges aliasing the same initializer array. Every pre-publication
+mutation must leave the owner body and lifecycle state unchanged; every
+post-certification mutation must fail invariantly. The recursive census counts
+parent-edge occurrences and uses only an active recursion stack for cycle
+protection, never a global visited set that collapses aliases.
+
+This amendment adds no route, backend instruction, optimization exception,
+kill switch, LOC allowance, or physical artifact change. Both new neutral
+files and `method-trampolines.ts` remain at or below the 1,500-line ceiling;
+existing giant-file and total-LOC ratchets remain non-growing. All original
+D1a/D1b ordering, exact #4590 parity, strict load gate, normal hooks, protected
+merge queue, and fresh Sol exact-byte review requirements remain unchanged.

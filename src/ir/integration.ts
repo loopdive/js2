@@ -23,6 +23,8 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import type { IrIntegrationOptions } from "./integration-options.js";
+export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
@@ -534,15 +536,6 @@ export interface IrTypeOverrideMap {
   // void-returning function (zero Wasm result types). Plumbs through to
   // `from-ast.ts` so the IR builder can be constructed with `[]` results.
   get(name: string): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
-}
-
-export interface IrIntegrationOptions {
-  /**
-   * Derive post-pass R2 components and seal every dependency-complete ABI
-   * component before lowering. Components with still-implicit runtime/layout
-   * support retain the established transitional route.
-   */
-  readonly sealPreparedComponents?: boolean;
 }
 
 interface BuiltFn {

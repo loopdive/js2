@@ -140,6 +140,41 @@ const SUPPORTED = {
   arithmeticAddDuration: `export function run() { return Temporal.PlainDate.from("2020-03-04").add({days: 1}).toString(); }`,
   arithmeticSubtract: `export function run() { return Temporal.PlainDate.from("2020-03-04").subtract({days: 1}).toString(); }`,
   arithmeticWith: `export function run() { return Temporal.PlainDate.from("2020-03-04").with({year: 2021}).toString(); }`,
+  // (#5226) ERROR IDENTITY. test262 asserts error TYPES
+  // (`assert.throws(RangeError, …)`), so this is what every negative-case
+  // Temporal row depends on. The rows record `<ctor-hit>|<name>` for the value
+  // the consumer's `catch` binding actually holds.
+  //
+  // Measured 2026-08-31 with a fresh JS2WASM_TEMPORAL_CACHE per lane
+  // (cacheHit=false both sides, .tmp/probe-temporal-5226.mjs):
+  //
+  //   row                base                     after #5226
+  //   errCtorOutOfRange  "no-E|n=undefined"    →  "RE|n=RangeError"
+  //   errFromEmptyObject "TE|n=TypeError"         unchanged (already correct)
+  //   errFromBadString   "RE|n=RangeError"        unchanged (already correct)
+  //
+  // The two unchanged rows are the honest part: the reported symptom
+  // (`Temporal.PlainDate.from({})`) already answered a correct `TypeError` on
+  // this chain tip, because a static reached through the seam is called via a
+  // host MIRROR and its throw crosses a JS frame. What was broken — and what
+  // this issue actually fixes — is the direct wasm→wasm route a `new` on a
+  // compiled provider class takes, where no JS frame exists and the payload was
+  // lost entirely.
+  errCtorOutOfRange: `export function run() {
+    try { new Temporal.PlainDate(2020, 13, 40); }
+    catch (e) { return (e instanceof RangeError ? "RE" : e instanceof Error ? "E" : "no-E") + "|n=" + String(e && e.name); }
+    return "no-throw";
+  }`,
+  errFromEmptyObject: `export function run() {
+    try { Temporal.PlainDate.from({}); }
+    catch (e) { return (e instanceof TypeError ? "TE" : e instanceof Error ? "E" : "no-E") + "|n=" + String(e && e.name); }
+    return "no-throw";
+  }`,
+  errFromBadString: `export function run() {
+    try { Temporal.PlainDate.from("nope"); }
+    catch (e) { return (e instanceof RangeError ? "RE" : e instanceof Error ? "E" : "no-E") + "|n=" + String(e && e.name); }
+    return "no-throw";
+  }`,
 };
 
 /**

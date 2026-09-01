@@ -12,7 +12,7 @@ import {
   validateFinalStructHierarchies,
 } from "../src/codegen/struct-hierarchy-layout.js";
 import type { StructTypeDef, ValType } from "../src/ir/types.js";
-import { compile, compileMulti } from "../src/index.js";
+import { compile, compileMulti, wrapExports } from "../src/index.js";
 
 const SOURCE = `
 interface Node {
@@ -80,6 +80,120 @@ export function test(): number {
   ];
   const selected = values.filter(isMultiTag);
   return selected.length;
+}
+`;
+
+const INTERFACE_DECLARATION_HANDLER_SOURCE = `
+type NodeArray<T extends Node> = T[];
+type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+
+enum SyntaxKind {
+  InterfaceDeclaration = 1,
+}
+
+// Note: 'brands' in our syntax nodes serve to give us a small amount of nominal typing.
+// The brands are never actually given values. At runtime they have zero cost.
+
+interface Node {
+  kind: number;
+  flags: number;
+  parent: Node | null;
+}
+
+interface JSDocContainer extends Node {
+  docs?: NodeArray<Node>;
+}
+
+interface Declaration extends Node {
+  symbol: number;
+}
+
+interface NamedDeclaration extends Declaration {
+  name?: Node;
+}
+
+interface Statement extends Node, JSDocContainer {
+  statementBrand: number;
+}
+
+interface DeclarationStatement extends NamedDeclaration, Statement {
+  name?: Node;
+}
+
+interface Identifier extends Node {
+  text: number;
+}
+
+interface TypeElement extends NamedDeclaration {
+  questionToken?: Node;
+}
+
+interface InterfaceDeclaration extends DeclarationStatement, JSDocContainer {
+  kind: 1;
+  modifiers?: NodeArray<Node>;
+  name: Identifier;
+  members: NodeArray<TypeElement>;
+}
+
+type ChildCallback<T> = (node: Node) => T | undefined;
+type ChildrenCallback<T> = (nodes: NodeArray<Node>) => T | undefined;
+type ForEachChildFunction<TNode extends Node> = <T>(
+  node: TNode,
+  cbNode: ChildCallback<T>,
+  cbNodes?: ChildrenCallback<T>,
+) => T | undefined;
+
+function forEachChild<T>(
+  node: Node,
+  cbNode: ChildCallback<T>,
+  cbNodes?: ChildrenCallback<T>,
+): T | undefined {
+  const forEachChildTable = {
+    [SyntaxKind.InterfaceDeclaration]: function forEachChildInInterfaceDeclaration<T>(
+      node: InterfaceDeclaration,
+      _cbNode: ChildCallback<T>,
+      _cbNodes?: ChildrenCallback<T>,
+    ): T | undefined {
+      return node.members[0].kind as T;
+    },
+  };
+  const widened = (forEachChildTable as Record<number, ForEachChildFunction<any>>)[1];
+  const fn = widened == null ? forEachChildTable[SyntaxKind.InterfaceDeclaration] : widened;
+  return fn === undefined ? undefined : fn(node, cbNode, cbNodes);
+}
+
+function createBaseNode<T extends Node>(kind: T["kind"]): Mutable<T> {
+  const node: Node = { kind, flags: 0, parent: null };
+  return node as Mutable<T>;
+}
+
+function createInterfaceDeclaration(
+  name: Identifier,
+  modifier: Node,
+  member: TypeElement,
+): InterfaceDeclaration {
+  const node = createBaseNode<InterfaceDeclaration>(SyntaxKind.InterfaceDeclaration);
+  node.symbol = 7;
+  node.statementBrand = 8;
+  node.docs = [];
+  node.modifiers = [modifier];
+  node.name = name;
+  node.members = [member];
+  return node;
+}
+
+export function test(): number {
+  const identifier: Identifier = { kind: 2, flags: 0, parent: null, text: 9 };
+  const modifier: Node = { kind: 4, flags: 0, parent: null };
+  const member: TypeElement = { kind: 3, flags: 0, parent: null, symbol: 5 };
+  const declaration = createInterfaceDeclaration(identifier, modifier, member);
+  const roots: NodeArray<Node> = [declaration];
+
+  function readKind(node: Node): number {
+    return node.kind;
+  }
+
+  return (forEachChild(roots[0], readKind) || 0) * 10 + declaration.members.length;
 }
 `;
 
@@ -608,6 +722,42 @@ describe("#1058 interface array callback coercion", () => {
     expect(exports.testProjection()).toBe(1399);
     expect(exports.testArrayFields()).toBe(14);
     expect(exports.test()).toBe(1);
+  });
+
+  it("preserves an InterfaceDeclaration carrier through a Node array and widened handler", async () => {
+    const generated = generateModule(analyzeSource(INTERFACE_DECLARATION_HANDLER_SOURCE, "src/compiler/types.ts"), {
+      standalone: false,
+    });
+    expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+
+    const interfaceDeclarationIdx = generated.module.types.findIndex(
+      (type) => type.kind === "struct" && type.name === "InterfaceDeclaration",
+    );
+    const node = generated.module.types.find(
+      (type): type is StructTypeDef => type.kind === "struct" && type.name === "Node",
+    );
+    expect(interfaceDeclarationIdx).toBe(-1);
+    expect(node?.fields.map((field) => field.name)).toEqual(["kind", "flags", "parent"]);
+
+    const result = await compileMulti(
+      {
+        "./src/compiler/types.ts": INTERFACE_DECLARATION_HANDLER_SOURCE,
+        "./main.ts": `
+import { test as visitorTest } from "./src/compiler/types.js";
+export function test(): number { return visitorTest(); }
+`,
+      },
+      "./main.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const imports = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { test(): number };
+    expect(exports.test()).toBe(31);
   });
 
   it("eagerly flattens method-bearing interfaces without nominally linking them", async () => {

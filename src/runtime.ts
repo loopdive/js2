@@ -78,6 +78,16 @@ import {
   recordVecMirrorElements,
   vecMirrorElementsChanged,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
+import {
+  arrayIndexForPropertyKey as _asArrayIndex,
+  copyWasmStructSidecar,
+  getOrCreateWasmStructSidecar,
+  readWasmStructSidecar,
+  wasmVecOwnKeys,
+  wasmVecSidecarDescriptor,
+  writeWasmStructSidecar,
+  type WasmStructSidecarState,
+} from "./runtime/wasm-struct-sidecar.js";
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
@@ -394,12 +404,21 @@ const _wasmPropDescs = new WeakMap<object, Map<string | symbol, number>>();
  */
 const _wasmStructAccessors = new WeakMap<object, Map<string | symbol, { get?: Function; set?: Function }>>();
 
-/** Tracks WasmGC struct objects that have been frozen via Object.freeze. */
 const _wasmFrozenObjs = new WeakSet<object>();
-/** Tracks WasmGC struct objects that have been sealed via Object.seal. */
 const _wasmSealedObjs = new WeakSet<object>();
 /** Tracks WasmGC struct objects that are non-extensible (freeze/seal/preventExtensions). */
 const _wasmNonExtensibleObjs = new WeakSet<object>();
+const _wasmSidecars: WasmStructSidecarState = {
+  props: _wasmStructProps,
+  prototypes: _wasmStructProto,
+  deletedKeys: _wasmStructDeletedKeys,
+  shadowedFields: _wasmStructShadowedFields,
+  descriptors: _wasmPropDescs,
+  accessors: _wasmStructAccessors,
+  frozen: _wasmFrozenObjs,
+  sealed: _wasmSealedObjs,
+  nonExtensible: _wasmNonExtensibleObjs,
+};
 
 /**
  * User-class instanceof support for subclasses of builtins (#1455).
@@ -3275,29 +3294,26 @@ function _convertIterableForHost(
 
 function _getSidecar(obj: object): Record<string | symbol, any> {
   if (!_canBeWeakKey(obj)) return Object.create(null) as Record<string | symbol, any>;
-  let sc = _wasmStructProps.get(obj);
-  if (!sc) {
-    sc = Object.create(null) as Record<string | symbol, any>;
-    _wasmStructProps.set(obj, sc);
-  }
-  return sc;
+  return getOrCreateWasmStructSidecar(_wasmSidecars, obj);
 }
 
 function _sidecarGet(obj: any, key: any): any {
-  if (!_canBeWeakKey(obj)) return undefined;
-  const sc = _wasmStructProps.get(obj);
-  return sc?.[key];
+  return _canBeWeakKey(obj) ? readWasmStructSidecar(_wasmSidecars, obj, key) : undefined;
 }
 
 function _sidecarSet(obj: any, key: any, val: any): void {
   if (!_canBeWeakKey(obj)) return;
-  _getSidecar(obj)[key] = val;
-  // (#1334) Re-assigning a previously-deleted property clears its tombstone
-  // so subsequent presence checks (`hasOwnProperty`, etc.) report it own again.
-  const tomb = _wasmStructDeletedKeys.get(obj);
-  if (tomb) {
-    tomb.delete(typeof key === "symbol" ? key : String(key));
-  }
+  writeWasmStructSidecar(_wasmSidecars, obj, key, val);
+}
+
+function _copyWasmStructSidecar(source: any, destination: any): void {
+  copyWasmStructSidecar(
+    _wasmSidecars,
+    source,
+    destination,
+    (value) => vecForMirror(value) ?? _unwrapForHost(value),
+    _canBeWeakKey,
+  );
 }
 
 // Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
@@ -7412,20 +7428,6 @@ function _setLikeRecordForHost(
   return rec;
 }
 
-// (#2801) Parse a property key into a canonical array index (uint32), or
-// `undefined` if it is not one. Mirrors the spec's CanonicalNumericIndexString
-// + array-index range so only genuine element keys (`"0"`, `"1"`, …) route to
-// `__vec_get`, while `"length"`, `"01"`, `"-1"`, `"1.5"` fall through to the
-// Array.prototype method path.
-function _asArrayIndex(key: string): number | undefined {
-  if (key === "0") return 0;
-  // Reject leading-zero / sign / non-digit forms — canonical indices only.
-  if (key.length === 0 || key.charCodeAt(0) === 48 /* '0' */) return undefined;
-  const n = Number(key);
-  if (Number.isInteger(n) && n >= 0 && n < 4294967295 && String(n) === key) return n;
-  return undefined;
-}
-
 // (#3116) Default attribute flags for a live array element that has never been
 // reconfigured: data property, writable+enumerable+configurable (§10.4.2).
 const _SC_ELEM_DEFAULT = _SC_DEFINED | _SC_WRITABLE | _SC_ENUMERABLE | _SC_CONFIGURABLE;
@@ -7684,14 +7686,14 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
       return undefined;
     }
   };
-  const rawDesc = (key: string): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, readExports());
-  const hostDesc = (key: string): PropertyDescriptor | undefined => {
+  const rawDesc = (key: string | symbol): PropertyDescriptor | undefined => _readOwnDescriptor(vec, key, readExports());
+  const hostDesc = (key: string | symbol): PropertyDescriptor | undefined => {
     const desc = rawDesc(key);
     if (!desc) return undefined;
     if ("value" in desc) desc.value = _wrapForHost(desc.value, readExports());
     return desc;
   };
-  const materializeNonConfigurable = (key: string, desc: PropertyDescriptor | undefined): void => {
+  const materializeNonConfigurable = (key: string | symbol, desc: PropertyDescriptor | undefined): void => {
     if (!desc || desc.configurable !== false) return;
     try {
       Object.defineProperty(target, key, desc);
@@ -7767,13 +7769,7 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
       return key in target;
     },
     ownKeys() {
-      const n = liveLen();
-      const keys: (string | symbol)[] = [];
-      for (let i = 0; i < n; i++) {
-        if (!mappedArguments || rawDesc(String(i)) !== undefined) keys.push(String(i));
-      }
-      keys.push("length");
-      return keys;
+      return wasmVecOwnKeys(_wasmSidecars, vec, target, liveLen(), mappedArguments, rawDesc);
     },
     getOwnPropertyDescriptor(_t, key) {
       if (key === "length") {
@@ -7791,7 +7787,10 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
           return desc;
         }
       }
-      return undefined;
+      return (
+        wasmVecSidecarDescriptor(_wasmSidecars, vec, key, hostDesc, materializeNonConfigurable) ??
+        Reflect.getOwnPropertyDescriptor(_t, key)
+      );
     },
     defineProperty(_t, key, descriptor) {
       if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
@@ -11960,8 +11959,8 @@ assert._isSameValue = isSameValue;
             _compiledTypedArrayKinds.set(vec, kind);
           }
         };
-      // Reverse any host-side facade that originated from a Wasm value before
-      // codegen narrows the externref back to a concrete GC representation.
+      if (name === "__copy_wasm_struct_sidecar") return _copyWasmStructSidecar;
+      // Reverse a host-side facade before narrowing externref to a concrete GC representation.
       // A vec mirror may have been mutated by a host Array/TypedArray method;
       // replay its current elements before returning the original vec so the
       // concrete call_ref parameter observes both identity and data.

@@ -145,7 +145,7 @@ then compares its result with the same operation in native Node.
 | **webpack upstream suite**              | #3995 | `lib/util/*.js`         | pinned original utility callbacks; complete top-level unit inventory tracked |
 | **jest upstream suite**                 | #3995 | `jest-get-type/src/index.ts` | pinned original get-type callbacks; complete monorepo unit inventory tracked |
 | **tailwindcss upstream suite**          | #3995 | `src/utils/{segment,to-key-path}.ts` | pinned original utility callbacks; complete package test inventory tracked |
-| **typescript upstream suite**           | #3995 | 3 original utility-unit files | 11 pinned base64/pseudo-BigInt callbacks; all 256 files / 1,761 registrations inventoried |
+| **typescript upstream suite**           | #3995 | 4 original utility-unit files | 14 pinned base64/pseudo-BigInt/comment-scanner callbacks; all 256 files / 1,761 registrations inventoried |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)
