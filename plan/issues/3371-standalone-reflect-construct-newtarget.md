@@ -1,8 +1,7 @@
 ---
 id: 3371
 title: "standalone: Reflect.construct arbitrary distinct NewTarget still refuses 33 ES2015 rows"
-status: blocked
-blocked_on: [2046]
+status: in-progress
 created: 2026-07-17
 updated: 2026-09-01
 reopened: 2026-09-01
@@ -10,7 +9,7 @@ sprint: current
 priority: high
 horizon: l
 feasibility: hard
-model: fable
+model: terra
 task_type: bugfix
 area: codegen, runtime
 language_feature: reflect, constructors, prototype chain
@@ -19,6 +18,7 @@ goal: standalone-mode
 umbrella: 1781
 related: [1472, 1781, 1905, 2026, 2046, 2618, 3240, 4196, 4661, 5138, 5140, 5143, 5150, 5153, 5154, 5156]
 origin: "2026-09-01 immutable f841 standalone census; reopened because the prior done closure still refuses arbitrary distinct NewTarget."
+checkpoint: ordinary-slice-authorized
 ---
 
 # #3371 — standalone Reflect.construct with arbitrary distinct NewTarget
@@ -31,10 +31,13 @@ below, 33 ES2015 paths end in the same compile error; this issue is therefore
 production or Test262-source change, creates no GitHub issue, and does not run a
 compiler lane.
 
-The blocking state is an ownership gate, not a claim that #2046 is the semantic
-prerequisite: active local #2046 currently owns
-src/codegen/expressions/call-namespace-static.ts. Rebase and audit after it
-lands before taking any source edit in that file.
+The former #2046 shared-file ownership gate is now released. Its implementation
+was frozen and published only as nonmergeable draft PR #5397; no further source
+work is active in that worktree and it is not a prerequisite for this issue.
+This implementation branch starts from current upstream main
+`2c3c27a54f78df2b71e034080dc509139776a2af`. The ordinary/class four-row slice
+below is authorized after a fresh overlap audit, while every view, native,
+bound-function, and Proxy carrier remains excluded.
 
 ## Immutable evidence
 
@@ -169,10 +172,10 @@ must not reimplement or bypass that carrier.
 
 | Scope | State at audit | Required treatment |
 | --- | --- | --- |
-| Local #3371 worktrees | This planning worktree only | No implementation has been started here. |
-| Local #2046 worktree | Active and dirty on codex/2046-reflect-set-receiver-f841-20260901 | It edits call-namespace-static.ts; wait for its landing and re-audit before source edits. |
-| #2046 source overlap | Its current diff is an import plus the Reflect.set arm around lines 896-935; #3371 refusal is around lines 1620-1627 | Semantically separate today, but a shared-file lease remains a merge/conflict risk. |
-| Open remote PR mentioning #3371 | None found | This does not reopen the issue automatically; the local plan is the authoritative handoff. |
+| Local #3371 worktrees | `issue-3371-reflect-construct-ordinary-20260901`, current-main branch | Terra owns only rows 10-13 after this plan checkpoint commits. |
+| Local #2046 worktree | Frozen at draft PR #5397; shepherded as nonmergeable and unqueued | No active file lease remains. Do not copy its unvalidated production diff. |
+| #2046 source overlap | Draft #5397 edits the Reflect.set arm; #3371 owns the distinct Reflect.construct refusal | Keep this slice based on current main and avoid depending on the draft helper. |
+| Open remote PR mentioning #3371 | Planning PR #5394, non-draft and queued before this branch was created | This branch carries that plan commit; do not open the implementation PR until its diff against current main is reviewed. |
 | Open remote PR touching call-namespace-static.ts | None found | Re-check immediately before implementation. |
 | Draft PR #5224 | WIP ES2015 buffers wave 1; changes DataView/buffer support but not call-namespace-static.ts | It does not block the ordinary carrier directly, but it owns adjacent view/buffer substrate for rows 1-9 and 16-17. |
 
@@ -185,11 +188,11 @@ not only labels, at the start of each implementation slice.
 
 Do not make a single patch for all 33 paths.
 
-1. **Release the shared-file gate.** Wait for #2046 to land. Rebase from the
-   then-current upstream, inspect the current ownership of
-   call-namespace-static.ts, and verify whether #2026/#5153/#5154 changed the
-   ordinary construction interfaces. This plan authorizes no source edit until
-   that check succeeds.
+1. **Release the shared-file gate — complete 2026-09-01.** #2046 stopped as
+   nonmergeable draft #5397, this branch was created from current upstream
+   `2c3c27a54f`, and no active worktree now leases the Reflect.construct arm.
+   Re-audit #2026/#5153/#5154 interfaces before editing and keep the ordinary
+   carrier independent of #2046's draft helper.
 
 2. **Ordinary/class runtime-NewTarget contract (rows 10-13).** This is the
    first candidate post-#2046 slice. For the narrow ordinary function, class,
@@ -220,14 +223,14 @@ Do not make a single patch for all 33 paths.
    target/newTarget forwarding, and invariant checking in the Proxy construct
    implementation rather than papering over it in the namespace-static caller.
 
-### Safe first slice after #2046?
+### Safe first slice after the #2046 freeze?
 
-**Yes, conditionally.** After #2046 lands and the prescribed fresh ownership
-audit succeeds, the four-row ordinary/class slice is non-overlapping with the
-active #2046 Reflect.set change and does not require the #5224 view/buffer
-files. It is not blanket authorization for all #3371 work: it must still honor
-any newly landed #2026/#5153/#5154 interfaces, and all view, native, bound, and
-Proxy groups remain separately owned.
+**Yes, conditionally.** With #2046 frozen rather than landing, the four-row
+ordinary/class slice is non-overlapping with its parked Reflect.set change and
+does not require the #5224 view/buffer files. It is not blanket authorization
+for all #3371 work: it must still honor any newly landed #2026/#5153/#5154
+interfaces, and all view, native, bound, and Proxy groups remain separately
+owned.
 
 ## Future acceptance and regression gate
 
