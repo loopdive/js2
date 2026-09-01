@@ -283,7 +283,7 @@ created.
 
 This residual-slice worktree is
 `/Users/thomas/Code/js2/.codex-worktrees/issue-5198-regexp-exec-r2-20260901`,
-on `codex/5198-regexp-exec-r2-f841-20260901`. Planning began at source
+on `codex/5198-regexp-exec-slice-b-checkpoint-20260901`. Planning began at source
 `f841cddc0f0ea665b63700d9944a4372a34a8b57`; before publication the branch was
 fast-forwarded to upstream `b590669a7b0dd9537d9b9e703218d9cd6eec3106`.
 That intervening PR changes only #3521's prepared-free-function routing and is
