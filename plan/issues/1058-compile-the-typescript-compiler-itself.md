@@ -60,6 +60,10 @@ loc-budget-allow:
   - src/codegen/generic-callback-result.ts
   - src/codegen/generic-struct-factory.ts
   - src/codegen/module-scale-profile.ts
+  # 2026-09-01: the binder runtime reaches TypeScript's bounded
+  # `Debug[AssertionKeys]` self-replacement protocol. The namespace-value
+  # subsystem now materializes that checker-proven callable projection.
+  - src/codegen/module-namespace-value.ts
   - src/codegen/native-construct.ts
   # 2026-08-31: projected NodeArray vecs retain their host-backed sidecar/MOP
   # identity so parser metadata survives element-type widening.
@@ -141,6 +145,10 @@ oracle-ratchet-allow:
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/expressions/misc.ts
   - src/codegen/statements/nested-declarations.ts
+  # 2026-09-01: admit a runtime-namespace function projection only when the
+  # computed write key's checker constraint is a finite string-literal set and
+  # every member has one exact executable Program ABI declaration.
+  - src/codegen/module-namespace-value.ts
   # 2026-08-30: distinguishing a compiled Scanner implementation from an
   # ambient object requires checker-backed declaration and initializer
   # provenance. This is deliberately local to callback classification.
@@ -1358,6 +1366,48 @@ performance fix. A local extraction would forfeit the unmodified-upstream-source
 claim, so treat it as an explicit module-hygiene follow-up (or upstream it), not
 as the current stack-balance or performance repair.
 
+### Binder compile, validation, and runtime-namespace frontier (2026-09-01)
+
+This supersedes the earlier stack-balance frontier above. On snapshot
+`0280bc394964f1`, the canonical TypeScript 5.9.3 binder workload selected **32
+input/source files**, **36 Program files**, and **312 module-initialization
+statements**. It completed body generation for **4,828 functions**, compiled
+successfully, and emitted a **76,915,977-byte** module that
+`WebAssembly.validate` accepted. The worker used 718,317 ms CPU (1.12 average
+cores) and peaked at **3,850.2 MiB RSS**, 245.8 MiB below the strict 4 GiB
+process target. The result had **21 non-fatal warnings and no hard compile
+errors**.
+
+Both committed binder controls instantiated and reached execution, but first
+stopped at the same runtime boundary: `visitorPublic.ts:374:5` called the
+overloaded `Debug.assertEachNode` through a null namespace receiver. TypeScript
+nominates the first bodyless overload as that property's `valueDeclaration`,
+so the static namespace-call path had declined to the extern-method bridge.
+Commit `b0f313de1f8af204ace11750c3bda9012180b26c` selects the unique body-bearing
+declaration and retains the exact Program ABI identity check. Its circular
+export-star regression executes the call and emits no
+`__extern_method_call_*` import.
+
+A fresh post-fix run again compiled and validated successfully. It completed in
+656,354 ms worker / 657,223 ms wall, used 718,349 ms CPU (1.09 average cores),
+peaked at **3,494.3 MiB RSS**, and emitted a **76,914,855-byte** module with
+**4,828 functions**, **21 non-fatal warnings**, and no hard compile errors. Both
+fixtures then entered `Debug.assertEachNode` and reached the next shared
+boundary inside `shouldAssertFunction`: the computed self-read `Debug[name]` at
+`debug.ts:189:56` still treated the mixed runtime namespace as its legacy null
+placeholder. The probe correctly rejected both invocations and did not publish
+`/private/tmp/ts2wasm-typescript-binder-latest.wasm{,.map}`.
+
+The focused repair materializes one symbol-keyed namespace function projection
+only when the checker proves that every possible computed-write key is a finite
+string-literal set of unique executable exports. It selects overload
+implementations by their body-bearing declarations, re-resolves exact Program
+ABI handles after late-import shifts, and never serves the partial projection
+for a bare/escaping namespace value or a non-admitted member. The exact
+`Debug[AssertionKeys]` circular-barrel regression now compiles, validates, and
+executes. A new authoritative full binder oracle is still required before this
+slice is accepted.
+
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
 reachable from the selected runtime entry nor re-exported may be removed only
@@ -1380,6 +1430,8 @@ emit and self-hosting.
 - [x] Tier 3 scanner+parser graph compiles, validates, and executes all three pinned real-source workloads
 - [x] Consumer-driven source resolution narrows the parser graph with default
       resolution unchanged and focused static/dynamic-demand tests
+- [ ] Binder slice compiles, validates, preserves the three accepted parser
+      fingerprints, and matches both committed native/Wasm binder oracles
 - [ ] ≥ 5 follow-up issues filed for concrete gap patterns
 - [x] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
 - [x] **Stretch 1 (Tier 3):** compiled scanner+parser produces native-equivalent AST fingerprints for all three pinned real `.ts` files
