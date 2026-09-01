@@ -212,6 +212,53 @@ Thomas and Codex/Terra trailers. Git signing is unavailable in this environment:
 there is no configured signing format/key/program and no `gpg` executable;
 `git log --show-signature` therefore reports no signature block.
 
+## 2026-09-01 CI regression containment checkpoint
+
+Draft PR #5402 CI run `33478111830` surfaced six genuine **host-lane**
+regressions: the four `generator-return-method` cases, #1205's nested
+TDZ-capturing generator case, and #1388's detached static async-generator
+method case. The exact failed jobs were equivalence shards `99761721969` and
+`99761721882`.
+
+The cause was #3591 removing the original
+`ctx.nativeGenerators.size === 0` admission guard. In a module with no
+pass-1 synchronous native producer, that let the new opaque dispatcher claim
+legacy sync and async-generator protocol calls with an empty state ladder.
+The former reaches the GeneratorValidate TypeError; the latter is not a
+synchronous IteratorResult at all. The forced-pass-2 #3591 fixtures retain a
+pass-1 native function-expression registration, so restoring the guard does
+not remove their late-filled final-state dispatch.
+
+The repair restores that guard and keeps the new opaque `externref` result ABI,
+`extern.convert_any`, and `__any_iter_next` reserve only for standalone/WASI.
+The JS-host native declaration path retains its historical `eqref` result ABI.
+`tests/issue-3591.test.ts` now also covers a nested host legacy generator
+through `(it as any).return(...)` followed by `.next()`; it protects the exact
+over-admission shape without changing nested-legacy bookkeeping.
+
+Post-CI validation on the worktree over
+`49db135cc230ed8f905d4f1d6fc96eed0167e8b7`:
+
+- Exact CI regressions: **6/6 pass**. The focused four-file run had **16 pass,
+  1 existing todo** (`generator-return-method`, #1205, #1388, and #3591).
+- Existing standalone controls remain **67/67 pass**; including the new host
+  control, the four #3591 control files total **68/68 pass** (3 + 13 + 18 +
+  34).
+- The authoritative isolated standalone cohort remains **4/7 pass, 3 fail**:
+  `chunks/exhaustion-does-not-call-return`,
+  `windows/exhaustion-does-not-call-return`, and
+  `GeneratorPrototype/next/context-method-invocation`. Their exact TypeError
+  failures are the pre-existing closure-carrier/property-call residuals above,
+  not a regression from this containment repair.
+- Typecheck, focused Biome lint, oracle ratchet, and LOC/function budget gates
+  pass.
+
+This remains a draft/in-progress handoff. A mixed module containing both a
+native synchronous producer and a typed async-generator receiver may still
+need a caller-side async exclusion; an `any`-typed heterogeneous sync/async
+receiver needs a dedicated runtime discriminator. Neither belongs in this
+late-fill repair, and `call-receiver-method.ts` is deliberately unchanged.
+
 ## Reproduction / affected shapes
 
 Measured on `origin/main` @ `7652f033774194`, `target: "standalone"`:

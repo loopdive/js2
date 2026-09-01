@@ -11,6 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { compileToWasm } from "./equivalence/helpers.js";
 
 async function runHostFree(source: string): Promise<number> {
   const result = await compile(source, {
@@ -27,7 +28,7 @@ async function runHostFree(source: string): Promise<number> {
   return (instance.exports as { test(): number }).test();
 }
 
-describe("#3591 — opaque generator resume dispatch late fill (standalone)", () => {
+describe("#3591 — opaque generator resume dispatch late fill", () => {
   it("keeps .next/.return/.throw correct after a real module-init pass 2", async () => {
     expect(
       await runHostFree(`
@@ -78,5 +79,22 @@ describe("#3591 — opaque generator resume dispatch late fill (standalone)", ()
         }
       `),
     ).toBe(2);
+  });
+
+  it("leaves a host nested legacy generator on its return/next fallback", async () => {
+    const exports = await compileToWasm(`
+      export function test(): number {
+        function outer(): number {
+          function* g() { yield 1; yield 2; }
+          const it = g() as any;
+          it.next();
+          const returned: any = it.return(9);
+          const after: any = it.next();
+          return (returned.done ? 1 : 0) + (returned.value === 9 ? 10 : 0) + (after.done ? 100 : 0);
+        }
+        return outer();
+      }
+    `);
+    expect(exports.test!()).toBe(111);
   });
 });

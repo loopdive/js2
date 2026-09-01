@@ -356,6 +356,10 @@ function reserveOpaqueNativeGeneratorDispatch(
   // externref for boxed-any frames. The source argument is still evaluated just
   // once at the call site; this fixed ABI lets a pass-2 producer add a carrier
   // absent from the pass-1 registration set without freezing the dispatch type.
+  // Only no-JS-host targets expose that result as externref: their function
+  // expression factory returns a native state through an opaque closure ABI.
+  // The JS-host native declaration path keeps its historical eqref result.
+  const externrefResultAbi = ctx.standalone || ctx.wasi;
   const params: ValType[] =
     methodName === "throw"
       ? [{ kind: "anyref" }, { kind: "externref" }]
@@ -363,15 +367,15 @@ function reserveOpaqueNativeGeneratorDispatch(
   const typeIdx = addFuncType(
     ctx,
     params,
-    [{ kind: "externref" }],
+    [{ kind: externrefResultAbi ? "externref" : "eqref" }],
     `$${opaqueNativeGeneratorDispatchName(methodName)}_type`,
   );
   const funcIdx = mintDefinedFunc(ctx);
   const hostResultLocal = params.length;
-  // An opaque `.next()` can be a native iterator-helper call. Reserve its
-  // adapter while body compilation can still register the iterator runtime;
-  // final type classification remains in the late-filled dispatch below.
-  const anyIterNextIdx = methodName === "next" ? reserveAnyIterNext(ctx) : undefined;
+  // An opaque `.next()` can be a native iterator-helper call in the no-JS-host
+  // lane. Reserve its adapter while body compilation can still register the
+  // iterator runtime; JS-host keeps the historical generator-only helper ABI.
+  const anyIterNextIdx = externrefResultAbi && methodName === "next" ? reserveAnyIterNext(ctx) : undefined;
   const name = opaqueNativeGeneratorDispatchName(methodName);
   pushDefinedFunc(ctx, funcIdx, {
     name,
@@ -716,10 +720,10 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
         ? buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, undefined, undefined, 1, hostMix)
         : buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, 1, 2, undefined, hostMix, iteratorMix);
     // Every native result struct (including the host-mix wrapper) is an
-    // internal anyref. Cross the opaque helper ABI as externref so callers
-    // compiled before their producer exists retain the ordinary dynamic
-    // IteratorResult representation rather than an unusable eqref.
-    fn.body = [...instrs, { op: "extern.convert_any" }];
+    // internal anyref. No-JS-host callers need the ordinary dynamic
+    // IteratorResult representation after pass 2, so cross that helper ABI as
+    // externref. Preserve the JS-host helper's historical eqref result path.
+    fn.body = ctx.standalone || ctx.wasi ? [...instrs, { op: "extern.convert_any" }] : instrs;
   }
 }
 
@@ -731,6 +735,11 @@ export function tryCompileNativeGeneratorMethodCall(
   args: readonly ts.Expression[],
 ): ValType | null | undefined {
   if (methodName !== "next" && methodName !== "return" && methodName !== "throw") return undefined;
+  // A pass-1 native producer is the only evidence this source-level call can
+  // need the late-filled native ladder. Without one, preserve the existing
+  // async/legacy generator protocol handlers rather than claiming every
+  // `.next()` / `.return()` / `.throw()` call with an empty dispatcher.
+  if (ctx.nativeGenerators.size === 0) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, receiverExpr);
   if (receiverType && (receiverType.kind === "ref" || receiverType.kind === "ref_null")) {
@@ -798,7 +807,7 @@ export function tryCompileNativeGeneratorMethodCall(
     fctx.body.push({ op: "local.get", index: valueLocal! }, { op: "local.get", index: valueAnyLocal! });
   }
   fctx.body.push({ op: "call", funcIdx: dispatch.funcIdx });
-  return { kind: "externref" };
+  return { kind: ctx.standalone || ctx.wasi ? "externref" : "eqref" };
 }
 
 export function tryCompileNativeGeneratorResultProperty(
