@@ -334,6 +334,22 @@ Post-sync validation after merging live `loopdive/js2` main
 - `test/built-ins/Reflect/construct/return-without-newtarget-argument.js` —
   pass.
 
+### Draft CI blocker — PR #5400
+
+The draft CI run confirms the checkpoint is inert rather than mergeable. Its
+only concrete failing gate was:
+
+~~~text
+pnpm run check:dead-exports
+dead-export gate: 1 NEW unreferenced top-level function(s) in src/codegen/: src/codegen/new-target.ts#standaloneReflectConstructOrdinarySite
+~~~
+
+It exited 1. All preceding and other gates passed or were intentionally
+skipped. The unreferenced admission query is expected while the
+`Reflect.construct` dispatcher remains unwired; it is evidence for the
+dedicated-module/decomposition handoff, not a reason to update the dead-export
+baseline or add a synthetic production reference.
+
 ## Future acceptance and regression gate
 
 Run these only in the later implementation worktree, after acquiring ownership;
