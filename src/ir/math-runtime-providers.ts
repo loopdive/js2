@@ -19,7 +19,15 @@ export function materializePreparedMathProviders(ctx: CodegenContext, prepared: 
     provider.implementation.kind === "self-hosted" ? [{ id: provider.id, symbol: provider.implementation.symbol }] : [],
   );
   if (selfHosted.some((provider) => preparedMathProviderIndex(ctx, provider.symbol) === undefined)) {
-    const methods = new Set(prepared.manifest.intrinsicUses.map((use) => use.id.slice("math.".length)));
+    // (#3526 F1-S1) The manifest now also carries non-Math intrinsic uses, so
+    // this projection filters by the `math.` prefix instead of slicing every
+    // use — `"js.number.box".slice(5)` would otherwise reach the Math emitter
+    // as the method name `"mber.box"`.
+    const methods = new Set(
+      prepared.manifest.intrinsicUses.flatMap((use) =>
+        use.id.startsWith("math.") ? [use.id.slice("math.".length)] : [],
+      ),
+    );
     emitInlineMathFunctions(ctx, methods);
   }
   for (const provider of selfHosted) {

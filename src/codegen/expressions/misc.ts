@@ -26,6 +26,7 @@ import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
+export { tryCompileCallableStaticField } from "./static-callable-field.js";
 
 /** A source `undefined` value that is not shadowed by a local declaration. */
 function isBuiltinUndefinedExpression(ctx: CodegenContext, expression: ts.Expression): boolean {

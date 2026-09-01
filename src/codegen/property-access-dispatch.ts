@@ -1882,7 +1882,13 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     const deferToWellKnownSymbolId = builtinName === "Symbol" && getWellKnownSymbolId(propName) !== undefined;
     const deferToNativeConstant =
       deferToWellKnownSymbolId || (ctx.standalone && hasNativeBuiltinConstantHandler(builtinName, propName));
-    if (ctx.standalone && BUILTIN_CTOR_NAMES.has(builtinName) && !isShadowed && !deferToNativeConstant) {
+    const isHostDescriptor = !ctx.wasi && builtinName === "Object" && propName === "getOwnPropertyDescriptor";
+    if (
+      (ctx.standalone || isHostDescriptor) &&
+      BUILTIN_CTOR_NAMES.has(builtinName) &&
+      !isShadowed &&
+      !deferToNativeConstant
+    ) {
       // (#2175 S1) `<Builtin>.prototype` as a value → the native `$NativeProto`
       // object (host-free), for builtins with a registered brand. This is the
       // inner read every reflective form (`RegExp.prototype.test`,
@@ -1897,25 +1903,13 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       }
       const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName, expr);
       if (closure) {
-        // (#2963) IDENTITY-STABLE reified builtin value: read via a module-level
-        // singleton so `Array.isArray === Array.isArray`, `Number.isInteger ===
-        // Number.isInteger`, etc. hold (a fresh `struct.new` per read gave two
-        // distinct instances → `!==`). Distinct builtins keep distinct singleton
-        // globals, so `Array.isArray !== Number.isInteger` still holds.
+        // (#2963) Reified builtin values use identity-stable singleton globals.
+        // Distinct builtin/member pairs retain distinct singleton values.
         fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
         return closure.type;
       }
-      // (#4484 B) `<Builtin>.constructor` — a builtin constructor is a function
-      // object whose [[Prototype]] is `Function.prototype`, so the INHERITED
-      // `constructor` it finds is `%Function%` (§20.2.3.1). There is no own
-      // `constructor` on any builtin constructor to shadow it. Routed through
-      // the ONE `%Function%` emitter (#4442) so this read cannot disagree with a
-      // bare `Function` read in the same module. Before this arm the pair
-      // refused LOUD — `Object.constructor` / `Boolean.constructor` were the two
-      // remaining `compile_error` rows under
-      // `language/expressions/property-accessors` (`S11.2.1_A4_T2` / `_A4_T6`,
-      // measured compile_error→pass), failing the whole file over a read the
-      // spec answers uniformly.
+      // (#4484 B) Builtin constructors inherit `%Function%`'s constructor;
+      // route this read through the shared intrinsic for identity consistency.
       if (propName === "constructor") {
         const fnIntrinsic = emitStandaloneFunctionIntrinsicValue(ctx, fctx);
         if (fnIntrinsic !== undefined) return fnIntrinsic;
