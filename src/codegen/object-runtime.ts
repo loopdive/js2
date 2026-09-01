@@ -165,7 +165,12 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 // (#2106 S1) function-level-only cycle with any-helpers.ts (which imports
 // ensureObjectRuntime) — same tolerated shape as native-strings ↔ any-helpers.
-import { buildIsUndefinedExternBody, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
+import {
+  buildIsUndefinedExternBody,
+  canonicalUndefinedExternInstrs,
+  undefinedExternInstrs,
+  undefinedSingletonActive,
+} from "./any-helpers.js";
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
@@ -7673,7 +7678,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
           { op: "ref.cast", typeIdx: proxyRevokerTypeIdx },
           { op: "struct.get", typeIdx: proxyRevokerTypeIdx, fieldIdx: 0 },
           { op: "call", funcIdx: proxyRevokeIdx },
-          ...undefinedSentinel(),
+          ...canonicalUndefinedExternInstrs(ctx),
           { op: "return" },
         ],
       },
