@@ -320,10 +320,15 @@ import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-gl
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
 import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
-import { isIntrinsicId, type IntrinsicId, type NumberBoundaryIntrinsicId } from "./intrinsics.js";
+import {
+  isIntrinsicId,
+  type BooleanBoundaryIntrinsicId,
+  type IntrinsicId,
+  type NumberBoundaryIntrinsicId,
+} from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
-import type { NumberBoundaryPolicy, RuntimeProviderPlan } from "./runtime-manifest.js";
+import type { BooleanBoundaryPolicy, NumberBoundaryPolicy, RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -795,6 +800,20 @@ function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPol
   });
 }
 
+/**
+ * (#3526 F1-S2) This caller's already-resolved BOOLEAN-boundary policy.
+ *
+ * The EXACT fact the from-ast boolean arm used to read through the
+ * `hasHostBooleanBox` resolver predicate (`!ctx.nativeStrings`), consulted
+ * once, here, before freeze. Boolean values share the host union-import family
+ * with numbers but retain their own boxer, so `true` never crosses an externref
+ * boundary as the number `1`; the family is one-armed because no native
+ * boolean boxer exists to select.
+ */
+function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryPolicy {
+  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("unsupported" as const) });
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -815,6 +834,26 @@ function unsupportedNumberBoundaryIntrinsic(
   return found;
 }
 
+/** The first boolean-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedBooleanBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: BooleanBoundaryPolicy,
+): BooleanBoundaryIntrinsicId | undefined {
+  if (policy.box !== "unsupported") return undefined;
+  let found: BooleanBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.boolean.box") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
 function prepareBuiltFnRuntimeManifest(
   ctx: CodegenContext,
   sourceFile: string,
@@ -827,6 +866,7 @@ function prepareBuiltFnRuntimeManifest(
       target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
       backend: "wasmgc",
       numberBoundary: integrationNumberBoundaryPolicy(ctx),
+      booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
     },
   });
   if (!runtime) return { entries };
@@ -3479,9 +3519,29 @@ export function compileIrPathFunctions(
   // manifest deterministic; structural manifest corruption and late mutation
   // stay fatal for the whole transaction.
   const numberBoundaryPolicy = integrationNumberBoundaryPolicy(ctx);
+  const booleanBoundaryPolicy = integrationBooleanBoundaryPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
-    if (unsupported === undefined) continue;
+    if (unsupported !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
+            `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S2) The boolean boundary partitions on the SAME rule and in the
+    // same pass, so one demoting owner still cannot fail an unrelated one
+    // through the aggregate manifest below.
+    const unsupportedBoolean = unsupportedBooleanBoundaryIntrinsic(entry.fn, booleanBoundaryPolicy);
+    if (unsupportedBoolean === undefined) continue;
     markOwnerFailure(
       terminalOwnerOf(entry),
       entry.artifactUnitId,
@@ -3489,8 +3549,8 @@ export function compileIrPathFunctions(
       new IrUnsupportedError(
         "late-preparation-unsupported",
         "resolve",
-        `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
-          `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        `ir/integration: semantic intrinsic ${unsupportedBoolean} has no provider under boolean-boundary policy ` +
+          `box=${booleanBoundaryPolicy.box}`,
       ),
       "resolve",
     );
@@ -5660,12 +5720,6 @@ function makeFromAstResolver(
     externIsUndefinedIsNative(): boolean {
       return ctx.standalone || ctx.wasi || ctx.nativeStrings;
     },
-    // Boolean values share the host union-import family with numbers, but
-    // retain their own boxer so `true` never crosses an externref boundary as
-    // the number `1`.
-    hasHostBooleanBox(): boolean {
-      return !ctx.nativeStrings;
-    },
     // (#2955 slice 3) Rep predicate: the string carrier is externref (host
     // strings), so string SSA values flow unchanged into externref-expected
     // positions (`coerceToExpectedExtern` host-call args) and take the
@@ -7400,29 +7454,31 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
           if (usesDynMemberSet(i)) usesMemberSet = true;
-          // (#3526 F1-S1) The number boundary now reaches Phase 3 as a semantic
-          // `intrinsic` whose frozen provider carries the SAME physical target
-          // the old direct call used. Provider attachment already ran (the
-          // manifest is prepared before this preregistration), so recognizing
-          // the exact attached targets here keeps `addUnionImports` the whole
-          // union family's single materializer — and keeps import membership,
-          // order and indices identical to the legacy control.
-          const numberBoundaryTarget =
+          // (#3526 F1-S1, widened by F1-S2) The number and boolean boundaries
+          // reach Phase 3 as semantic `intrinsic`s whose frozen providers carry
+          // the SAME physical targets the old direct calls used. Provider
+          // attachment already ran (the manifest is prepared at the top of the
+          // preparation sequence, this preregistration later in the same one),
+          // so recognizing the exact attached targets here keeps
+          // `addUnionImports` the whole union family's single materializer —
+          // and keeps import membership, order and indices identical to the
+          // legacy control. No name scanning, no second allocator.
+          const boundaryIntrinsicTarget =
             i.kind === "intrinsic" &&
-            (i.id === "js.number.box" || i.id === "js.number.unbox") &&
+            (i.id === "js.number.box" || i.id === "js.number.unbox" || i.id === "js.boolean.box") &&
             i.provider?.kind === "callable"
               ? i.provider.target
               : undefined;
           if (
-            numberBoundaryTarget?.binding.kind === "import" &&
-            numberBoundaryTarget.binding.module === "env" &&
-            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.field)
+            boundaryIntrinsicTarget?.binding.kind === "import" &&
+            boundaryIntrinsicTarget.binding.module === "env" &&
+            UNION_IMPORT_FUNC_NAMES.has(boundaryIntrinsicTarget.binding.field)
           ) {
             usesNamedUnionImport = true;
           }
           if (
-            numberBoundaryTarget?.binding.kind === "runtime" &&
-            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.symbol)
+            boundaryIntrinsicTarget?.binding.kind === "runtime" &&
+            UNION_IMPORT_FUNC_NAMES.has(boundaryIntrinsicTarget.binding.symbol)
           ) {
             usesRuntimeUnboxNumber = true;
           }
