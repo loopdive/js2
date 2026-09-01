@@ -5,6 +5,7 @@ import type { CodegenContext } from "./context/types.js";
 
 interface IdentityPreservingStructuralCarrier {
   open: true;
+  compoundStructDispatch?: true;
 }
 
 const identityPreservingParams = new WeakMap<
@@ -12,13 +13,17 @@ const identityPreservingParams = new WeakMap<
   WeakMap<ts.ParameterDeclaration, IdentityPreservingStructuralCarrier>
 >();
 
-export function markIdentityPreservingStructuralParam(ctx: CodegenContext, parameter: ts.ParameterDeclaration): void {
+export function markIdentityPreservingStructuralParam(
+  ctx: CodegenContext,
+  parameter: ts.ParameterDeclaration,
+  carrier: IdentityPreservingStructuralCarrier = { open: true },
+): void {
   let parameters = identityPreservingParams.get(ctx);
   if (!parameters) {
     parameters = new WeakMap();
     identityPreservingParams.set(ctx, parameters);
   }
-  parameters.set(parameter, { open: true });
+  parameters.set(parameter, carrier);
 }
 
 /**
