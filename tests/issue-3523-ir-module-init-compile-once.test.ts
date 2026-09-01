@@ -444,6 +444,45 @@ describe("#3523 exact scalar assignment stays inside the prepared module-init tr
 total = total + 1;
 export function read(): number { return total; }
 `;
+
+  // (#3523 R4 gap 2b) The scalar-statement operator family the prepared
+  // transaction owns. Every row's expected value is one only the ASSIGNMENT
+  // can produce — initializer-only execution returns the declared value — so a
+  // silently dropped statement fails on the number, not merely on an outcome
+  // row. The last two rows are the sub-B cases: a declaration AFTER an
+  // assignment, which the retired `sawAssignment` rule refused for order alone.
+  const ADMITTED_SHAPES = [
+    { name: "postfix increment", body: `let n: number = 0;\nn++;`, read: `n`, expected: 1 },
+    { name: "prefix increment", body: `let n: number = 0;\n++n;`, read: `n`, expected: 1 },
+    { name: "postfix decrement", body: `let n: number = 5;\nn--;`, read: `n`, expected: 4 },
+    { name: "prefix decrement", body: `let n: number = 5;\n--n;`, read: `n`, expected: 4 },
+    { name: "plus-equals", body: `let n: number = 0;\nn += 2;`, read: `n`, expected: 2 },
+    { name: "minus-equals", body: `let n: number = 5;\nn -= 2;`, read: `n`, expected: 3 },
+    { name: "times-equals", body: `let n: number = 5;\nn *= 3;`, read: `n`, expected: 15 },
+    { name: "divide-equals", body: `let n: number = 8;\nn /= 2;`, read: `n`, expected: 4 },
+    { name: "binary minus", body: `let n: number = 5;\nn = n - 2;`, read: `n`, expected: 3 },
+    { name: "binary times", body: `let n: number = 5;\nn = n * 3;`, read: `n`, expected: 15 },
+    { name: "binary divide", body: `let n: number = 8;\nn = n / 2;`, read: `n`, expected: 4 },
+    { name: "plain numeric literal", body: `let n: number = 0;\nn = 7;`, read: `n`, expected: 7 },
+    { name: "sequential compounds", body: `let n: number = 5;\nn -= 2;\nn *= 3;`, read: `n`, expected: 9 },
+    { name: "sequential binaries", body: `let n: number = 5;\nn = n - 2;\nn = n * 3;`, read: `n`, expected: 9 },
+    {
+      name: "declaration after assignment",
+      body: `let total: number = 0;\ntotal = total + 1;\nlet later: number = 2;`,
+      read: `total * 10 + later`,
+      expected: 12,
+    },
+    {
+      name: "interleaved declarations and updates",
+      body: `let n: number = 0;\nn++;\nlet k: number = 4;\nk--;`,
+      read: `n * 10 + k`,
+      expected: 13,
+    },
+  ] as const;
+
+  function admittedSource(shape: (typeof ADMITTED_SHAPES)[number]): string {
+    return `${shape.body}\nexport function read(): number { return ${shape.read}; }\n`;
+  }
   const lanes = [
     { name: "host-start", target: "gc" as const, deferTopLevelInit: false },
     { name: "host-deferred", target: "gc" as const, deferTopLevelInit: true },
@@ -568,6 +607,22 @@ export function read(): number { return offset * 10 + total; }`,
 export function read(): number { return value; }`,
         expected: 5,
       },
+      // (#3523 R4 gap 2b) Source order is proven per entry, so a declaration
+      // may follow an assignment. The retired `sawAssignment` rule refused
+      // this for ordering alone even though the plan zips bindings by
+      // `declarationOrdinal` and evaluations by population ordinal.
+      {
+        name: "declaration after an assignment",
+        source: `let total = 0; total = total + 1; let later = 2;
+export function read(): number { return total * 10 + later; }`,
+        expected: 12,
+      },
+      {
+        name: "declarations interleaved with updates",
+        source: `let first = 0; first++; let second = 4; second--;
+export function read(): number { return first * 10 + second; }`,
+        expected: 13,
+      },
     ] as const;
     for (const variant of variants) {
       const result = await compileLane(variant.source, lanes[2]!);
@@ -582,6 +637,42 @@ export function read(): number { return value; }`,
       expect((exports.read as () => number)(), variant.name).toBe(variant.expected);
     }
   });
+
+  // (#3523 R4 gap 2b) The operator family is the slice's whole behavior claim:
+  // each shape must be prepared-owned on every lane AND produce a value only
+  // the assignment can produce. The deferred lanes additionally prove the
+  // statement runs at `__module_init`, not at instantiation.
+  it("owns the whole scalar-statement operator family on every lane", async () => {
+    for (const shape of ADMITTED_SHAPES) {
+      const source = admittedSource(shape);
+      for (const lane of lanes) {
+        const label = `${shape.name} / ${lane.name}`;
+        const result = await compileLane(source, lane);
+        expect(result.success, `${label}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+        expect(scalarModuleInitOutcome(result), label).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+        expect(new Set(result.irCompiledFuncs ?? []), label).toContain("<module-init>");
+
+        const exports = await instantiateLane(result, lane);
+        const read = exports.read as () => number;
+        if (lane.deferTopLevelInit) {
+          expect(typeof exports.__module_init, label).toBe("function");
+          expect(read, label).toThrow();
+          (exports.__module_init as () => void)();
+        } else {
+          expect(exports.__module_init, label).toBeUndefined();
+        }
+        expect(read(), label).toBe(shape.expected);
+        expect(read(), label).toBe(shape.expected);
+      }
+    }
+    // 16 shapes x 5 lanes of real compiles; the default 35s budget is for
+    // single-compile tests.
+  }, 300000);
 
   it("keeps the exact standalone candidate prepared without Binaryen optimization", async () => {
     const lane = lanes[2]!;
@@ -602,27 +693,44 @@ export function read(): number { return value; }`,
     const previous = process.env[poison];
     process.env[poison] = "1";
     try {
-      for (const lane of lanes) {
-        const result = await compileLane(SOURCE, lane);
-        expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
-        expect(scalarModuleInitOutcome(result)).toMatchObject({
-          kind: "emitted",
-          legacyBodyEmitted: false,
-          irBodyEmitted: true,
-        });
+      // (#3523 R4 gap 2b) Every shape of the admitted operator family, not
+      // only the landed `total = total + 1`. A shape that still compiled a
+      // direct body would trip the poison and fail its compile.
+      for (const source of [SOURCE, ...ADMITTED_SHAPES.map(admittedSource)]) {
+        for (const lane of lanes) {
+          const result = await compileLane(source, lane);
+          expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+          expect(scalarModuleInitOutcome(result)).toMatchObject({
+            kind: "emitted",
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
+          });
+        }
       }
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, poison);
       else process.env[poison] = previous;
     }
-  });
+    // 17 sources x 5 lanes of real compiles under the poison seam.
+  }, 300000);
 
   it("fails closed for every near-miss grammar and binding-identity mutation", async () => {
     const controls = [
       ["const target", `const total: number = 0; total = total + 1;`],
-      ["compound assignment", `let total: number = 0; total += 1;`],
-      ["postfix increment", `let total: number = 0; total++;`],
-      ["different operator", `let total: number = 0; total = total - 1;`],
+      // (#3523 R4 gap 2b) `total += 1`, `total++`, `total = total - 1` and
+      // `let total = 0; total = total + 1; let later = 2` used to sit here.
+      // They are now ADMITTED; their green-under-poison proof lives in "never
+      // reaches the direct emitter in any admitted lane". What replaces them
+      // are the boundaries of the widened grammar — the operators the two
+      // allowlists deliberately omit, the fixed operand order, the
+      // non-numeric storage kind, and statement-subtree admission.
+      ["exponent compound", `let total: number = 2; total **= 2;`],
+      ["remainder compound", `let total: number = 7; total %= 3;`],
+      ["bitwise-or compound", `let total: number = 0; total |= 1;`],
+      ["shift compound", `let total: number = 1; total <<= 1;`],
+      ["literal-first operand order", `let total: number = 0; total = 1 + total;`],
+      ["boolean-branded increment", `let flag = true; flag++;`],
+      ["statement-subtree body", `let total: number = 0; for (let i = 0; i < 3; i++) { total = total + i; }`],
       ["parenthesized RHS", `let total: number = 0; total = (total + 1);`],
       ["nonnumeric literal", `let total: number = 0; total = total + "1";`],
       ["forward target", `total = total + 1; let total: number = 0;`],
@@ -637,7 +745,6 @@ export function read(): number { return value; }`,
       ["var declaration", `var total: number = 0; total = total + 1;`],
       ["destructuring", `let [total] = [0]; total = total + 1;`],
       ["multiple declarations", `let total: number = 0, other: number = 1; total = total + 1;`],
-      ["declaration after assignment", `let total = 0; total = total + 1; let later = 2;`],
     ] as const;
     const poison = "JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY";
     const previous = process.env[poison];
@@ -652,9 +759,13 @@ export function read(): number { return value; }`,
       // green-under-poison proof lives in "never reaches the direct emitter in
       // any admitted lane" above. The near-miss GRAMMAR controls still run on
       // the gc lane, so this test keeps every assertion it was written for.
-      expect(await directPoisonEvidence(`let total: number = 0; total += 1;`, "wasi"), "WASI compound").toContain(
-        "injected direct module-init body poison",
-      );
+      // (#3523 R4 gap 2b) `total += 1` was the WASI row here; it is now
+      // admitted, so the WASI near-miss carries a grammar the widened
+      // predicate still refuses.
+      expect(
+        await directPoisonEvidence(`let total: number = 2; total **= 2;`, "wasi"),
+        "WASI exponent compound",
+      ).toContain("injected direct module-init body poison");
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, poison);
       else process.env[poison] = previous;
@@ -674,7 +785,11 @@ export function read(): number { return value; }`,
         );
         expect(violated.binary.length).toBe(0);
       }
-      const control = await compileLane(`let total = 0; total += 1;`, lanes[1]!);
+      // (#3523 R4 gap 2b) The control has to be a shape that STAYS overlay,
+      // or it proves nothing about the seam. `total += 1` was admitted by this
+      // slice; a `for` body is statement-subtree admission — a later slice —
+      // and is measured overlay on every lane.
+      const control = await compileLane(`let total = 0; for (let i = 0; i < 3; i++) { total = total + i; }`, lanes[1]!);
       expect(control.success).toBe(true);
       expect(scalarModuleInitOutcome(control).legacyBodyEmitted).toBe(true);
     } finally {

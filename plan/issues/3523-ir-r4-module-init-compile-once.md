@@ -46,6 +46,16 @@ files:
   - tests/issue-4110-ir-fetch-all-parallel.test.ts
   - tests/ir/passes.test.ts
 loc-budget-allow:
+  # 2026-09-01 (gap 2b, scalar-statement overlay remainder): +80 lines in
+  # `src/codegen/index.ts`. The slice's whole contract is that both edits stay
+  # inside that file — the widened admission predicate
+  # (`preparedScalarModuleStatementShape` plus the two operator allowlists) and
+  # the retirement of the `sawAssignment` ordering refusal. The predicate is the
+  # gate of the prepared module-init transaction; moving it to a subsystem
+  # module would split the ownership the transaction exists to hold, and the
+  # measured payoff is byte-neutrality on every already-admitted shape (V-A,
+  # 15/15 `cmp`-identical) with no IR-fallback bucket movement (V-D).
+  - src/codegen/index.ts
   # 2026-09-01 (gap 3, WASI prepared module-init adapter): the guard stops being
   # a post-emission splice and becomes invocation-policy-driven, which grows two
   # more prepared-route owners. `multi-prepared-program.ts` gains invariant 7's
@@ -2252,3 +2262,135 @@ A/B); arrow/function initializers (gap 1's pass-1 purpose); `var`
 call initializers (**gap 1 — the next R4 slice after this one**, with the
 13th census cell `function h(){…} h(); export function read()` the IR probe
 asked for); gap 5 (R3).
+
+## 2026-09-01 gap-2b checkpoint note — probes P1–P4 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap2b-scalar-statements`, based on `origin/main`
+`d153a08826` with the plan branch `claude/docs-r4-gap2b-plan` merged in.
+Two edits, both confined to `src/codegen/index.ts` as the contract requires.
+
+The base census reproduced the plan's measured facts exactly on a five-lane
+grid (the plan's four plus `standalone-deferred`): the landed
+`total = total + 1` control is `0·0·1` prepared everywhere, and **every**
+shape this slice targets — s8/s9, all four `++`/`--` forms, `-= *= /=`,
+`= id - num`, `= id * num`, `= id / num`, `= num`, both multi-statement
+variants and both interleaved-declaration cases — read `1·0·0` overlay with a
+correct runtime value. Byte figures below are from this grounding, not
+inherited.
+
+### P1 — `/=`, `= id / num` and `= num`: all three admitted, A/B'd on five lanes
+
+The plan's A/B covered `+ - *` and `++/--/+=/-=/*=` only, so these three ran
+their own base/candidate pair before being admitted. All three clear the bar:
+
+| shape | base (5 lanes) | candidate (5 lanes) | runtime |
+| --- | --- | --- | --- |
+| `let n = 8; n /= 2;` | `1·0·0` overlay | **`0·0·1` prepared** | 4 ✓ |
+| `let n = 8; n = n / 2;` | `1·0·0` overlay | **`0·0·1` prepared** | 4 ✓ |
+| `let n = 0; n = 7;` | `1·0·0` overlay | **`0·0·1` prepared** | 7 ✓ |
+
+Each value is one only the statement can produce — initializer-only execution
+returns 8, 8 and 0 — so a silently dropped statement fails on the number. No
+operator was refused: nothing in the contract's admit list failed its A/B.
+
+### P2 — storage kind: guarded positively on `number`, and the guard narrows nothing
+
+The plan asked for confirmation that the target's storage is `f64` or dynamic.
+The measurement changed the shape of the answer: **the dynamic case is already
+refused upstream.** `let x: any = 0; x = x + 1;` reads `1·0·0` overlay on all
+five lanes on BASE — the selector's storage resolver never offers it — so a
+guard admitting only `number` narrows nothing that is admitted today. That is
+what V-A's 15/15 byte-identity then confirms independently.
+
+So the predicate carries a positive guard, `ctx.oracle.staticJsTypeOf(target)
+=== "number"`, rather than a boolean-shaped denial. It is routed through the
+oracle, not the raw checker, so the oracle-ratchet gate stays green. The arm it
+anticipates is `from-ast.ts`'s `!slotValType || slotValType.kind !== "f64"`
+demotion (`compound-assign-unsupported`): deciding it in the predicate keeps
+the refusal a silent non-admission instead of a late demotion.
+
+The boolean near-miss is measured, not assumed: `let flag = true; flag++;` is
+`1·0·0` overlay on base AND candidate, and is now a poison-proven control.
+
+### P3 — the `for` loop stays overlay, and is now the seam's control
+
+`let s = 0; for (let i = 0; i < 3; i++) { s = s + i; }` is `1·0·0` overlay on
+all five lanes under the final predicate, as required — statement-subtree
+admission is a later slice. It therefore replaces `let total = 0; total += 1;`
+as the `legacyBodyEmitted: true` control in the double-adapter seam test. That
+substitution is load-bearing: `total += 1` is admitted by this slice, so
+leaving it in place would have left the seam test asserting `true` against a
+shape that is now prepared, and the control would have silently stopped
+controlling.
+
+### P4 — the `declare namespace` ledger defect: confirmed, filed as #5273
+
+Confirmed with one compile of `tests/fixtures/extern-demo.ts`:
+
+```
+population size: 1
+  kind: ModuleDeclaration "declare namespace Host {\n  class Box {\n "
+direct passes: pass1 = 0  pass2 = 0
+module-init outcome: {"kind":"unsupported","legacyBodyEmitted":true,"irBodyEmitted":false}
+```
+
+`collectModuleInitPopulation` (`src/ir/module-init.ts:9-27`) skips every
+type-only statement kind except `ts.ModuleDeclaration`, so a `declare
+namespace` is counted as runtime work; the row then claims a legacy body while
+`pass1 = pass2 = 0` proves none was emitted. Not fixed here (different file,
+different mechanism, and it moves a module out of the claimable bucket, so it
+needs its own census diff). Filed as
+**[#5273](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5273-module-init-ledger-type-only-declarations)**.
+
+**Reservation caveat, stated because it affects the id's trustworthiness:**
+`gh` is not installed in this implementation container, so
+`claim-issue.mjs --allocate` refused (exit 6, open-PR scan degraded) and the id
+was reserved with the sanctioned `--allow-unscanned`. #5273 is verified on
+`origin/issue-assignments` but **not** against in-flight PRs
+(`pr_scan=degraded`); re-check for a collision before that file merges.
+
+### Verification
+
+- **V-A byte neutrality — 15/15 `cmp`-identical.** Census shapes (a)
+  `const memo = new Map()`, (b) `let v = 7`, (c) `let total = 0; total = total
+  + 1;` × five lanes, base-vs-candidate by file copy captured at the FIRST
+  edit. Zero differing bytes: host-start 255/168/182, host-deferred
+  268/268/282, standalone-start 51287/22642/22656, standalone-deferred
+  51300/49097/49111, wasi 51365/49162/49176.
+- **V-B — every newly admitted shape is `0·0·1` on all five lanes**, pass1 =
+  pass2 = 0, `preparedComponentId` present, correct runtime value, and on the
+  deferred lanes it throws before `__module_init` and reads correctly after.
+  Pinned by "owns the whole scalar-statement operator family on every lane";
+  the poison seam is green for the whole family (the poison test now iterates
+  the family, not just `SOURCE`) and the double-adapter seam stays fatal.
+- **V-C non-vacuity by revert — both sub-edits are independently
+  load-bearing.** Reverting only sub-A: the three operator/family tests fail,
+  the near-miss suite and the double-adapter seam stay green. Reverting only
+  sub-B: `n++` is still `0·0·1` prepared while
+  `let total = 0; total = total + 1; let later = 2;` falls back to `1·0·0`
+  overlay on all five lanes — exactly the interleaved positive, nothing else.
+- **V-D census diff — no movement.** `pnpm run check:ir-fallbacks` output is
+  byte-identical base vs candidate (diff empty; unintended buckets still
+  `(none)`), and `check:ir-only` is identical too (`READY`, 41 terminal units,
+  38 emitted, 0 legacy body emitted). The corpus contains none of these shapes,
+  as the plan measured.
+- **V-E** — the five ratchet gates chained green before the commit, and the
+  affected suites pass: `issue-3523-*` (4 files, 69 tests), `issue-4376`,
+  `issue-1411`, `issue-1789` and the three IR-retirement files (104 tests, 13
+  skipped). One note on honesty: `issue-4376-module-init-chunking` timed out
+  once at 35 s in a heavily parallel combined run; it passes in isolation and
+  on re-run of the same combined command, and the shape it pins
+  (`const locked += (effects = 1)`) is refused twice over by the new predicate
+  (const target, parenthesized non-literal RHS).
+
+### Two deliberate deviations from the plan's letter
+
+- **The new near-misses and the two heavy family tests needed explicit
+  timeouts** (300 s). 16 shapes × 5 lanes is ~80 real compiles per test and the
+  file inherits vitest's 35 s default. The alternative — trimming lanes — would
+  have weakened exactly the V-B claim the plan asks for.
+- **`src/codegen/index.ts` grows 80 lines past its god-file ceiling**, so this
+  change-set restates the `loc-budget-allow` grant with its own dated
+  rationale below. The contract confines both edits to that file; there is no
+  subsystem module to move a prepared-route admission predicate into without
+  splitting the ownership the transaction exists to hold.
