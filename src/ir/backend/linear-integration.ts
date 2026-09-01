@@ -133,7 +133,11 @@ import { IrInvariantError } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
-import { BOOLEAN_BOUNDARY_POLICY_DISABLED, NUMBER_BOUNDARY_POLICY_DISABLED } from "../runtime-manifest.js";
+import {
+  BOOLEAN_BOUNDARY_POLICY_DISABLED,
+  GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+  NUMBER_BOUNDARY_POLICY_DISABLED,
+} from "../runtime-manifest.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -669,6 +673,7 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
         backend: "linear",
         numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
         booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+        generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
       },
     })?.functions ?? functions
   );

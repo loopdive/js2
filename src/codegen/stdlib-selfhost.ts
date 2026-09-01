@@ -68,7 +68,11 @@ import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js
 import { irVal, type IrFunction, type IrType } from "../ir/nodes.js";
 import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../ir/vector-runtime.js";
 import { prepareIrRuntimeManifest } from "../ir/intrinsic-support.js";
-import { BOOLEAN_BOUNDARY_POLICY_DISABLED, NUMBER_BOUNDARY_POLICY_DISABLED } from "../ir/runtime-manifest.js";
+import {
+  BOOLEAN_BOUNDARY_POLICY_DISABLED,
+  GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+  NUMBER_BOUNDARY_POLICY_DISABLED,
+} from "../ir/runtime-manifest.js";
 import { isIntrinsicId } from "../ir/intrinsics.js";
 import { createDerivedIrUnitId, createIrSourceId, type IrSyntheticUnitRole, type IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -496,6 +500,7 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
       // whose `nativeStrings === false` would otherwise read as host support.
       numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
       booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+      generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
     },
   });
   const funcIdx = lowerAndRegister(ctx, def.name, prepared?.functions[0] ?? ir);

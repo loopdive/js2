@@ -437,6 +437,7 @@ describe("#4104 IR async plan runtime consumer", () => {
       backend: "wasmgc",
       numberBoundary: { box: "unsupported", unbox: "unsupported" },
       booleanBoundary: { box: "unsupported" },
+      generatorNumberBox: { box: "unsupported" },
     });
     expect(standalone.manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
     expect(standalone.manifest.hostCapabilities).toEqual([]);

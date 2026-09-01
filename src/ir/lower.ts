@@ -2794,8 +2794,23 @@ export function lowerIrFunctionBody<S, Slot>(
           throw new Error(`ir/lower: gen.setReturn requires func.generatorBufferSlot (${func.name})`);
         }
         const setReturnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_set_return"));
-        const boxRef = instr.boxProvider ?? irRuntimeFuncRef("__box_number");
         const valueT = asVal(typeOf(instr.value));
+        // (#3526 F1-S3) The boxing callable has ONE authority — the frozen
+        // runtime manifest, attached by `attachIrGeneratorSupport`. There is no
+        // `?? irRuntimeFuncRef("__box_number")` fallback any more: attachment
+        // was traced total on the only path that reaches here (every generator
+        // owner is attached at `integration.ts` before Phase 3, nothing joins
+        // the lowered set afterwards, and a `gen.setReturn` spliced into a
+        // non-generator owner is already rejected by the buffer-slot guard
+        // above). A missing attachment is therefore a preparation defect, and
+        // failing closed demotes the owner instead of silently re-deciding the
+        // symbol here.
+        const boxRef = (): IrFuncRef => {
+          if (!instr.boxProvider) {
+            throw new Error(`ir/lower: gen.setReturn numeric stash has no prepared boxing provider (${func.name})`);
+          }
+          return instr.boxProvider;
+        };
         // buffer (arg 0)
         emitter.pushRaw(out, {
           op: "local.get",
@@ -2805,11 +2820,11 @@ export function lowerIrFunctionBody<S, Slot>(
         emitValue(instr.value, out);
         if (valueT?.kind === "f64") {
           // pushraw-ok(#2951): plain call op — boxes the f64 return value to externref, mirrors the gen.setReturn contract above
-          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef()) });
         } else if (valueT?.kind === "i32") {
           emitter.pushRaw(out, { op: "f64.convert_i32_s" });
           // pushraw-ok(#2951): plain call op — boxes the widened i32 return value to externref, same contract as the f64 arm
-          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef()) });
         } else if (valueT?.kind === "ref" || valueT?.kind === "ref_null") {
           emitter.emitToExternref(out);
         }
