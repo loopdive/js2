@@ -121,7 +121,7 @@ loc-budget-allow:
   # them and adds no new path.
   #
   # 2026-09-01 F2-S1 (string.compare under manifest policy + the forof.string
-  # fallback retirement, +306 net LOC measured against origin/main bee8a149):
+  # fallback retirement, +301 net LOC measured against origin/main bee8a149):
   # the `(externref, externref) -> i32` compare signature (intrinsics.ts); the
   # `string.compare` capability record — family 2's first, and the first record
   # whose physical import is a BASE import minted by the legacy import
@@ -3493,7 +3493,7 @@ eyeballed); unintended, module-level and post-claim buckets all still empty.
    handled as the four prior checkpoints prescribe. No verdict, kind, placement,
    ratchet count or `settledBy` rationale changed — established by normalising
    both JSON documents and diffing those, which isolates exactly **TWO** citation
-   lines (`forof.string` `src/ir/integration.ts` 6243 → 6332; `string.len`
+   lines (`forof.string` `src/ir/integration.ts` 6243 → 6327; `string.len`
    `src/ir/backend/linear-integration.ts` 1624 → 1626). Patched surgically:
    committing the regenerator's output instead would have been a 524-line diff
    (it reformats every `evidence` array) for a 2-line change.
@@ -3502,7 +3502,7 @@ eyeballed); unintended, module-level and post-claim buckets all still empty.
 
 Green: TypeScript 7 typecheck; `check:ir-fallbacks` (bare, output-identical);
 the ratchet chain bare AND under `LOC_GATE_BASE=$(git rev-parse origin/main)` —
-loc (+306 net src LOC, every path granted by this file's frontmatter), func,
+loc (+301 net src LOC, every path granted by this file's frontmatter), func,
 coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
 `check:ir-layering`, `check:ir-only`, `check:linear-ir`,
 `check:host-import-policy`, `check:test-vacuity-shapes`,
