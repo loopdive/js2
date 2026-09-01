@@ -58,7 +58,7 @@ import {
 
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
-export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature;
+export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature | GeneratorNumberBoxRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -107,6 +107,32 @@ export const BOOLEAN_BOUNDARY_POLICY_DISABLED: BooleanBoundaryPolicy = Object.fr
   box: "unsupported",
 });
 
+/**
+ * (#3526 F1-S3) The exact, already-resolved policy for the GENERATOR return
+ * seam's numeric boxing — a sibling of {@link NumberBoundaryPolicy}, never a
+ * widening of it.
+ *
+ * The seam's truth table is deliberately WIDER than `numberBoundary`: this
+ * boxing is performed natively on the GC native-strings lane, whereas
+ * `numberBoundary.box` has no `"native"` member by design (F1-S1 excluded one
+ * so that native `__box_number` presence could not widen the from-ast arm's
+ * host-only policy). The two must therefore stay separate policies even though
+ * both name the same physical symbol.
+ */
+export interface GeneratorNumberBoxPolicy {
+  /**
+   * `host` selects the `env.__box_number` union import through the central
+   * `number.box` capability; `native` selects the union-native `__box_number`
+   * runtime function.
+   */
+  readonly box: "host" | "native" | "unsupported";
+}
+
+/** Adapters on which a generator `return <number>` cannot be boxed at all. */
+export const GENERATOR_NUMBER_BOX_POLICY_DISABLED: GeneratorNumberBoxPolicy = Object.freeze({
+  box: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -120,12 +146,18 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly booleanBoundary?: BooleanBoundaryPolicy;
+  /**
+   * Omission resolves to {@link GENERATOR_NUMBER_BOX_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly generatorNumberBox?: GeneratorNumberBoxPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
 export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly numberBoundary: NumberBoundaryPolicy;
   readonly booleanBoundary: BooleanBoundaryPolicy;
+  readonly generatorNumberBox: GeneratorNumberBoxPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -181,11 +213,31 @@ export type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PR
 export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.boolean.box"] as const);
 export type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
 
+/**
+ * (#3526 F1-S3) The generator return seam's boxing requirement.
+ *
+ * This family has NO intrinsic instruction: the demand is carried by a
+ * `gen.setReturn` whose stashed value is numeric, and it is requested at
+ * manifest freeze the way an async plan requests its runtime intents. The
+ * feature exists so the frozen manifest — not a hardcoded runtime symbol at
+ * the attachment site — is the authority for which boxer answers the seam.
+ */
+export const GENERATOR_NUMBER_BOX_RUNTIME_FEATURES = Object.freeze(["js.generator.number-box"] as const);
+export type GeneratorNumberBoxRuntimeFeature = (typeof GENERATOR_NUMBER_BOX_RUNTIME_FEATURES)[number];
+
+/** (#3526 F1-S3) One provider per admitted generator-number-box policy arm. */
+export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.generator.number-box",
+  "native.js.generator.number-box",
+] as const);
+export type GeneratorNumberBoxRuntimeProviderId = (typeof GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
   | NumberBoundaryRuntimeProviderId
   | BooleanBoundaryRuntimeProviderId
+  | GeneratorNumberBoxRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -376,6 +428,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "js.number.unbox": EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
+  "js.generator.number-box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -439,8 +492,8 @@ export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
 ]);
 
 function numberBoundaryProvider(
-  id: NumberBoundaryRuntimeProviderId | BooleanBoundaryRuntimeProviderId,
-  feature: NumberBoundaryRuntimeFeature | BooleanBoundaryRuntimeFeature,
+  id: NumberBoundaryRuntimeProviderId | BooleanBoundaryRuntimeProviderId | GeneratorNumberBoxRuntimeProviderId,
+  feature: NumberBoundaryRuntimeFeature | BooleanBoundaryRuntimeFeature | GeneratorNumberBoxRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -506,6 +559,44 @@ export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
     ["boolean.box"],
   ),
 ]);
+
+/**
+ * (#3526 F1-S3) The generator return seam's two boxing arms. Both name the
+ * SAME physical symbol `__box_number` — on the host lane through the central
+ * `number.box` capability record (`env.__box_number`), on the native-strings
+ * lane through the union-native runtime function. The manifest's job here is
+ * to decide WHICH authority answers and whether the seam is permitted at all,
+ * not to introduce a second spelling.
+ */
+export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.generator.number-box",
+    "js.generator.number-box",
+    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "number.box" },
+    ["number.box"],
+  ),
+  numberBoundaryProvider(
+    "native.js.generator.number-box",
+    "js.generator.number-box",
+    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__box_number" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted generator-box arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function generatorNumberBoxProviderId(policy: GeneratorNumberBoxPolicy): GeneratorNumberBoxRuntimeProviderId | null {
+  if (policy.box === "host") return "host.js.generator.number-box";
+  return policy.box === "native" ? "native.js.generator.number-box" : null;
+}
+
+const GENERATOR_NUMBER_BOX_FEATURE_SET: ReadonlySet<string> = new Set(GENERATOR_NUMBER_BOX_RUNTIME_FEATURES);
+
+function isGeneratorNumberBoxFeature(feature: RuntimeFeature): feature is GeneratorNumberBoxRuntimeFeature {
+  return GENERATOR_NUMBER_BOX_FEATURE_SET.has(feature);
+}
 
 /** The exact provider the admitted boolean arm selects, or `null` when the
  * caller resolved it to unsupported. */
@@ -737,6 +828,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...NUMERIC_COERCION_RUNTIME_PROVIDERS,
     ...NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
     ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
+    ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -745,6 +837,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
   ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  ...GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -753,6 +846,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_PROVIDER_IDS,
   ...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS,
+  ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -956,10 +1050,12 @@ export class RuntimeManifestBuilder {
     }
     const numberBoundary = policy.numberBoundary ?? NUMBER_BOUNDARY_POLICY_DISABLED;
     const booleanBoundary = policy.booleanBoundary ?? BOOLEAN_BOUNDARY_POLICY_DISABLED;
+    const generatorNumberBox = policy.generatorNumberBox ?? GENERATOR_NUMBER_BOX_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
       booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
+      generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -1053,6 +1149,7 @@ export class RuntimeManifestBuilder {
 
   resolveProvider(feature: IntrinsicRuntimeFeature): RuntimeProviderPlan;
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: GeneratorNumberBoxRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();
     const provider = this.#providerPlans.get(feature);
@@ -1270,7 +1367,22 @@ export class RuntimeManifestBuilder {
             }
             return candidates.filter((candidate) => candidate.id === selectedId);
           })()
-        : candidates;
+        : // (#3526 F1-S3) The generator return seam answers to its own policy
+          // too, and its truth table is wider than the number boundary's: this
+          // one boxes natively on the GC native-strings lane.
+          isGeneratorNumberBoxFeature(feature)
+          ? ((): readonly RuntimeProviderDefinition[] => {
+              const selectedId = generatorNumberBoxProviderId(this.#policy.generatorNumberBox);
+              if (selectedId === null) {
+                throw new RuntimeManifestInvariantError(
+                  "provider-target-unavailable",
+                  `runtime feature ${feature} is unavailable under generator-number-box policy ` +
+                    `box=${this.#policy.generatorNumberBox.box}`,
+                );
+              }
+              return candidates.filter((candidate) => candidate.id === selectedId);
+            })()
+          : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",

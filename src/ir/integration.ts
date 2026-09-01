@@ -319,9 +319,17 @@ import {
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
 import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
-import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import {
+  prepareIrRuntimeManifest,
+  preparedGeneratorNumberBoxProvider,
+  type PreparedIrRuntimeManifest,
+} from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
-import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
+import {
+  attachIrGeneratorSupport,
+  collectAttachedGeneratorProviders,
+  irGeneratorNumberBoxDemand,
+} from "./generator-support.js";
 import {
   isIntrinsicId,
   type BooleanBoundaryIntrinsicId,
@@ -330,7 +338,12 @@ import {
 } from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
-import type { BooleanBoundaryPolicy, NumberBoundaryPolicy, RuntimeProviderPlan } from "./runtime-manifest.js";
+import type {
+  BooleanBoundaryPolicy,
+  GeneratorNumberBoxPolicy,
+  NumberBoundaryPolicy,
+  RuntimeProviderPlan,
+} from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -807,6 +820,20 @@ function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryP
   return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("unsupported" as const) });
 }
 
+/**
+ * (#3526 F1-S3) This caller's already-resolved GENERATOR number-box policy.
+ *
+ * The EXACT truth table the `gen.setReturn` seam has always had, consulted
+ * once, here, before freeze: `__box_number` resolves to the `env` union import
+ * on the host lane and to the union-native helper when native strings are on.
+ * That is deliberately WIDER than `integrationNumberBoundaryPolicy`, whose box
+ * arm is host-only by design — the two policies name the same symbol and must
+ * not be merged.
+ */
+function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumberBoxPolicy {
+  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("native" as const) });
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -860,7 +887,11 @@ function prepareBuiltFnRuntimeManifest(
       backend: "wasmgc",
       numberBoundary: integrationNumberBoundaryPolicy(ctx),
       booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+      generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
     },
+    // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
+    // later — see `forEachIrGeneratorSetReturn`.
+    generatorNumberBoxDemand: irGeneratorNumberBoxDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3513,6 +3544,7 @@ export function compileIrPathFunctions(
   // stay fatal for the whole transaction.
   const numberBoundaryPolicy = integrationNumberBoundaryPolicy(ctx);
   const booleanBoundaryPolicy = integrationBooleanBoundaryPolicy(ctx);
+  const generatorNumberBoxPolicy = integrationGeneratorNumberBoxPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -3525,6 +3557,25 @@ export function compileIrPathFunctions(
           "resolve",
           `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
             `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S3) The generator return seam partitions on the same rule. It
+    // carries no intrinsic instruction, so the demand is read off the
+    // `gen.setReturn` population directly — the same enumeration the freeze
+    // scan and the attachment pass use.
+    if (generatorNumberBoxPolicy.box === "unsupported" && irGeneratorNumberBoxDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: generator return boxing has no provider under generator-number-box policy " +
+            `box=${generatorNumberBoxPolicy.box}`,
         ),
         "resolve",
       );
@@ -3592,8 +3643,11 @@ export function compileIrPathFunctions(
       // imports exist, then OBSERVE them: prepared-component sealing runs
       // before lowering, so an unobserved provider reads as an unplanned ABI
       // binding and peels the generator back to the compile-twice route.
+      // (#3526 F1-S3) The boxing callable is the frozen manifest's decision,
+      // not a symbol spelled at this seam.
+      const generatorNumberBoxProvider = preparedGeneratorNumberBoxProvider(preparedRuntimeManifest);
       healthyForLower = healthyForLower.map((entry) => {
-        const fn = attachIrGeneratorSupport(entry.fn);
+        const fn = attachIrGeneratorSupport(entry.fn, generatorNumberBoxProvider);
         return fn === entry.fn ? entry : { ...entry, fn };
       });
       if (ctx.programAbiCallableProviders) {
