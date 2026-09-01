@@ -1,6 +1,6 @@
 {
   "name": "@loopdive/js2",
-  "version": "0.70.0",
+  "version": "0.71.0",
   "description": "Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC",
   "keywords": [
     "webassembly",
