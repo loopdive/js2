@@ -1920,3 +1920,171 @@ Multi-source WASI prepared admission (M2; `rejectBeforeReservation` keeps
 `ctx.wasi`), gap 1's call-bearing pass-1 retirement for Unsupported shapes,
 the rest of gap 2 (statement grammar past exact scalar assignments), gap 5
 (class population, R3), and any change to `plan.invocation`'s shape.
+
+## 2026-09-01 gap-3 checkpoint note — probes P1–P4 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap3-wasi-prepared`, based on `origin/main` `7bee941d6`
+with the plan branch `claude/docs-r4-gap3-plan` merged in. Three commits:
+the behavior pin, the guard machinery, the selector admission.
+
+The base census reproduced the plan's measured facts exactly — WASI
+`p1=1,p2=1 / 1,0 / 1,0` for shapes (a)(b)(c), every non-WASI cell `0,0` and
+prepared-owned. The two byte figures differ from the plan's by 2–6 bytes
+(a 52,012 vs 52,010; b 49,236 vs 49,230; c 49,262 vs 49,256), which is the
+one commit main advanced by between the two groundings.
+
+### P1 — guard form: (i), the wrapping `if`, planted at prepared-body construction
+
+**Decision: form (i).** Not a close call, and the deciding evidence is a
+composition property the plan flagged but did not resolve.
+
+`finalizeInModuleInitFlag` (#2800) wraps the initializer as
+`__in_module_init = 1 … body … __in_module_init = 0`. In the single-module
+pipeline it runs at `index.ts:6524`, AFTER `add-wasi-start-export` at `:6479`.
+An early-`return` guard at the head of the body therefore skips the trailing
+`__in_module_init = 0` on every already-initialized entry — the flag stays 1
+forever and every delete-aware read misroutes. That is precisely the #3168
+merge-group regression class the `bodyContainsReturnClassOp` withdrawal at
+`integration.ts:4444-4459` exists to prevent, and it is a latent defect of the
+CURRENT legacy WASI splice, not something this slice introduces (it is
+unreachable today only because the flag is a no-op unless a gc/host
+delete-aware read recorded it). The wrapping `if` composes correctly in both
+directions: it adds no return-class op, so the withdrawal scan passes, and
+every appended epilogue still executes on the already-initialized path.
+
+Planting site: `compileIrPathFunctions`' `entry.moduleInit` branch, immediately
+after the return-class scan — the body the preparation snapshot seals already
+contains the guard, so nothing is spliced later. The `__init_done` global is
+reserved in `preallocateModuleInitCallable`, which provably precedes body
+emission. Gated on the new `plantPreparedWasiModuleInitGuard` option, set only
+by the prepared preparation call in `ir-prepared-free-functions.ts`, so the
+post-direct overlay — which patches the same unit on the legacy WASI lane —
+cannot plant a second guard.
+
+**Where the single-file seal boundary actually is: nowhere.** As the plan
+suspected, there is no `assertPreparedModuleInitCurrent` twin on the
+single-module route. `sealPreparedComponents` seals ABI components, not body
+identity; body identity is asserted only by `MultiPreparedProgramOwner`, and
+`finalizeInModuleInitFlag(ctx)` already mutates a prepared module-init body
+there today on the host lanes. So "before the seal" is vacuous on this route,
+and the guard is authenticated rather than assumed:
+`applyModuleInitGuard` checks the three planted instruction objects are the
+body's leading triple **by object identity**. `fixupModuleGlobalIndices`
+mutates `.index` in place, so identity survives every legitimate late
+import-global shift while a body REPLACEMENT does not — which is the property
+an index comparison would not have given. Guard application stays in
+`addWasiStartExport`, unmoved; no pipeline phase was reordered, so the
+`:11084` vs `:11115` hazard the plan raised for form (ii) never arises.
+
+### P2 — `tests/issue-3517-map-module-init.test.ts`: filed, not inherited
+
+Reproduced on this branch: **5 of 14 red**, exactly the pins the plan named
+(`keeps the Map module initializer legacy-owned in {native strings, fast,
+standalone, WASI, strict no-host}`, all asserting `<module-init>` ∉
+`irCompiledFuncs`).
+
+**Why main CI is green with this file red — measured, not inferred.** The only
+job that runs `tests/issue-*.test.ts` is `issue-tests` in `ci.yml:713-759`,
+and it is (a) **not a required check** — the required six are `cheap gate`,
+`quality`, `merge shard reports`, `check for test262 regressions`,
+`equivalence-gate`, `cla-check` — and (b) split into a FATAL pinned step and an
+ADVISORY `continue-on-error` changed-files step. `node
+scripts/select-changed-issue-tests.mjs --pinned` prints exactly ONE file,
+`tests/issue-3529-selector-preclaim.test.ts`. So this file runs in no gate at
+all unless a PR touches it, and then only advisorily. The job's own header
+documents this hole ("a file can be BORN red … with every gate green").
+
+**Not adopted here, and the reason is scope, not convenience.** Four of the
+five red lanes (native strings, fast, standalone, strict no-host) have nothing
+to do with WASI and are red because the overlay IR-patches the Map initializer
+in lanes this slice does not touch. This slice changes exactly one of the five
+— WASI, from overlay-patched to prepared — so adopting the rewrite would mean
+re-authoring four assertions whose correct new shape is decided by a different
+question (whether the `#3517` pins should track ownership at all, now that
+`<module-init>` ∈ `irCompiledFuncs` is the norm rather than the exception).
+That belongs in its own issue with its own evidence. **Left to file:** the
+implementation lane holds only the `3523:gap3` slice claim and does not
+allocate issue ids, so this is handed back to the planning lane as a named
+follow-up rather than silently inherited.
+
+### P3 — export prepends: unchanged, and confirmed on the new route
+
+The exported-function `call __module_init` prepends and `_start` target
+selection are byte-for-byte the same code on both routes; only the
+init-body half of `applyModuleInitGuard` branched.
+
+- **They still land on IR-prepared exports.** For shape (c) under WASI the
+  exported `read` is itself prepared (`irCompiledFuncs = ['read',
+  '<module-init>']`, row `read` = `emitted / legacy=false / ir=true /
+  directBodyEmissions=0 / irBodyEmissions=1 / preparedComponentId` present),
+  and the α pin — a direct export call with no `_start` returning the
+  initialized value — is only satisfiable through that prepend. No seal
+  objects: only the module-init body is identity-asserted anywhere.
+- **Placement still precedes dead-import elimination.** `addWasiStartExport`
+  remains at `index.ts:6479`, `eliminateDeadLayoutAndPlanProgramAbi` at
+  `:6592`; nothing moved, so the `const-box-hoist.ts:150-154` contract holds
+  unchanged.
+
+### P4 — outcome-row truthfulness: prepared, with the component id
+
+After admission the WASI module-init row is
+`kind: "emitted" · stage: "patch" · legacyBodyEmitted: false ·
+irBodyEmitted: true`, carrying
+
+```
+prepared-component:ir-unit:v1:ir-source%3Av1%3A…%3Aentry%3At.ts:root:module-init:…
+  +ir-unit:v1:ir-source%3Av1%3A…%3Aentry%3At.ts:root:top-level-function:…
+```
+
+**The constructor.** Prepared and overlay rows are built by the same arm —
+`evidence?.kind === "patched"` in `buildIrOverlayOutcomes`
+(`src/codegen/ir-overlay-outcomes.ts:928-935`). What separates them is
+`evidence.preparedComponentId`, which is minted only by the
+`sealPreparedComponents` closure and is therefore ABSENT on the overlay route.
+Before this slice the WASI row had no `preparedComponentId` and
+`legacyBodyEmitted: true`; it now has one and `false`. `legacyBodyEmitted`
+comes from `:866-867` and is false because the module-init unit is in
+`skippedBodyUnitIds`. So the row is prepared-constructed in the only sense the
+ledger can express, and the census denominator moves for a real reason.
+
+### Divergence from the plan: `strictNoHostImports` also refuses
+
+Contract 5 said to drop `ctx.wasi` at `index.ts:4201`. Doing only that admits
+**nothing**: `strictEnvImportGate` is `input.strictNoHostImports ?? target ===
+"wasi"` (`src/target-profile.ts:80`), so `ctx.strictNoHostImports` is
+unconditionally true under WASI and refuses the lane by itself. Measured
+directly — with `ctx.wasi` dropped, the selector still reached the refusal with
+`strict=true, lane=true, target=wasi, kind=wasi-start-export`.
+
+Narrowed to `(ctx.strictNoHostImports && !ctx.wasi)`, which keeps refusing the
+case the clause was written for: an **explicit** `--no-host-imports` gc/host
+build, a distinct regime this slice's invocation policies do not describe.
+`issue-3517`'s "strict no-host" lane still observes the legacy route.
+
+### Verification results
+
+| Check | Result |
+| --- | --- |
+| **V-A** non-WASI byte neutrality, file-copy A/B + `cmp` | **9/9 IDENTICAL** — (a)(b)(c) × {host-start, host-deferred, standalone}. Re-run after the last production edit, still 9/9. |
+| **V-B** WASI census flip | all three cells `direct 0 · legacy 0 · IR 1`, `pass1 = pass2 = 0`. Poison seam `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1`: **RED at base on all 3** ("injected direct module-init body poison"), **GREEN after on all 3**. |
+| **V-B** WASI sizes (raw / gzip -9) | a 52,012→**51,365** / 30,963→**30,623** · b 49,236→**49,162** / 29,545→**29,512** · c 49,262→**49,176** / 29,555→**29,516**. Smaller: one reserved global replaces a late-minted one and the wrapping `if` replaces the four-instruction early-return prologue. |
+| **V-C** behavior | Commit-1 pin green on both routes (7 tests, unchanged across the relocation). `issue-1789`, `issue-1411`, `issue-4376` legacy-lane pins untouched and green. `_start` exported, `__module_init` never exported, no wasm `start` section. |
+| **V-D** fail-closed | Double-adapter seam under WASI → compile fails, empty binary, Unsupported control still compiles. Four adapter mutations get single-source **prepared** equivalents (strip `_start` → "found 0"; duplicate → "found 2"; retarget the adapter's real first `call` → "does not retain its exact selected entry call path"; inject a compiler alias → "must not publish a compiler `__module_init` alias"), each with a positive control. Guard-strip seam → `IrInvariantError` "lost its exact planted idempotence guard", empty binary. |
+| **V-E** suites | `check:ir-fallbacks` OK, no module-init bucket growth. All five ratchet gates green. |
+
+**One honest negative.** `tests/issue-4376-module-init-chunking.test.ts >
+preserves TDZ ordering for const writes and updates` timed out (35 s ceiling)
+in a parallel run on this container. A/B'd in isolation, three runs each: base
+30.1 / 27.7 / 30.0 s, after 31.1 / 29.2 / 28.7 s — overlapping ranges. The test
+simply sits at ~29 s against a 35 s ceiling on a 4-core box; it is
+pre-existing marginal fragility, not a regression from this slice, and the
+9/9 byte identity independently rules out a codegen change on that lane.
+
+### Growth allowance
+
+`multi-prepared-program.ts` (+14) and `ir-prepared-free-functions.ts` (+9) are
+added to `loc-budget-allow` with the dated rationale in the frontmatter: the
+first carries invariant 7's third arm for M2, the second the one option that
+scopes guard planting to the prepared preparation call. Both are
+reconciliation/routing at the site that owns the prepared module-init
+transaction. `scripts/*-baseline.json` untouched.
