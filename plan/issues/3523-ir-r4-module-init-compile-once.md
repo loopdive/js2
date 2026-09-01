@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-31
+updated: 2026-09-01
 priority: critical
 horizon: xl
 complexity: XL
@@ -1665,3 +1665,245 @@ own projection, exactly the untruth this slice removes from the ledger.
 `issue-3520` and `issue-3525` gained the row in their exact projections and an
 explicit terminal/non-executable partition respectively — in both cases keeping
 the assertion exact rather than loosening a count.
+
+## 2026-09-01 gap-3 implementation plan — WASI prepared module-init adapter
+
+Grounded on `origin/main` `c62b9bc41d`. Slice claim: `#3523:gap3`
+(`ttraenkler/fable-ir-takeover`, branch `claude/docs-r4-gap3-plan` for this
+plan; the implementation branch claims separately). Three probe lanes
+(structural / measured census / test surface) ran against that commit; every
+line-number below is from them.
+
+Gap 3 is now the **only remaining direct-body/legacy-body producer in the
+12-cell census**: since gap 1a and the scalar-assignment slice landed, every
+non-WASI cell measures `direct 0 · legacy 0 · IR 1`, while WASI measures
+`direct 2 · legacy 1 · IR 1` for the call-bearing shape and
+`direct 1 · legacy 1 · IR 1` for call-free shapes (gap 1a applies to WASI).
+The WASI terminal row is `emitted@patch` — the success signature of this slice
+is `legacyBodyEmitted` dropping to `false` and pass1 hitting 0, **not** a kind
+change.
+
+### Measured facts (census probe, reproducible)
+
+Harness: `JS2WASM_COMPILE_PROFILE=1` + `refreshCompileProfileConfig()` /
+`resetCompileProfile()` (`src/compile-profile.ts:12-17`), pass counters summed
+from profile rows `module-init-pass1` (`src/codegen/declarations.ts:5988`) /
+`module-init-pass2` (`declarations.ts:6186`, gate `:6176-6181`); outcome rows
+via `compile(..., { trackIrOutcomes: true })`. Script + raw output preserved in
+the planning session's scratchpad (`census-3523.mts`, `census-out.json`,
+`wat-b-wasi.wat`).
+
+| Shape | host-start | host-deferred | standalone | wasi |
+| --- | --- | --- | --- | --- |
+| (a) `const memo = new Map()` + export | 0·0·1 | 0·0·1 | 0·0·1 | **2·1·1** (p1=1,p2=1) |
+| (b) `let v = 7` + export | 0·0·1 | 0·0·1 | 0·0·1 | **1·1·1** (p1=1,p2=0) |
+| (c) `let total = 0; total = total + 1;` + export | 0·0·1 | 0·0·1 | 0·0·1 | **1·1·1** |
+
+(cells are `direct·legacy·IR`; sizes and full WAT recorded in the probe
+artifacts. WASI raw/gzip: a 52,010/31,377 · b 49,230/29,551 · c 49,256/29,563.)
+
+The two corrections vs the 2026-08 table: gap 1a **does** apply to WASI
+(call-free shapes skip pass 2), and shape (c) is IR-owned on all non-WASI lanes
+(the selector admits a trailing run of exact scalar assignments,
+`src/codegen/index.ts:4260-4299`).
+
+### Why WASI is rejected today, and what the guard actually is
+
+- **Rejection sites**: `preparedExactLexicalModuleInit`
+  (`src/codegen/index.ts:4182-4310`) — `ctx.wasi ||` at `:4201` in the refusal
+  disjunction `:4199-4213`; `exactInvocationLane` (`:4189-4198`) has exactly
+  two lanes (host `wasm-start|deferred-export`; standalone native-first) and no
+  wasi lane; the bottom re-check `:4307-4309` and the evidence type at `:4014`
+  both restrict `invocationKind` to `"wasm-start" | "deferred-export"`. The
+  multi-source (M2) route independently rejects at
+  `src/codegen/multi-prepared-module-init.ts:135` (`rejectBeforeReservation`).
+- **The guard** (`applyModuleInitGuard`, `index.ts:6861-6895`; sole caller
+  `:6921-6923` inside `addWasiStartExport` under `if (ctx.wasi)`, post-emission
+  in both pipelines — single `:6479-6481`, multi `:11084-11087`): (1) mints a
+  fresh `(mut i32)` `__init_done` global via `nextModuleGlobalIdx` **at
+  guard-application time** and prepends
+  `global.get $done / if(return) / i32.const 1 / global.set $done` to
+  `__module_init`; (2) prepends `call __module_init` to **every exported
+  function** except the init itself (the "any exported entry runs init first"
+  semantics the test262 standalone harness relies on, #1789 comment
+  `:6904-6914`). `_start` target selection (`:6944-6992`: exported no-arg
+  no-result `main`, else the init handle) happens **after** the guard so a user
+  `main` carries the call prefix; `observeWasiStartAdapter` records the adapter
+  by object identity (`:7064`), authenticated later by
+  `assertGraphGlobalInvocationPolicy` case `"wasi-start-export"`
+  (`src/codegen/program-abi-module-init-planning.ts:646-708`) from
+  `program-abi-finalization.ts:44`.
+- **Why a sealed Prepared body can't take that splice**: the multi pipeline
+  seals body identity at preparation-snapshot time and
+  `assertPreparedModuleInitCurrent` (`multi-prepared-program.ts:1137-1156`)
+  fails on any body reassignment; `add-wasi-start-export` (`index.ts:11084`)
+  runs **before** `finalize-multi-prepared-module-init-startup`
+  (`index.ts:11115`), so an unmodified guard splice breaks the seal check by
+  construction. On the single-file route the invariant-7 reconciliation
+  (`declarations.ts:6310-6337`) is gated `skipModuleInitBody && !ctx.wasi`, so
+  a wasi admission with no third arm ships with **zero** adapter
+  reconciliation.
+- **The IR-patch constraint**: `src/ir/integration.ts:4444-4459` withdraws the
+  IR module-init patch if `bodyContainsReturnClassOp` (`:4776-4789`) finds any
+  non-trailing return — later passes append epilogues (#3168). The guard's
+  early-`return` form therefore **cannot be planted at IR-emission time**
+  as-is.
+- **Existing precedent for mode-conditional prologues on a Prepared body** —
+  all inside the sanctioned mutation window `finalizeMultiPreparedModuleInitStartup`
+  (`index.ts:6848-6859`), all host-only today: `finalizeInModuleInitFlag`
+  (`:6803-6846`, wraps `flag=1 … body … flag=0`),
+  `emitInitMarshalHelperRegistration` (`init-marshal-helpers.ts:100-135`),
+  `emitInitClassDispatchRegistration` (`init-class-dispatch-helpers.ts:209+`).
+- **Invocation policy already speaks wasi**: `IrModuleInitInvocationKind`
+  includes `"wasi-start-export"` (`src/ir/module-init-plan.ts:10`), chosen by
+  `invocationPolicy()` for `target === "wasi"` (`:188-201`), planned into
+  `plan.invocation` for every WASI compile today (pinned by
+  `tests/issue-3523-ir-module-init-compile-once.test.ts:146`). The ctx-derived
+  twin is `moduleInitInvocationPolicy` (`program-abi-module-init-planning.ts:23-28`).
+  The `wasi-start-export` authentication case never runs against a Prepared
+  unit today because `graphGlobalPass` is unset when a prepared exact unit owns
+  the init (`:439-456`).
+
+### Contract
+
+1. **The guard becomes invocation-policy-driven, not a post-hoc splice.** For
+   a Prepared module-init whose `plan.invocation.kind === "wasi-start-export"`:
+   the `__init_done` global is reserved at preallocation time (alongside
+   `preallocateModuleInitCallable`, `declarations.ts:4990-4994` region) so it
+   exists before body emission, and the guard prologue is planted **before the
+   seal**, by one of exactly two sanctioned forms — probe P1 decides which:
+   - (i) *wrapping-if form* at prepared-body construction:
+     `global.get $done / i32.eqz / if (then: done=1 … body …)` — no
+     return-class op, passes the `:4776` scan, inside the body at snapshot
+     time; or
+   - (ii) *early-return form* applied inside the sanctioned mutation window
+     (multi: a new step in `finalizeMultiPreparedModuleInitStartup` before
+     `finalizePreparedModuleInitStartup`, exactly like `finalizeInModuleInitFlag`;
+     single: the `skipModuleInitBody` wiring block), which requires resolving
+     the `:11084` vs `:11115` ordering hazard explicitly.
+2. **`applyModuleInitGuard` becomes prepared-aware and fails closed.** When
+   the init is prepared-owned it must NOT reassign the init body; it
+   authenticates that the guard is already present (a recorded receipt or a
+   structural check, not trust) and still performs the exported-function
+   `call __module_init` prepends and `_start` construction, whose ordering
+   contract (`guard before _start target selection`, `:6917-6923`; placement
+   before dead-import elimination, `const-box-hoist.ts:150-154`) is unchanged.
+   A prepared wasi init with no guard is an `IrInvariantError`, never a silent
+   unguarded binary.
+3. **Invariant 7 grows its third arm.** The single-file reconciliation drops
+   its `!ctx.wasi` gate and gains a `wasi-start-export` arm (expects: no start
+   section, no compiler `__module_init` export alias, exactly one
+   authenticated `_start` adapter); the multi twin
+   (`finalizePreparedModuleInitStartup`, `multi-prepared-program.ts:1159-1209`,
+   `exportModuleInit = defer && !wasi` at `:1179`) gains the same arm. The
+   `JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER` seam extends to the wasi arm
+   (install a start-section adapter the policy did not choose) — without this
+   the new reconciliation is vacuous by the project's own standard.
+4. **Prepared authentication runs.** The `wasi-start-export` authentication
+   shape (`program-abi-module-init-planning.ts:646-708`) — no start section, no
+   alias, one `_start` adapter whose first call reaches the target exactly
+   once, user-`main` first-call rule — must execute against the Prepared unit
+   (either by pointing the existing assert at the prepared callable when
+   `graphGlobalPass` is unset, or a prepared twin with identical checks).
+5. **Selector admission is the LAST edit.** Third lane in
+   `exactInvocationLane` (wasi: `nativeStrings && ctx.wasi` with
+   `plan.invocation.target === "wasi"` and `kind === "wasi-start-export"`),
+   drop `ctx.wasi` from `:4201`, widen the evidence type at `:4014` and the
+   bottom check `:4307-4309`. **Do not add a field to `plan.invocation`** —
+   the whole-shape `toEqual` pin at `compile-once.test.ts:104` stays intact;
+   the adapter discriminator is derivable from `kind`.
+6. **Multi-source WASI stays rejected** (`multi-prepared-module-init.ts:135`
+   unchanged) — M2 wasi admission is a follow-up slice, out of scope here.
+
+### Ordered work (behavior pin FIRST)
+
+1. **Commit 1 — the missing behavior pin, on today's overlay route.** The test
+   probe found NO idempotency/direct-export behavior pin for any shape this
+   slice admits (existing pins — `issue-1789:41-60`, `issue-1411:92-109`,
+   `issue-4376:906` — all use shapes the selector keeps rejecting). Add one
+   (new `tests/issue-3523-wasi-prepared-module-init.test.ts`): shape (b)/(c)
+   under `target: "wasi"`, instantiated with empty imports — (α) calling an
+   export without `_start` sees initialized state; (β) `_start()` then export
+   → init exactly once; (γ) two distinct exports → once (observable counter,
+   the `issue-1789` pattern). Must be green BEFORE the mechanism moves, so the
+   relocation is measured against a pin rather than self-certifying.
+2. **Commit 2 — guard machinery + reconciliation third arm + seam extension +
+   prepared authentication** (contract items 1-4). Unreachable until the
+   selector flips; the same PR carries both.
+3. **Commit 3 — selector admission + test flips**:
+   - `compile-once.test.ts:641` (WASI direct-body-poison arm) moves from the
+     near-miss control list to the positive green-under-poison side;
+   - wasi lanes join the positive suites at `:509` ("routes all four"), `:592`
+     ("never reaches the direct emitter"), `:648` (double-adapter fail);
+   - `issue-4376` (Unsupported shape, legacy guard) and `issue-1411`
+     (plain-literal assignment, not admitted grammar) must stay green
+     UNTOUCHED — they pin the legacy lane this slice does not remove;
+   - `issue-3520:483-487` (wasi publishes zero `__module_init` exports) must
+     hold for the prepared adapter too.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — guard form.** Decide (i) vs (ii) by measurement: for (i), verify the
+  wrapping-if body passes the `:4776` scan and the seal snapshot, and that
+  `finalizeInModuleInitFlag`-style later wraps compose with it; for (ii),
+  demonstrate the resolved ordering between `add-wasi-start-export` (`:11084`)
+  and the finalize window (`:11115`) — moving a pipeline phase needs its own
+  justification. Note: the multi window is currently unreachable for wasi
+  (item 6), so for THIS slice the decision only has to be sound on the
+  single-file route — state where the single-file seal boundary actually is
+  (no `assertPreparedModuleInitCurrent` twin exists there; if nothing asserts,
+  say so and keep the guard application inside the same block invariant 7
+  runs in).
+- **P2 — `tests/issue-3517-map-module-init.test.ts` is already red on main**
+  (5/14: every "keeps the Map module initializer legacy-owned in <lane>" pin,
+  `:146-157`, asserts `<module-init>` ∉ `irCompiledFuncs` while the overlay
+  IR-patches it). Establish why main CI is green with this file red (excluded
+  from the gate? stale baseline?), then either adopt the rewrite in commit 3
+  (the wasi row becomes prepared, the others overlay) or file it as its own
+  issue — do not silently inherit.
+- **P3 — export-prepend interactions.** The exported-function prepends mutate
+  functions that may themselves be IR-prepared free functions; today's legacy
+  route already does this without tripping any seal (only the module-init body
+  is identity-asserted). Confirm that stays true on the new route, and that
+  prepend placement still precedes dead-import elimination / late-import
+  renumbering (`const-box-hoist.ts:150-154` contract).
+- **P4 — outcome-row truthfulness.** After admission the WASI row must be
+  `emitted` with `legacyBodyEmitted: false`, `irBodyEmitted: true` via the
+  prepared constructor, not the overlay constructor
+  (`ir-overlay-outcomes.ts:928-935` / `:297-298`); name the constructor the
+  new path actually uses.
+
+### Verification matrix
+
+- **V-A — non-WASI byte neutrality (file-copy A/B, not the test net).** For
+  shapes (a)(b)(c) × {host-start, host-deferred, standalone}: compile at base,
+  compile with the change, `cmp` binaries — 9/9 byte-identical required. Any
+  delta is a defect (this slice touches nothing non-wasi).
+- **V-B — WASI census flip.** Shapes (a)(b)(c) under wasi:
+  `direct 0 · legacy 0 · IR 1`, pass1=pass2=0, poison seam green
+  (`JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` compiles clean where today
+  it fails with "injected direct module-init body poison" — measured on all 3
+  wasi cells at base). WASI byte sizes will change (guard is now planted
+  differently); record before/after raw+gzip in the checkpoint, no neutrality
+  requirement.
+- **V-C — behavior.** Commit-1 pin green on both routes; the `issue-1789`,
+  `issue-1411`, `issue-4376` legacy-lane pins untouched and green;
+  `wasmUnchanged`-class runtime checks: `_start` exported, `__module_init`
+  NOT exported, `__exn_tag`/`memory` unchanged.
+- **V-D — fail-closed reachability.** Double-adapter seam armed under wasi →
+  exactly-one-adapter error with empty binary, plus the Unsupported-control
+  compile (the seam only arms the Prepared route); guard-absent prepared init
+  (test seam or structural mutation) → `IrInvariantError`, per contract 2;
+  the four adapter-mutation authentications
+  (`issue-3520:657-688` — strip `_start`, retarget first call, duplicate
+  `_start`, inject alias) get prepared-route equivalents.
+- **V-E — suites.** Full vitest on the touched files + `pnpm run
+  check:ir-fallbacks` (module-init buckets must not grow) + equivalence gate
+  via CI.
+
+### Out of scope
+
+Multi-source WASI prepared admission (M2; `rejectBeforeReservation` keeps
+`ctx.wasi`), gap 1's call-bearing pass-1 retirement for Unsupported shapes,
+the rest of gap 2 (statement grammar past exact scalar assignments), gap 5
+(class population, R3), and any change to `plan.invocation`'s shape.
