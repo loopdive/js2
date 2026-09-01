@@ -997,6 +997,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
               { op: "local.get", index: 3 },
               { op: "local.get", index: 1 },
               { op: "local.get", index: 2 },
+              { op: "local.get", index: 0 },
               { op: "call", funcIdx: setDecideIdx! },
               { op: "local.tee", index: 4 },
               { op: "i32.const", value: 2 }, // SET_DECISION_HANDLED

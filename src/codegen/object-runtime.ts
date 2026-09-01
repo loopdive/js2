@@ -3241,17 +3241,26 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     let externSetDecideIdx: number | undefined;
     let externSetOwnIdx: number | undefined;
     if (inheritedSetRuntimeActive) {
-      // `__extern_set_decide(origRecv, ownLayer, key, value) -> decision` is
-      // the one descriptor authority.  A carrier supplies its existing bag as
+      // `__extern_set_decide(lookupRecv, ownLayer, key, value, callRecv) ->
+      // decision` is the one descriptor authority. `lookupRecv` supplies the
+      // prototype chain, while `callRecv` is the accessor `this`; ordinary
+      // assignment passes the same receiver for both and Reflect.set can keep
+      // its target chain separate. A carrier supplies its existing bag as
       // `ownLayer` (or null without allocating); a normal `$Object` supplies
-      // itself.  It returns at the FIRST live descriptor, so an inherited
+      // itself. It returns at the FIRST live descriptor, so an inherited
       // writable data property cannot accidentally expose a farther accessor.
       externSetDecideIdx = registerNative(
         "__extern_set_decide",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+          { kind: "externref" },
+        ],
         [{ kind: "i32" }],
         [
-          { name: "origAny", type: { kind: "anyref" } },
+          { name: "lookupAny", type: { kind: "anyref" } },
           { name: "ownAny", type: { kind: "anyref" } },
           { name: "own", type: objRefNull },
           { name: "entry", type: entryRefNull },
@@ -3265,27 +3274,27 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // an own property as a side effect of merely checking it.
           { op: "local.get", index: 1 },
           { op: "any.convert_extern" },
-          { op: "local.tee", index: 5 },
+          { op: "local.tee", index: 6 },
           { op: "ref.test", typeIdx: objectTypeIdx },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
-              { op: "local.get", index: 5 },
-              { op: "ref.cast", typeIdx: objectTypeIdx },
-              { op: "local.set", index: 6 },
               { op: "local.get", index: 6 },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "local.set", index: 7 },
+              { op: "local.get", index: 7 },
               { op: "ref.as_non_null" },
               { op: "local.get", index: 2 },
               { op: "call", funcIdx: objFindIdx },
-              { op: "local.tee", index: 7 },
+              { op: "local.tee", index: 8 },
               { op: "ref.is_null" },
               { op: "i32.eqz" },
               {
                 op: "if",
                 blockType: { kind: "empty" },
                 then: [
-                  { op: "local.get", index: 7 },
+                  { op: "local.get", index: 8 },
                   { op: "ref.as_non_null" },
                   { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
                   { op: "i32.const", value: FLAG_ACCESSOR },
@@ -3294,26 +3303,41 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     op: "if",
                     blockType: { kind: "empty" },
                     then: [
-                      { op: "local.get", index: 7 },
+                      { op: "local.get", index: 8 },
                       { op: "ref.as_non_null" },
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
                       { op: "extern.convert_any" },
-                      { op: "local.tee", index: 8 },
+                      { op: "local.tee", index: 9 },
                       { op: "ref.is_null" },
                       {
                         op: "if",
                         blockType: { kind: "empty" },
                         then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
                       },
-                      { op: "local.get", index: 0 },
-                      { op: "local.get", index: 8 },
+                      { op: "local.get", index: 4 },
+                      { op: "local.get", index: 9 },
                       { op: "local.get", index: 3 },
                       { op: "call", funcIdx: callAccessorSetIdx },
                       { op: "i32.const", value: SET_DECISION_HANDLED },
                       { op: "return" },
                     ],
                   },
+                  // A frozen own layer makes its data descriptor terminal and
+                  // non-writable even when the entry's original writable bit
+                  // remains set. This is observable when lookup and receiver
+                  // differ (Reflect.set), and preserves the same refusal the
+                  // ordinary same-receiver own-write path reaches later.
                   { op: "local.get", index: 7 },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                  { op: "i32.const", value: OBJ_FLAG_FROZEN },
+                  { op: "i32.and" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
+                  },
+                  { op: "local.get", index: 8 },
                   { op: "ref.as_non_null" },
                   { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
                   { op: "i32.const", value: FLAG_WRITABLE },
@@ -3328,45 +3352,45 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               },
             ],
           },
-          // Start the explicit inherited walk at receiver.$proto for ordinary
+          // Start the explicit inherited walk at lookupRecv.$proto for ordinary
           // objects, or at the registered fnctor prototype for a closed
-          // function/class instance.  The ORIGINAL receiver remains param 0.
+          // function/class instance. The accessor receiver remains param 4.
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
-          { op: "local.tee", index: 4 },
+          { op: "local.tee", index: 5 },
           { op: "ref.test", typeIdx: objectTypeIdx },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
-              { op: "local.get", index: 4 },
+              { op: "local.get", index: 5 },
               { op: "ref.cast", typeIdx: objectTypeIdx },
               { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-              { op: "local.set", index: 9 },
+              { op: "local.set", index: 10 },
             ],
             else:
               fnctorProtoStartIdx === undefined
                 ? ([
                     { op: "ref.null", typeIdx: objectTypeIdx },
-                    { op: "local.set", index: 9 },
+                    { op: "local.set", index: 10 },
                   ] satisfies Instr[])
                 : ([
                     { op: "local.get", index: 0 },
                     { op: "call", funcIdx: fnctorProtoStartIdx },
-                    { op: "local.tee", index: 10 },
+                    { op: "local.tee", index: 11 },
                     { op: "ref.is_null" },
                     {
                       op: "if",
                       blockType: { kind: "empty" },
                       then: [
                         { op: "ref.null", typeIdx: objectTypeIdx },
-                        { op: "local.set", index: 9 },
+                        { op: "local.set", index: 10 },
                       ],
                       else: [
-                        { op: "local.get", index: 10 },
+                        { op: "local.get", index: 11 },
                         { op: "any.convert_extern" },
                         { op: "ref.cast", typeIdx: objectTypeIdx },
-                        { op: "local.set", index: 9 },
+                        { op: "local.set", index: 10 },
                       ],
                     },
                   ] satisfies Instr[]),
@@ -3379,21 +3403,21 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 op: "loop",
                 blockType: { kind: "empty" },
                 body: [
-                  { op: "local.get", index: 9 },
+                  { op: "local.get", index: 10 },
                   { op: "ref.is_null" },
                   { op: "br_if", depth: 1 },
-                  { op: "local.get", index: 9 },
+                  { op: "local.get", index: 10 },
                   { op: "ref.as_non_null" },
                   { op: "local.get", index: 2 },
                   { op: "call", funcIdx: objFindIdx },
-                  { op: "local.tee", index: 7 },
+                  { op: "local.tee", index: 8 },
                   { op: "ref.is_null" },
                   { op: "i32.eqz" },
                   {
                     op: "if",
                     blockType: { kind: "empty" },
                     then: [
-                      { op: "local.get", index: 7 },
+                      { op: "local.get", index: 8 },
                       { op: "ref.as_non_null" },
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
                       { op: "i32.const", value: FLAG_ACCESSOR },
@@ -3402,19 +3426,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                         op: "if",
                         blockType: { kind: "empty" },
                         then: [
-                          { op: "local.get", index: 7 },
+                          { op: "local.get", index: 8 },
                           { op: "ref.as_non_null" },
                           { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
                           { op: "extern.convert_any" },
-                          { op: "local.tee", index: 8 },
+                          { op: "local.tee", index: 9 },
                           { op: "ref.is_null" },
                           {
                             op: "if",
                             blockType: { kind: "empty" },
                             then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
                           },
-                          { op: "local.get", index: 0 },
-                          { op: "local.get", index: 8 },
+                          { op: "local.get", index: 4 },
+                          { op: "local.get", index: 9 },
                           { op: "local.get", index: 3 },
                           { op: "call", funcIdx: callAccessorSetIdx },
                           { op: "i32.const", value: SET_DECISION_HANDLED },
@@ -3427,7 +3451,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                       // frozen data descriptor is terminal and non-writable.
                       // Keep this after the accessor branch: freeze leaves a
                       // setter callable.
-                      { op: "local.get", index: 9 },
+                      { op: "local.get", index: 10 },
                       { op: "ref.as_non_null" },
                       { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
                       { op: "i32.const", value: OBJ_FLAG_FROZEN },
@@ -3437,7 +3461,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                         blockType: { kind: "empty" },
                         then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
                       },
-                      { op: "local.get", index: 7 },
+                      { op: "local.get", index: 8 },
                       { op: "ref.as_non_null" },
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
                       { op: "i32.const", value: FLAG_WRITABLE },
@@ -3450,19 +3474,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                       },
                     ],
                   },
-                  { op: "local.get", index: 9 },
+                  { op: "local.get", index: 10 },
                   { op: "ref.as_non_null" },
                   { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-                  { op: "local.set", index: 9 },
+                  { op: "local.set", index: 10 },
                   { op: "br", depth: 0 },
                 ],
               },
             ],
           },
-          // Explicit links exhausted: now (and only now) probe the receiver's
+          // Explicit links exhausted: now (and only now) probe lookupRecv's
           // implicit native-prototype companions.  The helper owns the full
-          // brand→Object sequence and preserves nearest-descriptor order.
-          ...(protoIndexSetDecisionInstrs(ctx, 0, 2, 3) ?? [{ op: "i32.const", value: SET_DECISION_MISS }]),
+          // brand→Object sequence and invokes accessors with callRecv.
+          ...(protoIndexSetDecisionInstrs(ctx, 0, 4, 2, 3) ?? [{ op: "i32.const", value: SET_DECISION_MISS }]),
         ],
       );
 
@@ -3791,6 +3815,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "ref.null.extern" },
                 { op: "local.get", index: 1 },
                 { op: "local.get", index: 2 },
+                { op: "local.get", index: 0 },
                 { op: "call", funcIdx: externSetDecideIdx! },
                 { op: "local.tee", index: 10 },
                 { op: "i32.const", value: SET_DECISION_HANDLED },
@@ -3834,6 +3859,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             { op: "local.get", index: 0 },
             { op: "local.get", index: 1 },
             { op: "local.get", index: 2 },
+            { op: "local.get", index: 0 },
             { op: "call", funcIdx: externSetDecideIdx! },
             { op: "local.tee", index: 10 },
             { op: "i32.const", value: SET_DECISION_HANDLED },
@@ -4206,6 +4232,108 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "any", type: { kind: "anyref" } },
         { name: "o", type: objRefNull },
         { name: "e", type: entryRefNull },
+      ],
+      body,
+    );
+  }
+
+  // ── __reflect_set_receiver(target, key, value, receiver) -> i32 ─────────
+  //
+  // §28.1.12 delegates to target.[[Set]](key, value, receiver). The ordinary
+  // target path differs from __reflect_set in one crucial way: a writable data
+  // descriptor belongs to the TARGET chain, while the resulting own write (or
+  // accessor `this`) belongs to RECEIVER. Keep those two roles separate.
+  //
+  // This is intentionally private to the narrowly admitted #2046 ordinary
+  // object call-site path. TypedArray indexed-exotic and Proxy [[Set]] paths
+  // stay behind their explicit compile refusal until their owning slices model
+  // their brand/trap semantics; they must never arrive here as a false result.
+  {
+    const reflectSetReceiverDecisionIdx = ctx.funcMap.get("__extern_set_decide");
+    const reflectSetReceiverOwnIdx = ctx.funcMap.get("__extern_set_own");
+    const reflectSetReceiverFallbackIdx = ctx.funcMap.get("__reflect_set")!;
+    // The one descriptor authority owns target own/prototype/native-companion
+    // lookup. This wrapper only validates the admitted ordinary target,
+    // normalizes the property key once, maps its decision to Reflect's boolean,
+    // and performs the permitted receiver-own write.
+    const writeReceiver = (): Instr[] =>
+      reflectSetReceiverOwnIdx !== undefined
+        ? [
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: reflectSetReceiverOwnIdx },
+            { op: "i32.const", value: SET_RESULT_SUCCESS },
+            { op: "i32.eq" },
+            { op: "return" },
+          ]
+        : [
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: reflectSetReceiverFallbackIdx },
+            { op: "return" },
+          ];
+    const refuse = (): Instr[] => [{ op: "i32.const", value: 0 }, { op: "return" }];
+    const normalizeKey: Instr[] =
+      toPropertyKeyIdx === undefined
+        ? []
+        : [
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: toPropertyKeyIdx },
+            { op: "local.set", index: 1 },
+          ];
+    const decideAndWrite: Instr[] =
+      reflectSetReceiverDecisionIdx === undefined
+        ? writeReceiver()
+        : [
+            // lookup target / own target / normalized key / value / accessor receiver
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "local.get", index: 3 },
+            { op: "call", funcIdx: reflectSetReceiverDecisionIdx },
+            { op: "local.tee", index: 5 },
+            { op: "i32.const", value: SET_DECISION_HANDLED },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+            },
+            { op: "local.get", index: 5 },
+            { op: "i32.const", value: SET_DECISION_ALLOW_OWN },
+            { op: "i32.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: writeReceiver() },
+            { op: "local.get", index: 5 },
+            { op: "i32.const", value: SET_DECISION_REFUSED },
+            { op: "i32.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: refuse() },
+            // MISS is the default writable data descriptor.
+            ...writeReceiver(),
+          ];
+    const body: Instr[] = [
+      // The source admission is deliberately restricted to ordinary literals;
+      // retain a runtime guard so representation drift never reaches this path.
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: 4 },
+      { op: "ref.test", typeIdx: objectTypeIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: refuse() },
+      // Reflect.set performs ToPropertyKey exactly once, after target
+      // validation, before the shared decision or receiver write can observe it.
+      ...normalizeKey,
+      ...decideAndWrite,
+    ];
+    registerNative(
+      "__reflect_set_receiver",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+      [
+        { name: "targetAny", type: { kind: "anyref" } },
+        { name: "decision", type: { kind: "i32" } },
       ],
       body,
     );
@@ -11248,6 +11376,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
           { op: "ref.null.extern" },
           { op: "local.get", index: 1 },
           { op: "local.get", index: 2 },
+          { op: "local.get", index: 0 },
           { op: "call", funcIdx: setDecideIdx! },
           { op: "local.tee", index: setDecision },
           { op: "i32.const", value: SET_DECISION_HANDLED },

@@ -274,6 +274,7 @@ import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
+import { isOpenObjectLiteralPromotion, scanForStandaloneReflectSetReceiver } from "./reflect-set-receiver.js"; // (#2046)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import {
   hoistedVarRetypesToConcreteRef,
@@ -5423,6 +5424,9 @@ export function generateModule(
     // vec reads / joins emit the `$Hole → undefined` read-boundary guard.
     // Off by default — programs without holes are byte-identical.
     scanForArrayHoles(ctx, ast.sourceFile);
+    // #2046 literal promotion must see dynamicCodeDirty from the preceding
+    // scan: eval/Function can rebind identifiers after source analysis.
+    scanForStandaloneReflectSetReceiver(ctx, ast.sourceFile);
 
     if (
       options?.experimentalIR &&
@@ -10372,6 +10376,14 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       }
     });
 
+    // #2046: scan only after the whole-realm dynamic-code flag is known, so an
+    // eval in any source cannot promote imported/local literal storage.
+    profilePhase("reflect-set-receiver-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForStandaloneReflectSetReceiver(ctx, sf);
+      }
+    });
+
     // (#4037) Multi-source parity for the #2026/#53 up-front `$ObjVecArr`
     // reservation. The single-source path reserves it whenever its source
     // declares a class; `generateMultiModule` never did, so ANY dynamic
@@ -13275,7 +13287,7 @@ function hoistVarDecl(
       // `$Object` (externref, standalone-only) in compileObjectLiteral; the
       // hoisted `var` slot must be externref to match (mirrors the let/const path
       // in statements/variables.ts via ctx.dynamicProtoLiteralNodes).
-      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) {
+      if (ctx.standalone && isOpenObjectLiteralPromotion(ctx, decl.initializer)) {
         initForcesExternref = true;
       }
       for (const p of decl.initializer.properties) {
@@ -14076,7 +14088,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ctx.standalone &&
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
-          ctx.dynamicProtoLiteralNodes.has(decl.initializer);
+          isOpenObjectLiteralPromotion(ctx, decl.initializer);
         // (#4376) Keep the authoritative pre-hoisted slot in lockstep with
         // compileVariableStatement/compileObjectLiteral for a binding whose
         // object later receives out-of-shape or runtime-keyed writes. Without

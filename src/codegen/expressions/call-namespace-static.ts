@@ -61,6 +61,7 @@ import {
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
+import { standaloneReflectSetReceiverAdmission } from "../reflect-set-receiver.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
@@ -696,7 +697,11 @@ export function compileNamespaceStaticCall(
   // Replaces the previous compile-time rewrites that bypassed the Proxy MOP.
   // Each method routes through a thin host wrapper around Reflect.X so
   // Proxy targets see their traps fire and boolean returns are preserved.
-  if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Reflect") {
+  if (
+    ts.isIdentifier(propAccess.expression) &&
+    propAccess.expression.text === "Reflect" &&
+    resolvesToAmbientGlobal(ctx, propAccess.expression)
+  ) {
     const reflectMethod = propAccess.name.text;
 
     // Helper — compile each argument as externref, padding missing positions with ref.null.extern.
@@ -892,11 +897,11 @@ export function compileNamespaceStaticCall(
       }
 
       if (reflectMethod === "set" && expr.arguments.length >= 2) {
-        // (#2046 PR-A defect 1) Same as Reflect.get: __reflect_set writes the
-        // data-property subset on `target` itself and has no receiver slot, so
-        // an explicit receiver was evaluated then dropped — writing to the
-        // wrong object for accessor setters (§28.1.12 → §10.1.9). Refuse
-        // loudly with an explicit receiver until PR-C lands.
+        // (#2046) The ordinary `$Object` explicit-receiver path has a native
+        // OrdinarySetWithOwnDescriptor implementation. Keep typed-array and
+        // Proxy/exotic calls on the established loud refusal: their semantics
+        // are not a subset of ordinary property writes and are owned by #4449 /
+        // #5196 respectively.
         if (expr.arguments.length > 3) {
           if (boundaryReflectInterop && isDynamicBoundaryTarget(expr.arguments[0])) {
             ensureObjectRuntime(ctx);
@@ -907,6 +912,29 @@ export function compileNamespaceStaticCall(
               return { kind: "i32" };
             }
             return fallbackReturn(4, "i32-false");
+          }
+          if (standaloneReflectSetReceiverAdmission(ctx, expr.arguments[0], expr.arguments[3])) {
+            // Evaluate EVERY supplied argument left-to-right before the native
+            // call (including ignored extras), then use only the Reflect
+            // signature's first four. This matches ArgumentListEvaluation and
+            // avoids the old evaluated-then-dropped receiver bug.
+            ensureObjectRuntime(ctx);
+            const argLocals = emitReflectArgumentLocals();
+            const nativeIdx = ctx.funcMap.get("__reflect_set_receiver");
+            if (nativeIdx !== undefined) {
+              for (let i = 0; i < 4; i++) fctx.body.push({ op: "local.get", index: argLocals[i]! });
+              fctx.body.push({ op: "call", funcIdx: nativeIdx });
+              releaseReflectArgumentLocals(argLocals);
+              return { kind: "i32" };
+            }
+            reportError(
+              ctx,
+              expr,
+              "Codegen error: Reflect.set with an explicit receiver could not register its native provider (#2046).",
+            );
+            releaseReflectArgumentLocals(argLocals);
+            fctx.body.push({ op: "i32.const", value: 0 });
+            return { kind: "i32" };
           }
           reportError(
             ctx,

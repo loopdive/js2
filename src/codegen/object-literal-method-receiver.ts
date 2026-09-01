@@ -100,6 +100,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { isOpenObjectLiteralPromotion } from "./reflect-set-receiver.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { innerResultValType } from "./closure-receiver-install.js";
 
@@ -163,7 +164,7 @@ function shorthandMethodNeedsReceiver(ctx: CodegenContext, declaration: ts.Metho
   if (!declaration.body || !ts.isObjectLiteralExpression(declaration.parent)) return false;
   return (
     methodBodyReferencesSuper(declaration.body) ||
-    (ctx.dynamicProtoLiteralNodes.has(declaration.parent) && bodyReferencesOwnThis(declaration.body))
+    (isOpenObjectLiteralPromotion(ctx, declaration.parent) && bodyReferencesOwnThis(declaration.body))
   );
 }
 

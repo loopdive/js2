@@ -79,6 +79,7 @@ import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
+import { isOpenObjectLiteralPromotion } from "./reflect-set-receiver.js";
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
@@ -3231,7 +3232,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // stored the `$Object` into a struct-typed global (or kept the closed
     // struct), seeding `$proto = null` at `new F()` and killing every
     // inherited read.
-    if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) return true;
+    if (ctx.standalone && isOpenObjectLiteralPromotion(ctx, decl.initializer)) return true;
     // (#3369) An untyped empty object literal is constructed by literals.ts as
     // a host `$Object` (`__new_plain_object`). Keep the module global on the
     // same externref representation unless a shape pre-pass deliberately

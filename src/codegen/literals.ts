@@ -105,6 +105,7 @@ import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js"
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
+import { isOpenObjectLiteralPromotion } from "./reflect-set-receiver.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -2051,7 +2052,7 @@ export function compileObjectLiteral(
   // string-key read path (`__extern_get`) is separate host plumbing outside this
   // slice's scope. Gate promotion to standalone so gc/host stays byte-for-byte
   // unchanged (zero host-regression surface).
-  if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(expr)) {
+  if (ctx.standalone && isOpenObjectLiteralPromotion(ctx, expr)) {
     const promoted = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (promoted !== null) return promoted;
   }
