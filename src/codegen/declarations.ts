@@ -3652,13 +3652,19 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 
   // A bare identifier expression is normally inert at module-init collection
-  // time, but a reference to a direct CaseBlock lexical name is observable:
-  // outside the switch it must perform the ordinary unresolved-binding lookup
-  // and throw ReferenceError. Keep this narrow to top-level switches with no
-  // same-named top-level binding; an outer `let x` legitimately shadows a
-  // switch-local `let x` after the switch.
+  // time, but two source-local lexical cases are observable:
+  //
+  // - a reference to a direct CaseBlock lexical name outside its switch must
+  //   perform the ordinary unresolved-binding lookup and throw ReferenceError;
+  // - a direct script-level `x; let/const x` read is a statically guaranteed
+  //   TDZ violation once exact binding ownership is proven.
+  //
+  // Keep both exceptions narrow. In particular, an outer `let x` legitimately
+  // shadows a switch-local `let x` after the switch, and ordinary atom
+  // collection remains owned by #3623/#4433.
   const topLevelBoundNames = new Set<string>();
   const topLevelSwitchLexicalNames = new Set<string>();
+  const directTopLevelLexicalDeclarations = new Map<string, ts.VariableDeclaration | null>();
   const addBindingNames = (name: ts.BindingName): void => {
     if (ts.isIdentifier(name)) {
       topLevelBoundNames.add(name.text);
@@ -3671,6 +3677,24 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   for (const stmt of sourceFile.statements) {
     if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) addBindingNames(decl.name);
+      // #5253 — record only unambiguous direct runtime `let` / `const`
+      // declarations. The later predicate also requires the checker/oracle to
+      // resolve the read to this exact AST node, so same-spelled bindings from
+      // another source, `var`, patterns, ambient declarations, and duplicate
+      // syntax cannot enter the narrow TDZ-read route.
+      if (
+        !sourceFile.isDeclarationFile &&
+        !hasDeclareModifier(stmt) &&
+        (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0
+      ) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          directTopLevelLexicalDeclarations.set(
+            decl.name.text,
+            directTopLevelLexicalDeclarations.has(decl.name.text) ? null : decl,
+          );
+        }
+      }
     } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
       topLevelBoundNames.add(stmt.name.text);
     } else if (ts.isClassDeclaration(stmt) && stmt.name) {
@@ -3714,6 +3738,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
     }
   }
+  const isDirectTopLevelLexicalForwardRead = (identifier: ts.Identifier): boolean => {
+    const declaration = directTopLevelLexicalDeclarations.get(identifier.text);
+    // The expression statement is itself a direct SourceFile child, so this
+    // positional proof is the static TDZ analyser's guaranteed-throw case:
+    // no closure or loop can defer/re-enter the read before initialization.
+    return (
+      declaration !== undefined &&
+      declaration !== null &&
+      identifier.getSourceFile() === sourceFile &&
+      ctx.oracle.valueDeclarationOf(identifier) === declaration &&
+      identifier.getStart(sourceFile) < declaration.getEnd()
+    );
+  };
+  let directTopLevelLexicalForwardReadStatements = 0;
 
   // Var declarations are function-scoped, so a declaration nested in a later
   // top-level `try`/loop/branch is already in scope for earlier statements.
@@ -3881,6 +3919,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
       if (ts.isIdentifier(expr) && topLevelSwitchLexicalNames.has(expr.text) && !topLevelBoundNames.has(expr.text)) {
         ctx.moduleInitStatements.push(stmt);
+        continue;
+      }
+      // #5253 — retain only the exact source-owned direct lexical shape whose
+      // forward source position proves a TDZ throw. Do not generalize the
+      // `expressionRunsUserCode` atom route: unbound/var/post-init/block-local
+      // reads remain outside this collector exception.
+      if (ts.isIdentifier(stmt.expression) && isDirectTopLevelLexicalForwardRead(stmt.expression)) {
+        ctx.moduleInitStatements.push(stmt);
+        directTopLevelLexicalForwardReadStatements += 1;
         continue;
       }
       if (
@@ -4280,6 +4327,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       collectOrRecordUnnamedExpressionStatement(ctx, stmt);
     }
   }
+
+  // #5253 — every source statement retained by the narrow TDZ proof is
+  // reported independently from the aggregate module-init count below.
+  profileCount("module-init-direct-top-level-tdz-forward-read-statements", directTopLevelLexicalForwardReadStatements);
 
   // Export default for module globals (#1108): `export default <variable>` where
   // the variable is a module-level global (e.g. `var add = createMathOperation(fn, 0)`)
