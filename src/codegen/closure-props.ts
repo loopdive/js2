@@ -319,6 +319,102 @@ function buildProtoNamedMethodMissArm(
 }
 
 /**
+ * Build the dynamic `prototype` write arm for ordinary function objects.
+ *
+ * The closure property setter receives an erased function value, so the
+ * existing inherited-descriptor resolver can otherwise claim the write before
+ * the function's own mandatory writable `prototype` property is consulted.
+ */
+function buildFnctorPrototypeWriteArm(
+  ctx: CodegenContext,
+  sharedSetAvailable: boolean,
+  bagEnsureIdx: number,
+  externSetIdx: number,
+  setOwnIdx: number | undefined,
+  setResultGlobalIdx: number | undefined,
+): Instr[] {
+  const constructibleTypeIdxs = [...ctx.constructibleClosureTypeIdxs];
+  if (constructibleTypeIdxs.length === 0 || ctx.nativeStrings !== true || ctx.nativeStrTypeIdx < 0) return [];
+
+  if (sharedSetAvailable && (setOwnIdx === undefined || setResultGlobalIdx === undefined)) return [];
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const writeOwn = (): Instr[] =>
+    defineValueIdx !== undefined
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: bagEnsureIdx },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          // `prototype` is the mandatory own data property created for every
+          // ordinary function. Materialize its exact descriptor while changing
+          // only [[Value]]: writable=true, enumerable/configurable=false. The
+          // host flag word also marks all three attributes and value specified.
+          { op: "f64.const", value: 0xb9 },
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" },
+          ...(sharedSetAvailable
+            ? ([
+                { op: "i32.const", value: 1 }, // SET_RESULT_SUCCESS
+                { op: "global.set", index: setResultGlobalIdx! },
+              ] satisfies Instr[])
+            : []),
+          { op: "return" },
+        ]
+      : sharedSetAvailable
+        ? [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: bagEnsureIdx },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setOwnIdx! },
+            { op: "global.set", index: setResultGlobalIdx! },
+            { op: "return" },
+          ]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: bagEnsureIdx },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: externSetIdx },
+            { op: "return" },
+          ];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.nativeStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
+        ...nativeStringLiteralInstrs(ctx, "prototype"),
+        { op: "ref.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...constructibleTypeIdxs.flatMap((typeIdx): Instr[] => [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: writeOwn(),
+              },
+            ]),
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * Register the `$ClosurePropEntry` struct type + `$__closure_prop_head` global
  * and reserve the closure-own-property helper placeholders. Called from
  * `ensureObjectRuntime`'s type section under `ctx.standalone || ctx.wasi`,
@@ -661,6 +757,21 @@ function fillCarrierBagHelpers(
   }
 }
 
+/** Fill the closure carrier predicate shared by the closure property helpers. */
+function fillClosureCarrier(
+  carrierTypeIdxs: number[],
+  setBody: (name: string, locals: { name: string; type: ValType }[], body: Instr[]) => void,
+): void {
+  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  for (const carrierIdx of carrierTypeIdxs) {
+    body.push({ op: "local.get", index: 1 });
+    body.push({ op: "ref.test", typeIdx: carrierIdx });
+    body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] });
+  }
+  body.push({ op: "i32.const", value: 0 });
+  setBody(IS_CLOSURE_PROP_CARRIER, [{ name: "__any", type: { kind: "anyref" } }], body);
+}
+
 /**
  * Fill the reserved closure-own-property helper bodies at FINALIZE, after
  * every closure root is registered and `__extern_get`/`__extern_set`/
@@ -717,28 +828,8 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   ];
 
   // ── __is_closure_prop_carrier(externref value) -> i32 ──
-  // (#3468 F1) ref.test chain over the closure BASE-wrapper types (same set as
-  // `__is_closure`/`__typeof_function` via `collectClosureBaseWrapperTypeIdxs`);
-  // a base-root test also matches every capturing subtype instance, so this
-  // subsumes the previously narrowed capturing-only carrier set. This is the
-  // stakeholder-ruled widening that lets shared noncapturing wrappers — the
-  // test262 `assert` harness receiver — carry own properties, which makes the
-  // harness assertions FIRE (honest floor de-inflation; see the issue file).
-  // Constant 0 when the module has no closures.
-  {
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 1 }, // __any
-    ];
-    for (const carrierIdx of carrierTypeIdxs) {
-      body.push({ op: "local.get", index: 1 });
-      body.push({ op: "ref.test", typeIdx: carrierIdx });
-      body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] });
-    }
-    body.push({ op: "i32.const", value: 0 });
-    setBody(IS_CLOSURE_PROP_CARRIER, [{ name: "__any", type: { kind: "anyref" } }], body);
-  }
+  // The base-wrapper ref.test chain also matches every capturing subtype.
+  fillClosureCarrier(carrierTypeIdxs, setBody);
 
   fillCarrierBagHelpers(ctx, { entryTypeIdx, headGlobalIdx, newPlainObjectIdx, slotted, setBody });
 
@@ -882,8 +973,17 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
       setDecideIdx !== undefined &&
       setOwnIdx !== undefined &&
       setResultGlobalIdx !== undefined;
+    const fnctorProtoWriteArm = buildFnctorPrototypeWriteArm(
+      ctx,
+      sharedSetAvailable,
+      bagEnsureIdx,
+      externSetIdx,
+      setOwnIdx,
+      setResultGlobalIdx,
+    );
     const body: Instr[] = sharedSetAvailable
       ? [
+          ...fnctorProtoWriteArm,
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: isClosureIdx },
           {
@@ -951,6 +1051,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           },
         ]
       : [
+          ...fnctorProtoWriteArm,
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: isClosureIdx },
           {
@@ -967,7 +1068,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
         ];
     setBody(
       CLOSURE_PROP_SET,
-      sharedSetAvailable
+      sharedSetAvailable || fnctorProtoWriteArm.length > 0
         ? [
             { name: "__bag", type: { kind: "externref" } },
             { name: "__decision", type: { kind: "i32" } },

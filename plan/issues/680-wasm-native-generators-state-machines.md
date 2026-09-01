@@ -1383,3 +1383,48 @@ repository runtime PATH. A detached local wrapper will retain a log, PID, and
 actual exit-status file through any tool-session loss. The result remains
 authoritative only if the wrapper records a complete process exit; any real
 fresh-cache failure stops publication without another retry.
+
+### c112 merge commit — authoritative fresh-cache hook pass (2026-09-01)
+
+The durable normal hook session completed the c112 merge commit at
+`09ee2f3966` (full SHA to be re-verified before the next merge). It used the
+unique fresh `JS2WASM_TEMPORAL_CACHE` specified above and completed the full
+normal hook successfully: the rebuilt #4628 Temporal provider passed **11 / 11**;
+#5225 passed **2 / 2**; #5242 passed **2 / 2**; #5243 passed **1 / 1**; #5244
+passed **9 / 9**; and the #680 focused continuation suite passed **27 / 27**.
+The normal hook's lint-staged formatting/lint, LOC budget, function budget, and
+oracle-ratchet gates were also green. This replaces neither the later
+exact-live-head replay nor the final synthetic pre-push proof; those must be
+run after integrating the current upstream tip.
+
+### Current-main integration plan — e59af10496 (2026-09-01)
+
+Fresh `git fetch upstream main` resolved the live `loopdive/js2:main` tip to
+`e59af10496753d38352fdac74059872cd6033c7e`, **42 commits** beyond the c112
+integration parent. The actual three-way merge base remains
+`c11206262088a69815d6126787b10942df148b6d`. A two-tip name inventory lists all
+five #680 paths, but the actual incoming `c112..e59` side changes only
+`src/codegen/context/types.ts`; this tracker and the branch-only focused test
+are unchanged/absent on the incoming side, and
+`expressions.ts`/`generators-native.ts` have no incoming post-c112 hunk.
+
+The two-tip diff must not be misread as upstream deleting #680: the tracker is
+unchanged from c112 on upstream (354 lines at both revisions), and the focused
+test is branch-only (absent at both c112 and e59). They remain with the #680
+side. The sole semantic source overlap is `context/types.ts`: incoming main
+replaces `nodeGlobals` with `ambientPlatform`. The normal no-commit merge
+automatically retained that incoming field change together with #680's
+`nativeGeneratorYieldValueLocals` / `nativeGeneratorExpressionValueLocals`,
+their expression consumers, generator-plan save/restore mechanics, and the
+27-control focused regression file. `MERGE_HEAD` is now e59 with no unresolved
+paths; retain this indexed automatic reconciliation rather than overwriting
+either side wholesale.
+
+After the live merge is resolved, validate the exact resulting head in this
+order with host capacity re-audited before each compiler/hook lane: #680
+focused **27 / 27**, direct TypeScript 7, targeted static quality and issue
+budget/oracle gates, then the full synthetic exact-head pre-push hook using
+the actual new SHA and `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Fresh-fetch
+again before publication; if main advances, normally merge it and replay every
+affected gate. The prospective PR against that final live tip must contain
+only the five #680 paths and no benchmark/public/website/labs path.

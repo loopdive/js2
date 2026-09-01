@@ -15,6 +15,25 @@ export function failedSloppyNativeSetIsNoOp(obj: any, desc: PropertyDescriptor |
   }
 }
 
+export function hasUserCallableSidecarProps(
+  sidecar: Record<string | symbol, any> | undefined,
+  hasAccessors: boolean,
+): boolean {
+  return (
+    hasAccessors ||
+    (!!sidecar && Reflect.ownKeys(sidecar).some((key) => key !== "name" && key !== "length" && key !== "prototype"))
+  );
+}
+
+export function ownKeysResult(
+  name: string,
+  result: any,
+  state: any,
+  materialize: (value: any, state: any) => any,
+): any {
+  return name === "ownKeys" ? materialize(result, state) : result;
+}
+
 type CallbackState = { getExports: () => Record<string, Function> | undefined };
 const callableOwners = new WeakMap<Function, CallbackState>();
 const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({

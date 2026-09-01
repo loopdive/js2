@@ -64,6 +64,7 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 const F64: ValType = { kind: "f64" };
+const suppressedArraySpeciesContexts = new WeakSet<FunctionContext>();
 
 /** `@@species` — the well-known symbol id interned by the native `$Symbol` carrier. */
 const SYMBOL_SPECIES_ID = 5;
@@ -104,6 +105,15 @@ export function arraySpeciesActive(ctx: CodegenContext): boolean {
   return (ctx.standalone || ctx.wasi) && ctx.arraySpeciesDirty;
 }
 
+export function withArraySpeciesSuppressed<T>(fctx: FunctionContext, emit: () => T): T {
+  suppressedArraySpeciesContexts.add(fctx);
+  try {
+    return emit();
+  } finally {
+    suppressedArraySpeciesContexts.delete(fctx);
+  }
+}
+
 /**
  * Register every native the two emissions call and resolve their indices.
  * Registration happens in ONE batch before any index is read — each of these is
@@ -111,7 +121,7 @@ export function arraySpeciesActive(ctx: CodegenContext): boolean {
  * shifts the ones already resolved (the #2043 late-shift class).
  */
 export function prepareArraySpeciesDeps(ctx: CodegenContext, fctx: FunctionContext): ArraySpeciesDeps | undefined {
-  if (!arraySpeciesActive(ctx)) return undefined;
+  if (suppressedArraySpeciesContexts.has(fctx) || !arraySpeciesActive(ctx)) return undefined;
   ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
