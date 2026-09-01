@@ -99,7 +99,13 @@ function namespaceFunctionExports(
     exports.push({ key: exportedSymbol.getName(), functionName, funcIdx, constructible });
   }
 
-  if (exports.length === 0) return undefined;
+  // An empty module still has a real namespace object. In particular, a
+  // module may self-import its namespace while exporting no runtime values
+  // (`import * as ns from "./self.js"`). Declining this vacuous immutable
+  // namespace sends the binding through the identifier fallback and produces
+  // null instead of the empty object required by the module namespace API.
+  // Keep the object path for type-only modules as well: those exports have no
+  // runtime properties, but the namespace itself remains observable.
   exports.sort((left, right) => left.key.localeCompare(right.key));
   return exports;
 }

@@ -233,6 +233,11 @@ export function createCodegenContext(
     toPrimitiveSharedClaimed: new Set(),
     toPrimitiveForkedStructs: new Set(),
     exnTagIdx: -1,
+    // (#5226) The shared-tag ABI needs a JS host to own the `WebAssembly.Tag`,
+    // so a wasi/standalone module keeps its module-local tag and its previous
+    // bytes. Only the package linker sets the option.
+    sharedExnTag:
+      options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
     hasUnionImports: false,
     asyncFunctions: new Set(),
     generatorFunctions: new Set(),
@@ -382,7 +387,7 @@ export function createCodegenContext(
     funcClosureGlobals: new Map(),
     funcClosureSingletonKeyByFuncIdx: new Map(),
     wasi: targetProfile.target === "wasi",
-    nodeGlobals: options?.nodeGlobals ?? false,
+    nodeGlobals: targetProfile.ambientPlatform === "node",
     // #2783 — namespaces left as link-time imports (WASI-gated above).
     linkedNamespaces,
     linkedPackageBindings,

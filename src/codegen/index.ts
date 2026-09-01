@@ -196,6 +196,7 @@ import {
   auditIrSkippedClassMemberSlots,
   auditIrSkippedFunctionSlots,
   auditIrSkippedModuleInitSlot,
+  buildNonExecutableModuleInitOutcome,
   buildWholeSourceFailureOutcomes,
   reconcileIrOverlayOutcomes,
 } from "./ir-overlay-outcomes.js";
@@ -423,6 +424,7 @@ import {
   addImport,
   addStringConstantGlobal,
   ensureExnTag,
+  exportedExnTagIndex,
   localGlobalIdx,
   nextModuleGlobalIdx,
   // #808 — moved to registry/imports.ts; imported back for index.ts's own callers.
@@ -2530,6 +2532,20 @@ function recordObservedIrOutcomes(
         outcome.unitId !== preparedModuleInitUnitId,
     ),
   );
+  // (#3523 R4 gap 4) A source whose module init has nothing to do records one
+  // truthful "non-executable" row here instead of staying silent. It is pushed
+  // AFTER the prepared-unit filter above, never through it: the row carries no
+  // `unitId` by contract, and `undefined !== preparedModuleInitUnitId` is FALSE
+  // whenever no module init was prepared — which is exactly the case this row
+  // exists to describe, so routing it through that filter would silently drop
+  // every row it is supposed to add.
+  const nonExecutable = buildNonExecutableModuleInitOutcome({
+    sourceFile,
+    identityContext: plan.identityPlan.identityContext,
+    target,
+    existingOutcomes: ctx.irOutcomes,
+  });
+  if (nonExecutable) ctx.irOutcomes.push(nonExecutable);
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
 
@@ -6465,11 +6481,7 @@ export function generateModule(
     // Export the exception tag so the exec worker can extract thrown payloads
     // via WebAssembly.Exception.getArg(tag, 0).
     if (ctx.exnTagIdx >= 0) {
-      const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-      mod.exports.push({
-        name: "__exn_tag",
-        desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-      });
+      mod.exports.push({ name: "__exn_tag", desc: { kind: "tag", index: exportedExnTagIndex(ctx, mod) } });
     }
 
     // Mark leaf struct types as final for V8 devirtualization (#594).
@@ -11075,11 +11087,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // via WebAssembly.Exception.getArg(tag, 0).
     profilePhase("export-exception-tag", () => {
       if (ctx.exnTagIdx >= 0) {
-        const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-        mod.exports.push({
-          name: "__exn_tag",
-          desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-        });
+        mod.exports.push({ name: "__exn_tag", desc: { kind: "tag", index: exportedExnTagIndex(ctx, mod) } });
       }
     });
 
@@ -11983,13 +11991,12 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // program resolves byte-identically.
     const builtinSymName = symbolShadowsBuiltinGlobal(sym) ? undefined : sym?.name;
 
-    // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
-    // is a TS-only modifier with no runtime representation. Without this, a
-    // ReadonlyArray-typed struct field falls through to the anonymous-struct /
-    // externref path and mismatches the vec the array literal builds, trapping
-    // on indexed read (#1748).
+    // `readonly T[]` / `ReadonlyArray<T>` lower to `T[]`; otherwise fields fall
+    // through to a mismatched anonymous struct (#1748).
+    // Match-result subtypes retain their specialized fields and carriers.
     const inheritedArrayElement =
-      builtinSymName === "Array" || builtinSymName === "ReadonlyArray"
+      ["Array", "ReadonlyArray", "RegExpIndicesArray"].includes(builtinSymName ?? "") ||
+      (!ctx.nativeStrings && (sym?.name === "RegExpExecArray" || sym?.name === "RegExpMatchArray"))
         ? undefined
         : inheritedArrayElementType(ctx.checker, tsType);
     if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray" || inheritedArrayElement) {
@@ -14038,7 +14045,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         // initializer's externref is ref.cast to it at runtime (cast fails →
         // `b.x` reads NaN/null). Mirrors statements/variables.ts; inlined to
         // avoid an index↔literals import cycle.
-        let initIsHostSpreadLiteral = false;
+        let initRequiresExternref = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
         if (
           !initIsAccessorLiteral &&
           decl.initializer !== undefined &&
@@ -14046,7 +14053,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer.properties.some((p) => ts.isSpreadAssignment(p))
         ) {
           const spreadCtxType = ctx.checker.getContextualType(decl.initializer);
-          initIsHostSpreadLiteral =
+          initRequiresExternref ||=
             !spreadCtxType ||
             (spreadCtxType.flags & ts.TypeFlags.Any) !== 0 ||
             (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
@@ -14084,7 +14091,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
-          initIsHostSpreadLiteral ||
+          initRequiresExternref ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
           initIsRedeclaredObjectIdentityLiteral ||

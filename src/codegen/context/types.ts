@@ -111,11 +111,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
-  /**
-   * Node-compatible ambient globals are enabled. This is distinct from the
-   * Wasm backend target: a gc-host build can still target the Node platform.
-   */
-  nodeGlobals?: boolean;
+  /** Ambient runtime globals, independent of the Wasm backend target. */
+  ambientPlatform?: import("../../target-profile.js").AmbientPlatform;
   /**
    * #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
    * (satisfied by a preloaded provider) instead of inline-lowering. `["node:fs"]`
@@ -139,6 +136,14 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   runtimeProvider?: boolean;
   /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
   canonicalRuntimeTypes?: boolean;
+  /**
+   * (#5226) Import the throw/catch exception tag from `env.__exn` instead of
+   * defining a module-local one. Set by the package linker on BOTH sides of a
+   * separately-linked graph so a provider's `throw` and its consumer's `catch`
+   * name the SAME tag — without it every module owns a private tag, the
+   * consumer's `catch` never matches, and the payload is lost in `catch_all`.
+   */
+  sharedExceptionTag?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -778,6 +783,16 @@ export interface FunctionContext {
    * re-evaluated after suspension.
    */
   asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
+  /**
+   * (#680) Sent values for original bare-yield AST nodes while a native
+   * generator continuation state recompiles its containing expression.
+   */
+  nativeGeneratorYieldValueLocals?: Map<ts.YieldExpression, number>;
+  /**
+   * (#680) One-time pre-yield operand values for original expression AST nodes
+   * while a native generator continuation state recompiles that expression.
+   */
+  nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
   /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
@@ -2666,6 +2681,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   toPrimitiveForkedStructs: Set<string>;
   /** Tag index for the exception tag (-1 if not yet registered) */
   exnTagIdx: number;
+  /**
+   * (#5226) True when this module's exception tag is IMPORTED (`env.__exn`)
+   * rather than module-defined, so every module of one linked graph throws and
+   * catches with the same tag identity. `exnTagIdx` stays an ABSOLUTE tag index
+   * either way (imported tags occupy the low indices).
+   */
+  sharedExnTag: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**

@@ -152,8 +152,10 @@ function isCurrentSourceRuntimeVariable(declaration: ts.Declaration, sourceFile:
 }
 
 function directUnresolvedTopLevelVariable(ctx: CodegenContext, id: ts.Identifier): ts.VariableDeclaration | undefined {
-  const sourceFile = id.getSourceFile();
-  if (sourceFile.isDeclarationFile || ctx.oracle.declarationsOf(id).length !== 0) return undefined;
+  const sourceFile = id.getSourceFile() as ts.SourceFile | undefined;
+  if (sourceFile === undefined || sourceFile.isDeclarationFile || ctx.oracle.declarationsOf(id).length !== 0) {
+    return undefined;
+  }
   const matches = sourceFile.statements.flatMap((statement) =>
     ts.isVariableStatement(statement) && !hasDeclareModifier(statement)
       ? statement.declarationList.declarations.filter(

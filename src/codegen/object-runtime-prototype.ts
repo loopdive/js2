@@ -44,6 +44,8 @@ export interface ObjectPrototypeHelperState {
   boundaryObjectSetPrototypeIdx?: number;
   INITIAL_CAP: number;
   OBJ_FLAG_NONEXTENSIBLE: number;
+  /** Distinguishes an explicit null [[Prototype]] from the implicit terminal. */
+  OBJ_FLAG_NULL_PROTO: number;
 }
 
 /**
@@ -190,6 +192,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
+    OBJ_FLAG_NULL_PROTO,
   } = s;
 
   // (#4637 A1) The bag↔callable proto-view map, reserved just above in
@@ -269,6 +272,69 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   const devirtualizeProtoResult = (): Instr[] =>
     functionFromProtoIdx === undefined ? [] : [{ op: "call", funcIdx: functionFromProtoIdx }];
 
+  // `$Object.$proto === null` has two encodings in the standalone runtime:
+  // an ordinary object whose implicit Object.prototype terminal is omitted, and
+  // an explicitly null-prototype object. Keep the bit checks/final writes as
+  // factories: both writer and status bodies are remapped independently later.
+  const nullPrototypeFlagIsSet = (objectLocal: number): Instr[] => [
+    { op: "local.get", index: objectLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: OBJ_FLAG_NULL_PROTO },
+    { op: "i32.and" },
+  ];
+  const returnIfSameEncodedPrototype = (onSame: () => Instr[]): Instr[] => [
+    { op: "local.get", index: 3 },
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+    { op: "ref.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // With equal encoded references, SameValue also requires the raw
+        // JavaScript null classifications to agree. Otherwise either an
+        // ordinary object must become explicitly null-prototype, or a marked
+        // null-prototype object must clear that marker for a non-null input
+        // which has no `$Object` representation.
+        { op: "local.get", index: 1 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...nullPrototypeFlagIsSet(2), { op: "if", blockType: { kind: "empty" }, then: onSame() }],
+          else: [
+            ...nullPrototypeFlagIsSet(2),
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: onSame() },
+          ],
+        },
+      ],
+    },
+  ];
+  const updateNullPrototypeFlag = (): Instr[] => [
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: ~OBJ_FLAG_NULL_PROTO },
+    { op: "i32.and" },
+    // Use the original input, not the canonicalized `$Object` view: only a
+    // JavaScript null request receives the explicit-null-prototype marker.
+    { op: "local.get", index: 1 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: OBJ_FLAG_NULL_PROTO }],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+  ];
+
   // ── Prototype-chain ops (#1472 Phase C) ──────────────────────────────────
   //
   // The $Object struct already carries the [[Prototype]] in field 0 ($proto,
@@ -317,7 +383,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
 
   // __object_create(externref proto) -> externref (ES §20.1.2.2):
   //   fresh empty $Object with $proto = (proto is $Object ? proto : null).
-  //   Object.create(null) passes a null externref → $proto stays null.
+  //   Object.create(null) passes a null externref → $proto stays null and its
+  //   dedicated flag distinguishes that state from the implicit terminal.
   //   (The descriptors second arg is materialised separately by the call site.)
   {
     const body: Instr[] = [
@@ -343,11 +410,19 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         ],
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
-      // struct.new $Object {proto, props, count=0, tombstones=0, flags=0, nextSeq=0}
+      // struct.new $Object {proto, props, count=0, tombstones=0,
+      //   flags=(raw proto is null ? NULL_PROTO : 0), nextSeq=0}
       { op: "local.get", index: 2 },
       { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
-      { op: "i32.const", value: 0 },
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: OBJ_FLAG_NULL_PROTO }],
+        else: [{ op: "i32.const", value: 0 }],
+      },
       { op: "i32.const", value: 0 }, // nextSeq (#1837)
       { op: "struct.new", typeIdx: objectTypeIdx },
       { op: "extern.convert_any" },
@@ -451,17 +526,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
       { op: "local.set", index: 3 },
-      // step 2: if SameValue(v, o.$proto) → no-op (return obj)
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-      { op: "ref.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 0 }, { op: "return" }],
-      },
+      // step 2: SameValue includes the explicit-null-prototype bit when both
+      // encoded proto references are null.
+      ...returnIfSameEncodedPrototype(() => [{ op: "local.get", index: 0 }, { op: "return" }]),
       // step 3: if o.flags & OBJ_FLAG_NONEXTENSIBLE → refuse (return obj, no write)
       { op: "local.get", index: 2 },
       { op: "ref.as_non_null" },
@@ -514,6 +581,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       { op: "ref.as_non_null" },
       { op: "local.get", index: 3 },
       { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 0 },
+      // Keep every unrelated object flag and replace only the explicit-null
+      // classification after the write has passed all refusal checks.
+      ...updateNullPrototypeFlag(),
       // return obj
       { op: "local.get", index: 0 },
     ];
@@ -585,17 +655,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
       { op: "local.set", index: 3 },
-      // step 2: SameValue(v, o.$proto) → true, regardless of extensibility.
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-      { op: "ref.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
-      },
+      // step 2: SameValue includes the explicit-null-prototype bit when both
+      // encoded proto references are null.
+      ...returnIfSameEncodedPrototype(() => [{ op: "i32.const", value: 1 }, { op: "return" }]),
       // step 3: non-extensible → false.
       { op: "local.get", index: 2 },
       { op: "ref.as_non_null" },

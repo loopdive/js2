@@ -111,6 +111,7 @@ import {
   emitSetExtrasArgv,
   ensureArgcGlobal,
   compileNestedClassDeclaration,
+  emitUnresolvedComputedAccessorNameEffects,
   hoistFunctionDeclarations,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
@@ -2937,6 +2938,11 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   if (needsInScopeBody) {
     compileNestedClassDeclaration(ctx, fctx, expr, syntheticName);
   }
+
+  // The generic expression route owns ClassDefinitionEvaluation for inline and
+  // comma-position classes. Variable-bound singleton materialization bypasses
+  // this function and emits the same shared effect in variables.ts.
+  emitUnresolvedComputedAccessorNameEffects(ctx, fctx, expr);
 
   // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
   if (classNameForCheck && ctx.classThrowsOnEval.has(classNameForCheck)) {

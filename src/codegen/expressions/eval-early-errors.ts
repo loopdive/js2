@@ -201,6 +201,7 @@ export function evalCallerCapabilities(callSite: ts.Node, directEval: boolean): 
     if (ts.isMethodDeclaration(cur) || ts.isGetAccessorDeclaration(cur) || ts.isSetAccessorDeclaration(cur)) {
       return { newTarget: true, superProperty: true, superCall: false };
     }
+    if (ts.isPropertyDeclaration(cur)) return { newTarget: true, superProperty: true, superCall: false };
     if (ts.isConstructorDeclaration(cur)) {
       return { newTarget: true, superProperty: true, superCall: constructorIsDerived(cur) };
     }

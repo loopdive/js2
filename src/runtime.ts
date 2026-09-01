@@ -117,6 +117,7 @@ import {
 } from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
+import * as classStaticParent from "./runtime/class-static-parent.js";
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
@@ -2389,17 +2390,14 @@ function _wrapVoidHostCallback(
  * (#860) Wrap a Wasm closure stored as a property value so JS callers can
  * invoke it. Unlike `_maybeWrapCallable`, the arity is not known from
  * context — a value-typed property doesn't say how the host will eventually
- * call it. We use `__is_closure` as the authoritative closure discriminator
- * (avoids wrapping vec wrappers, named structs, plain objects) and the
- * highest available `__call_fn_<arity>` export as the dispatcher.
+ * call it. We use `__is_closure` plus the highest available dispatcher.
  *
  * The `__call_fn_N` dispatcher (emitClosureCallExportN in codegen) iterates
  * closures of arity ≤ N; lower-arity closures see their extra args dropped
  * at the wasm-side dispatch arm. So wrapping with the max arity is safe and
  * forwards a reasonable arg count for any caller.
  *
- * Returns the value unchanged when it is not a closure, when callbackState
- * is unavailable, or when no `__call_fn_*` export was emitted.
+ * Returns unchanged when it is not a closure or no callback/export is available.
  */
 function _maybeWrapCallableUnknownArity(
   val: any,
@@ -2424,6 +2422,8 @@ function _maybeWrapCallableUnknownArity(
   } catch {
     return val;
   }
+  if (wsh.hasUserCallableSidecarProps(_wasmStructProps.get(val), _wasmStructAccessors.has(val)))
+    return _wrapCallableForHost(val, callbackState) ?? val;
   return _wrapWasmClosureUnknownArity(val, callbackState) ?? val;
 }
 
@@ -5445,6 +5445,13 @@ function _safeGet(
     // retained while the receiver's static shape was widened.
     const sc = _sidecarGet(obj, key);
     if (sc !== undefined) return sc;
+    const inheritedStatic = classStaticParent.resolveClassStaticParent(
+      obj,
+      key,
+      callbackState?.getExports(),
+      _wrapForHost,
+    );
+    if (inheritedStatic !== classStaticParent.MISS) return inheritedStatic;
     // A declared own field shadows a prototype method with the same spelling
     // (§9.4.2 [[Get]]). This matters when an untyped host call reaches a
     // compiled class whose field stores a callable closure (Marked's
@@ -5690,7 +5697,7 @@ function _safeSet(
   // (#1712) A vec read through `_wrapForHost` may return its real-array Proxy
   // view. Numeric writes must target the canonical raw WasmGC vec so the
   // module's element-set dispatcher can mutate the backing array.
-  obj = _unwrapForHost(obj);
+  obj = (_wasmClosureWrapperTargets.has(obj) && Reflect.set(obj, key, val, obj), _unwrapForHost(obj));
   const accessorKey = typeof key === "number" && Number.isInteger(key) ? String(key) : key;
   const scAccessor = typeof accessorKey === "string" ? _wasmStructProps.get(obj) : undefined;
   if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__set_${accessorKey}`] === "function") {
@@ -6267,14 +6274,6 @@ const _classFnctorParents = new WeakMap<object, any>();
 // (`class C extends React.Component {}`) need the spec-synthesized
 // `super(...args)` applied by the host mirror after the Wasm struct allocation.
 const _classImplicitDynamicParentCtor = new WeakSet<object>();
-// Dynamic `extends <value>` parents, registered by NAME at the declaration
-// statement (`__register_class_parent`) — the name-keyed twin of the
-// WeakMap above, matching the name-keyed class-object singleton. Last write
-// wins, which mirrors how a re-declared same-named class shadows.
-const _classDynamicParentsByName = new Map<string, any>();
-// Class name per class-object singleton, from the 5th __register_class_ctor
-// arg — the mirror's key into the dynamic-parent map and its `.name` source.
-const _classNamesByObj = new WeakMap<object, string>();
 
 /** (#4618) `__register_class_ctor` import: pair the class object with
  * everything the host-side constructible mirror needs. Idempotent sets.
@@ -6296,7 +6295,8 @@ function _registerClassCtorHandler(
   if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
   if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
-  if (typeof classNameArg === "string" && classNameArg.length > 0) _classNamesByObj.set(classObj, classNameArg);
+  if (typeof classNameArg === "string" && classNameArg.length > 0)
+    classStaticParent.registerClassObject(classObj, classNameArg);
   if (implicitDynamicParentCtor === 1) _classImplicitDynamicParentCtor.add(classObj);
   else _classImplicitDynamicParentCtor.delete(classObj);
   _hostProxyCache.delete(classObj);
@@ -6333,7 +6333,7 @@ function _classObjectPrototypeStruct(obj: any): any {
 function _registerClassParentHandler(className: any, parentValue: any): void {
   if (typeof className !== "string" || className.length === 0) return;
   if (parentValue == null) return;
-  _classDynamicParentsByName.set(className, parentValue);
+  classStaticParent.registerClassParent(className, parentValue);
 }
 
 /** (#4618) Lazy dynamic-parent registration for PROPERTY-ACCESS heritage
@@ -6342,11 +6342,10 @@ function _registerClassParentHandler(className: any, parentValue: any): void {
  * (observed in the react per-file batch), so the runtime stores the live
  * container object + key and resolves `obj[key]` host-side, on demand, when
  * the class mirror needs the parent. Memoized on first non-null resolve. */
-const _classDynamicParentLazy = new Map<string, () => any>();
 function _registerClassParentRefHandler(className: any, obj: any, key: any, exports?: Record<string, Function>): void {
   if (typeof className !== "string" || className.length === 0) return;
   if (obj == null || typeof key !== "string" || key.length === 0) return;
-  _classDynamicParentLazy.set(className, () => {
+  classStaticParent.registerClassParentLazy(className, () => {
     try {
       // The container is often a RAW wasm struct (the compiled module's
       // `exports` object): its props may live in the sidecar OR as real
@@ -6368,10 +6367,7 @@ function _registerClassParentRefHandler(className: any, obj: any, key: any, expo
         if (wrapped != null && wrapped !== obj) v = (wrapped as any)[key];
       }
       if (v == null) v = (obj as any)[key];
-      if (v != null) {
-        _classDynamicParentsByName.set(className, v);
-        _classDynamicParentLazy.delete(className);
-      }
+      if (v != null) classStaticParent.rememberClassParent(className, v);
       return v;
     } catch {
       return undefined;
@@ -8634,7 +8630,7 @@ function _makeClassCtorMirrorForHost(
   const meta = _wasmStructProps.get(classObj);
   const sidecarName = _sidecarGet(classObj, "name");
   const className =
-    _classNamesByObj.get(classObj) ??
+    classStaticParent.classObjectName(classObj) ??
     (typeof meta?.name === "string" ? meta.name : typeof sidecarName === "string" ? sidecarName : "");
   const fnTarget = function compiledClassTarget() {} as any;
   try {
@@ -8649,7 +8645,7 @@ function _makeClassCtorMirrorForHost(
     const viaFnctor = _classFnctorParents.get(classObj);
     if (viaFnctor != null) return viaFnctor;
     if (className === "") return undefined;
-    return _classDynamicParentsByName.get(className) ?? _classDynamicParentLazy.get(className)?.();
+    return classStaticParent.getClassParent(className);
   };
   const resolveParentProto = (): any => {
     const pf = resolveParent();
@@ -9339,7 +9335,7 @@ function _buildProxyBridgeHandler(
       const nativeTarget = args[0];
       if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
       else if (substituteTarget && args.length > 0) args[0] = rawTarget;
-      const result = (callable as Function).apply(handler, args);
+      const result = wsh.ownKeysResult(name, callable.apply(handler, args), callbackState, _materializeIterable);
       return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
@@ -9423,7 +9419,7 @@ function _buildLazyProxyBridgeHandler(
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
       }
-      const result = (callable as Function).apply(handler, args);
+      const result = wsh.ownKeysResult(name, callable.apply(handler, args), callbackState, _materializeIterable);
       return _syncProxyPreventExtensionsInvariant(name, trapTarget, nativeTarget, result);
     };
   }
@@ -10439,6 +10435,12 @@ function _tryExternMethodDataView(
   return match[1] === "set" ? undefined : result;
 }
 
+const coherentBuiltinRealms = new WeakSet<object>();
+
+export function markCoherentBuiltinRealm(sandbox: object): void {
+  coherentBuiltinRealms.add(sandbox);
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -10453,6 +10455,8 @@ function resolveImport(
   dynamicCodeEvaluator?: DynamicCodeEvaluator,
   getCaughtException?: () => unknown,
 ): Function {
+  const builtin = <T>(name: string, fallback: T): T =>
+    coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
     return createBoundaryValueAdapter(intent, {
       object: (operation) => _createBoundaryObjectImport(operation, callbackState),
@@ -10637,7 +10641,7 @@ function resolveImport(
         // (Regressed when the extern_class block moved during a runtime refactor;
         // restored here — see tests/issue-1568.test.ts.)
         if (intent.className === "BigInt" || intent.className === "Symbol") {
-          return (v: any): any => Object(v);
+          return (v: any): any => builtin("Object", Object)(v);
         }
         // Test262Error is a simple Error subclass used by the test262 harness
         // (#4394) Was a fresh `class Test262Error extends Error` minted per
@@ -10645,55 +10649,59 @@ function resolveImport(
         // different constructor identities. Bound to the hoisted single class.
         const Test262Error = test262Host.HostTest262Error;
         const builtinCtors: Record<string, Function> = {
-          Number,
-          Boolean,
-          String,
+          Number: builtin("Number", Number),
+          Boolean: builtin("Boolean", Boolean),
+          String: builtin("String", String),
           // (#1721) Root constructors so `class Sub extends Object {}` /
           // `extends Function {}` route through `__new_Object()` /
           // `__new_Function()` instead of throwing "No dependency provided for
           // extern class". The instance's [[Prototype]] is then set to
           // `Sub.prototype` by `__set_subclass_proto`.
-          Object,
-          Function,
+          Object: builtin("Object", Object),
+          Function: builtin("Function", Function),
           // (#1366b) Array and Promise added so `class Sub extends Array {}` /
           // `class Sub extends Promise {}` route through `__new_Array(arg)` /
           // `__new_Promise(executor)` host imports. Without these entries the
           // resolver throws "No dependency provided for extern class 'Array'".
-          Array,
-          Promise,
-          Map,
-          Set,
-          WeakMap,
-          WeakSet,
-          WeakRef,
-          RegExp,
-          ArrayBuffer,
-          DataView,
-          Date,
+          Array: builtin("Array", Array),
+          Promise: builtin("Promise", Promise),
+          Map: builtin("Map", Map),
+          Set: builtin("Set", Set),
+          WeakMap: builtin("WeakMap", WeakMap),
+          WeakSet: builtin("WeakSet", WeakSet),
+          WeakRef: builtin("WeakRef", WeakRef),
+          RegExp: builtin("RegExp", RegExp),
+          ArrayBuffer: builtin("ArrayBuffer", ArrayBuffer),
+          DataView: builtin("DataView", DataView),
+          Date: builtin("Date", Date),
           // (#1455) TypedArray constructors for subclass-builtins host
           // construction (`class Sub extends Float32Array {}` etc.).
-          Int8Array,
-          Uint8Array,
-          Uint8ClampedArray,
-          Int16Array,
-          Uint16Array,
-          Int32Array,
-          Uint32Array,
-          Float32Array,
-          Float64Array,
-          ...(typeof BigInt64Array !== "undefined" ? { BigInt64Array } : {}),
-          ...(typeof BigUint64Array !== "undefined" ? { BigUint64Array } : {}),
-          Error,
-          TypeError,
-          RangeError,
-          SyntaxError,
-          URIError,
-          EvalError,
-          ReferenceError,
-          AggregateError,
+          Int8Array: builtin("Int8Array", Int8Array),
+          Uint8Array: builtin("Uint8Array", Uint8Array),
+          Uint8ClampedArray: builtin("Uint8ClampedArray", Uint8ClampedArray),
+          Int16Array: builtin("Int16Array", Int16Array),
+          Uint16Array: builtin("Uint16Array", Uint16Array),
+          Int32Array: builtin("Int32Array", Int32Array),
+          Uint32Array: builtin("Uint32Array", Uint32Array),
+          Float32Array: builtin("Float32Array", Float32Array),
+          Float64Array: builtin("Float64Array", Float64Array),
+          ...(typeof BigInt64Array !== "undefined" ? { BigInt64Array: builtin("BigInt64Array", BigInt64Array) } : {}),
+          ...(typeof BigUint64Array !== "undefined"
+            ? { BigUint64Array: builtin("BigUint64Array", BigUint64Array) }
+            : {}),
+          Error: builtin("Error", Error),
+          TypeError: builtin("TypeError", TypeError),
+          RangeError: builtin("RangeError", RangeError),
+          SyntaxError: builtin("SyntaxError", SyntaxError),
+          URIError: builtin("URIError", URIError),
+          EvalError: builtin("EvalError", EvalError),
+          ReferenceError: builtin("ReferenceError", ReferenceError),
+          AggregateError: builtin("AggregateError", AggregateError),
           Test262Error,
           // (#1455) SharedArrayBuffer for `class Sub extends SharedArrayBuffer {}`
-          ...(typeof SharedArrayBuffer !== "undefined" ? { SharedArrayBuffer } : {}),
+          ...(typeof SharedArrayBuffer !== "undefined"
+            ? { SharedArrayBuffer: builtin("SharedArrayBuffer", SharedArrayBuffer) }
+            : {}),
           // TC39 Explicit Resource Management (stage 3 / Node.js 22+)
           ...(typeof DisposableStack !== "undefined" ? { DisposableStack } : {}),
           ...(typeof AsyncDisposableStack !== "undefined" ? { AsyncDisposableStack } : {}),
@@ -12898,10 +12906,7 @@ assert._isSameValue = isSameValue;
           // statically named top-level function parent has no class `_init`,
           // so the compiler passes its canonical closure directly instead.
           // Both are the same JavaScript SuperCall operation once resolved.
-          const parent =
-            className !== ""
-              ? (_classDynamicParentsByName.get(className) ?? _classDynamicParentLazy.get(className)?.())
-              : parentIdentity;
+          const parent = className !== "" ? classStaticParent.getClassParent(className) : parentIdentity;
           const parentCtor =
             typeof parent === "function"
               ? parent
@@ -13587,6 +13592,7 @@ assert._isSameValue = isSameValue;
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
           try {
+            if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
             Object.defineProperty(obj, prop, desc);
           } catch (e) {
             if (e instanceof TypeError) {
@@ -13595,7 +13601,6 @@ assert._isSameValue = isSameValue;
               if (msg.includes("opaque") || msg.includes("WebAssembly")) {
                 // (#3116) Array exotic receiver: element/length defines apply
                 // into the vec itself (§10.4.2) so vec-lane reads observe them.
-                if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
                 // WasmGC struct — validate against sidecar descriptors, then store.
                 // Pass existing sidecar value for SameValue check on non-writable props.
                 const sDescs = _getSidecarDescs(obj);
@@ -13646,6 +13651,7 @@ assert._isSameValue = isSameValue;
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
           try {
+            if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
             Object.defineProperty(obj, prop, desc);
           } catch (e) {
             if (e instanceof TypeError) {
@@ -13654,7 +13660,6 @@ assert._isSameValue = isSameValue;
                 // (#3116) Array exotic receiver: index-keyed accessor defines
                 // route through §10.4.2 so the validation matrix (shrink
                 // blocking, redefinition rules) sees them.
-                if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
                 // WasmGC struct — store accessor in sidecar
                 const sDescs = _getSidecarDescs(obj);
                 const nProp = _normalizeDescKey(prop);
@@ -14614,7 +14619,7 @@ assert._isSameValue = isSameValue;
       // doesn't inherit from the Type, so obj.method() would fail.
       if (name === "__proto_method_call")
         return (typeName: string, methodName: string, receiver: any, args: any[]) => {
-          const Type = (globalThis as any)[typeName];
+          const Type = builtin(typeName, (globalThis as any)[typeName]);
           if (!Type || !Type.prototype) throw new TypeError(typeName + " is not a constructor");
           const method = Type.prototype[methodName];
           if (typeof method !== "function") throw new TypeError(methodName + " is not a function");
@@ -14681,17 +14686,9 @@ assert._isSameValue = isSameValue;
           }
           return ret === wrappedReceiver ? receiver : _unwrapForHost(ret);
         };
-      // Get actual JS built-in object by name (#965) — fixes WI3 null receiver for built-in classes
-      // (#2623 P-7b design decision) This handler resolves the HOST realm on
-      // purpose. A sandbox-first arm for `Promise` was prototyped and REVERTED:
-      // partial (per-builtin) realm unification is inherently leaky — Promise
-      // sandbox-first while Object/Boolean stayed host-realm regressed
-      // `prototype/proto.js` + `catch/this-value-obj-coercible.js` (cross-
-      // builtin proto/ToObject realm mixing). The vm sandbox is a LOCAL-runner
-      // isolation mechanism, not a product surface; the CI lane is single-realm
-      // (no sandbox) and relies on the worker's #1220 static snapshot/restore.
-      // See "P-7b DESIGN DECISION" in plan/issues/2623-*.md.
-      if (name === "__get_builtin") return (n: string) => (globalThis as any)[n];
+      // Default to the HOST realm; isolated descriptor rows opt into a complete
+      // sandbox realm by marking their fresh sandbox before buildImports().
+      if (name === "__get_builtin") return (n: string) => builtin(n, (globalThis as any)[n]);
       // Object.hasOwn(obj, key) — ES2022 static method (#965)
       // (#3060) Object.hasOwn(O, P) ≡ HasOwnProperty(ToObject(O), ToPropertyKey(P)),
       // the same predicate as Object.prototype.hasOwnProperty.call. The previous

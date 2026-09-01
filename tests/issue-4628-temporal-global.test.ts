@@ -258,6 +258,17 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.arithmeticAddDuration.value).toBe("2020-03-05");
     expect(s.arithmeticSubtract.value).toBe("2020-03-03");
     expect(s.arithmeticWith.value).toBe("2021-03-04");
+    // (#5226) Error IDENTITY, which is what test262's `assert.throws(RangeError,
+    // …)` actually checks. A `new` on a provider class is a direct wasm→wasm
+    // call with no JS frame, and every module owned a PRIVATE exception tag —
+    // so the consumer's `catch` never matched, the payload fell into
+    // `catch_all`, and the binding was `undefined` ("no-E|n=undefined" on base).
+    // The other two rows already answered correctly on base (a static reached
+    // through the seam is called via a host mirror) and are asserted so a
+    // regression on the route that worked is loud.
+    expect(s.errCtorOutOfRange.value).toBe("RE|n=RangeError");
+    expect(s.errFromEmptyObject.value).toBe("TE|n=TypeError");
+    expect(s.errFromBadString.value).toBe("RE|n=RangeError");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the

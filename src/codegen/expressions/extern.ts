@@ -24,6 +24,8 @@ import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
 import { emitFuncRefAsClosure } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { classHeritageRequiresRuntimeParent } from "../class-expression-identity.js";
 import type { InnerResult } from "../shared.js";
 import {
   coerceType,
@@ -54,6 +56,53 @@ export function findExternInfoForMember(
     current = ctx.externClassParent.get(current);
   }
   return null;
+}
+
+interface BuiltinClassStaticParentRegistration {
+  parentName: string;
+  registerClassParentIdx: number;
+  getBuiltinIdx: number;
+}
+
+function prepareBuiltinClassStaticParent(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+): BuiltinClassStaticParentRegistration | undefined {
+  if (ctx.standalone || ctx.wasi) return undefined;
+  // A runtime heritage value must be read at the class declaration's
+  // evaluation point; its initializer's builtin ancestry is not necessarily
+  // the class's current static parent.
+  if (classHeritageRequiresRuntimeParent(ctx, className)) return undefined;
+  const parentName = ctx.classBuiltinParentMap.get(className);
+  if (parentName === undefined) return undefined;
+  addHostStringConstantGlobal(ctx, parentName);
+  const registerClassParentIdx = ensureLateImport(
+    ctx,
+    "__register_class_parent",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [],
+  );
+  const getBuiltinIdx = ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (registerClassParentIdx === undefined || getBuiltinIdx === undefined) return undefined;
+  return { parentName, registerClassParentIdx, getBuiltinIdx };
+}
+
+function emitBuiltinClassStaticParent(
+  ctx: CodegenContext,
+  initBody: Instr[],
+  className: string,
+  registration: BuiltinClassStaticParentRegistration | undefined,
+): void {
+  if (registration === undefined) return;
+  initBody.push(...stringConstantExternrefInstrs(ctx, className));
+  initBody.push(...stringConstantExternrefInstrs(ctx, registration.parentName));
+  initBody.push({ op: "call", funcIdx: registration.getBuiltinIdx });
+  initBody.push({
+    op: "call",
+    funcIdx: ctx.funcMap.get("__register_class_parent") ?? registration.registerClassParentIdx,
+  });
 }
 
 // ── Extern method calls ──────────────────────────────────────────────
@@ -420,6 +469,8 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       addHostStringConstantGlobal(ctx, m);
     }
   }
+
+  const builtinParentRegistration = prepareBuiltinClassStaticParent(ctx, fctx, className);
   // (#4618) The class-object global index MUST be re-read at every push:
   // string-constant interning inserts an IMPORTED global, and the shift
   // repair updates ctx.classObjectGlobals plus every REACHABLE body — a
@@ -623,8 +674,8 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
             classDecl?.heritageClauses?.some(
               (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0,
             ) === true &&
-            !ctx.classParentMap.has(className) &&
-            !ctx.classBuiltinParentMap.has(className);
+            !ctx.classBuiltinParentMap.has(className) &&
+            (!ctx.classParentMap.has(className) || classHeritageRequiresRuntimeParent(ctx, className));
           const hasOwnCtor =
             classDecl?.members.some((member) => ts.isConstructorDeclaration(member) && member.body !== undefined) ===
             true;
@@ -655,6 +706,9 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
       }
     }
   }
+
+  // (#5206) Record the host builtin parent after constructor registration.
+  emitBuiltinClassStaticParent(ctx, initBody, className, builtinParentRegistration);
 
   // Emit: if global is null, init it; then get it. initBody is now embedded
   // in fctx.body (reachable through the normal body walks) — release the
@@ -691,7 +745,8 @@ export function emitRegisterDynamicClassParent(
 ): void {
   if (ctx.standalone || ctx.wasi) return;
   const className = classNameOverride ?? decl.name?.text;
-  if (className === undefined || ctx.classParentMap.has(className)) return;
+  if (className === undefined) return;
+  if (ctx.classParentMap.has(className) && !classHeritageRequiresRuntimeParent(ctx, className)) return;
   if (decl.heritageClauses === undefined) return;
   let heritageExpr: ts.Expression | undefined;
   for (const clause of decl.heritageClauses) {

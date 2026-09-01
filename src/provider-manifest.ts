@@ -17,8 +17,12 @@ export const PROVIDER_MANIFEST_SECTION_NAME = "js2wasm.provider.v1" as const;
 export const PROVIDER_MANIFEST_FORMAT_VERSION = 1 as const;
 /** Bump when the compiler's provider-byte/metadata contract changes. */
 export const PROVIDER_COMPILER_ABI_VERSION = "js2wasm-provider-compiler-v1" as const;
-/** The package-linker ABI is versioned independently from the section format. */
-export const PROVIDER_LINKER_ABI_VERSION = "npm-link-v3" as const;
+/**
+ * The package-linker ABI is versioned independently from the section format.
+ * v4 (#5226): every linked module imports its exception tag from `env.__exn`,
+ * so a v3 artifact (module-local tag) cannot be instantiated by a v4 host.
+ */
+export const PROVIDER_LINKER_ABI_VERSION = "npm-link-v4" as const;
 
 export interface ProviderDependencyManifest {
   packageName: string;

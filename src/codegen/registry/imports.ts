@@ -281,10 +281,37 @@ export function localGlobalIdx(ctx: CodegenContext, absIdx: number): number {
 export function ensureExnTag(ctx: CodegenContext): number {
   if (ctx.exnTagIdx >= 0) return ctx.exnTagIdx;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], []);
+  // (#5226) A separately-linked graph shares ONE host-owned tag. Wasm matches a
+  // `catch` clause by tag IDENTITY, so a module-local tag per module means a
+  // provider's `throw` can never be caught by its consumer's `catch` — it lands
+  // in `catch_all`, whose `__get_caught_exception()` never saw a host frame and
+  // answers `undefined`. Importing the tag makes the crossing lossless: the
+  // externref payload (the host-native `RangeError`) is delivered unchanged, so
+  // `instanceof`, `name`, `message` and any own props all survive by identity.
+  if (ctx.sharedExnTag) {
+    // Imported tags occupy the low indices, and this is the only tag import we
+    // ever register — so index 0. `exnTagIdx` is ABSOLUTE in both regimes.
+    ctx.exnTagIdx = ctx.mod.imports.filter((imp) => imp.desc.kind === "tag").length;
+    addImport(ctx, "env", "__exn", { kind: "tag", typeIdx });
+    return ctx.exnTagIdx;
+  }
   const tagDef: TagDef = { name: "__exn", typeIdx };
   ctx.exnTagIdx = ctx.mod.tags.length;
   ctx.mod.tags.push(tagDef);
   return ctx.exnTagIdx;
+}
+
+/**
+ * Absolute tag index for the `__exn_tag` export. Identical to the historic
+ * `numImportTags + exnTagIdx` for a module-defined tag (a non-linked module has
+ * no tag imports at all); an imported tag (#5226) is already absolute.
+ */
+export function exportedExnTagIndex(
+  ctx: CodegenContext,
+  mod: { imports: readonly { desc: { kind: string } }[] },
+): number {
+  if (ctx.sharedExnTag) return ctx.exnTagIdx;
+  return mod.imports.filter((imp) => imp.desc.kind === "tag").length + ctx.exnTagIdx;
 }
 
 /**
@@ -448,11 +475,10 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
 
   shiftModuleGlobalExportIndices(ctx, threshold, delta);
-
-  function shiftMap<Key>(map: Map<Key, number>): void {
-    for (const [key, idx] of map) {
+  function shiftMap<Key>(map: Map<Key, number> | undefined): void {
+    for (const [key, idx] of map ?? []) {
       if (idx >= threshold) {
-        map.set(key, idx + delta);
+        map?.set(key, idx + delta);
       }
     }
   }
@@ -494,6 +520,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
   shiftMap(ctx.tdzGlobals);
   shiftMap(ctx.modulePatternTdzGlobals);
+  shiftMap(ctx.builtinFnSingletonGlobalByTypeIdx);
 
   // (#1749) The CPR proto-override records (Array.prototype[@@iterator] /
   // .values) root each lifted override closure in a module-defined `mut

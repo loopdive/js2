@@ -23,6 +23,8 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import type { IrIntegrationOptions } from "./integration-options.js";
+export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
@@ -320,10 +322,10 @@ import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-gl
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
 import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
-import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
+import { isIntrinsicId, type IntrinsicId, type NumberBoundaryIntrinsicId } from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
-import type { RuntimeProviderPlan } from "./runtime-manifest.js";
+import type { NumberBoundaryPolicy, RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -432,9 +434,10 @@ function prepareSuspendingAsyncLowering(
   ownerUnitId: IrUnitId,
   name: string,
   suspendingOwners: ReadonlySet<IrUnitId> | undefined,
+  numberBoundary: NumberBoundaryPolicy,
 ): LoweredFunctionResult {
   if (!suspendingOwners?.has(ownerUnitId)) return lowered;
-  const prepared = prepareSuspendingIrFunction(lowered.main);
+  const prepared = prepareSuspendingIrFunction(lowered.main, numberBoundary);
   if (!prepared) {
     throw new IrUnsupportedError(
       "body-shape-rejected",
@@ -528,15 +531,6 @@ export interface IrTypeOverrideMap {
   // void-returning function (zero Wasm result types). Plumbs through to
   // `from-ast.ts` so the IR builder can be constructed with `[]` results.
   get(name: string): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
-}
-
-export interface IrIntegrationOptions {
-  /**
-   * Derive post-pass R2 components and seal every dependency-complete ABI
-   * component before lowering. Components with still-implicit runtime/layout
-   * support retain the established transitional route.
-   */
-  readonly sealPreparedComponents?: boolean;
 }
 
 interface BuiltFn {
@@ -771,6 +765,49 @@ function prepareClosureTransaction(input: {
   };
 }
 
+/**
+ * (#3526 F1-S1) This caller's already-resolved number-boundary policy.
+ *
+ * These are the EXACT facts the two from-ast arms used to read through the
+ * `hasHostNumberBox` / `hasNativeNumberUnbox` resolver predicates, consulted
+ * once, here, before freeze. `target` alone cannot answer the question:
+ * ordinary host-assisted GC, GC native-first, and host-assisted GC with
+ * explicit native strings all resolve to `target: "host"` and disagree about
+ * both arms. Native `__box_number` presence must NOT widen the box policy —
+ * the current arm is host-only by policy, not by helper availability.
+ */
+function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPolicy {
+  const hostNumberBoundary = !ctx.nativeStrings;
+  return Object.freeze({
+    box: hostNumberBoundary ? ("host" as const) : ("unsupported" as const),
+    unbox: hostNumberBoundary
+      ? ("host" as const)
+      : ctx.targetProfile.semanticProviders === "native-first"
+        ? ("native" as const)
+        : ("unsupported" as const),
+  });
+}
+
+/** The first number-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedNumberBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: NumberBoundaryPolicy,
+): NumberBoundaryIntrinsicId | undefined {
+  let found: NumberBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.number.box" && policy.box === "unsupported") found = instr.id;
+        else if (instr.id === "js.number.unbox" && policy.unbox === "unsupported") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
 function prepareBuiltFnRuntimeManifest(
   ctx: CodegenContext,
   sourceFile: string,
@@ -782,6 +819,7 @@ function prepareBuiltFnRuntimeManifest(
     policy: {
       target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
       backend: "wasmgc",
+      numberBoundary: integrationNumberBoundaryPolicy(ctx),
     },
   });
   if (!runtime) return { entries };
@@ -2266,6 +2304,9 @@ export function compileIrPathFunctions(
           ownerUnitId,
           name,
           loweringPlans?.suspendingAsyncUnitIds,
+          // (#3526 F1-S1) The same resolved fact manifest freeze consumes, so
+          // the numeric-tail elision keeps its exact pre-F1-S1 population.
+          integrationNumberBoundaryPolicy(ctx),
         );
         if (result.main.unitId !== ownerUnitId) {
           throw new IrInvariantError(
@@ -3422,6 +3463,33 @@ export function compileIrPathFunctions(
     );
     return finishReport();
   }
+  // (#3526 F1-S1) Partition the number-boundary decision by exact terminal
+  // owner BEFORE any body, slot, alias, outcome, or manifest prefix is
+  // published. The aggregate manifest below is prepared for all healthy owners
+  // at once, so a `provider-target-unavailable` throw inside it would turn one
+  // owner's demotion into `unexpected-internal-throw` for every unrelated
+  // owner. Classifying here keeps the failure owner-local and the surviving
+  // manifest deterministic; structural manifest corruption and late mutation
+  // stay fatal for the whole transaction.
+  const numberBoundaryPolicy = integrationNumberBoundaryPolicy(ctx);
+  for (const entry of healthyForLower) {
+    const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
+    if (unsupported === undefined) continue;
+    markOwnerFailure(
+      terminalOwnerOf(entry),
+      entry.artifactUnitId,
+      entry.name,
+      new IrUnsupportedError(
+        "late-preparation-unsupported",
+        "resolve",
+        `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
+          `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+      ),
+      "resolve",
+    );
+  }
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
   let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
   if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
   if (
@@ -5561,22 +5629,6 @@ function makeFromAstResolver(
     standaloneDomOperation(node: ts.Node) {
       return standaloneDomCapability?.operation(node);
     },
-    // (#2955 number-box slice) Capability: this lane owns the
-    // `__box_number` / `__unbox_number` f64⇄externref host imports (legacy
-    // registers them via `addUnionImports`). The from-ast boxing arms
-    // (`coerceToExpectedExtern`, `coerceReturnValue`) consult THIS predicate
-    // instead of reading `nativeStrings` directly — the mode knowledge lives
-    // here, on the lower/integration side, per #2955's de-polymorph
-    // direction. Implementation is deliberately the exact truth value the
-    // old in-place `nativeStrings?.() === false` reads produced (byte-inert
-    // relocation). Widening — e.g. allowing the box pair under a
-    // native-strings HOST compile, or lowering to `$AnyValue` boxing in
-    // standalone instead of demoting — is a semantic follow-up tracked in
-    // #2955's remaining-slices map, and must be validated against the
-    // standalone floor (the demote arm is load-bearing there).
-    hasHostNumberBox(): boolean {
-      return !ctx.nativeStrings;
-    },
     // (#4461) The three host-free capabilities the native-`$Map` arms consult.
     // They live here, on the lower/integration side, for the same #2955 reason
     // the box/unbox predicates do: from-ast reads no mode flags of its own.
@@ -5600,9 +5652,6 @@ function makeFromAstResolver(
     },
     externIsUndefinedIsNative(): boolean {
       return ctx.standalone || ctx.wasi || ctx.nativeStrings;
-    },
-    hasNativeNumberUnbox(): boolean {
-      return ctx.targetProfile.semanticProviders === "native-first";
     },
     // Boolean values share the host union-import family with numbers, but
     // retain their own boxer so `true` never crosses an externref boundary as
@@ -5631,7 +5680,8 @@ function makeFromAstResolver(
     // checker-number `.toString()` in source; its return IS host-mode's
     // string carrier). The from-ast `<number>.toString()` arm consults THIS
     // predicate instead of reading `nativeStrings` directly — same
-    // build-time capability shape as `hasHostNumberBox`, deliberately the
+    // build-time capability shape as the retired number-box predicate,
+    // deliberately the
     // exact truth value the old in-place `nativeStrings?.() === false` read
     // produced (byte-inert relocation). Widening — a native number
     // formatter returning the `(ref $AnyString)` carrier — is a semantic
@@ -7343,6 +7393,32 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
           if (usesDynMemberSet(i)) usesMemberSet = true;
+          // (#3526 F1-S1) The number boundary now reaches Phase 3 as a semantic
+          // `intrinsic` whose frozen provider carries the SAME physical target
+          // the old direct call used. Provider attachment already ran (the
+          // manifest is prepared before this preregistration), so recognizing
+          // the exact attached targets here keeps `addUnionImports` the whole
+          // union family's single materializer — and keeps import membership,
+          // order and indices identical to the legacy control.
+          const numberBoundaryTarget =
+            i.kind === "intrinsic" &&
+            (i.id === "js.number.box" || i.id === "js.number.unbox") &&
+            i.provider?.kind === "callable"
+              ? i.provider.target
+              : undefined;
+          if (
+            numberBoundaryTarget?.binding.kind === "import" &&
+            numberBoundaryTarget.binding.module === "env" &&
+            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.field)
+          ) {
+            usesNamedUnionImport = true;
+          }
+          if (
+            numberBoundaryTarget?.binding.kind === "runtime" &&
+            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.symbol)
+          ) {
+            usesRuntimeUnboxNumber = true;
+          }
           if (i.kind === "call" && i.target.binding.kind === "import" && i.target.binding.module === "env") {
             if (UNION_IMPORT_FUNC_NAMES.has(i.target.binding.field)) usesNamedUnionImport = true;
             else if (i.target.binding.field === "__extern_is_undefined") usesExternIsUndefined = true;
@@ -7460,9 +7536,10 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // funcs), is idempotent, and runs here — before any Phase-3 body buffer —
   // so its defined-funcIdx shift is hazard-free, exactly like the dynamic-op
   // path below. In `fast` (gc) mode the any-helper family owns boxing, but a
-  // from-ast `__box_number` funcref is only emitted when the lane actually has
-  // that host import (its `hasHostNumberBox` gate), so registering it here is
-  // correct in every mode the call can appear.
+  // from-ast number boundary attaches an `env.__box_number` / `env.__unbox_number`
+  // provider only when the frozen manifest resolved this lane's policy to the
+  // host arm (#3526 F1-S1), so registering it here is correct in every mode the
+  // target can appear.
   if (usesNamedUnionImport) addUnionImports(ctx);
   if (usesExternIsUndefined) {
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);

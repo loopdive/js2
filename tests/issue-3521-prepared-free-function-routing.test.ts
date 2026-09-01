@@ -603,6 +603,116 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     );
   });
 
+  it("prepares a fast JS-host string pass-through before direct emission", async () => {
+    const source = "export function echo(value: string): string { return value; }";
+    const result = await compileWithPoisonedDirectFunctionBodies(source, "echo", {
+      fileName: "prepared-fast-host-string.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: false,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped).toContain("echo");
+    const echoOutcome = outcome(result, "echo");
+    expect(echoOutcome.unitId).toBeDefined();
+    expect(echoOutcome).toMatchObject({
+      kind: "emitted",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect((await instantiate(result)).echo!("prepared host string")).toBe("prepared host string");
+  });
+
+  it("keeps fast string pass-through signatures direct in every excluded lane", async () => {
+    const source = "export function echo(value: string): string { return value; }";
+    const excludedLanes = [
+      ["nativeStrings", { nativeStrings: true }],
+      ["standalone", { target: "standalone", nativeStrings: false }],
+      ["wasi", { target: "wasi", nativeStrings: false, strictNoHostImports: false }],
+      ["strictNoHostImports", { strictNoHostImports: true, nativeStrings: false }],
+    ] as const;
+
+    for (const [lane, laneOptions] of excludedLanes) {
+      const result = await compileWithPoisonedDirectFunctionBodies(source, "echo", {
+        fileName: "prepared-fast-host-string-excluded-" + lane + ".ts",
+        experimentalIR: true,
+        fast: true,
+        trackIrOutcomes: true,
+        ...laneOptions,
+      });
+      expect(result.success, lane).toBe(false);
+      expect(result.errors.map((error) => error.message).join("\n"), lane).toContain(
+        "injected direct function-body poison: echo",
+      );
+    }
+  });
+
+  it("accounts an unpoisoned fast native-string pass-through as direct with no prepared owner", async () => {
+    const result = await compile("export function echo(value: string): string { return value; }", {
+      fileName: "prepared-fast-native-string-direct.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: true,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("echo");
+    const echoOutcome = outcome(result, "echo");
+    expect(echoOutcome).toMatchObject({
+      kind: "emitted",
+      stage: "patch",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
+  });
+
+  it("keeps a defaulted fast JS-host string parameter on the direct route", async () => {
+    const source = 'export function defaultEcho(value: string = "fallback"): string { return value; }';
+    const result = await compile(source, {
+      fileName: "prepared-fast-host-string-default.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: false,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("defaultEcho");
+    const defaultOutcome = outcome(result, "defaultEcho");
+    expect(defaultOutcome).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 0,
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(defaultOutcome.preparedComponentId).toBeUndefined();
+
+    const poisoned = await compileWithPoisonedDirectFunctionBodies(source, "defaultEcho", {
+      fileName: "prepared-fast-host-string-default-poisoned.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: false,
+      trackIrOutcomes: true,
+    });
+    expect(poisoned.success).toBe(false);
+    expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: defaultEcho",
+    );
+  });
+
   // The same scalar proof must close a mixed f64/i32 component before the
   // direct loop; poisoning both bodies catches a hidden patch-after-direct.
   it("prepares fast boolean callers with a numeric callee before direct emission", async () => {
