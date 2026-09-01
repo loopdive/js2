@@ -1,10 +1,11 @@
 ---
 id: 4449
 title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflection tests) — species protocol, detached-buffer checks, custom-ctor paths"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-15
-updated: 2026-08-31
+updated: 2026-09-01
+completed: 2026-09-01
 priority: high
 horizon: l
 feasibility: hard
@@ -788,3 +789,65 @@ above is retained only as pre-merge evidence.
 The merge index is resolved and staged for the durable normal commit. After
 that commit, rerun the exact merged-head gates and publish only if the
 three-path live-base/no-leak audit remains true.
+
+### c372 durable merge-commit evidence — 2026-09-01
+
+Root committed the resolved normal merge as
+`ec15fa8005591e69161e38baf35595419b6bed1c` with the required full, unskipped
+hook. Formatting, lint, applicable budgets, and the oracle gate were green;
+the changed-root mass-edit check correctly took its documented `>20`-file
+merge skip. This is commit evidence, not a substitute for the final
+current-head focused, host, standalone, TS7/static, pre-push, and fresh
+live-base/no-leak gates required before publication.
+
+### c372 exact-head runtime and static replay — 2026-09-01
+
+On exact merged head `ec15fa8005591e69161e38baf35595419b6bed1c`, the direct
+single-fork/no-file-parallelism producer suite
+`tests/issue-4449-species-producers.test.ts` passed **8 / 8** in **15.78 s**
+Vitest duration (**6.06 s** test time; **16.21 s** outer wall). The canonical
+eight-row constructor/default manifest was reconstructed from its
+LF-normalized SHA-256
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf` and ran
+in one shard with one compiler worker on each target:
+
+- host run `20260901-021202`: **8 / 8** pass, zero fail/compile-error/timeout/
+  skip, eight registered paths, eight settled callbacks, and eight canonical
+  verdicts; Vitest duration **27.92 s** (**14.33 s** tests; **30.03 s** outer
+  wall). Evidence is the timestamped `test262-{report,results}-20260901-021202`
+  pair plus its completion manifest.
+- pinned-QuickJS standalone run `20260901-021312`: **8 / 8** pass, zero
+  fail/compile-error/timeout/skip, eight registered paths, eight settled
+  callbacks, and eight canonical verdicts; Vitest duration **43.17 s**
+  (**31.39 s** tests; **54 s** to timestamped report write). It used
+  `quickjs-artifact-2e2d7736713beeda`, whose `libquickjs.wasm` is SHA-256
+  `073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+
+Direct TS7 `--noEmit -p tsconfig.ts7.json` exited zero in **18.38 s**. Targeted
+Prettier and Biome error lint passed for the source/test pair; LOC and function
+budgets passed (the one changed source file is net **+3 LOC** within its
+allowance), the oracle ratchet remained **+0**, and both live-base and
+worktree `git diff --check` gates were clean.
+
+The scoped host runner temporarily replaced the tracked regular
+`benchmarks/results/test262-report.json` with a symlink. That generated link
+was recoverably moved to
+`/private/tmp/js2-4449-c372-host-report-symlink-20260901-021202` (still
+pointing to its timestamped host report), then the exact tracked regular blob
+`032962b2093238914c1b214430af62b4b7e6d45b` was restored. Benchmark paths now
+have zero staged or unstaged diff and are excluded from publication. Final
+pre-push and a fresh upstream/no-leak audit remain pending the released lane;
+the completed implementation is otherwise ready for its non-draft PR.
+
+### Final c372 live-base confirmation — 2026-09-01
+
+Immediately before the publication checkpoint, a fresh `git fetch upstream
+main` again resolved live main to
+`c372457da1ffd39b87bebf235aac115a27657abf`; there is no post-c372 advance to
+merge. Its merge base with this branch is c372, the incoming overlap over the
+three #4449 paths is empty, and Git's read-only merge-tree reports no conflict.
+The prospective range remains exactly this tracker,
+`src/codegen/builtin-static-globals.ts`, and
+`tests/issue-4449-species-producers.test.ts`, with zero benchmark, public,
+website, or labs paths. The next required action is the durable tracker
+checkpoint commit, followed by the full pre-push hook on that exact SHA.
