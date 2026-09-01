@@ -4456,3 +4456,45 @@ fresh-fetch and re-merge if upstream advances, re-audit the exact eight-path
 range, and publish one ready non-draft PR from `ttraenkler/js2` to
 `loopdive/js2:main`. User authorization is recorded above; no GitHub issue was
 created.
+
+### e786 integration-regression plan — #1231 standalone parity ledger (2026-09-01)
+
+The normal, uncommitted e786 integration reaches incoming changed-root control
+`tests/issue-1231.test.ts` and reports **3 / 12** fixture failures. The
+reported delta is confined to the standalone `abi-signature-parity` detail
+strings: every affected IR type index moves by one, and only the
+`vec2-add`/`add` legacy index moves (`122 -> 123`); the GC rows do not move.
+This is a bounded integration update to #1231's exact standalone artifact
+ledger; it is not grounds to weaken its stale-setting or optimization-arm
+invariance assertion.
+
+Read-only provenance establishes why the ledger changes. D5 P1 registers the
+private `__object_terminal_allows_implicit_proto` native immediately after
+`__obj_find`, with the intentional nullable `$Object` to `i32` signature.
+`registerNative` calls `addFuncType`, whose exact-signature cache appends an
+otherwise-new Wasm function type to the module type table. The three #1231
+fixtures all pull the standalone object runtime, so that deliberate runtime
+type appears before their IR registrations. The exact serial replay confirms
+that the resulting artifact inventory must be recorded row-by-row rather than
+by applying a global legacy-index transform. The helper's typed ABI is used by
+the existing direct-object, fnctor-root, fixed-name `in`, and
+OrdinaryToPrimitive terminal paths. Do not change that ABI merely to reuse an
+`externref` function type: doing so would add unrelated conversion churn to the
+already-validated D5 implementation. The #2175 off-path identity boundary
+covers modules that do not pull the object runtime; these #1231 fixtures do
+pull it.
+
+The released single-fork replay captured the exact changed-root failure details.
+Update only the following standalone tuples in the incoming #1231 ledger,
+preserving every GC tuple and all assertion structure:
+
+- `point`: `createPoint [124, 45] -> [125, 45]`; `distance [125, 50] -> [126, 50]`.
+- `user`: `createUser [123, 45] -> [124, 45]`; `getAge [124, 55] -> [125, 55]`;
+  `run [125, 91] -> [126, 91]`.
+- `vec2-add`: `vec2 [124, 45] -> [125, 45]`; `add [125, 122] -> [126, 123]`;
+  `runX` and `runY` `[126, 91] -> [127, 91]`.
+
+Then rerun the exact #1231 changed-root control before the required #2175
+focused 30/30, deterministic standalone 4/4/0, #5239 2/2, static/path/no-leak,
+and normal full pre-push gates. No source-runtime change or expectation
+loosening belongs in this integration repair.
