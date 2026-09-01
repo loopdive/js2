@@ -104,6 +104,20 @@ loc-budget-allow:
   # generator-support.ts already carries an F1-S1/F1-S2 grant; this line
   # records the F1-S3 rationale against them and adds the one new path.
   - src/ir/generator-support.ts
+  # 2026-09-01 F1-S4 (boundary residuals, +265 net LOC measured against
+  # origin/main 96f7a3c0): the `js.extern.is_undefined` intrinsic + feature
+  # rows (intrinsics.ts); the `extern.is_undefined` capability record
+  # (runtime-host-capabilities.ts); the `externIsUndefined` policy, its TWO
+  # provider rows and their policy-driven selection (runtime-manifest.ts,
+  # which crosses the 1500-line god-file threshold with this slice); the
+  # migrated strict-undefined arm and the deleted resolver contract entry
+  # (from-ast.ts); the caller policy projection, the owner-local probe
+  # partition and the widened materialization trigger (integration.ts); the
+  # retired `?? irRuntimeFuncRef(<spelling>)` fallbacks on all four `gen.*`
+  # lowering arms (lower.ts); the explicit disabled probe policies in the
+  # linear and self-hosted-stdlib adapters. Every cited path already carries
+  # an F1-S1/F1-S2/F1-S3 grant; this line records the F1-S4 rationale against
+  # them and adds no new path.
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -2656,3 +2670,395 @@ plumbing (runner-up, own slice), the symbol boundary (#5258), R4 gaps
 (#3523), and everything owned by #3525/#3522. `integration.ts` diff stays
 minimal (policy projection, partition sibling, trigger widening); check the
 #3525 claim before touching it.
+
+## 2026-09-01 F1-S4 pre-implementation verifications — Opus lane
+
+**Branch** `claude/issue-3526-f1s4-boundary-residuals`, grounded on `origin/main`
+`96f7a3c0`, slice claim `3526:f1s4`. Implemented from the 2026-09-01 F1-S4 plan,
+whose template is the landed F1-S1/F1-S2/F1-S3 machinery.
+
+All four answers were measured on the grounded tree BEFORE any source edit. One
+of them is the plan's STOP condition, and it fired.
+
+### V-A population — **the STOP condition is REAL. Sub-A is not in this PR.**
+
+The plan asked whether the current resolution of the raw `__unbox_number`
+symbol at `from-ast.ts:12273/:12303` matches `NumberBoundaryPolicy.unbox`'s
+truth table on every reachable lane. It does not.
+
+**Reach, measured with a temporary trace at each arm.** The two arms are
+reached only through `emitUnaryToNumber`, and the shapes that get there are
+narrower than the plan assumed:
+
+| arm | reached by | measured |
+| --- | --- | --- |
+| `:12273` (`extern:Object`) | unary `+`/`-` on an OrdinaryToPrimitive object literal whose methods are property-assigned **function expressions** — `lowerOrdinaryToPrimitiveObjectLiteral` gives that form the open `extern:Object` protocol | IR-claimed and REACHED on gc-host, gc-native-strings, standalone and WASI |
+| `:12303` (`object`, string sub-arm) | would need a **shorthand-method** literal whose method returns `string` | **UNREACHABLE.** The closed structural route admits only `number`/`boolean` returns (`select.ts:10344` `hasPreparedParityReturn`, mirrored at `from-ast.ts:5592`); a string-returning method is admitted ONLY as a function expression, which takes the `extern:Object` route instead. Measured: the arm fires zero times across the `check:ir-fallbacks` corpus, the equivalence-adjacent suites and five hand-built candidate shapes |
+
+Eight further candidates (an `Object`-annotated parameter, a declared ambient
+`Object`, arrow-function OTP literals, a typed `{ valueOf: () => string }`
+parameter) all demote at IR **selection** (`type-resolution-unsupported` /
+`body-shape-rejected`) before reaching either arm.
+
+**The divergence.** On the reachable arm, per lane:
+
+| lane | `NumberBoundaryPolicy.unbox` | what the RAW symbol resolves to today |
+| --- | --- | --- |
+| gc-host | `host` | `env.__unbox_number` import — **matches** |
+| standalone / WASI | `native` | union-native function, no import — **matches** |
+| gc-native-strings (`nativeStrings: true`, `semanticProviders: "host-assisted"`) | **`unsupported`** | **`env.__unbox_number` import — the owner compiles and is IR-claimed** |
+| linear | disabled | arm unreachable (the shape fails the linear backend outright) |
+
+The gc-native-strings row is the STOP. `addUnionImports`
+(`registry/imports.ts:813`) registers the **host** `env` family on every
+non-`native-first` lane, so the raw runtime symbol resolves there; the
+preregistration comment says as much ("`__unbox_number` comes from the union
+family in every lane"). Measured directly: the fixture emits
+`env.__unbox_number` in its import list and reports `emitted`, while the
+F1-S1 arm on the same lane reports
+`late-preparation-unsupported / resolve — box=unsupported/unbox=unsupported`.
+
+Migrating the arm to `js.number.unbox` would therefore turn a compiling,
+IR-claimed owner into a preparation demote — a behaviour change, which the plan
+forbids absorbing. **Sub-A is stopped and recorded, not implemented.** Two
+tests in the new suite pin the divergence so the next slice inherits a
+measurement rather than a memory.
+
+*Route for a future slice, recorded not taken:* the F1-S3 precedent applies
+almost exactly. This seam's truth table is
+`semanticProviders === "native-first" ? native : host` — a fourth policy, a
+sibling of `numberBoundary` the way `generatorNumberBox` is. Minting it was not
+authorised by this plan (which explicitly routed sub-A through
+`NumberBoundaryPolicy.unbox`), so it belongs to an amended plan, not to a
+byte-neutral slice.
+
+### V-B readers — enumerated; the import-order-parity route was available
+
+`grep -rn externIsUndefinedIsNative` over the whole tree returns **three**
+executable hits and nothing else: the contract entry (`from-ast.ts:626`), the
+one read (`from-ast.ts:13768`), and the one implementation
+(`integration.ts:5767`, `ctx.standalone || ctx.wasi || ctx.nativeStrings`).
+There is no test, plan or doc reference. Both trigger detectors were traced
+end to end:
+
+| detector | set at | acts at | action |
+| --- | --- | --- | --- |
+| `usesExternIsUndefined` | `integration.ts:7534` (env-import `call`) | `:7654` | `ensureLateImport("__extern_is_undefined", …)` + `flushLateImportShifts` |
+| `usesNativeExternIsUndefined` | `:7553` (runtime `call`) | `:7628` | `ensureObjectRuntime` + flush + `observeNativeRuntimeProvider` |
+
+The two fire at **different points** in the registration sequence, so the
+migration recognises the attached target into the same two FLAGS and leaves the
+action order untouched.
+
+**Route taken: import-order parity, not the runtime-bound fallback.** F1-S3's
+V2 hazard (an import-bound ref refused by `resolveAndObserveCallableProvider`)
+does not apply: that path is the GENERATOR observation path, and this family
+lowers through `emitPreparedIntrinsic`, which F1-S1/F1-S2 already proved
+accepts an import-bound `host-callable` target. Both arms therefore keep
+exactly today's physical binding — `env.__extern_is_undefined` import on the
+host lane, the runtime symbol on the host-free lanes — and import membership,
+order and indices are measured identical in every cell (table below).
+
+**Adapters — measured, and they project `unsupported`.** The plan asked for
+"their measured current behaviour, do not guess". The measurement is that
+`linear-integration.ts` and `stdlib-selfhost.ts` **do not implement the
+predicate at all**, and that no owner under either resolver ever reaches the
+arm: a trace instrumented to report an adapter-resolver hit fired **zero**
+times across every `tests/linear-*.test.ts` file, `tests/stdlib.test.ts`,
+`tests/issue-3520-selfhost-cache-identity.test.ts` and
+`tests/standalone-ir-cutover-corpus.test.ts`. The resolver-absent default would
+have been `host`, so projecting `unsupported` is behaviour-neutral over an
+empty population while keeping both adapters fail-closed — which is what
+F1-S1/F1-S2/F1-S3 chose for the same two callers, and what the self-hosted
+stdlib's "owns no JS-host imports" invariant requires. Recorded as a
+deliberate reading of the plan's wording, with the population measurement that
+makes the two readings equivalent.
+
+### V-C totality — all four `gen.*` provider fields, proven the F1-S3 way
+
+F1-S3's V1 evidence extends to the other three kinds without weakening:
+
+| step | finding |
+| --- | --- |
+| producers | FOUR builder methods (`emitGenPush`, `emitGenEpilogue`, `emitGenYieldStar`, `emitGenSetReturn`), each guarded on `funcKind === "generator"` (epilogue and setReturn additionally on `generatorBufferSlot`). Their only callers are seven from-ast sites, all inside generator lowering. |
+| attachment | `attachIrGeneratorSupport` attaches `provider` **unconditionally** for all four kinds on every generator owner — no predicate, no policy gate. |
+| middle end | unchanged from F1-S3: `inline-small.ts` / `monomorphize.ts` only rename operands, spread the instr, and run before attachment. |
+| lowering entry | ONE production site (`integration.ts:4259` → `lowerIrEntryFunction`); `linear-integration`, `backend/porffor` and `stdlib-selfhost` lower non-generator bodies only, and **no test lowers a `gen.push` / `gen.epilogue` / `gen.yieldStar`** (zero hits across `tests/`). |
+| splice risk | every one of the four lowering arms reads its provider only AFTER the `func.generatorBufferSlot === undefined` guard, so a `gen.*` spliced into a non-generator owner is rejected before the provider is touched. |
+
+**Decision: retire all four fallbacks**, to the same fail-closed throw F1-S3
+used. One consequence is recorded rather than absorbed: the `gen.push` arm's
+local `__gen_push_f64` / `_i32` / `_ref` derivation existed only to feed the
+fallback, so it is gone — but its `typeOf(instr.value)` READ is kept, because
+`typeOf` throws for a value it cannot type and that throw demotes the owner.
+Deleting the read with its consumer would have silently admitted a population
+lowering previously refused.
+
+### V-D fixture reach — named, and one cell is honestly vacuous
+
+| arm | fixture that reaches it | verified by |
+| --- | --- | --- |
+| sub-B probe | `ANYUNDEF` (`const v = a[0]; v !== undefined`) and `MEMO` (the F1-S1 `Map` memo, which reaches the F1-S1 unbox arm AND this one) | trace at the arm; `env.__extern_is_undefined` in the host import list, absent on standalone/WASI |
+| sub-C `gen.setReturn` / `gen.push` / `gen.epilogue` | `VALUE_RETURN_GEN`, `I32_RETURN_GEN`, `BOOL_RETURN_GEN`, `FOROF_GEN`, `VOID_GEN`, `REF_RETURN_GEN` (F1-S3's set) | F1-S3's WAT inspection, re-run here |
+| sub-C `gen.yieldStar` | **`YIELDSTAR_GEN`, added by this slice** — F1-S3's set had no `yield*` fixture, so the fourth kind's parity cell would have been vacuous | new fixture; `__gen_yield_star` in the emitted import list |
+| sub-A arms | `OTPNEG` (the function-expression OTP literal) | kept in the matrix as an UNCHANGED control, since sub-A is stopped |
+
+The `:12303` string sub-arm has no fixture and cannot be given one — see V-A.
+
+## 2026-09-01 F1-S4 implementation checkpoint — Opus lane
+
+### What landed
+
+- **`src/ir/intrinsics.ts`** — `js.extern.is_undefined` `(externref) -> i32`,
+  versioned, with a 1:1 feature row, added as an `EXTERN_BOUNDARY_*` SIBLING of
+  the number and boolean constants (both unchanged). One ID, but — unlike the
+  boolean family — **two** provider arms.
+- **`src/ir/runtime-host-capabilities.ts`** — one record `extern.is_undefined`
+  → `env.__extern_is_undefined` `(externref) -> i32`, inserted in capability-ID
+  sort order so the async prefix keeps its historical position. Noted in place:
+  this is NOT an `addUnionImports` member — on the host lane the import is its
+  own `ensureLateImport` registration, which is why the trigger keys on it
+  separately.
+- **`src/ir/runtime-manifest.ts`** — `ExternIsUndefinedPolicy`
+  (`probe: "host" | "native" | "unsupported"`), a frozen
+  `EXTERN_IS_UNDEFINED_POLICY_DISABLED`, the optional `externIsUndefined` field
+  canonicalized at builder construction and published resolved on the frozen
+  manifest, the two provider rows (`host.…` → `host-callable` on capability
+  `extern.is_undefined`; `native.…` → `runtime-callable` on the runtime symbol),
+  and the policy branch in `#selectProvider` whose unavailable arm is a typed
+  `provider-target-unavailable` naming the intrinsic and the resolved policy.
+- **`src/ir/from-ast.ts`** — the strict-undefined arm emits the provider-free
+  intrinsic and reads no lane fact; the `externIsUndefinedIsNative` contract
+  entry and its one implementation are deleted. The `externrefShaped` gate
+  STAYS — it is a type/representation fact, not a lane fact.
+- **`src/ir/integration.ts`** — `integrationExternIsUndefinedPolicy`
+  (`{ probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? "native" : "host" }`,
+  the exact former truth table), the owner-local
+  `unsupportedExternBoundaryIntrinsic` partition in the same pass as the number,
+  boolean and generator ones, the freeze-time policy argument, and the widened
+  materialization trigger. Five touch points, per the #3525 co-ownership
+  constraint (`--check 3525` re-read before editing: still CLAIMED by
+  `ttraenkler/codex`).
+- **`src/ir/lower.ts`** — all four `?? irRuntimeFuncRef(<spelling>)` fallbacks on
+  the `gen.*` arms are gone, replaced by one shared fail-closed
+  `requirePreparedGeneratorProvider`.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `EXTERN_IS_UNDEFINED_POLICY_DISABLED` explicitly.
+- **`tests/issue-3526-boundary-residuals.test.ts`** (new, 26 tests).
+
+`src/ir/intrinsic-support.ts` needed **no edit** (its attachment and
+admitted-target tables are driven by `RUNTIME_PROVIDERS` × `INTRINSIC_DEFINITIONS`,
+so the new rows are picked up by construction), nor did
+`src/ir/async-prepare.ts` (this family has no async consumer — unlike the number
+side, whose hidden host-lane join cost F1-S1 a CI failure), nor
+`src/ir/backend/legality.ts` (its linear `intrinsic` arm is an allowlist, so the
+new id falls to the default reject).
+
+### One divergence from the plan's contract, forced by measurement
+
+The plan specified the intrinsic as `(externref) -> i32` and said nothing more
+about the operand. Measured, the arm's own `externrefShaped` gate admits FOUR IR
+type shapes, not one: `val` externref (`a[0]` out of an `any[]`), `extern`
+(a declared class instance), `callable` (a function-typed parameter) and
+host-mode `string`. `emitIntrinsic` type-checks arguments with `irTypeEquals`,
+which admits only the first.
+
+Resolved with `coerce.to_externref`, which is a **type normalisation, not a
+conversion**: `lower.ts:2962` elides `extern.convert_any` when the operand is
+already externref-shaped, and its `alreadyExternref` test is the same four-way
+fact as `externrefShaped`. The added IR instruction therefore lowers to **zero**
+Wasm instructions on every shape that reaches this arm — which is why the byte
+cells below are unchanged. The alternative (loosening `emitIntrinsic`'s argument
+check) would have weakened the closed contract for every intrinsic.
+
+### Measured neutrality
+
+**Byte parity — 67 of 70 cells identical, WAT included.** Fourteen fixtures ×
+five lanes, compiled before and after on the same tree, compared on byte length,
+binary sha256, import set AND order, and the full emitted WAT text.
+
+| fixture | gc-host | gc-native-strings | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| `MEMO` | 584 ✓ | 24596 ✓ | 125422 ✓ | 103862 ✓ | 5118 ✓ |
+| `ANYUNDEF` | 1489 ✓ | n/a ✓ | 122019 ✓ | 99650 ✓ | 4934 ✓ |
+| `STRUNDEF` | 184 ✓ | 22439 ✓ | 22603 ✓ | 22630 ✓ | 4894 ✓ |
+| `ANYUNDEF2` | 1614 △ | n/a ✓ | 122247 △ | 99875 △ | 4997 ✓ |
+| `OTPNEG` (sub-A control) | 3421 ✓ | 25569 ✓ | 126358 ✓ | 103866 ✓ | n/a ✓ |
+| `VALUE_RETURN_GEN` | 2543 ✓ | 24255 ✓ | 129904 ✓ | 104352 ✓ | n/a ✓ |
+| `I32_RETURN_GEN` | 2858 ✓ | 24562 ✓ | 130421 ✓ | 104532 ✓ | n/a ✓ |
+| `BOOL_RETURN_GEN` | 2819 ✓ | 24519 ✓ | 130420 ✓ | 104531 ✓ | n/a ✓ |
+| `FOROF_GEN` | 3150 ✓ | 25079 ✓ | 50251 ✓ | 50278 ✓ | n/a ✓ |
+| `YIELDSTAR_GEN` | 1925 ✓ | 24185 ✓ | 51207 ✓ | 51234 ✓ | n/a ✓ |
+| `REF_RETURN_GEN` | 2522 ✓ | 24332 ✓ | 129207 ✓ | 104465 ✓ | n/a ✓ |
+| `VOID_GEN` | 2594 ✓ | 24308 ✓ | 129972 ✓ | 104420 ✓ | n/a ✓ |
+| `BOOLSTORE` (F1-S2 fixture) | 1754 ✓ | 23758 ✓ | 50462 ✓ | 50489 ✓ | n/a ✓ |
+| `CLEAN` | 108 ✓ | 21970 ✓ | 22585 ✓ | 22612 ✓ | 4877 ✓ |
+
+(✓ = bytes, sha256, imports and WAT all identical before/after. `n/a` = the
+fixture does not compile on that lane, identically on both sides — the
+native-strings `ANYUNDEF*` cells and every linear generator cell are
+pre-existing refusals, unchanged by this slice. △ = the three cells below.)
+
+**Every sub-C cell is identical, including all four `gen.*` kinds.** The
+fallback retirement is provably inert: the attachment already supplied the same
+symbol the fallback spelled.
+
+**The three △ cells are the F1-S1 purity class, in a stronger manifestation —
+measured, argued and runtime-checked.** `ANYUNDEF2` is the only fixture with
+TWO probes in one owner. Its WAT diff is 42 lines on each of the three lanes and
+is entirely this: two spill locals (`(local $$ir14 externref)`,
+`(local $$ir15 i32)`) and their `local.tee`s disappear, and the second element
+read moves from a hoisted position at the top of the body down to its consumer.
+Same mechanism F1-S1 recorded — a semantic `intrinsic` is *pure* under the
+existing `effectsOf` authority while the opaque `call` it replaces was not, so
+the effects-aware scheduler stops anchoring the operand and emits it lazily —
+but a stronger manifestation than F1-S1's, which lost only local declarations.
+Recorded as a divergence from the plan's "identical instruction sequence"
+reading of that class, not absorbed:
+
+- the moved read is a pure bounds-checked GC read that yields `ref.null` on
+  out-of-bounds and cannot trap;
+- it moves across `call $__extern_is_undefined`, the probe itself, which cannot
+  mutate the vector;
+- the AFTER form is in fact **closer** to source order than the BEFORE form,
+  which hoisted `a[1]` ahead of `a[0]`;
+- runtime-checked rather than argued alone: five input cases
+  (`[1,2] [1] [] [undefined,5] [7,undefined]`) answer **identically** on base
+  and branch, on gc-host and standalone, including the pre-existing gc-host
+  out-of-bounds divergence from JS. Nothing about the answers moved.
+
+The plan permitted this class "on host lanes"; it appears on standalone and
+WASI too, because the scheduler is lane-independent. That widening of the
+permitted set is the divergence being recorded here.
+
+**Imports and order.** Identical in every one of the 70 cells, including the
+three △ ones. The host-lane `MEMO` list is `Map_new, Map_get, Map_set,
+<string_constants>, __unbox_number, __box_number, __extern_is_undefined`;
+standalone and WASI carry no `env` import at all.
+
+**The trigger widening is NOT decorative — measured, and it is the most
+load-bearing line in the slice.** With `js.extern.is_undefined` removed from
+`preregisterDynamicSupport`'s recognizer and everything else left in place:
+
+| cell | without the widening |
+| --- | --- |
+| `MEMO` gc-host | 584 → **727** bytes, and TWO extra imports appear (`env.__get_undefined`, `env.__new_ReferenceError`) — exactly the import-membership drift obligation 2 forbids |
+| `MEMO` standalone | **compile FAILS** — `invariant/unknown-function-ref @ resolve` |
+| `ANYUNDEF` / `ANYUNDEF2` gc-native-strings | a **host `env.__extern_is_undefined` import lands in a native-strings module** — precisely the #4461 failure the native arm exists to prevent |
+
+**Census.** `pnpm run check:ir-fallbacks` is output-identical (diffed, not
+eyeballed); unintended, module-level and post-claim buckets all still empty.
+
+**Outcome codes.** No shift anywhere in the 70 cells — the divergence-4 class
+does not appear here, and its absence is an assertion, not an omission: the
+integration policy resolves the probe to a supported arm on every lane, so no
+owner changes demote site. The `"unsupported"` arm is unreachable in production
+(as F1-S3's was) and is exercised by tests and by the two adapters' explicit
+disabled policies.
+
+### Non-vacuity — each sub-slice reverted independently against the kept schema
+
+- **sub-B**, reverting ONLY the from-ast arm to its direct two-armed call:
+  **4 tests fail** — the intrinsic-emission assertion, its lane-freedom twin,
+  the operand-normalisation assertion, and "uses the host-free Wasm function on
+  standalone, with no env import" (the reverted arm puts a host import into a
+  standalone module). All 9 schema/policy tests stay green.
+  One assertion had to be **strengthened** to be non-vacuous and the reason is
+  worth keeping: the two arms this slice replaced spelled the *same name*
+  (`__extern_is_undefined`) and differed only in `import` vs `runtime` binding,
+  so the lane-freedom comparison had to compare binding KINDS, not names. A
+  name-only comparison passed against the un-migrated front-end.
+- **sub-C**, restoring the four `??` fallbacks: exactly the **4** "refuses to
+  lower an unattached `gen.*`" tests fail, while the four attachment pins and
+  the entire F1-S3 suite stay green.
+- **sub-A**: nothing to revert — the two pinning tests assert the arms are
+  still unmigrated and that the raw symbol still resolves on the lane whose
+  policy calls it unsupported.
+
+The byte cells deliberately carry none of this argument: they are identical by
+construction, which is the point of the slice.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **Sub-A is not implemented** — V-A's STOP condition fired. Full measurement
+   above; the sibling-policy route a future slice would need is named there.
+2. **The `:12303` arm is unreachable**, so even had sub-A proceeded its parity
+   cell would have been vacuous. Measured, not inferred.
+3. **The intrinsic's operand needed `coerce.to_externref`** — the plan's
+   `(externref) -> i32` contract did not anticipate the arm's four admitted
+   operand shapes. Byte-inert by the elision at `lower.ts:2962`.
+4. **The purity class appears on standalone and WASI, not only host lanes, and
+   reorders two pure reads** rather than only dropping local declarations.
+   Argued and runtime-checked above.
+5. **One test outside the #3526 suites needed a one-field update.**
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` asserts the frozen
+   manifest policy by exact object equality and now also sees
+   `externIsUndefined`. Identical mechanical consequence to F1-S1's
+   `numberBoundary`, F1-S2's `booleanBoundary` and F1-S3's `generatorNumberBox`.
+6. **One F1-S3 test fixture needed a provider.** Its "refuses to lower a
+   numeric stash whose boxing provider was never attached" case built an
+   entirely unattached `gen.setReturn`; sub-C makes the SEAM provider fail
+   first, so the fixture now attaches `__gen_set_return` and keeps isolating the
+   boxing authority. The seam-provider case it used to reach incidentally is
+   pinned explicitly in the new suite, for all four kinds.
+7. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned
+   exception, handled as the three prior checkpoints prescribe. No verdict,
+   kind, placement, ratchet count or `settledBy` rationale changed — the
+   semantic delta was established by normalising both JSON documents and
+   diffing those, and it is exactly THREE citation lines (`forof.string`
+   `src/ir/integration.ts` 6159 → 6216; `string.len`
+   `src/ir/backend/linear-integration.ts` 1622 → 1624; `vec.new_fixed`
+   `src/ir/from-ast.ts` 4534 → 4526). Patched surgically: committing the
+   regenerator's output instead would have been a 269/85-line diff for a
+   3-line change.
+
+### Validation run
+
+Green: TypeScript 7 typecheck; `check:ir-fallbacks` (bare, output-identical);
+the ratchet chain bare AND under `LOC_GATE_BASE=$(git rev-parse origin/main)` —
+loc (+265 net src LOC, every path granted by this file's frontmatter), func,
+coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:test-vacuity-shapes`,
+`check:ir-kind-neutrality` (after the surgical refresh above); `lint`;
+`prettier --check` over `src`/`tests`/`scripts`; and
+`check:standalone-ir-cutover-corpus` (`derived=19/19`, `units=47/47`,
+`terminal=38/38`). Focused suites: 223/224 across 17 files — all six #3526
+suites, both async suites (#4103/#4104), #2951, #2035, #1169f-7a/7b, #2864,
+#680 and #4461.
+
+**Pre-existing failures, measured on the base tree and NOT caused by this
+change-set** — identical with the eight source files reverted to
+`origin/main` `96f7a3c0`: `tests/issue-2951.test.ts` › "standalone generators
+stay compile-twice (out of scope — #680 native carrier)" (1); the five
+`tests/stdlib.test.ts` `String.at` / `Array.at` cases; the two
+`WebAssembly.Tag` errors in `src/linked-provider-runtime.ts` under TypeScript 5;
+and the collect-time failure of
+`tests/issue-2949-slice3-dynamic-lowering.test.ts`.
+
+### Not touched (per the plan's scope discipline)
+
+`lower.ts:1440`'s defensive `coerceToF64ForBitwise` `__unbox_number` (a
+lower-time consumer, post-freeze, cannot carry a provider-free intrinsic —
+#1305 owns its retirement), `__to_primitive` itself and the `__ir_dyn_*`
+family, the string-plan / `stringMethodPlan` predicate family,
+`env.__get_undefined` / `env.__make_callback` reach plumbing, the symbol
+boundary (#5258), R4 gaps (#3523), `compiler-timer-shim-preparation.ts`, and
+`numberBoundary` / `booleanBoundary` / `generatorNumberBox` (all three
+unchanged). `scripts/*-baseline.json` is untouched apart from the sanctioned
+three-line `check:ir-kind-neutrality` citation refresh;
+`scripts/loc-budget-baseline.json` remains main's alone.
+
+### One follow-up this slice surfaced but does not own
+
+**The `emitUnaryToNumber` string sub-arm (`from-ast.ts:12303`) is dead code.**
+Its `primitiveType.kind === "string"` guard cannot be satisfied: the closed
+structural OrdinaryToPrimitive route admits only `number`/`boolean` method
+returns, and a string-returning method is admitted only as a function
+expression, which takes the `extern:Object` route instead. Measured zero hits
+across the fallback corpus and every candidate shape. It is either a dead arm
+to delete or a gap in the closed route to close — a decision above a
+byte-neutral slice. (`claim-issue.mjs --allocate` still refuses in this
+container — `gh` is unauthenticated, so the open-PR id scan degrades and the
+reservation would not be verified against in-flight PRs; recorded here rather
+than reserved under `--allow-unscanned`, per the #3890/#3891 precedent.)

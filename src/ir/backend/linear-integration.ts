@@ -135,6 +135,7 @@ import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
 import {
   BOOLEAN_BOUNDARY_POLICY_DISABLED,
+  EXTERN_IS_UNDEFINED_POLICY_DISABLED,
   GENERATOR_NUMBER_BOX_POLICY_DISABLED,
   NUMBER_BOUNDARY_POLICY_DISABLED,
 } from "../runtime-manifest.js";
@@ -673,6 +674,7 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
         backend: "linear",
         numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
         booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+        externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
         generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
       },
     })?.functions ?? functions

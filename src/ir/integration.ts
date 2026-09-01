@@ -333,6 +333,7 @@ import {
 import {
   isIntrinsicId,
   type BooleanBoundaryIntrinsicId,
+  type ExternBoundaryIntrinsicId,
   type IntrinsicId,
   type NumberBoundaryIntrinsicId,
 } from "./intrinsics.js";
@@ -340,6 +341,7 @@ import { materializePreparedMathProviders, preparedMathProviderIndex } from "./m
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
 import type {
   BooleanBoundaryPolicy,
+  ExternIsUndefinedPolicy,
   GeneratorNumberBoxPolicy,
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
@@ -821,6 +823,44 @@ function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryP
 }
 
 /**
+ * (#3526 F1-S4) This caller's already-resolved externref UNDEFINED-PROBE policy.
+ *
+ * The EXACT fact the from-ast strict-undefined arm used to read through the
+ * `externIsUndefinedIsNative` resolver predicate (#4461,
+ * `ctx.standalone || ctx.wasi || ctx.nativeStrings`), consulted once, here,
+ * before freeze. Every host-free lane registers `__extern_is_undefined` as a
+ * real Wasm function through `ensureObjectRuntime`, so this truth table is a
+ * THIRD one again: wider than `numberBoundary` (unsupported on native-strings
+ * GC) and wider than `booleanBoundary` (no native arm at all). The three name
+ * different symbols and must not be merged.
+ */
+function integrationExternIsUndefinedPolicy(ctx: CodegenContext): ExternIsUndefinedPolicy {
+  return Object.freeze({
+    probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? ("native" as const) : ("host" as const),
+  });
+}
+
+/** The first extern-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedExternBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: ExternIsUndefinedPolicy,
+): ExternBoundaryIntrinsicId | undefined {
+  if (policy.probe !== "unsupported") return undefined;
+  let found: ExternBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.extern.is_undefined") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
+/**
  * (#3526 F1-S3) This caller's already-resolved GENERATOR number-box policy.
  *
  * The EXACT truth table the `gen.setReturn` seam has always had, consulted
@@ -887,6 +927,7 @@ function prepareBuiltFnRuntimeManifest(
       backend: "wasmgc",
       numberBoundary: integrationNumberBoundaryPolicy(ctx),
       booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+      externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
       generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
@@ -3544,6 +3585,7 @@ export function compileIrPathFunctions(
   // stay fatal for the whole transaction.
   const numberBoundaryPolicy = integrationNumberBoundaryPolicy(ctx);
   const booleanBoundaryPolicy = integrationBooleanBoundaryPolicy(ctx);
+  const externIsUndefinedPolicy = integrationExternIsUndefinedPolicy(ctx);
   const generatorNumberBoxPolicy = integrationGeneratorNumberBoxPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
@@ -3576,6 +3618,24 @@ export function compileIrPathFunctions(
           "resolve",
           "ir/integration: generator return boxing has no provider under generator-number-box policy " +
             `box=${generatorNumberBoxPolicy.box}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S4) The externref undefined probe partitions on the same rule,
+    // in the same pass, for the same reason.
+    const unsupportedProbe = unsupportedExternBoundaryIntrinsic(entry.fn, externIsUndefinedPolicy);
+    if (unsupportedProbe !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: semantic intrinsic ${unsupportedProbe} has no provider under extern-is-undefined policy ` +
+            `probe=${externIsUndefinedPolicy.probe}`,
         ),
         "resolve",
       );
@@ -5764,9 +5824,6 @@ function makeFromAstResolver(
       if (ctx.mapTypeIdx < 0) return undefined;
       return { kind: "val", val: { kind: "ref_null", typeIdx: ctx.mapTypeIdx } };
     },
-    externIsUndefinedIsNative(): boolean {
-      return ctx.standalone || ctx.wasi || ctx.nativeStrings;
-    },
     // (#2955 slice 3) Rep predicate: the string carrier is externref (host
     // strings), so string SSA values flow unchanged into externref-expected
     // positions (`coerceToExpectedExtern` host-call args) and take the
@@ -7453,6 +7510,28 @@ function jsTagToStaticType(
  *     like `preregisterStringSupport`.
  * Both are idempotent, so overlapping legacy registration is a no-op.
  */
+/**
+ * (#3526 F1-S4) Which arm of the externref undefined probe an instruction's
+ * ATTACHED provider names, if any.
+ *
+ * `__extern_is_undefined` is NOT a member of the `addUnionImports` family: on
+ * the host lane it is its own `ensureLateImport` registration, and on the
+ * host-free lanes a real Wasm function `ensureObjectRuntime` owns. Its two
+ * preregistration detectors therefore stay separate from the union ones, and
+ * each must recognise the attached provider target now that the raw `call` they
+ * used to key on is gone (the F1-S1/F1-S2 precedent). This returns only the
+ * classification — the detector FLAGS still decide when each materializer runs,
+ * so the registration order in `preregisterDynamicSupport` is untouched.
+ */
+function attachedExternIsUndefinedArm(instr: IrInstr): "host" | "native" | undefined {
+  if (instr.kind !== "intrinsic" || instr.id !== "js.extern.is_undefined") return undefined;
+  if (instr.provider?.kind !== "callable") return undefined;
+  const { binding } = instr.provider.target;
+  if (binding.kind === "import" && binding.module === "env" && binding.field === "__extern_is_undefined") return "host";
+  if (binding.kind === "runtime" && binding.symbol === "__extern_is_undefined") return "native";
+  return undefined;
+}
+
 function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
@@ -7512,7 +7591,10 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           // legacy control. No name scanning, no second allocator.
           const boundaryIntrinsicTarget =
             i.kind === "intrinsic" &&
-            (i.id === "js.number.box" || i.id === "js.number.unbox" || i.id === "js.boolean.box") &&
+            (i.id === "js.number.box" ||
+              i.id === "js.number.unbox" ||
+              i.id === "js.boolean.box" ||
+              i.id === "js.extern.is_undefined") &&
             i.provider?.kind === "callable"
               ? i.provider.target
               : undefined;
@@ -7529,6 +7611,11 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           ) {
             usesRuntimeUnboxNumber = true;
           }
+          // (#3526 F1-S4) The undefined probe's own arm — see
+          // `attachedExternIsUndefinedArm`.
+          const probeArm = attachedExternIsUndefinedArm(i);
+          if (probeArm === "host") usesExternIsUndefined = true;
+          else if (probeArm === "native") usesNativeExternIsUndefined = true;
           if (i.kind === "call" && i.target.binding.kind === "import" && i.target.binding.module === "env") {
             if (UNION_IMPORT_FUNC_NAMES.has(i.target.binding.field)) usesNamedUnionImport = true;
             else if (i.target.binding.field === "__extern_is_undefined") usesExternIsUndefined = true;

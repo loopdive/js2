@@ -33,6 +33,7 @@ export const RUNTIME_HOST_CAPABILITY_IDS = Object.freeze([
   "async.promise.settle.reject",
   "async.value.undefined",
   "boolean.box",
+  "extern.is_undefined",
   "number.box",
   "number.unbox",
 ] as const);
@@ -117,6 +118,12 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   // over its ABI, not a second registration path. The one-armed family has no
   // unbox row: `__unbox_boolean` has no IR producer.
   record("boolean.box", "__box_boolean", ["i32"], ["externref"]),
+  // (#3526 F1-S4) The externref undefined probe. NOT a member of the
+  // `addUnionImports` family: on the host lane `__extern_is_undefined` is a
+  // standalone `ensureLateImport` registration, which is why the preregistration
+  // trigger keys on it separately. This record is manifest AUTHORITY over its
+  // ABI; the physical registration path is unchanged.
+  record("extern.is_undefined", "__extern_is_undefined", ["externref"], ["i32"]),
   // (#3526 F1-S1) The number boundary. Both names are members of the physical
   // `addUnionImports` family; the records are manifest AUTHORITY over their
   // ABI, not a second registration path.
