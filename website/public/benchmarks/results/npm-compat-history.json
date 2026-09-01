@@ -12019,6 +12019,22 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-01T18:50:02.971Z",
+      "sourceRevision": "bee8a14948562514a216f667dc368e9c927b8cde",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.011724404637995971
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
