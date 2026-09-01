@@ -1,10 +1,11 @@
 ---
 id: 5255
 title: "ES2015 standalone: preserve generator method receiver context"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
+completed: 2026-09-01
 priority: high
 horizon: m
 feasibility: hard
@@ -28,7 +29,7 @@ func-budget-allow:
 
 ## Problem and locked evidence
 
-The authoritative isolated standalone runner still fails:
+Before the repair, the authoritative isolated standalone runner failed:
 
 - `built-ins/GeneratorPrototype/next/context-method-invocation.js`
 
@@ -157,14 +158,26 @@ pre-fix `drop` / `ref.null extern` loss without broadening the bridge.
 - Focused #3591/native-generator/expression-generator/call-boundary controls
   pass. The #4025 ordinary `.call`/`.apply` file has 14 passing cases and three
   known nullish-receiver failures; the same three failures reproduce unchanged
-  on a clean `b603a4da69` (#3591) baseline, so they are not introduced here.
+  on a clean `b603a4da69` (#3591) baseline. They predate this repair and are
+  out of #5255 scope, so no change was made to their lowering.
 - TS7 typecheck, targeted Biome lint, targeted Prettier, oracle/coercion
   ratchets, and LOC/function budgets pass. The two budget grants above cover
   the deliberate native frame/resume ABI and the narrow callable result bridge;
   no baseline file is changed.
 
 Fresh process/memory census was taken before each compiler, Vitest, or Test262
-process tree. Final normal pre-push and publication remain pending.
+process tree. The normal pre-push hook passed TS7 typecheck, lint, format,
+oracle/coercion ratchets, 18/18 numeric-local parity, and issue integrity;
+`5890005e858772ae0b11999f964b83e063b81427` was then published to the fork.
+
+## Completion and handoff
+
+The completed implementation is commit
+`5890005e858772ae0b11999f964b83e063b81427`
+(`fix(generators): preserve property receiver across native resumes ✓`) on
+draft PR #5407. It is intentionally stacked on #5402's #3591 late-dispatch
+substrate: keep the PR draft until that dependency is merged and the stack is
+dependency-clean. Luna owns the ready-for-review transition after that handoff.
 
 ## Implementation plan
 
