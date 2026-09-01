@@ -11807,23 +11807,61 @@ export function findUserBindingDecl(id: ts.Identifier): ts.Node | undefined {
  * the interface itself to a closed Wasm struct makes an asserted array value
  * fail its guarded cast before its extra properties can be attached.
  */
+const inheritedArrayElementTypeCache = new WeakMap<ts.TypeChecker, WeakMap<ts.Type, ts.Type | null>>();
+
+interface InheritedArrayResolutionState {
+  incomplete: boolean;
+}
+
 function inheritedArrayElementType(
   checker: ts.TypeChecker,
-  type: ts.Type,
-  seen = new Set<ts.Type>(),
+  type: ts.Type | undefined,
+  seen?: Set<ts.Type>,
+  state?: InheritedArrayResolutionState,
 ): ts.Type | undefined {
+  // `ensureStructForType` reaches a broader set of partially resolved checker
+  // objects than ordinary value lowering. Cache complete top-level answers and
+  // fail closed for holes produced under skipSemanticDiagnostics.
+  if (type === undefined) {
+    if (state) state.incomplete = true;
+    return undefined;
+  }
+  if (seen === undefined) {
+    let byType = inheritedArrayElementTypeCache.get(checker);
+    if (!byType) {
+      byType = new WeakMap();
+      inheritedArrayElementTypeCache.set(checker, byType);
+    }
+    const cached = byType.get(type);
+    if (cached !== undefined) return cached ?? undefined;
+    const resolution = { incomplete: false } satisfies InheritedArrayResolutionState;
+    const result = inheritedArrayElementType(checker, type, new Set(), resolution);
+    // A skip-diagnostics checker can expose a transiently unresolved base.
+    // Never turn that partial answer into a permanent negative cache entry.
+    if (!resolution.incomplete || result !== undefined) byType.set(type, result ?? null);
+    return result;
+  }
   if (seen.has(type) || !(type.flags & ts.TypeFlags.Object)) return undefined;
   seen.add(type);
 
   const objectType = type as ts.InterfaceType;
   const symbol = objectType.symbol ?? type.symbol;
+  if (symbol === undefined || !(symbol.flags & (ts.SymbolFlags.Class | ts.SymbolFlags.Interface))) return undefined;
   if (!symbolShadowsBuiltinGlobal(symbol) && (symbol?.name === "Array" || symbol?.name === "ReadonlyArray")) {
     return checker.getTypeArguments(type as ts.TypeReference)[0];
   }
   if (!(objectType.objectFlags & (ts.ObjectFlags.Interface | ts.ObjectFlags.Reference))) return undefined;
-  for (const base of checker.getBaseTypes(objectType) ?? []) {
-    const element = inheritedArrayElementType(checker, base, seen);
-    if (element) return element;
+  try {
+    for (const base of checker.getBaseTypes(objectType) ?? []) {
+      const element = inheritedArrayElementType(checker, base, seen, state);
+      if (element) return element;
+    }
+  } catch {
+    // Invalid or still-partially-resolved heritage clauses can expose holes in
+    // the checker's base list. Uncertain types must retain their existing
+    // non-array registration path rather than failing the whole compile.
+    if (state) state.incomplete = true;
+    return undefined;
   }
   return undefined;
 }
@@ -12574,6 +12612,10 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     return;
   }
   if (!(tsType.flags & ts.TypeFlags.Object)) return;
+  // Tuple types are handled by getOrRegisterTupleType. They are also
+  // ObjectFlags.Reference objects without a class/interface symbol, so keep
+  // them out of inherited-carrier base-type queries.
+  if (isTupleType(tsType)) return;
   // Augmented array interfaces such as `NodeArray<T>` share the vec carrier
   // selected by resolveWasmType. Do not eagerly register their inherited
   // Array surface as a separate closed struct.
@@ -12594,8 +12636,6 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
   if (dtsDecls && dtsDecls.length > 0 && dtsDecls.every((d) => d.getSourceFile().isDeclarationFile)) {
     return;
   }
-  // Tuple types are handled by getOrRegisterTupleType, not as anonymous structs
-  if (isTupleType(tsType)) return;
   // #1247: Array types compile to vec structs (length+data) via getOrRegisterVecType,
   // not anonymous structs that pull in every Array.prototype method as a field. Without
   // this guard, `string[]` registers an anonymous struct named after Array.prototype's
