@@ -8,7 +8,9 @@ import type {
   IrIntegrationReport,
   IrIntegrationTerminalEvidence,
 } from "../ir/integration.js";
+import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
+import { nonExecutableOutcomeDefect } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { IrDirectFunctionBodyReceiptAudit } from "./legacy-body-audit.js";
@@ -662,6 +664,65 @@ export function auditIrSkippedModuleInitSlot(input: {
     expectedKind: "module-init",
     label: "module initializer",
   });
+}
+
+/**
+ * (#3523 R4 gap 4) Build the one observational row for a source whose module
+ * init has nothing to do, or `undefined` when the source is not that shape.
+ *
+ * The admission test is deliberately a CONJUNCTION, and both halves are
+ * fail-closed rather than convenient:
+ *
+ * - **No module-init terminal unit.** `buildIrModuleInitPlan` reads its own
+ *   `unitId` straight out of this map (`module-init-plan.ts:496`), so an absent
+ *   entry IS `plan.unitId === null`. It also guarantees no existing row can be
+ *   duplicated, because a row is only ever minted from a terminal unit.
+ * - **No module-init population.** The syntactic ground truth for "nothing to
+ *   evaluate". Measured 2026-08-31: across function-only, type-only, empty,
+ *   class-without-static, class-with-static and executable sources, this
+ *   conjunction coincides exactly with `plan.executable === false`.
+ *
+ * They can only disagree in the state `buildIrModuleInitPlan` already reports as
+ * the `missing-module-init-unit` gap — an executable source that lost its
+ * terminal. There we record NOTHING rather than a row claiming the source has
+ * nothing to do, because that row would be precisely the lie this arm exists to
+ * remove from the ledger.
+ */
+export function buildNonExecutableModuleInitOutcome(input: {
+  readonly sourceFile: ts.SourceFile;
+  readonly identityContext: IrPlanningIdentityContext;
+  readonly target: IrObservedOutcome["target"];
+  readonly existingOutcomes: readonly IrObservedOutcome[];
+}): IrObservedOutcome | undefined {
+  const { sourceFile, identityContext } = input;
+  if (identityContext.moduleInitUnitIdBySourceFile.has(sourceFile)) return undefined;
+  if (collectModuleInitPopulation(sourceFile).length !== 0) return undefined;
+  const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
+  if (!sourceId || identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) return undefined;
+  // Exactly one row per source, including every empty source of a multi-source
+  // graph. A second call for the same source is a no-op, not a second row.
+  if (input.existingOutcomes.some((outcome) => outcome.kind === "non-executable" && outcome.sourceId === sourceId)) {
+    return undefined;
+  }
+  const outcome: IrObservedOutcome = {
+    key: `${sourceFile.fileName}::module-init::${MODULE_INIT_UNIT_NAME}#0`,
+    sourceId,
+    file: sourceFile.fileName,
+    unitKind: "module-init",
+    displayName: MODULE_INIT_UNIT_NAME,
+    ordinal: 0,
+    line: 1,
+    column: 1,
+    backend: "wasmgc",
+    target: input.target,
+    kind: "non-executable",
+    stage: "select",
+    legacyBodyEmitted: false,
+    irBodyEmitted: false,
+  };
+  // The contract is a validator, not a comment: never emit a row the policy
+  // layer would have to reject as malformed evidence.
+  return nonExecutableOutcomeDefect(outcome) === undefined ? outcome : undefined;
 }
 
 function observedFailure(
