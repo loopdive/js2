@@ -1265,9 +1265,10 @@ The publication tree passes all **69/69** focused #1058 test files and
 
 The next self-host slice is a separate binder entry over an already parsed
 `SourceFile`. Root `createSourceFile` and `bindSourceFile` directly rather than
-the broad `_namespaces/ts.js` barrel, and keep checker, emitter, services, and
-server code outside the entry graph. The first bounded native/Wasm binder smoke
-oracle is:
+the broad `_namespaces/ts.js` barrel. The intended capability boundary excludes
+checker semantics, emitter, services, and server code; the current graph still
+retains a specialized checker shell solely for `getNodeId`/`getSymbolId`. The
+first bounded native/Wasm binder smoke oracle is:
 
 ```text
 symbolCount * 65,536 + locals.size * 256 + bindDiagnostics.length
@@ -1275,13 +1276,13 @@ symbolCount * 65,536 + locals.size * 256 + bindDiagnostics.length
 
 This packed count is intentionally only a first smoke oracle: different binder
 states can collide on the same number, so it is not a semantic fingerprint.
-Only the controls whose exact source text was recorded are currently
-reproducible:
+The tracked binder workload now pins two committed controls whose exact fixture
+bytes are authoritative:
 
-| exact source | native binder smoke oracle |
+| committed fixture | native binder smoke oracle |
 | --- | ---: |
-| `const x = 1;` | 65,792 |
-| `let x; let x;` | 131,330 |
+| `tests/dogfood/fixtures/typescript-binder/const-local.ts` | 65,792 |
+| `tests/dogfood/fixtures/typescript-binder/duplicate-let.ts` | 131,330 |
 
 A third value, **459,008**, was previously measured for an exported-class case
 with a nested declaration, but the exact source text was not recorded. It is
@@ -1293,12 +1294,69 @@ name-and-flags sequence (or its stable hash) for locals and exports so distinct
 binder states cannot pass solely by colliding on the packed count.
 
 `binder.ts` is the smallest next capability slice at approximately 199 KB /
-4,008 lines. The resolver currently selects 32 parser+binder source files
-totaling **6,973,595 input source bytes**; this is a source-selection
-measurement, and **no binder Wasm build is claimed yet**. Its current
-reachability hazard is `getNodeId`, which can pull `checker.ts` into the graph
-through a broad barrel even though binding itself does not need the checker
-implementation.
+4,008 lines. The tracked workload resolves cleanly to **32 source files / 36
+program files**, **6,974,097 selected input source bytes**, and **312
+module-initialization statements**. Native TypeScript 5.9.3 recomputes the two
+table values exactly from the committed fixtures.
+
+The first full 900-second-budget compile attempt did not time out: it completed
+body generation for **4,827 functions** and all late codegen passes in 625,740
+ms / 626,423 ms wall, used 692,469 ms CPU (1.11 average cores), and peaked at
+**3,970.7 MiB RSS**, 125.3 MiB below the strict 4 GiB process target. It emitted
+no binary (`compileSuccess: false`), so no validation or binder invocation is
+claimed. The result contained 25 diagnostics; its original bounded report put
+20 IR warnings first and hid the decisive tail diagnostics. The probe now
+prioritizes non-warning failures, with a focused fail-closed regression.
+
+After that reporting fix, a fresh diagnostic-prioritized rerun again completed
+all codegen phases without timing out: **4,827 functions**, 615,304 ms worker /
+616,254 ms wall, 656,412 ms CPU (1.07 average cores), and **3,778.9 MiB peak
+RSS**, 317.1 MiB below 4 GiB. It still emitted no binary, so validation and
+invocation did not run. The 25 diagnostics were **four instances of the same
+hard error and 21 warnings**. Each hard error is the #2090 fail-closed
+stack-balance diagnostic in `createBinder`: operand-stack underflow by 3 in an
+empty-typed block (body delta -3, expected 0). The active binder blocker is
+localizing and repairing the missing value producer; the repeated signature is
+not yet evidence of four independent defects.
+
+An instrumented localization rerun completed in 634,968 ms worker / 635,901 ms
+wall, used 676,862 ms CPU (1.06 average cores), and peaked at **3,703.4 MiB
+RSS**, 392.6 MiB below 4 GiB. It confirmed four distinct physical bodies, at
+`function body[190].if.then`, `function body[231].if.then[5].if.then`,
+`function body[293].if.then[14].if.then`, and
+`function body[293].if.then[60].if.then[5].if.then`. Every body constructs the
+same memoized nested-function closure and has the same first negative net
+prefix: 37 live operands immediately before a 40-field `struct.new`, followed
+by the memo-local `local.set`. The deficit is therefore exactly three closure
+constructor operands, not a stack-diagnostic accounting artifact.
+
+A producer-provenance rerun completed in 630,303 ms worker / 631,263 ms wall,
+used 703,130 ms CPU, and peaked at **3,897.4 MiB RSS**, 198.6 MiB below 4 GiB.
+It identified all four sites as memoized reads of `bind`: the current plan has
+33 value captures, no TDZ-flag fields, and one constructibility field (37
+fields with the three-field closure header), while the cached type was already
+40 fields wide at each emission site (36 captures plus the same header and
+constructibility field). This rules out late type growth, DCE, and net-delta
+accounting. A ten-line reproducer confirmed the general failure mode: Phase 0
+publishes a wider capture ABI; compiling an earlier sibling promotes three
+owner locals; the real reserved-entry compile recomputes a narrower plan while
+the already-minted closure type and trampoline retain the provisional ABI. The
+repair must therefore make the reserved Phase-0 capture plan canonical for the
+function body, metadata, trampoline, and every constructor rather than padding
+only the failing `struct.new`.
+
+The capability graph is also not honestly checker-free yet. `binder.ts` and
+`nodeFactory.ts` obtain `getNodeId` through the broad namespace, while private
+name binding reaches `getSymbolId` through `utilities.ts`; both allocators and
+their counters live in `checker.ts`. Consumer-driven specialization already
+blanks more than 99% of that file's semantic content (only 13,444 non-whitespace
+characters, 20/4,547 function-like nodes, and 2,114/261,341 AST nodes remain),
+so its 3,094,493 blank-preserved raw bytes are not the present codegen bottleneck.
+Move both ID allocators to a small shared identity module and direct-import it
+to make the parser/binder/checker module boundary truthful, not as a claimed
+performance fix. A local extraction would forfeit the unmodified-upstream-source
+claim, so treat it as an explicit module-hygiene follow-up (or upstream it), not
+as the current stack-balance or performance repair.
 
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
