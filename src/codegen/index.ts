@@ -4117,6 +4117,78 @@ function preparedExactLexicalDeclaration(
   return reachesSourceFunction ? undefined : declaration;
 }
 
+/**
+ * (#3523 R4 gap 2b) The scalar-statement operator family the prepared
+ * module-init transaction admits, as a pure grammar decision.
+ *
+ * Each arm yields the assignment TARGET identifier and — only when the source
+ * spells a SEPARATE read of the same binding (`id = id + 1`) — that read
+ * identifier. `id++` and `id += 1` read through the same node they write, so
+ * they carry no separate read and the caller's same-declaration check has
+ * nothing extra to prove.
+ *
+ * The two operator sets are allowlists, not denylists: `**=`, `%=`, the
+ * bitwise/shift compounds and the logical compounds are absent, so they stay
+ * refused without a rule of their own. Operand order is fixed — `id = 1 + id`
+ * is a different lowering and is not admitted — and a parenthesized or
+ * non-numeric right-hand side never matches an arm.
+ */
+interface PreparedScalarModuleStatementShape {
+  readonly target: ts.Identifier;
+  readonly read: ts.Identifier | undefined;
+}
+
+const PREPARED_SCALAR_COMPOUND_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+]);
+
+const PREPARED_SCALAR_ARITHMETIC_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+]);
+
+function preparedScalarModuleStatementShape(statement: ts.Statement): PreparedScalarModuleStatementShape | undefined {
+  if (!ts.isExpressionStatement(statement)) return undefined;
+  const expression = statement.expression;
+
+  // `id++` / `id--` / `++id` / `--id`.
+  if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
+    if (expression.operator !== ts.SyntaxKind.PlusPlusToken && expression.operator !== ts.SyntaxKind.MinusMinusToken) {
+      return undefined;
+    }
+    return ts.isIdentifier(expression.operand) ? { target: expression.operand, read: undefined } : undefined;
+  }
+
+  if (!ts.isBinaryExpression(expression) || !ts.isIdentifier(expression.left)) return undefined;
+  const target = expression.left;
+
+  // `id += n` / `id -= n` / `id *= n` / `id /= n`.
+  if (PREPARED_SCALAR_COMPOUND_OPERATORS.has(expression.operatorToken.kind)) {
+    return ts.isNumericLiteral(expression.right) ? { target, read: undefined } : undefined;
+  }
+  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+
+  // `id = n`.
+  if (ts.isNumericLiteral(expression.right)) return { target, read: undefined };
+
+  // `id = id + n` and its `- * /` siblings.
+  const increment = expression.right;
+  if (
+    !ts.isBinaryExpression(increment) ||
+    !PREPARED_SCALAR_ARITHMETIC_OPERATORS.has(increment.operatorToken.kind) ||
+    !ts.isIdentifier(increment.left) ||
+    !ts.isNumericLiteral(increment.right)
+  ) {
+    return undefined;
+  }
+  return { target, read: increment.left };
+}
+
 function isPreparedExactScalarModuleAssignment(
   ctx: CodegenContext,
   sourceId: IrSourceId,
@@ -4126,20 +4198,9 @@ function isPreparedExactScalarModuleAssignment(
   sourceOrdinal: number,
   admittedBindings: ReadonlyMap<ts.VariableDeclaration, IrModuleInitBindingIntent>,
 ): boolean {
-  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return false;
-  const assignment = statement.expression;
+  const shape = preparedScalarModuleStatementShape(statement);
   if (
-    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-    !ts.isIdentifier(assignment.left) ||
-    !ts.isBinaryExpression(assignment.right)
-  ) {
-    return false;
-  }
-  const increment = assignment.right;
-  if (
-    increment.operatorToken.kind !== ts.SyntaxKind.PlusToken ||
-    !ts.isIdentifier(increment.left) ||
-    !ts.isNumericLiteral(increment.right) ||
+    !shape ||
     !preparedModuleInitEvaluationMatchesStatement(
       sourceId,
       sourceFile,
@@ -4153,22 +4214,37 @@ function isPreparedExactScalarModuleAssignment(
     return false;
   }
 
-  const targetDeclarations = ctx.oracle.declarationsOf(assignment.left);
-  const readDeclarations = ctx.oracle.declarationsOf(increment.left);
+  const targetDeclarations = ctx.oracle.declarationsOf(shape.target);
   const declaration = targetDeclarations[0];
   if (
     targetDeclarations.length !== 1 ||
-    readDeclarations.length !== 1 ||
-    declaration !== readDeclarations[0] ||
     !declaration ||
     !ts.isVariableDeclaration(declaration) ||
     declaration.getSourceFile() !== sourceFile ||
     !ts.isIdentifier(declaration.name) ||
-    assignment.left.text !== declaration.name.text ||
-    increment.left.text !== declaration.name.text
+    shape.target.text !== declaration.name.text
   ) {
     return false;
   }
+  if (shape.read) {
+    const readDeclarations = ctx.oracle.declarationsOf(shape.read);
+    if (
+      readDeclarations.length !== 1 ||
+      readDeclarations[0] !== declaration ||
+      shape.read.text !== declaration.name.text
+    ) {
+      return false;
+    }
+  }
+
+  // (#3523 R4 gap 2b, probe P2) Every admitted operator lowers through the
+  // IR's f64 binop set, so the target's storage has to be numeric. A
+  // boolean-branded `let` has i32 storage and `from-ast.ts` would demote it
+  // (`compound-assign-unsupported`, the `!slotValType || slotValType.kind !==
+  // "f64"` arm); a dynamic (`any`) one is refused upstream by the selector's
+  // storage resolver and measured overlay on every lane. Deciding it here
+  // keeps the refusal a silent non-admission rather than a late demotion.
+  if (ctx.oracle.staticJsTypeOf(shape.target) !== "number") return false;
 
   const binding = admittedBindings.get(declaration);
   return (
@@ -4277,13 +4353,18 @@ function preparedExactLexicalModuleInit(
   const globalBindingIds = new Set<IrBindingId>();
   const admittedBindings = new Map<ts.VariableDeclaration, IrModuleInitBindingIntent>();
   let declarationOrdinal = 0;
-  let sawAssignment = false;
+  // (#3523 R4 gap 2b) Source order is proven per entry, not by segregating
+  // declarations from assignments: bindings are consumed by
+  // `declarationOrdinal` and evaluations by population ordinal, so a
+  // declaration AFTER an assignment zips exactly as one before it. A forward
+  // reference is still refused — the target must already be in
+  // `admittedBindings` when its assignment is walked, which is the TDZ
+  // property, not an ordering convention.
   for (let ordinal = 0; ordinal < population.length; ordinal++) {
     const statement = population[ordinal];
     const evaluation = planning.plan.evaluations[ordinal];
     if (!statement || !evaluation) return undefined;
     if (ts.isVariableStatement(statement)) {
-      if (sawAssignment) return undefined;
       const binding = bindingByDeclarationOrdinal.get(declarationOrdinal);
       if (!binding) return undefined;
       const declaration = preparedExactLexicalDeclaration(
@@ -4304,7 +4385,6 @@ function preparedExactLexicalModuleInit(
       continue;
     }
 
-    sawAssignment = true;
     if (
       !isPreparedExactScalarModuleAssignment(
         ctx,
