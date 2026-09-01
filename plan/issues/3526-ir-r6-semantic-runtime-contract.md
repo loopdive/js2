@@ -1969,6 +1969,188 @@ shims, and the #2108 coercion-sites baseline. `scripts/*-baseline.json` is
 untouched apart from the sanctioned `check:ir-kind-neutrality` evidence
 refresh above; `scripts/loc-budget-baseline.json` remains main's alone.
 
+## 2026-09-01 F1-S3 implementation plan — generator setReturn boxing under manifest authority (family 1, slice 3)
+
+**Fable lane.** Grounded on `origin/main` at `009b812779` (post-F1-S2 merge
+PR #5396) via a four-probe measurement pass. Opus implements against this
+plan. Governance note: the dormant whole-issue codex claim on #3526 (branch
+`codex/3526-f1-s1-number-boundary`, tip = the merged 2026-08-30 Sol
+correction, ancestor of main, no activity since 08-30) was released as stale
+on 2026-09-01; this slice runs under the slice claim `3526:f1s3`.
+
+This slice migrates the follow-up row both F1 checkpoints named: the
+`gen.setReturn` seam still pins `__box_number` by runtime symbol, chosen by
+presence, outside the frozen manifest's authority.
+
+### Measured facts (verified on the grounded tree; every line quoted in probes)
+
+- **One attachment site.** `attachIrGeneratorSupport`
+  (`src/ir/generator-support.ts:112-125`, generators only per `:82`) attaches
+  `provider = irRuntimeFuncRef("__gen_set_return")` and
+  `boxProvider = irGeneratorSetReturnNeedsBoxing(valueType) ?
+  irRuntimeFuncRef("__box_number") : undefined`; the boxing predicate
+  (`:57-61`) is `val.kind === "f64" || val.kind === "i32"`. Re-attachment is
+  guarded (`:119-122`) and `requireSameProvider` (`:64-67`) makes a
+  binding-kind switch across re-preparation a hard error.
+- **Reads.** `src/ir/lower.ts:2797`
+  (`instr.boxProvider ?? irRuntimeFuncRef("__box_number")`, consumed at
+  `:2808` f64 and `:2812` i32-after-convert; unresolvable box → `resolveFunc`
+  throws → whole-function demote, `:2788-2791`);
+  `collectAttachedGeneratorProviders` (`generator-support.ts:161-163`) feeds
+  pre-sealing observation at `integration.ts:3600-3602`; the sealing
+  agreement check `needsBoxing === (instr.boxProvider !== undefined)`
+  (`prepared-component-dependencies.ts:687-697`); dependency evidence at
+  `:1478-1479`. `boxProvider` exists ONLY on `IrInstrGenSetReturn`
+  (`dialect/js.ts:491`); no `__unbox_number` anywhere in the generator path.
+- **Order.** Inside `compileIrPathFunctions`: manifest freeze
+  (`integration.ts:3557`, `prepareBuiltFnRuntimeManifest`) → generator
+  attach (`:3596`) → Phase-3 lowering (`:4205`). `preparedRuntimeManifest`
+  is a local in scope at the attach point — threading is plumbing, not
+  reordering. Built fns (and thus setReturn value types) exist BEFORE
+  freeze, so freeze-time demand scanning is possible.
+- **Manifest coverage holes.** The manifest walk collects only
+  `instr.kind === "intrinsic"` uses (`intrinsic-support.ts:265`, `:297`); a
+  generator-only module yields NO manifest (`:335` empty-uses early return);
+  the retained provider map is keyed by actual uses. The asyncPlans hook
+  (`builder.requestFeature`, `:341`) is the precedent for freeze-time
+  feature requests from non-intrinsic consumers; the async-prepare policy
+  threading (`integration.ts:2343-2350` → `async-prepare.ts:680/:747/:829`)
+  is the precedent for handing a resolved policy to a prepare step.
+- **The truth table this slice must reproduce EXACTLY.**
+  | lane | today's boxProvider resolution |
+  | --- | --- |
+  | gc-host (`!nativeStrings`) | runtime symbol → `resolveAndObserveCallableProvider` materializes `env.__box_number` |
+  | gc-native-strings host | runtime symbol → native `__box_number` helper via funcMap presence |
+  | standalone / WASI / linear | seam UNREACHABLE — generators demote at BUILD (`from-ast.ts:1255-1271` `jsHostExterns` gate; `imports.ts:2284`) |
+  Note `integrationNumberBoundaryPolicy` says `box: "unsupported"` on
+  native-strings host while this seam boxes natively there — the seam's
+  truth table is WIDER than `numberBoundary` and must NOT reuse it; F1-S1
+  deliberately excluded a native member from `numberBoundary.box`
+  (presence-must-not-widen doc at `integration.ts:776-782`,
+  `runtime-manifest.ts:464-468`).
+- **Test surface.** NO test references `boxProvider` (zero hits) — the
+  attachment is pinned only by src-side checks. Behavior is pinned
+  indirectly: `tests/issue-2951.test.ts:50` (`VALUE_RETURN_GEN`, IR-claimed
+  host, terminal `done:true, value:3`), `:111` (`FOROF_GEN`, with
+  `trackIrOutcomes` anti-vacuity), `:85-89` (standalone must NOT IR-claim
+  the generator), `tests/issue-2035.test.ts:72-75`,
+  `tests/issue-1169f-7a/7b`. No fixture distinguishes the i32 arm of the
+  boxing predicate. `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-440`
+  pins the frozen policy by whole-object equality — every new policy field
+  breaks exactly that one test (F1-S1 and F1-S2 precedent).
+
+### Contract
+
+1. **Policy.** New `RuntimeManifestPolicy` field
+   `generatorNumberBox: { box: "host" | "native" | "unsupported" }`,
+   optional in the type, defaulted to a frozen
+   `GENERATOR_NUMBER_BOX_POLICY_DISABLED` (`box: "unsupported"`),
+   canonicalized at builder construction, published resolved on the frozen
+   manifest — sibling constants, never a widening of `numberBoundary` (whose
+   box arm has no native member by design). Callers: integration projects
+   `{ box: !ctx.nativeStrings ? "host" : "native" }` — the exact measured
+   truth table; `linear-integration.ts` and `stdlib-selfhost.ts` pass
+   disabled (the seam is build-unreachable there; fail closed).
+2. **Freeze-time demand.** `prepareBuiltFnRuntimeManifest` scans
+   `healthyForLower` for generator fns whose `gen.setReturn` needs boxing
+   (the same `irGeneratorSetReturnNeedsBoxing` predicate over the same
+   inputs the attach pass reads — export and reuse it, do not duplicate) and,
+   when present, requests the generator-box feature via the asyncPlans-style
+   hook so a generator-only module still freezes a manifest carrying the
+   provider row. Provider selection by `generatorNumberBox`:
+   `"host"` → the existing `host-callable` capability `number.box` (physical
+   `env.__box_number`, ABI authority `runtime-host-capabilities.ts:123`);
+   `"native"` → a `runtime-callable` provider on the runtime symbol
+   `__box_number` (both implementation kinds exist since F1-S1);
+   `"unsupported"` with demand present → typed
+   `provider-target-unavailable` naming the seam and resolved policy,
+   classified owner-locally (only the demanding generator owners demote).
+3. **Attachment.** `attachIrGeneratorSupport` takes the selected provider
+   ref as a parameter (threaded from the frozen manifest at
+   `integration.ts:3596`) and attaches THAT instead of the hardcoded
+   `irRuntimeFuncRef("__box_number")`. The parameter is required at the
+   integration call site; a defaulted fallback may exist only for tests and
+   must equal today's runtime ref. `requireSameProvider` stays authoritative
+   for re-attachment consistency.
+4. **Lowering.** `lower.ts:2797` keeps its shape; whether the `??` fallback
+   can be retired to a hard error depends on pre-implementation
+   verification V1 — if attachment is proven total for every lowered
+   `gen.setReturn`, retire it (fail closed); if any path lowers un-attached
+   instrs, keep it and say which path.
+5. **Sealing/evidence.** The agreement check
+   (`prepared-component-dependencies.ts:687-697`) and evidence recording
+   (`:1478-1479`) are provider-shape-agnostic; verify they accept an
+   import-bound ref unchanged (V2) rather than assuming.
+
+### Behavior-neutrality obligations (each a test or measured record)
+
+1. Byte parity on the REACHABLE lanes: gc-host and gc-native-strings cells
+   over generator fixtures — `VALUE_RETURN_GEN` (f64 arm) plus a NEW
+   i32-return generator variant (the arm no fixture distinguishes) —
+   byte/sha/WAT/import-set-and-order identical before and after. The F1-S1
+   purity-diff class does not apply here (no intrinsic purity change);
+   ANY WAT delta is a defect.
+2. Standalone/WASI/linear: generators still demote at build; the census
+   (`check:ir-fallbacks`) is output-identical; `tests/issue-2951.test.ts:85-89`
+   stays green untouched.
+3. Import set AND order identical on both host lanes — the binding-kind
+   switch (runtime-bound → import-bound on gc-host) changes the observation
+   path at `integration.ts:3600`; measure that import membership, order and
+   indices do not move (the F1-S2 trigger-widening measurement is the
+   precedent for proving this class non-decorative). If order DOES move,
+   the sanctioned alternative is recorded in the plan: keep the attached
+   ref runtime-bound and thread only the SELECTION (policy authority)
+   through the manifest — behavior identical, physical binding unchanged;
+   record which route was taken and why in the checkpoint.
+4. `tests/issue-4104-...:432-440` whole-shape policy pin gains the new
+   field — the one expected test edit outside the #3526 suites (divergence
+   class recorded by both prior checkpoints).
+5. Non-vacuity: reverting ONLY the attachment threading (hardcoded runtime
+   ref restored) with the schema kept must fail named tests (the
+   manifest-row assertion and a boxProvider-shape assertion — which also
+   closes the measured gap that NO test pins `boxProvider` today), while
+   schema/policy tests stay green.
+
+### Required pre-implementation verifications (record answers in the checkpoint)
+
+1. **Attachment totality.** Can `lower.ts:2797`'s `??` fallback ever fire on
+   the integration path (an un-attached `gen.setReturn` reaching Phase 3)?
+   Trace every producer of the instr; decide the fallback's fate from the
+   answer, not from taste.
+2. **Sealing/evidence shape-agnosticism.** Prove
+   `prepared-component-dependencies.ts:687-697/:1478-1479` and the
+   observation path accept an import-bound `boxProvider` with identical
+   import membership/order on gc-host; if not, take the recorded
+   runtime-bound alternative (obligation 3).
+3. **Freeze-scan equivalence.** The freeze-time demand scan and the attach
+   pass must classify the same population — prove by construction (shared
+   predicate + shared input enumeration), not by sampling.
+4. **i32 arm coverage.** Confirm the new i32-return fixture actually takes
+   the `:2810-2812` convert-then-box path (WAT-inspect once) so the parity
+   cell is not vacuously identical.
+
+### Validation
+
+Typecheck; `check:ir-fallbacks` bare; ratchet chain bare + the
+`LOC_GATE_BASE=$(git rev-parse origin/main)` simulation; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (evidence-line
+refresh via its own flow if line drift trips it), and
+`check:standalone-ir-cutover` locally before pushing; the focused suites:
+issue-2951, issue-2035, issue-1169f-7a/7b, issue-2864, issue-680, all five
+issue-3526 suites, issue-4104/4103; hooks without bypass. Growth allowances
+in this issue file's frontmatter with a dated rationale.
+
+### Explicitly out of scope
+
+The from-ast generator build gate (`jsHostExterns`), `gen.push` /
+`gen.epilogue` / `gen.yieldStar` providers and the `__gen_*` import family,
+legacy generator codegen and the native state machine,
+`compiler-timer-shim-preparation.ts`, `numberBoundary` / `booleanBoundary`
+(untouched), and everything owned by #3525 (multi-prepared ownership —
+check the claim map before touching `integration.ts`; keep that file's diff
+to the freeze scan, the policy projection, and the attach call site).
+
 ## 2026-09-01 F1-S3 pre-implementation verifications — Opus lane
 
 **Branch** `claude/issue-3526-f1s3-generator-boxprovider`, grounded on

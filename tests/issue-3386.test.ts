@@ -81,15 +81,9 @@ describe("#3386 — sync-generator pattern params (standalone, host-free)", () =
     expect(r.value).toBe(42);
   });
 
-  // SKIPPED (#3591) — REAL REGRESSION, not a stale expectation. Bisected to
-  // 1fbb1810 `feat(#3032): W6 … (#3356)` (2026-07-19); green at its parent
-  // 8bc6e1c3. The module-scope generator fn-expr is lifted once per
-  // `compileModuleInitBody` pass with a DIFFERENT state-struct type each time,
-  // and `.next()`'s inline dispatch (emitted between the passes) tests only the
-  // dead pass-1 type → #1344 TypeError. The sibling object-literal-method and
-  // declaration forms below are unaffected and still assert the same semantics.
-  // Re-enable with the fix — see plan/issues/3591-*.md.
-  it.skip("generator function expression array pattern", async () => {
+  // #3591 — a pass-2 generator function expression reaches the final opaque
+  // resume dispatch, including the pattern-parameter state carrier.
+  it("generator function expression array pattern", async () => {
     const r = await run(
       `const f = function* ([x]: number[]) { yield x; };
        export function test(): number { return f([5]).next().value as number; }`,
