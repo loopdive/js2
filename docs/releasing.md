@@ -86,8 +86,11 @@ tags only `sprint/N` (+ `sprint-N/begin`); see `CLAUDE.md` and
    leading `v`, reads both `package.json` versions, and **fails the publish if
    either differs** from the tag. Only when they match does it publish
    `@loopdive/js2`, the `js2wasm` proxy, and JSR. The JSR job builds a
-   name-preserving minified `dist/` package and refuses to publish at 18 MiB,
-   leaving 2 MiB of headroom below JSR's aggregate package limit.
+   name-preserving minified `dist/` package, retains only the declarations
+   reachable from its three public entries, and rejects declaration syntax
+   that the registry forbids (including global/module augmentation). It also
+   refuses to publish at 18 MiB, leaving 2 MiB of headroom below JSR's
+   aggregate package limit.
 
 ## Why the tag travels with the branch (and the merge-method dependency)
 
@@ -115,3 +118,5 @@ For an isolated JSR recovery after a partial release, select `target=jsr` and
 `dry-run=false`. This skips both npm jobs and publishes JSR from the selected
 ref. Use it only after confirming the exact version is absent from JSR and all
 version carriers on that ref match; manual dispatch bypasses the tag verifier.
+The compact-build declaration gate is load-bearing: `jsr publish --dry-run`
+does not exercise every registry-side syntax policy.
