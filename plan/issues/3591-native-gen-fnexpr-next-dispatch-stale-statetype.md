@@ -1,14 +1,27 @@
 ---
 id: 3591
 title: "Native generator fn-expr: .next() dispatch tests a stale pass-1 state-struct type (4 silent regressions from #3032 W6)"
-status: ready
+status: in-progress
 sprint: current
 priority: high
 horizon: m
 goal: standalone-gap
 feasibility: hard
 created: 2026-07-24
-assignee: null
+updated: 2026-09-01
+assignee: ttraenkler/codex-3591-terra-20260901
+reasoning_effort: max
+task_type: conformance
+area: codegen, generators
+es_edition: ES2015
+loc-budget-allow:
+  - src/codegen/generators-native-consumer.ts
+  - src/codegen/context/types.ts
+  - src/codegen/context/create-context.ts
+  - src/codegen/index.ts
+  - tests/issue-3164.test.ts
+  - tests/issue-3386.test.ts
+  - tests/issue-3591.test.ts
 ---
 
 # #3591 — `.next()` on a variable-bound generator function expression throws TypeError (standalone)
@@ -34,6 +47,61 @@ The module reports `success: true` with **zero `env` imports**, then traps out o
 works — only the `.next()/.return()/.throw()` member-call path is broken.
 
 This is a **real product regression**, not a stale test (see Attribution).
+
+## 2026-09-01 current-main re-grounding and implementation plan
+
+The old four skipped root-test cases no longer prove the defect by themselves.
+Commit `49e67ee60a` added the call-free module-init fast path, so those fixtures
+normally stop after pass 1. They remain useful controls, but the implementation
+must be justified by a fixture that forces pass 2.
+
+The defect is still live on `upstream/main` at
+`83b173d8ded5d10ea7d9986f62290334982fdee9`. The authoritative isolated
+standalone runner measured **0 pass / 7 fail** for this exact ES2015 cohort;
+every row throws `TypeError: Generator.prototype.next requires that 'this' be
+a Generator`:
+
+- `built-ins/Iterator/prototype/chunks/underlying-iterator-advanced-in-parallel.js`
+- `built-ins/Iterator/prototype/chunks/underlying-iterator-closed-in-parallel.js`
+- `built-ins/Iterator/prototype/chunks/exhaustion-does-not-call-return.js`
+- `built-ins/Iterator/prototype/windows/underlying-iterator-advanced-in-parallel.js`
+- `built-ins/Iterator/prototype/windows/underlying-iterator-closed-in-parallel.js`
+- `built-ins/Iterator/prototype/windows/exhaustion-does-not-call-return.js`
+- `built-ins/GeneratorPrototype/next/context-method-invocation.js`
+
+The evidence command was
+`node --import tsx scripts/run-test262-paths.mts <seven-path-list> --isolate
+--standalone`. No compiler/test process was active before the lane. The locked
+f841 census and the current-main rerun agree on all seven outcomes.
+
+### Bounded implementation plan
+
+1. Add a host-free red unit fixture that forces module-init pass 2 with an
+   unrelated top-level call and then consumes a module-scope generator function
+   expression through an opaque receiver. Pin `.next`, `.return`, and `.throw`
+   shapes plus zero `env` imports. Do not change production code unless this
+   fixture reproduces the stale brand.
+2. Keep the direct, statically typed generator fast path unchanged. Replace
+   only the opaque `anyref`/`externref` resume-method ladder that snapshots
+   `ctx.nativeGenerators` during body compilation with reserve-then-fill
+   dispatch helpers. Fill their bodies after all producer registrations, next
+   to `fillNativeIteratorLateArms`, using the final state/result types.
+3. Preserve the current argument-evaluate-once, host-generator-mix, abrupt
+   completion, result-carrier, and TypeError miss semantics for each of
+   `next`/`return`/`throw`. Do not memoize capturing generator closures by AST
+   node; current main admits captures and their `__self` state is pass-local.
+4. Re-enable the four `#3591` skips as call-free controls. Run the complete
+   `tests/issue-3164.test.ts` and `tests/issue-3386.test.ts`, the new forced-pass
+   test, and the heterogeneous/abrupt carrier controls in
+   `tests/issue-2864-standalone-generator-carrier.test.ts`.
+5. Rerun the exact seven-row isolated standalone cohort before/after and record
+   zero-loss evidence. Also retain `language/statements/generators/no-yield.js`
+   and `yield-star-before-newline.js` as official controls.
+
+Draft PR #5063 changes a separate result-reader hunk in
+`generators-native-consumer.ts` and does not own the stale dispatch builder.
+This branch must stay independent from #5063 and preserve that PR's sentinel
+reader change when it is eventually rebased.
 
 ## Reproduction / affected shapes
 
