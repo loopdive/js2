@@ -246,6 +246,80 @@ function namespaceMemberNames(statement: ts.Statement): Set<string> {
   return names;
 }
 
+function leftmostTypeReferenceIdentifier(name: ts.EntityName): ts.Identifier {
+  let current = name;
+  while (ts.isQualifiedName(current)) current = current.left;
+  return current;
+}
+
+/**
+ * Visit only identifiers that name another declaration from type syntax.
+ * Property/signature names and generic parameter declarations are deliberately
+ * excluded so a structural type cannot retain an unrelated same-named value.
+ */
+function forEachTypeDeclarationDependencyIdentifier(
+  node: ts.Node,
+  callback: (identifier: ts.Identifier) => void,
+): void {
+  const boundTypeParameters = new Set<string>();
+  const collectTypeParameters = (current: ts.Node): void => {
+    if (ts.isTypeParameterDeclaration(current)) boundTypeParameters.add(current.name.text);
+    ts.forEachChild(current, collectTypeParameters);
+  };
+  collectTypeParameters(node);
+
+  const visit = (current: ts.Node): void => {
+    if (ts.isTypeReferenceNode(current)) {
+      const identifier = leftmostTypeReferenceIdentifier(current.typeName);
+      if (!boundTypeParameters.has(identifier.text)) callback(identifier);
+    } else if (ts.isExpressionWithTypeArguments(current)) {
+      let expression: ts.Expression = current.expression;
+      while (ts.isPropertyAccessExpression(expression)) expression = expression.expression;
+      if (ts.isIdentifier(expression) && !boundTypeParameters.has(expression.text)) callback(expression);
+    }
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+}
+
+function forEachVariableAnnotationTypeDependencyIdentifier(
+  statement: ts.VariableStatement,
+  callback: (identifier: ts.Identifier) => void,
+): void {
+  for (const declaration of statement.declarationList.declarations) {
+    if (declaration.type) forEachTypeDeclarationDependencyIdentifier(declaration.type, callback);
+  }
+}
+
+/**
+ * Retained exported variables contribute named property types to
+ * `typeof Namespace`. Preserve those annotation dependencies without treating
+ * private annotations or exported function signatures as runtime roots.
+ */
+function forEachPublicRuntimeTypeDependencyIdentifier(
+  node: ts.Node,
+  forcedPublicDeclarations: ReadonlySet<ts.Statement>,
+  callback: (identifier: ts.Identifier) => void,
+): void {
+  const visit = (current: ts.Node): void => {
+    if (
+      ts.isVariableStatement(current) &&
+      (forcedPublicDeclarations.has(current) || hasModifier(current, ts.SyntaxKind.ExportKeyword))
+    ) {
+      forEachVariableAnnotationTypeDependencyIdentifier(current, callback);
+      return;
+    }
+    if (ts.isModuleDeclaration(current)) {
+      if (current.body) visit(current.body);
+      return;
+    }
+    if (ts.isSourceFile(current) || ts.isModuleBlock(current)) {
+      for (const statement of current.statements) visit(statement);
+    }
+  };
+  visit(node);
+}
+
 /**
  * Visit identifiers that can affect emitted runtime code or emitted WasmGC
  * type relationships.
@@ -373,9 +447,13 @@ function specializeNamespaceBody(
   sourceFile: ts.SourceFile,
   declaration: ts.ModuleDeclaration,
   roots: ReadonlySet<string>,
-): { content: string; outerReferences: readonly ts.Identifier[] } {
+): {
+  content: string;
+  outerReferences: readonly ts.Identifier[];
+  outerTypeReferences: readonly ts.Identifier[];
+} {
   if (!declaration.body || !ts.isModuleBlock(declaration.body)) {
-    return { content: source, outerReferences: [] };
+    return { content: source, outerReferences: [], outerTypeReferences: [] };
   }
   const ownerByName = new Map<string, Set<ts.Statement>>();
   const removable = new Set<ts.Statement>();
@@ -400,7 +478,12 @@ function specializeNamespaceBody(
   }
   const live = new Set<ts.Statement>();
   const queue: ts.Statement[] = [];
+  const checkerLive = new Set<ts.Statement>();
+  const checkerTypeClosure = new Set<ts.Statement>();
+  const checkerQueue: ts.Statement[] = [];
+  const noForcedPublicDeclarations = new Set<ts.Statement>();
   const outerReferences: ts.Identifier[] = [];
+  const outerTypeReferences: ts.Identifier[] = [];
   for (const root of roots) {
     for (const statement of ownerByName.get(root) ?? []) {
       if (!live.has(statement)) {
@@ -420,6 +503,20 @@ function specializeNamespaceBody(
       queue.push(statement);
     }
   }
+  const markTypeDependency = (identifier: ts.Identifier): void => {
+    const dependencies = ownerByName.get(identifier.text);
+    let foundLocalTypeOwner = false;
+    for (const dependency of dependencies ?? []) {
+      if (!ts.isInterfaceDeclaration(dependency) && !ts.isTypeAliasDeclaration(dependency)) continue;
+      foundLocalTypeOwner = true;
+      if (!checkerTypeClosure.has(dependency)) {
+        checkerTypeClosure.add(dependency);
+        if (!live.has(dependency)) checkerLive.add(dependency);
+        checkerQueue.push(dependency);
+      }
+    }
+    if (!foundLocalTypeOwner) outerTypeReferences.push(identifier);
+  };
   while (queue.length > 0) {
     const statement = queue.shift()!;
     forEachRuntimeIdentifier(statement, (identifier) => {
@@ -436,16 +533,20 @@ function specializeNamespaceBody(
       // can keep the exact declaration (and its own dependencies) alive.
       if (!dependencies) outerReferences.push(identifier);
     });
+    forEachPublicRuntimeTypeDependencyIdentifier(statement, noForcedPublicDeclarations, markTypeDependency);
+  }
+  while (checkerQueue.length > 0) {
+    forEachTypeDeclarationDependencyIdentifier(checkerQueue.shift()!, markTypeDependency);
   }
   let specialized = source;
-  const dead = Array.from(removable).filter((statement) => !live.has(statement));
+  const dead = Array.from(removable).filter((statement) => !live.has(statement) && !checkerLive.has(statement));
   for (const statement of dead.sort((left, right) => right.getStart(sourceFile) - left.getStart(sourceFile))) {
     const start = statement.getStart(sourceFile);
     const end = statement.getEnd();
     specialized =
       specialized.slice(0, start) + blankPreservingLines(specialized.slice(start, end)) + specialized.slice(end);
   }
-  return { content: specialized, outerReferences };
+  return { content: specialized, outerReferences, outerTypeReferences };
 }
 
 function baseModuleView(info: ModuleInfo): ModuleInfo {
@@ -495,6 +596,10 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
 
   const live = new Set<ts.Statement>();
   const queue: ts.Statement[] = [];
+  const checkerLive = new Set<ts.Statement>();
+  const checkerTypeClosure = new Set<ts.Statement>();
+  const checkerQueue: ts.Statement[] = [];
+  const publicSurfaceRoots = new Set<ts.Statement>();
   const namespaceRoots = new Map<ts.ModuleDeclaration, Set<string>>();
   const wholeNamespaces = new Set<ts.ModuleDeclaration>();
   const mark = (statement: ts.Statement): void => {
@@ -558,6 +663,16 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
       mark(owner);
     }
   };
+  const markTypeIdentifierDependency = (node: ts.Identifier): void => {
+    const owners = ownerByName.get(node.text);
+    for (const owner of owners ?? []) {
+      if ((ts.isInterfaceDeclaration(owner) || ts.isTypeAliasDeclaration(owner)) && !checkerTypeClosure.has(owner)) {
+        checkerTypeClosure.add(owner);
+        if (!live.has(owner)) checkerLive.add(owner);
+        checkerQueue.push(owner);
+      }
+    }
+  };
 
   let foundExternalRoot = false;
   for (const requested of demand) {
@@ -567,6 +682,7 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
     foundExternalRoot = true;
     const mergedNamespaceOwners = owners.size > 1 && Array.from(owners).every((owner) => ts.isModuleDeclaration(owner));
     for (const owner of owners) {
+      publicSurfaceRoots.add(owner);
       noteNamespaceUse(owner, mergedNamespaceOwners ? null : memberPath.length > 0 ? memberPath.join(".") : null);
       mark(owner);
     }
@@ -606,6 +722,10 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
         continue;
       }
       forEachRuntimeIdentifier(statement, (identifier) => markIdentifierDependency(identifier, statement));
+      forEachPublicRuntimeTypeDependencyIdentifier(statement, publicSurfaceRoots, markTypeIdentifierDependency);
+    }
+    while (checkerQueue.length > 0) {
+      forEachTypeDeclarationDependencyIdentifier(checkerQueue.shift()!, markTypeIdentifierDependency);
     }
 
     let specializedNamespace = false;
@@ -616,6 +736,7 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
       processedNamespaceRoots.set(namespace, rootKey);
       const specialization = specializeNamespaceBody(info.baseContent, info.baseSourceFile, namespace, roots);
       for (const reference of specialization.outerReferences) markIdentifierDependency(reference);
+      for (const reference of specialization.outerTypeReferences) markTypeIdentifierDependency(reference);
       specializedNamespace = true;
     }
     if (queue.length === 0 && !specializedNamespace) break;
@@ -627,7 +748,7 @@ function specializeModuleForDemand(info: ModuleInfo, demand: ReadonlySet<string>
       content = specializeNamespaceBody(content, info.baseSourceFile, namespace, roots).content;
     }
   }
-  const dead = Array.from(removable).filter((statement) => !live.has(statement));
+  const dead = Array.from(removable).filter((statement) => !live.has(statement) && !checkerLive.has(statement));
   for (const statement of dead.sort(
     (left, right) => right.getStart(info.baseSourceFile) - left.getStart(info.baseSourceFile),
   )) {
