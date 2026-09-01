@@ -13,6 +13,7 @@ area: codegen
 es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
+pr: 5389
 loc-budget-allow:
   - src/codegen/object-runtime.ts
 ---
@@ -183,6 +184,12 @@ RegExp, Promise, generator, or global skip behavior is part of this slice.
   function budget, oracle ratchet, issue-spec coverage, and `git diff --check`
   passed on that head. The LOC gate passed with this issue's explicit
   `src/codegen/object-runtime.ts` allowance for the five-line import expansion.
+- Upstream then released v0.71.0. PR #5389 had no merge-queue entry, so the
+  branch was normally merged with release head
+  `7fffec534b44e344f9c2b2b310b346084eaa66b6`; its version-only delta is
+  disjoint. The focused one-worker matrix passed **5/5** again on the resulting
+  merge head before the checkpoint push. PR #5389 remains the single non-draft
+  upstream delivery for this completed two-row fix.
 - No full 310-row re-census was run after the two exact rows passed: this lane
   preserves the required two-global-compiler-lane cap. Relative to the fresh
   snapshot, the unrerun residual is therefore 113 baseline `fail` rows plus 13
