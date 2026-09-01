@@ -1,7 +1,7 @@
 ---
 id: 3526
 title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
-status: blocked
+status: in-progress
 sprint: Backlog
 created: 2026-07-21
 updated: 2026-08-30
@@ -80,6 +80,44 @@ loc-budget-allow:
   - src/ir/async-prepare.ts
   - src/codegen/stdlib-selfhost.ts
   - src/ir/math-runtime-providers.ts
+  # 2026-09-01 F1-S2 (boolean boundary, +176 net LOC measured against
+  # origin/main dcb6eba6): the `js.boolean.box` intrinsic + feature rows
+  # (intrinsics.ts); the `boolean.box` capability record (the central
+  # catalogue, new in F1-S1 and named here so the grant is not implicit);
+  # the `booleanBoundary` policy, its provider and policy-driven selection
+  # (runtime-manifest.ts); the caller policy projection, the owner-local
+  # boolean partition and the widened materialization trigger
+  # (integration.ts); the explicit disabled policies in the linear and
+  # self-hosted-stdlib adapters. All four cited files already carry an
+  # F1-S1 grant; this line records the F1-S2 rationale against it.
+  - src/ir/runtime-host-capabilities.ts
+  # 2026-09-01 F1-S3 (generator setReturn boxing, +294 net LOC measured against
+  # origin/main 009b8127): the `generatorNumberBox` policy, its two provider
+  # rows and their policy-driven selection (runtime-manifest.ts); the
+  # freeze-time demand hook and the manifest-to-callable derivation
+  # (intrinsic-support.ts); the caller policy projection, the owner-local
+  # generator partition and the threaded attach call site (integration.ts);
+  # the shared demand enumeration and the required provider parameter
+  # (generator-support.ts); the retired `?? __box_number` fallback at the
+  # `gen.setReturn` lowering arm (lower.ts); the explicit disabled policies in
+  # the linear and self-hosted-stdlib adapters. Every cited file except
+  # generator-support.ts already carries an F1-S1/F1-S2 grant; this line
+  # records the F1-S3 rationale against them and adds the one new path.
+  - src/ir/generator-support.ts
+  # 2026-09-01 F1-S4 (boundary residuals, +265 net LOC measured against
+  # origin/main 96f7a3c0): the `js.extern.is_undefined` intrinsic + feature
+  # rows (intrinsics.ts); the `extern.is_undefined` capability record
+  # (runtime-host-capabilities.ts); the `externIsUndefined` policy, its TWO
+  # provider rows and their policy-driven selection (runtime-manifest.ts,
+  # which crosses the 1500-line god-file threshold with this slice); the
+  # migrated strict-undefined arm and the deleted resolver contract entry
+  # (from-ast.ts); the caller policy projection, the owner-local probe
+  # partition and the widened materialization trigger (integration.ts); the
+  # retired `?? irRuntimeFuncRef(<spelling>)` fallbacks on all four `gen.*`
+  # lowering arms (lower.ts); the explicit disabled probe policies in the
+  # linear and self-hosted-stdlib adapters. Every cited path already carries
+  # an F1-S1/F1-S2/F1-S3 grant; this line records the F1-S4 rationale against
+  # them and adds no new path.
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -1626,3 +1664,1565 @@ producer today), and the #2108 coercion-sites baseline. One owner for the
 same file family as F1-S1 minus the async files; check the claim ledger before
 touching `integration.ts` (#3525 codex lane overlaps it — coordinate, never
 parallel-write).
+
+## 2026-09-01 F1-S2 pre-implementation verifications — Opus lane
+
+**Branch** `claude/issue-3526-f1s2-boolean-boundary`, grounded on `origin/main`
+`dcb6eba626eea623c91156b7b8fc44a2d6b3fc00`. Implemented from the 2026-09-01
+F1-S2 plan (boolean-boundary intrinsic), whose template is the landed F1-S1
+machinery, not a re-derivation.
+
+The plan requires these four answers BEFORE any source edit. All four were
+measured on the grounded tree with the migration NOT yet applied.
+
+### 1. Full-repo trace of `hasHostBooleanBox` — the one-arm premise HOLDS
+
+`grep -rn hasHostBooleanBox` over the whole tree (excluding `node_modules` and
+`.git`) returns exactly nine hits, and the executable split is precisely what
+the plan predicted:
+
+| kind | site |
+| --- | --- |
+| from-ast READ (1) | `src/ir/from-ast.ts:7233` — the branded-i32→externref box arm |
+| contract entry (1) | `src/ir/from-ast.ts:421` |
+| implementation (3) | `src/ir/integration.ts:5666`, `src/ir/backend/linear-integration.ts:1537`, `src/codegen/stdlib-selfhost.ts:190` |
+| prose (4) | `src/ir/from-ast.ts:365`, `plan/issues/2955-…:399`, `plan/issues/3526-…:918`, `plan/issues/3526-…:1292` |
+
+**No additional executable read exists**, so the STOP-and-report condition did
+not trigger. There is no `hasNativeBooleanUnbox` and no unbox arm: F1-S2 mints
+ONE intrinsic, not a pair.
+
+### 2. Async non-involvement — proven twice over
+
+- **No `__box_boolean` join.** `grep -rn "__box_boolean" src/ir/` returns seven
+  hits: the one from-ast emission arm, its error message, four prose comments,
+  and the `UNION_IMPORT_FUNC_NAMES` membership row in `integration.ts:7244`.
+  **`src/ir/async-prepare.ts` contains no `box`/`unbox` reference other than
+  its own `js.number.unbox` numeric-tail roundtrip** (`:812-851`), which keys
+  on `js.number.unbox` / `env.__unbox_number` by exact ID and binding. A
+  boolean row cannot reach it. The F1-S1 standalone-cutover failure came from
+  the number side's hidden host-lane fact riding on a raw-import match; the
+  boolean side has no such consumer, so no policy hand-off is needed and none
+  is added.
+- **The async-only capability projection filters by ID, not by value type.**
+  `ASYNC_HOST_CAPABILITY_RECORDS` (`async-runtime-providers.ts`) is
+  `RUNTIME_HOST_CAPABILITY_RECORDS.filter((entry) =>
+  isAsyncHostCapabilityId(entry.capability))`, and
+  `ASYNC_HOST_CAPABILITY_ID_SET` is exactly the seven `async.*` IDs. An
+  `i32`-typed `boolean.box` row IS admissible under
+  `AsyncHostAdapterValueType` (`"externref" | "i32"`) — which is precisely why
+  a value-type filter would have been the wrong guard — but the seven-ID filter
+  excludes it, and `asAsyncHostAdapter` additionally throws on a non-async
+  capability, so the narrowing is checked rather than assumed. No async
+  manifest can acquire the boolean record.
+
+### 3. `box-boolean-fuse.ts` interaction — measured, and it is NIL
+
+The pass is env-gated **default OFF** (`fuseEnabled()` returns `false` unless
+`JS2WASM_UNBOXED_BOOL_FUSE` is set) and matches the direct-codegen
+`logical-ops.ts` if-merge SINK shape, not this coercion boundary. Measured on
+the grounded tree with the pass forced ON and its debug counters enabled, over
+the IR-path boolean fixture plus a logical-value control:
+
+| fixture | fuse counters | bytes fuse OFF | bytes fuse ON |
+| --- | --- | --- | --- |
+| `BOOLSTORE` (`a[0] = n > 2`, IR-emitted) | `fused-sink=0 fused-adjacent=0 leaf-box-call=0 sites=0` | 1754 | 1754 (sha identical) |
+| `LOGICAL` (`if ((a>1)||(b>2))`) | pass declined — no `__is_truthy` in module | 160 | 160 (sha identical) |
+| `BOOLSTORE_LOGICAL` | `sites=0` | 1654 | 1654 (sha identical) |
+
+**The pass never fires on an IR-path body today**, so there is no matched call
+shape to preserve. The obligation is therefore discharged as a *maintained
+zero*: the same measurement is repeated after the migration and must stay at
+`sites=0` with identical shas. (The lowered intrinsic emits through
+`emitPreparedIntrinsic` → `emitter.emitCall(resolveFunc(target))`, i.e. the
+same `call $__box_boolean` leaf, so even a future firing would match.)
+
+### 4. Brand producers — all pure type facts
+
+Every producer of a `boolean: true` i32 `IrType`, enumerated:
+
+| site | what it is |
+| --- | --- |
+| `src/ir/boolean-brand.ts:38` (`irBool()`) | the canonical brand factory; its `IR_BOOL` singleton (`from-ast.ts:2992`) feeds 25 comparison / truthiness / `i32.eqz` / bool-const sites |
+| `from-ast.ts:3825` | `typeNodeToIr` — the `boolean` **type annotation** |
+| `from-ast.ts:7106` | `new Boolean(x)` argument's expected type |
+| `from-ast.ts:7644` | standalone `RegExp.test` result type |
+| `from-ast.ts:7795` | pristine-ES5 `Object.isFrozen` constant-fold result |
+| `backend/linear-integration.ts:1242` | `latticeEvidenceToIr` — a certified `bool` lattice fact |
+
+**None consults `hasHostBooleanBox`, or any other capability predicate, to
+decide whether to produce the branded carrier.** (`:7795` reads
+`cx.resolver?.isAmbientBinding`, an unrelated *binding-provenance* question:
+"is `Object` the pristine ambient global?" — not a lane/capability question.)
+Emission population is therefore a pure type fact both before and after the
+migration, which is what obligation 6's before/after claim-census comparison
+asserts.
+
+### Reachability of the arm — measured, and it is narrow
+
+Worth recording because it bounds every neutrality claim below. With a
+temporary stderr trace at the arm, `pnpm run check:ir-fallbacks` (the fixed
+`playground/examples` corpus) fires the arm **zero** times, and eight
+hand-written candidate shapes (`Map<number, boolean>.set`, `Set<boolean>.add`,
+`any[]` push, `JSON.stringify`, template/string concat, an extern class method,
+a DOM property write) all demote at IR **selection** before reaching it. The
+one shape found that both IR-selects and reaches the arm is the **element
+store into an `any[]` parameter**:
+
+```ts
+export function put(a: any[], n: number): number { a[0] = n > 2; return n; }
+```
+
+That is the `BOOLSTORE` fixture used for every byte cell and for the
+non-vacuity test; `MIXED` combines it with the F1-S1 `Map` memo shape so one
+module carries both boundaries.
+
+## 2026-09-01 F1-S2 implementation checkpoint — Opus lane
+
+Implemented from the 2026-09-01 F1-S2 plan, mirroring the landed F1-S1
+machinery rather than re-deriving it. The four required pre-implementation
+verifications are in the section above; none triggered a STOP.
+
+### What landed
+
+- **`src/ir/intrinsics.ts`** — `js.boolean.box` `(i32) -> externref`,
+  versioned, with a 1:1 feature row, added as a `BOOLEAN_BOUNDARY_*` SIBLING
+  of the number constants (which are unchanged). One ID, not a pair: there is
+  no `js.boolean.unbox` because `__unbox_boolean` has no IR producer. The new
+  `I32_TYPE` param carries no `signed` field, so it matches the branded
+  carrier the arm passes (`signed ?? true` on both sides) while
+  `valTypeEquals` erases the brand itself.
+- **`src/ir/runtime-host-capabilities.ts`** — one record `boolean.box` →
+  `env.__box_boolean` `(i32) -> externref`, inserted in capability-ID sort
+  order between the async prefix and the number rows, so the async prefix
+  keeps its historical position.
+- **`src/ir/runtime-manifest.ts`** — `BooleanBoundaryPolicy`
+  (`box: "host" | "unsupported"` — no `"native"` member, because no native
+  boolean boxer exists), a frozen `BOOLEAN_BOUNDARY_POLICY_DISABLED`, the
+  optional `booleanBoundary` field on `RuntimeManifestPolicy` canonicalized at
+  builder construction and published resolved on the frozen manifest, the one
+  `host.js.boolean.box` provider (`host-callable` → capability `boolean.box`),
+  and its policy branch in `#selectProvider` whose unavailable arm is a typed
+  `provider-target-unavailable` naming the intrinsic and the resolved policy.
+- **`src/ir/from-ast.ts`** — the arm emits the provider-free
+  `js.boolean.box` intrinsic and reads no lane fact; the `hasHostBooleanBox`
+  contract entry, all three implementations and the prose reference are
+  deleted. The branded-i32 gate STAYS, and is load-bearing.
+- **`src/ir/integration.ts`** — `integrationBooleanBoundaryPolicy`
+  (`{ box: !ctx.nativeStrings ? "host" : "unsupported" }`, the exact former
+  truth table), the owner-local `unsupportedBooleanBoundaryIntrinsic`
+  partition run in the same pass as the number one, and the one-line trigger
+  widening.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `BOOLEAN_BOUNDARY_POLICY_DISABLED` explicitly.
+- **`tests/issue-3526-boolean-boundary-intrinsic.test.ts`** (new, 16 tests).
+
+`src/ir/intrinsic-support.ts` needed **no edit**: its attachment and
+admitted-target tables are driven by `RUNTIME_PROVIDERS` ×
+`INTRINSIC_DEFINITIONS`, so the new `host-callable` row is picked up by
+construction. Neither did `src/ir/backend/legality.ts` — its linear
+`intrinsic` arm is an allowlist, so `js.boolean.box` falls to the default
+reject. Neither did `src/ir/async-prepare.ts`, per verification 2: unlike the
+number side, this family has no async consumer, so no policy hand-off exists
+to thread.
+
+### Measured neutrality
+
+**Byte parity — 25/25 cells identical, WAT included.** Five fixtures
+(`BOOLSTORE` = the element store; `BOOLSTORE2` = two arms in one owner;
+`MIXED` = the boolean store PLUS the F1-S1 `Map` memo in one module; `CLEAN` =
+a Math-only control; `MEMO` = F1-S1's own fixture) × five lanes (gc-host,
+gc-native-strings, standalone, WASI, linear), compiled before and after on the
+same tree. Every cell matches on byte length, binary sha256, and import set
+AND order; a file-by-file diff of all 25 emitted WAT texts is empty.
+
+**This slice produced NO purity-class WAT diff at all** — the one divergence
+F1-S1 had to record. The reason is specific and worth keeping: F1-S1's boxed
+value was anchored into an `(local $$irN externref)` spill that the pure
+intrinsic no longer needed, whereas the boolean box's result is consumed
+immediately by its element store and was never spilled. The plan permitted
+that diff class; none appeared.
+
+| fixture | gc-host | gc-native-strings | standalone | WASI | linear |
+| --- | --- | --- | --- | --- | --- |
+| `BOOLSTORE` | 1754 ✓ | 23758 ✓ | 50462 ✓ | 50489 ✓ | 4918 ✓ |
+| `BOOLSTORE2` | 1643 ✓ | 24001 ✓ | 50688 ✓ | 50715 ✓ | 4958 ✓ |
+| `MIXED` | 2188 ✓ | 26289 ✓ | 124929 ✓ | 103377 ✓ | 5140 ✓ |
+| `CLEAN` | 117 ✓ | 21976 ✓ | 22591 ✓ | 22618 ✓ | 4883 ✓ |
+| `MEMO` | 584 ✓ | 24596 ✓ | 124959 ✓ | 103399 ✓ | 5118 ✓ |
+
+(✓ = bytes, sha256, imports and WAT all identical before/after.)
+
+**Imports and order.** Identical in every cell. The host-lane `BOOLSTORE`
+import list is `__box_boolean, __get_undefined, __unbox_number, __box_number`;
+`MIXED` is `Map_new, Map_get, Map_set, __unbox_number, __box_number,
+__box_boolean, __extern_is_undefined, __get_undefined`.
+
+**Census.** `pnpm run check:ir-fallbacks` is output-identical (diffed, not
+eyeballed); unintended, module-level and post-claim buckets all still empty.
+
+**Outcome-code shift (obligation 4).** Exactly the F1-S1 divergence-4 class,
+and nothing else — the only non-byte delta anywhere in the 25 cells:
+
+| lane | before | after |
+| --- | --- | --- |
+| gc-native-strings, standalone, WASI | `operand-coercion-unsupported` / `build` | `late-preparation-unsupported` / `resolve` |
+
+Both demote to legacy, and the emitted bytes on those lanes are measured
+identical. `MIXED` on gc-native-strings shows the two boundaries demoting
+side by side, each naming its own policy.
+
+**The trigger widening is NOT decorative — measured.** With the
+`js.boolean.box` arm removed from `preregisterDynamicSupport`'s recognizer and
+everything else left in place, `BOOLSTORE` and `BOOLSTORE2` on gc-host change
+sha (same byte length, different content): the union family materializes later,
+moving `__unbox_number` from type 11 to type 15 and `__box_number` from 12 to
+16. That is import-order/index drift of exactly the kind obligation 2 forbids,
+so the one-line widening is load-bearing and its removal is caught.
+
+**`box-boolean-fuse` (verification 3) — the zero is maintained.** Re-measured
+after the migration with the pass forced on and its debug counters enabled:
+still `fused-sink=0 fused-adjacent=0 leaf-box-call=0 sites=0` on every fixture,
+and every sha identical both before/after the migration and fuse-on/fuse-off.
+
+**Emission population unchanged (obligation 6).** Asserted directly rather
+than argued: `lowerFill` lowers the same source under a resolver that answers
+the deleted predicate `true` and one that answers it `false`, and the two IR
+bodies are shape-identical (same intrinsics, same call targets) — because the
+front-end no longer asks. Nothing that was not emitted before is emitted now.
+
+### Non-vacuity — verified by the specified revert-only-the-arm check
+
+Reverting ONLY the from-ast arm to its direct `emitCall(env.__box_boolean)`
+form while keeping the entire schema, then re-running the suite:
+
+- **4 tests fail**, and they are exactly the two named classes — the
+  intrinsic-emission assertion ("lowers the branded carrier to the
+  provider-free intrinsic", plus its lane-freedom twin) and the owner-local
+  demote code ("demotes only the requesting owner …" and its
+  standalone/WASI sibling);
+- **all 9 schema / policy / freeze-discipline tests stay green**, as the plan
+  requires.
+
+Worth stating plainly: the host-lane byte-parity test does NOT distinguish the
+two implementations (the bytes are identical by construction — that is the
+point of the slice), so it is deliberately not relied on for non-vacuity. The
+IR-level assertion is.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **One test outside the #3526 suites needed a one-field update.**
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` asserts the frozen
+   manifest policy by exact object equality, and the policy now publishes
+   `booleanBoundary` alongside `numberBoundary`. This is the same mechanical
+   consequence F1-S1 had when it introduced `numberBoundary` into that
+   assertion. Every #3526 F1-S1 test and both async suites are otherwise
+   green and untouched.
+2. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned
+   exception, handled exactly as the F1-S1 checkpoint prescribes. No verdict,
+   kind, placement, ratchet count or `settledBy` rationale changed — only
+   citation line numbers moved.
+
+   Pre-merge this branch carried three drifted citations plus the `generated`
+   date (`forof.string` `integration.ts` 6058→6112; `string.len`
+   `linear-integration.ts` 1614→1617; `vec.new_fixed` `from-ast.ts`
+   4542→4534). Main's own refresh has since absorbed two of them, so **the
+   shipped diff is ONE line**: `forof.string`'s `src/ir/integration.ts`
+   citation, 6051 (main's value) → **6105**.
+
+   That final number is neither side's, which is the trap this note exists to
+   flag: main moved the line one way and this branch's +56 LOC in the same
+   file moves it the other, so the merge resolution had to RE-DERIVE it from
+   the gate rather than pick a side or do arithmetic. Patched surgically in
+   both rounds rather than by committing the regenerator's output, which
+   reflows every array (measured: a 354-line diff for a 1-line change). The
+   semantic delta was established each time by normalising both JSON
+   documents and diffing those, so "only this line" is measured, not assumed.
+
+### Reachability, stated as a limit rather than a claim
+
+The migrated arm is narrow: it fires **zero** times on the fixed
+`playground/examples` corpus, and eight of nine candidate source shapes demote
+at IR *selection* before reaching it. Everything above is therefore measured on
+the one shape that does reach it (an element store of a comparison result into
+an `any[]`), plus hand-built owners for the manifest-level obligations. The
+neutrality result is strong for that population and says nothing about shapes
+that cannot reach the arm today — which is also why the census is unchanged.
+
+### Validation run
+
+Green: TypeScript 7 and TypeScript 5 typecheck; `check:ir-fallbacks` (bare,
+output-identical); the ratchet chain bare AND under
+`LOC_GATE_BASE=$(git rev-parse origin/main)` (`dcb6eba6`) — loc, func,
+coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (after the refresh
+above), `check:test-vacuity-shapes`; `lint`; `prettier --check` over
+`src`/`tests`/`scripts`; and — F1-S1's one CI failure —
+`check:standalone-ir-cutover-corpus`, which passes with `derived=19/19`,
+`units=47/47`, `terminal=38/38`. The new 16-test suite, the F1-S1
+number-boundary suite, both #3526 manifest/math suites and both async suites
+(#4103/#4104) are green.
+
+**Pre-existing failures, measured on a clean `origin/main` worktree at
+`dcb6eba6` and NOT caused by this change-set** — identical failures on base
+and branch: `tests/equivalence/arguments-nested-and-loops.test.ts` (1) and
+`tests/equivalence/logical-conditional-identity.test.ts` (3);
+`tests/ir-backend-emitter.test.ts` (1), `tests/ir-bytecode-proof.test.ts` (1),
+`tests/ir-scaffold.test.ts` (1) and `tests/issue-1058-ir-inline-dag.test.ts`
+(1). The last of those was worth checking rather than assuming, since a pure
+intrinsic can in principle change an inlining decision; it fails identically
+on base.
+
+### Not touched (per the plan's scope discipline)
+
+Generator `setReturn`'s `boxProvider`, `compiler-timer-shim-preparation.ts`,
+every direct codegen `__box_boolean` handler and the `box-boolean-fuse`
+peephole itself, `__box_symbol` / `$AnyValue`, `__unbox_boolean`, the timer
+shims, and the #2108 coercion-sites baseline. `scripts/*-baseline.json` is
+untouched apart from the sanctioned `check:ir-kind-neutrality` evidence
+refresh above; `scripts/loc-budget-baseline.json` remains main's alone.
+
+## 2026-09-01 F1-S3 implementation plan — generator setReturn boxing under manifest authority (family 1, slice 3)
+
+**Fable lane.** Grounded on `origin/main` at `009b812779` (post-F1-S2 merge
+PR #5396) via a four-probe measurement pass. Opus implements against this
+plan. Governance note: the dormant whole-issue codex claim on #3526 (branch
+`codex/3526-f1-s1-number-boundary`, tip = the merged 2026-08-30 Sol
+correction, ancestor of main, no activity since 08-30) was released as stale
+on 2026-09-01; this slice runs under the slice claim `3526:f1s3`.
+
+This slice migrates the follow-up row both F1 checkpoints named: the
+`gen.setReturn` seam still pins `__box_number` by runtime symbol, chosen by
+presence, outside the frozen manifest's authority.
+
+### Measured facts (verified on the grounded tree; every line quoted in probes)
+
+- **One attachment site.** `attachIrGeneratorSupport`
+  (`src/ir/generator-support.ts:112-125`, generators only per `:82`) attaches
+  `provider = irRuntimeFuncRef("__gen_set_return")` and
+  `boxProvider = irGeneratorSetReturnNeedsBoxing(valueType) ?
+  irRuntimeFuncRef("__box_number") : undefined`; the boxing predicate
+  (`:57-61`) is `val.kind === "f64" || val.kind === "i32"`. Re-attachment is
+  guarded (`:119-122`) and `requireSameProvider` (`:64-67`) makes a
+  binding-kind switch across re-preparation a hard error.
+- **Reads.** `src/ir/lower.ts:2797`
+  (`instr.boxProvider ?? irRuntimeFuncRef("__box_number")`, consumed at
+  `:2808` f64 and `:2812` i32-after-convert; unresolvable box → `resolveFunc`
+  throws → whole-function demote, `:2788-2791`);
+  `collectAttachedGeneratorProviders` (`generator-support.ts:161-163`) feeds
+  pre-sealing observation at `integration.ts:3600-3602`; the sealing
+  agreement check `needsBoxing === (instr.boxProvider !== undefined)`
+  (`prepared-component-dependencies.ts:687-697`); dependency evidence at
+  `:1478-1479`. `boxProvider` exists ONLY on `IrInstrGenSetReturn`
+  (`dialect/js.ts:491`); no `__unbox_number` anywhere in the generator path.
+- **Order.** Inside `compileIrPathFunctions`: manifest freeze
+  (`integration.ts:3557`, `prepareBuiltFnRuntimeManifest`) → generator
+  attach (`:3596`) → Phase-3 lowering (`:4205`). `preparedRuntimeManifest`
+  is a local in scope at the attach point — threading is plumbing, not
+  reordering. Built fns (and thus setReturn value types) exist BEFORE
+  freeze, so freeze-time demand scanning is possible.
+- **Manifest coverage holes.** The manifest walk collects only
+  `instr.kind === "intrinsic"` uses (`intrinsic-support.ts:265`, `:297`); a
+  generator-only module yields NO manifest (`:335` empty-uses early return);
+  the retained provider map is keyed by actual uses. The asyncPlans hook
+  (`builder.requestFeature`, `:341`) is the precedent for freeze-time
+  feature requests from non-intrinsic consumers; the async-prepare policy
+  threading (`integration.ts:2343-2350` → `async-prepare.ts:680/:747/:829`)
+  is the precedent for handing a resolved policy to a prepare step.
+- **The truth table this slice must reproduce EXACTLY.**
+  | lane | today's boxProvider resolution |
+  | --- | --- |
+  | gc-host (`!nativeStrings`) | runtime symbol → `resolveAndObserveCallableProvider` materializes `env.__box_number` |
+  | gc-native-strings host | runtime symbol → native `__box_number` helper via funcMap presence |
+  | standalone / WASI / linear | seam UNREACHABLE — generators demote at BUILD (`from-ast.ts:1255-1271` `jsHostExterns` gate; `imports.ts:2284`) |
+  Note `integrationNumberBoundaryPolicy` says `box: "unsupported"` on
+  native-strings host while this seam boxes natively there — the seam's
+  truth table is WIDER than `numberBoundary` and must NOT reuse it; F1-S1
+  deliberately excluded a native member from `numberBoundary.box`
+  (presence-must-not-widen doc at `integration.ts:776-782`,
+  `runtime-manifest.ts:464-468`).
+- **Test surface.** NO test references `boxProvider` (zero hits) — the
+  attachment is pinned only by src-side checks. Behavior is pinned
+  indirectly: `tests/issue-2951.test.ts:50` (`VALUE_RETURN_GEN`, IR-claimed
+  host, terminal `done:true, value:3`), `:111` (`FOROF_GEN`, with
+  `trackIrOutcomes` anti-vacuity), `:85-89` (standalone must NOT IR-claim
+  the generator), `tests/issue-2035.test.ts:72-75`,
+  `tests/issue-1169f-7a/7b`. No fixture distinguishes the i32 arm of the
+  boxing predicate. `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-440`
+  pins the frozen policy by whole-object equality — every new policy field
+  breaks exactly that one test (F1-S1 and F1-S2 precedent).
+
+### Contract
+
+1. **Policy.** New `RuntimeManifestPolicy` field
+   `generatorNumberBox: { box: "host" | "native" | "unsupported" }`,
+   optional in the type, defaulted to a frozen
+   `GENERATOR_NUMBER_BOX_POLICY_DISABLED` (`box: "unsupported"`),
+   canonicalized at builder construction, published resolved on the frozen
+   manifest — sibling constants, never a widening of `numberBoundary` (whose
+   box arm has no native member by design). Callers: integration projects
+   `{ box: !ctx.nativeStrings ? "host" : "native" }` — the exact measured
+   truth table; `linear-integration.ts` and `stdlib-selfhost.ts` pass
+   disabled (the seam is build-unreachable there; fail closed).
+2. **Freeze-time demand.** `prepareBuiltFnRuntimeManifest` scans
+   `healthyForLower` for generator fns whose `gen.setReturn` needs boxing
+   (the same `irGeneratorSetReturnNeedsBoxing` predicate over the same
+   inputs the attach pass reads — export and reuse it, do not duplicate) and,
+   when present, requests the generator-box feature via the asyncPlans-style
+   hook so a generator-only module still freezes a manifest carrying the
+   provider row. Provider selection by `generatorNumberBox`:
+   `"host"` → the existing `host-callable` capability `number.box` (physical
+   `env.__box_number`, ABI authority `runtime-host-capabilities.ts:123`);
+   `"native"` → a `runtime-callable` provider on the runtime symbol
+   `__box_number` (both implementation kinds exist since F1-S1);
+   `"unsupported"` with demand present → typed
+   `provider-target-unavailable` naming the seam and resolved policy,
+   classified owner-locally (only the demanding generator owners demote).
+3. **Attachment.** `attachIrGeneratorSupport` takes the selected provider
+   ref as a parameter (threaded from the frozen manifest at
+   `integration.ts:3596`) and attaches THAT instead of the hardcoded
+   `irRuntimeFuncRef("__box_number")`. The parameter is required at the
+   integration call site; a defaulted fallback may exist only for tests and
+   must equal today's runtime ref. `requireSameProvider` stays authoritative
+   for re-attachment consistency.
+4. **Lowering.** `lower.ts:2797` keeps its shape; whether the `??` fallback
+   can be retired to a hard error depends on pre-implementation
+   verification V1 — if attachment is proven total for every lowered
+   `gen.setReturn`, retire it (fail closed); if any path lowers un-attached
+   instrs, keep it and say which path.
+5. **Sealing/evidence.** The agreement check
+   (`prepared-component-dependencies.ts:687-697`) and evidence recording
+   (`:1478-1479`) are provider-shape-agnostic; verify they accept an
+   import-bound ref unchanged (V2) rather than assuming.
+
+### Behavior-neutrality obligations (each a test or measured record)
+
+1. Byte parity on the REACHABLE lanes: gc-host and gc-native-strings cells
+   over generator fixtures — `VALUE_RETURN_GEN` (f64 arm) plus a NEW
+   i32-return generator variant (the arm no fixture distinguishes) —
+   byte/sha/WAT/import-set-and-order identical before and after. The F1-S1
+   purity-diff class does not apply here (no intrinsic purity change);
+   ANY WAT delta is a defect.
+2. Standalone/WASI/linear: generators still demote at build; the census
+   (`check:ir-fallbacks`) is output-identical; `tests/issue-2951.test.ts:85-89`
+   stays green untouched.
+3. Import set AND order identical on both host lanes — the binding-kind
+   switch (runtime-bound → import-bound on gc-host) changes the observation
+   path at `integration.ts:3600`; measure that import membership, order and
+   indices do not move (the F1-S2 trigger-widening measurement is the
+   precedent for proving this class non-decorative). If order DOES move,
+   the sanctioned alternative is recorded in the plan: keep the attached
+   ref runtime-bound and thread only the SELECTION (policy authority)
+   through the manifest — behavior identical, physical binding unchanged;
+   record which route was taken and why in the checkpoint.
+4. `tests/issue-4104-...:432-440` whole-shape policy pin gains the new
+   field — the one expected test edit outside the #3526 suites (divergence
+   class recorded by both prior checkpoints).
+5. Non-vacuity: reverting ONLY the attachment threading (hardcoded runtime
+   ref restored) with the schema kept must fail named tests (the
+   manifest-row assertion and a boxProvider-shape assertion — which also
+   closes the measured gap that NO test pins `boxProvider` today), while
+   schema/policy tests stay green.
+
+### Required pre-implementation verifications (record answers in the checkpoint)
+
+1. **Attachment totality.** Can `lower.ts:2797`'s `??` fallback ever fire on
+   the integration path (an un-attached `gen.setReturn` reaching Phase 3)?
+   Trace every producer of the instr; decide the fallback's fate from the
+   answer, not from taste.
+2. **Sealing/evidence shape-agnosticism.** Prove
+   `prepared-component-dependencies.ts:687-697/:1478-1479` and the
+   observation path accept an import-bound `boxProvider` with identical
+   import membership/order on gc-host; if not, take the recorded
+   runtime-bound alternative (obligation 3).
+3. **Freeze-scan equivalence.** The freeze-time demand scan and the attach
+   pass must classify the same population — prove by construction (shared
+   predicate + shared input enumeration), not by sampling.
+4. **i32 arm coverage.** Confirm the new i32-return fixture actually takes
+   the `:2810-2812` convert-then-box path (WAT-inspect once) so the parity
+   cell is not vacuously identical.
+
+### Validation
+
+Typecheck; `check:ir-fallbacks` bare; ratchet chain bare + the
+`LOC_GATE_BASE=$(git rev-parse origin/main)` simulation; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (evidence-line
+refresh via its own flow if line drift trips it), and
+`check:standalone-ir-cutover` locally before pushing; the focused suites:
+issue-2951, issue-2035, issue-1169f-7a/7b, issue-2864, issue-680, all five
+issue-3526 suites, issue-4104/4103; hooks without bypass. Growth allowances
+in this issue file's frontmatter with a dated rationale.
+
+### Explicitly out of scope
+
+The from-ast generator build gate (`jsHostExterns`), `gen.push` /
+`gen.epilogue` / `gen.yieldStar` providers and the `__gen_*` import family,
+legacy generator codegen and the native state machine,
+`compiler-timer-shim-preparation.ts`, `numberBoundary` / `booleanBoundary`
+(untouched), and everything owned by #3525 (multi-prepared ownership —
+check the claim map before touching `integration.ts`; keep that file's diff
+to the freeze scan, the policy projection, and the attach call site).
+
+## 2026-09-01 F1-S3 pre-implementation verifications — Opus lane
+
+**Branch** `claude/issue-3526-f1s3-generator-boxprovider`, grounded on
+`origin/main` `009b812779`. Implemented from the 2026-09-01 F1-S3 plan, whose
+template is the landed F1-S1/F1-S2 machinery.
+
+All four answers were measured on the grounded tree BEFORE any source edit.
+Two of them decide routes the plan deliberately left open, and both decisions
+below are the measurement's, not a preference.
+
+### V1 — attachment totality: the `??` fallback is UNREACHABLE, so it is retired
+
+Traced end to end rather than sampled:
+
+| step | finding |
+| --- | --- |
+| producers | ONE: `builder.ts:1425` (`emitGenSetReturn`), reached only from the `funcKind === "generator"` return arm at `from-ast.ts:1985-2004`. |
+| middle end | `inline-small.ts:924` and `monomorphize.ts:891` only rename operands; both spread the instr, so an attached `boxProvider` survives — and both run BEFORE attachment anyway. |
+| lowering entry | ONE production site: `integration.ts:4205` → `lowerIrEntryFunction` → `lowerIrFunctionToWasm`. `linear-integration.ts`, `backend/porffor`, `stdlib-selfhost` lower non-generator bodies only, and NO test lowers a `gen.setReturn` (zero hits across `tests/`). |
+| ordering | attachment (`integration.ts:3596`) precedes Phase 3 (`:4205`), and every later `healthyForLower` assignment is a `retainHealthyOwners` FILTER — nothing joins the lowered set after attachment. |
+| the one splice risk | `canInline` admits a single-block callee with a `return` terminator, which a trivial generator can satisfy — so a `gen.setReturn` could in principle land in a NON-generator owner, which `attachIrGeneratorSupport` skips. That case is already rejected earlier in the same lowering arm by the `func.generatorBufferSlot === undefined` guard, which fires before the boxing reference is read. Slots are not migrated by the inliner, so the guard cannot be satisfied by a spliced owner. |
+
+One divergence between the two type maps is worth recording because it is
+NOT a hazard: `valueTypesOf` (attachment) covers block args, while lowering's
+`typeOf` covers params and instruction results only. A block-arg-typed stash
+would therefore be attached and then throw in `typeOf` — demoting the owner,
+never silently mis-lowering. In the other direction the attachment map is a
+superset, so anything lowering can type, attachment can too.
+
+**Decision: retire the fallback.** `lower.ts` now throws
+`gen.setReturn numeric stash has no prepared boxing provider` instead of
+re-deciding the symbol locally. Failing closed demotes one owner; the old
+`??` silently re-introduced a second authority for the very symbol this slice
+exists to give one.
+
+### V2 — sealing/evidence shape: the import-bound route is NOT available
+
+The plan asked whether an import-bound `boxProvider` survives sealing with
+identical import membership and order, and named a runtime-bound alternative
+if order moved. The measurement did not get as far as import order.
+
+Attaching `irImportFuncRef("env", "__box_number", "__box_number")` in place of
+the runtime ref — one line, everything else unchanged — was compiled on both
+reachable lanes:
+
+| fixture | gc-host | gc-native-strings |
+| --- | --- | --- |
+| `VALUE_RETURN_GEN` | **compile FAILS** — `invariant/unexpected-internal-throw` | **compile FAILS** — same |
+| `I32_RETURN_GEN` | **compile FAILS** — same | **compile FAILS** — same |
+| `REF_RETURN_GEN` (no boxing) | unaffected, 341 bytes | unaffected, 22223 bytes |
+
+The error is `callable-provider resolution requires a runtime or intrinsic
+reference`, thrown by `resolveAndObserveCallableProvider`
+(`integration.ts:5927`) — a deliberate precondition of the observation path
+that `collectAttachedGeneratorProviders` feeds. It is not import-order drift
+to be absorbed; it is a designed refusal, and it fails the owner outright
+rather than demoting cleanly.
+
+**Decision: take the sanctioned runtime-bound alternative** (plan obligation
+3). The attached reference stays `runtime`-bound and only the SELECTION is
+threaded through the manifest: the frozen manifest decides which physical
+symbol answers the seam — via the central `number.box` capability record on
+the host arm, via the union-native runtime symbol on the native arm — and the
+seam binds that symbol the one way its observation path admits. The physical
+target is unchanged on both lanes, which is why the slice is byte-neutral.
+
+Sealing itself is shape-agnostic and was not the constraint:
+`recordExternalCallable` (`prepared-component-dependencies.ts:1120`) keys on
+`irCallableBindingKey` for every binding kind, and the agreement check at
+`:687-697` reads only `needsBoxing === (instr.boxProvider !== undefined)`.
+Both accept the runtime-bound attachment unchanged, as they did before.
+
+### V3 — freeze-scan equivalence: one population, by construction
+
+The freeze-time demand scan and the attachment pass share a single
+enumeration, `forEachIrGeneratorSetReturn` (`generator-support.ts`): the same
+`funcKind` gate, the same `valueTypesOf` map, the same deep instruction walk
+and the same `irGeneratorSetReturnNeedsBoxing` predicate. `irGeneratorNumberBoxDemand`
+is a thin fold over it; the attachment pass calls the same predicate over the
+same map. A test battery (f64 / i32 / externref stashes, flat and nested in a
+statement buffer, plus a non-generator owner) asserts the two verdicts are
+equal case by case rather than relying on the shared code alone.
+
+The scan runs at freeze, the attachment later, so the population can only
+SHRINK in between (owners failing other preparation steps). That direction is
+harmless: the manifest carries a row nobody consumes. The opposite direction
+is a preparation defect and is caught by V1's fail-closed throw.
+
+### V4 — i32 arm coverage: measured, and the plan's fixture had to be replaced
+
+The plan's `type i32 = number` generator does NOT reach the arm. Five variants
+of the native-annotation shape were compiled and every one demotes at IR
+selection with `type-resolution-unsupported`, so its `f64.convert_i32_s` is
+LEGACY output and the parity cell would have been vacuous.
+
+The shapes that do IR-claim and take the `lower.ts` convert-then-box path are
+i32-valued expressions on an ordinary `number` parameter. Two are now fixtures,
+both verified by WAT inspection to emit `f64.convert_i32_s` → `call $__box_number`
+→ `call $__gen_set_return`, and both confirmed IR-claimed
+(`legacyBodyEmitted: false`, owner in `irFirstSkipped`):
+
+- `I32_RETURN_GEN` — `return n | 0` (a numeric i32; the headline i32 cell);
+- `BOOL_RETURN_GEN` — `return n > 2` (a boolean-branded i32).
+
+**Out-of-scope observation, recorded because the second fixture exposes it:**
+a generator returning a boolean yields `{done: true, value: 1}`, not `true` —
+the branded i32 is boxed through `__box_number`. Measured identical on the IR
+path and the legacy path (`IR_FIRST=1` and `=0` both answer `1`), so it is a
+pre-existing whole-compiler conformance gap, not an IR-path defect and not
+something this byte-neutral slice may change. Worth its own issue.
+
+## 2026-09-01 F1-S3 implementation checkpoint — Opus lane
+
+### What landed
+
+- **`src/ir/runtime-manifest.ts`** — `GeneratorNumberBoxPolicy`
+  (`box: "host" | "native" | "unsupported"`), a frozen
+  `GENERATOR_NUMBER_BOX_POLICY_DISABLED`, the optional `generatorNumberBox`
+  field canonicalized at builder construction and published resolved on the
+  frozen manifest; the `js.generator.number-box` feature row; the two provider
+  rows (`host.…` → `host-callable` on capability `number.box`, `native.…` →
+  `runtime-callable` on `__box_number`); the policy branch in `#selectProvider`
+  whose unavailable arm is a typed `provider-target-unavailable` naming the
+  feature and the resolved policy. Sibling constants throughout — the number
+  boundary's box arm still has no `"native"` member, and a test pins that.
+- **`src/ir/generator-support.ts`** — the shared
+  `forEachIrGeneratorSetReturn` enumeration, `irGeneratorNumberBoxDemand`, and
+  `attachIrGeneratorSupport(fn, numberBoxProvider)` with the provider as a
+  REQUIRED parameter. A numeric stash with no supplied provider is a hard
+  error, not a fallback to a spelled symbol.
+- **`src/ir/intrinsic-support.ts`** — `prepareIrRuntimeManifest` takes
+  `generatorNumberBoxDemand` and requests the feature the asyncPlans way, so a
+  generator-only module (which yields NO intrinsic uses) still freezes a
+  manifest carrying the row; `preparedGeneratorNumberBoxProvider` derives the
+  attachable callable from the frozen manifest's selected provider.
+- **`src/ir/integration.ts`** — `integrationGeneratorNumberBoxPolicy`
+  (`{ box: !ctx.nativeStrings ? "host" : "native" }`, the exact measured truth
+  table), the owner-local unsupported partition in the same pass as the number
+  and boolean ones, the freeze-time demand argument, and the threaded attach
+  call site. Four touch points, per the #3525 co-ownership constraint.
+- **`src/ir/lower.ts`** — the `?? irRuntimeFuncRef("__box_number")` fallback is
+  gone (V1); the arm shape is otherwise unchanged.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `GENERATOR_NUMBER_BOX_POLICY_DISABLED` explicitly.
+- **`tests/issue-3526-generator-number-box.test.ts`** (new, 22 tests).
+
+`prepared-component-dependencies.ts` needed **no edit** (V2): the agreement
+check and the evidence recorder are binding-kind agnostic and the attachment
+stays runtime-bound. Neither did `intrinsic-support.ts`'s admitted-target
+tables — this family has no intrinsic instruction, so nothing keys on it.
+
+Note the production consequence of the truth table: the `"unsupported"` arm is
+**unreachable in integration** (both lanes resolve to a supported arm, and
+generators demote at BUILD on standalone/WASI/linear). That is required by
+neutrality — a reachable unsupported arm would be a behavior change — so the
+owner-local partition is exercised by tests and by the linear/self-hosted
+adapters' explicit disabled policies, not by a production lane.
+
+### Measured neutrality
+
+**Byte parity — 35/35 cells identical, WAT included.** Seven fixtures
+(`VALUE_RETURN_GEN` = f64 arm; `I32_RETURN_GEN` = `n | 0`, the i32 arm;
+`BOOL_RETURN_GEN` = `n > 2`, the branded-i32 arm; `FOROF_GEN`;
+`REF_RETURN_GEN` = the no-boxing control; `VOID_GEN` = no `setReturn` at all;
+`CLEAN` = a generator-free control) × five lanes, compiled before and after on
+the same tree. Every cell matches on byte length, binary sha256, import set
+AND order; a file-by-file diff of all 35 emitted WAT texts is empty. The
+measurement was repeated after the V1 fallback retirement and is unchanged.
+
+| fixture | gc-host | gc-native-strings | standalone | WASI | linear |
+| --- | --- | --- | --- | --- | --- |
+| `VALUE_RETURN_GEN` | 376 ✓ | 22240 ✓ | 49963 ✓ | 49990 ✓ | demote ✓ |
+| `I32_RETURN_GEN` | 466 ✓ | 22329 ✓ | 50026 ✓ | 50053 ✓ | demote ✓ |
+| `BOOL_RETURN_GEN` | 367 ✓ | 22231 ✓ | 49929 ✓ | 49956 ✓ | demote ✓ |
+| `FOROF_GEN` | 416 ✓ | 22274 ✓ | 50256 ✓ | 50283 ✓ | demote ✓ |
+| `REF_RETURN_GEN` | 344 ✓ | 22225 ✓ | 49952 ✓ | 49979 ✓ | demote ✓ |
+| `VOID_GEN` | 390 ✓ | 22253 ✓ | 49915 ✓ | 49942 ✓ | demote ✓ |
+| `CLEAN` | 113 ✓ | 21973 ✓ | 22588 ✓ | 22615 ✓ | 4874 ✓ |
+
+(✓ = bytes, sha256, imports and WAT all identical before/after. `demote` = the
+linear target rejects generators at build, identically on both sides.)
+
+**This slice produced NO WAT diff at all.** The F1-S1 purity-diff allowance
+does not apply here and none was needed: no intrinsic purity changes, and the
+physical call target is the same `__box_number` before and after.
+
+**Imports and order.** Identical in every cell. The boxing lanes carry
+`__box_number, __gen_create_buffer, __gen_push_f64, __gen_set_return,
+__create_generator` in that order on both host lanes (the gc-host list is
+prefixed by its `string_constants` globals); `REF_RETURN_GEN` carries the same
+list minus `__box_number`, which is the control that the boxing import is
+present only when the seam demands it.
+
+**Census.** `pnpm run check:ir-fallbacks` is output-identical (diffed, not
+eyeballed); unintended, module-level and post-claim buckets all still empty.
+
+**Standalone/WASI/linear (obligation 2).** Generators still demote at BUILD;
+`tests/issue-2951.test.ts` needed no edit.
+
+### Non-vacuity — verified by the specified revert-only-the-threading check
+
+Reverting ONLY the attachment threading (hardcoded `irRuntimeFuncRef("__box_number")`
+restored) while keeping the entire schema, then re-running the suite:
+
+- **2 tests fail**, and they are exactly the two named classes — the
+  `boxProvider`-shape assertion (which also closes the measured gap that NO
+  test pinned `boxProvider` before this slice) and the fail-closed
+  attachment error;
+- **all 20 remaining tests stay green**, including every schema, policy,
+  freeze-discipline and derivation test, as the plan requires.
+
+The two halves of the authority claim are pinned separately and both are
+needed: `preparedGeneratorNumberBoxProvider` following the manifest's selected
+provider (proved by pointing the host arm at a different central capability
+and watching the derived callable follow it to `env.__get_undefined`, and by
+renaming the native arm's runtime symbol), and the attachment consuming THAT
+reference. The byte-parity cells deliberately do not carry the non-vacuity
+argument — they are identical by construction, which is the point of the slice.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **The plan's V2 route question resolved to the alternative, not the
+   primary.** Recorded above with the measurement; the contract's "host arm →
+   `host-callable` capability" survives as the manifest AUTHORITY, only the
+   physical binding kind at the seam stays `runtime`.
+2. **The plan's i32 fixture does not reach the arm** and was replaced by two
+   that do (V4).
+3. **One test outside the #3526 suites needed a one-field update.**
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` asserts the frozen
+   manifest policy by exact object equality and now also sees
+   `generatorNumberBox`. Identical mechanical consequence to F1-S1's
+   `numberBoundary` and F1-S2's `booleanBoundary`.
+4. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned
+   exception, handled as the F1-S1/F1-S2 checkpoints prescribe. No verdict,
+   kind, placement, ratchet count or `settledBy` rationale changed — the
+   semantic delta was established by normalising both JSON documents and
+   diffing those, and it is exactly TWO citation lines
+   (`forof.string` `src/ir/integration.ts` 6105 → 6159; `string.len`
+   `src/ir/backend/linear-integration.ts` 1617 → 1622). Patched surgically:
+   committing the regenerator's output instead would have been a 269/85-line
+   diff for a 2-line change.
+
+### Validation run
+
+Green: TypeScript 5 typecheck (the two pre-existing
+`WebAssembly.Tag` errors in `src/linked-provider-runtime.ts` are unrelated and
+fail identically on base); `check:ir-fallbacks` (bare, output-identical);
+the ratchet chain bare AND under `LOC_GATE_BASE=$(git rev-parse origin/main)`
+— loc, func, coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (after the surgical
+refresh above), and `check:standalone-ir-cutover-corpus`
+(`derived=19/19`, `units=47/47`, `terminal=38/38`). The new 22-test suite, all
+five other #3526 suites and both async suites (#4103/#4104) are green — 95
+tests across 8 files.
+
+**Pre-existing failure, measured on the base tree and NOT caused by this
+change-set:** `tests/issue-2951.test.ts` › "standalone generators stay
+compile-twice (out of scope — #680 native carrier)" fails identically with the
+change-set reverted. Its five siblings, including both value-returning host
+generator cases, pass.
+
+### Not touched (per the plan's scope discipline)
+
+The from-ast generator build gate (`jsHostExterns`), `gen.push` /
+`gen.epilogue` / `gen.yieldStar` and the `__gen_*` import family, legacy
+generator codegen and the native state machine,
+`compiler-timer-shim-preparation.ts`, and `numberBoundary` / `booleanBoundary`
+(both unchanged, and a test pins that the number box arm did not acquire a
+native member). `scripts/*-baseline.json` is untouched apart from the
+sanctioned two-line `check:ir-kind-neutrality` citation refresh;
+`scripts/loc-budget-baseline.json` remains main's alone.
+
+### Post-merge re-validation (origin/main `2dfb8396`)
+
+`main` advanced under this branch while the slice was in flight, and one of the
+landed changes is generator-adjacent (#3591, `src/codegen/generators-native-consumer.ts`),
+so every neutrality claim was re-measured against the merged base rather than
+carried over: the 35 byte cells are again identical on bytes, sha256, imports
+and WAT against `origin/main` `2dfb8396`; the fallback census is byte-identical
+to the pre-merge run; `check:ir-kind-neutrality` needs no further citation
+change; TypeScript 7 and 5, the full ratchet chain bare and under
+`LOC_GATE_BASE=$(git rev-parse origin/main)`, `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy` and `check:standalone-ir-cutover-corpus` are green.
+Focused suites: 134/135 pass across 14 files, the single failure being the
+pre-existing `tests/issue-2951.test.ts` standalone compile-twice case, which
+was re-confirmed to fail identically with this change-set reverted to
+`origin/main` `2dfb8396`.
+
+The merge resolved the issue file as a chronological union — main's F1-S3 plan
+section (PR #5409, merged while this branch was in flight) followed by this
+branch's verifications and checkpoint. No other file conflicted.
+
+### Merge-queue park (2026-09-01) — diagnosed as not-this-PR, with a gate finding
+
+PR #5412 was auto-parked from the merge queue: the `merge_group` re-validation's
+`check for test262 regressions` reported one regression —
+`test/language/statements/class/subclass/class-definition-null-proto-super.js`,
+pass → fail, `Maximum call stack size exceeded` (`range_error`), net −1 — and
+flagged it `Regressions with wasm-hash change: 1` on a content-current
+baseline. Read at face value that says a generator-boxing slice moved the bytes
+of a non-generator class test, which would violate obligation 1 outright.
+
+**It does not move them.** Compiled on clean `origin/main` and on this branch,
+same tree, four shapes: the raw test body; body + `assert.js`/`sta.js` sloppy;
+the same strict; and — the shape that settles it — the runner's OWN
+`assembleOriginalHarness` output under the runner's exact `compileOptions`,
+hashed with the runner's own `computeWasmSha`, for both the primary and the
+strict-rerun variant. Every cell is byte-, sha- and WAT-identical
+(`aa0313d0d7f6` / `c0a8b0c96fcb` on both sides), and the output is
+deterministic across processes.
+
+**Why the gate said otherwise, measured rather than guessed.**
+`scripts/diff-test262.ts:1747` computes
+`wasmUnchanged = typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha`,
+so the #1222 byte-identity noise filter requires a `wasm_sha` on BOTH sides.
+The current baseline JSONL carries **`wasm_sha` on 0 of 48,735 entries** (0 of
+35,659 `pass` entries). Against that baseline `wasmUnchanged` can never be
+true: every pass→fail transition is counted "with wasm-hash change", and the
+companion `Wasm-identical noise: 0` line is structurally guaranteed, not
+measured. The filter that exists to absorb exactly this class of runner-variance
+failure is therefore **inert**. That is a baseline-schema gap, not something
+this slice can fix — it deserves its own issue.
+
+With the bytes identical the behavior is identical, so the stack overflow is
+runner-side variance on a stack-depth-sensitive test. The run's other signals
+agree (`compile_error → compile_timeout` +1; aggregate compile time +1.8%), and
+this change-set is not the cause of those either: on the honest-lane module the
+branch compiles marginally FASTER (median 792 ms vs 824 ms over 5 runs).
+
+Resolution: one sanctioned re-admission (hold removed) on a confirmed
+not-this-PR determination, with no code change — there is nothing in the diff to
+fix. Recorded on the PR as the standing-down comment the park rules require.
+
+**Outcome:** the re-validation passed on re-admission and PR #5412 merged
+(`2e74deee` is an ancestor of main), which is the confirmation the diagnosis
+predicted — the same head, unchanged, went green on the second `merge_group`
+run. This note could not ride that PR because a queued branch is locked against
+pushes, so it lands separately.
+
+### Two follow-ups this slice surfaced but does not own
+
+Both were measured here and neither has an issue id yet:
+`node scripts/claim-issue.mjs --allocate` refuses in this container (exit 6 —
+`gh` is unauthenticated, so the open-PR id scan degrades and the reservation
+would not be verified against in-flight PRs). Reserving under
+`--allow-unscanned` to file them would risk exactly the permanent hole in the
+sequence that #3890/#3891 burned, so they are recorded here for whoever can
+allocate cleanly:
+
+1. **The test262 baseline carries no `wasm_sha`, which disables the #1222
+   byte-identity noise filter.** `scripts/diff-test262.ts:1747` requires the
+   field on BOTH sides; the baseline has it on 0 of 48,735 entries. Every
+   pass→fail transition is therefore reported "with wasm-hash change" and
+   `Wasm-identical noise: 0` is structurally guaranteed. The filter exists to
+   absorb runner-variance failures and currently cannot. Fix is on the
+   baseline-producing side (record `wasm_sha` per row), not in the gate.
+2. **A generator returning a boolean yields `1`, not `true`.** `return n > 2`
+   in a generator stashes a boolean-branded i32, which `gen.setReturn` boxes
+   through `__box_number`. Measured identical on the IR and legacy paths
+   (`IR_FIRST=1` and `=0` both answer `1`), so it is a whole-compiler
+   conformance gap, not an IR-path defect. Out of scope for a byte-neutral
+   slice; the `BOOL_RETURN_GEN` fixture added here pins the current behavior
+   and would need updating alongside the fix.
+
+## 2026-09-01 F1-S4 implementation plan — boundary residuals (family 1, slice 4)
+
+**Fable lane.** Grounded on `origin/main` at `41265d89f5` by a four-probe
+census workflow (symbol boundary, remaining predicates, R4 gaps,
+overlap/freshness). Opus implements against this plan. Slice claim
+`3526:f1s4`, branch `claude/issue-3526-f1s4-boundary-residuals`.
+
+Three sub-migrations, one PR: they share every piece of landed F1 machinery
+and reviewer context, and each is independently revertible for non-vacuity.
+The census's other candidates are dispositioned: the symbol boundary is
+blocked on brand production (filed as #5258, deferred), R4 gap 5 is R3's by
+design, R4 gap 3 is a separate R4 slice.
+
+### Sub-slice A — the two remaining `__unbox_number` from-ast arms
+
+**Measured.** `src/ir/from-ast.ts:12273` and `:12303` (ToPrimitive-adjacent
+arms) still emit direct `__unbox_number` calls by runtime symbol; the
+sibling coercion arm at `:9524` already emits the provider-free
+`js.number.unbox` intrinsic (F1-S1). Every piece exists and is exercised:
+intrinsic id (`intrinsics.ts:60`), capability row
+(`runtime-host-capabilities.ts:124`), `NumberBoundaryPolicy.unbox` with
+host/native arms, freeze-time attachment, owner-local unsupported partition,
+and the union-import trigger's attached-target recognition (which already
+names `js.number.unbox`).
+
+**Contract.** Both arms emit `emitIntrinsic("js.number.unbox", [...])`;
+population unchanged (the arms' guards stay). NOT in scope:
+`lower.ts:1440`'s defensive `__unbox_number` in `coerceToF64ForBitwise` —
+it is a lower-time consumer (post-freeze, cannot carry a provider-free
+intrinsic) and its retirement belongs to #1305; record it untouched.
+
+**Byte expectation.** The F1-S1 purity class MAY appear on host lanes (a
+pure intrinsic result no longer spilled); measure the cells and record the
+WAT diff class exactly as F1-S1 did. Native/standalone/WASI/linear cells
+byte-identical.
+
+### Sub-slice B — `__extern_is_undefined` under manifest authority
+
+**Measured.** `src/ir/from-ast.ts:13769-13770` is the last surviving
+pre-F1 two-armed shape in from-ast: runtime symbol vs `env` import chosen
+in the front-end by the resolver predicate `externIsUndefinedIsNative?()`
+(contract `:626`; integration implementation is
+`ctx.standalone || ctx.wasi || ctx.nativeStrings`, #4461). No capability
+row exists. The preregistration trigger (`integration.ts`,
+`preregisterDynamicSupport`) has raw-call detectors for BOTH forms
+(`usesExternIsUndefined` on the env call, `usesNativeExternIsUndefined` on
+the runtime symbol) — the F1-S1/S2 precedent says the migration removes the
+raw calls those detectors key on, so attached-target recognition must be
+widened for the new intrinsic id.
+
+**Contract.** `js.extern.is_undefined` `(externref) -> i32` intrinsic with
+a 1:1 feature row; capability record `extern.is_undefined` →
+`env.__extern_is_undefined` `(externref) -> i32`; policy
+`externIsUndefined: { probe: "host" | "native" | "unsupported" }` on
+`RuntimeManifestPolicy` (sibling constants; optional; frozen disabled
+default; canonicalized; published resolved). Callers: integration projects
+`{ probe: (ctx.standalone || ctx.wasi || ctx.nativeStrings) ? "native" :
+"host" }` — the exact former truth table; linear and selfhost project their
+measured current behavior (verify what linear-integration's resolver
+answers today and mirror it — do not guess). Host arm resolves via the
+capability record (`host-callable`); native arm via `runtime-callable` on
+the runtime symbol. Delete the resolver contract entry and every
+implementation of `externIsUndefinedIsNative`; the from-ast site emits the
+provider-free intrinsic with no lane read. Owner-local
+`late-preparation-unsupported` partition for a demanding owner on a
+disabled policy (mirror the F1 partitions). Widen the trigger's
+attached-target recognition to the new id and prove import set/order parity
+(the F1-S2 measured-trigger precedent — that proof was non-decorative
+there).
+
+**Byte expectation.** Byte-identical everywhere; the F1-S1 purity class MAY
+appear if the probe result was previously spilled — measure and record; any
+other WAT delta is a defect.
+
+### Sub-slice C — retire the four `gen.*` lowering fallbacks
+
+**Measured.** `src/ir/lower.ts:2731/2749/2769/2796` still carry
+`instr.provider ?? irRuntimeFuncRef("__gen_push_*" | "__create_generator" |
+"__gen_yield_star" | "__gen_set_return")`. F1-S3 deleted only the
+`boxProvider` fallback with a totality proof (`lower.ts:2798-2808`); the
+same argument covers all four `provider` fields — `attachIrGeneratorSupport`
+attaches them unconditionally for every `gen.*` kind before Phase 3.
+
+**Contract.** Replace each `??` fallback with the F1-S3 fail-closed throw
+(a missing attachment demotes one owner, never re-decides the symbol
+locally), AFTER pre-implementation verification V3 re-proves totality for
+all four kinds. No new rows, no behavior change, bytes identical.
+
+### Required pre-implementation verifications (record in the checkpoint)
+
+1. **V-A population.** Which shapes reach `from-ast.ts:12273/:12303`, and
+   does the current resolution of the raw runtime symbol on each reachable
+   lane match `NumberBoundaryPolicy.unbox`'s truth table exactly? If any
+   lane diverges (a population the policy calls unsupported but the raw
+   symbol resolves today), STOP on sub-A and record — do not absorb a
+   behavior change.
+2. **V-B readers.** Enumerate every reader of `externIsUndefinedIsNative`
+   and both trigger detectors; after migration, prove import membership,
+   order and indices identical on every lane (the binding-kind switch
+   hazard from F1-S3's V2 applies — if order moves, keep the native arm
+   runtime-bound and record the route).
+3. **V-C totality.** Extend F1-S3's attachment-totality evidence to all
+   four `gen.*` provider kinds (same producer/lowering-site enumeration).
+4. **V-D fixture reach.** For sub-A, name the fixture(s) that actually
+   reach each migrated arm (WAT-inspect once) so the parity cells are not
+   vacuous; add one if none exists.
+
+### Behavior-neutrality obligations
+
+`check:ir-fallbacks` census output-identical; import set AND order
+identical per lane; byte cells per sub-slice expectation above (record the
+matrix); the outcome-code divergence-4 class is NOT expected here (no
+demote-site moves) — its absence is itself an assertion; non-vacuity by
+reverting each sub-slice's arm independently against the kept schema
+(named failing tests per sub-slice, including a first-ever pin of the
+`gen.*` provider attachments if none survives C's throw conversion);
+`tests/issue-4104-...` whole-shape policy pin gains the new field (the
+recorded precedented edit).
+
+### Validation
+
+Typecheck; `check:ir-fallbacks` bare; ratchet chain bare + the
+`LOC_GATE_BASE=$(git rev-parse origin/main)` simulation; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (evidence-line
+refresh via its own flow if tripped), `check:standalone-ir-cutover` locally
+before pushing; the five issue-3526 suites, the F1-S3 generator suite, the
+#4461 extern-is-undefined tests, #4103/#4104; hooks without bypass. Growth
+allowances in this file's frontmatter, dated.
+
+### Explicitly out of scope
+
+`lower.ts:1440` (#1305), `__to_primitive` itself and the `__ir_dyn_*`
+family, the string-plan/stringMethodPlan predicate family (family-2
+territory), `env.__get_undefined`/`env.__make_callback` non-async reach
+plumbing (runner-up, own slice), the symbol boundary (#5258), R4 gaps
+(#3523), and everything owned by #3525/#3522. `integration.ts` diff stays
+minimal (policy projection, partition sibling, trigger widening); check the
+#3525 claim before touching it.
+
+## 2026-09-01 F1-S4 pre-implementation verifications — Opus lane
+
+**Branch** `claude/issue-3526-f1s4-boundary-residuals`, grounded on `origin/main`
+`96f7a3c0`, slice claim `3526:f1s4`. Implemented from the 2026-09-01 F1-S4 plan,
+whose template is the landed F1-S1/F1-S2/F1-S3 machinery.
+
+All four answers were measured on the grounded tree BEFORE any source edit. One
+of them is the plan's STOP condition, and it fired.
+
+### V-A population — **the STOP condition is REAL. Sub-A is not in this PR.**
+
+The plan asked whether the current resolution of the raw `__unbox_number`
+symbol at `from-ast.ts:12273/:12303` matches `NumberBoundaryPolicy.unbox`'s
+truth table on every reachable lane. It does not.
+
+**Reach, measured with a temporary trace at each arm.** The two arms are
+reached only through `emitUnaryToNumber`, and the shapes that get there are
+narrower than the plan assumed:
+
+| arm | reached by | measured |
+| --- | --- | --- |
+| `:12273` (`extern:Object`) | unary `+`/`-` on an OrdinaryToPrimitive object literal whose methods are property-assigned **function expressions** — `lowerOrdinaryToPrimitiveObjectLiteral` gives that form the open `extern:Object` protocol | IR-claimed and REACHED on gc-host, gc-native-strings, standalone and WASI |
+| `:12303` (`object`, string sub-arm) | would need a **shorthand-method** literal whose method returns `string` | **UNREACHABLE.** The closed structural route admits only `number`/`boolean` returns (`select.ts:10344` `hasPreparedParityReturn`, mirrored at `from-ast.ts:5592`); a string-returning method is admitted ONLY as a function expression, which takes the `extern:Object` route instead. Measured: the arm fires zero times across the `check:ir-fallbacks` corpus, the equivalence-adjacent suites and five hand-built candidate shapes |
+
+Eight further candidates (an `Object`-annotated parameter, a declared ambient
+`Object`, arrow-function OTP literals, a typed `{ valueOf: () => string }`
+parameter) all demote at IR **selection** (`type-resolution-unsupported` /
+`body-shape-rejected`) before reaching either arm.
+
+**The divergence.** On the reachable arm, per lane:
+
+| lane | `NumberBoundaryPolicy.unbox` | what the RAW symbol resolves to today |
+| --- | --- | --- |
+| gc-host | `host` | `env.__unbox_number` import — **matches** |
+| standalone / WASI | `native` | union-native function, no import — **matches** |
+| gc-native-strings (`nativeStrings: true`, `semanticProviders: "host-assisted"`) | **`unsupported`** | **`env.__unbox_number` import — the owner compiles and is IR-claimed** |
+| linear | disabled | arm unreachable (the shape fails the linear backend outright) |
+
+The gc-native-strings row is the STOP. `addUnionImports`
+(`registry/imports.ts:813`) registers the **host** `env` family on every
+non-`native-first` lane, so the raw runtime symbol resolves there; the
+preregistration comment says as much ("`__unbox_number` comes from the union
+family in every lane"). Measured directly: the fixture emits
+`env.__unbox_number` in its import list and reports `emitted`, while the
+F1-S1 arm on the same lane reports
+`late-preparation-unsupported / resolve — box=unsupported/unbox=unsupported`.
+
+Migrating the arm to `js.number.unbox` would therefore turn a compiling,
+IR-claimed owner into a preparation demote — a behaviour change, which the plan
+forbids absorbing. **Sub-A is stopped and recorded, not implemented.** Two
+tests in the new suite pin the divergence so the next slice inherits a
+measurement rather than a memory.
+
+*Route for a future slice, recorded not taken:* the F1-S3 precedent applies
+almost exactly. This seam's truth table is
+`semanticProviders === "native-first" ? native : host` — a fourth policy, a
+sibling of `numberBoundary` the way `generatorNumberBox` is. Minting it was not
+authorised by this plan (which explicitly routed sub-A through
+`NumberBoundaryPolicy.unbox`), so it belongs to an amended plan, not to a
+byte-neutral slice.
+
+### V-B readers — enumerated; the import-order-parity route was available
+
+`grep -rn externIsUndefinedIsNative` over the whole tree returns **three**
+executable hits and nothing else: the contract entry (`from-ast.ts:626`), the
+one read (`from-ast.ts:13768`), and the one implementation
+(`integration.ts:5767`, `ctx.standalone || ctx.wasi || ctx.nativeStrings`).
+There is no test, plan or doc reference. Both trigger detectors were traced
+end to end:
+
+| detector | set at | acts at | action |
+| --- | --- | --- | --- |
+| `usesExternIsUndefined` | `integration.ts:7534` (env-import `call`) | `:7654` | `ensureLateImport("__extern_is_undefined", …)` + `flushLateImportShifts` |
+| `usesNativeExternIsUndefined` | `:7553` (runtime `call`) | `:7628` | `ensureObjectRuntime` + flush + `observeNativeRuntimeProvider` |
+
+The two fire at **different points** in the registration sequence, so the
+migration recognises the attached target into the same two FLAGS and leaves the
+action order untouched.
+
+**Route taken: import-order parity, not the runtime-bound fallback.** F1-S3's
+V2 hazard (an import-bound ref refused by `resolveAndObserveCallableProvider`)
+does not apply: that path is the GENERATOR observation path, and this family
+lowers through `emitPreparedIntrinsic`, which F1-S1/F1-S2 already proved
+accepts an import-bound `host-callable` target. Both arms therefore keep
+exactly today's physical binding — `env.__extern_is_undefined` import on the
+host lane, the runtime symbol on the host-free lanes — and import membership,
+order and indices are measured identical in every cell (table below).
+
+**Adapters — measured, and they project `unsupported`.** The plan asked for
+"their measured current behaviour, do not guess". The measurement is that
+`linear-integration.ts` and `stdlib-selfhost.ts` **do not implement the
+predicate at all**, and that no owner under either resolver ever reaches the
+arm: a trace instrumented to report an adapter-resolver hit fired **zero**
+times across every `tests/linear-*.test.ts` file, `tests/stdlib.test.ts`,
+`tests/issue-3520-selfhost-cache-identity.test.ts` and
+`tests/standalone-ir-cutover-corpus.test.ts`. The resolver-absent default would
+have been `host`, so projecting `unsupported` is behaviour-neutral over an
+empty population while keeping both adapters fail-closed — which is what
+F1-S1/F1-S2/F1-S3 chose for the same two callers, and what the self-hosted
+stdlib's "owns no JS-host imports" invariant requires. Recorded as a
+deliberate reading of the plan's wording, with the population measurement that
+makes the two readings equivalent.
+
+### V-C totality — all four `gen.*` provider fields, proven the F1-S3 way
+
+F1-S3's V1 evidence extends to the other three kinds without weakening:
+
+| step | finding |
+| --- | --- |
+| producers | FOUR builder methods (`emitGenPush`, `emitGenEpilogue`, `emitGenYieldStar`, `emitGenSetReturn`), each guarded on `funcKind === "generator"` (epilogue and setReturn additionally on `generatorBufferSlot`). Their only callers are seven from-ast sites, all inside generator lowering. |
+| attachment | `attachIrGeneratorSupport` attaches `provider` **unconditionally** for all four kinds on every generator owner — no predicate, no policy gate. |
+| middle end | unchanged from F1-S3: `inline-small.ts` / `monomorphize.ts` only rename operands, spread the instr, and run before attachment. |
+| lowering entry | ONE production site (`integration.ts:4259` → `lowerIrEntryFunction`); `linear-integration`, `backend/porffor` and `stdlib-selfhost` lower non-generator bodies only, and **no test lowers a `gen.push` / `gen.epilogue` / `gen.yieldStar`** (zero hits across `tests/`). |
+| splice risk | every one of the four lowering arms reads its provider only AFTER the `func.generatorBufferSlot === undefined` guard, so a `gen.*` spliced into a non-generator owner is rejected before the provider is touched. |
+
+**Decision: retire all four fallbacks**, to the same fail-closed throw F1-S3
+used. One consequence is recorded rather than absorbed: the `gen.push` arm's
+local `__gen_push_f64` / `_i32` / `_ref` derivation existed only to feed the
+fallback, so it is gone — but its `typeOf(instr.value)` READ is kept, because
+`typeOf` throws for a value it cannot type and that throw demotes the owner.
+Deleting the read with its consumer would have silently admitted a population
+lowering previously refused.
+
+### V-D fixture reach — named, and one cell is honestly vacuous
+
+| arm | fixture that reaches it | verified by |
+| --- | --- | --- |
+| sub-B probe | `ANYUNDEF` (`const v = a[0]; v !== undefined`) and `MEMO` (the F1-S1 `Map` memo, which reaches the F1-S1 unbox arm AND this one) | trace at the arm; `env.__extern_is_undefined` in the host import list, absent on standalone/WASI |
+| sub-C `gen.setReturn` / `gen.push` / `gen.epilogue` | `VALUE_RETURN_GEN`, `I32_RETURN_GEN`, `BOOL_RETURN_GEN`, `FOROF_GEN`, `VOID_GEN`, `REF_RETURN_GEN` (F1-S3's set) | F1-S3's WAT inspection, re-run here |
+| sub-C `gen.yieldStar` | **`YIELDSTAR_GEN`, added by this slice** — F1-S3's set had no `yield*` fixture, so the fourth kind's parity cell would have been vacuous | new fixture; `__gen_yield_star` in the emitted import list |
+| sub-A arms | `OTPNEG` (the function-expression OTP literal) | kept in the matrix as an UNCHANGED control, since sub-A is stopped |
+
+The `:12303` string sub-arm has no fixture and cannot be given one — see V-A.
+
+## 2026-09-01 F1-S4 implementation checkpoint — Opus lane
+
+### What landed
+
+- **`src/ir/intrinsics.ts`** — `js.extern.is_undefined` `(externref) -> i32`,
+  versioned, with a 1:1 feature row, added as an `EXTERN_BOUNDARY_*` SIBLING of
+  the number and boolean constants (both unchanged). One ID, but — unlike the
+  boolean family — **two** provider arms.
+- **`src/ir/runtime-host-capabilities.ts`** — one record `extern.is_undefined`
+  → `env.__extern_is_undefined` `(externref) -> i32`, inserted in capability-ID
+  sort order so the async prefix keeps its historical position. Noted in place:
+  this is NOT an `addUnionImports` member — on the host lane the import is its
+  own `ensureLateImport` registration, which is why the trigger keys on it
+  separately.
+- **`src/ir/runtime-manifest.ts`** — `ExternIsUndefinedPolicy`
+  (`probe: "host" | "native" | "unsupported"`), a frozen
+  `EXTERN_IS_UNDEFINED_POLICY_DISABLED`, the optional `externIsUndefined` field
+  canonicalized at builder construction and published resolved on the frozen
+  manifest, the two provider rows (`host.…` → `host-callable` on capability
+  `extern.is_undefined`; `native.…` → `runtime-callable` on the runtime symbol),
+  and the policy branch in `#selectProvider` whose unavailable arm is a typed
+  `provider-target-unavailable` naming the intrinsic and the resolved policy.
+- **`src/ir/from-ast.ts`** — the strict-undefined arm emits the provider-free
+  intrinsic and reads no lane fact; the `externIsUndefinedIsNative` contract
+  entry and its one implementation are deleted. The `externrefShaped` gate
+  STAYS — it is a type/representation fact, not a lane fact.
+- **`src/ir/integration.ts`** — `integrationExternIsUndefinedPolicy`
+  (`{ probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? "native" : "host" }`,
+  the exact former truth table), the owner-local
+  `unsupportedExternBoundaryIntrinsic` partition in the same pass as the number,
+  boolean and generator ones, the freeze-time policy argument, and the widened
+  materialization trigger. Five touch points, per the #3525 co-ownership
+  constraint (`--check 3525` re-read before editing: still CLAIMED by
+  `ttraenkler/codex`).
+- **`src/ir/lower.ts`** — all four `?? irRuntimeFuncRef(<spelling>)` fallbacks on
+  the `gen.*` arms are gone, replaced by one shared fail-closed
+  `requirePreparedGeneratorProvider`.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `EXTERN_IS_UNDEFINED_POLICY_DISABLED` explicitly.
+- **`tests/issue-3526-boundary-residuals.test.ts`** (new, 26 tests).
+
+`src/ir/intrinsic-support.ts` needed **no edit** (its attachment and
+admitted-target tables are driven by `RUNTIME_PROVIDERS` × `INTRINSIC_DEFINITIONS`,
+so the new rows are picked up by construction), nor did
+`src/ir/async-prepare.ts` (this family has no async consumer — unlike the number
+side, whose hidden host-lane join cost F1-S1 a CI failure), nor
+`src/ir/backend/legality.ts` (its linear `intrinsic` arm is an allowlist, so the
+new id falls to the default reject).
+
+### One divergence from the plan's contract, forced by measurement
+
+The plan specified the intrinsic as `(externref) -> i32` and said nothing more
+about the operand. Measured, the arm's own `externrefShaped` gate admits FOUR IR
+type shapes, not one: `val` externref (`a[0]` out of an `any[]`), `extern`
+(a declared class instance), `callable` (a function-typed parameter) and
+host-mode `string`. `emitIntrinsic` type-checks arguments with `irTypeEquals`,
+which admits only the first.
+
+Resolved with `coerce.to_externref`, which is a **type normalisation, not a
+conversion**: `lower.ts:2962` elides `extern.convert_any` when the operand is
+already externref-shaped, and its `alreadyExternref` test is the same four-way
+fact as `externrefShaped`. The added IR instruction therefore lowers to **zero**
+Wasm instructions on every shape that reaches this arm — which is why the byte
+cells below are unchanged. The alternative (loosening `emitIntrinsic`'s argument
+check) would have weakened the closed contract for every intrinsic.
+
+### Measured neutrality
+
+**Byte parity — 67 of 70 cells identical, WAT included.** Fourteen fixtures ×
+five lanes, compiled before and after on the same tree, compared on byte length,
+binary sha256, import set AND order, and the full emitted WAT text.
+
+| fixture | gc-host | gc-native-strings | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| `MEMO` | 584 ✓ | 24596 ✓ | 125422 ✓ | 103862 ✓ | 5118 ✓ |
+| `ANYUNDEF` | 1489 ✓ | n/a ✓ | 122019 ✓ | 99650 ✓ | 4934 ✓ |
+| `STRUNDEF` | 184 ✓ | 22439 ✓ | 22603 ✓ | 22630 ✓ | 4894 ✓ |
+| `ANYUNDEF2` | 1614 △ | n/a ✓ | 122247 △ | 99875 △ | 4997 ✓ |
+| `OTPNEG` (sub-A control) | 3421 ✓ | 25569 ✓ | 126358 ✓ | 103866 ✓ | n/a ✓ |
+| `VALUE_RETURN_GEN` | 2543 ✓ | 24255 ✓ | 129904 ✓ | 104352 ✓ | n/a ✓ |
+| `I32_RETURN_GEN` | 2858 ✓ | 24562 ✓ | 130421 ✓ | 104532 ✓ | n/a ✓ |
+| `BOOL_RETURN_GEN` | 2819 ✓ | 24519 ✓ | 130420 ✓ | 104531 ✓ | n/a ✓ |
+| `FOROF_GEN` | 3150 ✓ | 25079 ✓ | 50251 ✓ | 50278 ✓ | n/a ✓ |
+| `YIELDSTAR_GEN` | 1925 ✓ | 24185 ✓ | 51207 ✓ | 51234 ✓ | n/a ✓ |
+| `REF_RETURN_GEN` | 2522 ✓ | 24332 ✓ | 129207 ✓ | 104465 ✓ | n/a ✓ |
+| `VOID_GEN` | 2594 ✓ | 24308 ✓ | 129972 ✓ | 104420 ✓ | n/a ✓ |
+| `BOOLSTORE` (F1-S2 fixture) | 1754 ✓ | 23758 ✓ | 50462 ✓ | 50489 ✓ | n/a ✓ |
+| `CLEAN` | 108 ✓ | 21970 ✓ | 22585 ✓ | 22612 ✓ | 4877 ✓ |
+
+(✓ = bytes, sha256, imports and WAT all identical before/after. `n/a` = the
+fixture does not compile on that lane, identically on both sides — the
+native-strings `ANYUNDEF*` cells and every linear generator cell are
+pre-existing refusals, unchanged by this slice. △ = the three cells below.)
+
+**Every sub-C cell is identical, including all four `gen.*` kinds.** The
+fallback retirement is provably inert: the attachment already supplied the same
+symbol the fallback spelled.
+
+**The three △ cells are the F1-S1 purity class, in a stronger manifestation —
+measured, argued and runtime-checked.** `ANYUNDEF2` is the only fixture with
+TWO probes in one owner. Its WAT diff is 42 lines on each of the three lanes and
+is entirely this: two spill locals (`(local $$ir14 externref)`,
+`(local $$ir15 i32)`) and their `local.tee`s disappear, and the second element
+read moves from a hoisted position at the top of the body down to its consumer.
+Same mechanism F1-S1 recorded — a semantic `intrinsic` is *pure* under the
+existing `effectsOf` authority while the opaque `call` it replaces was not, so
+the effects-aware scheduler stops anchoring the operand and emits it lazily —
+but a stronger manifestation than F1-S1's, which lost only local declarations.
+Recorded as a divergence from the plan's "identical instruction sequence"
+reading of that class, not absorbed:
+
+- the moved read is a pure bounds-checked GC read that yields `ref.null` on
+  out-of-bounds and cannot trap;
+- it moves across `call $__extern_is_undefined`, the probe itself, which cannot
+  mutate the vector;
+- the AFTER form is in fact **closer** to source order than the BEFORE form,
+  which hoisted `a[1]` ahead of `a[0]`;
+- runtime-checked rather than argued alone: five input cases
+  (`[1,2] [1] [] [undefined,5] [7,undefined]`) answer **identically** on base
+  and branch, on gc-host and standalone, including the pre-existing gc-host
+  out-of-bounds divergence from JS. Nothing about the answers moved.
+
+The plan permitted this class "on host lanes"; it appears on standalone and
+WASI too, because the scheduler is lane-independent. That widening of the
+permitted set is the divergence being recorded here.
+
+**Imports and order.** Identical in every one of the 70 cells, including the
+three △ ones. The host-lane `MEMO` list is `Map_new, Map_get, Map_set,
+<string_constants>, __unbox_number, __box_number, __extern_is_undefined`;
+standalone and WASI carry no `env` import at all.
+
+**The trigger widening is NOT decorative — measured, and it is the most
+load-bearing line in the slice.** With `js.extern.is_undefined` removed from
+`preregisterDynamicSupport`'s recognizer and everything else left in place:
+
+| cell | without the widening |
+| --- | --- |
+| `MEMO` gc-host | 584 → **727** bytes, and TWO extra imports appear (`env.__get_undefined`, `env.__new_ReferenceError`) — exactly the import-membership drift obligation 2 forbids |
+| `MEMO` standalone | **compile FAILS** — `invariant/unknown-function-ref @ resolve` |
+| `ANYUNDEF` / `ANYUNDEF2` gc-native-strings | a **host `env.__extern_is_undefined` import lands in a native-strings module** — precisely the #4461 failure the native arm exists to prevent |
+
+**Census.** `pnpm run check:ir-fallbacks` is output-identical (diffed, not
+eyeballed); unintended, module-level and post-claim buckets all still empty.
+
+**Outcome codes.** No shift anywhere in the 70 cells — the divergence-4 class
+does not appear here, and its absence is an assertion, not an omission: the
+integration policy resolves the probe to a supported arm on every lane, so no
+owner changes demote site. The `"unsupported"` arm is unreachable in production
+(as F1-S3's was) and is exercised by tests and by the two adapters' explicit
+disabled policies.
+
+### Non-vacuity — each sub-slice reverted independently against the kept schema
+
+- **sub-B**, reverting ONLY the from-ast arm to its direct two-armed call:
+  **4 tests fail** — the intrinsic-emission assertion, its lane-freedom twin,
+  the operand-normalisation assertion, and "uses the host-free Wasm function on
+  standalone, with no env import" (the reverted arm puts a host import into a
+  standalone module). All 9 schema/policy tests stay green.
+  One assertion had to be **strengthened** to be non-vacuous and the reason is
+  worth keeping: the two arms this slice replaced spelled the *same name*
+  (`__extern_is_undefined`) and differed only in `import` vs `runtime` binding,
+  so the lane-freedom comparison had to compare binding KINDS, not names. A
+  name-only comparison passed against the un-migrated front-end.
+- **sub-C**, restoring the four `??` fallbacks: exactly the **4** "refuses to
+  lower an unattached `gen.*`" tests fail, while the four attachment pins and
+  the entire F1-S3 suite stay green.
+- **sub-A**: nothing to revert — the two pinning tests assert the arms are
+  still unmigrated and that the raw symbol still resolves on the lane whose
+  policy calls it unsupported.
+
+The byte cells deliberately carry none of this argument: they are identical by
+construction, which is the point of the slice.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **Sub-A is not implemented** — V-A's STOP condition fired. Full measurement
+   above; the sibling-policy route a future slice would need is named there.
+2. **The `:12303` arm is unreachable**, so even had sub-A proceeded its parity
+   cell would have been vacuous. Measured, not inferred.
+3. **The intrinsic's operand needed `coerce.to_externref`** — the plan's
+   `(externref) -> i32` contract did not anticipate the arm's four admitted
+   operand shapes. Byte-inert by the elision at `lower.ts:2962`.
+4. **The purity class appears on standalone and WASI, not only host lanes, and
+   reorders two pure reads** rather than only dropping local declarations.
+   Argued and runtime-checked above.
+5. **One test outside the #3526 suites needed a one-field update.**
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` asserts the frozen
+   manifest policy by exact object equality and now also sees
+   `externIsUndefined`. Identical mechanical consequence to F1-S1's
+   `numberBoundary`, F1-S2's `booleanBoundary` and F1-S3's `generatorNumberBox`.
+6. **One F1-S3 test fixture needed a provider.** Its "refuses to lower a
+   numeric stash whose boxing provider was never attached" case built an
+   entirely unattached `gen.setReturn`; sub-C makes the SEAM provider fail
+   first, so the fixture now attaches `__gen_set_return` and keeps isolating the
+   boxing authority. The seam-provider case it used to reach incidentally is
+   pinned explicitly in the new suite, for all four kinds.
+7. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned
+   exception, handled as the three prior checkpoints prescribe. No verdict,
+   kind, placement, ratchet count or `settledBy` rationale changed — the
+   semantic delta was established by normalising both JSON documents and
+   diffing those, and it is exactly THREE citation lines (`forof.string`
+   `src/ir/integration.ts` 6159 → 6216; `string.len`
+   `src/ir/backend/linear-integration.ts` 1622 → 1624; `vec.new_fixed`
+   `src/ir/from-ast.ts` 4534 → 4526). Patched surgically: committing the
+   regenerator's output instead would have been a 269/85-line diff for a
+   3-line change.
+
+### Validation run
+
+Green: TypeScript 7 typecheck; `check:ir-fallbacks` (bare, output-identical);
+the ratchet chain bare AND under `LOC_GATE_BASE=$(git rev-parse origin/main)` —
+loc (+265 net src LOC, every path granted by this file's frontmatter), func,
+coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:test-vacuity-shapes`,
+`check:ir-kind-neutrality` (after the surgical refresh above); `lint`;
+`prettier --check` over `src`/`tests`/`scripts`; and
+`check:standalone-ir-cutover-corpus` (`derived=19/19`, `units=47/47`,
+`terminal=38/38`). Focused suites: 223/224 across 17 files — all six #3526
+suites, both async suites (#4103/#4104), #2951, #2035, #1169f-7a/7b, #2864,
+#680 and #4461.
+
+**Pre-existing failures, measured on the base tree and NOT caused by this
+change-set** — identical with the eight source files reverted to
+`origin/main` `96f7a3c0`: `tests/issue-2951.test.ts` › "standalone generators
+stay compile-twice (out of scope — #680 native carrier)" (1); the five
+`tests/stdlib.test.ts` `String.at` / `Array.at` cases; the two
+`WebAssembly.Tag` errors in `src/linked-provider-runtime.ts` under TypeScript 5;
+and the collect-time failure of
+`tests/issue-2949-slice3-dynamic-lowering.test.ts`.
+
+### Not touched (per the plan's scope discipline)
+
+`lower.ts:1440`'s defensive `coerceToF64ForBitwise` `__unbox_number` (a
+lower-time consumer, post-freeze, cannot carry a provider-free intrinsic —
+#1305 owns its retirement), `__to_primitive` itself and the `__ir_dyn_*`
+family, the string-plan / `stringMethodPlan` predicate family,
+`env.__get_undefined` / `env.__make_callback` reach plumbing, the symbol
+boundary (#5258), R4 gaps (#3523), `compiler-timer-shim-preparation.ts`, and
+`numberBoundary` / `booleanBoundary` / `generatorNumberBox` (all three
+unchanged). `scripts/*-baseline.json` is untouched apart from the sanctioned
+three-line `check:ir-kind-neutrality` citation refresh;
+`scripts/loc-budget-baseline.json` remains main's alone.
+
+### One follow-up this slice surfaced but does not own
+
+**The `emitUnaryToNumber` string sub-arm (`from-ast.ts:12303`) is dead code.**
+Its `primitiveType.kind === "string"` guard cannot be satisfied: the closed
+structural OrdinaryToPrimitive route admits only `number`/`boolean` method
+returns, and a string-returning method is admitted only as a function
+expression, which takes the `extern:Object` route instead. Measured zero hits
+across the fallback corpus and every candidate shape. It is either a dead arm
+to delete or a gap in the closed route to close — a decision above a
+byte-neutral slice. (`claim-issue.mjs --allocate` still refuses in this
+container — `gh` is unauthenticated, so the open-PR id scan degrades and the
+reservation would not be verified against in-flight PRs; recorded here rather
+than reserved under `--allow-unscanned`, per the #3890/#3891 precedent.)
+
+## 2026-09-01 F2-S1 implementation plan — string.compare under manifest policy (family 2, slice 1)
+
+Grounded on `origin/main` `d39779cbfd`. Slice claim: `#3526:f2s1`
+(`ttraenkler/fable-ir-takeover`). Three census probes (boundary surface /
+catalogue+policy / test surface) ran against that commit; every line number
+below is from them. This slice opens **family 2 (string/text boundary)** the
+way F1-S4 closed family 1: one byte-identical policy migration (sub-A) plus
+one dead-fallback retirement (sub-B), in one PR.
+
+### Where family 2 stands (census summary)
+
+- **Zero string entries in the R6 vocabulary today**: no string `IntrinsicId`
+  (`src/ir/intrinsics.ts:95-101`), no string capability record
+  (`src/ir/runtime-host-capabilities.ts:27-39`), no string policy on
+  `RuntimeManifestPolicy` (`src/ir/runtime-manifest.ts:165-195`).
+- The string ops themselves already flow through IR lane-free in from-ast
+  (the #2955 grep gate holds: zero functional `nativeStrings` reads there).
+  The un-governed mode reads live in **integration.ts**: the resolve-time
+  provider table `resolveAndObserveCallableProvider` (`:6059-6276`, raw
+  `ctx.nativeStrings` at Phase-3 resolve time — family 2's largest
+  un-governed dispatch), the emit-time no-provider fallbacks (`:6597-6688`),
+  and the preparation window `prepareStrings` (`:6943-7129`).
+- Measured per-op (gc-host / standalone+nativeStrings / wasi): concat, `<`
+  compare, `===`, `.length`, `.charCodeAt`, template literals are all
+  IR-claimed today; host lane imports span THREE namespaces (`env` funcs,
+  `wasm:js-string` builtins, `string_constants` globals); native/wasi lanes
+  are import-free. `String(n)` coercion is selector `external-call` — outside
+  IR entirely, selector work before boundary work.
+- **Deferred by design**: `string.concat`/`eq`/`len` host providers live in
+  the `wasm:js-string` module and `string.const` in imported GLOBALS — both
+  outside the frozen capability-record schema (`module: "env"`,
+  `kind: "func"`, runtime-host-capabilities.ts:76-78). Widening those axes is
+  its own schema slice (the family-2 analog of F1-S1's value widening) and
+  does NOT ride along here. `stringMethodPlan` (~14 concrete spellings,
+  from-ast.ts:656-666 / integration.ts:5652-5718) is the family's XL tail and
+  needs its own per-method census first.
+
+### Sub-A — `stringCompare` policy + `string.compare` capability
+
+**The arm being governed**: `IR_STRING_COMPARE_FN` (`__ir_str_compare`) —
+from-ast emits it lane-free (`src/ir/from-ast.ts:8477`; consumer :13189);
+resolution happens at `integration.ts:6189-6195`: host
+`ctx.funcMap.get("string_compare")` (env import
+`(externref,externref)->i32`, shim `src/runtime.ts:17620`) vs native
+`nativeStrHelperHandle("__str_compare")`. Truth table is exactly
+`ctx.nativeStrings ? runtime __str_compare : host env.string_compare`.
+
+**Contract**:
+1. New capability record
+   `record("string.compare", "string_compare", ["externref","externref"], ["i32"])`
+   in the central catalogue — fits the existing frozen schema (module `env`,
+   kind `func`; value union already has externref/i32,
+   runtime-host-capabilities.ts:53).
+2. New `stringCompare?: StringComparePolicy` — `{compare: "host" | "native" |
+   "unsupported"}`, sibling of `externIsUndefined` (two provider rows:
+   host-callable → the capability record; runtime-callable →
+   `__str_compare`). Frozen disabled default, canonicalized, published,
+   selected fail-closed with typed `provider-target-unavailable` naming the
+   policy. Follow the 10-point precedented edit list verbatim
+   (runtime-manifest.ts type+default+constructor refreeze :1137-1157,
+   feature/provider unions :604-701 + :64/:277-284, `#selectProvider` branch
+   :1425-1497, caller projection `integrationStringComparePolicy(ctx)` beside
+   :799-875 consulted ONCE before freeze, policy literal in
+   `prepareBuiltFnRuntimeManifest` :922-936, owner-local partition scan
+   :3578-3663, explicit disabled policy in the linear adapter and
+   `src/codegen/stdlib-selfhost.ts`, and the whole-shape pin updates).
+3. The resolve arm at `:6189-6195` stops reading `ctx.nativeStrings`: it
+   reads the frozen manifest's selected provider for the string-compare
+   demand and fails closed when absent. Mechanism choice is probe P1's
+   (below): freeze-time demand (`requestFeature`, the F1-S3
+   `generatorNumberBoxDemand` precedent, intrinsic-support.ts:343-389) vs a
+   full `js.string.compare` intrinsic instruction. The demand shape is
+   recommended: no new IrType ground, no from-ast changes, and byte identity
+   is structurally easier.
+4. **Import parity is the hard byte constraint**: the host arm today binds
+   the funcMap's existing base import `string_compare` — the policy-driven
+   attachment must land the exact same import index (no `ensureLateImport`,
+   no new registration), or bytes shift. String spellings are NOT in
+   `UNION_IMPORT_FUNC_NAMES` and must NOT be union-materialized — add
+   per-demand attached-target recognition (the `attachedExternIsUndefinedArm`
+   shape, integration.ts:7553-7560) routing to the EXISTING string
+   materializers, keeping each lane's registration order identical.
+5. No change to `plan.invocation`, no change to from-ast (the #2955 gate and
+   the S4 lane-freedom lesson: pins compare binding KINDS, not names).
+
+### Sub-B — retire the `forof.string` `??` fallback
+
+`src/ir/lower.ts:3375`:
+`instr.provider ?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN)` is the
+last string-op `??` lane fallback in lower.ts (the `gen.*` quartet was
+retired by F1-S4; the :3498-3520 quartet is `extern.*`, family 6).
+`attachIrStringSupport` attaches the provider unconditionally on every
+adapter that prepares strings (`src/ir/string-support.ts:72-73, 138-147`;
+linear adapter at `src/ir/backend/linear-integration.ts:735-737`), so the
+fallback is dead code under F1-S3's totality argument. Replace with a
+`requirePreparedStringProvider`-style fail-closed throw and pin "refuses to
+lower an unattached forof.string" — same anatomy as the F1-S4 sub-C pins in
+`tests/issue-3526-boundary-residuals.test.ts`.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — mechanism**: demand-at-freeze (recommended) vs intrinsic
+  instruction. For the demand shape, name the exact seam that reads the
+  selected provider (the `preparedGeneratorNumberBoxProvider` analog,
+  intrinsic-support.ts:262-280) and prove the host arm binds the SAME
+  `env.string_compare` funcMap index as today (contract item 4). Note the
+  measured constraint that generator-style seams accept only
+  runtime/intrinsic bindings — verify whether the string-compare seam can
+  take an `irImportFuncRef` host binding or must follow the same
+  runtime-symbol route; either way the physical import must not move.
+- **P2 — adapters**: exact edits for the linear adapter and
+  stdlib-selfhost disabled policies (edit-list item 9), with the F1-S2/S3/S4
+  loc-budget rationale pattern (issue :83-120).
+- **P3 — outcome-pin shift**: which committed pins actually move. Candidates
+  measured: `tests/issue-3520-callable-provider-abi.test.ts:16,768-777`
+  (IR_STRING_COMPARE_FN binding-key/ABI identity — update to compare KINDS),
+  the `tests/issue-4104-...:432-442` whole-shape policy pin and its
+  `issue-3526-ir-runtime-manifest.test.ts` analogs (new field), and whether
+  any `tests/issue-3529-*` divergence-4 pins
+  (`operand-coercion-unsupported`@build) cover populations this arm demotes —
+  if none demote (compare is total under both arms), record that the
+  divergence-4 class is EMPTY for this slice.
+- **P4 — census**: `pnpm run check:ir-fallbacks` output must be diffed, not
+  eyeballed (`ir-fallback-baseline.json` has `unintended: {}` and
+  `deferred: {"string-builder-candidate": 2}` — neither should move; note
+  `check-ir-fallbacks.ts:145-149` has no `resolve` stage key, so any
+  demote-site shift would change census OUTPUT). The linear twin
+  `scripts/linear-ir-baseline.json` is byte-exact-pinned
+  (`tests/issue-4550-linear-ir-census.test.ts:627-629`) — must not change.
+
+### Verification matrix (the 6-point F1 template, issue :1595-1616, verbatim)
+
+- **V-A byte cells**: the F1 fixture protocol — fixtures × 5 lanes (gc-host,
+  gc-native-strings, standalone, WASI, linear), before/after on the same
+  tree: byte length, sha256, import set AND order per cell; full WAT diff
+  empty. Expectation for this slice: **all cells byte-identical** (no purity
+  class — the semantic ref shape does not change). Any WAT delta is a defect.
+- **V-B import parity**: exact `result.imports.map(name)` array in order on
+  the host lane (the F1-S2 :467-492 pattern), plus a runtime oracle equality
+  check on string comparisons (`<`, `>`, `localeCompare`-free shapes) across
+  lanes.
+- **V-C non-vacuity by revert**: restore only the `:6189-6195` mode read
+  (sub-A) / only the `:3375` fallback (sub-B); exactly the named new pins
+  fail, all schema/policy pins stay green (the S3 2/20, S4 4/9 pattern).
+- **V-D fail-closed reachability**: refusal per disabled policy with typed
+  `provider-target-unavailable` naming `stringCompare`; owner-local demote
+  (`late-preparation-unsupported`@resolve) proven per-owner with a clean
+  co-owner staying emitted; unattached `forof.string` refusal pin (sub-B).
+- **V-E suites**: new `tests/issue-3526-string-boundary-compare.test.ts` with
+  the committed per-slice anatomy (a)-(i) from the F1 files; affected string
+  regression controls run unchanged (`issue-3518-string-repeat-ir`,
+  `issue-3502-string-contract`, `issue-2955-depolymorph-gate` — the grep gate
+  must stay green); all five ratchet gates chained before commit.
+
+### Out of scope
+
+The `wasm:js-string` and `string_constants` capability-schema widenings
+(their own slice, before concat/eq/len/const can move); `stringMethodPlan`
+(XL, needs per-method census); `String()` coercion (selector work, not
+boundary work); `stringForOfPlan`/`charReadPlan` strategy queries (stay
+build-time per #2955 — only their provider NAMES could ever be
+manifest-projected); the resolve-table rows beyond compare (`__concat_N`,
+repeat, charAt families — later slices ride on this slice's machinery).

@@ -4011,7 +4011,11 @@ interface IrFirstBodyRouting {
 interface PreparedLexicalModuleInitEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<IrBindingId>;
-  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export">;
+  // (#3523 R4 gap 3) `wasi-start-export` joins the two host/standalone
+  // policies. The adapter discriminator stays derivable from `kind` — no field
+  // is added to `plan.invocation`, whose whole shape is pinned by
+  // `tests/issue-3523-ir-module-init-compile-once.test.ts`.
+  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export" | "wasi-start-export">;
 }
 
 function preparedModuleInitEvaluationMatchesStatement(
@@ -4189,17 +4193,35 @@ function preparedExactLexicalModuleInit(
   const exactInvocationLane =
     (!ctx.nativeStrings &&
       !ctx.standalone &&
+      !ctx.wasi &&
       planning?.plan.invocation.target === "host" &&
       (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     (ctx.nativeStrings &&
       ctx.standalone &&
+      !ctx.wasi &&
       ctx.targetProfile.semanticProviders === "native-first" &&
       planning?.plan.invocation.target === "standalone" &&
-      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export"));
+      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
+    // (#3523 R4 gap 3) The WASI lane. `nativeStrings` auto-enables for WASI, so
+    // requiring it here states the regime rather than narrowing it. The
+    // startup adapter is neither a `start` section nor a `__module_init`
+    // export: it is the single `_start` export built by `addWasiStartExport`,
+    // and the body carries the `__init_done` idempotence guard planted at
+    // preparation instead of spliced afterwards.
+    (ctx.wasi &&
+      ctx.nativeStrings &&
+      planning?.plan.invocation.target === "wasi" &&
+      planning.plan.invocation.kind === "wasi-start-export");
   if (
     ctx.fast ||
-    ctx.wasi ||
-    ctx.strictNoHostImports ||
+    // (#3523 R4 gap 3) `strictNoHostImports` is DERIVED — `strictEnvImportGate`
+    // is `input.strictNoHostImports ?? target === "wasi"` — so under WASI it is
+    // always true and refuses the lane on its own. Dropping `ctx.wasi` from
+    // this disjunction alone would therefore have admitted nothing. What stays
+    // refused is the case the clause was actually written for: an EXPLICIT
+    // `--no-host-imports` gc/host build, a distinct and still-unproven regime
+    // that no invocation policy of this slice describes.
+    (ctx.strictNoHostImports && !ctx.wasi) ||
     !exactInvocationLane ||
     selection.moduleInit?.reason !== null ||
     selection.moduleInit.stmtCount === 0 ||
@@ -4305,7 +4327,8 @@ function preparedExactLexicalModuleInit(
     return undefined;
   }
   const invocationKind = planning.plan.invocation.kind;
-  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") return undefined;
+  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export" && invocationKind !== "wasi-start-export")
+    return undefined;
   return { unitId: planning.plan.unitId, globalBindingIds, invocationKind };
 }
 
@@ -6868,23 +6891,57 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
   if (!initFn || initFuncIdx === undefined) return; // no module init — nothing to guard
 
   // 1. __init_done global + self-guard prologue on __module_init.
-  const doneGlobalIdx = nextModuleGlobalIdx(ctx);
-  ctx.mod.globals.push({
-    name: "__init_done",
-    type: { kind: "i32" },
-    mutable: true,
-    init: [{ op: "i32.const", value: 0 }],
-  });
-  initFn.body = [
-    { op: "global.get", index: doneGlobalIdx },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-    { op: "i32.const", value: 1 },
-    { op: "global.set", index: doneGlobalIdx },
-    ...initFn.body,
-  ];
+  //
+  // (#3523 R4 gap 3) A PREPARED init already carries the guard: it was
+  // constructed around the reserved `__init_done` global as a wrapping `if`,
+  // inside the body the preparation snapshot sealed. Re-splicing here would
+  // both double-guard the body and reassign a sealed body, so this route only
+  // AUTHENTICATES — and fails closed. The three planted instruction objects
+  // must still be the body's leading triple, by object identity: index values
+  // are shifted in place by `fixupModuleGlobalIndices`, so identity survives
+  // every legitimate late mutation while a body replacement does not.
+  const reservation = ctx.preparedWasiModuleInitGuard;
+  const planted = reservation?.planted;
+  if (planted) {
+    if (process.env.JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD === "1") {
+      // Anti-vacuity seam: hand the authentication below a genuinely unguarded
+      // prepared body, so "fails closed" is a measured property.
+      initFn.body = initFn.body.filter((instr) => instr !== planted.guard);
+    }
+    const at = initFn.body.indexOf(planted.doneGet);
+    if (at < 0 || initFn.body[at + 1] !== planted.eqz || initFn.body[at + 2] !== planted.guard) {
+      throw new IrInvariantError(
+        "body-emission-evidence",
+        "patch",
+        "prepared WASI module initializer lost its exact planted idempotence guard",
+      );
+    }
+  } else {
+    // Legacy splice. When a reservation exists but preparation fell back to the
+    // direct body, adopt the reserved global rather than minting a second one.
+    const doneGlobalIdx = reservation?.doneGlobalIdx ?? nextModuleGlobalIdx(ctx);
+    if (reservation === undefined) {
+      ctx.mod.globals.push({
+        name: "__init_done",
+        type: { kind: "i32" },
+        mutable: true,
+        init: [{ op: "i32.const", value: 0 }],
+      });
+    }
+    initFn.body = [
+      { op: "global.get", index: doneGlobalIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index: doneGlobalIdx },
+      ...initFn.body,
+    ];
+  }
 
   // 2. Prepend `call __module_init` to every exported function (except
   //    __module_init itself). Idempotency makes repeated entry calls safe.
+  //    Unchanged on both routes: only the module-init body's identity is
+  //    asserted anywhere, and this placement still precedes dead-import
+  //    elimination and late-import renumbering (`const-box-hoist.ts` contract).
   for (const fn of ctx.mod.functions) {
     if (!fn.exported) continue;
     if (fn === initFn) continue;
@@ -13817,8 +13874,9 @@ export function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.
 function inferLetConstInitializerWasmType(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  initializer: ts.Expression | undefined,
+  declaration: ts.VariableDeclaration,
 ): ValType | null {
+  const initializer = declaration.initializer;
   if (!initializer) return null;
   // (#4376) Keep the authoritative pre-hoisted slot type in lockstep with
   // compileVariableStatement. A buffer-backed typed array is represented by a
@@ -13840,6 +13898,19 @@ function inferLetConstInitializerWasmType(
       // Wasm locals must be defaultable. The call emitter materializes the
       // concrete target before the initializer is stored into this slot.
       return { kind: "ref_null", typeIdx: target.typeIdx };
+    }
+    if (
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      genericFactory.sourceResultAbi === true &&
+      (target.kind === "externref" || target.kind === "ref_extern")
+    ) {
+      const source = resolveWasmType(ctx, genericFactory.sourceConstraint);
+      if (source.kind === "ref" || source.kind === "ref_null") {
+        // An unmaterializable logical T does not change what the proven fresh
+        // factory allocated. Preserve that source carrier in the authoritative
+        // pre-hoisted slot so its physical fields remain observable.
+        return { kind: "ref_null", typeIdx: source.typeIdx };
+      }
     }
   }
 
@@ -14133,7 +14204,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
               : isNullablePrimitiveType(varType)
                 ? { kind: "externref" }
                 : (hoistInferredArrayVecType ??
-                  inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                  inferLetConstInitializerWasmType(ctx, fctx, decl) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance

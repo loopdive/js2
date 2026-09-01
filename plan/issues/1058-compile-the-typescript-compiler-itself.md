@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-08-31
+updated: 2026-09-01
 priority: high
 feasibility: hard
 model: fable
@@ -171,7 +171,7 @@ Escalating difficulty:
 1. **Tier 1 (pattern validation — already done in #452):** TypeScript-compiler-shaped patterns compile. ✅ 19/20
 2. **Tier 2 (real compiler leaves):** individual source files from `typescript/src/compiler/` compile without modification
 3. **Tier 3 (scanner + parser):** compile `typescript/src/compiler/scanner.ts` + `parser.ts` so the resulting Wasm parses simple `.ts` source to an AST
-4. **Tier 4 (checker subset):** compile enough of `checker.ts` to type-check `1 + "str"` and report a type error
+4. **Tier 4 (checker subset):** compile enough of `checker.ts` to type-check `const x: number = "str"` and report TS2322
 5. **Tier 5 (emit):** compile enough of `emitter.ts` to emit a `.js` file from a compiled AST
 6. **Tier 6 (full round-trip):** compile a tsc subset end-to-end; hand it a `.ts` file, produce a `.js` file that matches native-tsc byte-for-byte (parallel to prettier's self-format diff #1034)
 7. **Tier 7 — the moonshot (self-hosting):** compile js2wasm's own source with compiled-tsc and verify the second-stage js2wasm still compiles test262 correctly
@@ -1223,17 +1223,109 @@ semantic surface is complete. Binder, checker, emitter, language services, and
 post-link dead-code elimination remain the separately layered follow-up work
 described above.
 
+## Exact parser acceptance and binder handoff (2026-09-01)
+
+The parser-only milestone is now accepted. A fresh build of the pinned
+TypeScript 5.9.3 consumer-driven scanner/parser graph selected **30 source
+files**, **34 program files**, and **310 module-initialization statements**. It
+compiled successfully, validated, and emitted a **68,781,935-byte** WasmGC
+module with **4,440 functions** after body generation and the same **16**
+non-fatal IR fallback warnings. The worker completed in 366,821 ms / 368,018 ms
+wall time, used 400,412 ms CPU (1.09 average cores), and peaked at **4,002.7 MiB
+RSS** with a 4,096 MiB V8 heap limit. That peak is **93.3 MiB below the strict
+4 GiB whole-process RSS target**. The artifact
+SHA-256 is
+`033de5a467fe492ba8bf531c9daa927c436ee1b43b0c7cc98467f72fd0c63f72`;
+the adjacent 48,038-byte source map SHA-256 is
+`52fbd62d169554bc5c8d2abbc51da37eb1b077aa52950e5669037d1df27c02d6`.
+
+All three canonical real-source fingerprints are exactly native-equivalent:
+
+| workload | native | Wasm | status |
+| --- | ---: | ---: | --- |
+| `builderStatePublic.ts` | 13,386,537,220,945 | 13,386,537,220,945 | exact |
+| `corePublic.ts` | 40,098,163,538,143 | 40,098,163,538,143 | exact |
+| `performanceCore.ts` | 49,645,738,923,599 | 49,645,738,923,599 | exact |
+
+The final two defects were separate representation boundaries. TypeScript's
+hosted `UnionTypeNode` and `IntersectionTypeNode` are explicit allocation views
+of the exact merged `TypeNode`/`Node` carrier; standalone retains their concrete
+physical `types` field. After that repair, the remaining hash difference was
+one event: `VariableDeclarationList.flags` held `Ambient` instead of `Ambient |
+Const`. Proven fresh generic factories now keep their physical source carrier
+when the logical instantiation is opaque, and `finishNode<T>` compound writes
+use the finalized typed-member dispatcher before its genuine-host-object
+fallback. The exact full-layout flag repro now returns **33,554,434** as native
+does. This establishes the selected parser module, not the complete upstream
+TypeScript parser unit suite.
+
+The publication tree passes all **69/69** focused #1058 test files and
+**336/336 tests**. The nine merge-sensitive and TypeScript-verdict controls pass
+**117/117**, and both TS5 and TS7 typechecks pass.
+
+The next self-host slice is a separate binder entry over an already parsed
+`SourceFile`. Root `createSourceFile` and `bindSourceFile` directly rather than
+the broad `_namespaces/ts.js` barrel, and keep checker, emitter, services, and
+server code outside the entry graph. The first bounded native/Wasm binder smoke
+oracle is:
+
+```text
+symbolCount * 65,536 + locals.size * 256 + bindDiagnostics.length
+```
+
+This packed count is intentionally only a first smoke oracle: different binder
+states can collide on the same number, so it is not a semantic fingerprint.
+Only the controls whose exact source text was recorded are currently
+reproducible:
+
+| exact source | native binder smoke oracle |
+| --- | ---: |
+| `const x = 1;` | 65,792 |
+| `let x; let x;` | 131,330 |
+
+A third value, **459,008**, was previously measured for an exported-class case
+with a nested declaration, but the exact source text was not recorded. It is
+not an acceptance control: first commit the literal fixture, then remeasure and
+record its native result. Acceptance requires compile+validate, unchanged
+pre-bind parser fingerprints, and exact native/Wasm results for every committed
+binder smoke fixture. The oracle must then grow a deterministic sorted
+name-and-flags sequence (or its stable hash) for locals and exports so distinct
+binder states cannot pass solely by colliding on the packed count.
+
+`binder.ts` is the smallest next capability slice at approximately 199 KB /
+4,008 lines. The resolver currently selects 32 parser+binder source files
+totaling **6,973,595 input source bytes**; this is a source-selection
+measurement, and **no binder Wasm build is claimed yet**. Its current
+reachability hazard is `getNodeId`, which can pull `checker.ts` into the graph
+through a broad barrel even though binding itself does not need the checker
+implementation.
+
+The module plan remains capability-based: parser, binder, checker, and
+printer/emitter are separate public roots. A runtime module that is neither
+reachable from the selected runtime entry nor re-exported may be removed only
+when its top-level evaluation is proven unobservable. A linked but otherwise
+unused module remains rooted when import evaluation, an observable initializer,
+or module evaluation order can affect behavior; side-effect imports therefore
+remain roots. Post-lowering DCE starts from public exports,
+module/start initialization, host callbacks, and genuine `ref.func`, table, or
+dynamic-registry targets, then removes unreachable functions, globals, types,
+data, and table entries before identical-body folding. The checker oracle after
+the binder slice must be `const x: number = "str"` producing TS2322; `1 +
+"str"` is valid TypeScript and is not a checker-negative control. Printer
+equivalence should be a separate `createPrinter().printFile` slice before full
+emit and self-hosting.
+
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
 - [ ] Tier 2 (leaf modules: `core.ts`, `path.ts`) compiles cleanly
-- [x] Tier 3 attempted — even a partial compile produces valuable error data
+- [x] Tier 3 scanner+parser graph compiles, validates, and executes all three pinned real-source workloads
 - [x] Consumer-driven source resolution narrows the parser graph with default
       resolution unchanged and focused static/dynamic-demand tests
 - [ ] ≥ 5 follow-up issues filed for concrete gap patterns
 - [x] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
-- [ ] **Stretch 1 (Tier 3):** compiled scanner+parser produces AST shape-equivalent to native ts for ≥ 3 real `.ts` files
-- [ ] **Stretch 2 (Tier 4):** compiled checker subset detects `1 + "str"` as a type error
+- [x] **Stretch 1 (Tier 3):** compiled scanner+parser produces native-equivalent AST fingerprints for all three pinned real `.ts` files
+- [ ] **Stretch 2 (Tier 4):** compiled checker subset reports TS2322 for `const x: number = "str"`
 - [ ] **Moonshot (Tier 7):** js2wasm-compiled tsc can compile js2wasm's own source, and the second-stage output passes test262 at the same rate
 
 ## Non-goals

@@ -34,7 +34,14 @@ export interface MultiPreparedModuleInitSourcePlan {
 export interface MultiPreparedModuleInitLexicalEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<string>;
-  readonly invocationKind: "wasm-start" | "deferred-export";
+  /**
+   * (#3523 R4 gap 3) Widened only to stay assignable from the one shared
+   * selector, which now also admits the single-source WASI lane. M2 WASI is
+   * still refused before any reservation (`rejectBeforeReservation` keeps its
+   * `ctx.wasi` clause), so this route never actually observes
+   * `"wasi-start-export"` — admitting it is a separate slice.
+   */
+  readonly invocationKind: "wasm-start" | "deferred-export" | "wasi-start-export";
 }
 
 export interface MultiPreparedModuleInitPlanningInput {
@@ -269,10 +276,17 @@ export function planMultiPreparedModuleInit(
   if (
     !lexical ||
     lexical.unitId !== contributor.unitId ||
-    lexical.invocationKind !== contributor.planning.plan.invocation.kind
+    lexical.invocationKind !== contributor.planning.plan.invocation.kind ||
+    // (#3523 R4 gap 3) The shared selector now admits single-source WASI. M2
+    // WASI admission is a separate slice, and `rejectBeforeReservation` above
+    // already refuses it — this restates the refusal at the point the narrow
+    // `MultiPreparedModuleInitPreparation.invocationKind` is produced, so the
+    // type stays the proof rather than a coincidence of ordering.
+    lexical.invocationKind === "wasi-start-export"
   ) {
     return undefined;
   }
+  const invocationKind: "wasm-start" | "deferred-export" = lexical.invocationKind;
 
   // Everything above is a pre-reservation eligibility gate. From this point
   // on, a broken exact handoff is an invariant failure, never a fallback.
@@ -334,7 +348,7 @@ export function planMultiPreparedModuleInit(
     sourceId: contributor.sourceId,
     unitId: contributor.unitId,
     sourcePlans: Object.freeze(sourcePlans),
-    invocationKind: lexical.invocationKind,
+    invocationKind,
     preparedComponentId,
     preparedFunction,
     preparedHandle,

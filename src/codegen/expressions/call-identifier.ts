@@ -147,18 +147,19 @@ function tryEmitGenericStructFactoryResult(
 
   const source = resolveWasmType(ctx, factory.sourceConstraint);
   const target = resolveWasmType(ctx, factory.target);
-  if ((source.kind !== "ref" && source.kind !== "ref_null") || (target.kind !== "ref" && target.kind !== "ref_null")) {
-    return null;
-  }
+  if (source.kind !== "ref" && source.kind !== "ref_null") return null;
+  const opaqueTarget = target.kind === "externref" || target.kind === "ref_extern";
+  // Recognizing a generic `new` assertion is enough for established concrete
+  // refinement, but not for preserving its source carrier through an opaque
+  // ABI: JavaScript constructors may explicitly return another object.
+  if (opaqueTarget && factory.sourceResultAbi !== true) return null;
 
   const sourceCarrier: ValType = { kind: "ref_null", typeIdx: source.typeIdx };
-  const sameStruct = source.typeIdx === target.typeIdx;
-  if (!sameStruct && !canEmitAssertedStructExtension(ctx, sourceCarrier, target)) return null;
-
   let carried: ValType;
   if (actualReturn.kind === "externref" || actualReturn.kind === "ref_extern") {
-    // Nested generic functions retain an externref ABI, but this detector has
-    // proved that the value was freshly allocated as the constraint struct.
+    // Only a declaration with the stronger source-result proof may recover an
+    // opaque implementation ABI as the constraint struct.
+    if (factory.sourceResultAbi !== true) return null;
     coerceType(ctx, fctx, { kind: "externref" }, sourceCarrier);
     carried = sourceCarrier;
   } else if (
@@ -169,6 +170,17 @@ function tryEmitGenericStructFactoryResult(
   } else {
     return null;
   }
+
+  // Some large structural instantiations are deliberately not materialized as
+  // Wasm structs and therefore map to externref. The declaration proof still
+  // establishes that the returned value is physically the fresh source
+  // constraint. Keep that carrier so binding lowering can access the source's
+  // real fields instead of immediately round-tripping through the host.
+  if (opaqueTarget) return carried;
+  if (target.kind !== "ref" && target.kind !== "ref_null") return null;
+
+  const sameStruct = source.typeIdx === target.typeIdx;
+  if (!sameStruct && !canEmitAssertedStructExtension(ctx, sourceCarrier, target)) return null;
 
   if (sameStruct) {
     if (!valTypesMatch(carried, target)) coerceType(ctx, fctx, carried, target);

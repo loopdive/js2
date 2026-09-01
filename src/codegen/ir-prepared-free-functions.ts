@@ -1822,7 +1822,16 @@ export function prepareIrBodies(input: {
             input.overrideMap,
             input.classShapes,
             input.projectLoweringPlans(selection),
-            { sealPreparedComponents: true },
+            {
+              sealPreparedComponents: true,
+              // (#3523 R4 gap 3) Only this call constructs the Prepared
+              // module-init body, so only this call may plant the reserved WASI
+              // `__init_done` guard into it. A no-op unless the reservation
+              // exists (WASI) and this population actually claims the init.
+              ...(moduleInitClaimsByUnitId.size > 0 && input.ctx.preparedWasiModuleInitGuard !== undefined
+                ? { plantPreparedWasiModuleInitGuard: true as const }
+                : {}),
+            },
           ),
   );
   const timerUnitIds = compilerTimerShimTerminalUnitIds(input.identityPlan.identityContext.inventory);
