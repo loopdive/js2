@@ -2,10 +2,11 @@
   "id": "3526",
   "slice": "f1s4",
   "assignee": "ttraenkler/fable-ir-takeover",
-  "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3526-f1s4-boundary-residuals",
   "claimed_at": "2026-09-01T12:44:24Z",
-  "updated_at": "2026-09-01T12:44:24Z",
-  "write_id": "25929-3nz18c13"
+  "updated_at": "2026-09-01T14:40:11Z",
+  "write_id": "1820-9ugs0rli",
+  "released_at": "2026-09-01T14:40:11Z"
 }
