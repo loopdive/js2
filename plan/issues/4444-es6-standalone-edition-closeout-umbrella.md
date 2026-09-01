@@ -23,7 +23,7 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 This is the latest immutable dispatch baseline for this umbrella. It replaces
 the older 2026-08-15/27/30 planning headline below, but it is not final
 acceptance evidence: upstream `main` advanced after the fetch from the measured
-`f841cddc` source to `b590669a`. A complete maintained-runner census on the
+`f841cddc` source to release head `7fffec53`. A complete maintained-runner census on the
 final integrated head is still required before any current pass-rate or
 completion claim.
 
