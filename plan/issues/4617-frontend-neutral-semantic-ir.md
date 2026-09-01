@@ -30,6 +30,7 @@ files:
   - src/ir/semantic-function-value-source-projection.ts
   - src/ir/program.ts
   - src/ir/prepared-component-sealing.ts
+  - src/codegen/certified-function-value-authority.ts
   - src/codegen/certified-function-value-materialization.ts
   - src/codegen/closures.ts
   - src/codegen/closures/method-trampolines.ts
@@ -1161,10 +1162,14 @@ The implementation owns only:
 - two new focused neutral modules,
   `src/ir/semantic-function-value-route-facts.ts` and
   `src/ir/semantic-function-value-source-projection.ts`;
-- one new codegen-local, frontend-free lifecycle module,
+- two new codegen-local, frontend-free dependency leaves:
+  `src/codegen/certified-function-value-authority.ts`, which owns only the
+  exact Program-ABI currentness joins and private lifecycle brands enumerated
+  by the 2026-09-01 D1a amendment below, and
   `src/codegen/certified-function-value-materialization.ts`, which registers,
-  consumes, audits, and aborts the one authenticated direct-materialization
-  receipt without importing TypeScript or an IR backend;
+  consumes, audits, publishes, settles, and aborts the one authenticated
+  direct-materialization receipt without importing TypeScript or an IR
+  backend;
 - `src/checker/oracle-declaration-snapshot.ts`;
 - `src/codegen/multi-prepared-function-value-declaration-replay.ts`;
 - `src/codegen/multi-prepared-function-value-import-target.ts`;
@@ -1261,18 +1266,21 @@ support site's read-only reauthentication of that same allocation, the shared
 singleton allocation core and two-step metadata recipe needed to make their
 physical artifacts agree, the two raw absolute-global side-table value shifts
 (`fnInstanceMetaGlobalByKey` and `nativeStrLiteralGlobals`), the codegen-local
-one-shot direct-materialization registry/emitter handoff and post-DCE
-settlement, the #1916 stable-handle assertions at those exact sites, the two
+one-shot direct-materialization registry/emitter handoff, its dependency-only
+current-authority leaf, and post-DCE settlement, the #1916 stable-handle
+assertions at those exact sites, the two
 multi-source trampoline-finalizer boundary pairs and three pre-consumer
 revision-0 assertions, and the terminal post-fixup audit enumerated above, the #4590
 fixture/tests, and remeasured pins. Its receipt is authorized by the existing
 C1 AST-backed candidate proof; it does not add the neutral schema or route
 lifecycle. D1b owns the remaining
-files and behavior listed above. The new
-direct-materialization registry is a dependency leaf: it may import codegen/Wasm
-data types, but it imports no TypeScript, checker, frontend, IR backend, or
-`method-trampolines` module; `method-trampolines.ts` imports the registry, never
-the reverse.
+files and behavior listed above. The new direct-materialization lifecycle
+module and current-authority module are two dependency leaves with the exact
+split below. The lifecycle leaf may import codegen/Wasm data types and the
+authority leaf; the authority leaf imports only its enumerated
+Program-ABI/current-layout dependencies. Neither imports TypeScript, checker,
+frontend, an IR backend, or `method-trampolines`; `method-trampolines.ts`
+imports the lifecycle leaf, never the reverse.
 
 ### The exact authority being retired
 
@@ -3089,8 +3097,8 @@ type indices must be constructible; and the subtype/family edges must be
 exactly base→allocation and allocation→metadata-field. Unrelated registry rows
 remain allowed.
 
-The `late` descriptor is not the last revision-0 registry check. Add a
-frontend-free
+The `late` descriptor is not the last revision-0 registry check. Keep a
+frontend-free lifecycle facade
 `assertCertifiedFunctionInstancePreDceRegistriesCurrent(ctx, receipt,
 consumer)` in the certified-materialization module and call it immediately
 before each later load-bearing consumer: `fillReflectIsConstructor`,
@@ -3099,8 +3107,12 @@ before each later load-bearing consumer: `fillReflectIsConstructor`,
 entire raw/root/constructible/metadata projection above from the authenticated
 layout cell and current module objects; it may not reuse the `late` descriptor,
 a prior scan, or generated helper bodies as evidence. The assertion performs
-no allocation or repair. Thus a mutation after `sealRoutesComplete` but before
-any finalizer fails at that consumer boundary with no helper/publication prefix.
+no allocation or repair. The materialization facade owns only receipt/lifecycle
+phase routing; it delegates every Program-ABI, locator, current-index,
+canonical-signature, stable-handle, and live-layout join to private authority
+implemented in `certified-function-value-authority.ts`. Thus a mutation after
+`sealRoutesComplete` but before any finalizer fails at that consumer boundary
+with no helper/publication prefix.
 
 After DCE these type-index-keyed maps are not current authority:
 revision 1 instead authenticates the exact emitted initializer, final type
