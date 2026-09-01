@@ -24,6 +24,7 @@ files:
   - src/compiler.ts
   - src/ts-api.ts
   - src/ir/identity.ts
+  - src/ir/integration.ts
   - src/ir/planning-identity.ts
   - src/ir/semantic-declaration-snapshot.ts
   - src/ir/semantic-function-value-route-facts.ts
@@ -37,6 +38,7 @@ files:
   - src/codegen/declarations.ts
   - src/codegen/function-instance-meta.ts
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-overlay-outcomes.ts
   - src/codegen/legacy-body-audit.ts
@@ -1174,7 +1176,20 @@ The implementation owns only:
 - `src/codegen/multi-prepared-function-value-declaration-replay.ts`;
 - `src/codegen/multi-prepared-function-value-import-target.ts`;
 - the exact function-value and route-claim sections of
-  `src/codegen/multi-prepared-scalar-leaf.ts`;
+  `src/codegen/multi-prepared-scalar-leaf.ts`, including the exact target-
+  UnitId-keyed prepared-install request carrier, one-entry callback lookup,
+  and post-prepare exact consumed-request census;
+- only one optional structurally neutral
+  `onPreparedUnitCallableInstalled(artifactUnitId)` field in
+  `IrIntegrationOptions` and one invocation in `src/ir/integration.ts` after
+  the normal non-deferred `replaceUnitCallableAt` succeeds and before
+  `settlePreparedDerivedCallable`; no codegen type, request, map, receipt, or
+  D1 import crosses into IR, and the deferred/publication and orphan-stub
+  branches are unchanged;
+- only the matching optional callback input and exact forwarding into the
+  sealed `compileIrPathFunctions` call in `prepareIrBodies` in
+  `src/codegen/ir-prepared-free-functions.ts`; no selection, lowering,
+  withdrawal, routing, or fallback behavior changes;
 - only a two-symbol import/export seam in `src/codegen/closures.ts` and a
   certified-metadata overload plus shared allocation core beside
   `ensureFuncClosureSingleton` in
@@ -1208,7 +1223,10 @@ The implementation owns only:
 - only the support allocator split, exact multi-program callback, the
   target-UnitId-keyed read-only late support reauthentication branch, and the
   complete D1 function-value selection/currentness branch of
-  `compileMultiIrOverlaySource`, and the D1 neutral skipped-slot audit/outcome
+  `compileMultiIrOverlaySource`, including exact early owner-UnitId threading,
+  registration of the one prepared-install request, and sealing of the exact
+  expected receipt census before `prepareIrBodies`; and the D1 neutral
+  skipped-slot audit/outcome
   calls in `consumeIrOverlayReport` / `recordObservedIrOutcomes` in
   `src/codegen/index.ts`; plus only the D1 receipt-conditional pre/post
   trampoline-finalization assertions surrounding the primary multi-source
@@ -1242,7 +1260,8 @@ The implementation owns only:
   `tests/issue-4617-declaration-replay-mutations.test.ts`, and
   `tests/issue-4590-bench-loop-prepared-cutover.test.ts`.
 
-Do not edit `src/ir/select.ts`, `src/codegen/ir-prepared-free-functions.ts`,
+Do not edit `src/ir/select.ts`, `src/codegen/ir-prepared-free-functions.ts`
+outside the exact neutral callback transport above,
 function-instance metadata outside the exact two-step recipe seam above, any
 async-analysis module, Program-ABI session/publication
 modules, any callable/module-init orchestration outside the single callback
@@ -1267,7 +1286,8 @@ singleton allocation core and two-step metadata recipe needed to make their
 physical artifacts agree, the two raw absolute-global side-table value shifts
 (`fnInstanceMetaGlobalByKey` and `nativeStrLiteralGlobals`), the codegen-local
 one-shot direct-materialization registry/emitter handoff, its dependency-only
-current-authority leaf, and post-DCE settlement, the #1916 stable-handle
+current-authority leaf, the exact neutral post-replacement callback transport,
+and post-DCE settlement, the #1916 stable-handle
 assertions at those exact sites, the two
 multi-source trampoline-finalizer boundary pairs and three pre-consumer
 revision-0 assertions, and the terminal post-fixup audit enumerated above, the #4590
@@ -3642,6 +3662,49 @@ opaque objects or caller-supplied canonical strings:
    module, proves the remapped `$fnmeta` field points to that index, rejoins all
    current locators/signatures/handles/globals/types and the exact-one owner
    initializer, then performs the sole layout-cell mutation.
+
+Prepared-target installation crosses one narrow neutral callback seam. Early
+D1 registration returns an opaque prepared-install request only after the
+exact target and legacy-owner UnitIds have both joined the certified candidate.
+The codegen owner retains that request in its existing support receipt, keyed
+by the exact target UnitId, and seals the one-receipt expected census before
+entering `prepareIrBodies`. Before IR's patch loop starts, codegen must prove
+that every retained request key is one exact selected physical target and that
+no request is missing, duplicated, foreign, already consumed, or associated
+with a deferred component.
+
+`IrIntegrationOptions` gains only this optional structurally neutral hook:
+
+```ts
+readonly onPreparedUnitCallableInstalled?: (
+  artifactUnitId: IrUnitId,
+) => void;
+```
+
+The normal non-deferred patch branch invokes it exactly once, immediately
+after `replaceUnitCallableAt(...)` returns the installed callable and before
+`settlePreparedDerivedCallable(...)` or compiled/evidence bookkeeping. The
+hook is not called by orphan-stub recovery, failed/withdrawn patches, or
+`deferPreparedPublication`; it receives no function, array, index, receipt,
+request, context, or canonical string. `prepareIrBodies` merely forwards the
+hook. A codegen closure looks up the UnitId in its private request map and asks
+the lifecycle leaf to stage the live target; unrelated successfully installed
+units are ignored, while the exact target must consume its request once. After
+`prepareIrBodies` returns, codegen requires that exact one-entry request census
+to be fully consumed. A callback throw is an invariant failure of the compile
+invocation, never a typed legacy fallback or permission to continue emitting a
+direct owner against an unstaged target.
+
+The D1 route does not use aggregate/deferred cross-source publication. Deferred
+patches install later through prepared-component publication and therefore
+must never consume a D1 request through this seam. Supporting that lane would
+require a separately planned publication-time neutral capability after the
+aggregate ABI commit; it is not D1a scope. Add non-vacuous controls for a
+missing exact callback, wrong/foreign target key, duplicate invocation,
+invocation before replacement, replay after staging, and an unrelated installed
+unit beside the exact target. Every failure leaves the legacy owner body and
+D1 lifecycle state unchanged; no failure may publish a compiled/evidence row
+for the exact target.
 
 The bounded authority leaf may document the existing
 `function-value-cache` global-role ordinal `2` locally and must validate it
