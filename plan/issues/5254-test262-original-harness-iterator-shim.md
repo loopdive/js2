@@ -1,7 +1,7 @@
 ---
 id: 5254
 title: "Test262 Iterator shim: provision the original harness and admit native helper dispatch"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
@@ -20,6 +20,10 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::tryCompileLateFnctorPrototypeMethodCall
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/iter-hof-native.ts::fillIterHofSteppers
+coercion-sites-allow:
+  - src/codegen/iter-hof-native.ts
 ---
 
 # #5254 — Provision the `Iterator` shim and admit its native helper dispatch
@@ -184,28 +188,19 @@ final PR must target `loopdive/js2:main`, contain only #5254's completed atomic
 harness-plus-admission fix after dependencies land, and remain draft while
 dependency-blocked or otherwise not mergeable.
 
-## Wrap-up handoff (2026-09-01)
+## Completion evidence (2026-09-01)
 
-Work is intentionally stopped on draft PR #5406, branch
-`codex/es2015-generator-closure-carrier-terra-20260901`. The corrected and
-published plan checkpoint is
-`99fa28a6895797c9418089d487fabf59a8fd9d7d`. The draft implementation checkpoint
-shares `needsIteratorBinding` and the minimal preamble through
-`scripts/test262-iterator-binding.mjs`, provisions both local and test262.fyi
-original-harness records while preserving the literal upstream body suffix,
-and carries focused assembly plus exact-row diagnostics in
-`tests/issue-5254.test.ts`.
+PR #5406 now contains both required halves of the atomic fix. The original
+harness shares and provisions the minimal `Iterator` binding, and the compiler
+admits only a standalone fnctor subclass with a compiled `next` method/getter
+into an existing supported lazy-helper form. Getter-backed iterators use a
+private `$IteratorNextCallable` carrier so the getter is evaluated once and the
+returned callable is invoked with the original receiver on every step.
 
-The assembly/provisioning checks are viable, but the runtime checks are kept
-skipped in this unfinished draft because both exact rows still fail before the
-authorized compiler admission is implemented. The decisive remaining seam is
-`tryCompileLateFnctorPrototypeMethodCall` / the #3123 known-class miss in
-`src/codegen/expressions/call-receiver-method.ts`: a structurally proven
-iterator-like fnctor subclass must reuse `reserveClosedMethodDispatch` for a
-valid lazy-helper name/arity. No production compiler file has been edited in
-this checkpoint. After implementing that seam, the next owner must unskip the
-chunks/windows and official-row checks, merge exact parent #5402 head
-`7380a1694b3fba806232f571ea3356b899d7a8e6`, and run the full acceptance and
-normal hooks. Do not mark #5406 ready until those tests and dependency cleanup
-are green. No GitHub issue was created; this markdown file is the canonical
-tracker and handoff.
+Focused validation is green: #5254 passes 6/6, including both exact Test262
+rows, getter single-read/callable reuse, and negative non-iterator/arity
+controls; #3591 passes 3/3. TypeScript 7 typecheck, focused formatting/lint,
+host-import, LOC, function, dead-export, coercion, and oracle ratchets pass.
+One #3123 host-lane control still fails with `flatMap is not a function`; an
+isolated run at the unmodified merged base `3a5fe59aac` reproduces the same
+failure, proving it is unrelated to this repair.

@@ -5,8 +5,8 @@
  * The exact Iterator helper rows extend a bare `Iterator`; that binding used to
  * exist only in the deprecated wrapper, so the literal original-harness path
  * never reached chunks/windows or the getter-returned generator closure. The
- * two execution checks remain skipped in this draft checkpoint until the
- * tracked known-class miss admits the existing standalone lazy dispatcher.
+ * The execution checks prove the tracked known-class miss admits the existing
+ * standalone lazy dispatcher without introducing a host dependency.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -124,7 +124,35 @@ describe("#5254 original-harness Iterator provisioning", () => {
     expect(records[0]!.contents).toBe(`prefix\n${sourceFor(ITERATOR_ROWS[0])}`);
   });
 
-  it.skip.each([["chunks"], ["windows"]] as const)(
+  it("declines non-iterator fnctor subclasses and unsupported helper arities", async () => {
+    const nonIterator = await compile(
+      `
+function Base() {}
+class NotIterator extends Base {}
+export function test(): any { return new NotIterator().chunks(2); }
+`,
+      { fileName: "issue-5254-non-iterator.ts", target: "standalone", skipSemanticDiagnostics: true },
+    );
+    expect(nonIterator.success).toBe(true);
+    expect(nonIterator.wat).not.toContain("$IteratorNextCallable");
+    expect(nonIterator.wat).not.toContain("__iter_lazy_chunks");
+
+    const unsupportedArity = await compile(
+      `
+function Iterator() {}
+class TestIterator extends Iterator {
+  get next() { return function () { return { value: undefined, done: true }; }; }
+}
+export function test(): any { return new TestIterator().chunks(); }
+`,
+      { fileName: "issue-5254-unsupported-arity.ts", target: "standalone", skipSemanticDiagnostics: true },
+    );
+    expect(unsupportedArity.success).toBe(true);
+    expect(unsupportedArity.wat).not.toContain("$IteratorNextCallable");
+    expect(unsupportedArity.wat).not.toContain("__iter_lazy_chunks");
+  });
+
+  it.each([["chunks"], ["windows"]] as const)(
     "keeps the %s next getter single-read, caches its callable, and avoids return() on exhaustion",
     async (method) => {
       // `getterReads === 1` proves GetIteratorDirect cached the property's
@@ -137,14 +165,10 @@ describe("#5254 original-harness Iterator provisioning", () => {
     },
   );
 
-  it.skip(
-    "passes the two official rows through the literal original-harness runner",
-    { timeout: 180_000 },
-    async () => {
-      for (const row of ITERATOR_ROWS) {
-        const result = await runTest262File(join(TEST262_ROOT, row), "built-ins/Iterator", undefined, "standalone");
-        expect(result, row).toMatchObject({ status: "pass" });
-      }
-    },
-  );
+  it("passes the two official rows through the literal original-harness runner", { timeout: 180_000 }, async () => {
+    for (const row of ITERATOR_ROWS) {
+      const result = await runTest262File(join(TEST262_ROOT, row), "built-ins/Iterator", undefined, "standalone");
+      expect(result, row).toMatchObject({ status: "pass" });
+    }
+  });
 });

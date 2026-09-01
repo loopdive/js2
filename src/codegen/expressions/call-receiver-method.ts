@@ -88,7 +88,8 @@ import {
   typedArrayVecStorage,
 } from "../index.js";
 import { isTaViewTypeIdx } from "../registry/types.js";
-import { LAZY_ITER_METHODS } from "../iter-lazy-native.js";
+import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
+import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
@@ -572,6 +573,92 @@ function tryCompileLateFnctorPrototypeMethodCall(
     } else if (argType === null) {
       fctx.body.push({ op: "ref.null.extern" });
     }
+  }
+  fctx.body.push({ op: "call", funcIdx: dispatchIdx });
+  return { kind: "externref" };
+}
+
+/**
+ * A standalone fnctor subclass can inherit Iterator helpers from the live
+ * prototype installed by the Test262 harness. Static class lookup cannot see
+ * that runtime installation, while the generic fnctor miss uses a host bridge
+ * that standalone deliberately does not provide. Admit only classes whose
+ * compiled class chain exposes the iterator protocol's `next` callable (as a
+ * method or getter), and only helper forms already owned by the closed lazy
+ * iterator dispatcher. Every other fnctor miss keeps the legacy path.
+ */
+function tryCompileStandaloneFnctorLazyMethodMiss(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  receiverClassName: string,
+  methodName: string,
+): InnerResult | undefined {
+  if (!ctx.standalone || fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
+
+  let owner: string | undefined = receiverClassName;
+  let hasCompiledNextMethod = false;
+  let nextGetterIdx: number | undefined;
+  const seen = new Set<string>();
+  while (owner !== undefined && ctx.classSet.has(owner) && !seen.has(owner)) {
+    seen.add(owner);
+    const methodKey = classMemberFuncKey(ctx, `${owner}_next`, "instance");
+    const getterKey = classMemberFuncKey(ctx, `${owner}_get_next`, "instance");
+    if (ctx.funcMap.has(methodKey) || ctx.funcMap.has(`${owner}_next`)) {
+      hasCompiledNextMethod = true;
+      break;
+    }
+    nextGetterIdx = ctx.funcMap.get(getterKey) ?? ctx.funcMap.get(`${owner}_get_next`);
+    if (nextGetterIdx !== undefined) {
+      break;
+    }
+    owner = ctx.classParentMap.get(owner);
+  }
+  if (!hasCompiledNextMethod && nextGetterIdx === undefined) return undefined;
+
+  const dispatchArgs = expr.arguments.some((arg) => ts.isSpreadElement(arg))
+    ? flattenCallArgs(expr.arguments)
+    : [...expr.arguments];
+  if (dispatchArgs === null || !isLazyIterForm(methodName, dispatchArgs.length)) return undefined;
+
+  const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, dispatchArgs.length);
+  const nextCallableTypeIdx = nextGetterIdx === undefined ? undefined : ensureIteratorNextCallableHandle(ctx);
+  if (nextGetterIdx !== undefined && nextCallableTypeIdx === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  if (nextGetterIdx !== undefined && nextCallableTypeIdx !== undefined) {
+    const getterReceiverType = getFuncParamTypes(ctx, nextGetterIdx)?.[0];
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, getterReceiverType);
+    const recvLocalType = getterReceiverType ?? recvType ?? { kind: "externref" as const };
+    if (recvType && !valTypesMatch(recvType, recvLocalType)) coerceType(ctx, fctx, recvType, recvLocalType);
+    else if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+    const recvLocal = allocLocal(fctx, `__iter_next_getter_recv_${fctx.locals.length}`, recvLocalType);
+    fctx.body.push({ op: "local.set", index: recvLocal });
+
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: nextGetterIdx });
+    const getterResultType = getWasmFuncReturnType(ctx, nextGetterIdx);
+    if (getterResultType && getterResultType.kind !== "externref") {
+      coerceType(ctx, fctx, getterResultType, { kind: "externref" });
+    } else if (getterResultType === undefined) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    if (recvLocalType.kind !== "externref") coerceType(ctx, fctx, recvLocalType, { kind: "externref" });
+    fctx.body.push({ op: "struct.new", typeIdx: nextCallableTypeIdx });
+    fctx.body.push({ op: "extern.convert_any" });
+  } else {
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+    if (recvType && recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+    else if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  for (const arg of dispatchArgs) {
+    const argType = compileInternalCallArgument(ctx, fctx, arg, { kind: "externref" });
+    if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    else if (argType === null) fctx.body.push({ op: "ref.null.extern" });
   }
   fctx.body.push({ op: "call", funcIdx: dispatchIdx });
   return { kind: "externref" };
@@ -1851,6 +1938,15 @@ export function compileReceiverMethodCall(
     // in `_fnctorInstanceCtor`, so the host resolves the member through the
     // live prototype chain) instead of falling to the graceful-null tail.
     if (funcIdx === undefined && fnctorAncestorOfClass(ctx, receiverClassName) !== undefined) {
+      const nativeLazyResult = tryCompileStandaloneFnctorLazyMethodMiss(
+        ctx,
+        fctx,
+        expr,
+        propAccess,
+        receiverClassName,
+        methodName,
+      );
+      if (nativeLazyResult !== undefined) return nativeLazyResult;
       const dynResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
       if (dynResult !== undefined) return dynResult;
     }
