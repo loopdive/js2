@@ -304,6 +304,7 @@ import {
   fillIterResultObject,
   fillNativeIteratorLateArms,
 } from "./iterator-native.js";
+import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
@@ -5886,6 +5887,7 @@ export function generateModule(
       addUnionImports(ctx);
     }
     fillNativeIteratorLateArms(ctx);
+    fillNativeGeneratorMethodDispatches(ctx);
 
     // (#2903) Rebuild the Iterator-helper steppers (iter-hof-native.ts) with
     // per-producer driven-generator arms + the positive-admission classifier.
@@ -10906,6 +10908,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       addUnionImports(ctx);
     }
     profilePhase("fill-native-iterator-late-arms", () => fillNativeIteratorLateArms(ctx));
+    profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));

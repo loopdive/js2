@@ -22,6 +22,9 @@ loc-budget-allow:
   - tests/issue-3164.test.ts
   - tests/issue-3386.test.ts
   - tests/issue-3591.test.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #3591 — `.next()` on a variable-bound generator function expression throws TypeError (standalone)
@@ -102,6 +105,42 @@ Draft PR #5063 changes a separate result-reader hunk in
 `generators-native-consumer.ts` and does not own the stale dispatch builder.
 This branch must stay independent from #5063 and preserve that PR's sentinel
 reader change when it is eventually rebased.
+
+## 2026-09-01 implementation checkpoint — incomplete
+
+The required forced-pass-2 standalone fixture was red before production changes:
+an opaque module-scope generator function expression failed `.next()`, `.return()`,
+and `.throw()` with the native GeneratorValidate `TypeError` despite zero `env`
+imports. The reserve-then-fill prototype makes that fixture green and has these
+focused results:
+
+- `tests/issue-3591.test.ts`: **1/1 pass**
+- `tests/issue-3164.test.ts`: **13/13 pass** (the three #3591 controls re-enabled)
+- `tests/issue-3386.test.ts`: **18/18 pass** (the one #3591 control re-enabled;
+  the current suite contains 18 assertions, not the historical 17)
+- `tests/issue-2864-standalone-generator-carrier.test.ts`: **34/34 pass**
+
+The authoritative isolated standalone command is still a blocker and the draft
+must remain unmergeable:
+
+```text
+node --import tsx scripts/run-test262-paths.mts .tmp/issue-3591-test262-seven.txt --isolate --standalone
+```
+
+It measured **0 pass / 7 non-pass** after the first reserve/fill prototype:
+
+- `chunks` / `windows` `underlying-iterator-advanced-in-parallel` and
+  `underlying-iterator-closed-in-parallel`: **4 compile errors** —
+  `Cannot destructure: unknown type`.
+- `chunks` / `windows` `exhaustion-does-not-call-return` and
+  `GeneratorPrototype/next/context-method-invocation`: **3 runtime failures** —
+  `Generator.prototype.next requires that 'this' be a Generator`.
+
+Current diagnosis: returning the helper's fixed ABI as `eqref` erases the
+call-site's statically known IteratorResult shape, explaining the four
+destructuring compile errors. The remaining three stale-brand routes are still
+being isolated; do not claim completion or modify the #5063 result reader from
+this checkpoint.
 
 ## Reproduction / affected shapes
 
