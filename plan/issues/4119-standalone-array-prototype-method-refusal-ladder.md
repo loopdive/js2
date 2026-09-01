@@ -4,19 +4,21 @@ title: "standalone: `Array.prototype.<m>` refuses in value position (265) and `O
 status: in-progress
 sprint: current
 created: 2026-08-03
-updated: 2026-08-04
-priority: medium
+updated: 2026-09-01
+priority: high
 horizon: m
 feasibility: medium
 reasoning_effort: high
 task_type: conformance
 area: codegen
-es_edition: ES5
+es_edition: ES5, ES2015
 language_feature: array-methods
 goal: standalone-mode
 umbrella: 2860
 related: [3571, 1888, 3180, 3170, 3169, 2860, 2501]
 test262_fail: 341
+es2015_residual: 33
+checkpoint: f841-residual-reopened
 origin: "2026-08-03 harvest of loopdive/js2wasm-baselines test262-standalone-current.jsonl, commit 8dac2d70 (2026-08-02T23:08:27Z) = js2 main c480fb66, 30759/43489 host"
 ---
 
@@ -422,3 +424,76 @@ node scripts/fetch-baseline-jsonl.mjs --force
 #   /is not yet callable as a value in --target standalone/   -> 265
 #   /Object\.prototype\.toString is not yet implemented/       -> 76
 ```
+
+## 2026-09-01 ES2015 residual reopen and implementation plan
+
+The old 76-row arm-1 closure is not the current ES2015 result. The immutable
+standalone census at source `f841cddc0f0ea665b63700d9944a4372a34a8b57`
+(JSONL SHA-256
+`4426cbf6f305ab4a092468b201cc5854d4470b5fe87edf2fe47ba0195a6e8cbf`)
+contains exactly **33 of the frozen 11,704 ES2015 paths** with the runtime
+signature `TypeError: Object.prototype.toString is not yet implemented in
+--target standalone`. This reopens only that reflective `toString` residual;
+the historical Array-method-as-value arm remains separate.
+
+### Exact 33-path residual
+
+1. `test/built-ins/TypedArrayConstructors/Uint8Array/prototype.js`
+2. `test/built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/proto.js`
+3. `test/built-ins/Function/call-bind-this-realm-undef.js`
+4. `test/built-ins/TypedArrayConstructors/Uint8Array/prototype/proto.js`
+5. `test/built-ins/TypedArrayConstructors/Uint16Array/prototype.js`
+6. `test/built-ins/Symbol/prototype/intrinsic.js`
+7. `test/built-ins/TypedArrayConstructors/Int16Array/prototype/proto.js`
+8. `test/built-ins/TypedArrayConstructors/Uint32Array/prototype.js`
+9. `test/built-ins/TypedArrayConstructors/Int32Array/prototype/proto.js`
+10. `test/language/statements/class/subclass/class-definition-null-proto-contains-return-override.js`
+11. `test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js`
+12. `test/built-ins/TypedArrayConstructors/Float64Array/prototype.js`
+13. `test/built-ins/ArrayBuffer/prototype/slice/species-constructor-is-undefined.js`
+14. `test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js`
+15. `test/built-ins/ArrayBuffer/prototype/slice/species-is-undefined.js`
+16. `test/built-ins/TypedArrayConstructors/Int16Array/prototype.js`
+17. `test/built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype.js`
+18. `test/built-ins/TypedArrayConstructors/Float32Array/prototype.js`
+19. `test/built-ins/TypedArrayConstructors/ctors/no-species.js`
+20. `test/built-ins/TypedArrayConstructors/Int8Array/prototype/proto.js`
+21. `test/built-ins/TypedArrayConstructors/Int32Array/prototype.js`
+22. `test/built-ins/ArrayBuffer/prototype/slice/species-is-null.js`
+23. `test/built-ins/TypedArrayConstructors/Float32Array/prototype/proto.js`
+24. `test/built-ins/TypedArrayConstructors/Float64Array/prototype/proto.js`
+25. `test/built-ins/TypedArrayConstructors/Int8Array/prototype.js`
+26. `test/built-ins/TypedArrayConstructors/Uint32Array/prototype/proto.js`
+27. `test/built-ins/TypedArrayConstructors/ctors/object-arg/as-generator-iterable-returns.js`
+28. `test/built-ins/Object/prototype/toString/proxy-array.js`
+29. `test/built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js`
+30. `test/built-ins/TypedArrayConstructors/Uint16Array/prototype/proto.js`
+31. `test/built-ins/ArrayBuffer/newtarget-prototype-is-not-object.js`
+32. `test/built-ins/RegExp/from-regexp-like.js`
+33. `test/built-ins/TypedArrayConstructors/ctors/length-arg/toindex-length.js`
+
+### Bounded implementation sequence
+
+1. Re-run these exact paths on current upstream main `2c3c27a54f` and partition
+   them by the receiver carrier that reaches the refusal. Do not infer one fix
+   merely because the runtime error text is shared.
+2. Select one independently sound carrier family and record its exact owned
+   paths before production edits. The first patch may touch the shared
+   `object-proto-tostring` / `array-object-proto` classifier seam, but it must
+   not modify TypedArray algorithms owned by #4449, Proxy internals, class
+   construction, or RegExp construction.
+3. Implement §20.1.3.6 faithfully for that carrier: preserve the observable
+   `Get(O, @@toStringTag)` and abrupt completion, use a string custom tag when
+   supplied, and otherwise return the correct builtin tag. A constant tag is
+   allowed only where the source/runtime representation proves that it cannot
+   bypass a getter, mutation, or Proxy trap. Revoked Proxy `IsArray` must still
+   throw.
+4. Add focused controls for ordinary objects, arrays, functions,
+   null/undefined, custom and throwing `@@toStringTag`, Proxy arrays, and a
+   revoked Proxy. Run the exact owned paths in host and standalone modes, then
+   the full 33-row standalone impact set; no unowned row may regress or change
+   from loud refusal to a wrong value.
+5. A sound completed family gets its own non-draft PR. If the classifier cannot
+   distinguish the carrier without broader object-model work, stop with this
+   issue updated to name the exact dependency and publish only a genuinely
+   nonmergeable draft checkpoint.
