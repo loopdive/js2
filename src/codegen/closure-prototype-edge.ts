@@ -169,6 +169,12 @@ function hasModuleBindingAssignment(ctx: CodegenContext, name: string): boolean 
   return reassigned;
 }
 
+/** Return the canonical function-value global for an approved fnctor name. */
+function fnctorPrototypeValueGlobalIdx(ctx: CodegenContext, name: string): number | undefined {
+  if (hasModuleBindingAssignment(ctx, name)) return undefined;
+  return ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name);
+}
+
 /**
  * The edges that exist in this module, in a deterministic order (fnctors by
  * registration order, then classes). Both halves of every pair must be present:
@@ -182,9 +188,7 @@ function collectPrototypeEdges(ctx: CodegenContext): PrototypeEdge[] {
     // while `var F = function(){}` publishes the same callable through its
     // module binding global. Both are canonical values for the fnctor edge;
     // the latter is the only value available for expression-backed fnctors.
-    const valueGlobalIdx = hasModuleBindingAssignment(ctx, name)
-      ? undefined
-      : (ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name));
+    const valueGlobalIdx = fnctorPrototypeValueGlobalIdx(ctx, name);
     if (valueGlobalIdx === undefined) continue;
     edges.push({ valueGlobalIdx, protoGlobalIdx, vivify: true, name });
   }
@@ -463,11 +467,17 @@ export function closurePrototypeEdgeGetArm(
  * consumer byte-identical — unless the module has an edge and both the helper
  * and the interned key literal are available.
  */
-export function closurePrototypeEdgeHasOwnArm(ctx: CodegenContext, recvSlot: number, keySlot: number): Instr[] {
-  if (!hasClosurePrototypeEdges(ctx)) return [];
+export function closurePrototypeEdgeHasOwnArm(
+  ctx: CodegenContext,
+  recvSlot: number,
+  keySlot: number,
+  answer = 1,
+): Instr[] {
+  const constructibleDeleteTypes = answer === 0 ? [...ctx.constructibleClosureTypeIdxs] : [];
+  if (!hasClosurePrototypeEdges(ctx) && constructibleDeleteTypes.length === 0) return [];
   const protoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
   const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
-  if (protoOfIdx === undefined) return [];
+  if (protoOfIdx === undefined && constructibleDeleteTypes.length === 0) return [];
   if (!ctx.nativeStrings || nativeStrTypeIdx < 0) return [];
   return [
     { op: "local.get", index: keySlot },
@@ -486,15 +496,29 @@ export function closurePrototypeEdgeHasOwnArm(ctx: CodegenContext, recvSlot: num
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "local.get", index: recvSlot },
-            { op: "call", funcIdx: protoOfIdx },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
-            },
+            ...constructibleDeleteTypes.flatMap((typeIdx): Instr[] => [
+              { op: "local.get", index: recvSlot },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: answer }, { op: "return" }],
+              },
+            ]),
+            ...(protoOfIdx === undefined
+              ? []
+              : ([
+                  { op: "local.get", index: recvSlot },
+                  { op: "call", funcIdx: protoOfIdx },
+                  { op: "ref.is_null" },
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [{ op: "i32.const", value: answer }, { op: "return" }],
+                  },
+                ] satisfies Instr[])),
           ],
         },
       ],
@@ -515,12 +539,19 @@ export function closurePrototypeEdgeHasOwnArm(ctx: CodegenContext, recvSlot: num
 export function spliceClosurePrototypeEdgeHasOwn(ctx: CodegenContext): void {
   const arm = closurePrototypeEdgeHasOwnArm(ctx, 0, 1);
   if (arm.length === 0) return;
-  for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
+  // The same identity edge also proves that `prototype` is the mandatory
+  // non-configurable own property, so OrdinaryDelete must return false even
+  // before a side-bag entry has materialized it.
+  for (const [name, answer] of [
+    ["__hasOwnProperty", 1],
+    ["__object_hasOwn", 1],
+    ["__delete_property", 0],
+  ] as const) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
     // A FACTORY per target: one shared `Instr` object reachable from two bodies
     // is double-remapped by the finalize index walks
     // (`reference_shared_instr_object_dce_double_remap`).
-    fn.body.unshift(...closurePrototypeEdgeHasOwnArm(ctx, 0, 1));
+    fn.body.unshift(...closurePrototypeEdgeHasOwnArm(ctx, 0, 1, answer));
   }
 }

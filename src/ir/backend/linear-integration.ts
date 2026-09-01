@@ -133,6 +133,7 @@ import { IrInvariantError } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
+import { NUMBER_BOUNDARY_POLICY_DISABLED } from "../runtime-manifest.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -657,7 +658,12 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
     prepareIrRuntimeManifest({
       functions,
       sourceFile,
-      policy: { target: "host", backend: "linear" },
+      // (#3526 F1-S1) The linear adapter exposes no f64⇄externref number
+      // boundary: `NUMBER_BOUNDARY_POLICY_DISABLED` resolves both arms to
+      // unsupported, and the backend legality gate independently rejects the
+      // two externref intrinsics, so a linear owner demotes rather than
+      // receiving a provider it cannot lower.
+      policy: { target: "host", backend: "linear", numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED },
     })?.functions ?? functions
   );
 }
@@ -1526,9 +1532,6 @@ function makeLinearIrResolver(
       return { kind: "i32" };
     },
     stringIsExternref(): boolean {
-      return false;
-    },
-    hasHostNumberBox(): boolean {
       return false;
     },
     hasHostBooleanBox(): boolean {

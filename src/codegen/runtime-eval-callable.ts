@@ -95,16 +95,19 @@ function syncedTrampolineBody(
   const argsLocalDecl = { name: "args", type: { kind: "externref" } as ValType };
   const envelopeLocal = 12;
   const locals: { name: string; type: ValType }[] = [argsLocalDecl, { name: "envelope", type: { kind: "externref" } }];
+  const callTarget: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: applyIdx },
+  ];
   const callEnvelope = (): Instr =>
     buildTargetTaggedTry(
       ctx,
       { kind: "empty" },
       [
-        { op: "local.get", index: 0 },
-        { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
-        { op: "local.get", index: 1 },
-        { op: "local.get", index: argsLocal },
-        { op: "call", funcIdx: applyIdx },
+        ...callTarget,
         ...buildRuntimeEvalCallResultWrap(ctx, locals, 11, true),
         { op: "local.set", index: envelopeLocal },
       ],
@@ -119,6 +122,47 @@ function syncedTrampolineBody(
     return {
       locals,
       body: [...buildArgs, callEnvelope(), { op: "local.get", index: envelopeLocal }],
+    };
+  }
+  // While the provider is actively re-entering caller-owned AOT code, its
+  // stack is only a conduit back to the caller module. Preserve the caller's
+  // exception tag on that path: unwrapping an envelope inside the provider
+  // would replace it with the provider's private tag, which the caller cannot
+  // catch. The cleanup catch still pushes live globals before rethrowing.
+  if (direction === "aot") {
+    const rawResult = buildTargetTaggedTry(
+      ctx,
+      { kind: "empty" },
+      [...callTarget, { op: "local.set", index: envelopeLocal }],
+      [
+        {
+          tagIdx: ensureExnTag(ctx),
+          body: [
+            { op: "local.set", index: envelopeLocal },
+            { op: "call", funcIdx: afterIdx },
+            { op: "local.get", index: envelopeLocal },
+            { op: "throw", tagIdx: ensureExnTag(ctx) },
+          ],
+        },
+      ],
+    );
+    return {
+      locals,
+      body: [
+        ...buildArgs,
+        { op: "global.get", index: activeGlobalIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "call", funcIdx: beforeIdx },
+            rawResult,
+            { op: "call", funcIdx: afterIdx },
+            { op: "local.get", index: envelopeLocal },
+          ],
+          else: [callEnvelope(), { op: "local.get", index: envelopeLocal }],
+        },
+      ],
     };
   }
   const activeBeforeLocal = 13;

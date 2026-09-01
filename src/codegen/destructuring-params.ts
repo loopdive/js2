@@ -62,10 +62,10 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-// (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
-// `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
-// already imports `destructureParamArray` from here — a module cycle. ESM
-// resolves it because these references are used at call time (inside
+import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
+// (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
+// imports `destructureParamArray` from here. ESM resolves the cycle because the
+// references are used only at call time (inside
 // `destructureParamArray`), never at module-init.
 import {
   arrayDstrNeedsIdentity,
@@ -869,7 +869,7 @@ export function destructureParamObjectExternref(
 
     addStringConstantGlobal(ctx, propNameText);
     const strGlobalIdx = ctx.stringGlobalMap.get(propNameText);
-    if (strGlobalIdx === undefined) continue;
+    if (strGlobalIdx === undefined && !ctx.nativeStrings) continue;
 
     getIdx = ctx.funcMap.get("__extern_get");
     if (getIdx === undefined) continue;
@@ -1321,8 +1321,8 @@ export function destructureParamObject(
       if (pattern.elements.length === 0) return;
 
       const tsType = ctx.checker.getTypeAtLocation(pattern);
-      let structTypeIdx: number | undefined;
-      if (tsType) {
+      let structTypeIdx: number | undefined = nestedObjectPatternCarrier(ctx, pattern);
+      if (structTypeIdx === undefined && tsType) {
         ensureStructForType(ctx, tsType);
         const typeName = ctx.anonTypeMap.get(tsType) ?? tsType.getSymbol()?.name ?? tsType.aliasSymbol?.name;
         structTypeIdx = typeName ? ctx.structMap.get(typeName) : undefined;

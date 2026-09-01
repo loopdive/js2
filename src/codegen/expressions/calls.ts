@@ -111,6 +111,13 @@ import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import { installableReceiverInstrs } from "../helpers/undefined-receiver.js"; // (#4555) runtime-eval receiver seam
+import {
+  consumeNativeIteratorResultBuffer,
+  enterNativeIteratorResultCallback,
+  markNativeIteratorResultBuffer,
+  nativeIteratorResultThenReceiver,
+} from "../promise-native-iterator-result.js";
+export { tryEmitAsyncGenNextDispatch } from "../promise-native-iterator-result.js";
 
 // (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
 // because call sites import it from `calls.ts`.
@@ -359,7 +366,8 @@ import {
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
 import { tryCompileRawWasiCall } from "../raw-wasi-api.js";
-import { resolvePromiseSubclassName, tryEmitPromiseSubclassReceiver } from "./promise-subclass.js";
+import { tryEmitPromiseSubclassReceiver } from "./promise-subclass.js";
+import { tryEmitStandalonePromiseStaticCallTypeError } from "./promise-static-call-typeerror.js";
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCombinatorRuntime,
@@ -1468,9 +1476,9 @@ export function emitReflectiveNativeProtoClosureCall(
     if (nativeProtoVariadic && i === 1) {
       // `userArgs[0]` is the receiver/thisValue.  Every remaining expression
       // is a real JavaScript argument and must be packed without padding.
-      // `array.new_fixed` accepts zero elements, so an omitted argument list
-      // still reaches the body as an empty vector.
+      // `$vec_externref` carries its length before the backing array.
       const variadicArgs = userArgs.slice(1);
+      fctx.body.push({ op: "i32.const", value: variadicArgs.length });
       for (const arg of variadicArgs) {
         const aType = compileExpression(ctx, fctx, arg, { kind: "externref" });
         if (aType === null) fctx.body.push({ op: "ref.null.extern" });
@@ -2765,113 +2773,6 @@ export function calleeIsCapabilityCtorParam(ctx: CodegenContext, expr: ts.Expres
   };
   visit(sf);
   return found;
-}
-
-/**
- * (#3390 slice 1) Known non-constructor global function identifiers. Called via
- * `Promise.<combinator>.call(<global>, …)` these are callable but have no
- * `[[Construct]]`, so NewPromiseCapability throws TypeError. Matched by NAME
- * (syntactic — no checker, so no oracle-ratchet cost); a user shadowing one of
- * these with a real constructor is not in the corpus and only affects the
- * standalone lane, so this stays correct-or-legacy.
- */
-const NON_CONSTRUCTOR_GLOBALS = new Set([
-  "eval",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "decodeURI",
-  "decodeURIComponent",
-  "encodeURI",
-  "encodeURIComponent",
-]);
-
-/**
- * (#3390 slice 1) Is `recv` STATICALLY, side-effect-freely a non-constructor —
- * so `Promise.<combinator>.call(recv, …)` must throw a synchronous TypeError
- * per §27.2.4.1 step 2 (IsConstructor) BEFORE the iterable is touched? Returns
- * true ONLY for provably non-constructor, side-effect-free receivers; anything
- * else (a real constructor, `Promise`, a subclass, or a receiver we cannot
- * classify without evaluating it) returns false → the caller falls through to
- * the existing host path (correct-or-legacy). `undefined` (no arg) ⇒ true.
- */
-function isStaticNonConstructorReceiver(ctx: CodegenContext, recv: ts.Expression | undefined): boolean {
-  if (recv === undefined) return true; // no receiver → undefined → non-object
-  let e: ts.Expression = recv;
-  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
-  // Non-object / primitive literals.
-  if (ts.isNumericLiteral(e) || ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
-  if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return true;
-  if (e.kind === ts.SyntaxKind.NullKeyword) return true;
-  if (ts.isVoidExpression(e)) {
-    // `void <literal>` only (a side-effecting operand must be evaluated first).
-    const op = e.expression;
-    return ts.isNumericLiteral(op) || ts.isStringLiteral(op) || op.kind === ts.SyntaxKind.NullKeyword;
-  }
-  // Arrow function — callable, no `[[Construct]]`.
-  if (ts.isArrowFunction(e)) return true;
-  // Empty object literal — a non-callable object; side-effect-free (no computed
-  // keys / getters). Non-empty literals may run key/value side effects → skip.
-  if (ts.isObjectLiteralExpression(e) && e.properties.length === 0) return true;
-  // `Symbol()` / `Symbol(<literal>)` — a bare `Symbol` call returns a symbol
-  // primitive (not a constructor), and is side-effect-free.
-  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Symbol") {
-    return e.arguments.length === 0 || (e.arguments.length === 1 && isSideEffectFreeLiteralArg(e.arguments[0]!));
-  }
-  // Identifier: `undefined`, or a known non-constructor global (eval, …).
-  if (ts.isIdentifier(e)) {
-    if (e.text === "undefined") return true;
-    if (e.text === "Promise") return false; // the constructor — direct-form semantics (slice 2)
-    if (resolvePromiseSubclassName(ctx, e.text) !== undefined) return false; // class extends Promise
-    return NON_CONSTRUCTOR_GLOBALS.has(e.text);
-  }
-  return false; // member access / new / arbitrary call / unknown → fall through
-}
-
-/** (#3390) A `Symbol(<arg>)` argument that runs no user code. */
-function isSideEffectFreeLiteralArg(a: ts.Expression): boolean {
-  return ts.isNumericLiteral(a) || ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a);
-}
-
-/**
- * (#3390 slice 1) `Promise.<combinator>.call(recv, …)` where `recv` is a static
- * non-constructor: emit a synchronous native TypeError (§27.2.4.1 step 2,
- * before any iteration) on the standalone/wasi lane, replacing the leaky
- * `Promise_<method>` host fallback. Returns the `never`-typed result (an
- * unreachable `ref.null.extern` after the throw) on a match, or `undefined` to
- * fall through to the existing dispatch (host lane, real constructors, dynamic
- * receivers — correct-or-legacy). The iterable argument is intentionally NOT
- * compiled (it must not be iterated).
- */
-function tryEmitStandaloneCombinatorCallTypeError(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  propAccess: ts.PropertyAccessExpression,
-): InnerResult | undefined {
-  if (!isStandalonePromiseActive(ctx)) return undefined;
-  // callee shape: `(Promise.<combinator>).call`
-  const inner = propAccess.expression;
-  if (!ts.isPropertyAccessExpression(inner)) return undefined;
-  if (!ts.isIdentifier(inner.expression) || inner.expression.text !== "Promise") return undefined;
-  const method = inner.name.text;
-  if (method !== "all" && method !== "allSettled" && method !== "race" && method !== "any") return undefined;
-  if (!isStaticNonConstructorReceiver(ctx, expr.arguments[0])) return undefined;
-
-  const msg = `Promise.${method} called on a non-constructor`;
-  emitWasiErrorConstructor(ctx, "TypeError", 1);
-  const exnTagIdx = ensureExnTag(ctx);
-  addStringConstantGlobal(ctx, msg);
-  const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
-  if (typeErrorCtorIdx === undefined) return undefined; // ctor unavailable → fall through
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
-  fctx.body.push({ op: "call", funcIdx: typeErrorCtorIdx });
-  fctx.body.push({ op: "throw", tagIdx: exnTagIdx });
-  // The throw is control-terminal; push an unreachable value so the surrounding
-  // expression contract (an externref on the stack) still type-checks.
-  fctx.body.push({ op: "ref.null.extern" });
-  return { kind: "externref" };
 }
 
 /**
@@ -5500,6 +5401,7 @@ export function compilePromiseThenReceiverBuffer(
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
+  markNativeIteratorResultBuffer(liveBuffers, nativeIteratorResultThenReceiver(ctx, expr));
   return instrs;
 }
 
@@ -5516,6 +5418,7 @@ export function compileStandalonePromiseThenCallback(
   // handler with zero arguments and preserves the original settlement.
   opts?: { allowDynamic?: boolean },
 ): StandalonePromiseThenCallback | null {
+  const nativeIteratorResult = consumeNativeIteratorResultBuffer(liveBuffers);
   if (arg === undefined || isNullishPromiseThenCallbackArg(arg)) return null;
 
   const instrs: Instr[] = [];
@@ -5533,6 +5436,7 @@ export function compileStandalonePromiseThenCallback(
   // contextually-inferred tuple struct (combinator over a tuple input) can
   // never match the runtime results vec (see computeClosureWrapperSig).
   const savedWidenTuple = ctx.widenTupleCallbackParams;
+  const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);
   ctx.widenTupleCallbackParams = true;
   try {
     const type =
@@ -5566,6 +5470,7 @@ export function compileStandalonePromiseThenCallback(
     return { instrs, closureInfo };
   } finally {
     ctx.widenTupleCallbackParams = savedWidenTuple;
+    restoreNativeIteratorResult();
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
@@ -5660,83 +5565,6 @@ function emitHostPromiseThenFallback(
  * BEFORE reaching here and keep the original unconditional-cast lowering
  * for wasi untouched.
  */
-
-/**
- * (#2865) Zero-arg `.next()` on a possibly-DRIVEN async-generator receiver.
- * `g()` on a driven producer returns the `$AsyncFrame` carrier (a bare
- * externref); source-level `g().next()` / `it.next()` must route to the
- * per-gen re-entrant driver `__async_gen_next_<stem>(frame) ->
- * Promise<IteratorResult>`. The receiver is dispatched at RUNTIME by
- * `ref.test`ing each registered producer's frame struct (the chain shape
- * `buildNativeGeneratorDispatch` uses for sync gens).
- *
- * Miss arm (a receiver that is none of the driven frames): under BOTH
- * `--target standalone` and `--target wasi`, the legacy host `__gen_next` is
- * kept ONLY when a legacy buffer async gen was actually emitted in this module
- * (`asyncGenLegacyBufferEmitted`); otherwise a plain null result, so an
- * ALL-DRIVEN module stays host-free. (#3132) This dispatch is TYPE-gated to
- * `AsyncGenerator`/`AsyncIterableIterator`/`AsyncIterator` receivers (see the
- * call sites), never user objects or sync gens — so in a module with no legacy
- * buffer async gen, every reachable receiver IS one of the driven frames and
- * the `__gen_next` miss arm is provably DEAD. Dropping it (previously kept
- * unconditionally on standalone) removes the `env::__gen_next` import that
- * blocked these otherwise-driven async gens — consumed via `.next()` — from
- * counting toward the host-free standalone floor, the CONSUMER half of the
- * dstr-param slice. Mixed modules (a driven gen AND a legacy buffer async gen)
- * keep the fallback, exactly as before. Mirrors #2903's `.then` host-arm
- * de-leak; matches the well-tested wasi semantics byte-for-byte.
- *
- * Returns null (no emission) when the module has no driven producers or the
- * target is the JS-host lane — the caller falls through to its original
- * lowering, byte-identical.
- */
-export function tryEmitAsyncGenNextDispatch(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  receiverExpr: ts.Expression,
-): ValType | null {
-  const producers = ctx.asyncGenProducers;
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
-  if (producers === undefined || producers.size === 0) return null;
-  // Evaluate the receiver ONCE into an externref local (it may be a call).
-  const recvLocal = allocLocal(fctx, `__agen_recv_${fctx.locals.length}`, { kind: "externref" });
-  const rt = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
-  if (rt !== null && rt !== undefined && (rt as ValType).kind !== "externref") {
-    coerceType(ctx, fctx, rt as ValType, { kind: "externref" });
-  }
-  fctx.body.push({ op: "local.set", index: recvLocal });
-  // funcMap lookups happen AFTER the receiver compile (which may register late
-  // imports and shift defined indices).
-  const wantHostFallback = ctx.asyncGenLegacyBufferEmitted === true;
-  const hostGenNext = wantHostFallback ? ctx.funcMap.get("__gen_next") : undefined;
-  let chain: Instr[] =
-    hostGenNext !== undefined
-      ? [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: hostGenNext },
-        ]
-      : [{ op: "ref.null.extern" }];
-  for (const p of [...producers.values()].reverse()) {
-    const nextIdx = ctx.funcMap.get(p.nextHelperName);
-    if (nextIdx === undefined) continue;
-    chain = [
-      { op: "local.get", index: recvLocal },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: p.stateTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: nextIdx },
-        ],
-        else: chain,
-      },
-    ];
-  }
-  fctx.body.push(...chain);
-  return { kind: "externref" };
-}
 
 /**
  * (#3389 slice 2a) `.return(v)` / `.throw(e)` on a DRIVEN async-generator
@@ -5917,6 +5745,7 @@ export function emitStandaloneThenWithNativeFallback(
     }
     fctx.body.push({ op: "local.set", index: recvLocal });
 
+    compilePromiseThenReceiverBuffer(ctx, fctx, receiverExpr, liveBuffers);
     const onFulfilled =
       method === "then"
         ? compileStandalonePromiseThenCallback(ctx, fctx, onFulfilledArg, liveBuffers, { allowDynamic: true })
@@ -8344,7 +8173,7 @@ function compileCallExpression(
         }
       }
 
-      // (#3390 slice 1) `Promise.<combinator>.call(recv, …)` with a STATICALLY
+      // (#3390) `Promise.<static>.call(recv, …)` with a STATICALLY
       // non-constructor receiver throws a TypeError synchronously (§27.2.4.1
       // step 2 IsConstructor, BEFORE touching the iterable). On the standalone
       // lane the host fallback (`Promise_all` etc.) leaks; emit the native
@@ -8352,8 +8181,8 @@ function compileCallExpression(
       // (correct-or-legacy — slice 2/3). `.apply` is not intercepted (rare;
       // the corpus uses `.call`).
       if (isCall) {
-        const combErr = tryEmitStandaloneCombinatorCallTypeError(ctx, fctx, expr, propAccess);
-        if (combErr !== undefined) return combErr;
+        const promiseStaticErr = tryEmitStandalonePromiseStaticCallTypeError(ctx, fctx, expr, propAccess);
+        if (promiseStaticErr !== undefined) return promiseStaticErr;
       }
 
       // (#2604/#3171) Reflective `X.prototype.METHOD.call(recv, …)` /

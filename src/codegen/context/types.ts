@@ -111,11 +111,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
-  /**
-   * Node-compatible ambient globals are enabled. This is distinct from the
-   * Wasm backend target: a gc-host build can still target the Node platform.
-   */
-  nodeGlobals?: boolean;
+  /** Ambient runtime globals, independent of the Wasm backend target. */
+  ambientPlatform?: import("../../target-profile.js").AmbientPlatform;
   /**
    * #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
    * (satisfied by a preloaded provider) instead of inline-lowering. `["node:fs"]`

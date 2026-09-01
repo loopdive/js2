@@ -9,6 +9,7 @@
 
 import { ts } from "../ts-api.js";
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
+import { isAccessorReceiver } from "./accessor-object-literal.js";
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -109,6 +110,7 @@ import {
   tryCompileStandaloneRegExpMatchResultRead,
   tryCompileStandaloneRegExpPropertyRead,
 } from "./regexp-standalone.js";
+import { tryCompileStandaloneRegExpLegacyStaticRead } from "./regexp-legacy-static.js";
 import {
   emitLazyNativeProtoGet,
   ensureStandaloneNativeMethodClosure,
@@ -1089,9 +1091,7 @@ export function resolveStructNameForExpr(
   ) {
     bareIdent = (bareIdent as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
   }
-  if (ts.isIdentifier(bareIdent) && ctx.externrefAccessorVars.has(bareIdent.text)) {
-    return undefined;
-  }
+  if (isAccessorReceiver(ctx, bareIdent)) return undefined;
   const assertedCarrier = identityPreservingStructuralParamCarrier(ctx, bareIdent);
   if (assertedCarrier !== undefined) {
     return undefined;
@@ -2492,7 +2492,7 @@ export function compileOptionalPropertyAccess(
     elseResultType = { kind: "i32" };
   } else {
     // General struct field access: look up the struct type and field index
-    const structName = resolveStructName(ctx, tsObjType);
+    const structName = objType.kind === "externref" ? undefined : resolveStructName(ctx, tsObjType);
     if (structName) {
       const structTypeIdx = ctx.structMap.get(structName);
       const fields = ctx.structFields.get(structName);
@@ -5010,13 +5010,11 @@ export function compileElementAccess(
 
   const arrayIteratorRead = tryCompileStandaloneArrayIteratorRead(ctx, fctx, expr);
   if (arrayIteratorRead !== undefined) return arrayIteratorRead;
-
   // #1886 Slice B: linear-backed Uint8Array read `buf[i]` → i32.load8_u(ptr+i).
   // Only fires when `buf` is a registered linear-safe buffer in this function;
   // every other receiver falls through to the GC element-access path unchanged.
   const linU8Get = tryEmitLinearU8ElementGet(ctx, fctx, expr);
   if (linU8Get !== null) return linU8Get;
-
   // Handle super[expr] — access parent class property via computed key on `this`
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return compileSuperElementAccess(ctx, fctx, expr);
@@ -5068,12 +5066,13 @@ export function compileElementAccess(
     fctx.body.push({ op: "call", funcIdx: ctx.wasiEnvGetStrIdx });
     return { kind: "externref" };
   }
-
   // Handle ClassName[key] for static accessors and static properties (#848)
   // Must intercept before compiling the object expression, since the class
   // identifier doesn't compile to a useful runtime value for struct access.
   if (ts.isIdentifier(expr.expression)) {
     const objName = expr.expression.text;
+    const legacyStaticRead = tryCompileStandaloneRegExpLegacyStaticRead(ctx, fctx, expr);
+    if (legacyStaticRead !== undefined) return legacyStaticRead;
     // Resolve class expressions (var C = class {}) through the expr-name map
     const resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
     if (ctx.classSet.has(resolvedClass)) {
@@ -5089,7 +5088,6 @@ export function compileElementAccess(
             return retType ?? { kind: "externref" };
           }
         }
-        // Check static property global
         const fullName = `${resolvedClass}_${key}`;
         const globalIdx = ctx.staticProps.get(fullName);
         if (globalIdx !== undefined) {
