@@ -1496,3 +1496,29 @@ contribution. After the merge commit, replay the exact source validation
 the full synthetic pre-push hook against the new actual SHA. A final fetch must
 still prove main has not advanced; otherwise repeat this same normal integration
 discipline before publication.
+
+### c372 merge and exact code-head replay (2026-09-01)
+
+The normal c372 integration committed at
+`cf6c524b8ea82538160b6b0c7f740b827b6e5367`
+(`merge(upstream): reconcile #680 with c372 main ✓`). It contained the
+incoming benchmark-refresh history unchanged and retained the exact five #680
+paths. Its normal hook passed LOC/function budgets and oracle ratchet and
+reran the #680 changed-root file successfully: **27 / 27** in **21.62 s**.
+
+Required exact-code-head replay then passed:
+
+- Single-fork focused #680 command exited 0: **1 file, 27 / 27 tests**,
+  **21.70 s** Vitest duration (**22 s** wall).
+- Direct TS7 `tsc --noEmit -p tsconfig.ts7.json` exited 0 with no diagnostics
+  in **14 s** wall.
+- Targeted Prettier and Biome error lint, `git diff --check
+  upstream/main...HEAD`, LOC/function budgets, and oracle ratchet passed.
+  The prospective range against c372 is exactly the five #680 paths and has
+  no benchmark/public/website/labs leakage.
+
+This tracker-only evidence will now be committed normally. The final
+synthetic pre-push must use that documentation commit's actual SHA; its
+typecheck/lint/format/ratchet/parity/issue-integrity result is the final local
+publication proof. Fetch upstream once more immediately afterward and only
+push if its live SHA still equals c372.
