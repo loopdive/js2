@@ -959,6 +959,8 @@ export interface CompileOptions {
   runtimeProvider?: boolean;
   /** Internal package-linker switch for the frozen cross-module runtime type group. */
   canonicalRuntimeTypes?: boolean;
+  /** Internal package-linker switch (#5226): one imported `env.__exn` tag for the whole linked graph. */
+  sharedExceptionTag?: boolean;
   /**
    * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
    * checker is given an ambient `process` declaration so Node globals js2wasm
@@ -1225,7 +1227,7 @@ export async function instantiateLinkedProject(
     new WebAssembly.Module(result.binary as unknown as BufferSource),
     rootImports,
   );
-  wireCompiledInstance(rootImports, instance);
+  wireCompiledInstance(rootImports, instance, providerExports.size > 0);
   return { instance, providers: providerExports };
 }
 

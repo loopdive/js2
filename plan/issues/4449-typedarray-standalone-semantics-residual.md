@@ -1,10 +1,11 @@
 ---
 id: 4449
 title: "standalone: TypedArray.prototype ES6 semantics residual (~556 non-reflection tests) — species protocol, detached-buffer checks, custom-ctor paths"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-15
-updated: 2026-08-30
+updated: 2026-09-01
+completed: 2026-09-01
 priority: high
 horizon: l
 feasibility: hard
@@ -13,6 +14,7 @@ area: codegen, conformance
 es_edition: es6
 goal: standalone-mode
 related: [4444, 2159, 2175]
+active_branch: codex/4449-species-live-20260831
 loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
@@ -299,3 +301,553 @@ lanes remain capped at one worker each; when one returns, a Luna Max handoff on
 this existing markdown issue must rerun each path alone with one bounded
 compiler worker, record whether compilation or strict rerun stalls, and fix the
 shared lowering rather than increasing retry budgets.
+
+## Live d60 constructor-carrier/species reconstruction (2026-08-31)
+
+This is a repository-local markdown issue only; do not create a GitHub issue.
+The current narrow port is based on exact live `loopdive/js2` main
+`d60aa73f9b3405dcdc1f832a511acb2366c7de00` in
+`codex/4449-species-live-20260831`. It owns only these four paths:
+
+- `plan/issues/4449-typedarray-standalone-semantics-residual.md`;
+- `src/codegen/array-methods.ts`;
+- `src/codegen/builtin-static-globals.ts`; and
+- `tests/issue-4449-species-producers.test.ts`.
+
+The older recovery worktree
+`codex/4449-species-recovery-20260831` at
+`c39de6dac8c376482b4f2cd628e445c6d8441728` is read-only design evidence. Its
+tracked `benchmarks/results/test262-report.json` mode change is a
+runner-generated symlink side effect and is explicitly **not** part of this
+port. Do not copy, stage, or otherwise mutate that report path.
+
+### Preserved recovery evidence — diagnostic, not publication evidence
+
+On the unchanged recovery head, the one-fork focused species matrix passed
+**13/13**. The exact LF-normalized constructor/default eight-row manifest had
+SHA-256
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf`; its
+maintained host run `20260831-175504` passed **8/8**, and its pinned-QuickJS
+standalone run `20260831-175554` passed **8/8**, all with zero fail, compile
+error, or skip. Both runners reconciled eight callbacks and eight verdicts.
+Those results remain recovery-head evidence only and must not be promoted to
+the live d60 reconstruction.
+
+### Bounded d60 implementation plan
+
+1. Publish a fresh builtin TypedArray constructor carrier immediately after
+   allocation and before its own-property/prototype seed. Preserve d60's
+   `liveBodies.add(initBody)`/cleanup ordering so late-import index repair still
+   covers the detached initializer. This prevents a re-entrant native-prototype
+   companion from minting a second carrier and splitting `result.constructor`
+   identity.
+2. Thread `skipArraySpecies` only through the three nested dynamic TypedArray
+   materialized-vector re-entries (`map`, `filter`, `slice`). The outer
+   TypedArray species path owns result construction; the inner ordinary Array
+   lowering must produce only the f64 payload. Ordinary Array #5145 species
+   lowering remains enabled, including `concat`, `splice`, ordinary vectors,
+   `subarray`, detached-buffer, reflection, and BigInt paths.
+3. Retain the focused TypedArray custom/default species controls and add the
+   ordinary Array `map` custom-species control to prove the narrow suppression
+   does not disable #5145 outside those three inner calls. Preserve standalone
+   zero-`env` import assertions.
+4. Before publication, replay focused tests, the exact host and standalone
+   eight-row manifest, static/typecheck/hook gates, and required pre-push work
+   on the exact integrated live head. Do not broaden a policy baseline or
+   convert recovery results into a d60 claim.
+
+### Current-main overlap audit and handoff
+
+From recovery base `c39de6...` to d60, current main changes
+`array-methods.ts` only in the unrelated Temporal closure-safety set near line
+446. It changes `builtin-static-globals.ts` in the same initializer region by
+registering both `savedBody` and `initBody` in `liveBodies`; the port must
+preserve that #5239-safe bookkeeping while moving only publication order.
+Neither the #4449 tracker nor focused producer test changed upstream in that
+range. On the dirty d60 reconstruction, targeted `git diff --check`, Prettier,
+and Biome error-level lint all exited 0; the LOC and function budget gates also
+exited 0 using the existing #4449 allowance (`array-methods.ts` +70 LOC and
+`compileArrayMethodCall` +24 lines). The owned-path conflict-marker inventory
+is empty. No compiler, focused-test, Test262, TypeScript, hook, or policy
+command has run on d60. The resulting static snapshot requires independent
+review and an exact-head replay before any commit, push, or PR action.
+
+### Root d60 focused runtime checkpoint (2026-08-31)
+
+Root released one compiler lane and ran the two focused files serially from the
+unchanged d60 snapshot with `TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, one
+Vitest fork, and no file parallelism:
+
+- `tests/issue-4449-species-producers.test.ts`: **8 / 8 passed** in 29.06 s
+  total (12.41 s test time), including the new ordinary Array `map` species
+  guard;
+- `tests/issue-4449-species-controls.test.ts`: **5 / 5 passed** in 12.70 s
+  total (3.63 s test time), preserving own/inherited constructor and
+  `Symbol.species` lookup/abrupt behavior.
+
+The exact current-head focused denominator is therefore **13 / 13**, and the
+files' standalone zero-`env` assertions passed. One unrelated long-running
+optimizer occupied the other shared lane; root did not exceed the global
+two-worker limit. This is checkpoint evidence only: independent review, the
+exact eight-row host and pinned-QuickJS standalone manifests, TypeScript,
+hooks, pre-push checks, commit, push, and a separate non-draft PR remain
+required. No GitHub issue was created.
+
+### Root d60 exact eight-row replay (2026-08-31)
+
+The fresh worktree initially had an uninitialized Test262 gitlink. The harness
+self-controls both returned setup errors and correctly aborted before emitting
+any row result; that attempt is discarded and is not counted below. Root then
+attached the already-present exact repository gitlink
+`b363f29d3c43c626dc852744ad64a0b48a003693` as a detached local worktree. No
+corpus file was edited.
+
+The canonical LF-normalized manifest still has SHA-256
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf` and
+contains exactly the eight recorded constructor/default rows. Both valid runs
+used `TEST262_WORKERS=1`, `COMPILER_POOL_SIZE=1`, a 120 s per-row bound, the
+real assembled harness, its must-pass/must-fail structural controls, and a
+second execution of every row for determinism:
+
+- host: **8 / 8 pass**, zero fail/compile error/timeout/skip/error,
+  `nondeterministic: 0`, with eight callbacks and eight JSONL rows;
+- standalone: **8 / 8 pass**, zero fail/compile error/timeout/skip/error,
+  `nondeterministic: 0`, with eight callbacks and eight JSONL rows.
+
+The standalone run pinned
+`/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda`;
+`libquickjs.wasm` has SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+The local evidence files are `.tmp/4449-d60-host-8.jsonl` and
+`.tmp/4449-d60-standalone-8.jsonl`; they are diagnostic outputs, not tracked
+changes. Independent review and final quality/commit/publication gates still
+remain. No GitHub issue was created.
+
+### Pre-publication upstream advance (2026-08-31)
+
+Immediately after the d60 review and runtime replay, live `loopdive/js2` main
+advanced to `c281669805ea987c0c5c08e4681370d199b77a34`. The complete
+`d60aa73f9b..c281669805` delta changes only generated benchmark/npm-compat
+artifacts; it does not touch this issue's tracker, two source files, focused
+test, Test262 gitlink, runner, or quality configuration. The d60 results remain
+valid checkpoint evidence, but root must normally integrate c281 (or newer)
+without force operations, rerun the scoped static/focused/exact-row gates on
+the resulting head, and record that exact integrated SHA before publication.
+No GitHub issue was created.
+
+### c281 integrated-head acceptance replay (2026-08-31)
+
+Root committed the reviewed four-path fix as
+`dc431dd80065f1cc07b97325ea792789b1734e8c`, then normally merged exact live
+upstream `c281669805ea987c0c5c08e4681370d199b77a34`. The resulting tested merge
+head is `d03d77e419bfcb4e46edc1699c662b606330bb08`; its two parents are the fix
+checkpoint and c281. No rebase, force, or skipped hook was used.
+
+Exact-head results:
+
+- focused lookup + producer files: **2 / 2 files, 13 / 13 tests passed** in
+  34.71 s total (18.66 s test time), one fork and no file parallelism;
+- canonical host manifest: harness positive/negative controls passed,
+  **8 / 8 rows passed**, counts summed to eight, `nondeterministic: 0`;
+- canonical pinned-QuickJS standalone manifest: harness controls passed,
+  **8 / 8 rows passed**, counts summed to eight, `nondeterministic: 0`;
+- TS7 `--noEmit -p tsconfig.ts7.json`: exit 0 with no diagnostics;
+- targeted Prettier, Biome error lint, LOC budget, and function budget: exit 0;
+- both fix and merge commit hooks passed. Each changed-root hook reran the
+  eight producer controls successfully, and oracle ratchet reported zero net
+  checker-usage growth.
+
+The integrated row captures are `.tmp/4449-d03d77e-host-8.jsonl` and
+`.tmp/4449-d03d77e-standalone-8.jsonl`; both contain exactly eight pass rows.
+The manifest and QuickJS hashes remain the pinned values above. This tracker
+update changes documentation only; the accepted code/test tree is exactly the
+tested d03d merge. A fresh upstream-head check, required pre-push hook, remote
+push, compliant PR body, and independent PR shepherd remain before
+publication. No GitHub issue was created.
+
+### Final documentation-only main sync (2026-08-31)
+
+The last pre-push check found upstream
+`207793dd444e17215db38c955ce3baaca5f85c7a`. Its sole change from c281 is the
+new unrelated repository-local `plan/issues/5247-uncaught-throw-host-bare-exception.md`;
+no #4449 source, test, runner, corpus, configuration, or evidence path changed.
+Root merged it normally as `59bb198317da139e912cd4c98c7a7613bb759760`.
+The accepted code/test tree is therefore byte-identical to tested merge
+`d03d77e419bfcb4e46edc1699c662b606330bb08`; the later commits add only this
+issue's evidence and unrelated upstream markdown. No GitHub issue was created.
+
+### Fresh live-main sync before publication (2026-08-31)
+
+Root freshly fetched `loopdive/js2` main at
+`932341cc7d01547bf6b0065d766a31cdf3478d9f`. The complete incremental
+`207793dd444e17215db38c955ce3baaca5f85c7a..932341cc7d01547bf6b0065d766a31cdf3478d9f`
+range changes only nine generated landing benchmark artifacts. It has no
+overlap with this tracker, either #4449 source file, the focused test, the
+Test262 runner or gitlink, quality configuration, or the accepted evidence
+artifacts.
+
+The completed branch normally merged that exact upstream head as
+`87cd03f8c3efe9ca989ac43052d3c0ddb5882aba`. Its #4449 code/test tree is
+byte-identical to the fully tested `d03d77e419bfcb4e46edc1699c662b606330bb08`
+checkpoint, and the pull-request diff remains exactly this tracker, the two
+source files, and the focused producer test.
+
+The first local pre-push invocation stopped before validation because this
+worktree had an incomplete generated `node_modules` tree without the
+`typescript7` package link. Root preserved that ignored tree under
+`.tmp/4449-node_modules-incomplete-20260831`, installed the standard
+worktree-to-root dependency symlink, and reran the unchanged hook without a
+remote write or gate bypass. On checkpoint
+`96ebf11e93eb90bcd8460b2e437c5c681acbbd25`, the complete hook passed:
+
+- TS7 typecheck and lint passed in parallel;
+- repository-wide Prettier `format:check` passed;
+- oracle and coercion-site ratchets both reported zero net growth;
+- numeric-local IR parity passed **18 / 18**; and
+- conformance synchronization made no tracked change and issue integrity
+  passed.
+
+This documentation commit is followed by one final unchanged pre-push replay
+so the eventual publication SHA, rather than only the preceding evidence SHA,
+is verified. Remote publication remains blocked by the execution environment's
+external-destination safeguard until the user explicitly authorizes pushing
+the completed branch to the configured public `ttraenkler/js2` fork; no push
+or pull request has been attempted around that guard. No GitHub issue was
+created.
+
+## Live-main integration plan — 2026-09-01
+
+The completed #4449 checkpoint is clean at
+`2ae828c69708179679cc13ae7bbe63583667824f`. Current shared
+`upstream/main` is `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`, five commits ahead of merge
+base `932341cc7d01547bf6b0065d766a31cdf3478d9f`. The complete upstream delta is
+limited to npm/Test262 benchmark mirrors and `scripts/loc-budget-baseline.json`;
+it has no direct overlap with this issue's tracker, two implementation sources,
+or focused test.
+
+Before integration, refresh `loopdive/js2:main` once more and re-audit that
+boundary. Use a temporary worktree-only `.prettierignore` block for the four
+public/website Test262 report mirrors so the normal merge hook cannot reformat
+generated upstream bytes into this four-path PR. The block must be applied and
+removed with `apply_patch`, never staged or committed. Merge with `--no-commit`,
+run the complete normal attributed commit hook, remove the guard, and prove the
+PR range is again exactly four intended paths with no benchmark or `labs/`
+leakage.
+
+Then serially repeat the focused **13/13** suite, the exact species-producer
+host **8/8** and standalone **8/8** manifests with deterministic path/row
+reconciliation, TS7/typecheck, and the complete synthetic-ref pre-push hook on
+the actual final HEAD. Stop on any regression or generated-path leak. No push
+or GitHub mutation is authorized by this plan; publication remains blocked on
+explicit permission to push the completed branch to the public
+`ttraenkler/js2` fork for a non-draft PR against `loopdive/js2:main`.
+
+### Live-main integrated validation handoff — 2026-09-01
+
+The plan commit is `c9a661d5d2`; its normal hook passed the producer matrix **8
+/ 8**, the exact LOC/function grants, and the zero-growth oracle ratchet. Fresh
+fetch still resolved live main to
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`. The attributed merge is
+`9eaf563d934bdf25520a3a2b4611f10e02c2fb4f`; its unskipped hook repeated the
+same gates and producer **8 / 8** result.
+
+The temporary four-path Prettier guard was never staged or committed and was
+removed immediately after the merge. `.prettierignore` is byte-identical to
+`HEAD`; `git diff upstream/main...HEAD` contains exactly this tracker, the two
+implementation sources, and the producer test, with no benchmark, public,
+website, or `labs/` path.
+
+The integrated one-fork replay of the unchanged five lookup controls plus the
+eight producer controls passed **2 / 2 files and 13 / 13 tests** (19.79 s
+total, 10.03 s test time). One serial host harness process then passed the
+mandatory must-pass/must-fail controls and all **8 / 8** exact rows, with total
+`8` and `nondeterministic: 0`; its artifact is
+`.tmp/4449-a4d-host-8.jsonl`. The pinned-QuickJS standalone process repeated
+the structural controls and passed **8 / 8**, total `8`,
+`nondeterministic: 0`, writing `.tmp/4449-a4d-standalone-8.jsonl`.
+
+Both artifacts contain exactly eight distinct requested paths, eight callbacks,
+and only `pass` rows in their respective target. Their LF-normalized sorted
+manifest SHA-256 is the canonical
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf`.
+Standalone used the pinned QuickJS artifact whose `libquickjs.wasm` SHA-256 is
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+Direct TypeScript 7 exited **0** with no diagnostics.
+
+This handoff note must pass the normal commit hook, after which the complete
+synthetic-ref pre-push hook must pass on the actual final HEAD. No push or
+GitHub mutation has occurred; explicit public-fork authorization remains the
+only publication-permission blocker.
+
+## c112 live-main integration plan — 2026-09-01
+
+Fresh fetch resolves `upstream/main` to
+`c11206262088a69815d6126787b10942df148b6d`, 55 commits beyond the branch's
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` merge base. The upstream range has
+no change in the four #4449-owned paths (this tracker,
+`src/codegen/array-methods.ts`, `src/codegen/builtin-static-globals.ts`, and
+`tests/issue-4449-species-producers.test.ts`). A read-only three-way
+`git merge-tree --trivial-merge a4d141321daf7f8874e540d7b75f58f8c3e2c2a7
+upstream/main HEAD` exits zero, so Git predicts no conflict.
+
+The normal merge must retain the dynamic TypedArray species boundary: the outer
+`map`/`filter`/`slice`/`subarray` path constructs the requested species result
+once, while its materialized temporary vector does not run a second
+ArraySpeciesCreate. It must retain #5145's ordinary Array producer behavior,
+including the ordinary Array `map` custom-species control, and preserve the
+builtin-static global publication ordering. Keep the standalone zero-`env`
+import assertions, host behavior, the canonical constructor/default manifest,
+and the pinned QuickJS artifact unchanged.
+
+### Released-lane gate sequence
+
+External lanes are saturated. Until root releases one, do not stage, commit,
+merge, run a hook, compiler, TypeScript, Vitest, Test262, or publication
+command. On release, fetch upstream again and re-audit if `upstream/main` has
+moved beyond c112; only then normally merge the exact live head. On that exact
+merged HEAD, require all of the following before any publication work:
+
+1. serial focused species controls and producers: **13 / 13**, preserving the
+   standalone zero-`env` assertions;
+2. the canonical host constructor/default manifest: **8 / 8** pass, eight
+   callbacks/rows, both harness controls, and `nondeterministic: 0`;
+3. the canonical pinned-QuickJS standalone manifest: **8 / 8** pass, eight
+   callbacks/rows, both harness controls, and `nondeterministic: 0`, using
+   `/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda`
+   with `libquickjs.wasm` SHA-256
+   `073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`;
+4. the LF-normalized eight-row manifest SHA-256
+   `619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf`;
+5. direct TS7 `node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`;
+6. targeted formatting/lint/budget checks plus `git diff --check`; and
+7. the complete synthetic-ref pre-push hook on the actual final head.
+
+The no-leak audit is mandatory: `git diff --name-only upstream/main...HEAD`
+must contain exactly these four #4449 paths, with no benchmark, report, public,
+website, `labs/`, generated evidence, or temporary `.prettierignore` path.
+Stop on a conflict, failed row/control, altered denominator, nondeterminism,
+quality failure, or leak.
+
+Publication remains blocked after local success until root releases the lane
+and the user explicitly authorizes pushing this completed branch to the public
+`ttraenkler/js2` fork and creating the non-draft PR against
+`loopdive/js2:main`. No push or GitHub mutation is authorized by this plan.
+
+### Merge-boundary correction before integration — 2026-09-01
+
+The first integration audit used `HEAD..upstream/main`, which compares the two
+tips' complete content and therefore lists this branch's own four #4449 paths.
+That is not an incoming-overlap test. The authoritative boundary is the exact
+merge base `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`: the scoped
+`git diff --name-only a4d141321daf7f8874e540d7b75f58f8c3e2c2a7..upstream/main --`
+over the tracker, two implementation files, and focused producer test is
+empty at `c11206262088a69815d6126787b10942df148b6d`. Conversely,
+`git diff --name-only upstream/main...HEAD` is exactly those four owned paths.
+There is no actual upstream overlap; proceed with the normal no-commit merge
+and retain the four-path no-leak audit after it.
+
+### Publication authorization cleared — 2026-09-01
+
+The user explicitly authorized publication of the completed branch to the
+public `ttraenkler/js2` fork for a PR against `loopdive/js2:main`. This clears
+only the external-destination authorization: publication still follows the
+released live-main validation sequence and four-path no-leak audit above.
+After those gates, publish this work as its own ready (non-draft) upstream PR.
+No GitHub issue was created.
+
+### Open c112 merge and e904 publication handoff — 2026-09-01
+
+Publication preparation is complete, but validation/publication remains blocked
+while #680 owns the second shared lane. The normal c112 integration is already
+open and resolved, not committed: branch
+`codex/4449-species-live-20260831` has `HEAD` `62ce4a558c`, active
+`MERGE_HEAD` `c11206262088a69815d6126787b10942df148b6d`, no unresolved paths,
+and no unstaged change before this tracker note. The staged prospective range
+against exact c112 is **exactly four paths**:
+
+1. `plan/issues/4449-typedarray-standalone-semantics-residual.md`
+2. `src/codegen/array-methods.ts`
+3. `src/codegen/builtin-static-globals.ts`
+4. `tests/issue-4449-species-producers.test.ts`
+
+It contains no benchmark, public/website, labs, generated-report, or unrelated
+source path; staged `git diff --check` and the conflict-marker inventory are
+clean. The eleven candidate commits beyond c112 all have author
+`Thomas Tränkler <git@thomas.traenkler.com>` and exactly one
+`Co-authored-by: Codex <codex@openai.com>` trailer. The user has already
+authorized publication to the public `ttraenkler/js2` fork, but that clears
+only destination authority: this still needs the released validation lane,
+final exact-head audit, and a ready/non-draft PR. No GitHub action occurred.
+
+#### Later e904-or-newer normal-merge resolution plan
+
+Live `upstream/main` is currently
+`e904b5f4b254dc5ab667685b8493f250d177efda`. Its post-c112 commits
+`cf6f2c3de14d` and `faf97eee1976` both touch
+`src/codegen/array-methods.ts`, including the same three materialized
+dynamic-TypedArray `map`/`filter`/`slice` calls. This is a genuine semantic
+overlap, not a reason to choose either side wholesale.
+
+On the later normal merge, retain upstream's scoped
+`withArraySpeciesSuppressed(fctx, ...)` helper and its `try/finally` lifetime:
+factor the three inner materialized-vector calls through that helper, retain
+the outer #4449 `emitTaDynSpeciesCreate` allocation and copy-back exactly once,
+and remove the local `skipArraySpecies` boolean parameter/plumbing from
+`compileArrayMethodCall`, slice, map, and filter. The helper makes
+`prepareArraySpeciesDeps` decline only during the temporary ordinary-vector
+re-entry. Therefore dynamic TypedArray result identity stays with the outer
+TypedArray species constructor, while upstream #5145 ordinary Array species
+and the new ordinary `flatMapSpeciesResult` behavior remain active outside
+that scope. Preserve the upstream imports (`withArraySpeciesSuppressed` and
+`flatMapSpeciesResult`) and do not suppress species around the outer producer,
+concat/splice, ordinary vectors, or standalone-unrelated paths.
+
+After a root-released lane permits the e904-or-newer merge, repeat the focused
+13/13 producer suite, exact host 8/8 manifest, pinned-QuickJS standalone 8/8
+manifest, TS7, scoped formatting/lint/diff checks, normal pre-push, and the
+final `upstream/main...HEAD` four-path/no-leak audit. Stop on a conflict that
+cannot retain both semantics, a denominator change, a non-deterministic row,
+or any generated-path leak.
+
+#### Prepared c112 merge commit message
+
+```text
+merge(upstream): sync #4449 with c112 main ✓
+
+Integrate loopdive/js2 main at c11206262088a69815d6126787b10942df148b6d after
+confirming the resolved prospective PR range contains only the #4449 tracker,
+two implementation files, and focused producer test.
+
+Preserve dynamic TypedArray species identity, ordinary Array species behavior,
+and the existing standalone zero-import validation boundary.
+
+# Codex session
+Co-authored-by: Codex <codex@openai.com>
+```
+
+#### Prepared ready/non-draft PR package (do not submit until gates pass)
+
+Title: `fix(typedarray): preserve dynamic species identity`
+
+```markdown
+## Description
+
+Preserve dynamic TypedArray species identity by publishing the builtin TypedArray constructor before re-entrant prototype seeding and by suppressing ArraySpeciesCreate only while map, filter, or slice materializes the temporary vector beneath the outer TypedArraySpeciesCreate; ordinary Array species behavior, including flatMap, remains active outside that narrow scope.
+
+## Quality
+
+Exact three-path live-base diff: this tracker, `src/codegen/builtin-static-globals.ts`, and `tests/issue-4449-species-producers.test.ts`; no benchmark, public, website, or labs paths.
+
+## CLA
+
+Please read the [Contributor License Agreement](../blob/main/CLA.md) and check the box:
+
+- [x] I have read and agree to the CLA
+```
+
+The PR must be created as ready/non-draft against `loopdive/js2:main` from the
+authorized `ttraenkler/js2` fork only after the exact-head gates above pass.
+
+### c112 merged full-hook evidence — 2026-09-01
+
+Root normally committed the c112 integration as
+`f105f115e3`. Its full unskipped hook passed the #4449 producer controls
+**8 / 8**, fresh Temporal controls **11 / 11**, #5225 **2 / 2**, #5242
+**2 / 2**, #5243 **1 / 1**, and #5244 **9 / 9**. The applicable budgets and
+oracle checks were also green. This is c112-head evidence only: before
+publication, fetch and normally merge the current live upstream, resolve the
+documented `array-methods.ts` semantic overlap, and rerun the exact merged-head
+gates. No push or GitHub action is implied by this checkpoint.
+
+### c372 live-main absorption and resolved merge handoff — 2026-09-01
+
+Fresh upstream/main is `c372457da1ffd39b87bebf235aac115a27657abf`. The
+normal no-commit/no-ff merge has one semantic overlap, in
+`src/codegen/array-methods.ts`, and it is now resolved by retaining current
+main's scoped `withArraySpeciesSuppressed` implementation. A byte-for-byte
+comparison establishes that upstream independently absorbed the #4449
+array-methods change: the resolved file is identical to `upstream/main` and
+therefore intentionally does not remain in the prospective PR.
+
+The exact current live-base scope is consequently **three paths**:
+
+1. `plan/issues/4449-typedarray-standalone-semantics-residual.md`
+2. `src/codegen/builtin-static-globals.ts`
+3. `tests/issue-4449-species-producers.test.ts`
+
+The remaining implementation change is behaviorally necessary. It publishes
+the builtin TypedArray constructor carrier before native-prototype companion
+seeding can re-enter its initializer; without that ordering, the re-entry can
+mint a second carrier and split constructor identity. The focused producer
+controls still distinguish this condition: the nullish-species case requires
+the published original constructor identity, while the dynamic producer cases
+require one outer TypedArray species allocation and the ordinary Array custom
+species control protects the unsuppressed Array/flatMap boundary. No test or
+hook was run for this c372 merge checkpoint; the prior c112 full-hook evidence
+above is retained only as pre-merge evidence.
+
+The merge index is resolved and staged for the durable normal commit. After
+that commit, rerun the exact merged-head gates and publish only if the
+three-path live-base/no-leak audit remains true.
+
+### c372 durable merge-commit evidence — 2026-09-01
+
+Root committed the resolved normal merge as
+`ec15fa8005591e69161e38baf35595419b6bed1c` with the required full, unskipped
+hook. Formatting, lint, applicable budgets, and the oracle gate were green;
+the changed-root mass-edit check correctly took its documented `>20`-file
+merge skip. This is commit evidence, not a substitute for the final
+current-head focused, host, standalone, TS7/static, pre-push, and fresh
+live-base/no-leak gates required before publication.
+
+### c372 exact-head runtime and static replay — 2026-09-01
+
+On exact merged head `ec15fa8005591e69161e38baf35595419b6bed1c`, the direct
+single-fork/no-file-parallelism producer suite
+`tests/issue-4449-species-producers.test.ts` passed **8 / 8** in **15.78 s**
+Vitest duration (**6.06 s** test time; **16.21 s** outer wall). The canonical
+eight-row constructor/default manifest was reconstructed from its
+LF-normalized SHA-256
+`619d16ee99f70d0af2969bf7951e034d6d022b1d4e4314872614a4ee0cc594cf` and ran
+in one shard with one compiler worker on each target:
+
+- host run `20260901-021202`: **8 / 8** pass, zero fail/compile-error/timeout/
+  skip, eight registered paths, eight settled callbacks, and eight canonical
+  verdicts; Vitest duration **27.92 s** (**14.33 s** tests; **30.03 s** outer
+  wall). Evidence is the timestamped `test262-{report,results}-20260901-021202`
+  pair plus its completion manifest.
+- pinned-QuickJS standalone run `20260901-021312`: **8 / 8** pass, zero
+  fail/compile-error/timeout/skip, eight registered paths, eight settled
+  callbacks, and eight canonical verdicts; Vitest duration **43.17 s**
+  (**31.39 s** tests; **54 s** to timestamped report write). It used
+  `quickjs-artifact-2e2d7736713beeda`, whose `libquickjs.wasm` is SHA-256
+  `073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+
+Direct TS7 `--noEmit -p tsconfig.ts7.json` exited zero in **18.38 s**. Targeted
+Prettier and Biome error lint passed for the source/test pair; LOC and function
+budgets passed (the one changed source file is net **+3 LOC** within its
+allowance), the oracle ratchet remained **+0**, and both live-base and
+worktree `git diff --check` gates were clean.
+
+The scoped host runner temporarily replaced the tracked regular
+`benchmarks/results/test262-report.json` with a symlink. That generated link
+was recoverably moved to
+`/private/tmp/js2-4449-c372-host-report-symlink-20260901-021202` (still
+pointing to its timestamped host report), then the exact tracked regular blob
+`032962b2093238914c1b214430af62b4b7e6d45b` was restored. Benchmark paths now
+have zero staged or unstaged diff and are excluded from publication. Final
+pre-push and a fresh upstream/no-leak audit remain pending the released lane;
+the completed implementation is otherwise ready for its non-draft PR.
+
+### Final c372 live-base confirmation — 2026-09-01
+
+Immediately before the publication checkpoint, a fresh `git fetch upstream
+main` again resolved live main to
+`c372457da1ffd39b87bebf235aac115a27657abf`; there is no post-c372 advance to
+merge. Its merge base with this branch is c372, the incoming overlap over the
+three #4449 paths is empty, and Git's read-only merge-tree reports no conflict.
+The prospective range remains exactly this tracker,
+`src/codegen/builtin-static-globals.ts`, and
+`tests/issue-4449-species-producers.test.ts`, with zero benchmark, public,
+website, or labs paths. The next required action is the durable tracker
+checkpoint commit, followed by the full pre-push hook on that exact SHA.

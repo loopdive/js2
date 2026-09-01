@@ -111,11 +111,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
-  /**
-   * Node-compatible ambient globals are enabled. This is distinct from the
-   * Wasm backend target: a gc-host build can still target the Node platform.
-   */
-  nodeGlobals?: boolean;
+  /** Ambient runtime globals, independent of the Wasm backend target. */
+  ambientPlatform?: import("../../target-profile.js").AmbientPlatform;
   /**
    * #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
    * (satisfied by a preloaded provider) instead of inline-lowering. `["node:fs"]`
@@ -139,6 +136,14 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   runtimeProvider?: boolean;
   /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
   canonicalRuntimeTypes?: boolean;
+  /**
+   * (#5226) Import the throw/catch exception tag from `env.__exn` instead of
+   * defining a module-local one. Set by the package linker on BOTH sides of a
+   * separately-linked graph so a provider's `throw` and its consumer's `catch`
+   * name the SAME tag — without it every module owns a private tag, the
+   * consumer's `catch` never matches, and the payload is lost in `catch_all`.
+   */
+  sharedExceptionTag?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -381,6 +386,31 @@ export interface ClosureInfo {
   needsCallSiteArity?: boolean;
   /** Small, capture-free numeric closure body eligible for HOF call-site inlining. */
   inlineBody?: Instr[];
+}
+
+/**
+ * A callable-property funcref ladder whose body is reserved while lowering a
+ * call site and filled after the complete program closure registry is known.
+ *
+ * Keep this record limited to stable handles and immutable ABI facts.  The
+ * finalizer must only read these facts plus `closureInfoByTypeIdx`; it may not
+ * register another type/function/import after callers have baked their
+ * references.
+ */
+export interface DeferredCallablePropertyDispatchPlan {
+  /** Stable private helper name/handle reserved at the first matching site. */
+  helperName: string;
+  helperFuncIdx: FuncHandle;
+  /** Canonical open wrapper root accepted by every admitted closure carrier. */
+  rootTypeIdx: number;
+  /** Declared wrapper candidate anchoring the final candidate collection. */
+  declaredFuncTypeIdx: number;
+  declaredStructTypeIdx: number;
+  declaredReturnType: ValType | null;
+  /** Typed helper ABI, excluding the leading wrapper-root receiver. */
+  paramTypes: ValType[];
+  /** Result expected by the original property signature (`null` = void). */
+  expectedReturn: ValType | null;
 }
 
 /** Metadata for a generator lowered to an in-module WasmGC state machine (#680). */
@@ -754,6 +784,16 @@ export interface FunctionContext {
    */
   asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
   /**
+   * (#680) Sent values for original bare-yield AST nodes while a native
+   * generator continuation state recompiles its containing expression.
+   */
+  nativeGeneratorYieldValueLocals?: Map<ts.YieldExpression, number>;
+  /**
+   * (#680) One-time pre-yield operand values for original expression AST nodes
+   * while a native generator continuation state recompiles that expression.
+   */
+  nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
+  /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
    * named local in the body prologue). The async drive lane compiles the body
@@ -888,6 +928,14 @@ export interface FunctionContext {
    * `arguments` construction reuses this local when both features are present.
    */
   argcCachedLocal?: number;
+  /**
+   * Optional scalar formals whose omitted-vs-supplied distinction is observed
+   * by this source function. The declaration identity prevents a shadowed
+   * same-spelled binding from borrowing the activation's cached `__argc`.
+   * Values are source-level parameter indices (capture/self parameters are not
+   * part of JavaScript's argument count).
+   */
+  omissionTrackedScalarParams?: Map<ts.ParameterDeclaration, number>;
   /** Set of function names successfully hoisted during THIS function body's hoisting pass */
   hoistedFuncs?: Set<string>;
   /** Enclosing class name — propagated to closures for super keyword resolution */
@@ -2499,6 +2547,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
   closureMap: Map<string, ClosureInfo>;
   closureInfoByTypeIdx: Map<number, ClosureInfo>;
+  /**
+   * Order-independent callable-property dispatchers, keyed by declared lifted
+   * funcref ABI plus expected result.  Optional so modules without an eligible
+   * externref callable field remain byte-identical.
+   */
+  deferredCallablePropertyDispatches?: Map<string, DeferredCallablePropertyDispatchPlan>;
+  /**
+   * Smallest observed source-level argument count for an exact lifted
+   * funcref ABI. Unlike `ClosureInfo`, this survives replacement of a shared
+   * wrapper's live registry record by a later closure allocation.
+   */
+  closureMinimumArgumentCountByFuncTypeIdx: Map<number, number>;
   maxHostDynamicMethodCallArity?: number;
   /**
    * Host-lane dynamic method names whose receiver may be a compiled class
@@ -2621,6 +2681,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   toPrimitiveForkedStructs: Set<string>;
   /** Tag index for the exception tag (-1 if not yet registered) */
   exnTagIdx: number;
+  /**
+   * (#5226) True when this module's exception tag is IMPORTED (`env.__exn`)
+   * rather than module-defined, so every module of one linked graph throws and
+   * catches with the same tag identity. `exnTagIdx` stays an ABSOLUTE tag index
+   * either way (imported tags occupy the low indices).
+   */
+  sharedExnTag: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**
@@ -2990,6 +3057,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * for subclasses of host-constructible builtins.
    */
   classExternrefBackedSet: Set<string>;
+  /**
+   * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
+   * class OBJECT can cross to the host and be constructed there. Exactly the
+   * set that needs a `__class_construct_<Class>_<arity>` bridge; every other
+   * module keeps byte-identical output.
+   */
+  classCtorHostRegistered: Set<string>;
   /** Counter for assigning unique class tags (for instanceof support) */
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
@@ -3229,6 +3303,39 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** (#1789) Whether the WASI module-init guard (idempotent __module_init +
    *  prepended init call on exports) has been applied. */
   moduleInitGuardApplied: boolean;
+  /**
+   * (#3523 R4 gap 3) The WASI `__init_done` idempotence guard, reserved at
+   * module-init PREALLOCATION rather than minted by the post-emission splice.
+   *
+   * `applyModuleInitGuard` used to mint this global and prepend an
+   * early-`return` prologue to an ALREADY EMITTED `__module_init`. A Prepared
+   * module-init body cannot take that splice: its identity is sealed at the
+   * preparation snapshot, and the early-`return` form is exactly what
+   * `bodyContainsReturnClassOp` withdraws the IR patch over (#3142/#3168),
+   * because every later epilogue (`finalizeInModuleInitFlag`'s
+   * `__in_module_init = 0` most critically) would become unreachable.
+   *
+   * So the global is reserved here, before body emission, and the prepared
+   * body is CONSTRUCTED around a wrapping `if` — no return-class op, inside
+   * the body at snapshot time. `planted` records the exact instruction
+   * objects so `applyModuleInitGuard` can authenticate the guard by identity
+   * instead of trusting that preparation planted one; a prepared WASI init
+   * that reaches the splice unguarded is an invariant failure, never a
+   * silently unguarded binary.
+   *
+   * `undefined` outside WASI, and outside a prepared module-init compile.
+   */
+  preparedWasiModuleInitGuard?: {
+    /** Module-global index of the reserved `(mut i32) __init_done`. */
+    readonly doneGlobalIdx: number;
+    /**
+     * The three top-level instruction objects planted into the prepared body,
+     * in order. `fixupModuleGlobalIndices` shifts their baked global indices in
+     * place on a late import-global insertion, so identity survives every
+     * legitimate late mutation while a body REPLACEMENT does not.
+     */
+    planted?: { readonly doneGet: Instr; readonly eqz: Instr; readonly guard: Instr };
+  };
   /**
    * #1984 — freeze-point discipline (child of #2043 Option 3). Set to `true`
    * by `generateModule`/`generateMultiModule` once the module's index spaces

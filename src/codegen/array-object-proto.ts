@@ -51,6 +51,7 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { DENO_PRIMORDIAL_GLOBAL_NAMES } from "./deno-platform.js";
 import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
@@ -3188,50 +3189,7 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   // because the same bootstrap discovers them through the computed path.
   // Keep the detached body live while later seed construction can still add
   // imports and shift defined-function indices.
-  const primordialGlobalNames = [
-    "JSON",
-    "Math",
-    "Proxy",
-    "Reflect",
-    "AggregateError",
-    "Array",
-    "ArrayBuffer",
-    "BigInt",
-    "BigInt64Array",
-    "BigUint64Array",
-    "Boolean",
-    "DataView",
-    "Date",
-    "Error",
-    "EvalError",
-    "FinalizationRegistry",
-    "Float32Array",
-    "Float64Array",
-    "Function",
-    "Int16Array",
-    "Int32Array",
-    "Int8Array",
-    "Map",
-    "Number",
-    "Object",
-    "Promise",
-    "RangeError",
-    "ReferenceError",
-    "RegExp",
-    "Set",
-    "String",
-    "Symbol",
-    "SyntaxError",
-    "TypeError",
-    "URIError",
-    "Uint16Array",
-    "Uint32Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "WeakMap",
-    "WeakRef",
-    "WeakSet",
-  ] as const;
+  const primordialGlobalNames = ctx.targetProfile.ambientPlatform === "deno" ? DENO_PRIMORDIAL_GLOBAL_NAMES : [];
   const savedBody = fctx.body;
   fctx.body = [];
   ctx.liveBodies.add(savedBody);

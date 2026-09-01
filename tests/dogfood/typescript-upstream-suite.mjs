@@ -1,4 +1,4 @@
-// TypeScript 5.9.3 original base64 and bigint utility unit slice.
+// TypeScript 5.9.3 original utility and comment-scanner unit slice.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -71,8 +71,17 @@ function extractFunction(source, marker) {
   }
   throw new Error(`TypeScript utility function is unterminated: ${marker}`);
 }
-function exactTypescriptProjection(utilitiesSource) {
+
+function extractLine(source, marker) {
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(`TypeScript utility marker changed: ${marker}`);
+  const end = source.indexOf("\n", start);
+  return source.slice(start, end < 0 ? source.length : end);
+}
+
+function exactTypescriptProjection(utilitiesSource, scannerSource) {
   utilitiesSource = utilitiesSource.replace(/\r\n/g, "\n");
+  scannerSource = scannerSource.replace(/\r\n/g, "\n");
   const startMarker = "/**\n * Replace each instance of non-ascii characters";
   const endMarker = "/** @internal */\nexport function readJsonOrUndefined";
   const start = utilitiesSource.indexOf(startMarker);
@@ -80,14 +89,61 @@ function exactTypescriptProjection(utilitiesSource) {
   if (start < 0 || end < 0) throw new Error("TypeScript base64 implementation markers changed");
   const declarations = utilitiesSource.slice(start, end);
   const parsePseudoBigInt = extractFunction(utilitiesSource, "export function parsePseudoBigInt");
-  const characterCodes = `const CharacterCodes = { _0: 48, _9: 57, A: 65, B: 66, F: 70, O: 79, X: 88, a: 97, b: 98, o: 111, x: 120 } as const;`;
-  return `const Debug = { assert(value: boolean, message?: string) { if (!value) throw new Error(message || "Debug assertion failed"); } };\n${characterCodes}\n${declarations}\n${parsePseudoBigInt}`;
+  const scannerDeclarations = [
+    extractFunction(scannerSource, "export function isWhiteSpaceLike"),
+    extractFunction(scannerSource, "export function isWhiteSpaceSingleLine"),
+    extractFunction(scannerSource, "export function isLineBreak"),
+    extractLine(scannerSource, "const shebangTriviaRegex"),
+    extractFunction(scannerSource, "function iterateCommentRanges"),
+    extractFunction(scannerSource, "export function reduceEachLeadingCommentRange"),
+    extractFunction(scannerSource, "function appendCommentRange"),
+    extractFunction(scannerSource, "export function getLeadingCommentRanges"),
+    extractFunction(scannerSource, "export function getShebang"),
+  ].join("\n\n");
+  const characterCodes = `const CharacterCodes = {
+  maxAsciiCharacter: 0x7f,
+  lineFeed: 0x0a,
+  carriageReturn: 0x0d,
+  lineSeparator: 0x2028,
+  paragraphSeparator: 0x2029,
+  nextLine: 0x0085,
+  space: 0x20,
+  nonBreakingSpace: 0x00a0,
+  enQuad: 0x2000,
+  zeroWidthSpace: 0x200b,
+  narrowNoBreakSpace: 0x202f,
+  ideographicSpace: 0x3000,
+  mathematicalSpace: 0x205f,
+  ogham: 0x1680,
+  _0: 0x30,
+  _9: 0x39,
+  A: 0x41,
+  B: 0x42,
+  F: 0x46,
+  O: 0x4f,
+  X: 0x58,
+  a: 0x61,
+  b: 0x62,
+  o: 0x6f,
+  x: 0x78,
+  asterisk: 0x2a,
+  slash: 0x2f,
+  formFeed: 0x0c,
+  byteOrderMark: 0xfeff,
+  tab: 0x09,
+  verticalTab: 0x0b,
+} as const;`;
+  const scannerTypes = `interface TextRange { pos: number; end: number; }
+export const SyntaxKind = { SingleLineCommentTrivia: 2, MultiLineCommentTrivia: 3 } as const;
+type CommentKind = typeof SyntaxKind.SingleLineCommentTrivia | typeof SyntaxKind.MultiLineCommentTrivia;
+interface CommentRange extends TextRange { hasTrailingNewLine?: boolean; kind: CommentKind; }`;
+  return `const Debug = { assert(value: boolean, message?: string) { if (!value) throw new Error(message || "Debug assertion failed"); } };\n${characterCodes}\n${scannerTypes}\n${declarations}\n${parsePseudoBigInt}\n${scannerDeclarations}`;
 }
 
 function transformTypescriptTest(source, projectionSpecifier) {
   return source.replace(
     /^import\s+\*\s+as\s+ts\s+from\s+["']\.\.\/_namespaces\/ts\.js["'];?\s*$/m,
-    `import { base64decode, base64encode, convertToBase64, parsePseudoBigInt } from ${JSON.stringify(projectionSpecifier)};\nconst ts = { base64decode, base64encode, convertToBase64, parsePseudoBigInt, sys: { base64decode: (input) => base64decode(undefined, input), base64encode: (input) => base64encode(undefined, input) } };`,
+    `import { base64decode, base64encode, convertToBase64, getLeadingCommentRanges, parsePseudoBigInt, SyntaxKind } from ${JSON.stringify(projectionSpecifier)};\nconst ts = { base64decode, base64encode, convertToBase64, getLeadingCommentRanges, parsePseudoBigInt, SyntaxKind, sys: { base64decode: (input) => base64decode(undefined, input), base64encode: (input) => base64encode(undefined, input) } };`,
   );
 }
 
@@ -95,9 +151,13 @@ export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
   const suite = setupTypescriptUpstreamSuite();
   const utilitiesPath = join(suite.root, "src", "compiler", "utilities.ts");
-  const projectionPath = join(GENERATED_ROOT, "release-base64.ts");
+  const scannerPath = join(suite.root, "src", "compiler", "scanner.ts");
+  const projectionPath = join(GENERATED_ROOT, "release-utilities.ts");
   mkdirSync(dirname(projectionPath), { recursive: true });
-  writeFileSync(projectionPath, exactTypescriptProjection(readFileSync(utilitiesPath, "utf-8")));
+  writeFileSync(
+    projectionPath,
+    exactTypescriptProjection(readFileSync(utilitiesPath, "utf-8"), readFileSync(scannerPath, "utf-8")),
+  );
   const runs = [];
 
   log(`[dogfood] typescript@${suite.pin.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
@@ -146,9 +206,9 @@ export function typescriptUpstreamReportSucceeded(report) {
   const scored = report?.results?.scored ?? 0;
   const modules = report?.compile?.modules ?? 0;
   return (
-    selectedFiles === 3 &&
-    registered === 11 &&
-    scored === 11 &&
+    selectedFiles === 4 &&
+    registered === 14 &&
+    scored === 14 &&
     report.extraction.nativePassed === registered &&
     report.extraction.nativeFailed === 0 &&
     modules === selectedFiles &&

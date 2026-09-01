@@ -133,6 +133,12 @@ import { IrInvariantError } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
+import {
+  BOOLEAN_BOUNDARY_POLICY_DISABLED,
+  EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+  GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+  NUMBER_BOUNDARY_POLICY_DISABLED,
+} from "../runtime-manifest.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -657,7 +663,20 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
     prepareIrRuntimeManifest({
       functions,
       sourceFile,
-      policy: { target: "host", backend: "linear" },
+      // (#3526 F1-S1, F1-S2) The linear adapter exposes no f64⇄externref number
+      // boundary and no i32⇄externref boolean boundary: both DISABLED policies
+      // resolve every arm to unsupported, and the backend legality gate
+      // independently rejects the externref intrinsics (its `intrinsic` arm is
+      // an allowlist), so a linear owner demotes rather than receiving a
+      // provider it cannot lower.
+      policy: {
+        target: "host",
+        backend: "linear",
+        numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
+        booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+        externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+        generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+      },
     })?.functions ?? functions
   );
 }
@@ -1526,12 +1545,6 @@ function makeLinearIrResolver(
       return { kind: "i32" };
     },
     stringIsExternref(): boolean {
-      return false;
-    },
-    hasHostNumberBox(): boolean {
-      return false;
-    },
-    hasHostBooleanBox(): boolean {
       return false;
     },
     hasHostNumberToString(): boolean {

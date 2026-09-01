@@ -793,6 +793,56 @@ function r2FastPreparedScalarFunctionSignature(
 }
 
 /**
+ * Fast mode normally selects native strings, but an explicit nativeStrings:
+ * false keeps the JS-host externref string ABI. Its only added
+ * prepare-before-direct admission is an annotation-fixed pass-through
+ * signature whose constructed IR string contract still equals the allocated
+ * callable slot.
+ */
+function r2FastJsHostPassThroughStringSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  unitId: IrUnitId,
+  claim: IrExactFunctionClaim,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  const declaration = claim.declaration;
+  const preparedOverride: { readonly params: readonly IrType[]; readonly returnType: IrType } = {
+    params: declaration.parameters.map(() => ({ kind: "string" })),
+    returnType: { kind: "string" },
+  };
+  const exactJsHostLane = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+
+  if (
+    !exactJsHostLane ||
+    !declaration.name ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== claim.legacyName ||
+    declaration.parent !== sourceFile ||
+    !sourceFile.statements.some((statement) => statement === declaration) ||
+    !declaration.body ||
+    (declaration.typeParameters?.length ?? 0) !== 0 ||
+    declaration.asteriskToken !== undefined ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    declaration.type?.kind !== ts.SyntaxKind.StringKeyword ||
+    declaration.parameters.length !== override.params.length ||
+    !declaration.parameters.every(
+      (parameter) =>
+        ts.isIdentifier(parameter.name) &&
+        parameter.questionToken === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        parameter.initializer === undefined &&
+        parameter.type?.kind === ts.SyntaxKind.StringKeyword,
+    ) ||
+    !override.params.every((type) => type.kind === "string") ||
+    override.returnType?.kind !== "string"
+  ) {
+    return false;
+  }
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, preparedOverride);
+}
+
+/**
  * (#4514) The narrow value vocabulary whose physical carrier is fixed by the
  * declaration alone, with no decision the prepared component could re-plan:
  * `void`, `f64`/`i32` scalars, `string` (one `nativeStrings`-keyed carrier both
@@ -1268,7 +1318,10 @@ export function selectR2PreparedOwnerComponents(input: {
     const signatureOptions = isGenerator ? { allowOpaqueExternrefValue: true } : undefined;
     if (
       (input.ctx.fast &&
-        !r2FastPreparedScalarFunctionSignature(input.ctx, input.sourceFile, unitId, claim, override)) ||
+        !(
+          r2FastPreparedScalarFunctionSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
+          r2FastJsHostPassThroughStringSignature(input.ctx, input.sourceFile, unitId, claim, override)
+        )) ||
       isAsync ||
       (isGenerator && !generatorsPreparable(input.ctx)) ||
       containsUnplannedNestedExecutableSyntax(
@@ -1769,7 +1822,16 @@ export function prepareIrBodies(input: {
             input.overrideMap,
             input.classShapes,
             input.projectLoweringPlans(selection),
-            { sealPreparedComponents: true },
+            {
+              sealPreparedComponents: true,
+              // (#3523 R4 gap 3) Only this call constructs the Prepared
+              // module-init body, so only this call may plant the reserved WASI
+              // `__init_done` guard into it. A no-op unless the reservation
+              // exists (WASI) and this population actually claims the init.
+              ...(moduleInitClaimsByUnitId.size > 0 && input.ctx.preparedWasiModuleInitGuard !== undefined
+                ? { plantPreparedWasiModuleInitGuard: true as const }
+                : {}),
+            },
           ),
   );
   const timerUnitIds = compilerTimerShimTerminalUnitIds(input.identityPlan.identityContext.inventory);

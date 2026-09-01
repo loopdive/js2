@@ -196,6 +196,7 @@ import {
   auditIrSkippedClassMemberSlots,
   auditIrSkippedFunctionSlots,
   auditIrSkippedModuleInitSlot,
+  buildNonExecutableModuleInitOutcome,
   buildWholeSourceFailureOutcomes,
   reconcileIrOverlayOutcomes,
 } from "./ir-overlay-outcomes.js";
@@ -303,6 +304,7 @@ import {
   fillIterResultObject,
   fillNativeIteratorLateArms,
 } from "./iterator-native.js";
+import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
@@ -370,6 +372,7 @@ import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set
 import { fillBigIntDynValueOfArm } from "./wrapper-proto-value-of.js"; // (#4631) dyn wrapper valueOf arm
 import { scanGlobalThisFnShadows } from "./fn-global-shadow.js"; // (#4630) globalThis.<fn> reassignment shadowing
 import { fillAsyncClosurePromiseWrappers } from "./async-closure-promise.js"; // (#4648)
+import { fillDeferredCallablePropertyDispatches } from "./expressions/calls-closures.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
@@ -422,6 +425,7 @@ import {
   addImport,
   addStringConstantGlobal,
   ensureExnTag,
+  exportedExnTagIndex,
   localGlobalIdx,
   nextModuleGlobalIdx,
   // #808 — moved to registry/imports.ts; imported back for index.ts's own callers.
@@ -578,6 +582,7 @@ import {
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
+import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -2528,6 +2533,20 @@ function recordObservedIrOutcomes(
         outcome.unitId !== preparedModuleInitUnitId,
     ),
   );
+  // (#3523 R4 gap 4) A source whose module init has nothing to do records one
+  // truthful "non-executable" row here instead of staying silent. It is pushed
+  // AFTER the prepared-unit filter above, never through it: the row carries no
+  // `unitId` by contract, and `undefined !== preparedModuleInitUnitId` is FALSE
+  // whenever no module init was prepared — which is exactly the case this row
+  // exists to describe, so routing it through that filter would silently drop
+  // every row it is supposed to add.
+  const nonExecutable = buildNonExecutableModuleInitOutcome({
+    sourceFile,
+    identityContext: plan.identityPlan.identityContext,
+    target,
+    existingOutcomes: ctx.irOutcomes,
+  });
+  if (nonExecutable) ctx.irOutcomes.push(nonExecutable);
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
 
@@ -3992,7 +4011,11 @@ interface IrFirstBodyRouting {
 interface PreparedLexicalModuleInitEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<IrBindingId>;
-  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export">;
+  // (#3523 R4 gap 3) `wasi-start-export` joins the two host/standalone
+  // policies. The adapter discriminator stays derivable from `kind` — no field
+  // is added to `plan.invocation`, whose whole shape is pinned by
+  // `tests/issue-3523-ir-module-init-compile-once.test.ts`.
+  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export" | "wasi-start-export">;
 }
 
 function preparedModuleInitEvaluationMatchesStatement(
@@ -4170,17 +4193,35 @@ function preparedExactLexicalModuleInit(
   const exactInvocationLane =
     (!ctx.nativeStrings &&
       !ctx.standalone &&
+      !ctx.wasi &&
       planning?.plan.invocation.target === "host" &&
       (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     (ctx.nativeStrings &&
       ctx.standalone &&
+      !ctx.wasi &&
       ctx.targetProfile.semanticProviders === "native-first" &&
       planning?.plan.invocation.target === "standalone" &&
-      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export"));
+      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
+    // (#3523 R4 gap 3) The WASI lane. `nativeStrings` auto-enables for WASI, so
+    // requiring it here states the regime rather than narrowing it. The
+    // startup adapter is neither a `start` section nor a `__module_init`
+    // export: it is the single `_start` export built by `addWasiStartExport`,
+    // and the body carries the `__init_done` idempotence guard planted at
+    // preparation instead of spliced afterwards.
+    (ctx.wasi &&
+      ctx.nativeStrings &&
+      planning?.plan.invocation.target === "wasi" &&
+      planning.plan.invocation.kind === "wasi-start-export");
   if (
     ctx.fast ||
-    ctx.wasi ||
-    ctx.strictNoHostImports ||
+    // (#3523 R4 gap 3) `strictNoHostImports` is DERIVED — `strictEnvImportGate`
+    // is `input.strictNoHostImports ?? target === "wasi"` — so under WASI it is
+    // always true and refuses the lane on its own. Dropping `ctx.wasi` from
+    // this disjunction alone would therefore have admitted nothing. What stays
+    // refused is the case the clause was actually written for: an EXPLICIT
+    // `--no-host-imports` gc/host build, a distinct and still-unproven regime
+    // that no invocation policy of this slice describes.
+    (ctx.strictNoHostImports && !ctx.wasi) ||
     !exactInvocationLane ||
     selection.moduleInit?.reason !== null ||
     selection.moduleInit.stmtCount === 0 ||
@@ -4286,7 +4327,8 @@ function preparedExactLexicalModuleInit(
     return undefined;
   }
   const invocationKind = planning.plan.invocation.kind;
-  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") return undefined;
+  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export" && invocationKind !== "wasi-start-export")
+    return undefined;
   return { unitId: planning.plan.unitId, globalBindingIds, invocationKind };
 }
 
@@ -5841,6 +5883,9 @@ export function generateModule(
     // the syntactic `Object.create(Foo.prototype)` fast path.
     emitObjectCreateClassInstanceExport(ctx);
 
+    // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
+    emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
+
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
     // (#3100) vec-FAMILY normalization arms ($ObjVec + `__vec_<elemKind>` —
@@ -5867,6 +5912,7 @@ export function generateModule(
       addUnionImports(ctx);
     }
     fillNativeIteratorLateArms(ctx);
+    fillNativeGeneratorMethodDispatches(ctx);
 
     // (#2903) Rebuild the Iterator-helper steppers (iter-hof-native.ts) with
     // per-producer driven-generator arms + the positive-admission classifier.
@@ -5985,6 +6031,13 @@ export function generateModule(
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 6; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     }
+
+    // (#1058) Callable-property sites can compile before the closure stored by
+    // a later source has published its concrete funcref ABI. Complete their
+    // reserved typed ladders now, over the final closure registry and before
+    // any consumer helper snapshots that registry. The fill only replaces
+    // reserved bodies/locals; it registers no module state.
+    fillDeferredCallablePropertyDispatches(ctx);
 
     // Emit the declared-arity classifier before filling `__apply_closure`.
     // The native bridge uses it to select a dispatcher wide enough for calls
@@ -6453,11 +6506,7 @@ export function generateModule(
     // Export the exception tag so the exec worker can extract thrown payloads
     // via WebAssembly.Exception.getArg(tag, 0).
     if (ctx.exnTagIdx >= 0) {
-      const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-      mod.exports.push({
-        name: "__exn_tag",
-        desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-      });
+      mod.exports.push({ name: "__exn_tag", desc: { kind: "tag", index: exportedExnTagIndex(ctx, mod) } });
     }
 
     // Mark leaf struct types as final for V8 devirtualization (#594).
@@ -6842,23 +6891,57 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
   if (!initFn || initFuncIdx === undefined) return; // no module init — nothing to guard
 
   // 1. __init_done global + self-guard prologue on __module_init.
-  const doneGlobalIdx = nextModuleGlobalIdx(ctx);
-  ctx.mod.globals.push({
-    name: "__init_done",
-    type: { kind: "i32" },
-    mutable: true,
-    init: [{ op: "i32.const", value: 0 }],
-  });
-  initFn.body = [
-    { op: "global.get", index: doneGlobalIdx },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-    { op: "i32.const", value: 1 },
-    { op: "global.set", index: doneGlobalIdx },
-    ...initFn.body,
-  ];
+  //
+  // (#3523 R4 gap 3) A PREPARED init already carries the guard: it was
+  // constructed around the reserved `__init_done` global as a wrapping `if`,
+  // inside the body the preparation snapshot sealed. Re-splicing here would
+  // both double-guard the body and reassign a sealed body, so this route only
+  // AUTHENTICATES — and fails closed. The three planted instruction objects
+  // must still be the body's leading triple, by object identity: index values
+  // are shifted in place by `fixupModuleGlobalIndices`, so identity survives
+  // every legitimate late mutation while a body replacement does not.
+  const reservation = ctx.preparedWasiModuleInitGuard;
+  const planted = reservation?.planted;
+  if (planted) {
+    if (process.env.JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD === "1") {
+      // Anti-vacuity seam: hand the authentication below a genuinely unguarded
+      // prepared body, so "fails closed" is a measured property.
+      initFn.body = initFn.body.filter((instr) => instr !== planted.guard);
+    }
+    const at = initFn.body.indexOf(planted.doneGet);
+    if (at < 0 || initFn.body[at + 1] !== planted.eqz || initFn.body[at + 2] !== planted.guard) {
+      throw new IrInvariantError(
+        "body-emission-evidence",
+        "patch",
+        "prepared WASI module initializer lost its exact planted idempotence guard",
+      );
+    }
+  } else {
+    // Legacy splice. When a reservation exists but preparation fell back to the
+    // direct body, adopt the reserved global rather than minting a second one.
+    const doneGlobalIdx = reservation?.doneGlobalIdx ?? nextModuleGlobalIdx(ctx);
+    if (reservation === undefined) {
+      ctx.mod.globals.push({
+        name: "__init_done",
+        type: { kind: "i32" },
+        mutable: true,
+        init: [{ op: "i32.const", value: 0 }],
+      });
+    }
+    initFn.body = [
+      { op: "global.get", index: doneGlobalIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index: doneGlobalIdx },
+      ...initFn.body,
+    ];
+  }
 
   // 2. Prepend `call __module_init` to every exported function (except
   //    __module_init itself). Idempotency makes repeated entry calls safe.
+  //    Unchanged on both routes: only the module-init body's identity is
+  //    asserted anywhere, and this placement still precedes dead-import
+  //    elimination and late-import renumbering (`const-box-hoist.ts` contract).
   for (const fn of ctx.mod.functions) {
     if (!fn.exported) continue;
     if (fn === initFn) continue;
@@ -7941,6 +8024,16 @@ function appendClassBridgeResultBoxing(ctx: CodegenContext, body: Instr[], resul
   else return false;
   return true;
 }
+
+/**
+ * (#5242) The two boundary primitives `emitClassValueConstructExports` needs,
+ * passed in rather than imported so the emitter can live in its own file
+ * without a cycle back into this module.
+ */
+const CLASS_VALUE_CONSTRUCT_HELPERS = {
+  paramCoercion: hostClassBridgeParamCoercion,
+  boxResult: appendClassBridgeResultBoxing,
+};
 
 /**
  * (#5204) Emit `__class_call_<Class>_<key>_vararg` — the rest-parameter shape
@@ -10856,6 +10949,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#5239) See the single-source path — same placement, same gate.
     profilePhase("emit-object-create-class-instance", () => emitObjectCreateClassInstanceExport(ctx));
 
+    // (#5242) See the single-source path — same placement, same gate.
+    profilePhase("emit-class-value-construct", () =>
+      emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
+    );
+
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher
     // is known. In particular, Reflect.ownKeys returns an $ObjVec whose late
@@ -10872,6 +10970,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       addUnionImports(ctx);
     }
     profilePhase("fill-native-iterator-late-arms", () => fillNativeIteratorLateArms(ctx));
+    profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
@@ -10905,6 +11004,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 0; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     });
+
+    // (#1058) Multi-source twin of the primary finalize seam. The parser-side
+    // call can precede the scanner-side captured closure, so the ladder must be
+    // filled only after the complete graph has emitted its closure ABIs.
+    profilePhase("fill-deferred-callable-property-dispatch", () => fillDeferredCallablePropertyDispatches(ctx));
 
     // These reserve/fill drivers require the receiver-aware arity-0 bridge,
     // which is only registered by the loop above in the multi-source path.
@@ -11043,11 +11147,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // via WebAssembly.Exception.getArg(tag, 0).
     profilePhase("export-exception-tag", () => {
       if (ctx.exnTagIdx >= 0) {
-        const numImportTags = mod.imports.filter((i) => i.desc.kind === "tag").length;
-        mod.exports.push({
-          name: "__exn_tag",
-          desc: { kind: "tag", index: numImportTags + ctx.exnTagIdx },
-        });
+        mod.exports.push({ name: "__exn_tag", desc: { kind: "tag", index: exportedExnTagIndex(ctx, mod) } });
       }
     });
 
@@ -11951,20 +12051,35 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // program resolves byte-identically.
     const builtinSymName = symbolShadowsBuiltinGlobal(sym) ? undefined : sym?.name;
 
-    // `readonly T[]` / `ReadonlyArray<T>` lower identically to `T[]` — `readonly`
-    // is a TS-only modifier with no runtime representation. Without this, a
-    // ReadonlyArray-typed struct field falls through to the anonymous-struct /
-    // externref path and mismatches the vec the array literal builds, trapping
-    // on indexed read (#1748).
+    // `readonly T[]` / `ReadonlyArray<T>` lower to `T[]`; otherwise fields fall
+    // through to a mismatched anonymous struct (#1748).
+    // Match-result subtypes retain their specialized fields and carriers.
     const inheritedArrayElement =
-      builtinSymName === "Array" || builtinSymName === "ReadonlyArray"
+      ["Array", "ReadonlyArray", "RegExpIndicesArray"].includes(builtinSymName ?? "") ||
+      (!ctx.nativeStrings && (sym?.name === "RegExpExecArray" || sym?.name === "RegExpMatchArray"))
         ? undefined
         : inheritedArrayElementType(ctx.checker, tsType);
     if (builtinSymName === "Array" || builtinSymName === "ReadonlyArray" || inheritedArrayElement) {
       const typeArgs = ctx.checker.getTypeArguments(tsType as ts.TypeReference);
       const elemTsType = inheritedArrayElement ?? typeArgs[0];
-      let elemWasm: ValType = elemTsType
-        ? resolveWasmType(ctx, elemTsType, _depth + 1, _visited)
+      // A constrained type parameter used AS AN ARRAY ELEMENT carries the
+      // representation of its constraint. The context-free fallback erases
+      // `T extends Node` to externref, which made `readonly T[]` an invariant
+      // sibling of the canonical Node vec and trapped TypeScript's generic
+      // `isNodeArray` predicate. Keep this deliberately scoped to container
+      // elements: a direct `T extends Node` parameter/result must remain erased
+      // so identity helpers such as `finishNode<T>(node: T): T` can transport
+      // richer sibling node layouts without narrowing them to the base struct.
+      // This selects the constraint carrier for the canonical container; it
+      // does not yet canonicalize multiple derived-array instantiations of one
+      // generic body, whose specialization ordering remains separate work.
+      const elemConstraint =
+        elemTsType && (elemTsType.flags & ts.TypeFlags.TypeParameter) !== 0
+          ? ctx.checker.getBaseConstraintOfType(elemTsType)
+          : undefined;
+      const runtimeElemTsType = elemConstraint && elemConstraint !== elemTsType ? elemConstraint : elemTsType;
+      let elemWasm: ValType = runtimeElemTsType
+        ? resolveWasmType(ctx, runtimeElemTsType, _depth + 1, _visited)
         : { kind: "externref" };
       // (#2806) An array whose element type is **purely** `undefined` / `void`
       // must lower to an externref-element vec, not a numeric (i32) vec — the
@@ -13759,8 +13874,9 @@ export function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.
 function inferLetConstInitializerWasmType(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  initializer: ts.Expression | undefined,
+  declaration: ts.VariableDeclaration,
 ): ValType | null {
+  const initializer = declaration.initializer;
   if (!initializer) return null;
   // (#4376) Keep the authoritative pre-hoisted slot type in lockstep with
   // compileVariableStatement. A buffer-backed typed array is represented by a
@@ -13782,6 +13898,19 @@ function inferLetConstInitializerWasmType(
       // Wasm locals must be defaultable. The call emitter materializes the
       // concrete target before the initializer is stored into this slot.
       return { kind: "ref_null", typeIdx: target.typeIdx };
+    }
+    if (
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      genericFactory.sourceResultAbi === true &&
+      (target.kind === "externref" || target.kind === "ref_extern")
+    ) {
+      const source = resolveWasmType(ctx, genericFactory.sourceConstraint);
+      if (source.kind === "ref" || source.kind === "ref_null") {
+        // An unmaterializable logical T does not change what the proven fresh
+        // factory allocated. Preserve that source carrier in the authoritative
+        // pre-hoisted slot so its physical fields remain observable.
+        return { kind: "ref_null", typeIdx: source.typeIdx };
+      }
     }
   }
 
@@ -13976,7 +14105,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         // initializer's externref is ref.cast to it at runtime (cast fails →
         // `b.x` reads NaN/null). Mirrors statements/variables.ts; inlined to
         // avoid an index↔literals import cycle.
-        let initIsHostSpreadLiteral = false;
+        let initRequiresExternref = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
         if (
           !initIsAccessorLiteral &&
           decl.initializer !== undefined &&
@@ -13984,7 +14113,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer.properties.some((p) => ts.isSpreadAssignment(p))
         ) {
           const spreadCtxType = ctx.checker.getContextualType(decl.initializer);
-          initIsHostSpreadLiteral =
+          initRequiresExternref ||=
             !spreadCtxType ||
             (spreadCtxType.flags & ts.TypeFlags.Any) !== 0 ||
             (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
@@ -14022,7 +14151,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
-          initIsHostSpreadLiteral ||
+          initRequiresExternref ||
           initIsGrowableObjectLiteral ||
           initIsOrdinaryToPrimitiveObjectLiteral ||
           initIsRedeclaredObjectIdentityLiteral ||
@@ -14075,7 +14204,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
               : isNullablePrimitiveType(varType)
                 ? { kind: "externref" }
                 : (hoistInferredArrayVecType ??
-                  inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                  inferLetConstInitializerWasmType(ctx, fctx, decl) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance

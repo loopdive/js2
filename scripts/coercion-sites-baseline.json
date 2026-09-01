@@ -98,7 +98,7 @@
   "codegen/ta-dyn-mop.ts": 4,
   "codegen/ta-hof-map-filter.ts": 3,
   "codegen/tonumber-fast-paths.ts": 7,
-  "codegen/type-coercion.ts": 35,
+  "codegen/type-coercion.ts": 37,
   "codegen/typed-lane-overlay-route.ts": 1,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,

@@ -26,6 +26,7 @@ import { getBarePackageName } from "./resolve.js";
 import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
 import { getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
+import { installSharedExceptionTag } from "./linked-provider-runtime.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
 import {
   appendProviderManifest,
@@ -1325,9 +1326,14 @@ function validateLinkedSignatures(
       string_constants: built.string_constants,
       string_constants16: built.string_constants16,
     } as unknown as WebAssembly.Imports;
+    // (#5226) Both halves import `env.__exn`; this dry-run instantiation must
+    // supply it exactly as the real one does, or every linked graph falls back
+    // to `bundled` on a missing-tag import error.
+    installSharedExceptionTag(baseImports);
     const providerExports = new Map<string, WebAssembly.Exports>();
     for (const artifact of artifacts) {
       const providerImports = buildProviderValidationImports(artifact);
+      installSharedExceptionTag(providerImports);
       for (const dependency of artifact.dependencies) {
         const dependencyExports = providerExports.get(dependency);
         if (!dependencyExports) return `missing provider dependency ${dependency}`;
@@ -1878,6 +1884,9 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       packageLinking: false,
       packageCacheDir: undefined,
       canonicalRuntimeTypes: true,
+      // (#5226) One exception identity for the whole graph — see the consumer's
+      // twin below. Both sides must agree or a provider throw is uncatchable.
+      sharedExceptionTag: true,
       // Provider module initialization is exported and invoked only after its
       // own host adapter has been wired to its own instance.
       deferTopLevelInit: true,
@@ -2073,6 +2082,8 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     packageLinking: false,
     packageCacheDir: undefined,
     canonicalRuntimeTypes: true,
+    // (#5226) The consumer half of the shared `env.__exn` tag.
+    sharedExceptionTag: true,
     link: [...new Set([...(input.options.link ?? []), ...Array.from(rootBindings.values(), (v) => v.module)])],
     linkedPackageBindings: rootBindings,
   };

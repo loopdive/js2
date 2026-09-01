@@ -793,6 +793,7 @@ const __qunitAssert = {
   expect(_count) {},
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value") + "; got " + __upstreamValue(value)); },
   notOk(value, message) { const n = ++__upstreamAssertion; if (value) __upstreamFail("assertion " + n + ": " + (message || "expected falsey value") + "; got " + __upstreamValue(value)); },
+  isDefined(value, message) { const n = ++__upstreamAssertion; if (value === undefined) __upstreamFail("assertion " + n + ": " + (message || "expected defined value")); },
   equal(actual, expected, message) { const n = ++__upstreamAssertion; if (actual != expected) __upstreamFail("assertion " + n + ": " + (message || "equal mismatch") + "; " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
   notEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual == expected) __upstreamFail("assertion " + n + ": " + (message || "notEqual mismatch") + "; unexpected " + __upstreamValue(actual)); },
   strictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual !== expected) __upstreamFail("assertion " + n + ": " + (message || "strictEqual mismatch") + "; " + __upstreamValue(actual) + " !== " + __upstreamValue(expected)); },

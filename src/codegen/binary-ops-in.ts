@@ -75,6 +75,15 @@ function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
   return ctx.typeIdxToStructName.get(wasmType.typeIdx)?.startsWith("__fnctor_") ?? false;
 }
 
+/** `$Object` values normally flow as externref; retain the direct typed form too. */
+function isMutableObjectRuntimeWasm(ctx: CodegenContext, wasmType: ValType): boolean {
+  if (wasmType.kind === "externref" || wasmType.kind === "anyref") return true;
+  return (
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    wasmType.typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx
+  );
+}
+
 /**
  * Compile a `key in obj` binary expression (op === InKeyword). Reads only the
  * codegen context, function context, and the expression node. Always returns.
@@ -437,6 +446,22 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       ctx.standalone &&
       !hasExplicitNullObjectPrototype(ctx, expr.right) &&
       objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
+    // (#2175 D5) The fixed Object.prototype name set is a valid positive fold
+    // only for immutable/proven-safe carriers. A mutable `$Object` descendant
+    // (or an approved fnctor's real `$Object` prototype root) can later end
+    // at an explicitly marked null terminal that the syntactic
+    // `hasExplicitNullObjectPrototype` probe cannot see: created children,
+    // ancestor relinks, and cycle-refusal survivors all have this shape.
+    //
+    // Route only those dynamic carriers to the dedicated native answer. It
+    // first preserves a real own/inherited `__extern_has` hit, then classifies
+    // the final reachable terminal without observing a second user property
+    // lookup. Thus an ordinary implicit terminal remains true even with no
+    // Object.prototype proto-index companion, while an explicit null terminal
+    // is false. Its Proxy arm delegates a present has trap exactly once.
+    const terminalAwareObjectPrototypeRoute =
+      inheritsFromObjectPrototype &&
+      (isMutableObjectRuntimeWasm(ctx, rightWasm) || isFnctorInstanceWasm(ctx, rightWasm));
     // (#4765) Host lane: the receiver was handed to a callee the compiler
     // cannot see through, so its compile-time struct shape is no longer a fact
     // about this site — the callee may have DELETED the key and the field list
@@ -447,8 +472,10 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       !ctx.wasi &&
       ts.isIdentifier(expr.right) &&
       identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
-    const has =
-      inheritsFromObjectPrototype || (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
+    const has = terminalAwareObjectPrototypeRoute
+      ? false
+      : inheritsFromObjectPrototype ||
+        (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -491,11 +518,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         vecNamedKeyRoute ||
         reassignedReceiverRoute ||
         escapedReceiverRoute ||
-        fnctorProtoRoute)
+        fnctorProtoRoute ||
+        terminalAwareObjectPrototypeRoute)
     ) {
       const hasIdx = ensureLateImport(
         ctx,
-        "__extern_has",
+        terminalAwareObjectPrototypeRoute ? "__extern_has_with_implicit_object_proto" : "__extern_has",
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "i32" }],
       );

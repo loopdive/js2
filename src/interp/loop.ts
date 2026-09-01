@@ -114,10 +114,10 @@ import {
   type JSValue,
   type Regs,
 } from "./types.js";
+import { constructValue, describe, intrinsicErrorConstructor } from "./call-helpers.js";
 
 /** A genuine interpreter-invariant violation (bad opcode, stalled decode). Never
- *  routed through the exception table — rethrown so it cannot be masked by a
- *  program `try/catch`. */
+ * routed through the exception table, so program try/catch cannot mask it. */
 export class InterpInternalError extends Error {
   constructor(message: string) {
     super(`interp/loop: ${message}`);
@@ -623,18 +623,6 @@ export function interpEnter(meta: FuncMeta, envRec: EnvRec | null, thisArg: JSVa
  * after the complete chain misses.  `null` is the private "not intrinsic"
  * sentinel because none of these constructor values can itself be null.
  */
-function intrinsicErrorConstructor(name: JSValue): JSValue {
-  if (name === "Error") return Error;
-  if (name === "TypeError") return TypeError;
-  if (name === "RangeError") return RangeError;
-  if (name === "SyntaxError") return SyntaxError;
-  if (name === "ReferenceError") return ReferenceError;
-  if (name === "EvalError") return EvalError;
-  if (name === "URIError") return URIError;
-  if (name === "AggregateError") return AggregateError;
-  return null;
-}
-
 function envLookup(env: EnvRec | null, name: JSValue): JSValue {
   let e = env;
   for (;;) {
@@ -922,13 +910,11 @@ function typeofName(env: EnvRec | null, name: JSValue): JSValue {
   }
 }
 
-// ── exception-table scan ──────────────────────────────────────────────────────
-// Returns the packed [handlerPC, handlerReg] of the innermost (tightest-span)
-// covering row, or -1 in `.pc` when there is no handler.
 interface Handler {
   pc: number;
   reg: number;
 }
+
 function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   if (exnTable === null) return { pc: -1, reg: -1 };
   let bestPc = -1;
@@ -938,10 +924,10 @@ function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   const n = exnTable.length;
   for (;;) {
     if (i + EXN_ROW > n) break;
-    const s = exnTable[i]!;
+    const start = exnTable[i]!;
     const end = exnTable[i + 1]!;
-    if (s <= throwPc && throwPc < end) {
-      const span = end - s;
+    if (start <= throwPc && throwPc < end) {
+      const span = end - start;
       if (span < bestSpan) {
         bestSpan = span;
         bestPc = exnTable[i + 2]!;
@@ -953,12 +939,6 @@ function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   return { pc: bestPc, reg: bestReg };
 }
 
-/**
- * Mutable execution state shared by the outlined opcode-family dispatchers.
- * Keeping the cache in one carrier preserves the original frame-stack machine
- * while keeping `run` itself small enough for the self-compiled runtime
- * provider's Wasm tiering pipeline.
- */
 class DispatchState {
   readonly frames: Frame[] = [];
   readonly callSites: number[] = [];
@@ -985,7 +965,6 @@ class DispatchState {
   }
 }
 
-/** Refresh the cache after a Call, Return, or exception-table unwind. */
 function installActiveFrame(state: DispatchState, frame: Frame, pc: number): void {
   state.frame = frame;
   state.meta = frame.meta;
@@ -1280,32 +1259,21 @@ function dispatchCallOp(state: DispatchState, op: number, a: number, b: number):
 
 /** Return true only when the bottom activation has completed. */
 function dispatchControlOp(state: DispatchState, op: number, a: number): boolean {
-  switch (op) {
-    // ── control (absolute PCs; jumps are always WIDE so `a` = target) ──
-    case Op.Jump:
-      state.pc = a;
-      return false;
-    case Op.JumpIfTrue:
-      if (isTruthy(state.acc)) state.pc = a;
-      return false;
-    case Op.JumpIfFalse:
-      if (!isTruthy(state.acc)) state.pc = a;
-      return false;
-    case Op.Return: {
-      const result = state.acc;
-      if (state.frames.length === 0) return true;
-      const caller = state.frames.pop()!;
-      state.callSites.pop();
-      installActiveFrame(state, caller, caller.pc);
-      state.acc = result; // callee's result becomes the caller's acc
-      return false;
-    }
-    // ── exceptions ──
-    case Op.Throw:
-      throw new ThrowSignal(state.acc);
-    default:
-      throw new InterpInternalError(`unexpected control opcode ${op} at pc ${state.curInstrPc}`);
-  }
+  if (op === Op.Jump) state.pc = a;
+  else if (op === Op.JumpIfTrue) {
+    if (isTruthy(state.acc)) state.pc = a;
+  } else if (op === Op.JumpIfFalse) {
+    if (!isTruthy(state.acc)) state.pc = a;
+  } else if (op === Op.Return) {
+    const result = state.acc;
+    if (state.frames.length === 0) return true;
+    const caller = state.frames.pop()!;
+    state.callSites.pop();
+    installActiveFrame(state, caller, caller.pc);
+    state.acc = result;
+  } else if (op === Op.Throw) throw new ThrowSignal(state.acc);
+  else throw new InterpInternalError(`unexpected control opcode ${op} at pc ${state.curInstrPc}`);
+  return false;
 }
 
 /** Decode and execute one bytecode instruction. Returns true on bottom Return. */
@@ -1359,28 +1327,22 @@ function dispatchNext(state: DispatchState): boolean {
   throw new InterpInternalError(`unknown opcode ${op} at pc ${state.curInstrPc}`);
 }
 
-/** Route a guest exception through handlers or caller call sites, then resume. */
-function routeException(state: DispatchState, e: unknown): void {
-  if (e instanceof InterpInternalError) throw e; // never route interpreter bugs
-  const value: JSValue = e instanceof ThrowSignal ? e.value : e;
-  // Unwind: scan the current frame, then callers (at their call-site PCs).
+function routeException(state: DispatchState, error: unknown): void {
+  if (error instanceof InterpInternalError) throw error;
+  const value: JSValue = error instanceof ThrowSignal ? error.value : error;
   let throwPc = state.curInstrPc;
   for (;;) {
-    const h = findHandler(state.meta.exnTable, throwPc);
-    if (h.pc >= 0) {
-      state.regs[h.reg] = value;
-      state.pc = h.pc;
+    const handler = findHandler(state.meta.exnTable, throwPc);
+    if (handler.pc >= 0) {
+      state.regs[handler.reg] = value;
+      state.pc = handler.pc;
       return;
     }
-    if (state.frames.length === 0) {
-      // Escape across the host boundary (E4 replaces this with a Wasm EH tag).
-      // Rethrow the RAW value so a host `try/catch` sees the real exception.
-      throw value;
-    }
+    if (state.frames.length === 0) throw value;
     const caller = state.frames.pop()!;
-    const cs = state.callSites.pop()!;
+    const callSite = state.callSites.pop()!;
     installActiveFrame(state, caller, caller.pc);
-    throwPc = cs;
+    throwPc = callSite;
   }
 }
 
@@ -1400,61 +1362,6 @@ function run(bottom: Frame): JSValue {
   }
 }
 
-/**
- * Construct a non-interpreted callable at the E1/E2 runtime seam.
- *
- * Standalone Reflect.construct deliberately accepts only an array-literal
- * argsList (#3371). Keeping the arity dispatch here lets the self-compiled E2
- * payload use positional `new` lowering while Node E1 retains real constructor
- * semantics. Eight arguments matches the generic standalone call/closure ABI
- * raised by #3310; arities above eight remain an explicit Phase-1 limit.
- * Preserving dynamic constructor arguments in AOT code remains the #3098
- * classifier's responsibility.
- */
-function constructValue(callee: JSValue, args: JSValue[]): JSValue {
-  switch (args.length) {
-    case 0:
-      return new (callee as new (...a: JSValue[]) => JSValue)();
-    case 1:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0]);
-    case 2:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1]);
-    case 3:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2]);
-    case 4:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2], args[3]);
-    case 5:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2], args[3], args[4]);
-    case 6:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2], args[3], args[4], args[5]);
-    case 7:
-      return new (callee as new (...a: JSValue[]) => JSValue)(
-        args[0],
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args[5],
-        args[6],
-      );
-    case 8:
-      return new (callee as new (...a: JSValue[]) => JSValue)(
-        args[0],
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args[5],
-        args[6],
-        args[7],
-      );
-    default:
-      throw new RangeError("interpreter Construct supports at most 8 arguments in Phase 1");
-  }
-}
-
-/** Op.Throw's carrier so the catch can recover the exact thrown value (which may
- *  itself be an Error, a primitive, or undefined). */
 class ThrowSignal {
   readonly value: JSValue;
   constructor(value: JSValue) {
@@ -1646,14 +1553,4 @@ function builtinMathExtremum(regs: Regs, base: number, argc: number, wantMax: bo
     i += 1;
   }
   return result;
-}
-
-/** A short description of a non-callable value for TypeError messages. */
-function describe(v: JSValue): string {
-  if (v === null) return "null";
-  if (v === undefined) return "undefined";
-  const t = typeof v;
-  if (t === "string") return JSON.stringify(v);
-  if (t === "number" || t === "boolean") return String(v);
-  return t;
 }

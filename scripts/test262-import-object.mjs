@@ -169,10 +169,32 @@ export function test262ImportNamespaceNames(binary, importObj, options = {}) {
  *
  * @param {BufferSource} binary
  * @param {Record<string, unknown>} importObj
- * @param {{ target?: string, providerLabel?: string }} [options]
+ * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[] }} [options]
  * @returns {Promise<WebAssembly.Instance>}
  */
 export async function instantiateTest262Module(binary, importObj, options = {}) {
+  // (#5248) A test compiled against a LINKED provider — today only the
+  // compile-once `Temporal` polyfill (#4628) — needs its provider modules
+  // instantiated INTO `importObj` before the test binary is, and the consumer
+  // registered in the cross-module decoder registry after. That lifecycle lives
+  // in `src/linked-provider-runtime.ts` and is exactly what
+  // `instantiateLinkedProject` does; doing it here rather than in a lane keeps
+  // the #4162 rule intact (one place turns a binary into an instance).
+  //
+  // The import is DYNAMIC and reached only when a lane actually supplies
+  // `linkedModules`: `scripts/test262-worker.mjs` runs against the prebuilt
+  // `compiler-bundle.mjs` with no TypeScript loader, so a static `src/` import
+  // here would break the sharded lane on load.
+  const linkedModules = options.linkedModules ?? [];
+  if (linkedModules.length > 0) {
+    const { instantiateLinkedProviders, wireCompiledInstance } = await import("../src/linked-provider-runtime.js");
+    const wasmModule = new WebAssembly.Module(binary);
+    attachConditionalImportNamespaces(wasmModule, importObj, options);
+    instantiateLinkedProviders(linkedModules, importObj);
+    const instance = await WebAssembly.instantiate(wasmModule, importObj);
+    wireCompiledInstance(importObj, instance, true);
+    return instance;
+  }
   if (options.target !== "standalone") {
     const { instance } = await WebAssembly.instantiate(binary, importObj);
     return instance;

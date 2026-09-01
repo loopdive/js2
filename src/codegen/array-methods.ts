@@ -20,6 +20,7 @@ import {
   emitArraySpeciesCreate,
   emitArraySpeciesResultSwap,
   prepareArraySpeciesDeps,
+  withArraySpeciesSuppressed,
 } from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
@@ -86,6 +87,7 @@ import {
 } from "./native-strings.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
+import { flatMapSpeciesResult } from "./array-flatmap.js";
 // (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
 import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
@@ -1584,6 +1586,11 @@ function emitDynViewSpeciesMethodTwoArm(
     emitTaDynViewWriteF64Vec(ctx, fctx, resultDv, source.local, source.typeIdx, source.elemType, countLocal);
   };
 
+  const compileMaterializedMethod = () =>
+    withArraySpeciesSuppressed(fctx, () =>
+      compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true),
+    );
+
   let outputSpecies: number | undefined;
   if (methodName === "map") {
     const sourceLen = allocLocal(fctx, `__dvs_map_len_${fctx.locals.length}`, { kind: "i32" });
@@ -1599,7 +1606,7 @@ function emitDynViewSpeciesMethodTwoArm(
     if (outputSpecies === undefined) return abandon();
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileMaterializedMethod();
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const mapped = captureVec(r, "map_result");
@@ -1608,7 +1615,7 @@ function emitDynViewSpeciesMethodTwoArm(
   } else if (methodName === "filter") {
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileMaterializedMethod();
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const filtered = captureVec(r, "filter_result");
@@ -1624,7 +1631,7 @@ function emitDynViewSpeciesMethodTwoArm(
   } else if (methodName === "slice") {
     const savedBind = fctx.localMap.get(name);
     fctx.localMap.set(name, matLocal);
-    const r = compileArrayMethodCall(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType, true);
+    const r = compileMaterializedMethod();
     if (savedBind !== undefined) fctx.localMap.set(name, savedBind);
     else fctx.localMap.delete(name);
     const sliced = captureVec(r, "slice_result");
@@ -4772,12 +4779,6 @@ function compileArrayUnshift(
  * `slice/S15.4.4.10_A1.1_T4.js` is downstream — the test calls
  * `Object.prototype.toString.call(arr)` which needs the $vec brand to
  * resolve to "[object Array]". That's #1334 territory.
- *
- * #1359 Slice B (@@species): receiver-type-driven dispatch. When the
- * receiver's static type is a known `__vec_*`, `Array[@@species] ===
- * Array` so `struct.new $vec` is correct. For subclass / proxy
- * receivers (rare; mainly test262), needs `__array_species_create`
- * host helper. Tracked as #1359B follow-up.
  */
 function compileArraySlice(
   ctx: CodegenContext,
@@ -10243,15 +10244,9 @@ function tryCompileFlatMapNative(
 ): ValType | null {
   if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
 
-  // (#3532) The former a-priori guard here — refusing any inline callback whose
-  // body contained a bare `[]` — is no longer needed. The underlying bug (an
-  // empty `[]` under flatMap's `U | readonly U[]` union contextual type resolving
-  // to a DIFFERENT vec type than a sibling non-empty array in the same
-  // conditional, yielding an invalid closure) is fixed at its source in
-  // `compileArrayLiteral` (`resolveEmptyArrayElemWasm`): `[]` now adopts the
-  // union's array-member element type, so `cond ? [] : [x]` unifies correctly.
-
   const mapType = compileArrayMap(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+  const speciesResult = flatMapSpeciesResult(ctx, mapType, callExpr.arguments[0]!);
+  if (speciesResult) return speciesResult;
   if (!mapType || (mapType.kind !== "ref" && mapType.kind !== "ref_null")) {
     // map couldn't type its result; the caller's unreachable keeps the body valid.
     return null;

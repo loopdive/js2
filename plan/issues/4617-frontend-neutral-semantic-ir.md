@@ -3,7 +3,7 @@ id: 4617
 title: "Frontend-neutral semantic IR snapshot for TypeScript 7 and Acorn"
 status: in-progress
 created: 2026-08-22
-updated: 2026-08-28
+updated: 2026-09-01
 assignee: ttraenkler/codex
 branch: codex/4617-frontend-neutral-semantic-ir
 priority: critical
@@ -24,18 +24,41 @@ files:
   - src/compiler.ts
   - src/ts-api.ts
   - src/ir/identity.ts
+  - src/ir/integration.ts
   - src/ir/planning-identity.ts
   - src/ir/semantic-declaration-snapshot.ts
+  - src/ir/semantic-function-value-route-facts.ts
+  - src/ir/semantic-function-value-source-projection.ts
   - src/ir/program.ts
   - src/ir/prepared-component-sealing.ts
+  - src/codegen/certified-function-value-authority.ts
+  - src/codegen/certified-function-value-evidence.ts
+  - src/codegen/certified-function-value-materialization.ts
+  - src/codegen/closures.ts
+  - src/codegen/closures/method-trampolines.ts
+  - src/codegen/declarations.ts
+  - src/codegen/function-instance-meta.ts
+  - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
+  - src/codegen/ir-overlay-identity.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/legacy-body-audit.ts
+  - src/codegen/multi-prepared-body-skips.ts
+  - src/codegen/multi-prepared-callable-orchestration.ts
+  - src/codegen/multi-prepared-program.ts
   - src/codegen/multi-prepared-scalar-leaf.ts
+  - src/codegen/multi-prepared-fibonacci-pair.ts
   - src/codegen/multi-prepared-function-value-declaration-replay.ts
   - src/codegen/multi-prepared-function-value-import-target.ts
+  - src/codegen/program-abi-finalization.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/registry/imports.ts
   - tests/issue-4590-bench-loop-prepared-cutover.test.ts
   - tests/issue-4591-fib-pair-prepared-cutover.test.ts
   - tests/issue-4617-declaration-replay-mutations.test.ts
+  - tests/issue-4617-certified-function-value-materialization.test.ts
   - tests/issue-4617-semantic-declaration-snapshot.test.ts
+  - tests/issue-4617-semantic-function-value-source-projection.test.ts
   - tests/dogfood/acorn-harness.mjs
 ---
 
@@ -1071,3 +1094,2754 @@ TypeScript adapter, so Phase D's neutral consumer and Phase E's
 TypeScript/Acorn-unloaded end-to-end replay remain open. This checkpoint claims
 no TypeScript 7 support, no Acorn support, no general semantic snapshot, no
 direct-codegen handler deletion, and no repository-wide frontend neutrality.
+
+## 2026-08-31 D1 implementation plan — neutral `bench_loop` facts without AST reattachment
+
+This is Phase D's first bounded checkpoint. It removes one real source of
+frontend authority from the C1 route: after finalization, the facts authorizing
+this route's eligibility, support allocation, direct-body skip, import-target
+choice, post-skip audit/outcome, and late route currentness must be read from a closed neutral record
+instead of being recovered by joining ranges back to `ts.Node` objects. The
+actual `lowerFunctionAstToIr` body construction still consumes TypeScript AST,
+checker, and oracle inputs; neutralizing those type/body semantics is Phase E,
+not D1.
+
+D1 ships as two sequential, independently reviewable implementation PRs on
+this issue. **D1a** first corrects the existing AST-authoritative C1 physical
+baseline for the exact `bench_loop` function value: the Prepared support call
+and its paired generic/direct function-value control must materialize the same
+ordinary-function-declaration constructible wrapper and exact `{name, length:
+0}` metadata. That semantic correction is allowed to change the old C1 type,
+body, WAT, and binary pins, but every change must be explained, measured, and
+locked. **D1b** then replaces the post-finalization AST authority with the
+neutral record specified below and must be artifact-equal to the corrected D1a
+baseline. D1b may not hide a physical materialization change inside the
+authority migration.
+
+The plan was re-grounded after #5336 and #5328 merged and refreshed through
+protected `main` `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` (tree
+`dc4b1248ee79a53f4b9bb71765c59195721ade21`). The intervening PRs #5350,
+#5363, and #5366 touch `src/codegen/index.ts` only in unrelated
+Object.create/boolean-boxing/finalizer-emission hunks. Later movement through
+#5368, #5370, #5371, #5372, and the scheduled #1951 baseline sync changes only
+benchmarks, generated reports, one unrelated issue plan, and the LOC baseline;
+none changes a named D1 seam. C1 is already present there. Its
+neutral schema is 291 lines, its TypeScript adapter is 251 lines, its route
+replay helper is 484 lines, and the exact scalar-leaf route is 1,468 lines.
+Do not resume or copy the stale `/private/tmp/js2-4617-*` worktrees: their C1
+content has already landed.
+
+### Scheduling gate and ownership
+
+The plan-only checkpoint may land immediately. #5336 merged as
+`e285c0f29dd557e702f7a473219513b560df7cb6`, and this plan branch was refreshed
+through current protected `main`; that queue dependency is closed. Production
+is still blocked while the parallel #3525/Program-ABI owner holds adjacent
+callable/publication paths: the published receipt seam is stable, but the exact
+support callback still rescans TypeScript syntax and the live oracle.
+Production work starts only after all of the following are true:
+
+1. #3525 has released, or D1 has exact ownership to add, a UnitId-only
+   `prepareCertifiedFunctionValueSupport` handoff and a neutral route-claim
+   ledger as specified below;
+2. the implementation worktree starts from
+   `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` or newer protected `main`, and
+   any later change to an owned D1 hunk has been remeasured/reviewed; and
+3. no concurrent owner is editing the D1 production paths below.
+
+A 2026-08-31 Terra read-only ownership audit found the local
+`codex/3525-m0-program-container-impl` worktree still dirty at `b8ed991` with a
+modified `src/codegen/index.ts` and untracked
+`src/codegen/multi-prepared-program.ts`. The M0 owner/callback seam has since
+landed through protected #5009, and other historical reviewed #3525 slices have
+landed, but no reviewed current remote ref exposes the required UnitId-only
+certified-support handoff and neutral route-claim ledger. That stale worktree is
+evidence that the gate remains closed, not an implementation base. Recheck
+ownership at start; never copy from or edit inside it.
+
+The implementation owns only:
+
+- `src/ir/semantic-declaration-snapshot.ts`;
+- two new focused neutral modules,
+  `src/ir/semantic-function-value-route-facts.ts` and
+  `src/ir/semantic-function-value-source-projection.ts`;
+- two new codegen-local, frontend-free dependency leaves:
+  `src/codegen/certified-function-value-authority.ts`, which owns only the
+  exact Program-ABI currentness joins and private lifecycle brands enumerated
+  by the 2026-09-01 D1a amendment below, and
+  `src/codegen/certified-function-value-materialization.ts`, which registers,
+  consumes, audits, publishes, settles, and aborts the one authenticated
+  direct-materialization receipt without importing TypeScript or an IR
+  backend;
+- `src/checker/oracle-declaration-snapshot.ts`;
+- `src/codegen/multi-prepared-function-value-declaration-replay.ts`;
+- `src/codegen/multi-prepared-function-value-import-target.ts`;
+- the exact function-value and route-claim sections of
+  `src/codegen/multi-prepared-scalar-leaf.ts`, including the exact target-
+  UnitId-keyed prepared-install request carrier, one-entry callback lookup,
+  and post-prepare exact consumed-request census;
+- only one optional structurally neutral
+  `onPreparedUnitCallableInstalled(artifactUnitId)` field in
+  `IrIntegrationOptions` and one invocation in `src/ir/integration.ts` after
+  the normal non-deferred `replaceUnitCallableAt` succeeds and before
+  `settlePreparedDerivedCallable`; no codegen type, request, map, receipt, or
+  D1 import crosses into IR, and the deferred/publication and orphan-stub
+  branches are unchanged;
+- only the matching optional callback input and exact forwarding into the
+  sealed `compileIrPathFunctions` call in `prepareIrBodies` in
+  `src/codegen/ir-prepared-free-functions.ts`; no selection, lowering,
+  withdrawal, routing, or fallback behavior changes;
+- only a two-symbol import/export seam in `src/codegen/closures.ts` and a
+  certified-metadata overload plus shared allocation core beside
+  `ensureFuncClosureSingleton` in
+  `src/codegen/closures/method-trampolines.ts`;
+- only a preparation/materialization split around `fnMetaSlotOfMeta` in
+  `src/codegen/function-instance-meta.ts`: new
+  `prepareFnMetaSlotOfMeta` allocates and returns the
+  exact field, metadata-global object, and canonical `{name,length}` recipe
+  without returning reusable instructions; new
+  `materializePreparedFnMetaSlot` emits the name
+  first, resolves the global/type objects against the current layout, and then
+  builds a fresh init sequence. The legacy wrapper calls both halves in order;
+- only the missing `fnInstanceMetaGlobalByKey` and
+  `nativeStrLiteralGlobals` value shifts beside the existing
+  `funcClosureGlobals` and other absolute-global side-table shifts in
+  `fixupModuleGlobalIndices` in `src/codegen/registry/imports.ts`; no import or
+  global-allocation policy change. The latter is a pre-existing raw-index bug
+  made non-vacuous by D1's required intervening import-global control, not a
+  new string-allocation policy;
+- only the distinct certified-support callback field and exact forwarding in
+  `MultiPreparedProgramRoutePlanningInput` / `planExistingRoutes` in
+  `src/codegen/multi-prepared-callable-orchestration.ts`;
+- only the `MultiPreparedProgramEarlyRouteInput` callback, central route-claim
+  extension, bounded neutral route/snapshot types, and D1-neutral branches in
+  registration, `#snapshotRoute`, `#assertRouteFields`,
+  `#assertRouteSnapshot`, `sealBodyBoundary`, `compileBodySource`,
+  `withOverlayState`, `sealRoutesComplete`, `sealBeforePublication`,
+  `complete`, the new read-only `sealAfterFinalFixups`, and the later
+  whole-program stability/publication checks in
+  `src/codegen/multi-prepared-program.ts`;
+- only the support allocator split, exact multi-program callback, the
+  target-UnitId-keyed read-only late support reauthentication branch, and the
+  complete D1 function-value selection/currentness branch of
+  `compileMultiIrOverlaySource`, including exact early owner-UnitId threading,
+  registration of the one prepared-install request, and sealing of the exact
+  expected receipt census before `prepareIrBodies`; and the D1 neutral
+  skipped-slot audit/outcome
+  calls in `consumeIrOverlayReport` / `recordObservedIrOutcomes` in
+  `src/codegen/index.ts`; plus only the D1 receipt-conditional pre/post
+  trampoline-finalization assertions surrounding the primary multi-source
+  `finalizeMethodTrampolines` call and the call inside
+  `compileMultiPreparedProgramOverlays`, and one receipt-conditional fresh
+  revision-0 registry assertion immediately before each of
+  `fillReflectIsConstructor`, `fillFunctionInstanceProps`, and
+  `emitIsCtorClosureExport` in that file, plus one receipt-conditional
+  `sealAfterFinalFixups` call immediately after `fixupExternConvertAny`. The
+  single-source finalizer and the consumers/fixups themselves are unchanged;
+- only the legacy receipt type derivation and distinct certified-support
+  callback threading in `planEarlyMultiPreparedFunctionValueRoutes` in
+  `src/codegen/multi-prepared-fibonacci-pair.ts`;
+- only the exact D1 neutral physical-skip projection and callback in
+  `src/codegen/multi-prepared-body-skips.ts`, and the matching exact
+  source-ID/declaration-range/UnitId branch in `compileDeclarations` /
+  `resolvePreparedFunctionBodyRoute` in `src/codegen/declarations.ts`;
+- only D1 neutral skipped-function audit and terminal-outcome reconciliation
+  inputs/branches keyed by the frozen source/terminal/selection projection in
+  `src/codegen/ir-overlay-outcomes.ts`, and the minimal UnitId owner-projection
+  helper they require in `src/codegen/ir-overlay-identity.ts`;
+- only a source-ID lookup overload beside `directFunctionBodyReceiptAudit` in
+  `src/codegen/legacy-body-audit.ts`; and
+- only one post-DCE certified-materialization settlement call at the end of
+  `eliminateDeadLayoutAndPlanProgramAbi` in
+  `src/codegen/program-abi-finalization.ts`; no dead-elimination algorithm or
+  Program-ABI planning order changes; and
+- `tests/issue-4617-semantic-declaration-snapshot.test.ts`,
+  `tests/issue-4617-certified-function-value-materialization.test.ts`,
+  `tests/issue-4617-semantic-function-value-source-projection.test.ts`,
+  `tests/issue-4617-declaration-replay-mutations.test.ts`, and
+  `tests/issue-4590-bench-loop-prepared-cutover.test.ts`.
+
+Do not edit `src/ir/select.ts`, `src/codegen/ir-prepared-free-functions.ts`
+outside the exact neutral callback transport above,
+function-instance metadata outside the exact two-step recipe seam above, any
+async-analysis module, Program-ABI session/publication
+modules, any callable/module-init orchestration outside the single callback
+transport above, the timer-shim route, or the linear backend. Those surfaces
+belong to #5092, #3525, #5336, #4588, or later R6/R8 work. The narrow
+`index.ts`, declaration/skip/audit/outcome, orchestration, program-owner, and
+certified function-instance allocation exceptions above are valid only after
+those owners hand off the exact lines; D1 does not absorb their wider
+implementation. The exact function value is materialized by the legacy
+`main` body, not by the Prepared target's IR body; D1 therefore adds no IR
+instruction, lowering-plan field, or backend behavior.
+
+Implementation uses one Terra writer per checkpoint in isolated current-main
+worktrees. D1a must land through the protected merge queue before D1b branches
+from refreshed protected `main`; the two writers must never edit the shared
+support/allocation seams concurrently. A fresh independent Sol review of each
+exact signed head is required before its PR becomes ready.
+
+D1a is limited to the early exact support-allocation site, the paired late
+support site's read-only reauthentication of that same allocation, the shared
+singleton allocation core and two-step metadata recipe needed to make their
+physical artifacts agree, the two raw absolute-global side-table value shifts
+(`fnInstanceMetaGlobalByKey` and `nativeStrLiteralGlobals`), the codegen-local
+one-shot direct-materialization registry/emitter handoff, its dependency-only
+current-authority leaf, the exact neutral post-replacement callback transport,
+and post-DCE settlement, the #1916 stable-handle
+assertions at those exact sites, the two
+multi-source trampoline-finalizer boundary pairs and three pre-consumer
+revision-0 assertions, and the terminal post-fixup audit enumerated above, the #4590
+fixture/tests, and remeasured pins. Its receipt is authorized by the existing
+C1 AST-backed candidate proof; it does not add the neutral schema or route
+lifecycle. D1b owns the remaining
+files and behavior listed above. The new direct-materialization lifecycle
+module and current-authority module are two dependency leaves with the exact
+split below. The lifecycle leaf may import codegen/Wasm data types and the
+authority leaf; the authority leaf imports only its enumerated
+Program-ABI/current-layout dependencies. Neither imports TypeScript, checker,
+frontend, an IR backend, or `method-trampolines`; `method-trampolines.ts`
+imports the lifecycle leaf, never the reverse.
+
+### The exact authority being retired
+
+C1's serialized records are neutral, but its decisive consumer is not. Today
+`createDeclarationSnapshotReplayOracle` builds a `DeclarationSnapshotJoin`,
+walks each referenced `ts.SourceFile` on demand with `ts.forEachChild`, and
+returns live `ts.Declaration` objects. The retained
+`MultiPreparedDeclarationReplayReceipt` also carries `oracle`, `identity`, and
+`roleOf`, so every late currentness check can reattach the snapshot to the
+TypeScript object graph. `resolveMultiPreparedFunctionValueImportTarget` then
+repeats `ImportSpecifier -> NamedImports -> ImportClause -> ImportDeclaration`
+parent joins and scans target `SourceFile.statements`.
+
+D1 deletes that production authority. Moving those functions to another file,
+wrapping them in a callback, or storing a `ts.Node` behind an opaque token does
+not satisfy the checkpoint.
+
+### Versioned neutral facts contract
+
+Add a closed envelope version
+`semantic-function-value-route-facts/1`. It is not an in-place
+reinterpretation of `semantic-declaration-snapshot/1`. Every nested record
+carries its own `kind` literal ending in `/1`; the envelope version and those
+record-kind versions jointly govern the complete layout. The D1 reader accepts
+only that exact combination. There is no implicit v1 migration.
+
+The two new neutral `src/ir` modules must not import TypeScript, Acorn, checker,
+codegen, Wasm, Program ABI, Node hashing, or a frontend callback. Their shared
+facts contract is the following compact pseudotype; atomic source/unit/binding/key/
+name components are validated non-empty and NUL-free, derived IDs contain only
+the prescribed NUL separators, ranges and ordinals are non-negative safe
+integers, and every object rejects unknown or missing fields:
+
+    interface SemanticFunctionValueRouteFactsV1 {
+      version: "semantic-function-value-route-facts/1";
+      provenance: {
+        kind: "provenance/1";
+        frontend: "typescript";
+        adapter: "typescript-compiler-api";
+        adapterVersion: "1";
+        frontendVersion: string;
+        analysisMode: "checked";
+        rule: "bench-loop-prepared-function-value/1";
+      };
+      target: {
+        kind: "target/1";
+        target: "standalone";
+        backend: "wasmgc";
+        environment: "none";
+        capabilityPolicy: "explicit-only";
+        semanticProviders: "native-first";
+        hostValueInterop: "off";
+        strictEnvImportGate: boolean;
+        nativeStringsRequiredByPolicy: true;
+        fast: false;
+        wasi: false;
+        standalone: true;
+        nativeStrings: true;
+        experimentalIR: true;
+        disableIrFirst: false;
+        irFirstExplicitlyDisabled: false;
+        cutoverEnabled: true;
+      };
+      sourceProjection: SemanticFunctionValueSourceProjectionV1;
+      route: SemanticBenchLoopRouteV1;
+    }
+
+    interface SemanticFunctionValueSourceProjectionV1 {
+      kind: "source-projection/1";
+      sources: readonly SemanticRouteSourceV1[];
+      routeUnitAnchors: readonly [
+        SemanticRouteUnitAnchorV1,
+        SemanticRouteUnitAnchorV1,
+        SemanticRouteUnitAnchorV1,
+      ];
+      declarations: readonly SemanticRouteDeclarationV1[];
+      importLink: SemanticRouteImportLinkV1;
+      queries: readonly SemanticRouteQueryV1[];
+      callsites: readonly [SemanticRouteCallsiteV1];
+      edges: readonly SemanticRouteEdgeV1[];
+      candidateUses: readonly [SemanticRouteCandidateUseV1];
+      blockers: SemanticRouteSourceBlockersV1;
+      scalarLeafCandidateUnitIds: readonly [];
+      reductionLeafCandidateUnitIds: readonly [string];
+      reduction: SemanticReductionV1;
+      callable: SemanticCallableV1;
+    }
+
+    interface SemanticRouteSourceV1 {
+      kind: "source/1";
+      sourceId: string;
+      sourceKey: string;
+      sourceKind: "entry" | "source";
+      inventoryOrder: number;
+      semanticOrder: number;
+      declarationFile: boolean;
+      utf16Length: number;
+      text: string;
+    }
+
+    interface SemanticRouteUnitAnchorV1 {
+      kind: "route-unit-anchor/1";
+      role: "prepared-target" | "legacy-owner" | "imported-target";
+      unitId: string;
+      sourceId: string;
+      unitKind: "top-level-function";
+      unitOrdinal: number;
+      declarationStart: number;
+      declarationEnd: number;
+      displayName: string;
+      terminalOwnerUnitId: string;
+    }
+
+    interface SemanticFunctionValueSourceReprojectionInputV1 {
+      kind: "source-reprojection-input/1";
+      rule: "bench-loop-prepared-function-value/1";
+      sources: readonly SemanticRouteLiveSourceInputV1[];
+      topLevelFunctionUnits: readonly SemanticRouteLiveTopLevelFunctionUnitInputV1[];
+    }
+
+    interface SemanticRouteLiveSourceInputV1 {
+      kind: "live-source-input/1";
+      sourceId: string;
+      sourceKey: string;
+      sourceKind: "entry" | "source";
+      inventoryOrder: number;
+      semanticOrder: number;
+      declarationFile: boolean;
+      text: string;
+    }
+
+    interface SemanticRouteLiveTopLevelFunctionUnitInputV1 {
+      kind: "live-top-level-function-unit-input/1";
+      unitId: string;
+      sourceId: string;
+      unitKind: "top-level-function";
+      unitOrdinal: number;
+      declarationStart: number;
+      declarationEnd: number;
+      displayName: string;
+      terminalOwnerUnitId: string;
+    }
+
+    interface SemanticRouteImportLinkV1 {
+      kind: "import-link/1";
+      id: string;
+      importerSourceId: string;
+      importStart: number;
+      importEnd: number;
+      moduleSpecifier: string;
+      importedName: string;
+      localName: string;
+      localDeclarationId: string;
+      targetSourceId: string;
+      targetDeclarationId: string;
+      targetExportStart: number;
+      targetExportEnd: number;
+      targetExported: true;
+    }
+
+    type SemanticRouteDeclarationRole =
+      | "prepared-target"
+      | "legacy-owner"
+      | "named-import"
+      | "imported-target"
+      | "reduction-accumulator"
+      | "reduction-induction"
+      | "same-spelling-unanchored";
+
+    interface SemanticRouteDeclarationV1 {
+      kind: "declaration/1";
+      id: string;
+      sourceId: string;
+      start: number;
+      end: number;
+      role: SemanticRouteDeclarationRole;
+      declarationKind: "function" | "named-import" | "variable";
+      name: string;
+      lexicalOwnerDeclarationId: string | null;
+      topLevel: boolean;
+      exported: boolean;
+      functionShape: {
+        async: false;
+        generator: false;
+        parameterCount: number;
+      } | null;
+      unitId: string | null;
+    }
+
+    type SemanticRouteQueryPurpose =
+      | "function-value-use"
+      | "named-import-callee"
+      | "imported-target-name"
+      | "reduction-accumulator-use"
+      | "reduction-induction-use";
+
+    interface SemanticRouteQueryV1 {
+      kind: "query/1";
+      id: string;
+      sourceId: string;
+      start: number;
+      end: number;
+      purpose: SemanticRouteQueryPurpose;
+      lexicalOwnerDeclarationId: string;
+      outcome: "proven" | "absent";
+      valueDeclarationId: string | null;
+      declarationIds: readonly string[];
+    }
+
+    interface SemanticRouteCallsiteV1 {
+      kind: "callsite/1";
+      id: string;
+      sourceId: string;
+      start: number;
+      end: number;
+      lexicalOwnerDeclarationId: string;
+      calleeQueryId: string;
+      argumentQueryId: string;
+      argumentOrdinal: 3;
+      argumentCount: 4;
+    }
+
+    interface SemanticRouteCandidateUseV1 {
+      kind: "candidate-use/1";
+      id: string;
+      queryId: string;
+      sourceId: string;
+      start: number;
+      end: number;
+      lexicalOwnerDeclarationId: string;
+      useKind: "required-function-value-argument";
+      callsiteId: string;
+    }
+
+    interface SemanticRouteSourceBlockersV1 {
+      kind: "source-blockers/1";
+      commonJsSourceIds: readonly string[];
+      classDeclarationKeys: readonly string[];
+      moduleInitSourceIds: readonly string[];
+      directCallerActivationSourceIds: readonly string[];
+      candidateNameCollisionKeys: readonly string[];
+      candidateImportAliasKeys: readonly string[];
+      unclassifiedCandidateUseKeys: readonly string[];
+    }
+
+    type SemanticRouteEdgeKind =
+      | "query-declaration"
+      | "function-value-owner"
+      | "named-import-target"
+      | "call-owner"
+      | "reduction-binding";
+
+    interface SemanticRouteEdgeV1 {
+      kind: "edge/1";
+      id: string;
+      edgeKind: SemanticRouteEdgeKind;
+      fromDomain: "query" | "declaration";
+      fromId: string;
+      toDomain: "declaration";
+      toId: string;
+    }
+
+    interface SemanticReductionV1 {
+      kind: "reduction/1";
+      rule: "i32-wrapping-sum-loop/1";
+      accumulatorDeclarationId: string;
+      inductionDeclarationId: string;
+      accumulatorInitial: 0;
+      inductionInitial: 0;
+      comparison: "strict-less-than";
+      upperBound: 1000000;
+      increment: "post-increment-one";
+      update: "i32-wrapping-add";
+      returnDeclarationId: string;
+    }
+
+    interface SemanticCallableV1 {
+      kind: "semantic-callable/1";
+      parameters: readonly [];
+      result: "number";
+      captureCount: 0;
+      explicitThisParameter: false;
+      eagerAsyncPromiseWrap: false;
+      restParameter: false;
+      constructibleWrapper: true;
+      wrapperProfile: "ordinary-function-declaration-constructible";
+      instanceMetadata: {
+        kind: "function-instance-metadata/1";
+        name: string;
+        length: 0;
+      };
+    }
+
+    interface SemanticTerminalOutcomeUnitV1 {
+      kind: "terminal-outcome-unit/1";
+      unitId: string;
+      sourceId: string;
+      lexicalOwnerUnitId: null;
+      unitKind: "top-level-function";
+      unitOrdinal: number;
+      syntheticRole: null;
+      declarationStart: number;
+      declarationEnd: number;
+      legacyKey: string;
+      legacyMatchName: string;
+      observedKind: "function";
+      displayName: string;
+      legacyOrdinal: number;
+      line: number;
+      column: number;
+      terminal: true;
+      terminalOwnerUnitId: string;
+      containingTerminalOwnerUnitId: null;
+      unownedReason: null;
+      staticClassMember: false;
+      legacyBodyAvailable: true;
+      directFailure: null;
+    }
+
+    type SemanticAbiIntentV1 =
+      | {
+          kind: "abi-callable-intent/1";
+          role: "target" | "trampoline";
+          bindingId: string;
+          terminalOwnerUnitId: string;
+          structuralReferenceKey: string;
+          displayName: string;
+          origin: "source" | "support";
+          slotSpace: "function";
+          slotPolicy: "required";
+          carrierProfile: "zero-args-f64" | "function-value-ref-to-f64";
+          contractAuthority: "prepared-program-abi";
+        }
+      | {
+          kind: "abi-global-intent/1";
+          role: "cache";
+          bindingId: string;
+          terminalOwnerUnitId: string;
+          structuralReferenceKey: string;
+          displayName: string;
+          origin: "support";
+          slotSpace: "global";
+          slotPolicy: "required";
+          mutable: true;
+          valueCarrier: "externref";
+          contractAuthority: "prepared-program-abi";
+        };
+
+    interface SemanticBenchLoopRouteV1 {
+      kind: "route/1";
+      route: "multi-prepared-function-value-leaf";
+      sourceId: string;
+      legacyName: string;
+      candidateDeclarationId: string;
+      candidateUnitId: string;
+      legacyOwnerDeclarationId: string;
+      legacyOwnerUnitId: string;
+      importedTargetDeclarationId: string;
+      importedTargetUnitId: string;
+      inventoryUnitIds: readonly string[];
+      candidateUnitIds: readonly [string];
+      componentTerminalUnitIds: readonly [string];
+      priorClaimedSourceIds: readonly string[];
+      priorClaimedTerminalUnitIds: readonly string[];
+      priorClaimedTargetUnitIds: readonly string[];
+      candidateOwnedDerivedUnitIds: readonly [];
+      terminalOutcomeUnit: SemanticTerminalOutcomeUnitV1;
+      abiIntents: readonly [SemanticAbiIntentV1, SemanticAbiIntentV1, SemanticAbiIntentV1];
+    }
+
+The record key formulas are exact:
+
+- source key = `sourceId`;
+- route-unit-anchor key = `unitId`;
+- declaration ID =
+  `sourceId + NUL + start + NUL + end + NUL + role`;
+- query ID =
+  `sourceId + NUL + start + NUL + end + NUL + purpose`;
+- callsite ID = `sourceId + NUL + start + NUL + end + NUL + "callsite"`;
+- import-link ID =
+  `importerSourceId + NUL + importStart + NUL + importEnd + NUL + localName`;
+- candidate-use ID =
+  `queryId + NUL + lexicalOwnerDeclarationId + NUL + "required-function-value-argument"`;
+- class-declaration blocker key =
+  `"class-declaration" + NUL + sourceId + NUL + start + NUL + end + NUL + name`;
+- candidate-name-collision blocker key =
+  `"candidate-name-collision" + NUL + sourceId + NUL + start + NUL + end + NUL + name`;
+- candidate-import-alias blocker key =
+  `"candidate-import-alias" + NUL + sourceId + NUL + start + NUL + end + NUL + localName + NUL + importedName + NUL + moduleSpecifier`;
+- unclassified-candidate-use blocker key =
+  `"unclassified-candidate-use" + NUL + sourceId + NUL + start + NUL + end + NUL + spelling`;
+- edge ID =
+  `edgeKind + NUL + fromDomain + NUL + fromId + NUL + toDomain + NUL + toId`;
+- ABI intent key = `bindingId`.
+
+Endpoint and role domains are exact:
+
+| Edge kind | From | To | Required join |
+| --- | --- | --- | --- |
+| `query-declaration` | any proven query | declaration | query `valueDeclarationId === toId` |
+| `function-value-owner` | `function-value-use` query | `legacy-owner` declaration | same source as the use and route owner |
+| `named-import-target` | `named-import` declaration | `imported-target` declaration | distinct sources, exact recorded module edge |
+| `call-owner` | `named-import-callee` query | `legacy-owner` declaration | same callsite source and route owner |
+| `reduction-binding` | accumulator/induction use query | matching reduction declaration | purpose and declaration role agree |
+
+`callsites` has exactly one row. Its range is the full imported call; its
+`lexicalOwnerDeclarationId` is the exact `legacy-owner`; its
+`calleeQueryId` names the exact `named-import-callee` query; its
+`argumentQueryId` names the exact `function-value-use` query; and the
+function value is argument ordinal 3 of exactly four arguments. Both query
+ranges must be strict children of the callsite range in the same source. This
+record—not two unrelated owner edges—proves that the imported callee consumes
+the candidate value at that exact call.
+
+`prepared-target`, `legacy-owner`, `imported-target`, and
+`same-spelling-unanchored` declarations are `function`, top-level, have null
+lexical owners, and have a non-null top-level function UnitId. The first three
+are exported, non-async, non-generator functions in the admitted fixture; the
+prepared target and legacy owner have zero parameters and the imported target
+has exactly four. `named-import` is a non-exported,
+top-level `named-import` declaration with
+`lexicalOwnerDeclarationId: null` and `unitId: null`. Both reduction locals are
+non-exported `variable` declarations with
+`lexicalOwnerDeclarationId === candidateDeclarationId` and `unitId: null`; all
+non-functions have a null `functionShape`.
+The three non-null route declarations join one-to-one with the three
+`routeUnitAnchors`, whose source/range/name, top-level kind, unit ordinal, and
+self terminal owner are independently projected from the complete neutral
+planning inventory. The parser never derives a UnitId from spelling.
+The admitted record has exactly one declaration in each of the first six roles
+and zero `same-spelling-unanchored` declarations:
+
+| Role | Exact count | Required reachability |
+| --- | ---: | --- |
+| `prepared-target` | 1 | route candidate, function-value query and ABI target |
+| `legacy-owner` | 1 | route owner, function-value-owner and call-owner edges |
+| `named-import` | 1 | named-import-callee query and named-import-target edge |
+| `imported-target` | 1 | imported-target-name query, import edge and route target |
+| `reduction-accumulator` | 1 | reduction record, three queries and return |
+| `reduction-induction` | 1 | reduction record and three queries |
+| `same-spelling-unanchored` | 0 | negative fixtures only; any admitted row withdraws |
+
+Every declaration must be reachable from the route, reduction, callsite,
+query, edge, or ABI population. An extra well-formed but unreachable row is an
+error.
+The positive `bench_loop` record has exactly nine proven queries: one
+function-value use, one named-import callee, one imported-target name, three
+accumulator uses, and three induction uses. It has one
+`query-declaration` edge per query, one function-value-owner, one
+named-import-target, one call-owner, and six reduction-binding edges. Any other
+cardinality is a versioned-rule mismatch, not an extension point. Every query
+records its exact containing declaration: the reduction queries are owned by
+the prepared target, the callee/function-value queries by the legacy owner,
+and the exported-target name by the imported target. The sole candidate-use
+row is the complete source-wide census of references resolving to the
+candidate declaration, joins the function-value query and callsite, and has
+`useKind: "required-function-value-argument"`. A direct call or any second,
+unclassified, differently owned, or differently positioned candidate use
+withdraws v1.
+
+`importLink` is the explicit module relationship, not an edge reconstructed
+from parent pointers. It joins the importer/import-declaration range, exact
+relative module specifier, imported/local spelling and local declaration to
+one distinct target source and one top-level exported target declaration.
+Both export and import ranges are strict ranges in their recorded sources.
+Type-only/default/namespace/CommonJS/re-export forms and an ambiguous source
+key or export target withdraw this rule.
+
+Sources sort by `inventoryOrder`, then `semanticOrder`, then `sourceId`;
+route-unit anchors occur exactly in prepared-target, legacy-owner,
+imported-target order; declarations, queries, callsites, candidate uses, and
+edges sort by their IDs; declaration-ID populations, blocker keys, and every route census sort
+lexically; ABI intents occur exactly in target, trampoline, cache order. JSON
+object keys serialize in the field order shown above. The parser validates
+each stored ID by recomputing it, requires unique arrays, validates every edge's
+allowed endpoint domains and role/purpose pairing, and proves full referential
+closure. A query with outcome `proven` has a non-null
+`valueDeclarationId` and its complete `declarationIds` population is exactly
+`[valueDeclarationId]`; this preserves the current load-bearing
+`declarationsOf(node).length === 1` and value/declarations identity proof. An
+`absent` query has `valueDeclarationId: null` and `declarationIds: []`. A
+second distinct declaration is rejection, not an ambiguous-but-usable query.
+Every range must satisfy
+`0 <= start < end <= source.utf16Length`, and `utf16Length` is measured in
+UTF-16 code units and must equal the exact JavaScript string `text.length`.
+The source array is the complete exact user-source denominator, including
+unreferenced sources. `inventoryUnitIds` is the complete exact planning-unit
+denominator and is unique/sorted. `inventoryOrder` is the planning-inventory order and
+`semanticOrder` is the exact route input order. Candidate/component and prior
+claim arrays are complete sorted populations, never opaque counts or
+precomputed booleans. For the admitted fixture, `candidateUnitIds` and
+`componentTerminalUnitIds` are each exactly `[candidateUnitId]`.
+`candidateUnitIds` is not a receipt-authored singleton: it must equal the fresh
+`sourceProjection.reductionLeafCandidateUnitIds`, while
+`sourceProjection.scalarLeafCandidateUnitIds` must be exactly empty. Both
+denominators are rerun from the complete source/top-level-unit input in every
+currentness phase; the three selected route anchors cannot supply them.
+`priorClaimedSourceIds`, `priorClaimedTerminalUnitIds`, and
+`priorClaimedTargetUnitIds` are the complete central route-claim ledger before
+D1 registers its own claim; each array is unique and lexically sorted, and the
+candidate source/unit must be absent. `candidateOwnedDerivedUnitIds` is not a
+whole-program derived inventory: it is the complete sorted subset of live
+derived records whose `terminalOwnerId === candidateUnitId`. It is empty for
+the admitted fixture; unrelated derived records are allowed and inert.
+
+The source blocker arrays are instead complete facts reprojected from the
+complete source texts: CommonJS-bearing sources, class declarations,
+executable top-level/module-init sources, sources where any top-level function
+observes its own `.caller` or `.arguments`, same/cross-file candidate-name
+collisions, candidate import aliases, and candidate uses that the bounded
+resolver cannot classify. They are all empty for the admitted fixture. V1
+does not claim to serialize every owner in every legacy provider map. It
+narrows that contract to the complete source-derived membership of this one
+candidate: the candidate body and every resolved candidate use must match the
+closed reduction/callsite graph above. During capture, the existing provider
+collectors are a mandatory independent cross-check:
+`preparedFunctionValueTargetUnitIds` must be exactly `[candidateUnitId]`, while
+the candidate must be absent from imported-call-owner,
+top-level-function-value-owner, host callback/Date, promise-delay,
+suspending-async, timer, and direct-caller-activation families. A missing,
+duplicate, foreign prepared target, a candidate in any disallowed family, or
+disagreement with the neutral candidate-use graph withdraws. Unrelated owners
+may remain in those legacy populations. After finalization the AST-keyed maps
+are neither retained nor consumed by D1. This removes the previously
+unprovable whole-program provider denominator without weakening any untouched
+route.
+
+### Independent neutral source reprojection
+
+`src/ir/semantic-function-value-source-projection.ts` owns a small,
+deterministic UTF-16 scanner and bounded structural parser. It imports neither
+TypeScript nor Acorn and accepts only one closed
+`SemanticFunctionValueSourceReprojectionInputV1`. Its `sources` are the complete
+live source population with both independently supplied `inventoryOrder` and
+`semanticOrder`; its `topLevelFunctionUnits` are the complete live population
+of every top-level-function unit, with all eight fields shown above. Both
+populations are unique and complete, and neither may be derived by filtering
+the frozen route's three selected anchors. The parser selects and emits those
+three route anchors only after joining its source proof to this full input.
+It tokenizes identifiers, keywords, numeric/string/template
+literals, comments, punctuation, and the exact operators needed by the route;
+tracks balanced braces, parentheses, brackets, and lexical scopes; and records
+token start/end offsets directly in UTF-16 code units. Invalid escapes,
+unterminated tokens, unbalanced delimiters, duplicate source keys, or syntax it
+cannot classify at a route-relevant boundary return an explicit `unknown`
+failure. Silent empty output is forbidden.
+
+The program owner creates a private `LiveSemanticSourceTextHandle` population
+before finalization while the existing source maps are still authoritative.
+Each handle binds one source ID to one exact entry of the owner's complete live
+SourceFile array, but exposes only `.text` and `.isDeclarationFile` to the
+reprojection adapter. On every later phase the adapter walks the owner's live
+array again to derive `semanticOrder`, joins the handle's source ID to the
+current complete neutral inventory to derive source key/kind/inventory order,
+and reads the fresh text. It never looks up a SourceFile in either identity
+map, traverses the node, or copies a frozen source record. Replacing/reordering
+the live array, source handle, or neutral inventory is detected; deleting or
+poisoning the old bidirectional SourceFile maps remains inert. This text-only
+carrier is codegen-local and never enters the neutral facts API or canonical
+bytes.
+
+The bounded parser independently reconstructs:
+
+- top-level named imports and their exact relative-module target, top-level
+  exported function declarations, declaration names/ranges, lexical owners,
+  local variable scopes, and exact joins to the neutral top-level-function
+  unit anchors;
+- the exact zero-parameter exported reduction function and all six bound local
+  identifier uses in its closed `let`/`for`/wrapping-add/return grammar, plus
+  its independently derived zero-capture/no-this/no-async/no-rest,
+  constructible ordinary-function wrapper and `{name, length: 0}` metadata;
+- the complete candidate denominators used by the existing planner across
+  every source/top-level-function unit. `scalarLeafCandidateUnitIds` applies
+  the exact syntax-only `hasExactNumericDeclarationSignature` plus
+  `isSyntacticScalarLeaf` rules: named body-bearing non-async/non-generator,
+  no type parameters, explicit numeric return and required identifier/numeric
+  parameters, only identifier locals, no nested function/class, only
+  `+ - * /` binary and unary `+/-`, no postfix operator, and none of the
+  call/new/property/element/object/array/throw/try/for-in/for-of/with/spread/
+  this/super/await/yield or non-local-identifier forms. The reduction census
+  applies that same exact numeric declaration signature plus the closed
+  source-identity reduction grammar above. Each accepted declaration joins its
+  exact source/range/name to one supplied top-level UnitId; an unsupported
+  construct at either candidate boundary returns `unknown`, never an omitted
+  row. The admitted population is scalar `[]` and reduction
+  `[candidateUnitId]`;
+- the exact containing top-level owner, imported four-argument call, callee,
+  argument-3 function-value use, and the complete source-wide census of every
+  identifier token that can resolve to the candidate;
+- all top-level function names/import aliases needed to derive collision rows,
+  and conservative CommonJS, class, and executable-top-level/module-init
+  blockers from every source, plus a complete scan of every top-level function
+  body for the exact current-name `name.caller` / `name.arguments` shape or an
+  element access whose key is an unescaped single- or double-quoted string
+  literal or unescaped no-substitution template literal containing exactly
+  `caller` or `arguments`. The receiver identifier activates when its token
+  spelling equals that function declaration's name even if a nested binding
+  shadows it or a frontend cannot resolve it; this deliberately reproduces the
+  producer's `resolved-to-declaration OR same-spelling` fallback, with the
+  spelling fallback winning. Every enumerated optional property/element form,
+  including `name?.caller`, `name?.["caller"]`, and
+  `name?.[\`arguments\`]`, activates identically. An escape in the key at this
+  boundary produces explicit `unknown` rather than attempting to reproduce the
+  TypeScript AST's cooked `key.text`; unrelated receivers remain nonblocking;
+  and
+- the explicit import/export link to the one target declaration.
+
+Function bodies unrelated to the candidate may be traversed as balanced token
+regions, but never silently ignored: any candidate spelling, alias, shadowing
+declaration, unbalanced construct, self `.caller`/`.arguments` access, or
+potentially executable top-level token inside such a region must either be
+classified into the projection or produce `unknown`. A source that contains no
+candidate spelling may remain opaque only after its top-level
+imports/exports/declarations, classes, CommonJS forms, module-init status, and
+direct-caller-activation status and every top-level function's scalar/reduction
+candidate status have been classified. This is a rule-specific semantic
+reprojector, not a second general TypeScript parser.
+
+At capture, the TypeScript adapter still performs the existing checker/AST
+proof, but it must also run this neutral parser from the exact source inventory
+and require the two independently produced source projections to be
+field-for-field equal before serialization. After finalization, the TypeScript
+projection is discarded. Every `preallocation`, `post-support`, `pre-body`,
+`late`, `pre-publication`, and `post-publication` descriptor reruns the neutral parser from fresh live source
+texts, freshly rebuilt order fields, and the full live top-level-function unit
+population, and carries its newly allocated `sourceProjection`; no range, owner,
+module, import/export, query, callsite, edge, candidate-use, blocker, or
+scalar/reduction-candidate census, reduction fact, or selected unit anchor is
+copied from the receipt. The reader compares that entire
+projection to the frozen one. Therefore a coherent range shift with unchanged
+source text, even with all serialized IDs and external digests recomputed,
+cannot become current.
+
+`legacyName` is not the rule identity. It is one ASCII identifier matching
+`^[A-Za-z_$][A-Za-z0-9_$]*$`, joined to the prepared-target declaration and
+UnitId. ABI display names are derived exactly: target = `legacyName`,
+trampoline = `__fn_tramp_${legacyName}_cached`, cache =
+`__fn_closure_${legacyName}`. The existing all-uses rename to
+`renamed_reduction` must therefore remain admitted with correspondingly
+derived support names. `sourceProjection.callable.instanceMetadata.name` must equal that same
+dynamic `legacyName`; its length, constructible ordinary-declaration profile,
+and the other closed callable flags above are part of the producer proof, not
+defaults supplied by codegen.
+
+`terminalOutcomeUnit` is both the complete candidate-inventory projection and
+the exact neutral base for the later D1 outcome row. Its source, UnitId,
+root-lexical owner, closed top-level-function kind, unit ordinal, null synthetic
+role, declaration range, terminal owner, key/name, observed kind, display name,
+legacy ordinal, location, containing-owner/class flags, body availability, and
+unowned/direct-failure state must join the route candidate and complete inventory
+record. Unit and legacy ordinals are zero-based; line/column are one-based. It
+is exactly one physical function terminal with an available direct body and no
+direct preparation failure. The reader rejects a target whose inventory
+projection does not match rather than asking a `SourceFile` to rediscover it
+later.
+
+D1 deliberately embeds the exact bounded source text and exact target-policy
+projection instead of inventing an undefined whole-compiler-options projection.
+The target projection includes every gate that can prevent the current early
+route: `options.experimentalIR === true`, `options.disableIrFirst === false`,
+and `explicitlyDisabled(JS2WASM_IR_FIRST) === false`, in addition to the
+standalone/fast/WASI/native-string and D1-cutover fields shown above. The
+normalized environment result is stored rather than an arbitrary raw string,
+and is recomputed from the live option/environment inputs in every current
+descriptor. Changing any one gate withdraws before support allocation.
+The plain expected-provenance descriptor supplied to the reader contains the
+current adapter version and exact `ts.version`; `frontendVersion` is
+1–128 ASCII characters from `[0-9A-Za-z.+-]` and must match it. A frontend
+upgrade therefore invalidates stale D1 bytes without asking a checker.
+
+Canonical JSON is ASCII: string serialization escapes every control, quote,
+backslash, non-ASCII code unit, and lone surrogate as fixed lowercase
+`\uXXXX` (supplementary characters are two escaped UTF-16 code units).
+This makes source text and ranges injective without relying on
+`TextEncoder`'s treatment of lone surrogates. The test/evidence harness
+reports:
+
+- source SHA-256 over ASCII
+  `"js2-semantic-source/1" + NUL + decimalByteLength + NUL + canonicalJson(text)`;
+- envelope SHA-256 over ASCII
+  `"js2-semantic-function-value-route-facts/1" + NUL + decimalByteLength + NUL + canonicalEnvelope`.
+
+Lengths are decimal ASCII byte lengths of the following framed value. These
+digests prove reproducibility but are not authenticators; production
+currentness uses the exact embedded text/target records and the independently
+rebuilt descriptor. A process-independent source blob store remains Phase E.
+
+The semantic callable record owns `() -> number`. Neutral ABI intent owns the
+three binding IDs, roles, owners, names, structural keys, origins, slot
+spaces/policies, and carrier profiles. The frozen Prepared Program ABI remains
+the independent authority for concrete backend contracts and final slots. The
+D1 producer derives the target binding with
+`irUnitCallableBindingId(candidateUnitId)`, the trampoline with
+`irSupportFuncRef(candidateUnitId, "function-value-trampoline", derivedName)`,
+and the cache with
+`irSupportGlobalRef(candidateUnitId, "function-value-cache", derivedName)`;
+each stored structural-reference key must equal that exact binding
+descriptor's canonical key. The
+D1 adapter must validate the complete #4590 projection: target `[] -> f64`;
+trampoline exactly one canonical `ref`/`ref null` parameter and `f64`
+result; cache mutable `externref`; exact source/support origins; and required
+function/function/global slot spaces. Mutable final indexes and allocator
+objects never enter the semantic snapshot.
+
+### Producer-only TypeScript adapter
+
+The TypeScript adapter may use the live checker, oracle, planning identity, and
+AST while producing the record. It must perform the exact C1 declaration
+queries plus the import-parent, exported-target, reduction grammar, binding,
+graph/collision, semantic-signature, and expected-ABI-intent proofs. It emits
+only neutral records.
+
+Capture is still discovery, not authority:
+
+1. run the exact producer proof once and collect a complete candidate record;
+2. canonicalize, serialize, parse, validate, and freeze it;
+3. discard the recording oracle and all AST-join helpers from the decision
+   path; and
+4. run the decisive eligibility proof against only the neutral reader and a
+   fresh preallocation descriptor. Support and Prepared/ABI results do not yet
+   exist; they are added and authenticated only in their tagged phases below.
+
+Delete the production `DeclarationSnapshotJoin` and
+`createDeclarationSnapshotReplayOracle` path. The producer must not return a
+`ts.Declaration`, `ts.SourceFile`, `TypeOracle`, planning-identity map, role
+classifier, or callback through the neutral facts API. Static type assertions
+and layering checks must prove that the new module and its exported receipt do
+not mention `ts.*`, Acorn, checker types, or codegen context.
+
+### Exact neutral handoffs below certification
+
+D1 must close eight current post-certification frontend seams. These are priced
+implementation work, not assumptions about the existing #3525 receipt:
+
+1. **Support allocation.** Today
+   `prepareTopLevelFunctionValueTargetSupport` calls
+   `collectPreparedTopLevelFunctionValueTargetUnitIds`, which traverses the
+   source and calls the live oracle after C1 certification. Factor an internal
+   `prepareTopLevelFunctionValueSupportForCertifiedUnit(ctx, proof)` that
+   accepts only the frozen neutral proof containing the candidate UnitId and
+   three ABI intents. It must not accept `IrOverlayPlan`, `SourceFile`, a
+   declaration, a legacy-name lookup, or a fallback callback. It
+   calls a new
+   `ensureFuncClosureSingletonFromCertifiedMetadata(ctx, request)` path with
+   the exact target handle/signature and frozen callable contract. Factor the
+   existing singleton emitter into a shared lower-level allocation core, but
+   make the certified entry validate `[] -> f64`, capture count zero,
+   no explicit `this`, no eager-async result promotion, no rest marker,
+   `constructible=true`, the exact ordinary-function-declaration wrapper
+   profile, and exact `{name: legacyName, length: 0}` before its first write.
+   This matches `normalizeOrdinaryFunctionConstructibility`. D1a must first
+   remove the incorrect `false` assumption at the exact Prepared support call
+   in `prepareTopLevelFunctionValueTargetSupport`. That early helper is the
+   candidate's sole allocator, metadata preparer, Program-ABI planner, and
+   direct-materialization registrar. It receives one closed
+   `constructibleFunctionValueTargetUnitIds` set whose only non-empty producer
+   is the existing certified C1 early route: after
+   `resolveExactFunctionValueCandidate` succeeds, the function-value planner
+   passes exactly `new Set([candidate.unitId])` to its support callback. The
+   helper changes `constructible=false` to `true` only when the current target
+   UnitId is in that set. The ordinary per-source support call,
+   array/string/Fibonacci routes, route-disabled states, and every other
+   top-level value keep an empty set and the literal legacy `false` behavior.
+
+   The paired top-level-function-value site in
+   `prepareMultiIrImportedLowering` must not allocate the candidate a second
+   time. Extend the early `MultiPreparedFunctionValueSupportReceipt` with the
+   exact frozen `CertifiedFunctionValueSingletonReceipt` and layout-cell
+   identity returned by the early allocation. For an early function-value
+   route, `compileMultiIrOverlaySource` passes the late helper one exact
+   `ReadonlyMap<IrUnitId, MultiPreparedFunctionValueSupportReceipt>` containing
+   only `[early.route.unitId, early.route.support]`; every other route passes an
+   empty map. Inside the existing top-level-function-value loop, first require
+   `valuePlan.target.binding.kind === "unit"`, then derive membership only from
+   `valuePlan.target.binding.unitId`. Never use `valuePlan.ownerUnitId`, a loop
+   owner, a legacy name, or source order as the support key.
+
+   When that exact target UnitId is present, call a frontend-free
+   `reauthenticateCertifiedFunctionValueSupportForLateProvider` instead of
+   `ensureFuncClosureSingleton` and `planProgramAbiFunctionValue`. It requires
+   the map key, value-plan target binding/name, target/trampoline/cache objects
+   and stable handles, support binding IDs, singleton receipt, and layout cell
+   to be the same early objects; freshly validates their live Program-ABI
+   drafts, locators, current indices, signatures, and structural keys; and
+   requires the direct-materialization entry already to be consumed at
+   revision 0 with `expectedUseCount=1` and `observedUseCount=1`. This call
+   occurs after legacy body emission, so a pending entry is not an acceptable
+   late state. The helper snapshots every touched registry, module array/map,
+   Program-ABI inventory, recipe/cell field, and counter before the check and
+   proves them identical afterward. It performs no singleton allocation,
+   metadata prepare/materialize, string/global/type/function allocation,
+   `planUnits`, Program-ABI plan/observe, support planning, registry
+   register/take/settlement, body write, or pending-row write. An absent,
+   duplicate, foreign, owner-keyed, or identity-mismatched certified entry is
+   fatal for the early function-value route. A top-level value outside this
+   exact map follows the unchanged generic `constructible=false` allocation
+   and ABI-planning path.
+
+   Thus D1a's early and late physical call opportunities share one receipt and
+   one layout cell: the early call writes once, the legacy `main` emitter takes
+   once, and the late call only authenticates the consumed result. D1a derives
+   constructibility and metadata from the existing C1 candidate/early-route
+   authority without blanket-widening every function-value route. It exercises
+   the actual lazy-cache materializer, records the expected physical delta from
+   old C1, and establishes the corrected baseline. D1b replaces that
+   source-derived early decision with the frozen neutral callable proof and
+   carries the same exact singleton UnitId in its distinct certified-support
+   callback. D1b bypasses `prepareMultiIrImportedLowering` for the candidate;
+   this remains artifact-equal because D1a's candidate-specific late branch is
+   provably zero-write. The shared allocation core prepares metadata through
+   `prepareFnMetaSlotOfMeta`. Unrelated legacy callers of the unchanged
+   `fnMetaSlotOfMeta` entry still invoke `materializePreparedFnMetaSlot`
+   immediately. In contrast, both D1a's exact C1-authorized support branch and
+   D1b's neutral-authorized branch carry the same recipe through the same
+   one-shot registry to the actual direct consumer. Thus both checkpoints
+   allocate/materialize the `bench_loop` name carrier at the identical legacy
+   `main` emission point; D1b changes authority only, never string/global
+   allocation order. The core returns one frozen
+   `CertifiedFunctionValueSingletonReceipt`. The receipt owns stable symbolic
+   target/trampoline/cache identities plus one authenticated
+   `CertifiedFunctionValueLayoutCell`. Target and trampoline are #1916 stable
+   `FuncHandle` values at or above `STABLE_FUNC_BASE`; they and the
+   `funcClosureSingletonKeyByFuncIdx` key never shift under late imports or
+   function-import DCE. The receipt does not freeze a resolved absolute
+   function index, an absolute global index, a detached metadata instruction
+   array, or a TypeDef object reference as a timeless value. At allocation
+   revision 0 the cell records the exact constructible base-wrapper and final
+   metadata-carrying allocation subtype identities, metadata field, cache and
+   metadata `GlobalDef` object identities, the canonical `{name,length}`
+   metadata recipe, target/trampoline stable handles, and their then-live
+   function object identities. The only later cell mutation is the named
+   post-DCE settlement described below. The
+   certified allocator must not call
+   `sourceFunctionDeclarationForHandle`, inspect `funcMapOwnerDecl` /
+   `topLevelFunctionDeclarations`, call
+   `parkedAsyncDeclarationWrapsPromise`, read `funcRestParams`, or pass a
+   declaration to `fnMetaSlot`. The legacy `ensureFuncClosureSingleton` derives
+   those values exactly as today and invokes the same core; no legacy caller is
+   redirected through the certified assertions. After the preallocation proof
+   and before planning either support binding, the D1 allocator must call the
+   existing neutral `ctx.programAbiSourceCallables.planUnits([candidateUnitId])`
+   exactly once. Before that write it proves registry/session/inventory object
+   coherence and the observed handle/object against the neutral UnitId and
+   recomputed target binding ID; after it, it independently validates the
+   resulting target draft, locator, current index, signature, structural key,
+   and order. This targeted plan is the only permitted write between
+   `preallocation` and singleton/support allocation. Merely observing/looking
+   up the source callable is not a planned ABI entry. The D1 support allocator then
+   allocates and validates the existing source callable/trampoline/cache and
+   authenticated function-instance allocation receipt without a source scan or
+   oracle. Keep the old collector wrapper byte-for-byte authoritative for
+   array, Fibonacci, string, every direct route outside the exact D1a
+   `bench_loop` comparator, and other unprepared callers. Thread a distinct
+   `prepareCertifiedFunctionValueSupport` callback through only the exact
+   interface/pass-through seam in
+   `MultiPreparedProgramRoutePlanningInput` / `planExistingRoutes`, the D1
+   function-value leaf in `MultiPreparedProgramEarlyRouteInput`, and
+   `planEarlyMultiPreparedFunctionValueRoutes`; Fibonacci keeps and continues
+   to receive the distinct legacy plan/source callback.
+
+   The receipt is not advisory. The exact `bench_loop` value is referenced by
+   the legacy `main` body, which is intentionally excluded from
+   `finalSelection.funcs`; the Prepared candidate body contains no
+   `closure.new`. Therefore the authenticated receipt must cross the actual
+   direct-emitter boundary, not an unreachable IR lowering-plan seam.
+
+   Add one codegen-local
+   `CertifiedFunctionValueDirectMaterializationRegistry`, keyed by the exact
+   target WasmFunction object identity and `targetBindingId`, never by a
+   durable numeric function index. After support allocation and before
+   source-body emission, the D1 owner registers one frozen pending entry that
+   owns the singleton receipt, stable layout-cell identity, exact legacy name,
+   expected one-use census, and current revision-0 target/trampoline/cache,
+   allocation-type, metadata-global-object, and canonical metadata-recipe
+   identities. It retains no detached initializer instruction array.
+   Duplicate target objects, binding IDs, or entries
+   reject. On D1 withdrawal before body emission, owner abort removes the entry
+   so the ordinary legacy path remains available; after the body boundary an
+   unconsumed or multiply consumed entry is fatal.
+
+   At the start of `emitCachedFuncClosureAccess`, before
+   `normalizeOrdinaryFunctionConstructibility` or any declaration lookup, ask
+   the registry for the exact `(ctx, targetHandle, funcName)` entry. The
+   lookup requires a #1916 stable `FuncHandle` and resolves it through
+   `definedFuncAt` to its live WasmFunction object; it never treats the handle
+   as a phase-current absolute index. It then
+   authenticates that object against the target binding locator; no entry takes
+   the unchanged legacy path. One pending entry is atomically marked consumed
+   and passed to a bounded `emitCertifiedCachedFuncClosureAccess` branch in
+   `method-trampolines.ts`. That branch reauthenticates every live identity and
+   canonical allocation/metadata projection. It first materializes the frozen
+   metadata name through the existing string-literal primitive, because that
+   operation may add import globals. Only afterward does it resolve the cache
+   and metadata globals from their exact retained `GlobalDef` objects and the
+   current import-global prefix, resolve the allocation/meta TypeDefs from the
+   current module, and freshly build the small metadata-init instruction tree
+   from the canonical `{name,length}` recipe. It then calls the existing lazy
+   cache emission core with those current indices. The freshly built sequence
+   is inserted immediately into the live owner body so later global-shift walks
+   can see it. A stale receipt-time global index or detached instruction object
+   is never used. It must not call
+   `ensureFuncClosureSingleton`, the constructibility normalizer,
+   `fnMetaSlot`, a checker/oracle, or any SourceFile map. A second take of the
+   same target is an invariant rather than a fallthrough. The complete neutral
+   candidate-use census proves that no other source use can consume the entry;
+   the legacy owner's `compileBodySource` boundary and
+   `sealRoutesComplete` independently require exactly one successful
+   consumption before overlays or publication. This threads the proof through
+   the actual lazy cache initializer while leaving every unrelated direct
+   function value and every IR backend byte-for-byte authoritative.
+
+   Dead layout elimination is an explicit phase boundary. The certified branch
+   records the exact legacy-owner WasmFunction object and one emitted lazy-cache
+   initializer occurrence. Stable `FuncHandle` identities remain unchanged,
+   but no pre-DCE resolved absolute index, absolute global index, initializer
+   operand, or TypeDef object is authoritative afterward. At the end of
+   `eliminateDeadLayoutAndPlanProgramAbi`, after DCE and every retained
+   Program-ABI planner have run, call
+   `settleCertifiedFunctionValueMaterializationsAfterLayout(ctx)`. It resolves
+   the three final ABI indices through their authenticated binding locators,
+   separately proves the stable target/trampoline handles still resolve to the
+   exact retained functions, finds
+   exactly one canonical initializer in the retained legacy-owner body, reads
+   the remapped `struct.new` operand and final TypeDefs from `ctx.mod`, rebuilds
+   the metadata-init projection, and atomically changes the same cell from
+   `{layoutState:"allocation", layoutRevision:0}` to
+   `{layoutState:"compacted", layoutRevision:1}`. Missing/dead/ambiguous body
+   evidence, a stale locator, a second settlement, or any canonical mismatch is
+   fatal before ABI publication. This hook does not change DCE, a stable
+   handle, or an emitted value itself; it authenticates the layout DCE already
+   produced.
+
+   This introduces no fourth helper or Program-ABI binding: target,
+   trampoline, and cache remain the exact three #4590 artifacts.
+   `targetBindingId` is always
+   `irUnitCallableBindingId(candidateUnitId)` and must equal the role=`target`
+   ABI intent, the source-callable draft, and the authenticated allocation
+   receipt. It is never the trampoline or cache binding. Those two binding IDs
+   remain separately authenticated by their support intents and by the ordered
+   `[target, trampoline, cache]` support tuple.
+2. **Route claims.** Extend `MultiPreparedRouteClaimSnapshot` with canonical
+   `sourceIds` while retaining `sourceFiles` for legacy routes. The central
+   `MultiPreparedProgramOwner.planEarlyRoutes` derives and inserts the exact
+   source ID for every claimed route. D1 overlap after finalization compares
+   only source ID, terminal UnitIds, and target UnitIds; it never calls
+   `includes(sourceFile)`. Existing routes may continue their SourceFile
+   compatibility check.
+3. **Owner reauthentication and publication lifecycle.** Add a bounded neutral
+   route/snapshot type beside the legacy AST route in
+   `MultiPreparedProgramOwner.#assertRouteFields`, `#snapshotRoute`, and
+   `#assertRouteSnapshot`. For D1 it validates source ID, declaration range
+   record, terminal/owner UnitIds, canonical bytes, Prepared receipt, support
+   receipt, and exact ABI-intent inventory. It must not call
+   `ts.isFunctionDeclaration`, inspect declaration parents/bodies, or compare
+   `claim.declaration`. Thread that neutral branch through registration,
+   `sealBodyBoundary`, `compileBodySource`, `withOverlayState`,
+   `sealRoutesComplete`, and the later whole-program stability checks.
+   Build `post-support` inside the planner before it returns; rebuild
+   `pre-body` after central claim registration in `sealBodyBoundary` and again
+   immediately before the candidate direct-body skip; build `late` after all
+   direct/overlay owners; and build compacted `pre-publication` last in
+   `sealBeforePublication`. After publication, `complete` independently
+   reads the published Program ABI and proves the exact target, trampoline, and
+   cache entries before retaining the publication. After the three remaining
+   mutating whole-module fixups, `sealAfterFinalFixups` performs the terminal
+   fresh physical audit described below while retaining those published
+   entries. Preserve the AST branch for every untouched route. Neither a check
+   before publication nor `complete` can stand in for that final proof.
+4. **Late selection/currentness.** The complete D1 function-value branch of
+   `compileMultiIrOverlaySource` must not use the late
+   `makeMultiIrSafeSelection` result as its authority: that path still walks
+   AST-keyed imported calls/function values and checker-derived graph safety.
+   It must bypass the whole AST/planning mutation chain for this route,
+   including `removeMultiIrAttemptedCallableUnits`,
+   `synchronizeIrSafeFunctionSelection`, and
+   `prepareMultiIrImportedLowering`, rather than replacing only the first
+   selector result. Project the exact singleton selection and lowering inputs
+   from the neutral candidate UnitId and frozen Prepared/Program-ABI
+   registries, then compare them with the retained early Prepared selection.
+   Existing routes keep the current selector and mutation chain.
+5. **Physical direct-body skip.** The neutral route supplies one frozen
+   physical-skip entry containing exact source ID, source key, declaration
+   range, legacy name, terminal UnitId, and `preserve=true` to
+   `compileMultiPreparedScalarLeafDeclarations`. The D1-only branch in
+   `compileDeclarations` authenticates the current source ID and maps the
+   already iterated declaration body handle through that exact range/name
+   record; it must not ask `unitIdByDeclaration` or a planning claim which unit
+   to skip. It requires exactly one matched and skipped entry and returns the
+   exact skipped UnitId. AST iteration remains only the Phase-E body-emission
+   handle. The existing name/identity-map routing remains authoritative for all
+   legacy routes.
+6. **Direct-body receipt lookup.** Add
+   `directFunctionBodyReceiptAuditForSourceId(sourceId)` beside the existing
+   SourceFile overload. It validates the frozen source ID against the audit
+   session's neutral `#sourceById` inventory and reads the existing
+   source-ID-keyed receipt census directly; it must not consult
+   `sourceIdBySourceFile`, `sourceFileBySourceId`, or accept a `SourceFile`.
+   The D1 `recordObservedIrOutcomes` path uses only this overload. All legacy
+   callers retain the exact SourceFile method.
+7. **Post-skip terminal audit.** Add a closed D1 audit input containing the
+   frozen source ID, exact terminal unit projection, neutral singleton
+   selection/owner, and Prepared integration evidence. The D1 overload of
+   `auditIrSkippedFunctionSlots` validates the one skipped UnitId and its
+   terminal evidence without `SourceFile`, `IrOverlayIdentityPlan`,
+   `collectObservedIrUnits`, or an AST-derived owner projection. Its result is
+   still consumed by the shared fatal diagnostic path. Class-member,
+   module-init, and every legacy function audit keep their current
+   source/planning inputs.
+8. **Observed terminal outcome.** `recordObservedIrOutcomes` must partition the
+   D1 target before legacy reconciliation. A bounded neutral reconciler accepts
+   the frozen source/terminal record, exact initial and prepared singleton
+   UnitId sets, direct-body receipt audit, skipped UnitId, preparation failure
+   census, integration report/evidence, existing outcome keys, and target. It
+   emits the one exact target row or fatal diagnostics without `SourceFile`,
+   `IrOverlayIdentityPlan`, `collectR2FreeFunctionUnitIds`,
+   `collectObservedIrUnits`, `buildIrIntegrationOwnerProjection`, or any AST
+   identity map. The legacy reconciler receives an exact excluded neutral-route
+   record and must remove that target before every legacy AST/planning
+   population, receipt, audit, and outcome pass; it continues to reconcile all
+   other source units unchanged. Merge the neutral and legacy rows once in
+   canonical inventory order, reject duplicate/missing target rows, and feed
+   both diagnostic arrays through the existing fatal `reportErrorNoNode` path.
+
+Currentness is phase-tagged; it must not require objects that do not yet exist:
+
+    interface SemanticFunctionValueCurrentBase {
+      expectedProvenance: SemanticFunctionValueRouteFactsV1["provenance"];
+      target: SemanticFunctionValueRouteFactsV1["target"];
+      sourceProjection: SemanticFunctionValueSourceProjectionV1;
+      inventoryUnitIds: readonly string[];
+      candidateUnit: SemanticTerminalOutcomeUnitV1;
+      priorClaims: {
+        sourceIds: readonly string[];
+        terminalUnitIds: readonly string[];
+        targetUnitIds: readonly string[];
+      };
+      liveClaims: {
+        sourceIds: readonly string[];
+        terminalUnitIds: readonly string[];
+        targetUnitIds: readonly string[];
+      };
+      registries: {
+        funcMapEntries: readonly {
+          legacyName: string;
+          handle: number;
+        }[];
+        occupiedFunctionNameCounts: readonly {
+          legacyName: string;
+          count: number;
+        }[];
+        occupiedFunctionKeys: readonly string[];
+        liveFunctionBindingGlobalNames: readonly string[];
+        funcClosureGlobalEntries: readonly {
+          key: string;
+          handle: number;
+        }[];
+        funcClosureSingletonKeyEntries: readonly {
+          // Stable FuncHandle, never a resolved absolute function index.
+          targetHandle: number;
+          key: string;
+        }[];
+        declaredFunctionRefHandles: readonly number[];
+        moduleGlobalNameCounts: readonly {
+          name: string;
+          count: number;
+        }[];
+        nativeStringLiteralGlobalEntries: readonly {
+          key: string;
+          currentIndex: number;
+          globalObjectIdentity: unknown;
+          globalName: string;
+          valueTypeCanonical: string;
+          mutable: false;
+          initializerIdentity: unknown;
+          initializerInstructionCount: number;
+          initializerCanonical: string;
+        }[];
+        candidateOwnedDerivedUnitIds: readonly string[];
+      };
+      sourceCallable: {
+        unitId: string;
+        bindingId: string;
+        displayName: string;
+        functionName: string;
+        handle: number;
+        objectIdentity: unknown;
+        typeIdx: number;
+        typeObjectIdentity: unknown;
+        signatureCanonical: string;
+        localsIdentity: unknown;
+        localCount: number;
+        localsCanonical: string;
+        bodyIdentity: unknown;
+        bodyInstructionCount: number;
+        bodyCanonical: string;
+        exported: true;
+      };
+    }
+
+    interface SemanticProgramAbiOrderProjection {
+      sourceOrder: number;
+      declarationOrder: number;
+    }
+
+    interface SemanticProgramAbiStructuralOrderProjection {
+      sourceId: string;
+      declarationOrdinal: number;
+      domainOrdinal: number;
+      roleOrdinal: number;
+      derivedOrdinal: number;
+    }
+
+    type SemanticFunctionValueAbiProjectionCore =
+      | {
+          kind: "callable";
+          role: "target";
+          bindingId: string;
+          displayName: string;
+          slotSpace: "function";
+          slotPolicy: "required";
+          structuralReferenceKey: string;
+          semanticTerminalOwnerUnitId: string;
+          intent: {
+            kind: "callable";
+            origin: "source";
+            unitId: string;
+            sourceId: null;
+            classId: null;
+            signature: {
+              params: readonly [];
+              results: readonly ['{"kind":"f64"}'];
+            };
+          };
+        }
+      | {
+          kind: "callable";
+          role: "trampoline";
+          bindingId: string;
+          displayName: string;
+          slotSpace: "function";
+          slotPolicy: "required";
+          structuralReferenceKey: string;
+          semanticTerminalOwnerUnitId: string;
+          intent: {
+            kind: "callable";
+            origin: "support";
+            unitId: string;
+            sourceId: null;
+            classId: null;
+            signature: {
+              params: readonly [string];
+              functionValueParam: {
+                kind: "ref" | "ref_null";
+                typeIdx: number;
+              };
+              results: readonly ['{"kind":"f64"}'];
+            };
+          };
+        }
+      | {
+          kind: "global";
+          role: "cache";
+          bindingId: string;
+          displayName: string;
+          slotSpace: "global";
+          slotPolicy: "required";
+          structuralReferenceKey: string;
+          semanticTerminalOwnerUnitId: string;
+          intent: {
+            kind: "global";
+            origin: "support";
+            unitId: null;
+            sourceId: null;
+            capability: null;
+            mutable: true;
+            valueType: '{"kind":"externref"}';
+          };
+        };
+
+    type SemanticFunctionValueAbiDraftProjection = SemanticFunctionValueAbiProjectionCore & {
+      phase: "draft";
+      structuralOrder: SemanticProgramAbiStructuralOrderProjection;
+      currentIndex: number;
+    };
+
+    type SemanticFunctionValueAbiEntryProjection = SemanticFunctionValueAbiProjectionCore & {
+      phase: "published";
+      order: SemanticProgramAbiOrderProjection;
+      resolvedIndex: number;
+    };
+
+    interface SemanticCertifiedFunctionInstancePreDceRegistryProjection {
+      signatureKey: "->f64";
+      rawBaseWrapperCache: {
+        closureInfoIdentity: unknown;
+        structTypeIdx: number;
+        structTypeObjectIdentity: unknown;
+        structTypeCanonical: string;
+        structSuperTypeIdx: number;
+        funcTypeIdx: number;
+        paramTypes: readonly [];
+        resultType: '{"kind":"f64"}';
+        minimumArgumentCount: null;
+        effectiveMinimumArgumentCount: 0;
+        hasCaptures: null;
+        hasRestParam: null;
+        nativeProtoVariadic: null;
+        hostOneShotOnly: false;
+        domCallbackOnly: null;
+        needsCallSiteArity: null;
+        inlineBody: null;
+      };
+      rootWrapperType: {
+        typeIdx: number;
+        typeObjectIdentity: unknown;
+        typeCanonical: string;
+      };
+      liftedFunctionType: {
+        typeIdx: number;
+        typeObjectIdentity: unknown;
+        typeCanonical: string;
+        selfParam: {
+          kind: "ref";
+          typeIdx: number;
+        };
+        userParams: readonly [];
+        results: readonly ['{"kind":"f64"}'];
+      };
+      liftedFunctionTypeCache: {
+        keyCanonical: string;
+        typeIdx: number;
+        typeObjectIdentity: unknown;
+      };
+      metadataStructRegistry: {
+        typeIdx: number;
+        typeObjectIdentity: unknown;
+      };
+      metadataGlobalCache: {
+        key: string;
+        currentIndex: number;
+        globalObjectIdentity: unknown;
+        globalName: string;
+        valueTypeCanonical: string;
+        mutable: true;
+        initializerIdentity: unknown;
+        initializerInstructionCount: 1;
+        initializerCanonical: string;
+      };
+      constructibleWrapperCache: {
+        closureInfoIdentity: unknown;
+        structTypeIdx: number;
+        funcTypeIdx: number;
+        paramTypes: readonly [];
+        resultType: '{"kind":"f64"}';
+        minimumArgumentCount: null;
+        effectiveMinimumArgumentCount: 0;
+        hasCaptures: null;
+        hasRestParam: null;
+        nativeProtoVariadic: null;
+        hostOneShotOnly: null;
+        domCallbackOnly: null;
+        needsCallSiteArity: null;
+        inlineBody: null;
+      };
+      closureInfoEntries: readonly [
+        {
+          role: "constructible-base";
+          typeIdx: number;
+          closureInfoIdentity: unknown;
+          structTypeIdx: number;
+          funcTypeIdx: number;
+          paramTypes: readonly [];
+          resultType: '{"kind":"f64"}';
+          minimumArgumentCount: null;
+          effectiveMinimumArgumentCount: 0;
+          hasCaptures: null;
+          hasRestParam: null;
+          nativeProtoVariadic: null;
+          hostOneShotOnly: null;
+          domCallbackOnly: null;
+          needsCallSiteArity: null;
+          inlineBody: null;
+        },
+        {
+          role: "metadata-allocation";
+          typeIdx: number;
+          closureInfoIdentity: unknown;
+          structTypeIdx: number;
+          funcTypeIdx: number;
+          paramTypes: readonly [];
+          resultType: '{"kind":"f64"}';
+          minimumArgumentCount: null;
+          effectiveMinimumArgumentCount: 0;
+          hasCaptures: null;
+          hasRestParam: null;
+          nativeProtoVariadic: null;
+          hostOneShotOnly: null;
+          domCallbackOnly: null;
+          needsCallSiteArity: null;
+          inlineBody: null;
+        },
+      ];
+      constructibleTypeIdxs: readonly [number, number];
+      metadataSubtype: {
+        baseTypeIdx: number;
+        allocationTypeIdx: number;
+      };
+      metadataFamily: {
+        allocationTypeIdx: number;
+        fieldIndex: number;
+      };
+    }
+
+    type SemanticCertifiedFunctionInstanceAllocationProjection =
+      SemanticCertifiedFunctionInstanceAllocationProjectionCore &
+        (
+          | {
+              layoutState: "allocation";
+              layoutRevision: 0;
+              preDceRegistries: SemanticCertifiedFunctionInstancePreDceRegistryProjection;
+            }
+          | {
+              layoutState: "compacted";
+              layoutRevision: 1;
+            }
+        );
+
+    interface SemanticCertifiedFunctionInstanceAllocationProjectionCore {
+      kind: "certified-function-instance-allocation";
+      layoutCellIdentity: unknown;
+      targetBindingId: string;
+      constructible: true;
+      wrapperProfile: "ordinary-function-declaration-constructible";
+      metadata: {
+        name: string;
+        length: 0;
+      };
+      baseWrapperTypeIdx: number;
+      allocationStructTypeIdx: number;
+      metadataStructTypeIdx: number;
+      metadataFieldIndex: number;
+      // Fresh absolute index resolved from metadataGlobalObjectIdentity now.
+      metadataGlobalCurrentIndex: number;
+      metadataGlobalName: string;
+      metadataGlobalValueTypeCanonical: string;
+      metadataGlobalMutable: true;
+      metadataGlobalInitializerIdentity: unknown;
+      metadataGlobalInitializerInstructionCount: 1;
+      metadataGlobalInitializerCanonical: string;
+      baseWrapperCanonical: string;
+      allocationStructCanonical: string;
+      metadataStructCanonical: string;
+      metadataRecipeCanonical: string;
+      baseWrapperObjectIdentity: unknown;
+      allocationStructObjectIdentity: unknown;
+      metadataStructObjectIdentity: unknown;
+      metadataGlobalObjectIdentity: unknown;
+    }
+
+    interface SemanticCertifiedPendingDirectMaterializationProjection {
+      state: "pending";
+      targetBindingId: string;
+      targetHandle: number;
+      legacyName: string;
+      expectedUseCount: 1;
+      observedUseCount: 0;
+      emittedInitializerIdentity: null;
+    }
+
+    interface SemanticCertifiedConsumedDirectMaterializationProjection {
+      state: "consumed";
+      targetBindingId: string;
+      targetHandle: number;
+      legacyName: string;
+      expectedUseCount: 1;
+      observedUseCount: 1;
+      emittedInitializerIdentity: unknown;
+      emittedInitializerCanonical: string;
+    }
+
+    interface SemanticCertifiedPendingTrampolineFinalizationProjection {
+      state: "pending";
+      candidateIncidentRowCount: 1;
+      targetHandle: number;
+      trampolineHandle: number;
+      trampolineBodyIdentity: unknown;
+      objStructTypeIdx: -1;
+      userParamCount: 0;
+      wrapperUserParams: readonly [];
+      wrapperResult: '{"kind":"f64"}';
+      noThisParam: true;
+      explicitThisParam: null;
+      methodTargetsImport: false;
+      methodUsesThis: null;
+      eagerAsyncPromiseWrap: null;
+    }
+
+    interface SemanticCertifiedFinalizedTrampolineProjection {
+      state: "finalized";
+      candidateIncidentRowCount: 0;
+      targetHandle: number;
+      trampolineHandle: number;
+      trampolineBodyIdentity: unknown;
+      instructionCount: 1;
+      forwardedTargetHandle: number;
+      trampolineBodyCanonical: string;
+    }
+
+    interface SemanticFunctionValueCurrentSupportCore {
+      // #1916 stable FuncHandles; neither field follows an fR layout map.
+      targetHandle: number;
+      trampolineHandle: number;
+      // Fresh absolute global index resolved from cacheGlobalObjectIdentity now.
+      cacheGlobalCurrentIndex: number;
+      targetObjectIdentity: unknown;
+      trampolineObjectIdentity: unknown;
+      trampolineName: string;
+      trampolineTypeIdx: number;
+      trampolineTypeObjectIdentity: unknown;
+      trampolineTypeCanonical: string;
+      trampolineLocalsIdentity: unknown;
+      trampolineLocalCount: 0;
+      trampolineLocalsCanonical: "[]";
+      trampolineExported: false;
+      cacheGlobalObjectIdentity: unknown;
+      cacheGlobalName: string;
+      cacheGlobalValueTypeCanonical: '{"kind":"externref"}';
+      cacheGlobalMutable: true;
+      cacheGlobalInitializerIdentity: unknown;
+      cacheGlobalInitializerInstructionCount: 1;
+      cacheGlobalInitializerCanonical: '[{"op":"ref.null.extern"}]';
+      // Exact order: target, trampoline, cache.
+      bindingIds: readonly [string, string, string];
+      abiDrafts: readonly [
+        SemanticFunctionValueAbiDraftProjection,
+        SemanticFunctionValueAbiDraftProjection,
+        SemanticFunctionValueAbiDraftProjection,
+      ];
+    }
+
+    type SemanticFunctionValuePendingAllocationSupport =
+      SemanticFunctionValueCurrentSupportCore & {
+        instanceAllocation: SemanticCertifiedFunctionInstanceAllocationProjection & {
+          layoutState: "allocation";
+          layoutRevision: 0;
+        };
+        directMaterialization: SemanticCertifiedPendingDirectMaterializationProjection;
+        trampolineFinalization: SemanticCertifiedPendingTrampolineFinalizationProjection;
+      };
+
+    type SemanticFunctionValueConsumedAllocationSupport =
+      SemanticFunctionValueCurrentSupportCore & {
+        instanceAllocation: SemanticCertifiedFunctionInstanceAllocationProjection & {
+          layoutState: "allocation";
+          layoutRevision: 0;
+        };
+        directMaterialization: SemanticCertifiedConsumedDirectMaterializationProjection;
+        trampolineFinalization: SemanticCertifiedFinalizedTrampolineProjection;
+      };
+
+    type SemanticFunctionValueConsumedCompactedSupport =
+      SemanticFunctionValueCurrentSupportCore & {
+        instanceAllocation: SemanticCertifiedFunctionInstanceAllocationProjection & {
+          layoutState: "compacted";
+          layoutRevision: 1;
+        };
+        directMaterialization: SemanticCertifiedConsumedDirectMaterializationProjection;
+        trampolineFinalization: SemanticCertifiedFinalizedTrampolineProjection;
+      };
+
+    interface SemanticPreparedCandidateBodyProjection {
+      receiptKind: "prepared";
+      preparedComponentId: string;
+      terminalUnitIds: readonly [string];
+      selectedUnitIds: readonly [string];
+      callableObjectIdentity: unknown;
+      localsIdentity: unknown;
+      localCount: number;
+      localsCanonical: string;
+      bodyIdentity: unknown;
+      instructionCount: number;
+      bodyCanonical: string;
+      exported: true;
+    }
+
+    type SemanticFunctionValueCurrentDescriptor =
+      | {
+          phase: "preallocation";
+          base: SemanticFunctionValueCurrentBase;
+          ownClaim: null;
+        }
+      | {
+          phase: "post-support";
+          base: SemanticFunctionValueCurrentBase;
+          ownClaim: null;
+          support: SemanticFunctionValuePendingAllocationSupport;
+        }
+      | {
+          phase: "pre-body";
+          base: SemanticFunctionValueCurrentBase;
+          ownClaim: {
+            sourceIds: readonly [string];
+            terminalUnitIds: readonly [string];
+            targetUnitIds: readonly [string];
+          };
+          support: SemanticFunctionValuePendingAllocationSupport;
+          prepared: SemanticPreparedCandidateBodyProjection;
+        }
+      | {
+          phase: "late";
+          base: SemanticFunctionValueCurrentBase;
+          ownClaim: {
+            sourceIds: readonly [string];
+            terminalUnitIds: readonly [string];
+            targetUnitIds: readonly [string];
+          };
+          support: SemanticFunctionValueConsumedAllocationSupport;
+          prepared: SemanticPreparedCandidateBodyProjection;
+        }
+      | {
+          phase: "pre-publication";
+          base: SemanticFunctionValueCurrentBase;
+          ownClaim: {
+            sourceIds: readonly [string];
+            terminalUnitIds: readonly [string];
+            targetUnitIds: readonly [string];
+          };
+          support: SemanticFunctionValueConsumedCompactedSupport;
+          prepared: SemanticPreparedCandidateBodyProjection;
+        }
+      | {
+          phase: "post-publication";
+          base: SemanticFunctionValueCurrentBase;
+          ownClaim: {
+            sourceIds: readonly [string];
+            terminalUnitIds: readonly [string];
+            targetUnitIds: readonly [string];
+          };
+          support: SemanticFunctionValueConsumedCompactedSupport;
+          prepared: SemanticPreparedCandidateBodyProjection;
+          publishedAbiEntries: readonly [
+            SemanticFunctionValueAbiEntryProjection,
+            SemanticFunctionValueAbiEntryProjection,
+            SemanticFunctionValueAbiEntryProjection,
+          ];
+        };
+
+The adapter normalizes absent optional Program-ABI intent fields to the explicit
+nulls above, rejects any other provenance, and validates each closed
+callable/global projection and canonical signature before constructing the
+descriptor. Target params are empty. The trampoline's sole canonical parameter
+string must parse to an object with exactly `kind: "ref" | "ref_null"` and a
+non-negative safe-integer `typeIdx`, reserialize byte-exactly under
+`canonicalProgramAbiValType`, and equal its closed `functionValueParam`; all
+callable results are canonical `f64`.
+
+Before publication, `post-support`, `pre-body`, `late`, and `pre-publication`
+project identity, provenance, policy, key, and structural order from the exact `ProgramAbiDraft` returned by
+`ProgramAbiSession.getDraft`, never a synthetic dense plan entry. Callable
+signatures come from the authenticated
+`ProgramAbiSession.currentCallableSignature(bindingId)` after any latest
+`applyTypeLayoutRemap`, not the draft's frozen pre-remap signature; the current locator/index is
+checked against the same binding/key. Each five-field `structuralOrder` must equal a fresh
+`session.structuralOrder.forUnit(candidateUnitId, suborder)` result with the
+exact callable/global domain and existing body/function-value-trampoline/
+function-value-cache role ordinal; every numeric component is a non-negative
+safe integer and `sourceId` is exact. `currentIndex` comes from the authenticated
+draft binding/key/locator lookup after the same latest remap.
+
+Only `post-publication` projects `ProgramAbiPlanEntry.order`. Its `sourceOrder`
+must equal the candidate source's inventory order; declaration orders are
+non-negative safe integers, distinct, and in exact
+target-before-trampoline-before-cache relative order. They need not be
+consecutive because unrelated bindings may lie between them. This phase reads
+the actual dense order from each published entry rather than copying it from a
+draft or semantic intent. The cache's actual global intent deliberately has
+`unitId: null`: its `semanticTerminalOwnerUnitId` is independently derived by
+recomputing the exact `irSupportGlobalRef` binding ID and structural key from
+the candidate UnitId/role/name, checking the candidate inventory anchor and
+draft/published order. Target and trampoline require their actual
+callable-intent `unitId` to equal that same owner. The implementation must
+preserve all six temporal variants.
+
+Immediately before support allocation, build `preallocation` from independent
+live state: the configured expected provenance; the complete target-policy and
+activation-gate projection; the complete freshly parsed neutral source
+projection; the complete sorted planning-inventory UnitId census; the
+independently reprojected candidate inventory row; and the already
+allocated/observed source callable handle and object. The target ABI entry does
+not exist in `preallocation`; requiring it there would confuse registry
+observation with ABI planning. Each descriptor independently rebuilds fresh
+arrays for every relevant `ctx.funcMap` row, occupied function-name count and
+suffix key, live function-binding global, `funcClosureGlobals` key/handle,
+`funcClosureSingletonKeyByFuncIdx` target/key, raw `ctx.mod.globals` name
+count, the complete ordered `ctx.mod.declaredFuncRefs` handle census, every
+sorted `ctx.nativeStrLiteralGlobals` key/current-index/global
+object/name relation, and candidate-owned derived record. No array,
+Map, object projection, or parser result retained by the receipt or a prior
+descriptor may be reused.
+
+The source-callable projection closes the existing pre-support physical gate,
+not just the later ABI draft. Every phase resolves `handle` through
+`definedFuncAt`, proves the exact WasmFunction object and its current `typeIdx`,
+and projects every live WasmFunction field: exact `name=legacyName`, current
+TypeDef object/canonical `[] -> f64` signature, ordered LocalDef array identity/
+count/canonical names and ValTypes, body-array identity/count/canonical
+instructions, and `exported=true`. `preallocation` and `post-support` require
+both exact arrays to be empty and canonical `[]`; this preserves
+`exactAllocatedNumericCallable(..., requireEmptyBody=true)` as a zero-write
+precondition rather than inferring it from a draft created afterward.
+The one authorized Prepared commit may replace both initial empty arrays.
+`pre-body` captures the exact installed locals and body arrays from the
+authenticated receipt; `late`, `pre-publication`, and `post-publication`
+require the same callable object and those retained Prepared array identities.
+Each phase's fresh locals/body counts and canonical projections must equal the
+independently projected `SemanticPreparedCandidateBodyProjection`; neither side
+may reuse a receipt-time projection as the live scan. A foreign TypeDef, a
+same-signature replacement callable, an in-place name/local/export mutation, a
+nonempty early array, or an array replacement after the authorized commit
+rejects in the phase where it appears.
+
+The target/trampoline fields and singleton-map key above are freshly read but
+remain stable `FuncHandle` identities, not absolute module indices. Every ABI
+`currentIndex`, cache-global current index, and metadata-global current index is
+instead resolved afresh from the exact binding/object against the phase-current
+module layout. A descriptor rejects a live absolute function index supplied
+where a stable handle is required, or a receipt-time global/index projection
+supplied where a current one is required.
+
+The native-string literal registry is another raw absolute-global-index
+sidecar. Every projected entry must resolve its current index to the exact live
+`GlobalDef` and close all four fields: expected `__strlit_*` name, immutable
+`ref` ValType with the exact phase-current native/UTF-8 string type index,
+`mutable=false`, and the exact initializer-array identity/count/canonical
+instructions and operands derived from its `u16:` or `u8:` key. Unknown key
+prefixes, duplicate keys, indices below the current import-global prefix, or a
+map/index/object/shape mismatch reject. Before type DCE, pre-existing rows must
+remain field-exact to the independently captured projection; the named
+revision-1 settlement is the only place allowed to accept the corresponding
+type-remapped canonical initializer. The
+standalone prelude must make the existing `""` row non-vacuous before D1
+support. When the test inserts an import global between support and the direct
+owner, `fixupModuleGlobalIndices` shifts every affected
+`nativeStrLiteralGlobals` value exactly once while preserving its key and
+global-object identity, just as it shifts `fnInstanceMetaGlobalByKey`. A later
+reuse of the already interned empty string must return the shifted index and
+same object; materializing the metadata name may add a distinct row only after
+that repair, under the exact `u16:${legacyName}` key and independently derived
+shape. This check is independent of resolving the certified cache and metadata
+globals after name materialization. An in-place mutation is detected by the
+closed projection even though the object identity remains equal.
+
+The fresh UnitId census must equal the frozen route `inventoryUnitIds`, and the
+three freshly selected source-projection anchors must join those live records;
+the complete candidate inventory row is then checked as the stronger terminal
+projection of the prepared-target anchor.
+
+The registry phase formula is closed. `preallocation` requires exactly the one
+source callable under `legacyName`, zero trampoline-name entries, zero
+`funcClosureGlobals` entries for the base or `$n` variants, and zero raw module
+globals named `__fn_closure_${legacyName}`; the target also has no pre-existing
+singleton key. `post-support` and later require
+exactly the source and trampoline `funcMap` objects, exactly one
+`funcClosureGlobals` base-key entry equal to the freshly resolved cache-global
+current index, and
+exactly one raw module global of the expected cache name at that current index and
+object identity, plus the exact target-handle-to-`legacyName` singleton key.
+Every phase closes the live cache `GlobalDef`: exact name,
+`type={kind:"externref"}`, `mutable=true`, and the same initializer-array
+identity containing exactly `[{op:"ref.null.extern"}]`; its canonical
+projection is rebuilt from the object rather than copied from the ABI intent.
+An in-place field or initializer edit rejects even though its locator and
+object identity are unchanged;
+suffix or half-registered pairs reject. Unrelated names remain
+allowed and are retained in the complete arrays so a test cannot pass by
+filtering before the census. `preallocation` has no candidate trampoline
+handle to declare. `post-support` and every later phase require the exact
+stable trampoline handle to occur once in the complete
+`ctx.mod.declaredFuncRefs` array; its order is projected, and unrelated handles
+remain present. Dropping, duplicating, retargeting, or replacing that row is a
+currentness failure even when the trampoline object and ABI draft still exist.
+
+The direct-materialization formula is also phase-exact. `preallocation` has no
+registry entry. `post-support` and `pre-body` require exactly one pending entry
+whose target binding, handle, name, singleton receipt, and physical identities
+match the support projection and whose census is `expectedUseCount=1,
+observedUseCount=0`; both carry allocation revision 0 and an explicitly null
+emitted-initializer identity. The legacy owner body is
+the only permitted consumer. The candidate's paired late-provider
+reauthentication reads this cell but cannot mutate or retake it. `late`
+requires that same revision-0 entry in consumed state with
+`observedUseCount=1`, exactly one freshly built initializer
+identity/canonical projection in that body, and current cache/metadata global
+indices resolved after any intervening global-import shift. `pre-publication` and
+`post-publication` require the same consumed cell after the one post-DCE
+transition to compacted revision 1, reprojected from final locators/module
+objects rather than compared to old raw indices. Missing, replaced,
+consumed-early, duplicate-consumed, foreign, unremapped, or twice-remapped
+entries reject. Aborting before body emission deletes the pending entry and
+proves the legacy fallback has no retained D1 registry state.
+Every resolved absolute function/global index in these descriptors is a fresh
+phase-local projection; the #1916 function handles remain stable, and the
+direct registry's stable key remains target WasmFunction object identity plus
+`targetBindingId` across late-import and DCE remaps.
+
+The trampoline projection also closes every live WasmFunction field at every
+support-bearing phase: exact synthetic name, stable object, current lifted
+TypeDef/canonical signature, the same empty LocalDef array identity/count/
+canonical `[]`, the phase-required body below, and `exported=false`. Its local
+array is independently scanned even though this zero-argument finalizer should
+allocate no scratch locals. An in-place name/type/local/body/export edit cannot
+hide behind stable function-object identity or an unchanged ABI draft.
+
+The method-trampoline finalization sidecar is equally phase-exact and is not
+subsumed by the callable, singleton, or body registries. `post-support` and
+`pre-body` scan the complete live `ctx.pendingMethodTrampolines` array and
+require exactly one row incident to any of the candidate target handle,
+trampoline handle, or trampoline-body identity. That row must join all three
+identities and have `objStructTypeIdx=-1`, `userParamCount=0`, empty
+`wrapperUserParams`, canonical `f64` result, `noThisParam=true`,
+`methodTargetsImport=false`, and absent `explicitThisParam`, `methodUsesThis`,
+and `eagerAsyncPromiseWrap` normalized to `null`. Both handles are #1916 stable
+handles and never follow `fR`. The complete-array incidence rule prevents a
+duplicate or foreign row from disappearing behind a candidate-only filter.
+
+The `pre-body` snapshot alone cannot prove later consumption because the
+registration-time zero-parameter body is already `[call targetHandle]`. Add a
+frontend-free
+`assertCertifiedFunctionValueTrampolineFinalizationCurrent(ctx, receipt,
+expectedState)` and call it at the actual finalizer boundaries. Immediately
+before the primary multi-source `finalizeMethodTrampolines` call after body
+emission, `expectedState="pending"` freshly repeats the complete-array exact-one
+row proof. Immediately after that finalizer, `expectedState="finalized"`
+requires zero candidate-incident rows and the exact final body below. Before
+and after the post-overlay `finalizeMethodTrampolines` call,
+`expectedState="finalized"` repeats the same zero-row/body proof; the D1
+candidate may not be re-enqueued by an overlay. The single-source finalizer
+call has no D1 receipt and is unchanged.
+
+`late`, `pre-publication`, and `post-publication` independently repeat the
+finalized-state proof, but their zero census is not treated as evidence that
+the earlier pending row existed. Every finalized check re-reads the exact
+registered trampoline object and the same in-place body-array identity and
+requires exactly one instruction: a direct `call` whose `funcIdx` is the stable
+candidate target handle. Its canonical form is rebuilt from that live
+instruction, not retained from the pending row or receipt;
+`forwardedTargetHandle` must equal `targetHandle`. These repeated scans ensure
+neither a dropped/duplicate pending row nor a post-finalizer retarget can be
+hidden by later settlement.
+
+Settlement is not a cached acceptance oracle. `pre-publication` independently
+rescans the retained legacy-owner body after DCE and the pre-publication
+repair/peephole/inlining/finalizer passes and requires exactly one initializer
+whose current operands and canonical projection match the compacted cell.
+`post-publication` performs the same fresh exact-one scan plus all closed
+target/trampoline/global shapes and published entries. Neither phase trusts an
+occurrence identity or canonical string cached by settlement without finding
+the exact live objects again.
+
+Publication is not yet the terminal body-mutation boundary on current main:
+`repairCrossHierarchyOperands`, `stackBalance`, and `fixupExternConvertAny`
+run afterward. Add a receipt-conditional
+`MultiPreparedProgramOwner.sealAfterFinalFixups()` immediately after
+`fixupExternConvertAny`. It retains the published ABI entries and freshly
+repeats the compacted initializer census, full target/trampoline WasmFunction
+projections, closed cache/metadata/native-string GlobalDef projections, claim
+ledger, and finalized-trampoline proof. No later codegen step may mutate a D1
+body/local/global/type; the remaining host-import/frame/validation checks are
+read-only. A terminal mismatch is a fatal post-certification compile failure,
+not a repaired or accepted publication. This final audit is a named check over
+the existing six descriptors, not a seventh authority phase.
+
+For allocation revision 0, `post-support`, `pre-body`, and `late` also
+reproject the complete candidate-owned relations in `funcRefWrapperCache`,
+`constructibleFuncRefWrapperCache`, `closureInfoByTypeIdx`,
+`constructibleClosureTypeIdxs`, `fnInstanceMetaSubtypeByBase`, and
+`fnInstanceMetaFamilies`, plus the scalar `fnInstanceMetaStructTypeIdx` and the
+exact `fnInstanceMetaGlobalByKey` row keyed by `0:${legacyName}`. The scalar
+type index must address the same metadata-struct object carried by the
+allocation projection; the metadata-global row's freshly resolved current
+index must address its exact retained `GlobalDef`. Both the cache row and
+allocation projection close that same object's live shape: expected
+`__fn_instance_meta_*` name, `mutable=true`, current
+`ref_null(metadataStructTypeIdx)` ValType, and the same initializer-array
+identity containing exactly one `ref.null` of that current metadata type. The
+canonical ValType and initializer are freshly rebuilt at every revision-0
+scan and reprojected after the authorized type remap at settlement; ABI
+metadata or object identity alone is insufficient. The exact `->f64` cache row must be the
+constructible-base closure-info object. The raw
+`funcRefWrapperCache['->f64']` row must separately be the exact
+`closureInfoByTypeIdx` object for its raw base struct, and the hidden
+`__funcRefWrapperRootTypeIdx` must resolve the exact retained root TypeDef.
+The constructible wrapper's struct is a direct subtype of that raw base, and
+its `funcTypeIdx` equals the raw row's lifted function type. The raw base is
+either the root itself with `superTypeIdx=-1` or a direct subtype of the root;
+the lifted function type's sole leading `ref` parameter names that exact root,
+followed by no user parameters and one `f64` result. The registered trampoline
+WasmFunction's current `typeIdx`/TypeDef/canonical signature and its Program-ABI
+draft signature must equal that lifted type, including the root self
+parameter. For this closed signature the locally recomputed `funcTypeKey` is
+exactly `ref:${rootTypeIdx}|f64`; that key must occur once in
+`ctx.funcTypeCache` and resolve the same type index and TypeDef object. No
+private registry helper or newly exported API is required, and a later
+equivalent type lookup must reuse the row rather than minting a duplicate. The
+raw, constructible-base, and metadata-allocation closure-info
+rows must have the closed zero-param/f64 contract, raw
+`minimumArgumentCount:null`, derived effective minimum zero, and every other
+optional `ClosureInfo` field normalized role-exactly: the ordinary raw-base row
+has `hostOneShotOnly:false` because `observeAllocation(..., "ordinary")`
+materializes that property, while the constructible-base and
+metadata-allocation rows normalize its absence to `null`; all their other
+optional fields use the explicit nulls above. Both
+type indices must be constructible; and the subtype/family edges must be
+exactly base→allocation and allocation→metadata-field. Unrelated registry rows
+remain allowed.
+
+The `late` descriptor is not the last revision-0 registry check. Keep a
+frontend-free lifecycle facade
+`assertCertifiedFunctionInstancePreDceRegistriesCurrent(ctx, receipt,
+consumer)` in the certified-materialization module and call it immediately
+before each later load-bearing consumer: `fillReflectIsConstructor`,
+`fillFunctionInstanceProps`, and `emitIsCtorClosureExport`. The closed
+`consumer` domain is exactly those three names. Each call freshly rebuilds the
+entire raw/root/constructible/metadata projection above from the authenticated
+layout cell and current module objects; it may not reuse the `late` descriptor,
+a prior scan, or generated helper bodies as evidence. The assertion performs
+no allocation or repair. The materialization facade owns only receipt/lifecycle
+phase routing; it delegates every Program-ABI, locator, current-index,
+canonical-signature, stable-handle, and live-layout join to private authority
+implemented in `certified-function-value-authority.ts`. Thus a mutation after
+`sealRoutesComplete` but before any finalizer fails at that consumer boundary
+with no helper/publication prefix.
+
+After DCE these type-index-keyed maps are not current authority:
+revision 1 instead authenticates the exact emitted initializer, final type
+objects/canonical shapes, and ABI locators from the compacted module. No
+pre-DCE relation is silently interpreted under a remapped type index.
+
+The claim formula is phase-exact. The frozen route's three
+`priorClaimed*` arrays and every descriptor's `base.priorClaims` are the
+complete unique/sorted live ledger immediately before D1 registration. In
+`preallocation` and `post-support`, `ownClaim` is null and `liveClaims` must
+equal `priorClaims` exactly. In `pre-body`, `late`, `pre-publication`, and
+`post-publication`, `ownClaim` is exactly the singleton candidate source ID,
+candidate terminal UnitId, and candidate target UnitId. Each own atom must
+occur exactly once in the complete live ledger, must be absent from the frozen
+prior ledger, and the full live ledger must equal the unique sorted union of
+prior plus own. Exact subtraction of own from live must reproduce prior. The
+builder rejects duplicate raw atoms before sorting; it never silently filters
+the candidate. A missing, duplicate, foreign, early, or retained-after-abort
+own claim is therefore observable.
+
+The candidate-owned derived census is equally exact: filter the complete live
+Program-ABI derived records by `terminalOwnerId === candidateUnitId`, reject
+duplicate IDs, and compare the sorted result to the frozen empty route fact.
+An unrelated derived unit is deliberately allowed and must not perturb D1; a
+candidate-owned one withdraws in every phase.
+
+The provider boundary is now the independently reprojected candidate-use graph
+described above, not a purported complete serialization of legacy provider
+maps. The TypeScript adapter runs all existing provider collectors before
+finalization and requires the exact prepared-target singleton, zero candidate
+memberships in every disallowed family, and exact agreement with the neutral
+projection. After finalization, the D1 overlay branch neither
+consumes nor mutates those AST-keyed maps. New ownership that can affect
+emitted state must cross the fresh candidate-use/source-blocker projection,
+claim ledger, registries, certified allocation receipt, or Program ABI, where
+it is rejected. A mutation of a discarded legacy `IrOverlayPlan` provider map
+alone is observationally inert for D1 and remains load-bearing in a paired
+legacy-route control.
+
+`unknown` object identities in the pseudotype above are codegen-local
+reference-equality tokens, never serialized semantic facts. The adapter must
+authenticate them against the live module arrays/registries in every phase.
+`post-support`, `pre-body`, and `late` reproject allocation revision 0;
+`pre-publication` and `post-publication` reproject compacted revision 1 after
+the named settlement hook. Each projection contains the exact constructible
+base wrapper, final metadata subtype, metadata family/global/recipe, and current
+target/trampoline/cache objects plus their closed function/global fields for
+that revision. Pending phases prove there
+is no emitted initializer; `late` and both compacted phases additionally prove
+the exact live initializer. Missing or stale physical identity rejects before
+AST body construction or publication. The canonical strings above are closed,
+lossless field/op/operand projections, not hashes: each is rebuilt from the live
+type, recipe, or emitted instruction object and compared together with
+reference identity, so in-place mutation cannot hide behind a stable object
+token.
+Immediately after `planUnits`, certified singleton allocation, and the two
+support plans, build `post-support` and validate the receipt and all three ABI
+drafts plus the pending direct-materialization entry before AST body
+construction. After the planner returns, central claim registration and the
+Prepared receipt must be reauthenticated in `pre-body` while that entry is
+still pending; this is the descriptor consumed by `sealBodyBoundary`. Only
+after the legacy owner has consumed exactly that entry may `late` include the
+Prepared receipt, neutral singleton selection, and consumed materialization
+census. After DCE and the settlement hook, `sealBeforePublication` builds
+`pre-publication` from compacted revision 1. Only
+`MultiPreparedProgramOwner.complete(publication)` may build
+`post-publication`; it reads and projects the three exact entries from the
+published ABI after publication, and retains the publication object only after
+that projection passes. `sealAfterFinalFixups` does not create another
+descriptor; it rebuilds the compacted physical projection and published-entry
+joins once more after the last mutating fixup and is the terminal acceptance
+audit.
+
+This adapter may read SourceFile `text` but may not traverse an AST or call a
+checker/oracle. The neutral reader compares the snapshot against each newly
+rebuilt descriptor; comparing receipt fields with themselves is forbidden.
+
+These changes are confined to the exact `index.ts`, program-owner,
+function-value planner, scalar-leaf, callback-transport, physical-skip, and
+neutral audit/outcome branches listed in ownership. If their current owners do not hand
+off those lines on or after the re-grounded base, D1 stays blocked.
+
+### Frontend-neutral reader and route receipt
+
+The neutral module exposes a parsed/frozen reader with exact-key lookups and one
+complete `requireBenchLoopFunctionValueProof()`-style operation. A missing or
+ambiguous fact is a typed snapshot failure; no method returns a frontend object
+or accepts a fallback delegate.
+
+The decisive result is a frozen
+`MultiPreparedFunctionValueSemanticProof` containing neutral records and exact
+source/unit/support-intent identities only. Replace the C1 receipt's
+`oracle`, `identity`, and `roleOf` fields with canonical bytes and the
+frozen proof. External evidence may report the canonical-byte SHA-256, but the
+runtime receipt neither computes nor trusts a digest. The route must never
+recreate a declaration oracle after finalization.
+
+Narrow import-target handling for this route into two responsibilities:
+
+- the TypeScript producer proves and records the exact import relationship;
+- the neutral reader resolves that relationship by record IDs and source/unit
+  identities.
+
+Do not delete or weaken
+`resolveMultiPreparedFunctionValueImportTarget`,
+`multiPreparedFunctionValueUseIsCurrent`, or their AST receipt: array,
+Fibonacci, and string routes still consume them. Define a distinct
+`MultiPreparedNeutralFunctionValueLeafRoute` for `bench_loop`, with no
+`valueIdentifier`, `importedCall`, or `declarationReplay`. Extract a
+`LegacyMultiPreparedFunctionValueUseReceipt` for untouched routes and update
+Fibonacci's current `Omit<MultiPreparedFunctionValueLeafRoute, ...>` type
+derivation to use it. Its only other edit threads the distinct certified-support
+callback past the combined planner without changing Fibonacci's legacy
+callback or behavior.
+
+The D1 route may retain its already selected TypeScript declaration solely as
+the existing `MultiPreparedLeafRouteBase` body-lowering handle because Phase E
+has not serialized the lowering program. Neutral facts are the sole authority
+to enter support/body preparation and to choose semantic identity/import/claim
+edges. The AST may construct or reject the body, and the independently
+authenticated successful Prepared-body receipt remains a required conjunct
+before the direct-body skip. The AST handle cannot invent a route, retarget an
+import, allocate support without the proof, or authorize late semantic
+currentness.
+
+After direct owners run, currentness compares the snapshot with a newly rebuilt
+current descriptor, exact route UnitIds, the neutral claim ledger, Prepared
+receipt, neutral singleton selection, support bindings, full Program-ABI
+projection, and body object identity. The later post-publication owner phase
+separately reprojects all three entries from `PublishedProgramAbi` and retains
+the publication object only after they match. Neither phase may call
+`ctx.oracle`, traverse source trees, inspect import parents, re-run graph
+safety, or join ranges back to AST declarations. Snapshot or current-state
+drift after a skip is the existing fatal post-certification invariant with zero
+target legacy rows.
+
+### Mutation-proof and non-vacuous acceptance
+
+Pure schema tests must prove canonical capture-order independence and exact
+parse/reserialize bytes. Mutate one fact at a time and require typed rejection
+for at least:
+
+- wrong schema/record kind, adapter version, frontend version, rule, analysis
+  mode, target-policy or activation-gate field, source inventory/semantic order, source key,
+  source text, UTF-16 length, range bound, declaration-file flag, complete
+  inventory UnitId census, or route-unit anchor role/source/range/name/kind/
+  ordinal/terminal owner;
+- missing, extra, duplicate, reordered, malformed, unknown-purpose, or
+  unknown-role records;
+- null, foreign, dangling, or mismatched declaration kind/name/lexical owner/
+  top-level/export/function-shape field, query owner, binding/call/import link or edge,
+  import/export range, module specifier, callsite owner/range, callee query,
+  argument query, ordinal, or count;
+  for every proven query, add a second distinct declaration to its population
+  and require rejection even when its `valueDeclarationId` is unchanged;
+- wrong candidate, owner, target, terminal owner, UnitId, component census,
+  signature, capture/this/async/rest/constructible flag, wrapper profile,
+  instance metadata,
+  terminal outcome lexical owner/kind/unit ordinal/synthetic role/range,
+  key/name/observed kind/legacy ordinal/line/column/containing owner/class
+  flag/body availability/failure, every draft structural-order field
+  (sourceId/declaration/domain/role/derived ordinal), published ABI
+  source/declaration order, callable/global intent provenance (including a
+  forged cache `unitId`), derived semantic owner, canonical trampoline
+  parameter, carrier intent, support role, or structural-reference key;
+- every reduction field: accumulator, induction variable, initializers, bound,
+  comparison, increment, wrapping update, and return binding; and
+- missing/duplicate/foreign candidate-use rows, an unclassified candidate use,
+  or a false CommonJS/class/module-init/direct-caller-activation/collision/
+  import-alias blocker.
+
+Also mutate complete candidate, component, scalar-leaf-candidate,
+reduction-leaf-candidate, prior-claim, source-blocker, and candidate-use
+populations by drop, duplicate, and foreign insertion. Negative
+fixtures must cause the neutral parser and the existing producer collector to
+agree on the exact prepared-target singleton and every disallowed candidate
+membership; disagreement withdraws. Do not claim that a
+manually deleted negative fact is detectable by schema validation alone—the
+fresh source reprojection is the denominator. A complete extra user source
+with an otherwise valid same-spelled declaration must change eligibility;
+omitting that source from the snapshot or current descriptor fails closed.
+Add one unrelated exact numeric scalar leaf and, separately, one second exact
+reduction leaf under a different name/source. The fresh scalar denominator must
+change from `[]`, the fresh reduction denominator from the required singleton,
+and each fixture must withdraw exactly as the existing planner does.
+
+At least one fixture has two same-spelled declarations in different sources and
+one has a same-spelled but unanchored declaration. Range or spelling equality
+must not satisfy a source-qualified edge. Duplicate and reorder controls must
+contain at least two real rows; singleton “reorder” tests are vacuous.
+
+Route tests must separately prove:
+
+1. poisoning live `valueDeclarationOf`/`declarationsOf` after finalization does
+   not affect the D1 route;
+2. calling the old AST-reattachment path is impossible in production (the
+   implementation and import are absent). A test-only legacy replayer or
+   after-finalization AST-join spy must deliberately cross the forbidden phase
+   boundary and observe the poison; separately, poison the producer before
+   finalization and prove its permitted live queries are load-bearing;
+3. deleting or replacing the producer-side source/identity maps after the
+   canonical record is created does not affect the neutral reader. Prove the
+   TypeScript-produced source projection and neutral-parser projection are
+   independently allocated yet field-exact at capture; inject an unsupported,
+   unbalanced, shadowing, aliased, or second candidate-use construct and require
+   explicit `unknown`/withdrawal rather than an empty projection;
+4. poisoning the live oracle immediately before
+   `prepareCertifiedFunctionValueSupport` still allocates the exact support,
+   while the legacy collector control observes the poison. Independently poison
+   declaration resolution, explicit-`this`, async-body classification,
+   rest-parameter state, and declaration-derived function metadata: the
+   certified singleton path must not touch them, while one exact legacy
+   singleton control must observe each relevant legacy dependency. Assert the
+   D1 receipt and actual lazy cache initializer both use the constructible
+   ordinary-function wrapper and exact `{name, length: 0}` metadata subtype;
+   mutate the wrapper profile, base/allocation type, metadata field/global/init,
+   receipt target binding ID, substitute either support binding ID, or change
+   the ordered `[target, trampoline, cache]` tuple, layout-cell identity/state/
+   revision, or current remapped locator and require
+   zero lazy-cache-initializer/publication prefix. Before the first support
+   write, replace the source callable, its TypeDef, or its body-array object;
+   mutate its name, `[] -> f64`, LocalDef order/name/type, body instructions,
+   or exported flag, including same-object in-place edits; or retain a
+   receipt-time locals/body projection. Require the preallocation gate to
+   reject with zero Program-ABI/support allocation. After Prepared compilation,
+   mutate either retained array, the receipt identities/counts/canonical
+   projections, exported state, or any join and require phase-local rejection.
+   Repeat name/type/local/export mutations against the exact trampoline object.
+   Before DCE, independently delete, retarget, or foreignize the exact `->f64`
+   raw-wrapper cache row, constructible-wrapper cache row, the hidden root
+   wrapper index/object, any raw/root/constructible TypeDef or canonical shape,
+   the lifted function type/root-self parameter or its exact `funcTypeCache`
+   key/index/object row, either
+   base/allocation `closureInfoByTypeIdx` row, either
+   constructible-set membership, the base→allocation metadata-subtype edge,
+   the allocation→field metadata-family edge, `fnInstanceMetaStructTypeIdx`,
+   and the `fnInstanceMetaGlobalByKey['0:'+legacyName]` current-index/object
+   relation. Swap the ordinary raw row's `hostOneShotOnly:false` with an absent
+   value, or add `false` to either row that must normalize absence to `null`;
+   retarget the trampoline's type or ABI draft away from the lifted type.
+   Every mutation must reject before consumption. Repeat representative
+   deletion, foreign-index, and wrong-family mutations in the gap after
+   `sealRoutesComplete` and immediately before each of
+   `fillReflectIsConstructor`, `fillFunctionInstanceProps`, and
+   `emitIsCtorClosureExport`; require the named fresh revision-0 scan to reject
+   before that consumer emits a helper body and before publication. Drop,
+   duplicate, pre-consume,
+   retarget, or replay the direct-materialization entry; require the exact
+   pending→consumed one-shot census, fatal duplicate take, and abort cleanup.
+   Instrument the two physical support opportunities. Require exactly one
+   early singleton allocation, one metadata preparation, one
+   `planUnits([candidateUnitId])`, one Program-ABI support plan, one direct
+   registry registration, one legacy-emitter take, and one late read-only
+   reauthentication. The early allocator, route receipt, registry entry, late
+   validator, and emitter must expose the same target/trampoline/cache objects,
+   stable handles, singleton receipt, and layout-cell identity. Snapshot all
+   module/registry/Program-ABI counters and collections around the late call
+   and require a byte- and identity-exact zero-write delta while it observes
+   `observedUseCount=1`. Calling `ensureFuncClosureSingleton`,
+   `prepareFnMetaSlotOfMeta`, `materializePreparedFnMetaSlot`,
+   `planProgramAbiFunctionValue`, `planUnits`, register, or take a second time
+   is fatal. Drop, duplicate, or foreignize the late receipt-map row, key it by
+   `valuePlan.ownerUnitId` instead of `valuePlan.target.binding.unitId`, or
+   substitute a same-name receipt/layout cell; every mutation must reject with
+   no new allocation or publication prefix. The ordinary adjacent function
+   value must still exercise the unchanged generic late path.
+   In the exact gap after `pre-body`/legacy body emission and immediately
+   before the primary trampoline finalizer, drop or duplicate the candidate's
+   `pendingMethodTrampolines` row, retarget `methodFuncIdx` to a foreign
+   same-signature function, replace `trampolineFuncIdx` or `trampolineBody`, or
+   mutate any wrapper shape/flag; the named pending-state boundary assertion
+   must reject before the finalizer. After that finalizer, require the
+   candidate-incident census to be zero and the canonical body; re-enqueue a
+   candidate row or retarget the live body before the post-overlay finalizer
+   and require its finalized-state precheck to reject. Separately mutate the
+   live body between settlement and each publication scan and require zero
+   publication prefix.
+   Force a late import-global insertion between support allocation and the
+   legacy `main` consumption. Seed and authenticate the pre-existing interned
+   `""` row before support, then prove `fixupModuleGlobalIndices` shifts the
+   affected `nativeStrLiteralGlobals` and `fnInstanceMetaGlobalByKey` values
+   exactly once while preserving their keys/object identities. Reuse `""`
+   after the shift and require the same object at the repaired index; an
+   omitted/double/stale map shift must reject. On the same retained objects,
+   mutate cache/metadata/native-string name, ValType/typeIdx, mutability,
+   initializer array/op/order/operand, and initializer-array identity one at a
+   time; every closed live projection must reject without relying on a changed
+   object identity. Prove the certified emitter
+   materializes the metadata name first, then resolves the cache and metadata
+   globals from their exact retained objects, builds a fresh initializer, and
+   emits current indices; substituting the receipt-time absolute global index
+   or a detached pre-shift initializer must reject before a body/publication
+   prefix.
+   Force non-empty function and type DCE remaps and prove settlement changes
+   revision 0→1 exactly once, resolves the remapped absolute indices/TypeDefs from the
+   final module, and rejects a frozen old index/object, missing/duplicate final
+   initializer, skipped settlement, or second settlement. The same control must
+   prove the #1916 target/trampoline `FuncHandle` values and
+   `funcClosureSingletonKeyByFuncIdx` key remain byte-identical and at or above
+   `STABLE_FUNC_BASE`, while `absoluteFuncIndex` and the authenticated ABI
+   `currentIndex` follow the non-empty `fR`. Supplying a live absolute index as
+   the singleton key or confusing that stable handle with the remapped current
+   index rejects before settlement. Mutate the retained initializer after
+   settlement but before `sealBeforePublication`; the fresh pre-publication
+   body scan must reject, and a separate post-publication scan mutation must
+   not be masked by the settled cell. Inject one body/local/global mutation
+   after `complete` and before each of `repairCrossHierarchyOperands`,
+   `stackBalance`, and `fixupExternConvertAny`, and inject a drift from each
+   real pass; `sealAfterFinalFixups` must reject every survivor before a
+   successful compile result.
+   A paired `Reflect.construct`/function-name/function-length runtime control
+   must match the direct route. Spy that
+   `planUnits([candidateUnitId])` runs exactly once after preallocation and
+   before support planning; drop, duplicate, or retarget its target entry or
+   locator, substitute a foreign registry observation, and replay the callback
+   after the targeted plan. Require exact idempotent target identity or a typed
+   invariant, with zero singleton/support/body allocation on every mismatch;
+5. forged source-ID route claims, owner snapshots, neutral selection, current
+   descriptors, or ABI entries reject without falling into the legacy
+   SourceFile/selection/currentness branches; cover preallocation,
+   post-support, pre-body, late, pre-publication, and post-publication
+   substitution separately. Mutate
+   each fresh registry population independently: the candidate `funcMap`
+   handle, occupied-name count, occupied suffix key, live binding-global name,
+   `funcClosureGlobals` key/handle, singleton target/key, candidate trampoline
+   `declaredFuncRefs` row, raw module-global name count/object, and prior claim.
+   In preallocation/post-support require a null own claim and exact
+   live=prior ledger; in pre-body/late/pre-publication/post-publication drop,
+   duplicate, or foreignize
+   the singleton own source/terminal/target atom and prove the exact
+   union/subtraction formula rejects. Add one unrelated derived record and
+   prove it is inert; add one candidate-owned derived record and require
+   rejection. Separately drop/duplicate/foreignize the exact prepared-target
+   singleton and insert the candidate into each disallowed producer provider
+   family before finalization; every mismatch with the source-derived graph
+   withdraws. Add a sibling top-level function in the candidate source that
+   reads its own `.caller` and, separately, `['arguments']` and
+   `?.["caller"]`; the neutral parser must emit that source in
+   `directCallerActivationSourceIds`, the legacy
+   collector must place the candidate in the direct-activation family, and the
+   route must withdraw. Add one same-spelled receiver shadowed by a nested local
+   and one unresolved same-spelled receiver; the producer's spelling fallback
+   and the neutral parser must still activate. An escaped string/template key
+   at that boundary must return explicit `unknown`, while an unrelated
+   `.caller` property receiver remains a non-blocking control. After
+   finalization, mutating only the
+   discarded legacy plan provider map is inert for D1 but load-bearing in the
+   paired legacy route. At publication, mutate
+   an entry's source order, duplicate/reverse the three declaration orders,
+   forge cache intent provenance, and substitute one exact final index/object.
+   Before publication, mutate each of the five structural-order fields and one
+   authenticated current index independently; none may be reinterpreted as a
+   dense published order;
+6. missing or malformed facts withdraw before the first support allocation,
+   Prepared preparation, direct-body skip, or audit/outcome prefix;
+7. a dropped, duplicated, foreign, range-shifted, or `preserve=false` neutral
+   physical-skip entry rejects before the declaration body is skipped; a
+   foreign/unknown receipt-audit source ID rejects before reconciliation.
+   Poison both SourceFile identity maps after finalization and spy that D1's
+   source-ID receipt lookup remains current without touching them, while the
+   paired legacy SourceFile lookup observes the poison. A
+   dropped/foreign terminal row, owner, selection, or patched evidence rejects
+   in the neutral post-skip audit with zero accepted target outcome prefix.
+   Exercise those same mutations through the actual
+   `recordObservedIrOutcomes` path; spy on every legacy population/owner helper
+   and prove none receives the D1 target, while a legacy sibling row still uses
+   and is load-bearing on the old reconciliation;
+8. tampering canonical bytes, inventory, route IDs, or support intent after
+   certification fails invariantly with no target legacy row; and
+9. a coherent tamper changes a valid semantic/source/target fact, canonicalizes
+   it, recomputes every reported SHA-256, and still rejects against the
+   independently rebuilt current descriptor. A digest-only mismatch is not
+   sufficient evidence. Include a coherent declaration/query/callsite/reduction
+   range shift under unchanged source text and UnitIds; it must reach the
+   preallocation descriptor comparison and reject before any support allocation
+   or Prepared/body write. The all-uses rename control must certify
+   `renamed_reduction` and its derived support names. An armed-but-unmatched or
+   unknown injection also fails.
+
+No new shipping kill switch is allowed. Exact `JS2WASM_TEST_*` seams are
+permitted only when parsed, named, non-vacuous, and removed from ordinary output.
+
+### Optimization and compatibility parity
+
+D1 must preserve the complete existing #4590 evidence, not merely the runtime
+answer:
+
+- the exact `bench_loop` terminal-IR route, zero target legacy rows, imported
+  call edge, terminal ownership, and three Program-ABI bindings;
+- raw and optimized Prepared-versus-direct `bench_loop` body/WAT and normalized
+  trampoline equality;
+- exact ordinary-function constructibility plus observable `name === legacyName`
+  and `length === 0`, with no fourth helper/ABI binding;
+- exports, imports, DTS, helper/import descriptors, string pool, and runtime
+  result `1_783_293_664`;
+- the existing direct kill-switch as an observational control; and
+- non-vacuity through exact route movement, not binary-size drift.
+
+Parity is phase-honest:
+
+- D1a compares against old C1 and the paired direct/generic control on the same
+  exact base. It must explain and lock every type/body/WAT/binary/slot change
+  required by the constructible wrapper and metadata initializer, prove exact
+  `Reflect.construct`, `name`, and `length` behavior, and remeasure the complete
+  #4590 evidence. Add an adjacent ordinary top-level function value that is not
+  the certified early-route target and prove its support call still receives
+  the empty constructible-target set, retains the literal legacy `false`
+  profile, and is byte-identical to old C1. Put distinct string literals before
+  and after the `main` function-value use; prove D1a and D1b allocate the
+  `bench_loop` metadata-name carrier at the same direct-emission point and keep
+  exact string/global order, WAT, and binary bytes. No unrelated artifact may
+  move.
+- The resulting signed D1a artifacts are the corrected C1 baseline. D1b starts
+  only after D1a lands, refreshes every baseline pin from protected `main`, and
+  must produce equal generated Wasm, WAT, Program ABI, outcomes, audits,
+  runtime, and optimization evidence for the exact neutral route and its
+  corrected control.
+- Any physical pin changed by unrelated `main` movement is independently
+  remeasured on clean current `main` and documented. Neither checkpoint
+  receives an unexplained size, runtime, slot, or optimization waiver.
+
+Scalar/array/Fibonacci/string behavior and artifacts, and every host/direct/
+fast/WASI/IR-disabled lane outside the exact corrected `bench_loop`
+function-value comparator, remain unchanged. TypeScript 5 behavior and the
+public compile API also remain unchanged. Fibonacci's only edits are its legacy receipt type derivation and
+the pass-through of a distinct certified-support callback that it never
+consumes; its existing legacy support callback, AST resolver, and currentness
+path are preserved. C1 v1 fixtures continue to parse
+only under their v1 reader; feeding v1 bytes to the D1 reader must yield
+`unsupported-version`.
+
+### Landing gates and honest claim
+
+For D1a, run the complete #4590 suite plus the direct/generic materialization
+control, exact early-allocation/late-reauthentication identity and zero-write
+census, constructibility/name/length runtime mutations, adjacent
+function-value routes, and all static gates below. Land and refresh protected
+`main` before D1b. For D1b, run the pure schema/adapter tests, the complete #4590 suite, declaration replay
+mutations, adjacent scalar/array/Fibonacci/string Prepared routes, callable and
+module-init publication controls affected by the stable #3525 handoff, and the
+current changed-root denominator. Then run TypeScript 7 and TypeScript 5,
+Prettier/Biome, IR layering/dialect/fallback/oracle/optimization/dead-export,
+host-import policy, test-vacuity, and LOC/function regrowth gates.
+
+Keep `multi-prepared-scalar-leaf.ts` at non-positive net LOC and do not add a
+LOC or function-budget allowance for moving the old AST replayer. Run LOC and
+function ratchets immediately before the signed commit. Run every normal
+precommit and prepush hook without a skip. Before each heavy command, commit,
+and push, require a fresh finite, non-negative one-minute load strictly below
+`logical cores - 2` (10 cores means `< 8`).
+
+Acceptance proves Phase D only for the exact standalone `bench_loop`
+function-value route: its declaration/import/reduction/graph/signature/ABI
+facts are serialized with provenance and consumed by a frontend-neutral reader,
+without AST reattachment in route eligibility, support entry, import choice,
+claim ownership, or late semantic currentness. It does **not** prove that
+TypeScript can be unloaded, that body construction/type semantics are
+frontend-neutral, that the prepared body is serialized, that Acorn or
+TypeScript 7 is supported, that every frontend fact is neutral, or that direct
+codegen can be deleted. Those remain Phase E and later checkpoints.
+
+## 2026-09-01 D1a amendment — split physical lifecycle from current authority
+
+The first D1a implementation review made one ownership detail non-optional.
+The one-shot physical lifecycle and the independent Program-ABI currentness
+authority cannot remain both auditable in the single
+`certified-function-value-materialization.ts` file under the repository's
+1,500-line hard ceiling. Compressing the full draft below that ceiling would
+hide phase transitions and repeat currentness joins instead of simplifying
+them. D1a therefore owns one additional dependency leaf:
+
+- `src/codegen/certified-function-value-authority.ts` owns only the exact
+  Program-ABI draft, structural-order, reverse-reference, locator,
+  current-index, canonical-callable-signature, and stable-handle joins, plus
+  private `WeakMap`/`WeakSet` brands for allocation, support, owner-transition,
+  trampoline-finalization, and final-layout authority;
+- `src/codegen/certified-function-value-materialization.ts` owns the exact
+  non-empty receipt census, pending→taken→emitted→settled/aborted lifecycle,
+  atomic publication of one freshly built initializer into the exact live
+  owner body, recursive exact-one body census, and the sole
+  revision-0→revision-1 layout-cell transition. It retains canonical and body-
+  census evidence, never a detached initializer as authority; and
+- `src/codegen/closures/method-trampolines.ts` remains the sole legacy/frontend
+  boundary. It authenticates declaration→UnitId→stable-handle→function and
+  the in-progress `FunctionContext` body before asking the two neutral leaves
+  to bind the current owner transition. Neither neutral leaf may inspect
+  `sourceFunction`, a TypeScript declaration, checker/oracle state, source-file
+  maps, or a `FunctionContext`.
+
+The dependency direction is strict: method trampolines may import the lifecycle
+leaf; the lifecycle leaf may import the authority leaf; neither leaf may import
+method trampolines, `src/codegen/index.ts`, `func-space.ts`,
+`program-abi-planning.ts`, `registry/imports.ts`, a multi-prepared owner, a
+frontend, or an IR backend. Runtime imports from apparently neutral IR binding
+helpers are also forbidden when their transitive graph reaches `ts-api`.
+Stable function joins use `absoluteFuncIndex` from
+`src/emit/resolve-layout.ts`. Callable-signature comparisons use canonical
+semantic equality because `currentCallableSignature()` returns a fresh frozen
+object. `resolveCurrentIndex` receives the current module, never a locator;
+exact locator identity is checked independently.
+
+Authority is phase-specific and cannot be synthesized from caller-supplied
+opaque objects or caller-supplied canonical strings:
+
+1. allocation authenticates the exact target UnitId/binding/key, source
+   callable object and stable handle, current callable signature,
+   candidate-scoped absence of the exact trampoline/cache IDs, locators, and
+   registry rows, and allocation-era type/global objects before the first
+   write. Unrelated support artifacts remain valid;
+2. the post-allocation support result independently rejoins the exact target,
+   one `function-value-trampoline` support callable, and one
+   `function-value-cache` support global against their Program-ABI drafts,
+   structural roles, locators, current positions, and retained objects before
+   the singleton receipt is minted;
+3. early registration records the exact expected legacy owner
+   UnitId/handle/function and issues one one-shot branded owner-transition
+   request. A generally callable leaf API may not mint authority from a plain
+   owner tuple. At take, the method-owned boundary consumes that exact request,
+   proves the same owner plus `ctx.currentFunc === fctx` and the exact compiling
+   body, and returns it to the authority leaf, which rejoins the submitted
+   neutral tuple to the stored early owner. Final settlement requires that
+   exact function to own that exact body after normal body installation;
+4. prepared-target installation and trampoline finalization are authenticated
+   one-shot transitions over retained array identities and lifecycle-derived
+   canonical bytes, never callbacks that canonicalize their own values; and
+5. post-DCE settlement derives the current metadata type index from the final
+   module, proves the remapped `$fnmeta` field points to that index, rejoins all
+   current locators/signatures/handles/globals/types and the exact-one owner
+   initializer, then performs the sole layout-cell mutation.
+
+Prepared-target installation crosses one narrow neutral callback seam. Early
+D1 registration returns an opaque prepared-install request only after the
+exact target and legacy-owner UnitIds have both joined the certified candidate.
+The codegen owner retains that request in its existing support receipt, keyed
+by the exact target UnitId, and seals the one-receipt expected census before
+entering `prepareIrBodies`. Before IR's patch loop starts, codegen must prove
+that every retained request key is one exact selected physical target and that
+no request is missing, duplicated, foreign, already consumed, or associated
+with a deferred component.
+
+`IrIntegrationOptions` gains only this optional structurally neutral hook:
+
+```ts
+readonly onPreparedUnitCallableInstalled?: (
+  artifactUnitId: IrUnitId,
+) => void;
+```
+
+The normal non-deferred patch branch invokes it exactly once, immediately
+after `replaceUnitCallableAt(...)` returns the installed callable and before
+`settlePreparedDerivedCallable(...)` or compiled/evidence bookkeeping. The
+hook is not called by orphan-stub recovery, failed/withdrawn patches, or
+`deferPreparedPublication`; it receives no function, array, index, receipt,
+request, context, or canonical string. `prepareIrBodies` merely forwards the
+hook. A codegen closure looks up the UnitId in its private request map and asks
+the lifecycle leaf to stage the live target; unrelated successfully installed
+units are ignored, while the exact target must consume its request once. After
+`prepareIrBodies` returns, codegen requires that exact one-entry request census
+to be fully consumed. A callback throw is an invariant failure of the compile
+invocation, never a typed legacy fallback or permission to continue emitting a
+direct owner against an unstaged target.
+
+The D1 route does not use aggregate/deferred cross-source publication. Deferred
+patches install later through prepared-component publication and therefore
+must never consume a D1 request through this seam. Supporting that lane would
+require a separately planned publication-time neutral capability after the
+aggregate ABI commit; it is not D1a scope. Add non-vacuous controls for a
+missing exact callback, wrong/foreign target key, duplicate invocation,
+invocation before replacement, replay after staging, and an unrelated installed
+unit beside the exact target. Every failure leaves the legacy owner body and
+D1 lifecycle state unchanged; no failure may publish a compiled/evidence row
+for the exact target.
+
+The bounded authority leaf may document the existing
+`function-value-cache` global-role ordinal `2` locally and must validate it
+through a fresh `structuralOrder.forUnit` result. It must not import the general
+Program-ABI planner merely to read that constant. Extracting all global-role
+constants into another shared module is follow-up refactoring, not D1a scope.
+
+Add non-vacuous mutations for an unbranded/cross-context allocation proof, a
+no-op or foreign support observation, a real nonidentity metadata-type DCE
+remap, nested instruction and initializer drift between prepare and publish, a
+foreign/duplicate/shared-body owner, a self-certifying phase/final proof, and
+two parent edges aliasing the same initializer array. Every pre-publication
+mutation must leave the owner body and lifecycle state unchanged; every
+post-certification mutation must fail invariantly. The recursive census counts
+parent-edge occurrences and uses only an active recursion stack for cycle
+protection, never a global visited set that collapses aliases.
+
+This amendment adds no route, backend instruction, optimization exception,
+kill switch, LOC allowance, or physical artifact change. The authority and
+lifecycle leaves and `method-trampolines.ts` remain at or below the 1,500-line ceiling;
+existing giant-file and total-LOC ratchets remain non-growing. All original
+D1a/D1b ordering, exact #4590 parity, strict load gate, normal hooks, protected
+merge queue, and fresh Sol exact-byte review requirements remain unchanged.
+
+## 2026-09-01 D1a amendment — extract physical evidence from lifecycle authority
+
+The repaired D1a draft proved that the preceding two-leaf split is still one
+neutral boundary short. After the first exact Sol audit closed singleton
+overwrite, transition replay, mutable-layout escape, native-witness replay,
+canonical-clone publication, and incomplete terminal-currentness false-passes,
+the honest authority and lifecycle implementations measured about 1,750 and
+1,700 lines. Consolidating their duplicate registries and recipes removed real
+code, but the remaining phase joins cannot fit below 1,500 without either
+hiding them in dense conditionals or treating canonical strings as authority.
+Neither is acceptable. D1a therefore owns one final dependency leaf:
+
+- `src/codegen/certified-function-value-evidence.ts` owns only immutable
+  physical evidence: the canonical instruction/value walker, exact array and
+  top-level/nested occurrence identity/path captures, native-name before/after
+  index-space snapshots and exact zero-or-one-global witness, and final
+  publication-recipe/occurrence reprojection;
+- `src/codegen/certified-function-value-authority.ts` continues to own every
+  Program-ABI/current-layout join and every receipt, support, owner-transition,
+  trampoline, and settlement authority brand. It may consume branded physical
+  evidence but may not move a lifecycle transition into the evidence leaf; and
+- `src/codegen/certified-function-value-materialization.ts` continues to own
+  the pending/taken/emitted/settled-or-aborted registry, the sole native-name
+  callback invocation, atomic owner-body publication, prepared-install and
+  trampoline transitions, and the sole revision-zero to revision-one commit.
+
+The runtime dependency graph is acyclic and exact:
+
+```text
+method-trampolines
+        |
+        v
+certified-function-value-materialization
+        |                         |
+        v                         v
+certified-function-value-authority ---> certified-function-value-evidence
+```
+
+The evidence leaf is the bottom dependency. It may import Wasm/IR value types
+and codegen context types with `import type`, but it may not import the
+authority or lifecycle leaves, method trampolines, `index.ts`, `func-space.ts`,
+Program-ABI planning, registry/import owners, a multi-prepared owner, a
+frontend, an IR backend, or `ts-api`. Authority and materialization may both
+consume its branded read-only evidence. No evidence token is accepted by
+structural shape, canonical text, a caller-supplied phase, or a caller-built
+receipt census.
+
+Physical evidence is not permission to mutate. The evidence leaf may read the
+module/context surfaces explicitly passed by its callers and may mutate only
+its own private `WeakMap`/`WeakSet` brand state. It must not allocate a Wasm
+function/global/type, invoke the native-name callback, write an owner body,
+change a Program-ABI session, or advance the D1 lifecycle. A native-name
+witness is prepared before the callback and consumed exactly once afterward;
+it retains exact map key, object, absolute/current index, name, ValType,
+mutability, initializer-array identity, canonical initializer, and the complete
+bounded import/function/type/global side-space snapshot. Cache hit permits no
+index-space delta; cache miss permits exactly one matching literal global and
+no unrelated delta. Callback throw terminally consumes the lifecycle attempt.
+
+Publication evidence retains the exact pushed instruction objects and every
+nested array path, plus a fresh canonical projection. Revision zero requires
+those exact occurrences. The branded post-DCE settlement may refresh canonical
+operands only over the same six retained top-level arrays, owner-body array,
+and published occurrence identities; it never accepts a replacement array or
+canonical clone. Revision one captures the refreshed canonicals over those same
+objects, and the terminal audit re-finds exactly one occurrence and rejoins the
+current Program ABI, type cells, globals, and native-name witness. Aliased
+parent edges are counted per occurrence; an active recursion stack rejects
+cycles without globally collapsing aliases.
+
+This extraction changes no route, hook, ABI, instruction, native-string
+allocation policy, optimizer, fixture, expected binary, or acceptance oracle.
+It grants no LOC or function-budget exception. The authority, evidence,
+materialization, and method-trampoline leaves must each remain at or below
+1,500 lines, the existing oversized-file ratchets must not regrow, and all
+three neutral leaves require a fresh exact-byte Sol review before the D1a PR is
+marked ready. The original strict load gate, normal precommit/prepush hooks,
+protected merge queue, D1a-before-D1b order, and full #4590 artifact/runtime
+parity remain mandatory.
+
+### Frozen implementation handoff
+
+The 2026-09-01 repair session stopped before publication and left no staged,
+committed, or pushed compiler/test bytes. Its reproducible local checkpoint is
+the worktree `/private/tmp/js2-4617-d1a-function-value-baseline`, branch
+`codex/4617-d1a-function-value-baseline`, based on
+`c11206262088a69815d6126787b10942df148b6d`. The two unfinished core leaves are:
+
+- `certified-function-value-authority.ts`: 1,725 lines, SHA-256
+  `ed9d3c00117059c9a43c847c710a594baf7a34ac528757a2f9707638ef8591b1`; and
+- `certified-function-value-materialization.ts`: 1,649 lines, SHA-256
+  `c853e9ef6946cfd4ec248bdbe1d0cd4b17ac7e51b5559fa9ab99f9406e2bbaa5`.
+
+Those bytes close unconditional active-singleton rejection, one-shot owner
+request/transition linkage, private layout state, prewrite physical
+reauthorization, private registry-entry/seal state, staged prepared installs,
+one-shot native-name witnessing, exact published occurrence identity, and the
+settlement-token dispatcher. They are not acceptance-ready: both exceed the
+hard 1,500-line ceiling, the evidence leaf is absent, and settlement-only
+canonical reprojection is still outstanding. Current `git diff --check`
+passes; the last TS7 typecheck passed before the final small edits and therefore
+must not be treated as a validation of these exact hashes.
+
+The unfinished test migration is
+`tests/issue-4617-certified-function-value-materialization.test.ts`, 1,522
+lines, SHA-256
+`4c22a6cf1d5464db7db2ec86ffcff31ccac1c318941c1f7cc03fdf5c8e146b34`.
+It begins the ctx-only lifecycle and opaque-layout conversion but retains stale
+old-arity negative cases and lacks the required second-receipt, native-witness,
+occurrence, settlement, and terminal-revision coverage. It was not formatted,
+typechecked, or run after its final edits. A continuation must first extract
+the evidence leaf, wire it through the two core leaves, bring all three below
+their ratchets, finish the test migration, and then run the full strict-gated
+validation and fresh exact-byte Sol review. It must not present this frozen
+checkpoint as a draft implementation PR or acceptance evidence.

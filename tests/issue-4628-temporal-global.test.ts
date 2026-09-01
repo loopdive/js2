@@ -170,9 +170,24 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(report.provider.binaryBytes).toBeGreaterThan(1_000_000);
 
     const s = report.supported;
-    for (const [label, probe] of Object.entries(s) as [string, { status: string }][]) {
-      expect(`${label}:${probe.status}`).toBe(`${label}:ok`);
-    }
+    // (#5227 / #5243) Report the stale-provider hypothesis BEFORE the row
+    // assertions, and report ALL failing rows rather than only the first.
+    // The provider cache is content-addressed on the polyfill source, which a
+    // compiler change does not touch, so a hit serves a binary built by
+    // whatever compiler ran last in this container. Measured 2026-08-31: a
+    // 17-hour-old default cache failed five of these rows at once on a branch
+    // where all five pass fresh, and the single-row assertion below read as a
+    // specific regression in recent work.
+    const failing = (Object.entries(s) as [string, { status: string; error?: string }][])
+      .filter(([, probe]) => probe.status !== "ok")
+      .map(([label, probe]) => `${label}: ${probe.error ?? probe.status}`);
+    const staleHint =
+      failing.length > 0 && report.provider?.cacheHit === true
+        ? ` — NOTE: the provider was served from CACHE (${report.provider.cacheAgeHours ?? "unknown"}h old) and was ` +
+          `NOT built by this working tree's compiler. Re-run with JS2WASM_TEMPORAL_CACHE set to a fresh directory ` +
+          `before treating this as a regression.`
+        : "";
+    expect(`supported failures: ${failing.join(" | ")}${staleHint}`).toBe("supported failures: ");
 
     // THE headline. On base this program answers "undefined".
     expect(s.typeofTemporal.value).toBe("object");
@@ -223,6 +238,37 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     expect(s.staticFrom.value).toBe("2026-08-30");
     expect(s.staticFromField.value).toBe("2026");
     expect(s.staticCompare.value).toBe(-1);
+    // (#5243) The first Temporal ARITHMETIC row to answer correctly through the
+    // provider. On base it threw `Cannot destructure 'null' or 'undefined'`
+    // from the ISO calendar's `dateAdd(e, {years = 0, …}, i)`: the record
+    // `Wr(e) → { ...t.date, days: n }` is an object literal with a SPREAD, so
+    // it is built on the host and returns an `externref`, which `coerceType`
+    // then `ref.test`ed against `Wr`'s inferred `__anon_*` record type and, on
+    // failure, replaced with `ref.null`. The object-ARGUMENT rows
+    // (`add({days: 1})`) stay in knownGaps — that is #5225's seam, not this.
+    expect(s.arithmeticAddString.value).toBe("2020-03-05");
+    // (#5225) The object-ARGUMENT family, promoted out of knownGaps. A value
+    // minted in the CONSUMER reached the polyfill as a raw WasmGC struct, and
+    // every read path in the provider resolved `__struct_field_names` /
+    // `__sget_<field>` from the module that was RUNNING rather than the module
+    // that MINTED it. On base: "year is required" / "invalid duration-like" /
+    // three WebAssembly.Exceptions.
+    expect(s.staticFromObject.value).toBe("2020-03-04");
+    expect(s.durationFromObject.value).toBe("P1D");
+    expect(s.arithmeticAddDuration.value).toBe("2020-03-05");
+    expect(s.arithmeticSubtract.value).toBe("2020-03-03");
+    expect(s.arithmeticWith.value).toBe("2021-03-04");
+    // (#5226) Error IDENTITY, which is what test262's `assert.throws(RangeError,
+    // …)` actually checks. A `new` on a provider class is a direct wasm→wasm
+    // call with no JS frame, and every module owned a PRIVATE exception tag —
+    // so the consumer's `catch` never matched, the payload fell into
+    // `catch_all`, and the binding was `undefined` ("no-E|n=undefined" on base).
+    // The other two rows already answered correctly on base (a static reached
+    // through the seam is called via a host mirror) and are asserted so a
+    // regression on the route that worked is loud.
+    expect(s.errCtorOutOfRange.value).toBe("RE|n=RangeError");
+    expect(s.errFromEmptyObject.value).toBe("TE|n=TypeError");
+    expect(s.errFromBadString.value).toBe("RE|n=RangeError");
 
     // The compile-once claim, as a measurement rather than a comment: a
     // second consumer must not re-pay the provider build. Prepending the
@@ -233,15 +279,11 @@ describe("#4628 — the polyfill compiled as a linked provider (heavy)", () => {
     // was measured about each. Asserting only their presence keeps the list
     // honest without pinning today's failure text.
     expect(Object.keys(report.knownGaps).sort()).toEqual([
-      // (#5241) The arithmetic family joined the list. It is NOT a new
-      // regression: these throw identically on #5241's base through the
-      // provider. They are recorded because #5241 changed what they do in the
-      // single-module control — `undefined` (never called) became a real
-      // in-polyfill TypeError — which is the evidence that the extern-class
-      // hijack is gone and the residual belongs elsewhere. See the harness.
-      "arithmeticAddDuration",
-      "arithmeticSubtract",
-      "arithmeticWith",
+      // (#5225) The arithmetic family LEFT this list — it was the object
+      // ARGUMENT crossing the provider seam, and it is asserted above now.
+      // What remains is three rows that are not seam defects: two are #5221's
+      // null deref (identical single-module) and one is a missing
+      // `Symbol.toStringTag` wiring reproduced on a plain user class.
       "instanceToStringTag",
       "nowPlainDateISOCall",
       "nowTimeZoneIdCall",

@@ -12,10 +12,40 @@ import {
   PROVIDER_LINKER_ABI_VERSION,
   type ProviderManifestV1,
 } from "./provider-manifest.js";
-import { buildCompiledImports as buildCompiledImportsRuntime, wrapLinkedProviderValue } from "./runtime.js";
+import {
+  buildCompiledImports as buildCompiledImportsRuntime,
+  registerLinkedConsumerModule,
+  registerLinkedProviderModule,
+  wrapLinkedProviderValue,
+} from "./runtime.js";
 
 function wasmBytes(binary: Uint8Array): BufferSource {
   return binary as unknown as BufferSource;
+}
+
+/**
+ * (#5226) The one exception tag a linked graph throws and catches with.
+ *
+ * Wasm matches a `catch` clause by tag IDENTITY, so a module-local tag per
+ * module makes a provider's `throw` uncatchable by its consumer: the payload
+ * fell through to `catch_all`, whose `__get_caught_exception()` never saw a host
+ * frame and answered `undefined`. Both halves import `env.__exn`; installing the
+ * SAME `WebAssembly.Tag` object on both import objects is what makes the
+ * crossing lossless — the host-native `RangeError` arrives by identity, so
+ * `instanceof`, `name`, `message` and own props all survive.
+ *
+ * One tag per PROCESS rather than per graph: tags carry no state, and the only
+ * way two graphs' frames interleave is one calling the other, where sharing is
+ * exactly what is wanted.
+ */
+let sharedExceptionTag: WebAssembly.Tag | undefined;
+
+export function installSharedExceptionTag(imports: WebAssembly.Imports): void {
+  const Tag = (WebAssembly as unknown as { Tag?: new (t: { parameters: string[] }) => WebAssembly.Tag }).Tag;
+  if (!Tag) return;
+  sharedExceptionTag ??= new Tag({ parameters: ["externref"] });
+  const env = ((imports as Record<string, unknown>).env ??= {}) as Record<string, unknown>;
+  env.__exn = sharedExceptionTag;
 }
 
 /**
@@ -186,8 +216,12 @@ export function instantiateLinkedProviders(
   rootImports: WebAssembly.Imports,
 ): ReadonlyMap<string, WebAssembly.Exports> {
   const providerExports = new Map<string, WebAssembly.Exports>();
+  // (#5226) The consumer's own import object needs the tag too — it is the
+  // module that CATCHES what a provider throws.
+  if (artifacts.length > 0) installSharedExceptionTag(rootImports);
   for (const artifact of artifacts) {
     const providerImports = buildProviderImportObject(artifact, rootImports);
+    installSharedExceptionTag(providerImports);
     for (const dependency of artifact.dependencies) {
       const exports = providerExports.get(dependency);
       if (!exports) throw new Error(`Missing linked provider dependency ${dependency}`);
@@ -197,6 +231,11 @@ export function instantiateLinkedProviders(
     wireProviderInstance(artifact, providerImports, instance);
     const manifest = decodeLinkedProviderManifest(artifact);
     const rawExports = instance.exports as Record<string, Function>;
+    // (#5225) Register unconditionally: a provider whose whole export surface is
+    // plain FUNCTIONS never reaches `wrapLinkedProviderValue` (the loop below
+    // skips `kind === "function"`), yet its `__extern_get` is exactly where a
+    // consumer-minted argument arrives undecodable.
+    registerLinkedProviderModule(rawExports);
     const exposedExports: Record<string, any> = { ...rawExports };
     for (const boundary of Object.values(manifest.exportBoundaries)) {
       if (boundary.kind === "function") continue;
@@ -213,7 +252,14 @@ export function instantiateLinkedProviders(
 }
 
 /** Wire root runtime lifecycle state after a consumer instance is created. */
-export function wireCompiledInstance(imports: WebAssembly.Imports, instance: WebAssembly.Instance): void {
+export function wireCompiledInstance(
+  imports: WebAssembly.Imports,
+  instance: WebAssembly.Instance,
+  // (#5225) Only a LINKED consumer joins the cross-module decoder registry; a
+  // lone module must keep the registry empty so every read stays byte-identical.
+  linked = false,
+): void {
   const setInstance = (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance;
   setInstance?.(instance);
+  if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>);
 }
