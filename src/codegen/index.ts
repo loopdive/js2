@@ -13817,8 +13817,9 @@ export function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.
 function inferLetConstInitializerWasmType(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  initializer: ts.Expression | undefined,
+  declaration: ts.VariableDeclaration,
 ): ValType | null {
+  const initializer = declaration.initializer;
   if (!initializer) return null;
   // (#4376) Keep the authoritative pre-hoisted slot type in lockstep with
   // compileVariableStatement. A buffer-backed typed array is represented by a
@@ -13840,6 +13841,19 @@ function inferLetConstInitializerWasmType(
       // Wasm locals must be defaultable. The call emitter materializes the
       // concrete target before the initializer is stored into this slot.
       return { kind: "ref_null", typeIdx: target.typeIdx };
+    }
+    if (
+      (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+      genericFactory.sourceResultAbi === true &&
+      (target.kind === "externref" || target.kind === "ref_extern")
+    ) {
+      const source = resolveWasmType(ctx, genericFactory.sourceConstraint);
+      if (source.kind === "ref" || source.kind === "ref_null") {
+        // An unmaterializable logical T does not change what the proven fresh
+        // factory allocated. Preserve that source carrier in the authoritative
+        // pre-hoisted slot so its physical fields remain observable.
+        return { kind: "ref_null", typeIdx: source.typeIdx };
+      }
     }
   }
 
@@ -14133,7 +14147,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
               : isNullablePrimitiveType(varType)
                 ? { kind: "externref" }
                 : (hoistInferredArrayVecType ??
-                  inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                  inferLetConstInitializerWasmType(ctx, fctx, decl) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance

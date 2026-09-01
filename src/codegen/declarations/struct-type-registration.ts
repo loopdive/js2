@@ -61,8 +61,11 @@ const typescriptZeroCostNodeBrands = new Set([
   "_updateExpressionBrand",
 ]);
 
-function isTypeScriptSyntaxTypesSource(sourceFile: ts.SourceFile): boolean {
-  return /(?:^|\/)src\/compiler\/types\.ts$/.test(sourceFile.fileName.replace(/\\/g, "/"));
+export function isTypeScriptZeroCostSyntaxTypesSource(sourceFile: ts.SourceFile): boolean {
+  return (
+    /(?:^|\/)src\/compiler\/types\.ts$/.test(sourceFile.fileName.replace(/\\/g, "/")) &&
+    /never actually given values\.\s+At runtime they have zero cost\./.test(sourceFile.getFullText())
+  );
 }
 
 function constantStringValue(
@@ -157,8 +160,7 @@ function isRuntimeErasedNominalBrand(ctx: CodegenContext, symbol: ts.Symbol): bo
     ) &&
     (symbolType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Never)) !== 0 &&
     sourceFile !== undefined &&
-    isTypeScriptSyntaxTypesSource(sourceFile) &&
-    /never actually given values\.\s+At runtime they have zero cost\./.test(sourceFile.getFullText());
+    isTypeScriptZeroCostSyntaxTypesSource(sourceFile);
 
   if (erased) {
     const visit = (node: ts.Node): void => {
@@ -218,11 +220,15 @@ function typescriptSharedSyntaxNodeCarrier(
     ?.filter((candidate): candidate is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(candidate));
   // Concrete literal and type-member nodes are flattened multiple-heritage
   // views and therefore already share Node's carrier below. Their common
-  // parser return types are otherwise single-base interfaces: LiteralLikeNode
-  // and TypeElement. NodeFactory deliberately allocates their concrete values
-  // on the Node carrier, so materializing either intermediate view as a
+  // parser return types are otherwise single-base interfaces. The same is true
+  // of the union/intersection factory: it allocates through createBaseNode and
+  // installs `types` afterward. Materializing any of these producer views as a
   // distinct nominal struct would turn the real value into null at the parser
   // return boundary.
+  const isHostUnionOrIntersectionAllocationView =
+    !ctx.standalone &&
+    !ctx.wasi &&
+    (declaration.name.text === "UnionTypeNode" || declaration.name.text === "IntersectionTypeNode");
   const allocationViewBaseName =
     declaration.name.text === "LiteralLikeNode"
       ? "Node"
@@ -230,18 +236,25 @@ function typescriptSharedSyntaxNodeCarrier(
         ? "NamedDeclaration"
         : declaration.name.text === "PropertyAccessChain"
           ? "PropertyAccessExpression"
-          : undefined;
+          : isHostUnionOrIntersectionAllocationView
+            ? "TypeNode"
+            : undefined;
+  const hasExactMergedTypeNodeBase =
+    isHostUnionOrIntersectionAllocationView &&
+    recordsExactInterfaceCarrierAlias(ctx, baseTypes[0]?.getSymbol()) &&
+    ctx.structMap.get("TypeNode") === ctx.structMap.get("Node");
+  const hasEligibleAllocationViewBase = isHostUnionOrIntersectionAllocationView
+    ? hasExactMergedTypeNodeBase
+    : directBaseDeclarations?.length === 1 && directBaseDeclarations[0]?.getSourceFile() === sourceFile;
   const isSingleBaseSyntaxAllocationView =
     allocationViewBaseName !== undefined &&
     declarations?.length === 1 &&
     declarations[0] === declaration &&
     baseTypes.length === 1 &&
     baseTypes[0]?.getSymbol()?.name === allocationViewBaseName &&
-    directBaseDeclarations?.length === 1 &&
-    directBaseDeclarations[0]?.getSourceFile() === sourceFile;
+    hasEligibleAllocationViewBase;
   if (
-    !isTypeScriptSyntaxTypesSource(sourceFile) ||
-    !/never actually given values\.\s+At runtime they have zero cost\./.test(sourceFile.getFullText()) ||
+    !isTypeScriptZeroCostSyntaxTypesSource(sourceFile) ||
     !interfaceTypeDescendsFromNode(ctx, type) ||
     (baseTypes.length < 2 && !isSingleBaseSyntaxAllocationView)
   ) {
@@ -317,10 +330,10 @@ export function collectInterface(ctx: CodegenContext, decl: ts.InterfaceDeclarat
     // installs kind-specific properties afterward. Most single-heritage
     // syntax views keep their existing specialized carrier machinery, but a
     // multiple-heritage view is flattened and cannot be materialized by that
-    // base allocation. LiteralLikeNode is the one single-base producer view
-    // that must follow its flattened LiteralExpression descendants. Keeping
-    // those views on Node sends derived reads/writes through the existing
-    // dynamic sidecars instead of growing the shared constructor layout.
+    // base allocation. The explicit single-base producer views above must
+    // follow the same carrier for the same reason. Keeping those views on Node
+    // sends derived reads/writes through the existing dynamic sidecars instead
+    // of growing the shared constructor layout.
     sealNominalStructParent(ctx, sharedSyntaxNodeCarrier.typeIdx);
     recordExactInterfaceCarrierAlias(ctx, interfaceType.getSymbol());
     ctx.structMap.set(name, sharedSyntaxNodeCarrier.typeIdx);

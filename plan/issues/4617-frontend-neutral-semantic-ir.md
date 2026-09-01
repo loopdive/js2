@@ -32,6 +32,7 @@ files:
   - src/ir/program.ts
   - src/ir/prepared-component-sealing.ts
   - src/codegen/certified-function-value-authority.ts
+  - src/codegen/certified-function-value-evidence.ts
   - src/codegen/certified-function-value-materialization.ts
   - src/codegen/closures.ts
   - src/codegen/closures/method-trampolines.ts
@@ -3723,8 +3724,124 @@ parent-edge occurrences and uses only an active recursion stack for cycle
 protection, never a global visited set that collapses aliases.
 
 This amendment adds no route, backend instruction, optimization exception,
-kill switch, LOC allowance, or physical artifact change. Both new neutral
-files and `method-trampolines.ts` remain at or below the 1,500-line ceiling;
+kill switch, LOC allowance, or physical artifact change. The authority and
+lifecycle leaves and `method-trampolines.ts` remain at or below the 1,500-line ceiling;
 existing giant-file and total-LOC ratchets remain non-growing. All original
 D1a/D1b ordering, exact #4590 parity, strict load gate, normal hooks, protected
 merge queue, and fresh Sol exact-byte review requirements remain unchanged.
+
+## 2026-09-01 D1a amendment — extract physical evidence from lifecycle authority
+
+The repaired D1a draft proved that the preceding two-leaf split is still one
+neutral boundary short. After the first exact Sol audit closed singleton
+overwrite, transition replay, mutable-layout escape, native-witness replay,
+canonical-clone publication, and incomplete terminal-currentness false-passes,
+the honest authority and lifecycle implementations measured about 1,750 and
+1,700 lines. Consolidating their duplicate registries and recipes removed real
+code, but the remaining phase joins cannot fit below 1,500 without either
+hiding them in dense conditionals or treating canonical strings as authority.
+Neither is acceptable. D1a therefore owns one final dependency leaf:
+
+- `src/codegen/certified-function-value-evidence.ts` owns only immutable
+  physical evidence: the canonical instruction/value walker, exact array and
+  top-level/nested occurrence identity/path captures, native-name before/after
+  index-space snapshots and exact zero-or-one-global witness, and final
+  publication-recipe/occurrence reprojection;
+- `src/codegen/certified-function-value-authority.ts` continues to own every
+  Program-ABI/current-layout join and every receipt, support, owner-transition,
+  trampoline, and settlement authority brand. It may consume branded physical
+  evidence but may not move a lifecycle transition into the evidence leaf; and
+- `src/codegen/certified-function-value-materialization.ts` continues to own
+  the pending/taken/emitted/settled-or-aborted registry, the sole native-name
+  callback invocation, atomic owner-body publication, prepared-install and
+  trampoline transitions, and the sole revision-zero to revision-one commit.
+
+The runtime dependency graph is acyclic and exact:
+
+```text
+method-trampolines
+        |
+        v
+certified-function-value-materialization
+        |                         |
+        v                         v
+certified-function-value-authority ---> certified-function-value-evidence
+```
+
+The evidence leaf is the bottom dependency. It may import Wasm/IR value types
+and codegen context types with `import type`, but it may not import the
+authority or lifecycle leaves, method trampolines, `index.ts`, `func-space.ts`,
+Program-ABI planning, registry/import owners, a multi-prepared owner, a
+frontend, an IR backend, or `ts-api`. Authority and materialization may both
+consume its branded read-only evidence. No evidence token is accepted by
+structural shape, canonical text, a caller-supplied phase, or a caller-built
+receipt census.
+
+Physical evidence is not permission to mutate. The evidence leaf may read the
+module/context surfaces explicitly passed by its callers and may mutate only
+its own private `WeakMap`/`WeakSet` brand state. It must not allocate a Wasm
+function/global/type, invoke the native-name callback, write an owner body,
+change a Program-ABI session, or advance the D1 lifecycle. A native-name
+witness is prepared before the callback and consumed exactly once afterward;
+it retains exact map key, object, absolute/current index, name, ValType,
+mutability, initializer-array identity, canonical initializer, and the complete
+bounded import/function/type/global side-space snapshot. Cache hit permits no
+index-space delta; cache miss permits exactly one matching literal global and
+no unrelated delta. Callback throw terminally consumes the lifecycle attempt.
+
+Publication evidence retains the exact pushed instruction objects and every
+nested array path, plus a fresh canonical projection. Revision zero requires
+those exact occurrences. The branded post-DCE settlement may refresh canonical
+operands only over the same six retained top-level arrays, owner-body array,
+and published occurrence identities; it never accepts a replacement array or
+canonical clone. Revision one captures the refreshed canonicals over those same
+objects, and the terminal audit re-finds exactly one occurrence and rejoins the
+current Program ABI, type cells, globals, and native-name witness. Aliased
+parent edges are counted per occurrence; an active recursion stack rejects
+cycles without globally collapsing aliases.
+
+This extraction changes no route, hook, ABI, instruction, native-string
+allocation policy, optimizer, fixture, expected binary, or acceptance oracle.
+It grants no LOC or function-budget exception. The authority, evidence,
+materialization, and method-trampoline leaves must each remain at or below
+1,500 lines, the existing oversized-file ratchets must not regrow, and all
+three neutral leaves require a fresh exact-byte Sol review before the D1a PR is
+marked ready. The original strict load gate, normal precommit/prepush hooks,
+protected merge queue, D1a-before-D1b order, and full #4590 artifact/runtime
+parity remain mandatory.
+
+### Frozen implementation handoff
+
+The 2026-09-01 repair session stopped before publication and left no staged,
+committed, or pushed compiler/test bytes. Its reproducible local checkpoint is
+the worktree `/private/tmp/js2-4617-d1a-function-value-baseline`, branch
+`codex/4617-d1a-function-value-baseline`, based on
+`c11206262088a69815d6126787b10942df148b6d`. The two unfinished core leaves are:
+
+- `certified-function-value-authority.ts`: 1,725 lines, SHA-256
+  `ed9d3c00117059c9a43c847c710a594baf7a34ac528757a2f9707638ef8591b1`; and
+- `certified-function-value-materialization.ts`: 1,649 lines, SHA-256
+  `c853e9ef6946cfd4ec248bdbe1d0cd4b17ac7e51b5559fa9ab99f9406e2bbaa5`.
+
+Those bytes close unconditional active-singleton rejection, one-shot owner
+request/transition linkage, private layout state, prewrite physical
+reauthorization, private registry-entry/seal state, staged prepared installs,
+one-shot native-name witnessing, exact published occurrence identity, and the
+settlement-token dispatcher. They are not acceptance-ready: both exceed the
+hard 1,500-line ceiling, the evidence leaf is absent, and settlement-only
+canonical reprojection is still outstanding. Current `git diff --check`
+passes; the last TS7 typecheck passed before the final small edits and therefore
+must not be treated as a validation of these exact hashes.
+
+The unfinished test migration is
+`tests/issue-4617-certified-function-value-materialization.test.ts`, 1,522
+lines, SHA-256
+`4c22a6cf1d5464db7db2ec86ffcff31ccac1c318941c1f7cc03fdf5c8e146b34`.
+It begins the ctx-only lifecycle and opaque-layout conversion but retains stale
+old-arity negative cases and lacks the required second-receipt, native-witness,
+occurrence, settlement, and terminal-revision coverage. It was not formatted,
+typechecked, or run after its final edits. A continuation must first extract
+the evidence leaf, wire it through the two core leaves, bring all three below
+their ratchets, finish the test migration, and then run the full strict-gated
+validation and fresh exact-byte Sol review. It must not present this frozen
+checkpoint as a draft implementation PR or acceptance evidence.
