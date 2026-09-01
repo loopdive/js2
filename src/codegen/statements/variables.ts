@@ -1879,7 +1879,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const genericFactoryInitializerType: ValType | null =
       genericFactoryTarget?.kind === "ref" || genericFactoryTarget?.kind === "ref_null"
         ? { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx }
-        : null;
+        : (decl.parent.flags & ts.NodeFlags.Const) !== 0 &&
+            genericFactory?.sourceResultAbi === true &&
+            (genericFactoryTarget?.kind === "externref" || genericFactoryTarget?.kind === "ref_extern") &&
+            (genericFactorySource?.kind === "ref" || genericFactorySource?.kind === "ref_null")
+          ? // Keep this declaration in lockstep with the let/const pre-hoister:
+            // an opaque logical T still carries the proven factory's physical
+            // source fields.
+            { kind: "ref_null", typeIdx: genericFactorySource.typeIdx }
+          : null;
     // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
     // slots so dynamic MOP/result-object reads do not become struct.get on the
     // checker-inferred target/revocable shapes.
