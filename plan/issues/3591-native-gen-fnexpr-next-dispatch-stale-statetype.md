@@ -64,9 +64,9 @@ imports to the standalone generator shapes.
 
 The seven-row Test262 list was a diagnostic expansion, not the original
 acceptance scope. Its two captured-closure `chunks`/`windows` exhaustion rows
-are handed to [#5254](5254-captured-generator-closure-resume-carrier.md), and
+are handed to [#5254](5254-es2015-native-generator-capture-carrier.md), and
 its `GeneratorPrototype/next/context-method-invocation` dynamic-`this` row is
-handed to [#5255](5255-generator-context-method-dynamic-this.md). Those
+handed to [#5255](5255-es2015-generator-method-this-transport.md). Those
 independent residuals do not reopen #3591's stale-dispatch fix.
 
 Final validation after synchronizing `upstream/main` at
