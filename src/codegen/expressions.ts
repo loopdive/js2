@@ -41,6 +41,7 @@ import {
   ensureAnyHelpers,
   isAnyValue,
   registerCompileExpression,
+  registerCompileThisKeyword,
   registerEnsureLateImport,
   registerFlushLateImportShifts,
   valTypesMatch,
@@ -1702,5 +1703,6 @@ function compileExpressionInner(
 // call compileExpression / ensureLateImport / flushLateImportShifts without
 // creating circular imports.
 registerCompileExpression(compileExpression);
+registerCompileThisKeyword(compileThisKeyword);
 registerEnsureLateImport(ensureLateImport);
 registerFlushLateImportShifts(flushLateImportShifts);
