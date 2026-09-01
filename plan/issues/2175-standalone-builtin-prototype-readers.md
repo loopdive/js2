@@ -4420,3 +4420,39 @@ fetched successor), and only then run the required exact-final-head controls,
 complete synthetic-ref pre-push gate, no-leak audit, fork push, and ready
 non-draft upstream PR. User publication authorization remains recorded above;
 no GitHub issue was created.
+
+### c372 exact-head validation handoff — 2026-09-01
+
+The current live-base merge committed at
+`58f1f163f20d653f093ee9d98ff50353f4597731` with upstream parent
+`c372457da1ffd39b87bebf235aac115a27657abf`. A fresh `git fetch upstream main`
+after that commit still resolved to c372, and `upstream/main` is an ancestor of
+the candidate. This is the code head validated below; the next commit is this
+evidence-only tracker handoff.
+
+With the unique worktree-local
+`JS2WASM_TEMPORAL_CACHE=.tmp/temporal-cache-final`, the final serial focused
+suite `tests/issue-2175-null-proto-toprimitive.test.ts` passed **30 / 30** in
+22.69 s total (10.01 s test time). The exact deterministic standalone harness
+then exercised its mandatory controls (`must-pass -> pass`; `must-fail -> fail`)
+and reported **4 / 4 pass**, total `4`, and `nondeterministic: 0`. Its fresh
+ignored artifact is `.tmp/2175-d5-null-proto-rows-final-c372.jsonl`: it holds
+exactly four records, each `{ file, target: "standalone", status: "pass" }`,
+for the requested four distinct paths. The byte-sorted LF manifest SHA-256 is
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+
+Only after that green harness, the serial #5239 class-prototype bridge suite
+passed **2 / 2** in 9.57 s total (810 ms test time). Direct TypeScript 7
+`--noEmit -p tsconfig.ts7.json` exited 0 in 16.5 s with no diagnostics.
+Scoped Prettier (all eight owned paths), Biome error-level lint (the seven
+TypeScript paths), and `git diff --check upstream/main...HEAD` also exited 0.
+At this evidence boundary the committed PR range is exactly this tracker, six
+implementation sources, and the focused test; it contains no
+`benchmarks/`, `public/`, `website/`, or `labs/` path.
+
+Next owner: make a normal hook-running documentation commit of this handoff,
+then run the complete synthetic-ref pre-push hook on that exact new head,
+fresh-fetch and re-merge if upstream advances, re-audit the exact eight-path
+range, and publish one ready non-draft PR from `ttraenkler/js2` to
+`loopdive/js2:main`. User authorization is recorded above; no GitHub issue was
+created.
