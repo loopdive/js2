@@ -1,0 +1,6 @@
+language/expressions/super/prop-dot-cls-ref-strict.js
+language/expressions/super/prop-dot-obj-ref-non-strict.js
+language/expressions/super/prop-dot-obj-ref-strict.js
+language/expressions/super/prop-expr-cls-ref-strict.js
+language/expressions/super/prop-expr-obj-ref-non-strict.js
+language/expressions/super/prop-expr-obj-ref-strict.js

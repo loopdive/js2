@@ -1,0 +1,7 @@
+built-ins/TypedArray/prototype/fill/coerced-indexes.js
+built-ins/TypedArray/prototype/slice/return-abrupt-from-end-symbol.js
+built-ins/TypedArray/prototype/copyWithin/coerced-values-end.js
+built-ins/TypedArray/prototype/subarray/return-abrupt-from-end-symbol.js
+built-ins/TypedArray/prototype/subarray/return-abrupt-from-begin-symbol.js
+built-ins/TypedArray/prototype/set/array-arg-set-values-in-order.js
+built-ins/TypedArray/prototype/slice/return-abrupt-from-start-symbol.js

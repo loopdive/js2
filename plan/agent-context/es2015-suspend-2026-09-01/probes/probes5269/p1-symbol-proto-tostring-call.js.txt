@@ -1,0 +1,4 @@
+var r = Symbol.prototype.toString.call(Symbol('66'));
+if (r !== 'Symbol(66)') throw new Test262Error('toString.call: ' + String(r));
+var t = Symbol.prototype[Symbol.toStringTag];
+if (t !== 'Symbol') throw new Test262Error('toStringTag: ' + String(t));

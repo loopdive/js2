@@ -1,0 +1,6 @@
+/*---
+description: new WeakMap([1, 1]) must throw a catchable TypeError (whose ctor is the realm TypeError)
+---*/
+var got = null;
+try { new WeakMap([1, 1]); } catch (e) { got = e; }
+assert.sameValue(got instanceof TypeError, true, 'instanceof TypeError; got=' + got + ' ctor=' + (got && got.constructor && got.constructor.name));

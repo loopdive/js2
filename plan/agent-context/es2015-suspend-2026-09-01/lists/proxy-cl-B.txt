@@ -1,0 +1,12 @@
+built-ins/Proxy/has/call-object-create.js
+built-ins/Proxy/has/call-in-prototype-index.js
+built-ins/Proxy/get/trap-is-undefined-receiver.js
+built-ins/Proxy/set/call-parameters-prototype-index.js
+built-ins/Proxy/has/trap-is-undefined-target-is-proxy.js
+built-ins/Proxy/set/trap-is-missing-receiver-multiple-calls-index.js
+built-ins/Proxy/has/call-in-prototype.js
+built-ins/Proxy/set/call-parameters-prototype-dunder-proto.js
+built-ins/Proxy/set/call-parameters-prototype.js
+built-ins/Proxy/get/trap-is-undefined-target-is-proxy.js
+built-ins/Proxy/set/trap-is-null-receiver.js
+built-ins/Proxy/set/trap-is-missing-receiver-multiple-calls.js

@@ -1,0 +1,8 @@
+language/expressions/class/gen-method-static/dflt-params-arg-val-not-undefined.js
+language/expressions/class/gen-method/dflt-params-arg-val-not-undefined.js
+language/expressions/class/method-static/dflt-params-arg-val-not-undefined.js
+language/expressions/class/method/dflt-params-arg-val-not-undefined.js
+language/statements/class/gen-method-static/dflt-params-arg-val-not-undefined.js
+language/statements/class/gen-method/dflt-params-arg-val-not-undefined.js
+language/statements/class/method-static/dflt-params-arg-val-not-undefined.js
+language/statements/class/method/dflt-params-arg-val-not-undefined.js

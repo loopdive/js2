@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/falsy-default.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var cnt = 0;
+class C { m(a = cnt += 1) { return a; } }
+var r = new C().m(false);
+assert.sameValue(r, false, 'false through defaulted param');
+assert.sameValue(cnt, 0, 'initializer not evaluated');

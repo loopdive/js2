@@ -1,0 +1,6 @@
+built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor.js
+built-ins/Proxy/defineProperty/targetdesc-not-configurable-writable-desc-not-writable.js
+built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable.js
+built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible.js
+built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target.js
+built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor.js

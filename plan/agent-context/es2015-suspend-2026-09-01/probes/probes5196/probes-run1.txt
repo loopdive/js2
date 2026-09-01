@@ -1,0 +1,52 @@
+=== .tmp/es2015/probes5196/p1-define-invariant.js
+STATUS fail
+REASON Error: no TypeError from defineProperty invariant
+exit=0
+=== .tmp/es2015/probes5196/p10-gpo-same-proto-identity.js
+STATUS fail
+REASON Error: invariant threw although protos agree; direct same=false TypeError: Proxy trap result violates a Proxy invariant
+exit=0
+=== .tmp/es2015/probes5196/p11-reflect-nonobject-target.js
+STATUS fail
+REASON Error: only 0/4 TypeErrors
+exit=0
+=== .tmp/es2015/probes5196/p12-reflect-define-false.js
+STATUS fail
+REASON TypeError: TypeError: Cannot assign to read only property of a non-configurable property
+exit=0
+=== .tmp/es2015/probes5196/p13-define-literal-desc-trap.js
+STATUS fail
+REASON Error: trap not called through r.proxy
+exit=0
+=== .tmp/es2015/probes5196/p2-gopd-invariant.js
+STATUS fail
+REASON Error: no TypeError from gopd invariant
+exit=0
+=== .tmp/es2015/probes5196/p3-has-false-nonconfig.js
+STATUS fail
+REASON Error: no TypeError from has invariant
+exit=0
+=== .tmp/es2015/probes5196/p4-proto-chain-proxy.js
+STATUS fail
+REASON Error: chain:  gp=false
+exit=0
+=== .tmp/es2015/probes5196/p5-revoker-shape.js
+STATUS fail
+REASON Error: length desc = null
+exit=0
+=== .tmp/es2015/probes5196/p6-reflect-spo-false.js
+STATUS fail
+REASON Error: Reflect.setPrototypeOf(proxy) with false trap = true
+exit=0
+=== .tmp/es2015/probes5196/p7-reflect-ownkeys-order.js
+STATUS fail
+REASON RuntimeError: dereferencing a null pointer in __module_init_chunk_1() at source L2 (via __module_init@L2)
+exit=0
+=== .tmp/es2015/probes5196/p8-gopd-forward-undefined.js
+STATUS pass
+exit=0
+=== .tmp/es2015/probes5196/p9-ownkeys-invariant.js
+STATUS fail
+REASON Error: ownKeys must include non-configurable keys
+exit=0
+PROBES DONE

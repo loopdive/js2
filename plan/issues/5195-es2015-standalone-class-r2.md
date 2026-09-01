@@ -668,3 +668,32 @@ Control list verification on HEAD `0d9bfedee` (2026-09-01):
 - #2023 — `new-target.ts`; #4483 — `class-call-without-new.ts`; #3972 /
   #2917 — `standalone-subclass-ctors.ts`; #1536 / #2101a — `$Error_struct`.
 - Handover: `plan/agent-context/es2015-standalone-session-handover.md`.
+
+## Suspended Work (2026-09-01T21:56Z — user-requested 2-hour pause)
+
+- **Branch**: local lane branch `worktree-agent-a7080d5c21bf4a49c` at `27ffb1a99`
+  (WIP snapshot on top of base `dc29e1f15`; NOT pushed — durable copy is
+  `plan/agent-context/es2015-suspend-2026-09-01/patches/lane-5195.mbox`, 2
+  patches: `44dcc7d90` "Step 3 + Step 9K — closure-written binding reads,
+  computed 'constructor' key ✓" + the snapshot carrying uncommitted edits in
+  `src/codegen/class-proto-object.ts` and
+  `src/codegen/expressions/call-builtin-static.ts` and the issue-file
+  allowance amendment for
+  `property-access-dispatch.ts::finalizeStructAndDynamicMemberGet` (+21)).
+- **Worktree at suspension**: `/home/user/js2/.claude/worktrees/agent-a7080d5c21bf4a49c`
+  (treat as gone).
+- **State**: mid-implementation. Step 3 (D1 typeof/member reads on a
+  closure-written module `var`) and Step 9-K (computed `['constructor']` early
+  error) committed; the uncommitted edits look like Step 1/2 work on the class
+  prototype object (`class-proto-object.ts`) — unverified. Steps 1, 2, 4–12
+  otherwise not landed.
+- **Verified so far**: only what the `44dcc7d90` commit body records (read it
+  after `git am`); no whole-list after-run recorded.
+- **NOT yet verified / next steps**: (1) `pnpm run typecheck` on the applied
+  patch — the uncommitted half may not compile; (2) `class-cl-D1*.txt` +
+  `class-cl-K*.txt` + `class-controls.txt` (22/22) re-runs; (3) continue the
+  plan in yield order: Step 1 (runtime-computed element keys, 48 rows) → Step 2
+  (static sidecar `$Object`) → Step 4 (super reads) → …; (4) gates.
+- **Traps**: the plan's out-of-scope table (generator carrier, decorators, eval
+  tier, #3371, #5198, realm) — 38 rows — must not be chased. Merge, never
+  rebase.

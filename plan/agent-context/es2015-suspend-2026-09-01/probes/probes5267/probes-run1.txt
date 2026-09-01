@@ -1,0 +1,21 @@
+##### .tmp/es2015/probes5267/p1-map-entries-next.js
+STATUS fail
+REASON TypeError: Cannot access property on null or undefined at 324:18 | at L8: assert.sameValue(result.done, false, 'done');
+##### .tmp/es2015/probes5267/p2-array-symiter-next.js
+STATUS fail
+REASON TypeError: Cannot access property on null or undefined at 323:18 | at L7: assert.sameValue(r.done, false, 'done');
+##### .tmp/es2015/probes5267/p3-class-extends-iterator-chunks.js
+STATUS fail
+REASON Test262Error: next() error identity; returnReads=0 got=TypeError: Cannot read properties of undefined (reading 'next') Expected SameValue(«false», «true») to be true | at L12: assert.sameValue(got instanceof Test262Error, true, 'next() error identity; returnReads=' + returnReads + ' got=' + got);
+##### .tmp/es2015/probes5267/p4-new-map-iterable.js
+STATUS fail
+REASON Test262Error: calls=0 got=null Expected SameValue(«false», «true») to be true | at L7: return { next: function() { calls++; throw new Test262Error(); } };
+##### .tmp/es2015/probes5267/p5-set-entries.js
+STATUS fail
+REASON TypeError: called value is not a function | at L7: assert.sameValue(r.done, false);
+##### .tmp/es2015/probes5267/p6-weakmap-nonentry.js
+STATUS compile_error
+REASON compilation timeout (15999.74ms)
+##### .tmp/es2015/probes5267/p7-set-custom-iterable.js
+STATUS compile_error
+REASON compilation timeout (15790.94ms)

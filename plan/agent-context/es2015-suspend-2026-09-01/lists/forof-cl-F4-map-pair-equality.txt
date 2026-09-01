@@ -1,0 +1,3 @@
+language/statements/for-of/map-contract-expand.js
+language/statements/for-of/map-expand.js
+language/statements/for-of/map.js

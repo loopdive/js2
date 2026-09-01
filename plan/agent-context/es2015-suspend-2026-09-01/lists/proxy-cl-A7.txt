@@ -1,0 +1,3 @@
+built-ins/Proxy/ownKeys/return-all-non-configurable-keys.js
+built-ins/Proxy/ownKeys/not-extensible-new-keys-throws.js
+built-ins/Proxy/ownKeys/not-extensible-missing-keys-throws.js

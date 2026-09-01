@@ -1,0 +1,1367 @@
+From dd9370a31f05c7a831cc2eddb009cf145aa694fe Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 21:19:19 +0000
+Subject: [PATCH 1/4] =?UTF-8?q?fix(#5150):=20clusters=20A+F=20=E2=80=94=20?=
+ =?UTF-8?q?undefined=20arg=20padding,=20module-global=20$=5F=5Fta=5Fview?=
+ =?UTF-8?q?=20slot?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Cluster A (missing setter value): the reflective DataView proto-member body and
+the closed-method dispatcher both padded an ABSENT argument with
+`ref.null.extern`. Standalone tells `null` and `undefined` apart, so
+ToNumber(pad) was 0 where ToNumber(undefined) = NaN is required — `setFloat32()`
+wrote 0. Both sites now pad with the canonical `undefined` singleton, and the
+BigInt setters' ToBigInt(undefined) TypeError switches from a bare `ref.is_null`
+to a nullish-OR-undefined test so it keeps firing.
+
+Cluster F (module-global view): `var ta = new Uint8Array(buffer, 0)` at MODULE
+scope got the checker-inferred plain TypedArray vec as its global slot type, so
+the shared-backing `$__ta_view` the constructor emits failed the slot and the
+global stayed null — every later `ta[i]` / `ta.length` threw "Cannot access
+property on null or undefined". Function-local let/const slots already consulted
+`inferTaViewType` (#4376); module globals now do too, and the two receiver
+lookups that were locals-only (`taViewReceiverTypeIdx`, the `.length` arm of
+`tryLengthAndNameReads`) also consult module globals. test262 declares every
+binding at top level, which is why the whole `DataView/prototype/set*` family
+was blocked on this.
+
+Also lands the two explicit-`undefined` externref tests and the shared
+`isViewRefTestInstrs` carrier chain that the later clusters build on.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+✓
+---
+ src/codegen/closed-method-dispatch.ts   |  13 ++-
+ src/codegen/dataview-native.ts          | 144 ++++++++++++++++++++++--
+ src/codegen/declarations.ts             |  14 ++-
+ src/codegen/property-access-dispatch.ts |  31 ++++-
+ src/codegen/property-access.ts          |  15 ++-
+ 5 files changed, 200 insertions(+), 17 deletions(-)
+
+diff --git a/src/codegen/closed-method-dispatch.ts b/src/codegen/closed-method-dispatch.ts
+index 3802ed8ec..5f5099090 100644
+--- a/src/codegen/closed-method-dispatch.ts
++++ b/src/codegen/closed-method-dispatch.ts
+@@ -37,7 +37,12 @@
+  * arguments fall through to the existing path (the dispatcher is not used).
+  */
+ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+-import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
++import {
++  canonicalUndefinedExternInstrs,
++  ensureExternSameValueZeroHelper,
++  ensureExternStrictEqHelper,
++  undefinedExternInstrs,
++} from "./any-helpers.js";
+ import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
+ import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
+ import { classMemberFuncKey } from "./class-member-keys.js";
+@@ -1535,7 +1540,11 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
+         const helperArgs = methodName.startsWith("get") ? 2 : 3;
+         const dvCall: Instr[] = [{ op: "local.get", index: 0 }];
+         for (let i = 0; i < helperArgs; i++) {
+-          dvCall.push(i < arity ? { op: "local.get", index: 1 + i } : { op: "ref.null.extern" });
++          // (#5150) Pad an ABSENT argument with the `undefined` singleton, not
++          // `null`: ToNumber(undefined) is NaN, ToNumber(null) is 0, and the
++          // `no-value-arg.js` rows assert the NaN.
++          if (i < arity) dvCall.push({ op: "local.get", index: 1 + i });
++          else dvCall.push(...canonicalUndefinedExternInstrs(ctx));
+         }
+         dvCall.push({ op: "call", funcIdx: dvHelperIdx });
+         current = [
+diff --git a/src/codegen/dataview-native.ts b/src/codegen/dataview-native.ts
+index f3792bbda..37f4f6b17 100644
+--- a/src/codegen/dataview-native.ts
++++ b/src/codegen/dataview-native.ts
+@@ -57,7 +57,7 @@ import {
+   taCtorKindOf,
+ } from "./registry/types.js";
+ import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
+-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2864/#3177) semantic undefined vs null
++import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedExternInstrs } from "./any-helpers.js"; // (#2864/#3177) semantic undefined vs null; (#5150) explicit-undefined tests
+ import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
+ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+ import { coerceType } from "./type-coercion.js";
+@@ -304,6 +304,110 @@ export function usesNativeDataViewProvider(ctx: CodegenContext): boolean {
+   return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
+ }
+ 
++/**
++ * (#5150) §25.1.4.1 `ArrayBuffer.isView(arg)`, decided HOST-FREE: true iff the
++ * value carries a [[ViewedArrayBuffer]] slot. Every TypedArray lowers to some
++ * registered `$Vec` carrier and every DataView to the `$__ta_view`/
++ * `$__dv_window` brand, so the answer is a `ref.test` disjunction over those.
++ *
++ * `anyLocalIdx` must hold the argument already converted with
++ * `any.convert_extern`. Extracted so the direct-call site
++ * (`call-namespace-static.ts`) and the first-class VALUE closure
++ * (`builtin-value-read.ts`) share ONE chain rather than drifting apart — the
++ * value read used to fall to the generic "not yet implemented in --target
++ * standalone" throw (`isView/invoked-as-a-fn.js`).
++ *
++ * KNOWN IMPRECISION, unchanged from the call site: standalone shares the `$Vec`
++ * carrier between `number[]` and TypedArrays, so a plain array reads as a view.
++ * That is the accepted price of not leaking the `__arraybuffer_isView` host
++ * import, which would break the whole module at instantiate.
++ */
++export function isViewRefTestInstrs(ctx: CodegenContext, anyLocalIdx: number): Instr[] {
++  const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
++  // (#5150) The `$__ta_view` carriers belong here too: a buffer-backed
++  // `new Uint8Array(buffer)` is a shared-backing VIEW struct, not one of the
++  // plain `$Vec`s, so the pre-#5150 chain answered `false` for it whenever the
++  // static type could not decide — which is always, for a first-class value
++  // read. `ref.test` needs no ordering, so a Set keeps the chain duplicate-free.
++  const carriers = new Set<number>([...ctx.vecTypeMap.values(), ...ctx.taViewTypeMap.values(), dvWinTypeIdx]);
++  const out: Instr[] = [];
++  let emitted = false;
++  for (const vi of carriers) {
++    out.push({ op: "local.get", index: anyLocalIdx });
++    out.push({ op: "ref.test", typeIdx: vi });
++    if (emitted) out.push({ op: "i32.or" });
++    emitted = true;
++  }
++  if (!emitted) out.push({ op: "i32.const", value: 0 });
++  return out;
++}
++
++/**
++ * (#5150) i32 test: is the externref in `externIdx` the tag-1 `$AnyValue`
++ * `undefined` singleton — and NOT `null`?
++ *
++ * Several buffer clauses distinguish an EXPLICITLY passed `undefined` (which
++ * means "argument absent", so the clause's default applies) from `null` (an
++ * ordinary value that `ToIntegerOrInfinity` maps to 0):
++ * `ArrayBuffer.prototype.slice(0, undefined)` slices to the end while
++ * `slice(0, null)` slices nothing, and `new DataView(buf, 0, undefined)` views
++ * the whole buffer while `new DataView(buf, 0, null)` views zero bytes.
++ *
++ * Shaped after {@link nullishExternTestInstrs} (any-helpers.ts) — scratch-free,
++ * detached instruction array — but deliberately NOT gated on the default-off
++ * `undefinedSingleton` flag: the standalone lane reserves the singleton
++ * unconditionally, and the padding this issue introduced relies on it. Answers
++ * a constant 0 when `$AnyValue` is unavailable (the host lane), where the
++ * callers' pre-existing NaN handling remains in charge.
++ */
++export function explicitUndefinedExternTestInstrs(ctx: CodegenContext, externIdx: number): Instr[] {
++  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
++  const t = ctx.anyValueTypeIdx;
++  if (t < 0) return [{ op: "i32.const", value: 0 }];
++  return [
++    { op: "local.get", index: externIdx },
++    { op: "ref.is_null" },
++    {
++      op: "if",
++      blockType: { kind: "val", type: { kind: "i32" } },
++      then: [{ op: "i32.const", value: 0 }],
++      else: [
++        { op: "local.get", index: externIdx },
++        { op: "any.convert_extern" },
++        { op: "ref.test", typeIdx: t },
++        {
++          op: "if",
++          blockType: { kind: "val", type: { kind: "i32" } },
++          then: [
++            { op: "local.get", index: externIdx },
++            { op: "any.convert_extern" },
++            { op: "ref.cast", typeIdx: t },
++            { op: "struct.get", typeIdx: t, fieldIdx: 0 },
++            { op: "i32.const", value: 1 },
++            { op: "i32.eq" },
++          ],
++          else: [{ op: "i32.const", value: 0 }],
++        },
++      ],
++    },
++  ];
++}
++
++/**
++ * (#5150) i32 test: is the externref in `externIdx` `null` OR the `undefined`
++ * singleton? The BigInt setters' §7.1.13 `ToBigInt(undefined)` TypeError used a
++ * bare `ref.is_null`, which stopped firing the moment the missing-argument
++ * padding became the singleton.
++ */
++export function nullishOrUndefinedExternTestInstrs(ctx: CodegenContext, externIdx: number): Instr[] {
++  return [
++    { op: "local.get", index: externIdx },
++    { op: "ref.is_null" },
++    ...explicitUndefinedExternTestInstrs(ctx, externIdx),
++    { op: "i32.or" },
++  ];
++}
++
+ /**
+  * #1698 — `ab.slice(begin?, end?)` in no-JS-host mode. Returns a new
+  * ArrayBuffer (i32_byte vec struct) holding bytes `[begin, end)` of the
+@@ -378,10 +482,30 @@ export function emitArrayBufferSlice(
+   // end (default srcLen). Same clamp/negate.
+   const endLocal = allocLocal(fctx, `__abs_end_${fctx.locals.length}`, { kind: "i32" });
+   if (args.length >= 2) {
+-    compileExpr(args[1]!, { kind: "f64" });
++    // (#5150) §25.1.5.3 step 8: an EXPLICIT `undefined` end means "to the end
++    // of the buffer", not `ToIntegerOrInfinity(undefined)` = 0. Keep the
++    // compiled argument as an externref so the singleton stays distinguishable,
++    // derive the ordinary clamped index from it, then override with srcLen when
++    // it WAS undefined. `null` deliberately still coerces to 0.
++    const endExtern = allocLocal(fctx, `__abs_endx_${fctx.locals.length}`, { kind: "externref" });
++    const endTy = compileExpr(args[1]!, { kind: "externref" });
++    if (endTy === null) fctx.body.push({ op: "ref.null.extern" });
++    else if (endTy.kind !== "externref") coerceType(ctx, fctx, endTy, { kind: "externref" });
++    fctx.body.push({ op: "local.tee", index: endExtern });
++    coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+     fctx.body.push({ op: "local.set", index: endLocal });
+     emitNormalizeIndex(fctx, endLocal, srcLenLocal);
++    fctx.body.push(...explicitUndefinedExternTestInstrs(ctx, endExtern));
++    fctx.body.push({
++      op: "if",
++      blockType: { kind: "empty" },
++      then: [
++        { op: "local.get", index: srcLenLocal },
++        { op: "local.set", index: endLocal },
++      ],
++      else: [],
++    });
+   } else {
+     fctx.body.push({ op: "local.get", index: srcLenLocal });
+     fctx.body.push({ op: "local.set", index: endLocal });
+@@ -1930,13 +2054,15 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
+   fctx.body.push({ op: "local.set", index: getIdxLocal });
+ 
+   // Setters: numberValue = ToNumber(value) (a1) — observable, after ToIndex.
+-  // (#3173) BigInt setters: §7.1.13 ToBigInt(undefined) throws TypeError — a
+-  // MISSING value arrives as a null extern (dispatcher/closure padding).
++  // (#3173/#5150) BigInt setters: §7.1.13 ToBigInt(undefined) throws TypeError.
++  // A MISSING value now arrives as the `undefined` SINGLETON (#5150 changed the
++  // dispatcher/closure padding away from `ref.null.extern`, which made float
++  // setters write 0 where ToNumber(undefined) = NaN is required), so the test
++  // must accept BOTH shapes rather than `ref.is_null` alone.
+   const valLocal = acc.kind === "set" ? allocLocal(fctx, "val", { kind: "f64" }) : -1;
+   if (acc.kind === "set") {
+     if (toBigIntThrow) {
+-      fctx.body.push({ op: "local.get", index: 2 });
+-      fctx.body.push({ op: "ref.is_null" });
++      fctx.body.push(...nullishOrUndefinedExternTestInstrs(ctx, 2));
+       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: toBigIntThrow, else: [] });
+     }
+     fctx.body.push({ op: "local.get", index: 2 });
+@@ -2080,14 +2206,16 @@ export function emitDataViewProtoMemberBody(
+   if (helperIdx === undefined) return null;
+   const acc = DV_ACCESSORS[member]!;
+   const helperArgs = acc.kind === "get" ? 2 : 3;
+-  // this (param 1) + args (params 2..), padded with null extern (undefined).
++  // this (param 1) + args (params 2..), padded with the `undefined` SINGLETON
++  // (#5150 — a `null` pad coerces to 0, so `dv.setFloat32(0)` wrote 0 where
++  // ToNumber(undefined) = NaN is required by `setFloat32/no-value-arg.js`).
+   fctx.body.push({ op: "local.get", index: 1 });
+   for (let i = 0; i < helperArgs; i++) {
+     const paramIdx = 2 + i;
+     if (paramIdx < fctx.params.length) {
+       fctx.body.push({ op: "local.get", index: paramIdx });
+     } else {
+-      fctx.body.push({ op: "ref.null.extern" });
++      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+     }
+   }
+   fctx.body.push({ op: "call", funcIdx: helperIdx });
+diff --git a/src/codegen/declarations.ts b/src/codegen/declarations.ts
+index a84906980..c75b292a7 100644
+--- a/src/codegen/declarations.ts
++++ b/src/codegen/declarations.ts
+@@ -111,7 +111,7 @@ import {
+   STRING_METHODS,
+   unwrapGeneratorYieldType,
+ } from "./index.js";
+-import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
++import { inferTaViewType, proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
+ import {
+   ensureAsyncDriveRuntime,
+   ensureNativePromiseBoundaryBridge,
+@@ -3456,6 +3456,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
+     // predicate the lowering's dispatcher asks, so slot and value cannot
+     // disagree — see array-concat-carrier.ts.
+     if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
++    // (#5150) `var ta = new Uint8Array(buffer[, byteOffset[, length]])` at
++    // MODULE scope. The constructor lowers to a shared-backing `$__ta_view`
++    // struct (#3054 B1/B2), but the checker-inferred slot is the plain
++    // TypedArray vec, so the value failed the slot's type and the global stayed
++    // null — every later `ta[i]` / `ta.length` threw "Cannot access property on
++    // null or undefined". Function-local `let`/`const` slots already consult
++    // this (#4376, `inferLetConstInitializerWasmType`); module globals did not,
++    // and test262 writes its bindings at top level.
++    {
++      const taViewGlobalType = inferTaViewType(ctx, decl.initializer);
++      if (taViewGlobalType !== null) return taViewGlobalType;
++    }
+     // #1914 — `var m = re.exec(s)` under standalone gets the precise
+     // match-vec ref type so indexed reads stay on the static vec path
+     // (externref-widened globals round-trip through __extern_get_idx,
+diff --git a/src/codegen/property-access-dispatch.ts b/src/codegen/property-access-dispatch.ts
+index ebfc1794a..db3b43bc1 100644
+--- a/src/codegen/property-access-dispatch.ts
++++ b/src/codegen/property-access-dispatch.ts
+@@ -3228,12 +3228,37 @@ export function tryLengthAndNameReads(
+     }
+     // Check the actual local type (may differ from TS type, e.g. arguments vec struct)
+     if (ts.isIdentifier(expr.expression)) {
+-      const localIdx = fctx.localMap.get(expr.expression.text);
++      let localIdx = fctx.localMap.get(expr.expression.text);
++      let spilledGlobalType: ValType | undefined;
++      if (localIdx === undefined) {
++        // (#5150) …or a MODULE GLOBAL holding a `$__ta_view`. test262 declares
++        // its bindings at top level (`var ta = new Uint8Array(buffer, 0)`), and
++        // the locals-only lookup missed them: `ta.length` then fell to the
++        // checker-typed vec arm below, whose `ref.test` fails on the view struct
++        // and answers 0. Spill the global into a temp local so the existing
++        // effective-length lowering applies unchanged.
++        const globalIdx = ctx.moduleGlobals.get(expr.expression.text);
++        const globalType = globalIdx !== undefined ? ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type : undefined;
++        if (
++          (globalType?.kind === "ref" || globalType?.kind === "ref_null") &&
++          globalType.typeIdx !== undefined &&
++          isTaViewTypeIdx(ctx, globalType.typeIdx)
++        ) {
++          const compiled = compileExpression(ctx, fctx, expr.expression);
++          if (compiled) {
++            const tmp = allocLocal(fctx, `__tav_glob_${fctx.locals.length}`, globalType);
++            fctx.body.push({ op: "local.set", index: tmp });
++            localIdx = tmp;
++            spilledGlobalType = globalType;
++          }
++        }
++      }
+       if (localIdx !== undefined) {
+         const localType =
+-          localIdx < fctx.params.length
++          spilledGlobalType ??
++          (localIdx < fctx.params.length
+             ? fctx.params[localIdx]!.type
+-            : fctx.locals[localIdx - fctx.params.length]?.type;
++            : fctx.locals[localIdx - fctx.params.length]?.type);
+         // Vec struct ref local (e.g. `arguments` object) — struct.get field 0 (length)
+         // Note: for externref locals (e.g. `obj: any` in filter callbacks), we fall through
+         // to the generic externref path below (line ~1731) which uses multi-struct dispatch
+diff --git a/src/codegen/property-access.ts b/src/codegen/property-access.ts
+index dc48fa537..1a078ae07 100644
+--- a/src/codegen/property-access.ts
++++ b/src/codegen/property-access.ts
+@@ -3462,9 +3462,18 @@ export function taViewReceiverTypeIdx(
+ ): number | undefined {
+   if (!ts.isIdentifier(recvExpr)) return undefined;
+   const localIdx = fctx.localMap.get(recvExpr.text);
+-  if (localIdx === undefined) return undefined;
+-  const localType =
+-    localIdx < fctx.params.length ? fctx.params[localIdx]!.type : fctx.locals[localIdx - fctx.params.length]?.type;
++  let localType: ValType | undefined;
++  if (localIdx !== undefined) {
++    localType =
++      localIdx < fctx.params.length ? fctx.params[localIdx]!.type : fctx.locals[localIdx - fctx.params.length]?.type;
++  } else {
++    // (#5150) …or a MODULE GLOBAL carrying the same slot type. test262 declares
++    // its bindings at top level (`var ta = new Uint8Array(buffer, 0)`), so the
++    // locals-only lookup missed every one of them and the read fell to the
++    // checker-typed vec arm, which `ref.test`s a different struct.
++    const globalIdx = ctx.moduleGlobals.get(recvExpr.text);
++    if (globalIdx !== undefined) localType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
++  }
+   if (
+     (localType?.kind === "ref" || localType?.kind === "ref_null") &&
+     localType.typeIdx !== undefined &&
+-- 
+2.43.0
+
+
+From 6911a46bb63b3fb3ee73c6e9c3ce901139186651 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 21:20:24 +0000
+Subject: [PATCH 2/4] =?UTF-8?q?fix(#5150):=20cluster=20D=20=E2=80=94=20buf?=
+ =?UTF-8?q?fer=20constructor=20argument=20validation?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ArrayBuffer:
+  - ToIndex(length) now runs ToPrimitive for a non-numeric argument (an object's
+    `valueOf`/`toString`, a string) by routing it through the externref→f64
+    coercion chokepoint; a statically numeric argument keeps the direct f64 hint,
+    so the common shape is unchanged.
+  - ToIndex maps NaN/undefined to 0 and TRUNCATES toward zero. The old
+    `len !== floor(len)` test rejected `new ArrayBuffer(1.9)` outright.
+  - An unallocatable length is now a catchable RangeError. It used to reach
+    `array.new_default` and TRAP ("requested new array is too large"), which no
+    `assert.throws` can catch.
+
+DataView, in §25.3.2.1 step order:
+  - step 2 brand check, statically for a primitive / foreign-builtin first
+    argument and by `ref.test` on the runtime carrier otherwise, raised BEFORE
+    ToIndex(byteOffset) so the offset's `valueOf` never runs. The static half
+    also fixes two COMPILE_ERRORs: the primitive's f64/i32 result was stored
+    into the externref buffer local and the downstream `struct.get` failed Wasm
+    validation, killing the whole module.
+  - step 7 IsDetachedBuffer → TypeError, after ToIndex and before the bounds
+    check (folding it into the offset condition answered RangeError instead).
+  - steps 9 and 11.b.ii bounds checks now also apply to the externref-carried
+    buffer, which is the common standalone shape.
+  - an EXPLICIT `undefined` byteLength means "to the end of the buffer"; `null`
+    still coerces to 0.
+
+Neither constructor has a [[Call]] behaviour (§25.1.3.1 / §25.3.2.1 step 1), so
+both join the existing call-without-`new` table. Arguments are still evaluated,
+never coerced — which is what `DataView/newtarget-undefined-throws.js` asserts.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+✓
+---
+ .../expressions/new-builtin-globals.ts        |  19 +-
+ src/codegen/expressions/new-indexed.ts        | 261 ++++++++++++++++--
+ 2 files changed, 249 insertions(+), 31 deletions(-)
+
+diff --git a/src/codegen/expressions/new-builtin-globals.ts b/src/codegen/expressions/new-builtin-globals.ts
+index 8ba89bb23..01ae429f1 100644
+--- a/src/codegen/expressions/new-builtin-globals.ts
++++ b/src/codegen/expressions/new-builtin-globals.ts
+@@ -2305,8 +2305,25 @@ export function tryCompileErrorCtorCallWithoutNew(
+  * (§24.1.1.1 / §24.2.1.1 / §24.3.1.1 step 1), which were never added here — so
+  * `Map()`, `Set()` and `WeakMap()` each returned an object instead of throwing.
+  * They are table-driven off the one set below rather than three copies.
++ *
++ * (#5150) …and the BUFFER constructors, whose §25.1.3.1 / §25.3.2.1 step 1 is
++ * word-for-word the same clause: `ArrayBuffer(10)` and `DataView(buf)` both
++ * returned an object instead of throwing (`ArrayBuffer/undefined-newtarget-
++ * throws.js`, `DataView/newtarget-undefined-throws.js`). Arguments are still
++ * EVALUATED — §13.3.6.1 evaluates the argument list before [[Call]] is entered
++ * — but never coerced, which is exactly what the DataView row asserts: a
++ * `byteOffset` whose `valueOf` throws must not run, because ToIndex is never
++ * reached.
+  */
+-const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
++const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set([
++  "Map",
++  "Set",
++  "WeakMap",
++  "WeakSet",
++  "ArrayBuffer",
++  "SharedArrayBuffer",
++  "DataView",
++]);
+ 
+ export function tryCompileCollectionCtorCallWithoutNew(
+   ctx: CodegenContext,
+diff --git a/src/codegen/expressions/new-indexed.ts b/src/codegen/expressions/new-indexed.ts
+index 9b1741abe..4ee7a0bf0 100644
+--- a/src/codegen/expressions/new-indexed.ts
++++ b/src/codegen/expressions/new-indexed.ts
+@@ -14,12 +14,17 @@ import type { Instr, ValType } from "../../ir/types.js";
+ import { ts } from "../../ts-api.js";
+ import type { CodegenContext, FunctionContext } from "../context/types.js";
+ import { allocLocal } from "../context/locals.js";
+-import { getOrRegisterDvWindowType, usesNativeDataViewProvider } from "../dataview-native.js";
++import {
++  explicitUndefinedExternTestInstrs,
++  getOrRegisterDvWindowType,
++  usesNativeDataViewProvider,
++} from "../dataview-native.js";
+ import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecType, resolveWasmType } from "../index.js";
+ import { getOrRegisterHoleyArrayType } from "../registry/types.js";
+ import { ensureHoleyArrayNew } from "../vec-elem-set.js";
+ import { sparseArrayNewSplitInstrs } from "../vec-sparse-index.js";
+ import { compileExpression } from "../shared.js";
++import { coerceType } from "../type-coercion.js"; // (#5150) ToIndex via the ToPrimitive chokepoint
+ import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js";
+ import { buildThrowJsErrorInstrs } from "./helpers.js";
+ import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
+@@ -179,20 +184,48 @@ export function tryCompileIndexedBuiltinNew(
+         return { kind: "ref_null", typeIdx: vecTypeIdx };
+       }
+       // new ArrayBuffer(byteLength) → create vec with byteLength elements, all 0
+-      compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
++      // (#5150) §25.1.3.1 step 2 is `ToIndex(length)`, whose ToNumber must run a
++      // plain object's `valueOf` / `Symbol.toPrimitive`. Compiling straight to
++      // the f64 hint skipped ToPrimitive for object arguments, so
++      // `new ArrayBuffer({valueOf(){return 42}})` became NaN → RangeError
++      // (`toindex-length.js`). Routing a non-numeric argument through
++      // `coerceType` hits the standalone externref→f64 chokepoint, which calls
++      // `__to_primitive`. A statically numeric argument keeps the direct hint,
++      // so the common shape stays byte-identical.
++      {
++        const numericArg = ctx.oracle.staticJsTypeOf(args[0]!) === "number";
++        const lenTy = compileExpression(ctx, fctx, args[0]!, numericArg ? { kind: "f64" } : { kind: "externref" });
++        if (lenTy === null) fctx.body.push({ op: "f64.const", value: NaN });
++        else if (lenTy.kind !== "f64") coerceType(ctx, fctx, lenTy, { kind: "f64" });
++      }
+ 
+       // RangeError validation: byteLength must be a non-negative integer < 2^31
+       // (We use i32 internally so cap at i32 max)
+       const lenF64Local = allocLocal(fctx, `__ab_len_f64_${fctx.locals.length}`, { kind: "f64" });
+       fctx.body.push({ op: "local.tee", index: lenF64Local });
+-      // Check len != floor(len) (non-integer or NaN)
++      // (#5150) ToIndex maps NaN (and `undefined`) to 0 and TRUNCATES toward
++      // zero; it does not reject a fractional length. The old `len !== floor(len)`
++      // test rejected both, so `new ArrayBuffer(1.9)` threw where the spec wants
++      // a 1-byte buffer.
++      fctx.body.push({ op: "f64.const", value: 0 });
+       fctx.body.push({ op: "local.get", index: lenF64Local });
+-      fctx.body.push({ op: "f64.floor" });
+-      fctx.body.push({ op: "f64.ne" });
+-      // Check len < 0
++      fctx.body.push({ op: "local.get", index: lenF64Local });
++      fctx.body.push({ op: "f64.eq" }); // false only for NaN
++      fctx.body.push({ op: "select" });
++      fctx.body.push({ op: "f64.trunc" });
++      fctx.body.push({ op: "local.set", index: lenF64Local });
++      // Check len < 0 (ToIndex step 2b)
+       fctx.body.push({ op: "local.get", index: lenF64Local });
+       fctx.body.push({ op: "f64.const", value: 0 });
+       fctx.body.push({ op: "f64.lt" });
++      // (#5150) …and an upper bound BEFORE `array.new_default`, which otherwise
++      // traps uncatchably ("requested new array is too large" —
++      // `allocation-limit.js` / `length-is-too-large-throws.js`). §25.1.3.1
++      // permits a RangeError for any length the implementation cannot allocate;
++      // the backing vec is i32-indexed, so 2^31-1 is the ceiling.
++      fctx.body.push({ op: "local.get", index: lenF64Local });
++      fctx.body.push({ op: "f64.const", value: 2147483647 });
++      fctx.body.push({ op: "f64.gt" });
+       fctx.body.push({ op: "i32.or" });
+       {
+         const rangeErrMsg = "RangeError: Invalid array buffer length";
+@@ -227,11 +260,75 @@ export function tryCompileIndexedBuiltinNew(
+     const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", elemType);
+     const args = expr.arguments ?? [];
+ 
++    // (#5150) §25.3.2.1 step 2: `buffer` must carry an [[ArrayBufferData]]
++    // slot, and that TypeError fires BEFORE `ToIndex(byteOffset)` runs the
++    // offset's `valueOf` — `buffer-not-object-throws.js` asserts exactly that
++    // order. A statically primitive/foreign first argument also MIS-COMPILED:
++    // its f64/i32 result was stored into the externref buffer local and the
++    // later `struct.get` failed Wasm validation ("struct.get[0] expected type
++    // …"), turning the whole module into a COMPILE_ERROR. Evaluate every
++    // argument for its side effects, drop, throw.
++    const dvBrandThrow = (): ValType => {
++      for (const arg of args) {
++        const t = compileExpression(ctx, fctx, arg);
++        if (t) fctx.body.push({ op: "drop" });
++      }
++      fctx.body.push(
++        ...buildThrowJsErrorInstrs(ctx, "TypeError", "First argument to DataView constructor must be an ArrayBuffer", {
++          flush: fctx,
++        }),
++      );
++      return { kind: "ref_null", typeIdx: vecTypeIdx };
++    };
++    if (args.length >= 1) {
++      const arg0Tag = ctx.oracle.staticJsTypeOf(args[0]!);
++      const arg0Builtin = ctx.oracle.builtinReceiverOf(args[0]!);
++      const staticallyNotABuffer =
++        arg0Tag === "number" ||
++        arg0Tag === "string" ||
++        arg0Tag === "boolean" ||
++        arg0Tag === "bigint" ||
++        arg0Tag === "symbol" ||
++        arg0Tag === "undefined" ||
++        // A statically known OBJECT that is a DIFFERENT builtin (a TypedArray,
++        // a DataView, a Map…). Its carrier is not the i32_byte vec, so the
++        // downstream `struct.get` is the validation failure described above.
++        ((arg0Tag === "object" || arg0Tag === "function") &&
++          arg0Builtin !== undefined &&
++          arg0Builtin !== "ArrayBuffer" &&
++          arg0Builtin !== "SharedArrayBuffer");
++      if (staticallyNotABuffer) return dvBrandThrow();
++    }
++
+     if (args.length >= 1) {
+       // Compile buffer arg first
+       const resultType = compileExpression(ctx, fctx, args[0]!);
+       const isStructBuf = resultType !== null && (resultType.kind === "ref" || resultType.kind === "ref_null");
+ 
++      // (#5150) The compiled carrier IS a struct, but not the i32_byte buffer
++      // vec (nor its resizable subtype): `new DataView({}, …)` /
++      // `new DataView([], …)`. Same validation failure, same spec answer.
++      if (isStructBuf && nativeDataView) {
++        const structIdx = (resultType as { typeIdx?: number }).typeIdx;
++        const rabIdx = getOrRegisterResizableAbType(ctx);
++        if (structIdx !== undefined && structIdx !== vecTypeIdx && structIdx !== rabIdx) {
++          fctx.body.push({ op: "drop" });
++          for (let ai = 1; ai < args.length; ai++) {
++            const t = compileExpression(ctx, fctx, args[ai]!);
++            if (t) fctx.body.push({ op: "drop" });
++          }
++          fctx.body.push(
++            ...buildThrowJsErrorInstrs(
++              ctx,
++              "TypeError",
++              "First argument to DataView constructor must be an ArrayBuffer",
++              { flush: fctx },
++            ),
++          );
++          return { kind: "ref_null", typeIdx: vecTypeIdx };
++        }
++      }
++
+       // Always stash the buffer in a local so we can validate, register the
+       // view window via __dv_register_view (#1064), and restore it on stack.
+       const bufLocalType: ValType = isStructBuf ? resultType! : { kind: "externref" };
+@@ -245,6 +342,43 @@ export function tryCompileIndexedBuiltinNew(
+         kind: "f64",
+       });
+ 
++      // (#5150) Push the buffer's byte length as f64. Works for BOTH carriers:
++      // an already struct-typed local, and the common standalone shape where an
++      // `ArrayBuffer` binding is an externref that has to be recovered. Only
++      // reachable on the native lane, where the buffer really is an i32_byte vec.
++      const canReadBufLen = isStructBuf || nativeDataView;
++      const pushBufByteLenF64 = (): void => {
++        fctx.body.push({ op: "local.get", index: bufLocal });
++        if (!isStructBuf) {
++          fctx.body.push({ op: "any.convert_extern" });
++          fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
++        }
++        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
++        fctx.body.push({ op: "f64.convert_i32_s" });
++      };
++
++      // (#5150) §25.3.2.1 step 2, RUNTIME half: the static type could not decide
++      // (an `any` binding, a DataView instance widened to externref). Runs
++      // BEFORE ToIndex(byteOffset) — `buffer-does-not-have-arraybuffer-data-
++      // throws.js` asserts the offset's `valueOf` never runs.
++      if (!isStructBuf && nativeDataView) {
++        fctx.body.push({ op: "local.get", index: bufLocal });
++        fctx.body.push({ op: "any.convert_extern" });
++        fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
++        fctx.body.push({ op: "i32.eqz" });
++        fctx.body.push({
++          op: "if",
++          blockType: { kind: "empty" },
++          then: buildThrowJsErrorInstrs(
++            ctx,
++            "TypeError",
++            "First argument to DataView constructor must be an ArrayBuffer",
++            { flush: fctx },
++          ),
++          else: [],
++        });
++      }
++
+       if (args.length >= 2) {
+         // #1515 ToIndex(byteOffset) per ECMA §7.1.22:
+         //   1. If undefined → 0
+@@ -289,20 +423,11 @@ export function tryCompileIndexedBuiltinNew(
+         fctx.body.push({ op: "f64.gt" });
+         fctx.body.push({ op: "i32.or" });
+ 
+-        // If buffer is a vec struct, also check offset > bufferByteLength
+-        if (isStructBuf) {
+-          fctx.body.push({ op: "local.get", index: offsetF64 });
+-          fctx.body.push({ op: "local.get", index: bufLocal });
+-          fctx.body.push({
+-            op: "struct.get",
+-            typeIdx: vecTypeIdx,
+-            fieldIdx: 0,
+-          }); // buffer length
+-          fctx.body.push({ op: "f64.convert_i32_s" });
+-          fctx.body.push({ op: "f64.gt" });
+-          fctx.body.push({ op: "i32.or" });
+-        }
+-
++        // (#5150) The `offset > bufferByteLength` half moved OUT of this
++        // condition: §25.3.2.1 orders it at step 9, i.e. AFTER the step-7
++        // detached TypeError, and folding the two produced a RangeError for a
++        // detached buffer (`detached-buffer.js`). What remains here is the
++        // ToIndex RangeError of step 4.
+         {
+           const rangeErrMsg = "RangeError: Start offset is outside the bounds of the buffer";
+           fctx.body.push({
+@@ -318,13 +443,71 @@ export function tryCompileIndexedBuiltinNew(
+         fctx.body.push({ op: "local.set", index: offsetF64 });
+       }
+ 
++      // (#5150) §25.3.2.1 step 7: IsDetachedBuffer(buffer) → TypeError. AFTER
++      // ToIndex(byteOffset) (the offset's `valueOf` must have run exactly once)
++      // and BEFORE the step-9 bounds check. The standalone detach marker is the
++      // shared vec's `length` field forced negative (dataview-native.ts), so a
++      // NEGATIVE byte length is the test.
++      if (canReadBufLen) {
++        pushBufByteLenF64();
++        fctx.body.push({ op: "f64.const", value: 0 });
++        fctx.body.push({ op: "f64.lt" });
++        fctx.body.push({
++          op: "if",
++          blockType: { kind: "empty" },
++          then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot construct a DataView on a detached ArrayBuffer", {
++            flush: fctx,
++          }),
++          else: [],
++        });
++      }
++
++      // (#5150) §25.3.2.1 step 9: offset > bufferByteLength → RangeError, now
++      // also for the externref-carried buffer, which is the common standalone
++      // shape (`var ab = new ArrayBuffer(1); new DataView(ab, 2)`).
++      if (canReadBufLen && args.length >= 2) {
++        fctx.body.push({ op: "local.get", index: offsetF64 });
++        pushBufByteLenF64();
++        fctx.body.push({ op: "f64.gt" });
++        fctx.body.push({
++          op: "if",
++          blockType: { kind: "empty" },
++          then: buildThrowJsErrorInstrs(
++            ctx,
++            "RangeError",
++            "RangeError: Start offset is outside the bounds of the buffer",
++            { flush: fctx },
++          ),
++          else: [],
++        });
++      }
++
+       if (args.length >= 3) {
+         // #1515 ToIndex(byteLength) — same ToIndex semantics as byteOffset above.
+         // (#3481) …including the §7.1.4 Symbol TypeError.
+         if (emitSymbolOperandCoercionThrow(ctx, fctx, args[2]!, "number")) {
+           return { kind: "ref_null", typeIdx: vecTypeIdx };
+         }
+-        compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
++        // (#5150) §25.3.2.1 step 11: an EXPLICIT `undefined` byteLength means
++        // "to the end of the buffer" (`defined-byteoffset-undefined-bytelength.js`
++        // asserts byteLength 4, not 0), while `null` keeps coercing to 0. Keep
++        // the compiled argument as an externref so the singleton stays
++        // distinguishable, then override the length below.
++        const lenWasUndefined = allocLocal(fctx, `__dv_len_undef_${fctx.locals.length}`, { kind: "i32" });
++        fctx.body.push({ op: "i32.const", value: 0 });
++        fctx.body.push({ op: "local.set", index: lenWasUndefined });
++        if (ctx.oracle.staticJsTypeOf(args[2]!) === "number") {
++          compileExpression(ctx, fctx, args[2]!, { kind: "f64" });
++        } else {
++          const lenExtern = allocLocal(fctx, `__dv_lenx_${fctx.locals.length}`, { kind: "externref" });
++          const lenTy = compileExpression(ctx, fctx, args[2]!, { kind: "externref" });
++          if (lenTy === null) fctx.body.push({ op: "ref.null.extern" });
++          else if (lenTy.kind !== "externref") coerceType(ctx, fctx, lenTy, { kind: "externref" });
++          fctx.body.push({ op: "local.tee", index: lenExtern });
++          fctx.body.push(...explicitUndefinedExternTestInstrs(ctx, lenExtern));
++          fctx.body.push({ op: "local.set", index: lenWasUndefined });
++          coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
++        }
+         fctx.body.push({ op: "local.set", index: lenF64 });
+         // NaN → 0
+         fctx.body.push({ op: "local.get", index: lenF64 });
+@@ -353,18 +536,14 @@ export function tryCompileIndexedBuiltinNew(
+         fctx.body.push({ op: "f64.gt" });
+         fctx.body.push({ op: "i32.or" });
+ 
+-        // Check: offset + length > bufferByteLength
+-        if (isStructBuf) {
++        // Check: offset + length > bufferByteLength (§25.3.2.1 step 11.b.ii).
++        // (#5150) …now also for the externref carrier — `excessive-bytelength-
++        // throws.js` passes a plain `var buffer = new ArrayBuffer(n)`.
++        if (canReadBufLen) {
+           fctx.body.push({ op: "local.get", index: offsetF64 });
+           fctx.body.push({ op: "local.get", index: lenF64 });
+           fctx.body.push({ op: "f64.add" });
+-          fctx.body.push({ op: "local.get", index: bufLocal });
+-          fctx.body.push({
+-            op: "struct.get",
+-            typeIdx: vecTypeIdx,
+-            fieldIdx: 0,
+-          });
+-          fctx.body.push({ op: "f64.convert_i32_s" });
++          pushBufByteLenF64();
+           fctx.body.push({ op: "f64.gt" });
+           fctx.body.push({ op: "i32.or" });
+         }
+@@ -378,6 +557,28 @@ export function tryCompileIndexedBuiltinNew(
+             else: [],
+           });
+         }
++
++        // (#5150) …and the explicit-`undefined` default, applied after the
++        // bounds check (which the 0-length placeholder always passes).
++        if (canReadBufLen) {
++          fctx.body.push({ op: "local.get", index: lenWasUndefined });
++          const defaultLen: Instr[] = [];
++          const savedBody = fctx.body;
++          fctx.body = defaultLen;
++          pushBufByteLenF64();
++          fctx.body = savedBody;
++          fctx.body.push({
++            op: "if",
++            blockType: { kind: "empty" },
++            then: [
++              ...defaultLen,
++              { op: "local.get", index: offsetF64 },
++              { op: "f64.sub" },
++              { op: "local.set", index: lenF64 },
++            ],
++            else: [],
++          });
++        }
+       } else if (isStructBuf) {
+         // Default byteLength = bufferByteLength - offset
+         fctx.body.push({ op: "local.get", index: bufLocal });
+-- 
+2.43.0
+
+
+From b615b634d4ae718de58587a021c72d5a2395add1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 21:21:04 +0000
+Subject: [PATCH 3/4] =?UTF-8?q?fix(#5150):=20cluster=20G=20=E2=80=94=20Arr?=
+ =?UTF-8?q?ayBuffer.isView=20as=20a=20first-class=20value?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`var isView = ArrayBuffer.isView; isView(x)` fell to the generic
+"ArrayBuffer.isView is not yet implemented in --target standalone" throw: only
+the DIRECT call site had a host-free lowering. The value read now mints the same
+1-arg boxed-predicate closure the `Number.is*` family uses, whose body is the
+carrier `ref.test` chain — shared with the direct call through
+`isViewRefTestInstrs` (dataview-native.ts) so the two can never drift apart.
+
+The shared chain also gained the `$__ta_view` carriers. A buffer-backed
+`new Uint8Array(buffer)` is a shared-backing view struct, not one of the plain
+`$Vec`s, so the pre-existing chain answered `false` for it whenever the static
+type could not decide — which is always, for a value read.
+
+The known imprecision is unchanged and still documented at the helper:
+standalone shares the `$Vec` carrier between `number[]` and TypedArrays, so a
+plain array reads as a view. That is the accepted price of not emitting the
+`__arraybuffer_isView` host import, which would break the whole module at
+instantiate. The `isView/arg-is-typedarray*.js` rows remain failing for the
+separate reason that their harness constructs through a TypedArray ctor VALUE.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+✓
+---
+ src/codegen/builtin-value-read.ts             | 21 +++++++++++++++++++
+ .../expressions/call-namespace-static.ts      | 17 ++++-----------
+ 2 files changed, 25 insertions(+), 13 deletions(-)
+
+diff --git a/src/codegen/builtin-value-read.ts b/src/codegen/builtin-value-read.ts
+index 1f812cfa2..dd73d4c52 100644
+--- a/src/codegen/builtin-value-read.ts
++++ b/src/codegen/builtin-value-read.ts
+@@ -28,6 +28,7 @@ import {
+ } from "./shared.js";
+ import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+ import { allocLocal } from "./context/locals.js";
++import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
+ import { reportErrorNoNode } from "./context/errors.js";
+ import { ensureRegExpNativeProtoGlue } from "./regexp-standalone.js";
+ import {
+@@ -1184,6 +1185,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
+     // natives are standalone-DEFINED funcs (host-free) registered by
+     // `addUnionImports`; if the substrate is unavailable, degrade to the generic
+     // catchable-TypeError body (identity/meta still hold).
++    // (#5150) `ArrayBuffer.isView` as a first-class VALUE — `isView/
++    // invoked-as-a-fn.js` does `var isView = ArrayBuffer.isView; isView(x)`.
++    // The direct-call site is already host-free (call-namespace-static.ts);
++    // only the value read fell to the generic "not yet implemented in --target
++    // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
++    case "ArrayBuffer.isView": {
++      if (!noJsHost(ctx)) return null;
++      paramTypes = [{ kind: "externref" }];
++      returnType = BOOLEAN_PREDICATE_RESULT;
++      break;
++    }
+     case "Number.isInteger":
+     case "Number.isFinite":
+     case "Number.isNaN":
+@@ -1614,6 +1626,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
+           else: [{ op: "i32.const", value: 0 }],
+         },
+       );
++    } else if (key === "ArrayBuffer.isView" && !genericThrowBody) {
++      // (#5150) Body = the SAME carrier `ref.test` disjunction the direct call
++      // emits, shared through `isViewRefTestInstrs` so the value and the call
++      // can never answer differently. Params: 0 = self, 1 = the boxed argument.
++      const anyTmp = allocLocal(closureFctx, "isview_any", { kind: "anyref" });
++      closureFctx.body.push({ op: "local.get", index: 1 });
++      closureFctx.body.push({ op: "any.convert_extern" });
++      closureFctx.body.push({ op: "local.set", index: anyTmp });
++      closureFctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
+     } else if (key === "Object.is" && !genericThrowBody) {
+       // (#2963 Tier 2b) Body. Params: 0=self, 1=x, 2=y (both boxed externref).
+       const typeofNumIdx = ctx.funcMap.get("__typeof_number");
+diff --git a/src/codegen/expressions/call-namespace-static.ts b/src/codegen/expressions/call-namespace-static.ts
+index 959796a11..74b7c5e52 100644
+--- a/src/codegen/expressions/call-namespace-static.ts
++++ b/src/codegen/expressions/call-namespace-static.ts
+@@ -35,7 +35,7 @@ import { reportError } from "../context/errors.js";
+ import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
+ import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
+ import type { CodegenContext, FunctionContext } from "../context/types.js";
+-import { getOrRegisterDvWindowType } from "../dataview-native.js";
++import { isViewRefTestInstrs } from "../dataview-native.js";
+ import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
+ import { GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES, resolvesToAmbientGlobal } from "./non-constructable.js"; // (#5158)
+ import { emitNativeReflectTargetGuard } from "../reflect-target-guard.js";
+@@ -662,21 +662,12 @@ export function compileNamespaceStaticCall(
+       // breaks the whole module). Most isView call sites are statically typed.
+       const at = compileExpression(ctx, fctx, arg0, { kind: "externref" });
+       if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+-      const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+-      const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
+       const anyTmp = allocLocal(fctx, `__isview_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+       fctx.body.push({ op: "any.convert_extern" });
+       fctx.body.push({ op: "local.set", index: anyTmp });
+-      let emitted = false;
+-      for (const vi of vecTypeIdxs) {
+-        fctx.body.push({ op: "local.get", index: anyTmp });
+-        fctx.body.push({ op: "ref.test", typeIdx: vi });
+-        if (emitted) fctx.body.push({ op: "i32.or" });
+-        emitted = true;
+-      }
+-      fctx.body.push({ op: "local.get", index: anyTmp });
+-      fctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx });
+-      if (emitted) fctx.body.push({ op: "i32.or" });
++      // (#5150) The chain moved to `isViewRefTestInstrs` (dataview-native.ts) so
++      // the first-class `ArrayBuffer.isView` VALUE answers identically.
++      fctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
+       return { kind: "i32" };
+     }
+     const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+-- 
+2.43.0
+
+
+From 0795f838f08d009a214abcd2afb32f411eafbe7b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 21:57:25 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?wip(#5150):=20suspension=20snapshot=202026-?=
+ =?UTF-8?q?09-01T21:57Z=20=E2=9C=93?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Unverified WIP snapshot taken by the lead at user-requested suspension (plumbing commit per the /suspend protocol; gates not run).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+---
+ .../5150-es2015-standalone-buffers-wave1.md   |  35 +-
+ tests/issue-5150-es2015-buffers.test.ts       | 345 ++++++++++++++++++
+ 2 files changed, 367 insertions(+), 13 deletions(-)
+ create mode 100644 tests/issue-5150-es2015-buffers.test.ts
+
+diff --git a/plan/issues/5150-es2015-standalone-buffers-wave1.md b/plan/issues/5150-es2015-standalone-buffers-wave1.md
+index 1e286354a..19d13012d 100644
+--- a/plan/issues/5150-es2015-standalone-buffers-wave1.md
++++ b/plan/issues/5150-es2015-standalone-buffers-wave1.md
+@@ -1,10 +1,10 @@
+ ---
+ id: 5150
+ title: "ES2015 standalone: buffers conformance wave 1"
+-status: ready
++status: in-review
+ sprint: current
+ created: 2026-08-28
+-updated: 2026-08-28
++updated: 2026-09-01
+ priority: high
+ horizon: l
+ feasibility: medium
+@@ -14,26 +14,35 @@ es_edition: ES2015
+ goal: standalone-mode
+ requested_by: claude/fable-es2015
+ loc-budget-allow:
+-  - src/runtime.ts
+   - src/codegen/dataview-native.ts
+   - src/codegen/builtin-value-read.ts
+-  - src/codegen/builtin-fn-meta.ts
++  - src/codegen/property-access.ts
+   - src/codegen/property-access-dispatch.ts
+-  - src/codegen/expressions/new-super.ts
++  - src/codegen/declarations.ts
++  - src/codegen/closed-method-dispatch.ts
+   - src/codegen/expressions/new-indexed.ts
+   - src/codegen/expressions/new-builtin-globals.ts
+-  - src/codegen/expressions/calls.ts
+-  - src/codegen/expressions/call-namespace-static.ts
+-  - src/codegen/expressions/call-receiver-method.ts
++func-budget-allow:
++  - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
++  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
++  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
++  - src/codegen/declarations.ts::collectDeclarations
++  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+ ---
+ 
+ # ES2015 standalone: buffers conformance wave 1
+ 
+-LOC-growth allowance rationale (2026-08-28): the clusters below add codegen
+-arms (setter-undefined return, ArrayBuffer.prototype.slice SpeciesConstructor,
+-ctor argument validation, isView closure body, NewTarget.prototype
+-observability) to the files in `loc-budget-allow` — measured growth is
+-expected and granted for this change-set.
++LOC/function-growth allowance rationale (2026-09-01, measured on the landed
++change-set): the wave adds codegen arms — the explicit-`undefined` tests and
++the shared `isView` carrier chain (`dataview-native.ts` +128), the DataView
++constructor's brand / detached / bounds validation (`new-indexed.ts` +196 in
++`tryCompileIndexedBuiltinNew`), the module-global `$__ta_view` slot lookups
++(`property-access*.ts`, `declarations.ts`), the `undefined`-singleton argument
++padding (`closed-method-dispatch.ts`) and the `ArrayBuffer.isView` value
++closure (`builtin-value-read.ts`). The `new-indexed.ts` function growth is the
++one that deserves a follow-up: `tryCompileIndexedBuiltinNew` is now 884 lines
++and its DataView arm should be lifted into its own `tryCompileDataViewNew`
++before the next buffer wave adds to it.
+ 
+ ## Problem
+ 
+diff --git a/tests/issue-5150-es2015-buffers.test.ts b/tests/issue-5150-es2015-buffers.test.ts
+new file mode 100644
+index 000000000..0bfa88e3d
+--- /dev/null
++++ b/tests/issue-5150-es2015-buffers.test.ts
+@@ -0,0 +1,345 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/**
++ * #5150 — ES2015 standalone ArrayBuffer/DataView conformance, wave 1.
++ *
++ * Five clusters land here. Each has a STANDALONE control (the lane the issue is
++ * about) plus a host control wherever the host lane exercises the same code —
++ * `emitArrayBufferSlice` and the buffer-constructor arms are lane-agnostic,
++ * while the DataView instance model and the TypedArray-over-buffer view are
++ * host-bridged and unaffected. Every standalone control also asserts an EMPTY
++ * import manifest: the fixes are Wasm-native, and a regression that pulled in a
++ * host import would be scored `compile_error/host_import_leak` by CI's sharded
++ * lane even though the in-process runner would still report a pass (#5272).
++ *
++ *  A — a DataView setter reached through the closed-method dispatcher pads its
++ *      ABSENT value argument with the `undefined` singleton, so
++ *      `ToNumber(undefined)` is NaN (a `null` pad silently wrote 0).
++ *  C — `ArrayBuffer.prototype.slice` treats an EXPLICIT `undefined` end as "to
++ *      the end of the buffer" while `null` still coerces to 0.
++ *  D — the buffer constructors validate their arguments: an unallocatable
++ *      length is a catchable RangeError (it used to TRAP), `ToIndex` runs
++ *      `valueOf` and truncates, `new DataView(<non-buffer>, …)` is a TypeError
++ *      raised BEFORE the byteOffset coercion, offset/length are bounds-checked
++ *      against the buffer for the externref carrier too, an explicit
++ *      `undefined` byteLength means "to the end", and calling either
++ *      constructor without `new` throws.
++ *  F — `new Uint8Array(buffer[, byteOffset])` assigned to a MODULE-LEVEL
++ *      binding keeps its shared-backing `$__ta_view` slot type (test262
++ *      declares every binding at top level).
++ *  G — `ArrayBuffer.isView` read AS A VALUE mints a real closure instead of the
++ *      generic "not yet implemented in --target standalone" throw, and the
++ *      shared carrier chain now recognises `$__ta_view` structs.
++ */
++import { dirname, join } from "node:path";
++import { fileURLToPath } from "node:url";
++import { describe, expect, it } from "vitest";
++import { buildImports, compile, instantiateWasm } from "../src/index.js";
++import { runTest262File } from "./test262-runner.js";
++import { restoreHostBuiltins } from "./test262-restore-builtins.js";
++
++type Lane = "host" | "standalone";
++
++const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
++const TEST262_ROOT = join(REPO_ROOT, "test262");
++
++/**
++ * Cluster F — the exact top-level shape every `DataView/prototype/set*` row
++ * uses. A module-scope `var` initialised from `new Uint8Array(buffer, 0)` must
++ * hold the shared-backing view, so element reads observe the DataView's write.
++ */
++const MODULE_GLOBAL_VIEW_SOURCE = `
++  var buffer = new ArrayBuffer(4);
++  var sample = new DataView(buffer, 0);
++  var typedArray = new Uint8Array(buffer, 0);
++  var whole = new Uint8Array(buffer);
++  export function test(): number {
++    let checks = 0;
++    sample.setUint8(0, 42);
++    if (typedArray[0] === 42) checks += 1;
++    if (typedArray.length === 4) checks += 2;
++    if (whole[0] === 42) checks += 4;
++    typedArray[1] = 7;
++    if (sample.getUint8(1) === 7) checks += 8;
++    const windowed = new Uint8Array(buffer, 2);
++    if (windowed.length === 2) checks += 16;
++    sample.setUint8(2, 9);
++    if (windowed[0] === 9) checks += 32;
++    return checks;
++  }
++`;
++
++/**
++ * Cluster A — an absent setter value must coerce as `undefined` (ToNumber →
++ * NaN), not `null` (ToNumber → 0), on both the statically typed receiver and
++ * the `any` receiver that routes through the closed-method dispatcher.
++ */
++const MISSING_VALUE_PAD_SOURCE = `
++  export function test(): number {
++    let checks = 0;
++
++    const dv1 = new DataView(new ArrayBuffer(8));
++    dv1.setFloat32(0);
++    const a: any = dv1.getFloat32(0);
++    if (a !== a) checks += 1;
++
++    const dv2: any = new DataView(new ArrayBuffer(8));
++    dv2.setFloat32(0);
++    const b: any = dv2.getFloat32(0);
++    if (b !== b) checks += 2;
++
++    const dv3: any = new DataView(new ArrayBuffer(8));
++    dv3.setUint8(0, 200);
++    const r: any = dv3.setUint8(0);
++    if (r === undefined) checks += 4;
++    if (r !== null) checks += 8;
++    if (dv3.getUint8(0) === 0) checks += 16;
++
++    return checks;
++  }
++`;
++
++/** Cluster C — an explicit `undefined` end defaults to the buffer length. */
++const SLICE_SOURCE = `
++  export function test(): number {
++    let checks = 0;
++    const ab = new ArrayBuffer(8);
++    const end: any = undefined;
++    if (ab.slice(6, end).byteLength === 2) checks += 1;
++    if (ab.slice(6, undefined).byteLength === 2) checks += 2;
++    if (ab.slice(6).byteLength === 2) checks += 4;
++    // null is NOT the absent-argument value — it still coerces to 0.
++    const nullEnd: any = null;
++    if (ab.slice(6, nullEnd).byteLength === 0) checks += 8;
++    if (ab.slice(1, 3).byteLength === 2) checks += 16;
++    if (ab.slice(-2).byteLength === 2) checks += 32;
++    return checks;
++  }
++`;
++
++/** Cluster D — constructor argument validation for both buffer constructors. */
++const CTOR_VALIDATION_SOURCE = `
++  export function test(): number {
++    let checks = 0;
++
++    // ToIndex: a plain object runs valueOf; a fractional length truncates.
++    const lengthObject: any = { valueOf: function (): number { return 4; } };
++    if (new ArrayBuffer(lengthObject).byteLength === 4) checks += 1;
++    if (new ArrayBuffer(1.9).byteLength === 1) checks += 2;
++
++    // An unallocatable length is a CATCHABLE RangeError, not a Wasm trap.
++    try {
++      const huge: any = 9007199254740991;
++      new ArrayBuffer(huge);
++    } catch (e: any) {
++      if (e instanceof RangeError) checks += 4;
++    }
++
++    // The brand TypeError precedes ToIndex(byteOffset), so the offset's valueOf
++    // must NOT run.
++    let offsetTouched = 0;
++    const offset: any = { valueOf: function (): number { offsetTouched += 1; return 0; } };
++    const notABuffer: any = 0;
++    try {
++      new DataView(notABuffer, offset);
++    } catch (e: any) {
++      if (e instanceof TypeError) checks += 8;
++    }
++    if (offsetTouched === 0) checks += 16;
++
++    // Offset/length bounds are checked against the buffer's byteLength.
++    const small = new ArrayBuffer(1);
++    try {
++      new DataView(small, 2);
++    } catch (e: any) {
++      if (e instanceof RangeError) checks += 32;
++    }
++    try {
++      new DataView(small, 0, 4);
++    } catch (e: any) {
++      if (e instanceof RangeError) checks += 64;
++    }
++
++    // An EXPLICIT undefined byteLength means "to the end of the buffer".
++    const four = new ArrayBuffer(4);
++    const absent: any = undefined;
++    if (new DataView(four, 0, absent).byteLength === 4) checks += 128;
++
++    return checks;
++  }
++`;
++
++/**
++ * Cluster D.5 — neither buffer constructor has a [[Call]] behaviour. The gate
++ * is the DIRECT identifier call, which is the form both test262 rows use. The
++ * indirect value form (`var f = ArrayBuffer; f(10)`) still succeeds; it needs
++ * the #3177 slice-3 ctor-value arm extended to the buffer carriers and is left
++ * to the follow-on wave.
++ */
++const CTOR_REQUIRES_NEW_SOURCE = `
++  export function test(): number {
++    let checks = 0;
++    try {
++      (ArrayBuffer as any)(10);
++    } catch (e: any) {
++      if (e instanceof TypeError) checks += 1;
++    }
++    // The arguments are still evaluated; they are simply never coerced.
++    let touched = 0;
++    const arg: any = { valueOf: function (): number { touched += 1; return 0; } };
++    try {
++      (DataView as any)(new ArrayBuffer(1), arg);
++    } catch (e: any) {
++      if (e instanceof TypeError) checks += 2;
++    }
++    if (touched === 0) checks += 4;
++    return checks;
++  }
++`;
++
++/** Cluster G — `ArrayBuffer.isView` extracted as a first-class value. */
++const ISVIEW_VALUE_SOURCE = `
++  export function test(): number {
++    let checks = 0;
++    const isView: any = ArrayBuffer.isView;
++    if (typeof isView === "function") checks += 1;
++    const buffer = new ArrayBuffer(8);
++    const dv: any = new DataView(buffer);
++    const ta: any = new Uint8Array(buffer);
++    if (isView(dv) === true) checks += 2;
++    if (isView(ta) === true) checks += 4;
++    const nothing: any = undefined;
++    if (isView(nothing) === false) checks += 8;
++    if (isView === ArrayBuffer.isView) checks += 16;
++    return checks;
++  }
++`;
++
++async function runControl(source: string, lane: Lane): Promise<{ value: number; imports: string[] }> {
++  const result = await compile(source, {
++    allowJs: true,
++    fileName: "issue-5150-es2015-buffers.ts",
++    skipSemanticDiagnostics: true,
++    ...(lane === "standalone" ? { target: "standalone" as const } : {}),
++  });
++  expect(
++    result.success,
++    `${lane} control compile failed:\n${result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")}`,
++  ).toBe(true);
++  if (!result.success) return { value: -1, imports: [] };
++
++  const module = await WebAssembly.compile(result.binary);
++  const imports = WebAssembly.Module.imports(module).map((entry) => `${entry.module}::${entry.name}`);
++  if (lane === "standalone") {
++    expect(imports, "standalone buffer controls must emit zero imports").toEqual([]);
++    const { instance } = await WebAssembly.instantiate(result.binary, {});
++    return { value: (instance.exports as { test: () => number }).test(), imports };
++  }
++
++  const built = buildImports(result.imports, undefined, result.stringPool);
++  const { instance } = await instantiateWasm(result.binary, built.env, built.string_constants);
++  built.setInstance?.(instance);
++  return { value: (instance.exports as { test: () => number }).test(), imports };
++}
++
++async function runRow(relativePath: string, lane: Lane) {
++  const filePath = join(TEST262_ROOT, "test", relativePath);
++  try {
++    return await runTest262File(filePath, `issue-5150-${lane}`, 120_000, lane === "standalone" ? lane : undefined);
++  } finally {
++    restoreHostBuiltins();
++  }
++}
++
++/**
++ * One representative row per mechanism this wave fixes, each measured `fail` at
++ * its base and `pass` after. The wave flips SIXTEEN rows in total; the rest are
++ * held out of the vitest file deliberately — every row compiles a full test262
++ * harness IN-PROCESS, and the fork pool caps a worker's V8 old-space at 512 MB
++ * (`VITEST_FORK_MAX_OLD_SPACE_SIZE`, vitest.config.ts). Measured on this
++ * change: nine of these rows reach the limit and the worker dies with
++ * "Ineffective mark-compacts near heap limit". The complete flipped list, and
++ * the before/after run behind it, is recorded in
++ * `plan/issues/5150-es2015-standalone-buffers-wave1.md`; CI's sharded lane runs
++ * all of them anyway.
++ */
++const STANDALONE_ROWS = [
++  // A — absent setter value pads as `undefined`, and F — the module-global view.
++  "built-ins/DataView/prototype/setUint8/no-value-arg.js",
++  // D — the brand TypeError, raised before ToIndex(byteOffset). Was a
++  // COMPILE_ERROR: the primitive argument mis-typed the buffer local and the
++  // whole module failed Wasm validation.
++  "built-ins/DataView/buffer-not-object-throws.js",
++  // D — the allocation ceiling. Was an UNCATCHABLE trap.
++  "built-ins/ArrayBuffer/allocation-limit.js",
++  // C — an explicit `undefined` end defaults to the buffer length.
++  "built-ins/ArrayBuffer/prototype/slice/end-default-if-undefined.js",
++] as const;
++
++describe("#5150 ES2015 standalone buffers wave 1", () => {
++  it("module-level buffer views alias their backing buffer (standalone)", async () => {
++    const outcome = await runControl(MODULE_GLOBAL_VIEW_SOURCE, "standalone");
++    expect(outcome.value).toBe(63);
++    expect(outcome.imports).toEqual([]);
++  });
++
++  it("module-level buffer views keep their host-lane behaviour", async () => {
++    // The host lane constructs a REAL host TypedArray over a host ArrayBuffer
++    // (#3097), a different mechanism that this wave does not touch. 18 is what
++    // it answered before the change; pinned so a host regression still fails.
++    expect((await runControl(MODULE_GLOBAL_VIEW_SOURCE, "host")).value).toBe(18);
++  });
++
++  it("an absent setter value pads as undefined, not null (standalone)", async () => {
++    const outcome = await runControl(MISSING_VALUE_PAD_SOURCE, "standalone");
++    expect(outcome.value).toBe(31);
++    expect(outcome.imports).toEqual([]);
++  });
++
++  it("slice defaults an explicit undefined end (standalone)", async () => {
++    const outcome = await runControl(SLICE_SOURCE, "standalone");
++    expect(outcome.value).toBe(63);
++    expect(outcome.imports).toEqual([]);
++  });
++
++  it("buffer constructors validate their arguments (standalone)", async () => {
++    const outcome = await runControl(CTOR_VALIDATION_SOURCE, "standalone");
++    expect(outcome.value).toBe(255);
++    expect(outcome.imports).toEqual([]);
++  });
++
++  it("buffer constructors validate their arguments (host)", async () => {
++    // Host mode reaches the same ArrayBuffer arm (ToIndex + the allocation
++    // RangeError, bits 1|2|4); the DataView halves are host-bridged and stay
++    // out of scope. Before this wave the whole control TRAPPED.
++    expect((await runControl(CTOR_VALIDATION_SOURCE, "host")).value).toBe(7);
++  });
++
++  it("buffer constructors require new (standalone)", async () => {
++    const outcome = await runControl(CTOR_REQUIRES_NEW_SOURCE, "standalone");
++    expect(outcome.value).toBe(7);
++    expect(outcome.imports).toEqual([]);
++  });
++
++  it("buffer constructors require new (host)", async () => {
++    expect((await runControl(CTOR_REQUIRES_NEW_SOURCE, "host")).value).toBe(7);
++  });
++
++  it("ArrayBuffer.isView reads as a callable value (standalone)", async () => {
++    const outcome = await runControl(ISVIEW_VALUE_SOURCE, "standalone");
++    expect(outcome.value).toBe(31);
++    expect(outcome.imports).toEqual([]);
++  });
++
++  it("ArrayBuffer.isView keeps its host-lane behaviour", async () => {
++    // Host mode answers through the `__arraybuffer_isView` import, untouched
++    // here. 29 is the pre-change value (the DataView bit is a host-repr gap).
++    expect((await runControl(ISVIEW_VALUE_SOURCE, "host")).value).toBe(29);
++  });
++
++  for (const row of STANDALONE_ROWS) {
++    it(`standalone: ${row}`, async () => {
++      const outcome = await runRow(row, "standalone");
++      expect(outcome.status, `${row}: ${JSON.stringify(outcome)}`).toBe("pass");
++    }, 240_000);
++  }
++});
+-- 
+2.43.0
+

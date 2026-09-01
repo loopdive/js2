@@ -1,0 +1,150 @@
+test/built-ins/Function/internals/Construct/derived-return-val-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/built-ins/Function/prototype/toString/not-a-constructor.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/prototype/toString/proxy-bound-function.js	fail/assertion_fail	Test262Error: Conforms to NativeFunction Syntax: "undefined"
+test/built-ins/JSON/stringify/replacer-array-abrupt.js	compile_error/other	L47:3 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the P
+test/built-ins/Symbol/auto-boxing-non-strict.js	fail/assertion_fail	Test262Error: The value of `sym.a` is `undefined`, after executing `sym.a = 0;` Expected SameValue(«null», «undefined») to be true
+test/built-ins/Symbol/for/cross-realm.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'for')
+test/built-ins/String/prototype/search/cstm-search-invocation.js	fail/type_error	TypeError: Unsupported dynamic regular expression pattern
+test/built-ins/String/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 344:44
+test/built-ins/NativeErrors/message_property_native_error.js	compile_error/host_import_leak	standalone target emitted host imports: env::__new_SuppressedError (#2961)
+test/built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js	fail/assertion_fail	Test262Error: `function() {}` doesn't coerce into a number in range (1-100) Expected a RangeError but got a TypeError
+test/annexB/built-ins/escape/to-primitive-observe.js	fail/assertion_fail	Test262Error: this should be unreachable
+test/built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/prototype/apply/this-not-callable-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 333:18
+test/built-ins/Symbol/toStringTag/prop-desc.js	fail/assertion_fail	Test262Error: toStringTag should be an own property
+test/built-ins/Symbol/prototype/intrinsic.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js	compile_error/runtime_error	L23:9 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Function/prototype/apply/argarray-not-object-realm.js	fail/assertion_fail	Test262Error: Expected a but got a undefined
+test/built-ins/Date/proto-from-ctor-realm-zero.js	fail/type_error	TypeError: Cannot access property on null or undefined at 346:44
+test/built-ins/String/prototype/search/invoke-builtin-search-searcher-undef.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-symbol.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/built-ins/Symbol/prototype/Symbol.toStringTag.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"Symbol"») to be true
+test/built-ins/Error/prototype/stack/setter-proxy-wrapping-prototype.js	fail/type_error	TypeError: Cannot access property on null or undefined at 379:11
+test/built-ins/Function/prototype/toString/proxy-generator-function.js	fail/assertion_fail	Test262Error: Conforms to NativeFunction Syntax: "undefined"
+test/annexB/built-ins/String/prototype/substr/this-to-str-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Error/message_property.js	fail/assertion_fail	Test262Error: message should be an own property
+test/built-ins/Error/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «undefined») to be true
+test/built-ins/Error/prototype/stack/getter-cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 336:12
+test/built-ins/String/prototype/normalize/return-normalized-string.js	fail/assertion_fail	Test262Error: Normalized on NFD Expected SameValue(«"ẛ̣"», «"ẛ̣"») to be true
+test/built-ins/JSON/stringify/value-symbol.js	fail/assertion_fail	Test262Error: Expected SameValue(«"null"», «undefined») to be true
+test/built-ins/Symbol/prototype/toString/toString-default-attributes-strict.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/prototype/name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 96:34
+test/built-ins/Symbol/isConcatSpreadable/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:45
+test/built-ins/String/prototype/indexOf/position-tointeger-errors.js	fail/assertion_fail	Test262Error: ToInteger: @@toPrimitive => Symbol => TypeError Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/prototype/bind/instance-construct-newtarget-self-reflect.js	fail/type_error	TypeError: Reflect.construct newTarget is not a constructor
+test/built-ins/JSON/stringify/replacer-array-wrong-type.js	compile_error/other	L37:18 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the 
+test/built-ins/JSON/stringify/value-object-proxy.js	fail/assertion_fail	Test262Error: proxy for an object Expected SameValue(«"null"», «"{\"a\":1,\"b\":1}"») to be true
+test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js	compile_error/runtime_error	L24:9 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/NativeErrors/ReferenceError/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: newTarget.prototype is undefined Expected SameValue(«null», «undefined») to be true
+test/built-ins/String/prototype/split/cstm-split-get-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Symbol/desc-to-string.js	fail/assertion_fail	Test262Error: Expected SameValue(«""», «"toStringvalueOf"») to be true
+test/built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js	fail/assertion_fail	Test262Error: hint: default
+test/built-ins/Error/prototype/stack/setter-cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 855:12
+test/built-ins/JSON/stringify/replacer-array-proxy.js	compile_error/other	L29:18 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the 
+test/built-ins/Function/prototype/Symbol.hasInstance/value-get-prototype-of-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/String/prototype/replace/cstm-replace-get-err.js	compile_error/other	L23:3 Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile wit
+test/built-ins/String/prototype/match/cstm-matcher-is-null.js	fail/type_error	TypeError: Unsupported dynamic regular expression pattern
+test/built-ins/Symbol/toPrimitive/prop-desc.js	fail/assertion_fail	Test262Error: toPrimitive should be an own property
+test/built-ins/Function/prototype/Symbol.hasInstance/this-val-not-callable.js	fail/type_error	TypeError: Function.prototype.call is not yet implemented in --target standalone
+test/built-ins/String/prototype/indexOf/searchstring-tostring-wrapped-values.js	fail/assertion_fail	Test262Error: ToPrimitive: @@toPrimitive Expected SameValue(«-1», «2») to be true
+test/built-ins/JSON/stringify/replacer-array-proxy-revoked.js	compile_error/other	L31:3 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the P
+test/built-ins/Symbol/isConcatSpreadable/prop-desc.js	fail/assertion_fail	Test262Error: isConcatSpreadable should be an own property
+test/built-ins/Symbol/prototype/toString/toString.js	fail/assertion_fail	Test262Error: `Symbol.prototype.toString.call(Symbol('66'))` returns `'Symbol(66)'` Expected SameValue(«undefined», «"Symbol(66)"») to be true
+test/built-ins/Error/prototype/stack/setter-not-a-constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 356:11
+test/built-ins/NativeErrors/EvalError/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: newTarget.prototype is undefined Expected SameValue(«null», «undefined») to be true
+test/built-ins/Symbol/unscopables/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:38
+test/built-ins/Function/prototype/toString/proxy-method-definition.js	fail/assertion_fail	Test262Error: Conforms to NativeFunction Syntax: "undefined"
+test/built-ins/NativeErrors/TypeError/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: newTarget.prototype is undefined Expected SameValue(«null», «undefined») to be true
+test/built-ins/JSON/stringify/value-array-abrupt.js	compile_error/other	L36:3 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the P
+test/built-ins/Symbol/hasInstance/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:38
+test/built-ins/NativeErrors/RangeError/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: newTarget.prototype is undefined Expected SameValue(«null», «undefined») to be true
+test/built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js	fail/type_error	TypeError: Cannot access property on null or undefined at 355:11
+test/built-ins/Function/prototype/bind/get-fn-realm-recursive.js	compile_error/runtime_error	L50:14 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/String/prototype/search/cstm-search-get-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Symbol/for/to-string-err.js	fail/null_deref	dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/String/prototype/normalize/return-normalized-string-from-coerced-form.js	fail/assertion_fail	Test262Error: coerced array - NFC Expected SameValue(«"Å⫝̸क़Ω̈́"», «"Å⫝̸क़Ω̈́"») to be true
+test/built-ins/String/prototype/replace/cstm-replace-invocation.js	fail/assertion_fail	Test262Error: Expected SameValue(«""», «[object Object]») to be true
+test/built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-obj-symbol-wrapper.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «Symbol()») to be true
+test/built-ins/Boolean/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/built-ins/String/prototype/search/cstm-search-is-null.js	fail/type_error	TypeError: Unsupported dynamic regular expression pattern
+test/built-ins/Function/prototype/bind/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/built-ins/Function/proto-from-ctor-realm-prototype.js	fail/type_error	TypeError: Cannot access property on null or undefined at 361:45
+test/built-ins/Symbol/symbol.js	fail/assertion_fail	Test262Error: Symbol should be an own property
+test/built-ins/Function/prototype/toString/proxy-function-expression.js	fail/assertion_fail	Test262Error: Conforms to NativeFunction Syntax: "undefined"
+test/built-ins/Symbol/species/basic.js	fail/assertion_fail	Test262Error: species should be an own property
+test/built-ins/Symbol/keyFor/cross-realm.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'for')
+test/built-ins/String/prototype/indexOf/position-tointeger-toprimitive.js	fail/assertion_fail	Test262Error: ToPrimitive: @@toPrimitive takes precedence Expected SameValue(«0», «1») to be true
+test/built-ins/String/prototype/split/this-value-tostring-error.js	fail/assertion_fail	Test262Error: ToString should not be called on the receiver when the separator has a @@split method. Expected SameValue(«ExpectedError: receiver.toString», «undefined») to be true
+test/built-ins/isNaN/toprimitive-valid-result.js	fail/assertion_fail	Test262Error: toPrimitive is called - non-NaN number Expected SameValue(«NaN», «1») to be true
+test/built-ins/Error/prototype/stack/getter-subclass.js	compile_error/host_import_leak	standalone target emitted host imports: env::__new_SuppressedError (#2961)
+test/built-ins/String/prototype/indexOf/searchstring-tostring-errors.js	fail/assertion_fail	Test262Error: ToString: unbox object with internal slot => Symbol => TypeError Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/JSON/stringify/replacer-array-proxy-revoked-realm.js	compile_error/other	L34:3 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the P
+test/annexB/built-ins/unescape/to-primitive-observe.js	fail/assertion_fail	Test262Error: this should be unreachable
+test/built-ins/Function/prototype/bind/get-fn-realm.js	compile_error/runtime_error	L52:12 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/String/prototype/indexOf/searchstring-tostring-toprimitive.js	fail/assertion_fail	Test262Error: 
+test/built-ins/String/prototype/search/invoke-builtin-search.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Symbol/toPrimitive/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:32
+test/built-ins/String/prototype/match/invoke-builtin-match.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Function/internals/Construct/base-ctor-revoked-proxy-realm.js	fail/type_error	TypeError: Proxy.revocable is not yet implemented in --target standalone
+test/built-ins/AsyncFunction/is-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor(AsyncFunction) must return true Expected SameValue(«false», «true») to be true
+test/built-ins/Function/prototype/toString/proxy-class.js	fail/assertion_fail	Test262Error: Conforms to NativeFunction Syntax: "undefined"
+test/built-ins/Symbol/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 326:3
+test/built-ins/Symbol/toStringTag/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:38
+test/built-ins/String/raw/nextkey-is-symbol-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/prototype/bind/instance-construct-newtarget-self-new.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true
+test/built-ins/Date/proto-from-ctor-realm-two.js	fail/type_error	TypeError: Cannot access property on null or undefined at 347:44
+test/built-ins/Error/prototype/stack/getter-receiver-is-proxy.js	fail/type_error	TypeError: Cannot access property on null or undefined at 370:11
+test/built-ins/String/prototype/split/limit-touint32-error.js	fail/assertion_fail	Test262Error: ToUint32 should be called on the limit before ToString on the separator. Expected a ExpectedError but got a Test262Error
+test/built-ins/JSON/stringify/value-array-proxy-revoked.js	compile_error/other	L32:3 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the P
+test/built-ins/JSON/stringify/value-array-proxy.js	compile_error/other	L38:3 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the P
+test/built-ins/Function/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «undefined») to be true
+test/built-ins/Symbol/prototype/Symbol.toPrimitive/redefined-symbol-wrapper-ordinary-toprimitive.js	fail/type_error	TypeError: TypeError: Cannot assign to read only property of a non-configurable property
+test/built-ins/NativeErrors/URIError/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: newTarget.prototype is undefined Expected SameValue(«null», «undefined») to be true
+test/built-ins/Symbol/iterator/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:35
+test/built-ins/String/prototype/match/cstm-matcher-get-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Function/internals/Call/class-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/built-ins/String/raw/returns-abrupt-from-next-key.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/ThrowTypeError/distinct-cross-realm.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/annexB/built-ins/escape/to-primitive-err.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a Test262Error
+test/built-ins/Date/subclassing.js	compile_error/runtime_error	L29:12 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Error/prototype/stack/getter-not-a-constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 356:11
+test/built-ins/String/prototype/match/cstm-matcher-invocation.js	fail/type_error	TypeError: Unsupported dynamic regular expression pattern
+test/built-ins/Symbol/species/cross-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:34
+test/built-ins/JSON/parse/text-non-string-primitive.js	compile_error/other	L18:3 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/str
+test/built-ins/String/prototype/toString/non-generic-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 338:21
+test/built-ins/Error/prototype/stack/getter-foreign-new-target.js	compile_error/runtime_error	L29:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Symbol/not-callable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/is-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor(Function) must return true Expected SameValue(«false», «true») to be true
+test/built-ins/JSON/stringify/replacer-wrong-type.js	compile_error/other	L24:18 Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (#1599). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the 
+test/built-ins/JSON/parse/revived-proxy.js	fail/assertion_fail	Test262Error: proxy for array proxy Expected SameValue(«true», «false») to be true
+test/built-ins/JSON/stringify/value-object-proxy-revoked.js	fail/assertion_fail	Test262Error: top-level value Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Error/prototype/stack/setter-proxy-trap-throws.js	fail/type_error	TypeError: Cannot access property on null or undefined at 342:11
+test/built-ins/Function/prototype/toString/proxy-non-callable-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/internals/Construct/derived-this-uninitialized-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/built-ins/Symbol/hasInstance/prop-desc.js	fail/assertion_fail	Test262Error: hasInstance should be an own property
+test/built-ins/Symbol/species/subclassing.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/String/prototype/normalize/return-normalized-string-using-default-parameter.js	fail/assertion_fail	Test262Error: Use NFC as the default form Expected SameValue(«"Å⫝̸क़Ω̈́"», «"Å⫝̸क़Ω̈́"») to be true
+test/built-ins/AsyncFunction/AsyncFunctionPrototype-to-string.js	fail/assertion_fail	Test262Error: toStringTag value Expected SameValue(«undefined», «"AsyncFunction"») to be true
+test/built-ins/Function/prototype/Symbol.hasInstance/prop-desc.js	fail/type_error	TypeError: Cannot access property on null or undefined at 105:29
+test/built-ins/Date/prototype/toJSON/to-primitive-symbol.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «false») to be true
+test/built-ins/Symbol/auto-boxing-strict.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/isFinite/toprimitive-valid-result.js	fail/assertion_fail	Test262Error: use returned value - number Expected SameValue(«false», «true») to be true
+test/built-ins/Number/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/built-ins/Function/prototype/toString/proxy-arrow-function.js	fail/assertion_fail	Test262Error: Conforms to NativeFunction Syntax: "undefined"
+test/built-ins/Symbol/unscopables/prop-desc.js	fail/assertion_fail	Test262Error: unscopables should be an own property
+test/built-ins/Symbol/keyFor/arg-non-symbol.js	fail/assertion_fail	Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Function/prototype/Symbol.hasInstance/name.js	fail/assertion_fail	Test262Error: name descriptor value should be [Symbol.hasInstance]; name value should be [Symbol.hasInstance]
+test/built-ins/String/prototype/split/cstm-split-invocation.js	fail/assertion_fail	Test262Error: Expected SameValue(«», «[object Object]») to be true
+test/built-ins/Date/proto-from-ctor-realm-one.js	fail/type_error	TypeError: Cannot access property on null or undefined at 347:44
+test/annexB/built-ins/unescape/to-primitive-err.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a Test262Error
+test/built-ins/Function/call-bind-this-realm-undef.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/Date/prototype/toJSON/to-object.js	fail/type_error	TypeError: Date.prototype.toJSON is not yet implemented in --target standalone
+test/built-ins/Function/call-bind-this-realm-value.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/Function/prototype/Symbol.hasInstance/this-val-poisoned-prototype.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/String/raw/template-length-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Function/internals/Construct/derived-return-val.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a ReferenceError
+test/built-ins/String/prototype/valueOf/non-generic-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 338:20
+test/built-ins/NativeErrors/SyntaxError/proto-from-ctor-realm.js	fail/assertion_fail	Test262Error: newTarget.prototype is undefined Expected SameValue(«null», «undefined») to be true
+test/built-ins/Symbol/iterator/prop-desc.js	fail/assertion_fail	Test262Error: iterator should be an own property
+test/built-ins/Symbol/species/builtin-getter-name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:16
+test/built-ins/Error/prototype/stack/setter-receiver-is-proxy.js	fail/type_error	TypeError: Cannot access property on null or undefined at 371:11

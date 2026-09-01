@@ -1,0 +1,13 @@
+/*---
+description: probe .tmp/es2015/probes5195/name-binding.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var C2;
+class C { m() { C2 = C; } }
+new C().m();
+assert.sameValue(C2, C, 'inner binding equals class');
+var Cv = class K { m() { return K; } };
+assert.sameValue(new Cv().m(), Cv, 'class-expression inner name');
+var threw = false;
+try { class Q { m() { Q = 42; } } new Q().m(); } catch (e) { threw = e instanceof TypeError; }
+assert.sameValue(threw, true, 'assignment to inner class binding is TypeError');

@@ -380,3 +380,41 @@ flight on the same arm before starting.
   missing-brand-check trap cluster (cluster C.1/D.3 are its buffer cases).
 - #2046 (in-progress) — standalone Reflect spec gaps; #4274 — true realms
   (the two deferred proto-from-ctor-realm tests).
+
+## Suspended Work (2026-09-01T21:56Z — user-requested 2-hour pause)
+
+- **Branch**: local lane branch `worktree-agent-aeeb8b33069f63eff` at `0795f838f`
+  (WIP snapshot on top of base `d153a0882`; NOT pushed — durable copy is
+  `plan/agent-context/es2015-suspend-2026-09-01/patches/lane-5150.mbox`, 4
+  patches: `dd9370a31` clusters A+F (+ cluster C's explicit-`undefined` slice
+  end), `6911a46bb` cluster D, `b615b634d` cluster G, then the snapshot carrying
+  the untracked focused test `tests/issue-5150-es2015-buffers.test.ts` and this
+  file's edits; apply with `git am --3way` onto current main).
+- **Worktree at suspension**: `/home/user/js2/.claude/worktrees/agent-aeeb8b33069f63eff`
+  (treat as gone).
+- **State** (implementer's handoff): clusters A, C (slice end), D, F, G done
+  and committed; Step 2 (cluster B ctor/instance object model), Step 3.3
+  (slice species) and Step 5 (cluster E, #3371) NOT done — B blocks the 3
+  remaining `defined-byteoffset*` rows and the species family.
+- **Verified so far** (implementer's runs, standalone, the 53-row list,
+  `.tmp` runner with a 120 s compile timeout): before 0 pass / 48 fail / 5 CE
+  → after **16 pass / 32 fail / 5 CE — +16, zero regressions**; the 5 CEs are
+  the #3371 refusal. All 16 flipped rows verified host-import clean
+  (`check-leak.mts`). Gates green (loc, func, coercion, oracle-ratchet,
+  dead-exports); `tsc --noEmit` identical to the unmodified checkout; focused
+  test 14/14.
+- **NOT yet verified / next steps**: (1) `git am` + `pnpm run typecheck`; (2)
+  the 20-row TypedArray collateral sample (`lists/ta-sample.txt` if present,
+  else pick 20 currently-passing `TypedArray/prototype/**` rows) in BOTH lanes;
+  (3) `pnpm run test:equivalence:gate`; (4) write the `## 2026-09-01
+  implementation (Opus)` section; (5) Step 2 (cluster B) then 3.3.
+- **Traps**: `scripts/run-test262-paths.mts` uses the runner's hard-coded 15 s
+  compile timeout — under load 33/53 rows falsely read `compilation timeout`;
+  use a runner with a longer timeout (the implementer's `run-rows.mts`) or an
+  idle box. `runTest262File` does not apply the standalone leak check (#5272).
+  Do not A/B by restoring `.tmp/*-new.ts` snapshots (it silently reverted the
+  `isViewRefTestInstrs` taView fix once). Host-lane `ab.slice(1,3).byteLength`
+  fails to compile on unmodified main — pre-existing. `tryCompileIndexedBuiltinNew`
+  is now 884 lines: lift the DataView arm into `tryCompileDataViewNew` before
+  the next wave. #5194 edits neighbouring TypedArray functions in
+  `dataview-native.ts` — reconcile at merge, never rebase.

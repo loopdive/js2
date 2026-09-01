@@ -1,0 +1,157 @@
+test/built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js	fail/assertion_fail	Test262Error: target has the custom set prototype Expected SameValue(«[object Object]», «[object Object]») to be true
+test/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js	compile_error/runtime_error	L42:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor-realm.js	fail/assertion_fail	Test262Error: Thrown value was not an object!
+test/built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js	compile_error/other	L24:3 Codegen error: Reflect.defineProperty not supported in standalone mode (#1472 Phase C).
+test/built-ins/Proxy/has/call-object-create.js	fail/assertion_fail	Test262Error: handler is context Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Proxy/defineProperty/null-handler.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/get/trap-is-null-target-is-proxy.js	fail/null_deref	dereferencing a null pointer [in __module_init_chunk_0() ← __module_init]
+test/built-ins/Proxy/construct/return-not-object-throws-null-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/has/call-in-prototype-index.js	fail/assertion_fail	Test262Error: handler is context Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js	compile_error/runtime_error	L45:9 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js	fail/type_error	TypeError: Proxy trap result violates a Proxy invariant
+test/built-ins/Proxy/construct/trap-is-undefined-target-is-proxy.js	compile_error/runtime_error	L43:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/get/trap-is-undefined-receiver.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «null») to be true
+test/built-ins/Proxy/revocable/revocation-function-length.js	fail/assertion_fail	Test262Error: length should be an own property
+test/built-ins/Reflect/set/set-value-on-accessor-descriptor-with-receiver.js	compile_error/other	L41:14 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Proxy/deleteProperty/targetdesc-is-not-configurable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/construct/arguments-list-is-not-array-like.js	compile_error/other	L35:3 Codegen error: standalone Reflect.construct currently requires an array-literal argsList (#3371).; L39:3 Codegen error: standalone Reflect.construct currently requires an array-literal argsList (#3371).
+test/built-ins/Proxy/set/trap-is-null-target-is-proxy.js	fail/assertion_fail	Test262Error: Actual [1, 2, 3] and expected [] should have the same contents. 
+test/built-ins/Proxy/ownKeys/return-all-non-configurable-keys.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/has/return-false-target-not-extensible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/ownKeys/not-extensible-new-keys-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/get/return-abrupt-from-property-key.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Proxy/deleteProperty/trap-is-null-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/trap-is-missing-target-is-proxy.js	fail/type_error	TypeError: Method called on incompatible receiver (RegExp brand check failed)
+test/built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/call-parameters-prototype-index.js	fail/assertion_fail	Test262Error: handler object is the trap context Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-invalid-descriptor.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/has/trap-is-undefined-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-targetdesc-is-not-configurable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/revocable/revocation-function-property-order.js	fail/assertion_fail	Test262Error: The `length` property comes before the `name` property on built-in functions
+test/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/apply/arguments-list-is-not-array-like.js	fail/assertion_fail	Test262Error: `Reflect.apply(fn, null /* empty */)` throws a TypeError exception Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/return-not-object-throws-boolean-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/construct/return-with-newtarget-argument.js	compile_error/runtime_error	L25:14 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/apply/null-handler-realm.js	fail/type_error	TypeError: Proxy.revocable is not yet implemented in --target standalone
+test/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/apply/trap-is-missing-target-is-proxy.js	fail/type_error	TypeError: Object.prototype.hasOwnProperty is not yet implemented in --target standalone
+test/built-ins/Proxy/defineProperty/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «4») to be true
+test/built-ins/Proxy/deleteProperty/trap-is-undefined-not-strict.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «undefined») to be true
+test/built-ins/Proxy/has/return-false-target-not-extensible-using-with.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a ReferenceError
+test/built-ins/Proxy/defineProperty/targetdesc-not-configurable-writable-desc-not-writable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/null-handler-realm.js	fail/type_error	TypeError: Proxy.revocable is not yet implemented in --target standalone
+test/built-ins/Proxy/construct/trap-is-undefined.js	compile_error/runtime_error	L46:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/apply/trap-is-null-target-is-proxy.js	fail/null_deref	dereferencing a null pointer [in __module_init()]
+test/built-ins/Proxy/revocable/revocation-function-not-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor invoked with a non-function value
+test/built-ins/Proxy/defineProperty/desc-realm.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Object]») to be true
+test/built-ins/Proxy/setPrototypeOf/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/preventExtensions/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/return-true-target-property-is-not-configurable.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/set/different-property-descriptors.js	compile_error/other	L45:14 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.; L59:10
+test/built-ins/Proxy/getPrototypeOf/instanceof-target-not-extensible-not-same-proto-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/get/not-same-value-configurable-false-writable-false-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/trap-is-missing-receiver-multiple-calls-index.js	fail/assertion_fail	Test262Error: Actual [] and expected [0, 0, 0] should have the same contents. getOwnPropertyDescriptor: key present on [[ProxyTarget]]
+test/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-undefined.js	fail/null_deref	dereferencing a null pointer [in __module_init_chunk_1() ← __module_init]
+test/built-ins/Proxy/has/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-undefined-target-is-proxy.js	fail/assertion_fail	Test262Error: 0 should be an own property
+test/built-ins/Proxy/getPrototypeOf/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/enumerate/undefined.js	compile_error/other	L10:18 Codegen error: Reflect.hasOwnProperty not supported in standalone mode (#1472 Phase C).
+test/built-ins/Reflect/apply/call-target.js	fail/assertion_fail	Test262Error: Called target with `o` as `this` object Expected SameValue(«null», «[object Object]») to be true
+test/built-ins/Proxy/get/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «0») to be true
+test/built-ins/Proxy/revocable/revocation-function-name.js	fail/assertion_fail	Test262Error: name should be an own property
+test/built-ins/Proxy/defineProperty/null-handler-realm.js	fail/type_error	TypeError: Proxy.revocable is not yet implemented in --target standalone
+test/built-ins/Reflect/set/creates-a-data-descriptor.js	compile_error/other	L63:10 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/Reflect/ownKeys/order-after-define-property.js	fail/assertion_fail	Test262Error: Actual [] and expected [Symbol(a), Symbol(b)] should have the same contents. 
+test/built-ins/Proxy/preventExtensions/return-false.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Proxy/get/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/setPrototypeOf/return-false-if-target-is-prototype-of-proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Proxy/ownKeys/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: Actual [0, 1, 2, length] and expected [0, 1, 2, length, Symbol()] should have the same contents. 
+test/built-ins/Proxy/has/trap-is-undefined-using-with.js	fail/other	ReferenceError: length is not defined
+test/built-ins/Reflect/set/set-value-on-data-descriptor.js	compile_error/other	L50:14 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/Proxy/deleteProperty/trap-is-undefined-strict.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «undefined») to be true
+test/built-ins/Proxy/construct/arguments-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-undefined.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-realm.js	fail/assertion_fail	Test262Error: Thrown value was not an object!
+test/built-ins/Reflect/set/return-abrupt-from-property-key.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Proxy/has/call-in-prototype.js	fail/assertion_fail	Test262Error: handler is context Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Proxy/construct/return-not-object-throws-string-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 372:44
+test/built-ins/Reflect/has/target-is-not-object-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/get/target-is-not-object-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/call-parameters-prototype-dunder-proto.js	fail/assertion_fail	Test262Error: handler object is the trap context Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Proxy/setPrototypeOf/trap-is-undefined-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «0») to be true
+test/built-ins/Proxy/has/return-false-targetdesc-not-configurable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/has/trap-is-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«false», «true») to be true
+test/built-ins/Reflect/ownKeys/return-on-corresponding-order.js	fail/assertion_fail	Test262Error: Expected SameValue(«5», «7») to be true
+test/built-ins/Proxy/construct/call-parameters-new-target.js	compile_error/runtime_error	L39:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/getPrototypeOf/instanceof-custom-return-accepted.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Proxy/set/target-property-is-accessor-not-configurable-set-is-undefined.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/getOwnPropertyDescriptor/return-abrupt-from-property-key.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/trap-is-null.js	compile_error/runtime_error	L46:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/isExtensible/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/preventExtensions/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/getOwnPropertyDescriptor/null-handler.js	compile_error/other	L15:3 Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (#1472 Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/str
+test/built-ins/Proxy/defineProperty/trap-is-null-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/built-ins/Proxy/setPrototypeOf/trap-is-null-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «null») to be true
+test/built-ins/Proxy/apply/arguments-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/built-ins/Proxy/set/trap-is-undefined-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Reflect/apply/target-is-not-callable-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-missing-target-is-proxy.js	fail/assertion_fail	Test262Error: 0 should be an own property
+test/built-ins/Proxy/construct/return-not-object-throws-symbol-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/setPrototypeOf/return-abrupt-from-get-trap.js	fail/assertion_fail	Test262Error: 
+test/built-ins/Proxy/get-fn-realm-recursive.js	compile_error/runtime_error	L54:15 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js	fail/other	ReferenceError: ns is not defined
+test/built-ins/Proxy/function-prototype.js	fail/assertion_fail	Test262Error: `Object.getPrototypeOf(Proxy)` returns `Function.prototype` Expected SameValue(«null», «[object Function]») to be true
+test/built-ins/Proxy/set/call-parameters-prototype.js	fail/assertion_fail	Test262Error: handler object is the trap context Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Proxy/defineProperty/call-parameters.js	fail/type_error	TypeError: Cannot convert undefined to object
+test/built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js	compile_error/runtime_error	L35:15 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/revocable/tco-fn-realm.js	fail/assertion_fail	Test262Error: Expected a but got a TypeError
+test/built-ins/Proxy/ownKeys/return-not-list-object-throws-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-configurable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/setPrototypeOf/toboolean-trap-result-false.js	fail/assertion_fail	Test262Error: false Expected SameValue(«true», «false») to be true
+test/built-ins/Proxy/defineProperty/targetdesc-configurable-desc-not-configurable-realm.js	fail/assertion_fail	Test262Error: Thrown value was not an object!
+test/built-ins/Proxy/ownKeys/not-extensible-missing-keys-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/ownKeys/return-on-corresponding-order-large-index.js	fail/assertion_fail	Test262Error: Expected SameValue(«8», «9») to be true
+test/built-ins/Proxy/get/trap-is-undefined-target-is-proxy.js	fail/assertion_fail	Test262Error: Actual [] and expected [1, 2, 3] should have the same contents. 
+test/built-ins/Proxy/set/trap-is-null-receiver.js	fail/type_error	TypeError: Cannot access property on null or undefined at 341:1
+test/built-ins/Proxy/ownKeys/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/return-not-object-throws-number-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/get-fn-realm.js	compile_error/runtime_error	L50:13 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Reflect/defineProperty/return-boolean.js	fail/type_error	TypeError: TypeError: Cannot assign to read only property of a non-configurable property
+test/built-ins/Proxy/has/return-false-target-prop-exists.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Reflect/deleteProperty/delete-properties.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Reflect/getPrototypeOf/return-prototype.js	fail/assertion_fail	Test262Error: return default prototypes Expected SameValue(«null», «[object Object]») to be true
+test/built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-not-writable-targetdesc-is-writable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/defineProperty/trap-is-undefined-target-is-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/preventExtensions/return-boolean-from-proxy-object.js	fail/assertion_fail	Test262Error: returns false from Proxy handler Expected SameValue(«true», «false») to be true
+test/built-ins/Reflect/construct/target-is-not-constructor-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/object-prototype.js	fail/assertion_fail	Test262Error: `Object.getPrototypeOf(Reflect)` returns `Object.prototype` Expected SameValue(«null», «[object Object]») to be true
+test/built-ins/Proxy/has/return-false-targetdesc-not-configurable-using-with.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a ReferenceError
+test/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target-realm.js	fail/assertion_fail	Test262Error: Thrown value was not an object!
+test/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/has/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/target-property-is-not-configurable-not-writable-not-equal-to-v.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/set/trap-is-missing-receiver-multiple-calls.js	fail/assertion_fail	Test262Error: Actual [] and expected [foo, foo, foo] should have the same contents. getOwnPropertyDescriptor: key present on [[ProxyTarget]]
+test/built-ins/Proxy/defineProperty/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/construct/return-not-object-throws-undefined-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/set/return-false-if-target-is-not-writable.js	compile_error/other	L36:14 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/Reflect/set/symbol-property.js	compile_error/other	L33:14 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/Reflect/set/receiver-is-not-object.js	compile_error/other	L37:14 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/Proxy/getOwnPropertyDescriptor/trap-is-null-target-is-proxy.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Proxy/defineProperty/targetdesc-not-compatible-descriptor.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-target-is-not-extensible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/enumerate/removed-does-not-trigger.js	compile_error/other	L35:12 Codegen error: #1320 values() receiver is not an array
+test/built-ins/Proxy/construct/trap-is-undefined-no-property.js	compile_error/runtime_error	L42:11 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Proxy/get/accessor-get-is-undefined-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Proxy/ownKeys/call-parameters-object-getownpropertysymbols.js	fail/assertion_fail	Test262Error: Expected SameValue(«Symbol()», «Symbol(a)») to be true
+test/built-ins/Proxy/apply/trap-is-not-callable-realm.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Reflect/setPrototypeOf/return-true-if-new-prototype-is-set.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «null») to be true

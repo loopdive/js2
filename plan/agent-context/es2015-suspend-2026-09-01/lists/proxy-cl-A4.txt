@@ -1,0 +1,2 @@
+built-ins/Proxy/get/not-same-value-configurable-false-writable-false-throws.js
+built-ins/Proxy/get/accessor-get-is-undefined-throws.js

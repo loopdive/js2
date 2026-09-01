@@ -1,0 +1,3 @@
+built-ins/Proxy/preventExtensions/return-false.js
+built-ins/Proxy/preventExtensions/trap-is-missing-target-is-proxy.js
+built-ins/Reflect/preventExtensions/return-boolean-from-proxy-object.js

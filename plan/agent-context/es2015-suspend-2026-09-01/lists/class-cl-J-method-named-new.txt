@@ -1,0 +1,2 @@
+language/expressions/class/ident-name-method-def-new-escaped.js
+language/statements/class/ident-name-method-def-new-escaped.js
