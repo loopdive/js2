@@ -44,6 +44,8 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { buildStandardTryTable } from "../ir/try-table.js";
 import {
   PROMISE_STATE_PENDING,
+  DENO_PROMISE_HOOK_INIT,
+  buildDenoPromiseHookCall,
   // (#3125) `ensurePromiseExecutorClosures` + its interface moved to
   // async-scheduler.ts: the thenable-assimilation job (built inside
   // `ensurePromiseSettleFunctions`) needs the same settle closures, and this
@@ -125,9 +127,10 @@ export function emitStandalonePromiseFromExecutor(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
+  fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
 
   // 3. Materialise resolve / reject as capturing closure VALUES (externref):
   //    struct{ func: ref.func $cl, cap_promise: p } upcast to externref.
@@ -266,9 +269,10 @@ export function emitStandalonePromiseFromExecutorValue(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
+  fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
 
   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {

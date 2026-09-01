@@ -1,10 +1,12 @@
 ---
 id: 5167
 title: "IR: extend the #2972 string-index charAt delegation to counted-loop-proven reads (`for (i=0; i<s.length; i++) … s[i]`)"
-status: ready
+status: done
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
+completed: 2026-08-29
+assignee: ttraenkler/opus-5167
 priority: medium
 horizon: s
 feasibility: medium

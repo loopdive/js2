@@ -125,7 +125,7 @@
  *   objects (faithful for acorn nodes; documented otherwise).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import { buildBagMarkerTestInstrs } from "./carrier-bag-visibility.js";
+import { buildBagGopdFallback, buildBagMarkerTestInstrs } from "./carrier-bag-visibility.js";
 import type { CodegenContext } from "./context/types.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { exposedClosedStructFieldName } from "./fnctor-identity-fields.js";
@@ -382,6 +382,19 @@ export function fillInstanceProps(ctx: CodegenContext): void {
     const gopdFn = gopdIdx === undefined ? undefined : definedFuncAt(ctx, gopdIdx);
     if (gopdFn) {
       gopdFn.body.unshift(
+        // `__hasOwnProperty` is intentionally bag-aware. Ask the INSTANCE
+        // bag for its real descriptor first, otherwise the physical-field arm
+        // below would mistake an expando hit for a declared slot and fabricate
+        // W/E/C=all true. Gate the generic bag helper on the instance carrier:
+        // vectors have their own overlay descriptor path, and allowing this
+        // arm to claim them first loses non-default array expando flags.
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: carrierIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildBagGopdFallback(ctx, 6),
+        },
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: carrierIdx },
         {

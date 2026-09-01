@@ -46,11 +46,12 @@ import {
   valTypesMatch,
 } from "../shared.js";
 import { collectInstrs } from "./shared.js";
-import { emitLocalTdzInit } from "./tdz.js";
+import { emitBindingElementTdzInit, emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
+import { currentSourceModuleGlobalIndex } from "../expressions/identifier-module-storage.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -177,8 +178,26 @@ export function tryEmitArrayProtoIteratorReadDrive(
       if (ts.isOmittedExpression(el) || !ts.isIdentifier(el.name)) continue; // elision: just advance
 
       const name = el.name.text;
-      const localIdx = fctx.localMap.get(name);
-      if (localIdx === undefined) continue;
+      let localIdx = fctx.localMap.get(name);
+      if (localIdx === undefined) {
+        // (#5144 cluster A) A for-of HEAD binding (`for (var [x,y,z] of …)`)
+        // at module scope lives in a module global, not a local — the drain
+        // silently skipped every such element, so the override's values were
+        // never bound. Materialize the local; the caller's
+        // `syncDestructuredLocalsToGlobals` writes it back.
+        const moduleGlobalIdx = ctx.moduleGlobals.get(name);
+        if (moduleGlobalIdx !== undefined) {
+          const globalType =
+            ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)]?.type ?? ({ kind: "externref" } as ValType);
+          localIdx = allocLocal(fctx, name, globalType);
+        } else {
+          // A `let`/`const` for-of head binding has no slot yet at drive time.
+          const declType = resolveBindingElementType(el, ctx.checker.getTypeAtLocation(el), (t) =>
+            resolveWasmType(ctx, t),
+          );
+          localIdx = allocLocal(fctx, name, declType);
+        }
+      }
       const localType = getLocalType(fctx, localIdx) ?? ({ kind: "externref" } as ValType);
 
       // value-present arm: coerce `value` externref → the binding's local type.
@@ -310,7 +329,7 @@ export function syncDestructuredLocalsToGlobals(
         // the central "destructure complete" callsite — and is a
         // no-op for non-let/const bindings, which have no TDZ flag.
         emitLocalTdzInit(fctx, name);
-        const moduleGlobalIdx = isModuleLevel ? ctx.moduleGlobals.get(name) : undefined;
+        const moduleGlobalIdx = isModuleLevel ? currentSourceModuleGlobalIndex(ctx, element.name) : undefined;
         const localIdx = fctx.localMap.get(name);
         if (moduleGlobalIdx !== undefined && localIdx !== undefined) {
           const localType = getLocalType(fctx, localIdx);
@@ -322,6 +341,10 @@ export function syncDestructuredLocalsToGlobals(
             coerceType(ctx, fctx, localType, globalType);
           }
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+          // Pattern leaves own exact TDZ sidecars. Never also initialize the
+          // legacy name-keyed flag: a different source may own that spelling.
+          if (ctx.modulePatternTdzGlobals.has(element)) emitBindingElementTdzInit(ctx, fctx, element);
+          else emitTdzInit(ctx, fctx, name);
         }
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         syncDestructuredLocalsToGlobals(ctx, fctx, element.name);

@@ -16,9 +16,21 @@ export type CapabilityPolicy = "ambient-js" | "explicit-only" | "backend-defined
 export type SemanticProviderSelection = "auto" | "native-first";
 export type SemanticProviderPolicy = "host-assisted" | "native-first" | "backend-defined";
 export type HostValueInteropPolicy = "required" | "enabled" | "off";
+export type AmbientPlatform = "node" | "deno";
+
+export function ambientPlatformOf(input: {
+  platform?: "web" | "node" | "deno";
+  emulateNode?: boolean;
+}): AmbientPlatform | undefined {
+  if (input.platform === "deno") return "deno";
+  return input.emulateNode === true || input.platform === "node" ? "node" : undefined;
+}
 
 export interface TargetProfileInput {
   readonly target?: CompileTarget;
+  readonly ambientPlatform?: AmbientPlatform;
+  readonly platform?: "web" | "node" | "deno";
+  readonly emulateNode?: boolean;
   /** Internal CodegenOptions compatibility projection. Public callers use target. */
   readonly wasi?: boolean;
   /** Internal CodegenOptions compatibility projection. Public callers use target. */
@@ -49,6 +61,7 @@ export interface CompileTargetProfile {
   readonly hostValueInterop: HostValueInteropPolicy;
   readonly strictEnvImportGate: boolean;
   readonly nativeStringsRequiredByPolicy: boolean;
+  readonly ambientPlatform?: AmbientPlatform;
 }
 
 export function resolveCompileTargetProfile(input: TargetProfileInput = {}): CompileTargetProfile {
@@ -110,5 +123,6 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     strictEnvImportGate,
     nativeStringsRequiredByPolicy:
       target === "standalone" || target === "wasi" || strictEnvImportGate || semanticProviders === "native-first",
+    ambientPlatform: input.ambientPlatform ?? ambientPlatformOf(input),
   });
 }

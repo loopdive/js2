@@ -63,21 +63,26 @@ const SECTIONS = [
       [
         "`ForStatement`",
         "mixed",
-        "Bare `for (;;)` and `for (init; ; incr)` ADOPTED (#3583): an omitted condition emits the constant-`true` cond buffer directly, byte-identical to the already-claimed `for (; true; )`. Residual: a TAIL-position `for` whose body `return`s rejects at `tail-unhandled` — the orthogonal tail-position gate, not the retired `for-missing-cond` arm.",
-        "#2952",
+        "Bare `for (;;)` and `for (init; ; incr)` ADOPTED (#3583): an omitted condition emits the constant-`true` cond buffer directly, byte-identical to the already-claimed `for (; true; )`. A function ENDING in a `for` is ADOPTED too (#5165 S1) — void functions fall out into the implicit empty return, non-void ones need `loopNeverFallsThrough` (no falsifiable condition AND no `break` binding this loop, scanned with nesting respected). Residual: a tail-position non-void loop that CAN complete normally (e.g. `while (true) { if (x) return 1; break; }`) stays legacy at `tail-loop-falls-through` — emitting `unreachable` there would trap where JS returns `undefined`.",
+        "#2952, #5165",
       ],
       [
         "`ForOfStatement`",
         "mixed",
-        "Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof`. #4470 measured what happens if that arm is lifted: the head itself lowers fine (element slot + one `vec.get` per leaf, reusing `lowerArrayPattern`), but the ELEMENT CARRIER is the real blocker — a vec whose element is itself a vec is unrepresentable, so `number[][]` dies at `resolve` (`array element TypeNode ArrayType could not be lowered to a primitive ValType`) and `string[][]`/`any[][]` die as a HARD `invariant` in `prepared-vector-support.ts` (elements must be `f64`/`i32`/`externref`). Lifting `nontail-forof` alone turns working legacy programs into compile errors — fix the nested-vec carrier FIRST.",
-        "#3518, #4470",
+        "Array iteration claims, over NESTED arrays too (#5166, 2026-08-29): a `number[][]` / `string[][]` / `any[][]` / `Uint8Array[]` iterable now resolves, because `resolvePositionType` carries a vec-typed element as a CONCRETE ref to the inner vec struct — legacy `resolveWasmType`\u2019s own carrier — and `prepared-vector-support.ts` accepts that element. An ARRAY-PATTERN head (`for (const [p, q] of m)`) claims with it (#4470): leaves bind per iteration from the element slot, each a bounds-checked read whose out-of-bounds value is the element ZERO, matching legacy exactly. Residual, all soft: OBJECT-pattern heads (`forof-head-object-pattern` \u2014 the element slot carries a `val`, not an `IrType.object`), array patterns with defaults / rest / nesting (`forof-head-pattern-complex`), a pattern head whose row leaf is not f64/i32 (a `string[][]` leaf is an externref whose `.length` is a separate hard error), an OBJECT element type (`{ v: number }[][]` at `resolve`), and the LOCAL `number[][]` annotation arm (`vardecl-typenode:ArrayType`, `isPhase1TypeNode`).",
+        "#3518, #4470, #5166",
       ],
-      ["`WhileStatement`", "ir-owned", "—", "—"],
+      [
+        "`WhileStatement`",
+        "ir-owned",
+        "Includes a function ENDING in a `while` (#5165 S1) — same `loopNeverFallsThrough` proof as `ForStatement`.",
+        "#5165",
+      ],
       [
         "`TryStatement`",
         "mixed",
-        'CORRECTED (measured 2026-08-15, #3583): `try`/`finally`, `try`/`catch`/`finally` and a `try`/`catch` assigning an outer local ALL claim — the old "finally + rethrow partial" note was backwards. What actually rejects is a `return` inside the `try` or `catch` (`tail-unhandled`), i.e. the residual is tail-position control flow, plus a catch clause with no binding.',
-        "#2952",
+        "`try`/`finally`, `try`/`catch`/`finally`, a `try`/`catch` assigning an outer local, and a catch clause with NO binding all claim (measured 2026-08-15 #3583; re-measured 2026-08-29 #5165). A `return` inside a finally-LESS `try` or `catch` is ADOPTED (#5165 S2) — a Wasm `return` is not intercepted by an exception handler, so it leaves the function exactly as JS does. A function ENDING in a `try` is ADOPTED too (#5165 S3): void falls out into the implicit empty return, non-void needs every path (try block, catch block) to terminate. Residual: a `return` that would cross a `finally` stays legacy at `body-return-context` (#5165 S4 — it needs the value-stash + inlined-finally machinery), as does a non-void tail try that can fall out (`tail-try-falls-through`) and a destructuring catch param.",
+        "#2952, #5165",
       ],
       ["`ThrowStatement`", "ir-owned", "—", "—"],
       ["`Block`", "ir-owned", "Plain statement lists; scope handling via LowerCtx.", "—"],
@@ -102,8 +107,8 @@ const SECTIONS = [
       [
         "`DoStatement`",
         "mixed",
-        "Post-test loop claimed (reuses `while.loop` + `postCond`); unlabeled break/continue bodies claimed since slice 2; labeled since slice 3.",
-        "#2952",
+        "Post-test loop claimed (reuses `while.loop` + `postCond`); unlabeled break/continue bodies claimed since slice 2; labeled since slice 3; a function ENDING in a `do … while` claimed since #5165 S1.",
+        "#2952, #5165",
       ],
       [
         "`LabeledStatement`",
@@ -158,7 +163,7 @@ const SECTIONS = [
       [
         "`BinaryExpression`",
         "mixed",
-        'Arithmetic / comparison / `&& \\|\\|` / bitwise lowered. CORRECTED (measured 2026-08-15, #3583): `%` AND `instanceof` are both LOWERED — the old "`%`, `**`, `in`, `instanceof` throw" note was stale on two of four. Still rejecting: `**` and `in` at `expr-binary-op-**` / `expr-binary-op-in`, and the comma operator at `expr-binary-op-,`. `??` is gated by the union-typed operand (see `NullKeyword`), not by `??` itself.',
+        "Arithmetic / comparison / `&& \\|\\|` / bitwise lowered, as are `%` and `instanceof` (measured 2026-08-15, #3583). CORRECTED AGAIN (measured 2026-08-28/29, #5164): `**` is NOT rejecting — #4787 landed its bounded exact-numeric gate and `math.pow` lowering, so the note above it was stale for a second time. The COMMA operator now claims in value position for a PURE left operand and in a `for` incrementor (#5164 S1/S2); a MUTATING value-position operand (`(a = 1, b)`) still rejects at `expr-binary-op-,`, needing the statement-arm assignment bookkeeping in value position. `in` claims ONLY the bounded dynamic lane — a non-fast dynamic externref receiver on a host-string carrier, probed through `__extern_has` (#5164 S3); every static-fold route (checker property folds, #3920 presence bits, the #4222/#4491 overlay+hole index routes, #4765 escaped receivers, #2617 Proxy slot overrides, the `#x in o` private brand) still rejects at `expr-binary-op-in`. `??` is gated by the union-typed operand (see `NullKeyword`), not by `??` itself.",
         "#2949",
       ],
       [

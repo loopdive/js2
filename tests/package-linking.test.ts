@@ -111,6 +111,66 @@ describe("#2527 npm package module linking", () => {
     expect(linked.instance.exports.run?.()).toBe(42);
   });
 
+  it("returns a failed linked root directly without recompiling provider sources as a bundle", async () => {
+    const root = project("package-link-root-failure");
+    writePackage(root, "root-failure-provider", "export function limit(): number { return 3; }\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      `import { limit } from "root-failure-provider";
+export async function run(): Promise<number> {
+  let i = 0;
+  try {
+    while (i < limit()) {
+      await Promise.reject(1);
+      i++;
+    }
+  } catch (error) {
+    return error as number;
+  }
+  return i;
+}
+`,
+    );
+
+    const entry = join(root, "main.ts");
+    const cacheDir = join(root, ".cache");
+    const compileSeparate = () =>
+      compileProject(entry, {
+        allowJs: true,
+        emitWat: false,
+        packageCacheDir: cacheDir,
+        packageLinking: "separate",
+      });
+
+    const first = await compileSeparate();
+    const second = await compileSeparate();
+
+    for (const result of [first, second]) {
+      expect(result.success).toBe(false);
+      expect(result.errors.some((error) => error.message.includes("#3587"))).toBe(true);
+      expect(result.linkPlan?.mode).toBe("separate");
+      expect(result.linkPlan?.fallbackReason).toBeUndefined();
+      expect(result.linkedModules).toBeUndefined();
+    }
+    expect(first.linkPlan).toMatchObject({
+      mode: "separate",
+      compiledProviders: 1,
+      cachedProviders: 0,
+    });
+    expect(second.linkPlan).toMatchObject({
+      mode: "separate",
+      compiledProviders: 0,
+      cachedProviders: 1,
+    });
+
+    const automatic = await compile(root, "main.ts", cacheDir);
+    expect(automatic.success).toBe(false);
+    expect(automatic.linkPlan).toMatchObject({
+      mode: "bundled",
+      fallbackReason: expect.stringMatching(/linked root compilation failed/i),
+    });
+  });
+
   it("links a package dependency DAG provider-before-consumer", async () => {
     const root = project("package-link-dag");
     writePackage(root, "base-fn", "export function double(x: number): number { return x * 2; }\n");
@@ -182,6 +242,30 @@ describe("#2527 npm package module linking", () => {
     });
     expect(cached.linkPlan).toMatchObject({ mode: "merged", compiledProviders: 0, cachedProviders: 2 });
     expect(cached.bundleCacheKey).toBe(result.bundleCacheKey);
+  });
+
+  it("keeps host imports in an optimized static package bundle engine-loadable", async () => {
+    const root = project("package-link-merge-host-import");
+    writePackage(root, "merge-inc", "export function inc(x: number): number { return x + 1; }\n");
+    writeFileSync(
+      join(root, "main.ts"),
+      'import { inc } from "merge-inc"; export function run(x: number): number { console.log(x); console.log("hello"); console.error(x); return inc(x); }\n',
+    );
+    const result = await compileProject(join(root, "main.ts"), {
+      emitWat: false,
+      optimize: 1,
+      packageCacheDir: join(root, ".cache"),
+      packageLinking: "merge",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.linkPlan?.mergeFallbackReason).toBeUndefined();
+    expect(result.linkPlan?.mode).toBe("merged");
+    const module = new WebAssembly.Module(result.binary);
+    const imports = WebAssembly.Module.imports(module);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.some((entry) => entry.module.startsWith("js2wasm:npm:"))).toBe(false);
+    await expect(WebAssembly.instantiate(module, result.importObject)).resolves.toBeDefined();
   });
 
   it("reports an explicit separate-module fallback for merge-unsafe JavaScript values", async () => {

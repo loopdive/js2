@@ -12,6 +12,7 @@ import type { UsageInference } from "../../checker/usage-inference.js";
 import type { IrUnitId } from "../../ir/identity.js";
 import type {
   FieldDef,
+  FuncHandle,
   GlobalDef,
   Instr,
   LocalDef,
@@ -110,11 +111,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   testRuntime?: boolean;
   /** WASI target: emit WASI imports (fd_write, proc_exit) instead of JS host imports */
   wasi?: boolean;
-  /**
-   * Node-compatible ambient globals are enabled. This is distinct from the
-   * Wasm backend target: a gc-host build can still target the Node platform.
-   */
-  nodeGlobals?: boolean;
+  /** Ambient runtime globals, independent of the Wasm backend target. */
+  ambientPlatform?: import("../../target-profile.js").AmbientPlatform;
   /**
    * #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
    * (satisfied by a preloaded provider) instead of inline-lowering. `["node:fs"]`
@@ -138,12 +136,22 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   runtimeProvider?: boolean;
   /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
   canonicalRuntimeTypes?: boolean;
+  /**
+   * (#5226) Import the throw/catch exception tag from `env.__exn` instead of
+   * defining a module-local one. Set by the package linker on BOTH sides of a
+   * separately-linked graph so a provider's `throw` and its consumer's `catch`
+   * name the SAME tag — without it every module owns a private tag, the
+   * consumer's `catch` never matches, and the payload is lost in `catch_all`.
+   */
+  sharedExceptionTag?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
    *  `__unbox_string` JS-host string imports. Used so the compiled module is
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
+  /** Linked zero-argument getter for a canonical standalone realm-global object. */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   /**
@@ -358,6 +366,8 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  /** Smallest source-level argument count accepted before optional parameters. */
+  minimumArgumentCount?: number;
   nativeProtoVariadic?: boolean;
   /**
    * True only while every concrete allocation of this wrapper/subtype is a
@@ -376,6 +386,31 @@ export interface ClosureInfo {
   needsCallSiteArity?: boolean;
   /** Small, capture-free numeric closure body eligible for HOF call-site inlining. */
   inlineBody?: Instr[];
+}
+
+/**
+ * A callable-property funcref ladder whose body is reserved while lowering a
+ * call site and filled after the complete program closure registry is known.
+ *
+ * Keep this record limited to stable handles and immutable ABI facts.  The
+ * finalizer must only read these facts plus `closureInfoByTypeIdx`; it may not
+ * register another type/function/import after callers have baked their
+ * references.
+ */
+export interface DeferredCallablePropertyDispatchPlan {
+  /** Stable private helper name/handle reserved at the first matching site. */
+  helperName: string;
+  helperFuncIdx: FuncHandle;
+  /** Canonical open wrapper root accepted by every admitted closure carrier. */
+  rootTypeIdx: number;
+  /** Declared wrapper candidate anchoring the final candidate collection. */
+  declaredFuncTypeIdx: number;
+  declaredStructTypeIdx: number;
+  declaredReturnType: ValType | null;
+  /** Typed helper ABI, excluding the leading wrapper-root receiver. */
+  paramTypes: ValType[];
+  /** Result expected by the original property signature (`null` = void). */
+  expectedReturn: ValType | null;
 }
 
 /** Metadata for a generator lowered to an in-module WasmGC state machine (#680). */
@@ -607,6 +642,13 @@ export interface FunctionContext {
   /** Function name */
   name: string;
   /**
+   * Physical module-init helper context. Its `name` intentionally remains
+   * `__module_init` so source lowering selects module-global semantics; this
+   * separate marker disables representations whose value lives only in Wasm
+   * locals and therefore cannot cross a helper call boundary.
+   */
+  moduleInitChunk?: boolean;
+  /**
    * Source-level function represented by this body.  Present only for
    * ECMAScript functions (not compiler/runtime helpers); used by the ES5
    * Function `caller` poison lowering to recognize a self-reference.
@@ -639,6 +681,13 @@ export interface FunctionContext {
   /** Bindings widened because their assignments cross representation domains.
    * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
   mixedAssignmentCarrierVars?: Set<string>;
+  /**
+   * Concrete object shapes whose values were written to a standalone RegExp's
+   * raw `lastIndex` slot in this function. Later ref→externref coercions in
+   * the same expression frame must retain that exact GC identity instead of
+   * making the normal ToPrimitive `$Object` value copy.
+   */
+  regexpLastIndexIdentityStructTypes?: Set<number>;
   /**
    * Callback captures whose ABI deliberately remains externref.  Their
    * checker type may be a concrete array/object, but the value crossed a host
@@ -734,6 +783,16 @@ export interface FunctionContext {
    * re-evaluated after suspension.
    */
   asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
+  /**
+   * (#680) Sent values for original bare-yield AST nodes while a native
+   * generator continuation state recompiles its containing expression.
+   */
+  nativeGeneratorYieldValueLocals?: Map<ts.YieldExpression, number>;
+  /**
+   * (#680) One-time pre-yield operand values for original expression AST nodes
+   * while a native generator continuation state recompiles that expression.
+   */
+  nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
   /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
@@ -869,6 +928,14 @@ export interface FunctionContext {
    * `arguments` construction reuses this local when both features are present.
    */
   argcCachedLocal?: number;
+  /**
+   * Optional scalar formals whose omitted-vs-supplied distinction is observed
+   * by this source function. The declaration identity prevents a shadowed
+   * same-spelled binding from borrowing the activation's cached `__argc`.
+   * Values are source-level parameter indices (capture/self parameters are not
+   * part of JavaScript's argument count).
+   */
+  omissionTrackedScalarParams?: Map<ts.ParameterDeclaration, number>;
   /** Set of function names successfully hoisted during THIS function body's hoisting pass */
   hoistedFuncs?: Set<string>;
   /** Enclosing class name — propagated to closures for super keyword resolution */
@@ -1374,6 +1441,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Exact prepared class-body routing retained while nested bodies compile in scope. */
   irClassBodyRouting?: import("../class-bodies.js").ClassBodyCompileRouting;
   checker: ts.TypeChecker;
+  /** Source set available to cross-module callable wrapper pre-registration. */
+  callableSourceFiles?: readonly ts.SourceFile[];
   /** True when the single-file input is an ECMAScript Module goal. Script-goal
    * module init uses the host global object for top-level `this`; module goal
    * keeps top-level `this` undefined (#3365). */
@@ -1398,6 +1467,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   useUsageInfer: boolean;
   /** Map from function name to its absolute index (imports + locals) */
   funcMap: Map<string, number>;
+  /** Exact compiler-owned private bodies in the module-init chunk call tree. */
+  moduleInitChunkHelperNames: Set<string>;
   /** Source-qualified realm builtins whose names may also occur in package
    * modules. Kept separate from funcMap so a user function named parseInt does
    * not steal a call through an ambient-builtin alias. */
@@ -1758,6 +1829,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * emission, no runtime guard.
    */
   vecIndexDeleteDirty: boolean;
+  /**
+   * (#5145) The module may observe `ArraySpeciesCreate` — it mentions
+   * `Symbol.species` or assigns to a `.constructor` property. Consumer:
+   * `array-species.ts` and the `slice`/`splice`/`map`/`filter` producers, which
+   * only then emit the §10.4.2.3 species prologue + result swap. Clear ⇒ the
+   * producers keep their raw `struct.new $vec` result and their static
+   * `(ref null $vec)` result type, so emission is byte-identical.
+   */
+  arraySpeciesDirty: boolean;
   /**
    * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
    * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a
@@ -2325,6 +2405,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   nativeIteratorUserArmPending?: boolean;
   /**
+   * (#5147) Set by `reserveAnyIterNext` — `__any_iter_next` was minted with a
+   * placeholder body that `fillAnyIterNext` must replace at finalize (it needs
+   * the `$LazyIterHelper` type and the ladder's late arms, which only exist by
+   * then). Same reserve-then-fill discipline as `nativeIteratorUserArmPending`.
+   */
+  anyIterNextPending?: boolean;
+  /** (#5147) `__iter_result_obj` reserved with a placeholder body; filled at finalize. */
+  iterResultObjPending?: boolean;
+  /** (#5147) the `$__IterRec` identity arm was already prepended to `__iterator`. */
+  iterRecIdentityArmDone?: boolean;
+  /**
    * Static property initializer expressions to compile into __module_init.
    * `className` (#1395) is the owning class name — used to set
    * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
@@ -2337,6 +2428,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     staticBlock?: ts.ClassStaticBlockDeclaration;
     className?: string;
   }[];
+  /**
+   * Static initializers owned by a class expression. Unlike class-declaration
+   * statics, these execute as part of ClassDefinitionEvaluation at the exact
+   * expression site, so they cannot share the module-level static queue.
+   *
+   * A variable-bound class expression is registered under both its source
+   * binding and a synthetic identity. `staticPropKey` retains each internal
+   * storage alias while the emitter evaluates the source initializer once.
+   */
+  classExpressionStaticInitExprs: Map<
+    ts.ClassExpression,
+    {
+      initializer?: ts.Expression;
+      staticBlock?: ts.ClassStaticBlockDeclaration;
+      className: string;
+      staticPropKey?: string;
+    }[]
+  >;
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**
@@ -2349,6 +2458,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Canonical branded carrier for an interpreted callback crossing modules. */
   runtimeEvalInterpretedCallbackTypeIdx?: number;
   runtimeEvalValueTypeIdx?: number;
+  /** Canonical `(value, ok)` envelope returned by cross-module AOT callables. */
+  runtimeEvalCallResultTypeIdx?: number;
+  /** `(externref envelope) -> externref`, rethrowing through this module's tag. */
+  runtimeEvalCallResultUnwrapFuncIdx?: number;
   /**
    * #2928 — this unit consumes or provides the linked runtime-eval ABI.
    * Callable writes to its native global object use the cross-module carrier.
@@ -2434,6 +2547,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
   closureMap: Map<string, ClosureInfo>;
   closureInfoByTypeIdx: Map<number, ClosureInfo>;
+  /**
+   * Order-independent callable-property dispatchers, keyed by declared lifted
+   * funcref ABI plus expected result.  Optional so modules without an eligible
+   * externref callable field remain byte-identical.
+   */
+  deferredCallablePropertyDispatches?: Map<string, DeferredCallablePropertyDispatchPlan>;
+  /**
+   * Smallest observed source-level argument count for an exact lifted
+   * funcref ABI. Unlike `ClosureInfo`, this survives replacement of a shared
+   * wrapper's live registry record by a later closure allocation.
+   */
+  closureMinimumArgumentCountByFuncTypeIdx: Map<number, number>;
   maxHostDynamicMethodCallArity?: number;
   /**
    * Host-lane dynamic method names whose receiver may be a compiled class
@@ -2442,6 +2567,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * older fnctor-subclass surface.
    */
   hostDynamicClassMethodNames: Set<string>;
+  /**
+   * (#5223) Property names READ off a dynamically-typed receiver. A read
+   * registers nothing in `hostDynamicClassMethodNames` — that set is demand
+   * from CALL and WRITE sites — so a class ACCESSOR reached only by
+   * `a.g` on an `any` never got a `__member_kind_g`/`__call_get_g` export and
+   * answered `undefined`. Kept SEPARATE from the method set on purpose: the
+   * method set also relaxes the arity/rest admission rules for `__class_call_*`
+   * bridges, and a bare read must not widen those. Finalization intersects
+   * this set against `classAccessorSet`, so a read of a name no class declares
+   * as an accessor emits nothing at all.
+   */
+  hostDynamicClassAccessorReads: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */
@@ -2544,6 +2681,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   toPrimitiveForkedStructs: Set<string>;
   /** Tag index for the exception tag (-1 if not yet registered) */
   exnTagIdx: number;
+  /**
+   * (#5226) True when this module's exception tag is IMPORTED (`env.__exn`)
+   * rather than module-defined, so every module of one linked graph throws and
+   * catches with the same tag identity. `exnTagIdx` stays an ABSOLUTE tag index
+   * either way (imported tags occupy the low indices).
+   */
+  sharedExnTag: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**
@@ -2885,6 +3029,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * synthesized runtime helper — never to a nested declaration.
    */
   funcMapOwnerDecl: Map<string, ts.FunctionDeclaration>;
+  /**
+   * Exact source declaration owned by a defined-function handle.
+   *
+   * Unlike the legacy bare-name declaration maps, this remains unambiguous
+   * when multiple source modules declare the same function name or an import
+   * gives the selected declaration a different local spelling. Source
+   * function-value wrappers use it to recover declaration-only ABI facts such
+   * as TypeScript's pseudo-`this` parameter without changing the direct ABI.
+   */
+  sourceFunctionDeclarationByHandle: Map<FuncHandle, ts.FunctionDeclaration>;
+  /** Reverse index for checker-selected declarations such as import aliases. */
+  sourceFunctionHandleByDeclaration: WeakMap<ts.FunctionDeclaration, FuncHandle>;
   /** Map from child className → parent className (for local class inheritance) */
   classParentMap: Map<string, string>;
   /**
@@ -2901,6 +3057,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * for subclasses of host-constructible builtins.
    */
   classExternrefBackedSet: Set<string>;
+  /**
+   * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
+   * class OBJECT can cross to the host and be constructed there. Exactly the
+   * set that needs a `__class_construct_<Class>_<arity>` bridge; every other
+   * module keeps byte-identical output.
+   */
+  classCtorHostRegistered: Set<string>;
   /** Counter for assigning unique class tags (for instanceof support) */
   classTagCounter: number;
   /** Map from class name → unique tag value (for instanceof support) */
@@ -3141,6 +3304,39 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  prepended init call on exports) has been applied. */
   moduleInitGuardApplied: boolean;
   /**
+   * (#3523 R4 gap 3) The WASI `__init_done` idempotence guard, reserved at
+   * module-init PREALLOCATION rather than minted by the post-emission splice.
+   *
+   * `applyModuleInitGuard` used to mint this global and prepend an
+   * early-`return` prologue to an ALREADY EMITTED `__module_init`. A Prepared
+   * module-init body cannot take that splice: its identity is sealed at the
+   * preparation snapshot, and the early-`return` form is exactly what
+   * `bodyContainsReturnClassOp` withdraws the IR patch over (#3142/#3168),
+   * because every later epilogue (`finalizeInModuleInitFlag`'s
+   * `__in_module_init = 0` most critically) would become unreachable.
+   *
+   * So the global is reserved here, before body emission, and the prepared
+   * body is CONSTRUCTED around a wrapping `if` — no return-class op, inside
+   * the body at snapshot time. `planted` records the exact instruction
+   * objects so `applyModuleInitGuard` can authenticate the guard by identity
+   * instead of trusting that preparation planted one; a prepared WASI init
+   * that reaches the splice unguarded is an invariant failure, never a
+   * silently unguarded binary.
+   *
+   * `undefined` outside WASI, and outside a prepared module-init compile.
+   */
+  preparedWasiModuleInitGuard?: {
+    /** Module-global index of the reserved `(mut i32) __init_done`. */
+    readonly doneGlobalIdx: number;
+    /**
+     * The three top-level instruction objects planted into the prepared body,
+     * in order. `fixupModuleGlobalIndices` shifts their baked global indices in
+     * place on a late import-global insertion, so identity survives every
+     * legitimate late mutation while a body REPLACEMENT does not.
+     */
+    planted?: { readonly doneGet: Instr; readonly eqz: Instr; readonly guard: Instr };
+  };
+  /**
    * #1984 — freeze-point discipline (child of #2043 Option 3). Set to `true`
    * by `generateModule`/`generateMultiModule` once the module's index spaces
    * are final (right before `stackBalance`, after the last legitimate
@@ -3275,6 +3471,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * codec arm and never register the type.
    */
   moduleUsesDynTaView: boolean;
+  /**
+   * Set by a module pre-scan when a statically named TypedArray constructor is
+   * used with an ArrayBuffer backing. This lets an earlier helper that writes
+   * through an `any` receiver reserve the runtime-kind `$__ta_view` dispatch
+   * before the concrete view type is registered by the later constructor.
+   */
+  moduleUsesStaticTaView: boolean;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /**
@@ -3444,6 +3647,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
      */
     noThisParam?: boolean;
     /**
+     * A plain named FunctionDeclaration whose first source parameter is the
+     * TypeScript-only `this` pseudo-parameter. Its underlying direct-call ABI
+     * still carries that slot, but the first-class wrapper must source it from
+     * `__current_this` and exclude it from the callable's visible arity.
+     */
+    explicitThisParam?: boolean;
+    /**
      * (#1809) True when `methodFuncIdx` already pointed at a host IMPORT at
      * registration time — e.g. a DOM/host global (`resizeTo`, `scrollBy`) or
      * any `declare`d function used as a first-class value, where the trampoline
@@ -3476,6 +3686,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   needsToUint32: boolean;
   /** Map from class name → class AST declaration node */
   classDeclarationMap: Map<string, ts.ClassDeclaration | ts.ClassExpression>;
+  /**
+   * (#4646) Declarations whose constructor/method bodies `compileClassBodies`
+   * has already emitted, keyed by the DECLARATION NODE.
+   *
+   * `structMap` is keyed by class NAME, so "is this class already compiled?"
+   * was answered by `structMap.has(className)` — a name test standing in for a
+   * declaration test. Two same-named classes in different scopes collapse onto
+   * that one key, so the second declaration's bodies were skipped and every
+   * call to it ran the FIRST declaration's code (no invalid wasm, no compile
+   * error — silently wrong results). This set makes the question node-scoped.
+   */
+  compiledClassBodies: Set<ts.ClassDeclaration | ts.ClassExpression>;
   /** Cache for function type deduplication: signature key → type index */
   funcTypeCache: Map<string, number>;
   /** Wrapper type indices */
@@ -3639,6 +3861,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
+  /** Linked zero-argument getter for the canonical standalone realm-global object. */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */
@@ -3668,6 +3892,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  runs it after `setExports` (symmetric with the standalone `_start` model).
    *  Default false. WASI is unaffected. */
   deferTopLevelInit: boolean;
+  /** (#5193) A host-lane call site needs compiled→host MARSHALLING to work while
+   *  the wasm `start` section runs — where `instance.exports` does not exist yet.
+   *  Set by `emitHostTaBufferConstruct`; consumed by
+   *  `emitInitMarshalHelperRegistration`, which emits the funcref self-registration
+   *  prologue on `__module_init`. Unset ⇒ byte-identical output. */
+  needsInitMarshalHelpers?: boolean;
   /** (#2179/#4745) True when the module body contains any `delete` of a
    *  property or element access (e.g. `delete o.a` / `delete o[k]`) or
    *  `Reflect.deleteProperty(o, k)`. Pre-scanned once at module setup. When
@@ -4119,6 +4349,10 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   strictNoHostImports: boolean;
   /** Map from let/const module global variable name → TDZ flag global index */
   tdzGlobals: Map<string, number>;
+  /** Exact TDZ flag globals for top-level destructuring binding leaves. */
+  modulePatternTdzGlobals: Map<ts.BindingElement, number>;
+  /** Source-local names for exact top-level destructuring TDZ sidecars. */
+  modulePatternTdzBindings: Map<ts.SourceFile, Map<string, ts.BindingElement | null>>;
   /** Set of let/const module global variable names */
   tdzLetConstNames: Set<string>;
   /** Compile-time property descriptor flags */

@@ -109,6 +109,7 @@ export function createCodegenContext(
     usageInference: new UsageInference(checker),
     useUsageInfer: options?.useUsageInfer ?? process.env.JS2WASM_USAGE_INFER !== "0",
     funcMap: new Map(),
+    moduleInitChunkHelperNames: new Set(),
     ambientBuiltinFuncMap: new Map(),
     irUnitFuncMap: new Map(),
     structMap: new Map(),
@@ -178,6 +179,7 @@ export function createCodegenContext(
     inheritedSetDescriptorDirty: false, // (#4504) scanForArrayHoles: a descriptor may affect inherited [[Set]]
     inheritedSetDirtyKeys: new Set<string>(), // (#4602) scanForArrayHoles: statically-named keys such a descriptor could use
     vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
+    arraySpeciesDirty: false, // (#5145) scanForArrayHoles: Symbol.species / a `.constructor` assignment is present
     vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
     dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
@@ -209,10 +211,13 @@ export function createCodegenContext(
     staticProps: new Map(),
     protoOverrides: new Map(), // #1719 CPR — captured prototype-member overrides
     staticInitExprs: [],
+    classExpressionStaticInitExprs: new Map(),
     closureCounter: 0,
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),
+    closureMinimumArgumentCountByFuncTypeIdx: new Map(),
     hostDynamicClassMethodNames: new Set(),
+    hostDynamicClassAccessorReads: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
@@ -228,6 +233,11 @@ export function createCodegenContext(
     toPrimitiveSharedClaimed: new Set(),
     toPrimitiveForkedStructs: new Set(),
     exnTagIdx: -1,
+    // (#5226) The shared-tag ABI needs a JS host to own the `WebAssembly.Tag`,
+    // so a wasi/standalone module keeps its module-local tag and its previous
+    // bytes. Only the package linker sets the option.
+    sharedExnTag:
+      options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
     hasUnionImports: false,
     asyncFunctions: new Set(),
     generatorFunctions: new Set(),
@@ -240,9 +250,12 @@ export function createCodegenContext(
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
     funcMapOwnerDecl: new Map(),
+    sourceFunctionDeclarationByHandle: new Map(),
+    sourceFunctionHandleByDeclaration: new WeakMap(),
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
+    classCtorHostRegistered: new Set(),
     classTagCounter: 0,
     classTagMap: new Map(),
     classExprNameMap: new Map(),
@@ -314,6 +327,7 @@ export function createCodegenContext(
     taDynViewTypeIdx: -1, // (#3054 D) $__ta_dyn_view {length,buf,byteOffset,kind} runtime-kinded view, lazy
     boundFnTypeIdx: -1, // (#3140) $__bound_fn {target,thisArg,boundArgs} native bound-function carrier, lazy
     moduleUsesDynTaView: false, // (#3057) set by pre-scan when a dynamic `new ctorVar(buf)` exists
+    moduleUsesStaticTaView: false, // buffer-backed `new Uint8Array(buf)` etc.; enables any-write dispatch
     errorStructTypeIdx: -1,
     widenedTypeProperties: new Map(),
     widenedVarStructMap: new Map(),
@@ -333,6 +347,7 @@ export function createCodegenContext(
     pendingMethodTrampolines: [],
     needsToUint32: false,
     classDeclarationMap: new Map(),
+    compiledClassBodies: new Set(),
     wrapperNumberTypeIdx: -1,
     wrapperStringTypeIdx: -1,
     wrapperBooleanTypeIdx: -1,
@@ -372,7 +387,7 @@ export function createCodegenContext(
     funcClosureGlobals: new Map(),
     funcClosureSingletonKeyByFuncIdx: new Map(),
     wasi: targetProfile.target === "wasi",
-    nodeGlobals: options?.nodeGlobals ?? false,
+    nodeGlobals: targetProfile.ambientPlatform === "node",
     // #2783 — namespaces left as link-time imports (WASI-gated above).
     linkedNamespaces,
     linkedPackageBindings,
@@ -383,6 +398,7 @@ export function createCodegenContext(
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.target === "standalone",
+    ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     directEvalMode: options?.directEval ?? "legacy",
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.
@@ -446,6 +462,8 @@ export function createCodegenContext(
     ...(options?.importMemory ? { importMemory: options.importMemory } : {}),
     strictNoHostImports,
     tdzGlobals: new Map(),
+    modulePatternTdzGlobals: new Map(),
+    modulePatternTdzBindings: new Map(),
     tdzLetConstNames: new Set(),
     definedPropertyFlags: new Map(),
     nonWritableExternKeys: new Set(),

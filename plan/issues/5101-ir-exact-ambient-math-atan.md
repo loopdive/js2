@@ -31,8 +31,9 @@ loc-budget-allow:
   - src/ir/runtime-manifest.ts
   - src/ir/select.ts
 func-budget-allow:
-  # The narrow rollback predicate belongs at the shared provider-capability
-  # check read by every selector/call-graph Math admission site.
+  # During initial rollout, the narrow rollback predicate belonged at the
+  # shared provider-capability check read by every selector/call-graph Math
+  # admission site.
   - src/ir/select.ts::selectorSupportsMathPlan
 ---
 
@@ -100,7 +101,7 @@ selection/build contract. No parallel `atan` recognizer is added.
    `IR_MATH_METHOD_TABLE`. The existing selector, number proof, call-graph
    walker, builder, manifest preparation, and backend provider resolution then
    consume the same row.
-3. Add a narrow `JS2WASM_IR_MATH_ATAN=0` selector control at
+3. Initial rollout retained a narrow per-method selector withdrawal at
    `selectorSupportsMathPlan`; it prevents only this new claim and leaves the
    direct implementation reachable. Keep `JS2WASM_IR_FIRST=0` as the global
    repository control.
@@ -125,7 +126,7 @@ selection/build contract. No parallel `atan` recognizer is added.
   legacy body.
 - Host and standalone binaries execute with direct-path parity; standalone has
   zero imports.
-- `JS2WASM_IR_MATH_ATAN=0` keeps the same valid source on the direct path.
+- The rollout-only per-method withdrawal kept the same valid source on the direct path.
 - Every excluded shape declines before claim with no post-claim error or
   invariant.
 - Existing #3526 runtime-manifest, integration, and linear-backend tests pass.
@@ -135,7 +136,7 @@ selection/build contract. No parallel `atan` recognizer is added.
 
 - `math.atan` is now the thirteenth closed source-level Math intrinsic, with
   the existing unary f64 definition and self-hosted `Math_atan` provider. The
-  only selection change is one shared table row plus the narrow rollback in
+  only selection change was one shared table row plus the narrow rollback in
   `selectorSupportsMathPlan`; from-AST lowering remains completely generic.
 - The #3526 closed-vocabulary, manifest, all-method integration, and neutrality
   evidence now describe thirteen intrinsic entry points. `math.reduce-trig`
@@ -145,7 +146,7 @@ selection/build contract. No parallel `atan` recognizer is added.
   zero-import standalone execution, provider-free semantic IR before manifest
   attachment, exact existing-provider resolution, IR/direct parity across
   finite values, infinities, NaN and signed zero, pre-claim exclusions, and a
-  compile-level `JS2WASM_IR_MATH_ATAN=0` rollback without withdrawing
+  compile-level per-method rollback without withdrawing
   `Math.atan2`.
 - TypeScript 7 typecheck, targeted Prettier/Biome, the IR kind-neutrality gate,
   and scoped LOC/function budgets pass. Independent Luna Max review returned
@@ -174,3 +175,10 @@ inside the same table used by expression selection, call-graph scanning, and
 from-AST lowering preserves one source of truth. Any provider/signature drift
 after claim remains a runtime-manifest invariant; unsupported source shapes
 must never reach that boundary.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

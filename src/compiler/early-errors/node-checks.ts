@@ -26,6 +26,7 @@ import {
   isInsideClassWithPrivateName,
   isInsideFunction,
   isInsideGeneratorFunction,
+  isInYieldParamContext,
   isInsideGeneratorParams,
   isInsideIteration,
   isInsideMethod,
@@ -882,7 +883,7 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
         if (node.text === "await" && isInsideAsyncFunction(node)) {
           ctx.addError(node, "'await' is not allowed as an identifier in an async function");
         }
-        if (node.text === "yield" && isInsideGeneratorFunction(node)) {
+        if (node.text === "yield" && isInYieldParamContext(node)) {
           ctx.addError(node, "'yield' is not allowed as an identifier in a generator function");
         }
       }
@@ -1354,9 +1355,47 @@ on([ts.SyntaxKind.BinaryExpression], (ctx, node) => {
   }
 });
 
+/**
+ * (#5146 cluster H) True when `node` is covered by an ObjectAssignmentPattern /
+ * ArrayAssignmentPattern — the LHS of `=`, or a for-of / for-in head, possibly
+ * nested inside another pattern. The duplicate-`__proto__` Early Error applies
+ * to object LITERALS only; `({ __proto__: x, __proto__: y } = value)` is legal.
+ */
+function isAssignmentPatternPosition(node: ts.Node): boolean {
+  let child: ts.Node = node;
+  let parent: ts.Node | undefined = node.parent;
+  while (parent !== undefined) {
+    if (ts.isParenthesizedExpression(parent)) {
+      child = parent;
+      parent = parent.parent;
+      continue;
+    }
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      // `pattern = value`, or a nested `target = default` inside a pattern.
+      if (parent.left === child) return true;
+      return false;
+    }
+    if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === child) return true;
+    if (
+      ts.isArrayLiteralExpression(parent) ||
+      ts.isObjectLiteralExpression(parent) ||
+      ts.isPropertyAssignment(parent) ||
+      ts.isShorthandPropertyAssignment(parent) ||
+      ts.isSpreadElement(parent) ||
+      ts.isSpreadAssignment(parent)
+    ) {
+      child = parent;
+      parent = parent.parent;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
 // ── Duplicate __proto__ in object literal ────────────────────────
 on([ts.SyntaxKind.ObjectLiteralExpression], (ctx, node) => {
-  if (ts.isObjectLiteralExpression(node)) {
+  if (ts.isObjectLiteralExpression(node) && !isAssignmentPatternPosition(node)) {
     let protoCount = 0;
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop)) {

@@ -7,7 +7,7 @@ import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitThrowReferenceError, noJsHost } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
-import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import { addHostStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 
 // (#4601 route 1) `collectPatternBindingNames` is a pure-AST walk with no
 // CodegenContext in sight; it moved below the IR (`ir/analysis/ast-scope.ts`)
@@ -21,6 +21,18 @@ export { collectPatternBindingNames } from "../../ir/analysis/ast-scope.js";
  */
 export function emitTdzInit(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
   const flagIdx = ctx.tdzGlobals.get(name);
+  if (flagIdx === undefined) return;
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "global.set", index: flagIdx });
+}
+
+/** Mark one exact top-level destructuring binding leaf initialized. */
+export function emitBindingElementTdzInit(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  binding: ts.BindingElement,
+): void {
+  const flagIdx = ctx.modulePatternTdzGlobals.get(binding);
   if (flagIdx === undefined) return;
   fctx.body.push({ op: "i32.const", value: 1 });
   fctx.body.push({ op: "global.set", index: flagIdx });
@@ -51,17 +63,6 @@ export function emitLocalTdzInit(fctx: FunctionContext, name: string): void {
   }
   fctx.body.push({ op: "i32.const", value: 1 });
   fctx.body.push({ op: "local.set", index: flagIdx });
-}
-
-/**
- * Emit a TDZ check for a module-level let/const variable read.
- * If the TDZ flag is 0 (uninitialized), throw a ReferenceError.
- * No-op if the variable doesn't have a TDZ flag.
- */
-export function emitTdzCheck(ctx: CodegenContext, fctx: FunctionContext, name: string, throwJsError = false): void {
-  const flagIdx = ctx.tdzGlobals.get(name);
-  if (flagIdx === undefined) return;
-  emitTdzCheckAtGlobal(ctx, fctx, flagIdx, name, throwJsError);
 }
 
 /** Emit a TDZ check against an exact initialization-flag global. */
@@ -116,9 +117,13 @@ export function emitTdzCheckAtGlobal(
   flushLateImportShifts(ctx, fctx);
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    } else {
+      const tagIdx = ensureExnTag(ctx);
+      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
+    }
   } else {
     const tagIdx = ensureExnTag(ctx);
     then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];

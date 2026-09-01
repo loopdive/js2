@@ -38,9 +38,15 @@
  *   `struct.new` sites therefore push an extra `i32.const 0`
  *   (`pushBuiltinFnClosureValueInstrs` below).
  */
-import type { Instr } from "../ir/types.js";
-import type { ClosureInfo, CodegenContext } from "./context/types.js";
-import { closureArityField, closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+import type { Instr, ValType } from "../ir/types.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  closureArityField,
+  closureBagField,
+  closureBagInitInstr,
+  getOrCreateFuncRefWrapperTypes,
+} from "./closures/funcref-wrapper-types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
 /**
  * (#4241) Field indices of the meta-typed closure subtype, derived from the
@@ -78,6 +84,10 @@ export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; lengt
   // value arg (replacer/space out of scope, matching the standalone call-path
   // narrowing), but `.length` reports the spec arity.
   "JSON.stringify": { name: "stringify", length: 3 },
+  "Symbol.for": { name: "for", length: 1 },
+  "Symbol.keyFor": { name: "keyFor", length: 1 },
+  "Promise.resolve": { name: "resolve", length: 1 },
+  "Promise.reject": { name: "reject", length: 1 },
   // (#2933) Math.max/Math.min as VALUES — genuinely VARIADIC; reified with the
   // canonical variadic closure convention (one `$vec_externref` args param, see
   // `ctx.variadicBuiltinClosure`). Spec `.length` is 2 for both (§21.3.2.24/.25).
@@ -380,4 +390,73 @@ export function pushBuiltinFnSingletonValueInstrs(
     { op: "global.get", index: globalIdx },
     { op: "ref.as_non_null" },
   ];
+}
+
+/**
+ * (#2984 / #5197) Canonical per-constructor `get [Symbol.species]` closure.
+ *
+ * Keep this builder beside the builtin-function metadata substrate rather than
+ * in `builtin-static-gopd.ts`: both compile-time descriptor synthesis and the
+ * reified constructor carrier need the exact same identity-stable accessor,
+ * while the latter is imported by `builtin-static-globals.ts`.  Depending on
+ * the higher-level property-access module here would close that initialization
+ * cycle.
+ *
+ * The getter's first user parameter is the original receiver (`this`).  Its
+ * unique metadata subtype makes the singleton's reflective `.name`/`.length`
+ * surface spec-correct and registering that subtype as receiver-aware keeps a
+ * reflective `.call(value)` from dropping the receiver.
+ */
+export function ensureStandaloneSpeciesGetterClosure(
+  ctx: CodegenContext,
+  builtinName: string,
+): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
+  const userParams: ValType[] = [{ kind: "externref" }];
+  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, [{ kind: "externref" }]);
+  if (!wrapperTypes) return null;
+
+  const funcName = `__builtin_species_get_${builtinName}`;
+  let funcIdx = ctx.funcMap.get(funcName);
+  if (funcIdx === undefined) {
+    const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.liftedSelfTypeIdx };
+    const closureFctx: FunctionContext = {
+      name: funcName,
+      params: [{ name: "__self", type: selfType }, ...userParams.map((type, i) => ({ name: `arg${i}`, type }))],
+      locals: [],
+      localMap: new Map(),
+      returnType: { kind: "externref" },
+      body: [{ op: "local.get", index: 1 }],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+    for (let i = 0; i < closureFctx.params.length; i++) {
+      closureFctx.localMap.set(closureFctx.params[i]!.name, i);
+    }
+    funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name: funcName,
+      typeIdx: wrapperTypes.liftedFuncTypeIdx,
+      locals: closureFctx.locals,
+      body: closureFctx.body,
+      exported: false,
+    });
+    ctx.funcMap.set(funcName, funcIdx);
+    if (!ctx.nativeClosureMeta) ctx.nativeClosureMeta = new Map();
+    ctx.nativeClosureMeta.set(funcIdx, { name: "get [Symbol.species]", length: 0 });
+  }
+
+  const metaTypeIdx = ensureBuiltinFnMetaType(
+    ctx,
+    wrapperTypes.structTypeIdx,
+    wrapperTypes.closureInfo,
+    `species:${builtinName}`,
+    "get [Symbol.species]",
+    0,
+  );
+  if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();
+  ctx.nativeProtoReceiverClosureStructTypes.add(metaTypeIdx);
+  return { type: { kind: "ref", typeIdx: metaTypeIdx }, funcIdx };
 }

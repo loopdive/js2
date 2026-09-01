@@ -41,6 +41,14 @@ export const NO_ARG_STRING_MEMBER_HELPER: Readonly<Record<string, string>> = {
   toUpperCase: "__str_toUpperCase",
   toLocaleLowerCase: "__str_toLowerCase",
   toLocaleUpperCase: "__str_toUpperCase",
+  // (#5152) `normalize` (§22.1.3.13) has the same reflective shape: declared
+  // length 0, string result, and — until the NFC/NFD tables land — an IDENTITY
+  // transformation, so `__str_flatten` IS its "helper". What the body buys is
+  // the spec preamble the refusal path skipped: RequireObjectCoercible(this)
+  // (`normalize.call(null)` / `(undefined)` must throw TypeError) and
+  // ToString(this) (a user `toString` runs and its abrupt completion
+  // propagates; a Symbol receiver throws).
+  normalize: "__str_flatten",
 };
 
 // (#2742) SUPERSEDED-WIRING CARVE-OUT. For these five members the #2875

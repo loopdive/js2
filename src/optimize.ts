@@ -16,6 +16,11 @@
  */
 
 import { inlineHintArgs } from "./inline-hints.js";
+import {
+  BINARYEN_BASE_FEATURE_FLAGS,
+  BINARYEN_COMPACT_IMPORTS_DISABLE_FLAG,
+  BINARYEN_PORTABLE_FEATURE_FLAGS,
+} from "./binaryen-features.js";
 
 // Dynamic imports to avoid vite bundling node-only modules for the browser.
 // These are only used by optimizeWithSystemBinary which only runs in Node.js.
@@ -29,6 +34,8 @@ let _nodeImports: {
   join: typeof import("node:path").join;
   tmpdir: typeof import("node:os").tmpdir;
 } | null = null;
+
+const _wasmOptCompactImportsSupport = new Map<string, boolean>();
 
 async function getNodeImports() {
   if (_nodeImports) return _nodeImports;
@@ -116,6 +123,27 @@ function getNodeImportsSync() {
   }
 }
 
+function wasmOptSupportsCompactImports(n: NonNullable<typeof _nodeImports>, wasmOptPath: string): boolean {
+  const cached = _wasmOptCompactImportsSupport.get(wasmOptPath);
+  if (cached !== undefined) return cached;
+
+  let supported = false;
+  try {
+    const help = n.execFileSync(wasmOptPath, ["--help"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    });
+    supported = help.includes(BINARYEN_COMPACT_IMPORTS_DISABLE_FLAG);
+  } catch {
+    // Older Binaryen versions do not advertise compact imports and must not
+    // receive a flag they cannot parse. The real optimization call below
+    // remains responsible for surfacing an unusable executable.
+  }
+  _wasmOptCompactImportsSupport.set(wasmOptPath, supported);
+  return supported;
+}
+
 /** Settings for {@link optimizeBinaryAsync} (Binaryen wasm-opt configuration). */
 export interface OptimizeOptions {
   /** Optimization level: 1 (-O1), 2 (-O2), 3 (-O3), 4 (-O4). Default: 3 */
@@ -164,7 +192,7 @@ export interface EmittedBinaryValidation {
  * failed: struct.get[0] expected type (ref null 2), found local.tee of type
  * f64`) that makes a miscompile diagnosable. Callers: the compiler's opt-in
  * `validate` gate (src/compiler.ts), the CLI's refuse-to-publish check
- * (src/cli.ts, #3338), {@link optimizedBinaryValidates} (#1941), and the
+ * (src/cli.ts, #3338), {@link optimizeBinaryAsync} (#1941), and the
  * dogfood/npm-compat compile probe.
  *
  * Reports `valid: true` when validation cannot be performed at all (no
@@ -211,17 +239,16 @@ export function validateEmittedBinary(binary: Uint8Array): EmittedBinaryValidati
 /**
  * Validate optimizer output before trusting it (#1941).
  *
- * `WebAssembly.validate` is available in every runtime that can host a
- * compiled module (Node, browsers, Deno, Bun). We use it as a fail-loud
- * gate on whatever the optimizer hands back: if the bytes don't validate,
- * the optimization MISCOMPILED the module and we must NOT ship it. Returns
- * `true` when validation can't be performed (no `WebAssembly` global — an
- * exotic embedding); in that case we conservatively trust the optimizer,
- * because refusing to optimize everywhere `WebAssembly` is absent would be
- * worse than the status quo.
+ * Preserve the engine's validation detail while applying the fail-loud gate
+ * to optimizer output. If validation cannot be performed, the shared helper
+ * deliberately returns `valid: true` and we conservatively trust the result.
  */
-function optimizedBinaryValidates(binary: Uint8Array): boolean {
-  return validateEmittedBinary(binary).valid;
+function invalidCliBinaryWarning(validation: EmittedBinaryValidation): string {
+  const detail = validation.detail ? ` Runtime validation: ${validation.detail.slice(0, 500)}` : "";
+  return (
+    "wasm-opt produced an invalid binary (it failed WebAssembly.validate); shipping unoptimized output instead." +
+    detail
+  );
 }
 
 /**
@@ -264,13 +291,18 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
   // not fix a pre-existing codegen bug, and a broken-input warning would be
   // noise. The optimize gate below only judges the optimizer's *delta*.
 
+  let cliValidationWarning: string | undefined;
+
   // 1. System / bundled wasm-opt CLI — the correct backend (#1941).
   try {
     const result = optimizeWithSystemBinary(binary, level, gc, referenceTypes, exceptionHandling, preserveNames);
     if (result && result.optimized) {
-      if (optimizedBinaryValidates(result.binary)) return result;
+      const validation = validateEmittedBinary(result.binary);
+      if (validation.valid) return result;
       // CLI produced an invalid binary — do not ship it. Fall through to the
-      // module backend in case a different encoder produces valid output.
+      // module backend in case a different encoder produces valid output, but
+      // retain the actual validation failure if that fallback is unavailable.
+      cliValidationWarning = invalidCliBinaryWarning(validation);
     } else if (result) {
       // CLI resolved but reported a wasm-opt error (warning, optimized:false)
       // — surface it; don't silently fall through to the module path, which
@@ -296,7 +328,8 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
         preserveNames,
       );
       if (result && result.optimized) {
-        if (optimizedBinaryValidates(result.binary)) return result;
+        const validation = validateEmittedBinary(result.binary);
+        if (validation.valid) return result;
         // Module miscompiled (the #1941 case). Discard — return the original
         // binary with a fail-loud warning so the miscompile is visible and we
         // never emit a module that doesn't validate.
@@ -318,6 +351,7 @@ export async function optimizeBinaryAsync(binary: Uint8Array, options: OptimizeO
     binary,
     optimized: false,
     warning:
+      cliValidationWarning ??
       "wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.",
   };
 }
@@ -530,6 +564,13 @@ function optimizeWithSystemBinary(
   }
   if (!wasmOptPath) return null;
 
+  // Binaryen 132 added compact imports to --all-features. Capability-probe
+  // rather than version-check because callers may provide an older system
+  // wasm-opt or a downstream build with a backported feature set.
+  const featureFlags = wasmOptSupportsCompactImports(n, wasmOptPath)
+    ? BINARYEN_PORTABLE_FEATURE_FLAGS
+    : BINARYEN_BASE_FEATURE_FLAGS;
+
   // Write to temp file, run wasm-opt, read result
   const tmpDir = n.mkdtempSync(n.join(n.tmpdir(), "js2wasm-opt-"));
   const inputPath = n.join(tmpDir, "input.wasm");
@@ -547,28 +588,16 @@ function optimizeWithSystemBinary(
     // surfaced as the misleading "wasm-opt not available" warning at the
     // outer try/catch). Use `--all-features` rather than enumerating; it's
     // the same set wasm-opt uses for `wasm-opt --all-features`.
-    // `--disable-custom-descriptors` excludes the unfinished
-    // custom-descriptors / exact-ref proposal from `--all-features`.
-    // Without this, wasm-opt's GC optimization passes will introduce
-    // `(ref (exact $T))` types that wasmtime ≤ 44 (and most other engines)
-    // refuse to parse. The cost of the disable is zero — js2wasm doesn't
-    // emit exact refs itself, so the only effect is preventing wasm-opt
-    // from inserting them as a width refinement.
+    // The shared portable-feature flags exclude proposal encodings Binaryen
+    // may otherwise introduce while rewriting the module: exact references
+    // from custom-descriptors, and (since Binaryen 132) compact import kind
+    // 0x7e. js2wasm emits neither, and Node 25/current Wasmtime reject them.
     // (#4157) `JS2WASM_INLINE_HINTS` — binaryen's inlining knobs. Both lists
     // are empty (and the argv byte-identical) unless the flag is set. `pre`
     // must precede `-O<level>`: `--no-inline` is a PASS and binaryen runs
     // passes in command order.
     const hints = inlineHintArgs();
-    const args: string[] = [
-      inputPath,
-      ...hints.pre,
-      `-O${level}`,
-      "-o",
-      outputPath,
-      "--all-features",
-      "--disable-custom-descriptors",
-      ...hints.post,
-    ];
+    const args: string[] = [inputPath, ...hints.pre, `-O${level}`, "-o", outputPath, ...featureFlags, ...hints.post];
     if (preserveNames) args.push("-g");
     void gc;
     void referenceTypes;

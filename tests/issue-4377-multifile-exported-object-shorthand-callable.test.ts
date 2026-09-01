@@ -121,6 +121,117 @@ describe("#4377 — compileMulti file-URL module identity", () => {
     expect(calls).toBe(4);
   });
 
+  it("terminates a directly exported validated host UTF-16 decoder", async () => {
+    const codeUnitIndices: number[] = [];
+    let lengthCalls = 0;
+    const result = await compile(
+      `declare function __v8x_import_meta_result_utf16_length(): number;
+       declare function __v8x_import_meta_result_utf16_code_unit(index: number): number;
+
+       export function denoImportMetaResultValue(): string {
+         const length = __v8x_import_meta_result_utf16_length();
+         if (
+           length < 0 || length > 9007199254740991 ||
+           Math.floor(length) !== length
+         ) {
+           throw new RangeError("import.meta host returned an invalid text length");
+         }
+         let value = "";
+         for (let index = 0; index < length; index++) {
+           value += String.fromCharCode(
+             __v8x_import_meta_result_utf16_code_unit(index),
+           );
+         }
+         return value;
+       }
+
+       export function probe(): number {
+         return denoImportMetaResultValue().length;
+       }`,
+      {
+        target: "standalone",
+        emitWat: false,
+        externImportModule: "v8x:deno",
+      },
+    );
+    const exports = await instantiate(result, {
+      "v8x:deno": {
+        __v8x_import_meta_result_utf16_length: () => {
+          lengthCalls++;
+          return 3;
+        },
+        __v8x_import_meta_result_utf16_code_unit: (index: number) => {
+          codeUnitIndices.push(index);
+          if (codeUnitIndices.length > 4) {
+            throw new Error("UTF-16 decoder did not terminate");
+          }
+          return "abc".charCodeAt(index);
+        },
+      },
+    });
+    expect((exports.probe as () => number)()).toBe(3);
+    expect(lengthCalls).toBe(1);
+    expect(codeUnitIndices).toEqual([0, 1, 2]);
+  });
+
+  it("keeps a renamed imported decoder distinct from a same-named entry wrapper", async () => {
+    const codeUnitIndices: number[] = [];
+    let lengthCalls = 0;
+    const result = await compileMulti(
+      {
+        "./runtime.ts": `declare function __v8x_import_meta_result_utf16_length(): number;
+                         declare function __v8x_import_meta_result_utf16_code_unit(index: number): number;
+
+                         export function denoImportMetaResultValue(): string {
+                           const length = __v8x_import_meta_result_utf16_length();
+                           let value = "";
+                           for (let index = 0; index < length; index++) {
+                             value += String.fromCharCode(
+                               __v8x_import_meta_result_utf16_code_unit(index),
+                             );
+                           }
+                           return value;
+                         }`,
+        "./entry.ts": `import {
+                         denoImportMetaResultValue as runtimeDenoImportMetaResultValue,
+                       } from "./runtime.ts";
+
+                       export function denoImportMetaResultValue(): string {
+                         return runtimeDenoImportMetaResultValue();
+                       }
+
+                       export function probe(): number {
+                         return denoImportMetaResultValue().length;
+                       }`,
+      },
+      "./entry.ts",
+      {
+        target: "standalone",
+        emitWat: true,
+        externImportModule: "v8x:deno",
+      },
+    );
+    const exports = await instantiate(result, {
+      "v8x:deno": {
+        __v8x_import_meta_result_utf16_length: () => {
+          lengthCalls++;
+          return 3;
+        },
+        __v8x_import_meta_result_utf16_code_unit: (index: number) => {
+          codeUnitIndices.push(index);
+          if (codeUnitIndices.length > 4) {
+            throw new Error("renamed imported decoder did not terminate");
+          }
+          return "abc".charCodeAt(index);
+        },
+      },
+    });
+    expect((exports.probe as () => number)()).toBe(3);
+    expect(lengthCalls).toBe(1);
+    expect(codeUnitIndices).toEqual([0, 1, 2]);
+    expect(result.wat).not.toMatch(/\(func \$(denoImportMetaResultValue_[^\s]*)[\s\S]*?\(return_call \$\1\)/);
+  });
+
   it("keeps both Deno.cwd probes live beside another imported module", async () => {
     let calls = 0;
     const result = await compileMulti(

@@ -36,6 +36,8 @@ import { addFuncType } from "./registry/types.js";
 import {
   CASED_RANGES,
   CASE_IGNORABLE_RANGES,
+  ASTRAL_LOWER_CASE_RUNS,
+  ASTRAL_UPPER_CASE_RUNS,
   LOWER_CASE_RUNS,
   LOWER_CASE_SPECIAL,
   UPPER_CASE_RUNS,
@@ -702,6 +704,16 @@ export function emitNativeCaseConversion(
     const tag = finalSigma ? "lower" : "upper";
     const runsGlobal = caseTableGlobal(ctx, tableGlobals, `__case_${tag}_runs`, runsTable, i32ArrTypeIdx);
     const specGlobal = caseTableGlobal(ctx, tableGlobals, `__case_${tag}_special`, specialTable, i32ArrTypeIdx);
+    // (#5152) Supplementary-plane simple case mappings. The scan below walks
+    // UTF-16 code UNITS, so a surrogate pair never matched the BMP runs and
+    // astral letters (Deseret, Adlam, Warang Citi, …) passed through unmapped.
+    const astralGlobal = caseTableGlobal(
+      ctx,
+      tableGlobals,
+      `__case_${tag}_astral`,
+      finalSigma ? ASTRAL_LOWER_CASE_RUNS : ASTRAL_UPPER_CASE_RUNS,
+      i32ArrTypeIdx,
+    );
     const casedGlobal = finalSigma
       ? caseTableGlobal(ctx, tableGlobals, "__case_cased", CASED_RANGES, i32ArrTypeIdx)
       : undefined;
@@ -734,7 +746,13 @@ export function emitNativeCaseConversion(
       PREVCASED = 19,
       NEXTCASED = 20,
       CASED = 21,
-      IGNORABLE = 22;
+      IGNORABLE = 22,
+      // (#5152) Astral scratch. Declared AFTER the two conditional Final_Sigma
+      // property-table locals, so the base shifts with them.
+      ASTRAL = finalSigma ? 23 : 21,
+      AFLAG = ASTRAL + 1,
+      ACP = ASTRAL + 2,
+      APAIR = ASTRAL + 3;
     const get = (i: number): Instr => ({ op: "local.get", index: i });
     const set = (i: number): Instr => ({ op: "local.set", index: i });
     const tee = (i: number): Instr => ({ op: "local.tee", index: i });
@@ -884,6 +902,8 @@ export function emitNativeCaseConversion(
       // ~1.9k `array.new_fixed` operands re-materialised on every call.
       { op: "global.get", index: runsGlobal },
       set(RUNS),
+      { op: "global.get", index: astralGlobal },
+      set(ASTRAL),
       { op: "global.get", index: specGlobal },
       tee(SPEC),
       { op: "array.len" },
@@ -1011,28 +1031,119 @@ export function emitNativeCaseConversion(
                   },
                 ],
                 else: [
-                  // Simple mapping, except for the one language-insensitive
-                  // conditional SpecialCasing rule: Final_Sigma.
-                  get(OUTARR),
-                  get(M),
-                  ...(finalSigma
-                    ? [
-                        get(CH),
-                        c(0x03a3),
-                        { op: "i32.eq" } as Instr,
-                        {
-                          op: "if",
-                          blockType: { kind: "val", type: i32 },
-                          then: finalSigmaMapped(),
-                          else: simpleMapped(),
-                        } as Instr,
-                      ]
-                    : simpleMapped()),
-                  { op: "array.set", typeIdx: strDataTypeIdx },
-                  get(M),
+                  // (#5152) A well-formed surrogate PAIR is one astral code
+                  // point: decode it, map through the astral runs, re-encode.
+                  // The image is always astral, so two units in / two out and
+                  // the pass-1 length count (1 per unit) still matches.
+                  c(0),
+                  set(AFLAG),
+                  get(CH),
+                  c(0xd800),
+                  { op: "i32.ge_u" },
+                  get(CH),
+                  c(0xdbff),
+                  { op: "i32.le_u" },
+                  { op: "i32.and" },
+                  get(I),
                   c(1),
                   { op: "i32.add" },
-                  set(M),
+                  get(LEN),
+                  { op: "i32.lt_u" },
+                  { op: "i32.and" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      ...srcCharAt([get(I), c(1), { op: "i32.add" }]),
+                      tee(APAIR),
+                      c(0xdc00),
+                      { op: "i32.ge_u" },
+                      get(APAIR),
+                      c(0xdfff),
+                      { op: "i32.le_u" },
+                      { op: "i32.and" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [c(1), set(AFLAG)],
+                      },
+                    ],
+                  },
+                  get(AFLAG),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      // cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)
+                      get(CH),
+                      c(0xd800),
+                      { op: "i32.sub" },
+                      c(10),
+                      { op: "i32.shl" },
+                      get(APAIR),
+                      c(0xdc00),
+                      { op: "i32.sub" },
+                      { op: "i32.add" },
+                      c(0x10000),
+                      { op: "i32.add" },
+                      get(ASTRAL),
+                      { op: "call", funcIdx: simpleIdx },
+                      c(0x10000),
+                      { op: "i32.sub" },
+                      set(ACP),
+                      get(OUTARR),
+                      get(M),
+                      get(ACP),
+                      c(10),
+                      { op: "i32.shr_u" },
+                      c(0xd800),
+                      { op: "i32.add" },
+                      { op: "array.set", typeIdx: strDataTypeIdx },
+                      get(OUTARR),
+                      get(M),
+                      c(1),
+                      { op: "i32.add" },
+                      get(ACP),
+                      c(0x3ff),
+                      { op: "i32.and" },
+                      c(0xdc00),
+                      { op: "i32.add" },
+                      { op: "array.set", typeIdx: strDataTypeIdx },
+                      get(M),
+                      c(2),
+                      { op: "i32.add" },
+                      set(M),
+                      // consume the trailing surrogate (the loop tail adds 1 more)
+                      get(I),
+                      c(1),
+                      { op: "i32.add" },
+                      set(I),
+                    ],
+                    else: [
+                      // Simple mapping, except for the one language-insensitive
+                      // conditional SpecialCasing rule: Final_Sigma.
+                      get(OUTARR),
+                      get(M),
+                      ...(finalSigma
+                        ? [
+                            get(CH),
+                            c(0x03a3),
+                            { op: "i32.eq" } as Instr,
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: i32 },
+                              then: finalSigmaMapped(),
+                              else: simpleMapped(),
+                            } as Instr,
+                          ]
+                        : simpleMapped()),
+                      { op: "array.set", typeIdx: strDataTypeIdx },
+                      get(M),
+                      c(1),
+                      { op: "i32.add" },
+                      set(M),
+                    ],
+                  },
                 ],
               },
               get(I),
@@ -1080,6 +1191,10 @@ export function emitNativeCaseConversion(
               { name: "ignorable", type: i32ArrRef }, // 22 IGNORABLE
             ]
           : []),
+        { name: "astral", type: i32ArrRef }, // ASTRAL (#5152)
+        { name: "aflag", type: i32 }, // AFLAG
+        { name: "acp", type: i32 }, // ACP
+        { name: "apair", type: i32 }, // APAIR
       ],
       body,
       exported: false,

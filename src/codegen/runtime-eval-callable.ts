@@ -19,15 +19,18 @@
  */
 
 import type { Instr, ValType } from "../ir/types.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
-import { nextModuleGlobalIdx } from "./registry/imports.js";
+import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs } from "./native-strings.js";
 import {
+  buildRuntimeEvalCallResultWrap,
+  ensureRuntimeEvalCallResultUnwrapHelper,
   ensureRuntimeEvalInterpretedCallbackType,
   ensureRuntimeEvalProviderActiveGlobal,
   RUNTIME_EVAL_AOT_CALLABLE_BRAND_A,
@@ -89,36 +92,110 @@ function syncedTrampolineBody(
       },
     );
   }
-  const callBody: Instr[] = [
+  const argsLocalDecl = { name: "args", type: { kind: "externref" } as ValType };
+  const envelopeLocal = 12;
+  const locals: { name: string; type: ValType }[] = [argsLocalDecl, { name: "envelope", type: { kind: "externref" } }];
+  const callTarget: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 2 },
     { op: "local.get", index: 1 },
     { op: "local.get", index: argsLocal },
     { op: "call", funcIdx: applyIdx },
   ];
-  const argsLocalDecl = { name: "args", type: { kind: "externref" } as ValType };
+  const callEnvelope = (): Instr =>
+    buildTargetTaggedTry(
+      ctx,
+      { kind: "empty" },
+      [
+        ...callTarget,
+        ...buildRuntimeEvalCallResultWrap(ctx, locals, 11, true),
+        { op: "local.set", index: envelopeLocal },
+      ],
+      [
+        {
+          tagIdx: ensureExnTag(ctx),
+          body: [...buildRuntimeEvalCallResultWrap(ctx, locals, 11, false), { op: "local.set", index: envelopeLocal }],
+        },
+      ],
+    );
   if (beforeIdx === undefined || afterIdx === undefined || activeGlobalIdx === undefined) {
-    return { locals: [argsLocalDecl], body: [...buildArgs, ...callBody] };
+    return {
+      locals,
+      body: [...buildArgs, callEnvelope(), { op: "local.get", index: envelopeLocal }],
+    };
   }
-  const resultLocal = 12;
-  return {
-    locals: [argsLocalDecl, { name: "result", type: { kind: "externref" } }],
-    body: [
-      ...buildArgs,
+  // While the provider is actively re-entering caller-owned AOT code, its
+  // stack is only a conduit back to the caller module. Preserve the caller's
+  // exception tag on that path: unwrapping an envelope inside the provider
+  // would replace it with the provider's private tag, which the caller cannot
+  // catch. The cleanup catch still pushes live globals before rethrowing.
+  if (direction === "aot") {
+    const rawResult = buildTargetTaggedTry(
+      ctx,
+      { kind: "empty" },
+      [...callTarget, { op: "local.set", index: envelopeLocal }],
+      [
+        {
+          tagIdx: ensureExnTag(ctx),
+          body: [
+            { op: "local.set", index: envelopeLocal },
+            { op: "call", funcIdx: afterIdx },
+            { op: "local.get", index: envelopeLocal },
+            { op: "throw", tagIdx: ensureExnTag(ctx) },
+          ],
+        },
+      ],
+    );
+    return {
+      locals,
+      body: [
+        ...buildArgs,
+        { op: "global.get", index: activeGlobalIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "call", funcIdx: beforeIdx },
+            rawResult,
+            { op: "call", funcIdx: afterIdx },
+            { op: "local.get", index: envelopeLocal },
+          ],
+          else: [callEnvelope(), { op: "local.get", index: envelopeLocal }],
+        },
+      ],
+    };
+  }
+  const activeBeforeLocal = 13;
+  locals.push({ name: "activeBefore", type: { kind: "i32" } });
+  const synchronizedEnvelope = buildTargetTaggedTry(
+    ctx,
+    { kind: "empty" },
+    [
       { op: "global.get", index: activeGlobalIdx },
+      { op: "local.tee", index: activeBeforeLocal },
       {
         op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "call", funcIdx: beforeIdx },
-          ...callBody,
-          { op: "local.set", index: resultLocal },
-          { op: "call", funcIdx: afterIdx },
-          { op: "local.get", index: resultLocal },
-        ],
-        else: callBody,
+        blockType: { kind: "empty" },
+        then: [{ op: "call", funcIdx: beforeIdx }],
+      },
+      callEnvelope(),
+      { op: "local.get", index: activeBeforeLocal },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "call", funcIdx: afterIdx }],
       },
     ],
+    [
+      {
+        tagIdx: ensureExnTag(ctx),
+        body: [...buildRuntimeEvalCallResultWrap(ctx, locals, 11, false), { op: "local.set", index: envelopeLocal }],
+      },
+    ],
+  );
+  return {
+    locals,
+    body: [...buildArgs, synchronizedEnvelope, { op: "local.get", index: envelopeLocal }],
   };
 }
 
@@ -757,6 +834,7 @@ export function buildRuntimeEvalCarrierMethodDispatch(
 ): Instr[] | null {
   const carrier = ctx.runtimeEvalAotCallableCarrier;
   if (carrier === undefined) return null;
+  const unwrapResultIdx = ensureRuntimeEvalCallResultUnwrapHelper(ctx);
 
   // `argc` is the dispatcher's declared arity: the same "caller supplied no
   // exact count" convention the ordinary entries fall back to when `__argc`
@@ -802,6 +880,7 @@ export function buildRuntimeEvalCarrierMethodDispatch(
             ...castCarrier,
             { op: "struct.get", typeIdx: carrier.structTypeIdx, fieldIdx: 0 },
             { op: "call_ref", typeIdx: carrier.funcTypeIdx },
+            { op: "call", funcIdx: unwrapResultIdx },
             { op: "return" },
           ],
         },

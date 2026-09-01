@@ -1,25 +1,23 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrBindingId, IrUnitId } from "../ir/identity.js";
 import type { IrFnctorParameterPreselectionPlan } from "../ir/ast-lowering-plans.js";
 import type { IrTypeOverrideMap } from "../ir/integration.js";
+import type {
+  PreparedComponentPublicationDraft,
+  PreparedComponentPublicationToken,
+} from "../ir/prepared-component-publication.js";
 import { asVal, irVal, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { isExactDynamicStringReplaceNumberParser } from "../ir/dynamic-string-parser-shape.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import type { PreparedProgramAbiPendingScope } from "./program-abi-prepared-transaction.js";
 
-declare module "../ir/integration.js" {
-  interface IrIntegrationOptions {
-    /** Source files participating in one aggregate IR integration. */
-    readonly integrationSourceFiles?: readonly ts.SourceFile[];
-    /** Seal and withdraw the exact aggregate as one component. */
-    readonly atomicComponent?: boolean;
-    /** Exact non-source bindings included in the component seal. */
-    readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
-  }
-}
+/** The narrow owner-facing aggregate publication boundary for IR integration. */
+export type PreparedComponentPublicationDraftForOwner = PreparedComponentPublicationDraft;
+export type PreparedComponentPublicationTokenForOwner = PreparedComponentPublicationToken;
+export type PreparedComponentPendingScope = PreparedProgramAbiPendingScope;
 
 export function resolveIntegrationSourceFiles(
   representative: ts.SourceFile,

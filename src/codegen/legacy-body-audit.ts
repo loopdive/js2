@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ClassDeclaration, ClassExpression, Node } from "typescript";
+import type { ClassDeclaration, ClassExpression, Node, SourceFile } from "typescript";
 import type { IrClassId, IrClassRecord, IrSourceId, IrSourceRecord, IrUnitId, IrUnitKind } from "../ir/identity.js";
-import type { IrObservedOutcome } from "../ir/outcomes.js";
+import { nonExecutableOutcomeDefect, type IrObservedOutcome } from "../ir/outcomes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "../ir/program-abi.js";
 import { IR_COMPILE_ROUTE_MANIFEST, type IrCompileRoute } from "../ir/standalone-route-manifest.js";
@@ -28,6 +28,7 @@ export type IrDerivedBodyUnitDisposition =
 export type IrBodyRouteAuditViolationCode =
   | "duplicate-outcome-unit"
   | "unknown-outcome-unit"
+  | "unjoined-non-executable-outcome"
   | "missing-terminal-evidence"
   | "missing-legacy-entry-evidence"
   | "unresolved-legacy-entry"
@@ -69,6 +70,33 @@ export interface IrLegacyBodyEntry {
   readonly unitKind?: IrUnitKind;
   readonly terminalOwnerId?: IrUnitId | null;
   readonly count: number;
+}
+
+/** Fail-closed diagnostics for exact top-level direct-body receipts. */
+export type IrDirectFunctionBodyReceiptViolationCode =
+  | "missing-direct-function-body-identity"
+  | "foreign-direct-function-body-receipt"
+  | "impossible-direct-function-body-receipt"
+  | "duplicate-direct-function-body-receipt";
+
+export interface IrDirectFunctionBodyReceiptViolation {
+  readonly code: IrDirectFunctionBodyReceiptViolationCode;
+  readonly detail: string;
+  readonly unitId?: IrUnitId;
+}
+
+/**
+ * Exact receipt census for the R2 free-function direct dispatcher.
+ *
+ * A count comes only from entering `compileFunctionBody`, never from a skip
+ * set, a selector label, or a legacy name projection.
+ */
+export interface IrDirectFunctionBodyReceiptAudit {
+  readonly sourceId: IrSourceId;
+  readonly countsByUnitId: ReadonlyMap<IrUnitId, number>;
+  readonly violations: readonly IrDirectFunctionBodyReceiptViolation[];
+  /** Graph-global corruption that cannot be safely assigned to one source. */
+  readonly unattributedViolation?: IrDirectFunctionBodyReceiptViolation;
 }
 
 /** Exhaustive source-inventory row, reconciled with physical legacy entries. */
@@ -136,13 +164,22 @@ function outcomeRoute(outcome: IrObservedOutcome | undefined): "ir" | "legacy" |
   return "unresolved";
 }
 
+interface MutableDirectFunctionBodyReceiptIndex {
+  readonly countsByUnitId: Map<IrUnitId, number>;
+  readonly violations: IrDirectFunctionBodyReceiptViolation[];
+  readonly duplicateUnitIds: Set<IrUnitId>;
+}
+
 /** Per-codegen-session recorder; allocated only with `trackIrOutcomes`. */
 export class IrBodyRouteAuditSession {
   readonly #identity: IrPlanningIdentityContext;
   readonly #target: CompileTargetProfile["target"];
   readonly #compileRoute: IrCompileRoute;
+  readonly #sourceById: ReadonlyMap<IrSourceId, IrBodyRouteSource>;
   readonly #seenFrames = new WeakSet<FunctionContext>();
   readonly #entries = new Map<string, IrLegacyBodyEntry>();
+  readonly #directFunctionBodyReceiptsBySourceId = new Map<IrSourceId, MutableDirectFunctionBodyReceiptIndex>();
+  #unattributedDirectFunctionBodyReceiptViolation?: IrDirectFunctionBodyReceiptViolation;
   #route?: {
     readonly graph: "single" | "multi";
     readonly generator: "generateModule" | "generateMultiModule";
@@ -156,6 +193,7 @@ export class IrBodyRouteAuditSession {
     this.#identity = identity;
     this.#target = target;
     this.#compileRoute = compileRoute;
+    this.#sourceById = new Map(identity.inventory.sources.map((source) => [source.id, source]));
   }
 
   registerGenerator(graph: "single" | "multi", generator: "generateModule" | "generateMultiModule"): void {
@@ -199,6 +237,134 @@ export class IrBodyRouteAuditSession {
     return currentDepth + 1;
   }
 
+  /**
+   * Return the exact direct-body receipts for one source's top-level function
+   * terminals. This is intentionally a separate view from the broad route
+   * audit: class/member and module-init dispatchers have their own R3/R4
+   * accounting contracts and must not be inferred from a class-name root.
+   */
+  directFunctionBodyReceiptAudit(sourceFile: SourceFile): IrDirectFunctionBodyReceiptAudit {
+    const sourceId = this.#identity.sourceIdBySourceFile.get(sourceFile);
+    if (!sourceId || this.#identity.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+      throw new Error(
+        `IR direct-body receipt source ${sourceFile.fileName} is outside the authoritative planning context`,
+      );
+    }
+    const indexed = this.#directFunctionBodyReceiptsBySourceId.get(sourceId);
+    const countsByUnitId = new Map(indexed?.countsByUnitId);
+    const violations = [...(indexed?.violations ?? [])];
+    for (const unitId of indexed?.duplicateUnitIds ?? []) {
+      const count = countsByUnitId.get(unitId);
+      violations.push(
+        Object.freeze({
+          code: "duplicate-direct-function-body-receipt",
+          detail: `direct function-body receipt ${unitId} occurs ${count} times`,
+          unitId,
+        }),
+      );
+    }
+    return Object.freeze({
+      sourceId,
+      countsByUnitId,
+      violations: Object.freeze(violations),
+      ...(this.#unattributedDirectFunctionBodyReceiptViolation
+        ? { unattributedViolation: this.#unattributedDirectFunctionBodyReceiptViolation }
+        : {}),
+    });
+  }
+
+  #directFunctionBodyReceiptIndex(sourceId: IrSourceId): MutableDirectFunctionBodyReceiptIndex {
+    let indexed = this.#directFunctionBodyReceiptsBySourceId.get(sourceId);
+    if (!indexed) {
+      indexed = {
+        countsByUnitId: new Map(),
+        violations: [],
+        duplicateUnitIds: new Set(),
+      };
+      this.#directFunctionBodyReceiptsBySourceId.set(sourceId, indexed);
+    }
+    return indexed;
+  }
+
+  #recordDirectFunctionBodyReceiptViolation(
+    sourceId: IrSourceId | undefined,
+    code: IrDirectFunctionBodyReceiptViolationCode,
+    detail: string,
+    unitId?: IrUnitId,
+  ): void {
+    const violation = Object.freeze({ code, detail, ...(unitId === undefined ? {} : { unitId }) });
+    if (sourceId !== undefined && this.#sourceById.has(sourceId)) {
+      this.#directFunctionBodyReceiptIndex(sourceId).violations.push(violation);
+      return;
+    }
+    this.#unattributedDirectFunctionBodyReceiptViolation ??= violation;
+  }
+
+  #indexDirectFunctionBodyReceipt(entry: IrLegacyBodyEntry): void {
+    if (entry.entryPoint !== "compileFunctionBody") return;
+    const knownUnit = entry.unitId === undefined ? undefined : this.#identity.unitByUnitId.get(entry.unitId);
+    const attributedSourceId =
+      entry.sourceId !== undefined && this.#sourceById.has(entry.sourceId) ? entry.sourceId : knownUnit?.sourceId;
+
+    // `compileFunctionBody` is also a shared wrapper for known support,
+    // nested, CJS/runtime-namespace, and compiler-synthetic bodies. Exact
+    // identities in those populations are outside #3521 and remain ignored.
+    if (knownUnit && (!knownUnit.terminal || knownUnit.kind !== "top-level-function")) {
+      if (
+        entry.sourceId !== knownUnit.sourceId ||
+        entry.unitKind !== knownUnit.kind ||
+        entry.terminalOwnerId !== knownUnit.terminalOwnerId
+      ) {
+        this.#recordDirectFunctionBodyReceiptViolation(
+          attributedSourceId,
+          "foreign-direct-function-body-receipt",
+          `out-of-scope direct function-body receipt ${entry.unitId} does not match its exact inventory identity`,
+          entry.unitId,
+        );
+      }
+      return;
+    }
+    if (entry.sourceId === undefined || entry.unitId === undefined) {
+      this.#recordDirectFunctionBodyReceiptViolation(
+        attributedSourceId,
+        "missing-direct-function-body-identity",
+        `direct function-body receipt ${JSON.stringify(entry.bodyName)} has no exact source/unit identity`,
+        entry.unitId,
+      );
+      return;
+    }
+    const terminal = this.#identity.terminalByUnitId.get(entry.unitId);
+    if (
+      !terminal ||
+      terminal.kind !== "top-level-function" ||
+      terminal.observedKind !== "function" ||
+      terminal.sourceId !== entry.sourceId ||
+      entry.unitKind !== terminal.kind ||
+      entry.terminalOwnerId !== entry.unitId
+    ) {
+      this.#recordDirectFunctionBodyReceiptViolation(
+        attributedSourceId,
+        "foreign-direct-function-body-receipt",
+        `direct function-body receipt ${entry.unitId} does not match its exact terminal/source owner`,
+        entry.unitId,
+      );
+      return;
+    }
+    const indexed = this.#directFunctionBodyReceiptIndex(entry.sourceId);
+    const count = (indexed.countsByUnitId.get(entry.unitId) ?? 0) + 1;
+    if (!Number.isSafeInteger(count) || count <= 0) {
+      this.#recordDirectFunctionBodyReceiptViolation(
+        entry.sourceId,
+        "impossible-direct-function-body-receipt",
+        `direct function-body receipt ${entry.unitId} has impossible count ${count}`,
+        entry.unitId,
+      );
+      return;
+    }
+    indexed.countsByUnitId.set(entry.unitId, count);
+    if (count > 1) indexed.duplicateUnitIds.add(entry.unitId);
+  }
+
   #record(entryPoint: IrLegacyBodyEntryPoint, bodyName: string, node: Node): void {
     const sourceFile = node.getSourceFile();
     const sourceId = this.#identity.sourceIdBySourceFile.get(sourceFile);
@@ -209,8 +375,7 @@ export class IrBodyRouteAuditSession {
         : undefined);
     const classId = this.#identity.classIdByDeclaration.get(node as ClassDeclaration | ClassExpression);
     const unit = unitId === undefined ? undefined : this.#identity.unitByUnitId.get(unitId);
-    const source =
-      sourceId === undefined ? undefined : this.#identity.inventory.sources.find((row) => row.id === sourceId);
+    const source = sourceId === undefined ? undefined : this.#sourceById.get(sourceId);
     const position = { ...sourcePosition(node), ...(source === undefined ? {} : { file: source.sourceKey }) };
     const key = [
       entryPoint,
@@ -222,24 +387,32 @@ export class IrBodyRouteAuditSession {
       position.column,
     ].join("\0");
     const prior = this.#entries.get(key);
-    this.#entries.set(
-      key,
-      Object.freeze({
-        target: this.#target,
-        entryPoint,
-        bodyName,
-        ...position,
-        ...(sourceId === undefined ? {} : { sourceId }),
-        ...(unitId === undefined ? {} : { unitId }),
-        ...(classId === undefined ? {} : { classId }),
-        ...(unit === undefined
-          ? {}
-          : {
-              unitKind: unit.kind,
-              terminalOwnerId: unit.terminalOwnerId,
-            }),
-        count: (prior?.count ?? 0) + 1,
-      }),
+    const entry = Object.freeze({
+      target: this.#target,
+      entryPoint,
+      bodyName,
+      ...position,
+      ...(sourceId === undefined ? {} : { sourceId }),
+      ...(unitId === undefined ? {} : { unitId }),
+      ...(classId === undefined ? {} : { classId }),
+      ...(unit === undefined
+        ? {}
+        : {
+            unitKind: unit.kind,
+            terminalOwnerId: unit.terminalOwnerId,
+          }),
+      count: (prior?.count ?? 0) + 1,
+    });
+    this.#entries.set(key, entry);
+    this.#indexDirectFunctionBodyReceipt(entry);
+  }
+
+  /** Sources that own a module-init terminal, so cannot be "nothing to do". */
+  #moduleInitTerminalSourceIds(): ReadonlySet<IrSourceId> {
+    return new Set(
+      this.#identity.inventory.terminalUnits.flatMap((unit) =>
+        unit.observedKind === "module-init" ? [unit.sourceId] : [],
+      ),
     );
   }
 
@@ -253,8 +426,51 @@ export class IrBodyRouteAuditSession {
     const legacyEntryIds = new Set(
       [...this.#entries.values()].flatMap((entry) => (entry.unitId === undefined ? [] : [entry.unitId])),
     );
+    // (#3523 R4 gap 4) Sources with a physical module-init body root, counted
+    // ONLY from roots carrying exact terminal identity. A `compileModuleInitBody`
+    // entry whose unit identity does not resolve is already reported as
+    // `unresolved-legacy-entry`; its ambient `sourceId` is the source being
+    // compiled at the time, not proof that THAT source owns the body. Measured
+    // 2026-08-31: the whole-program `__module_init` of a multi-source graph is
+    // exactly such an entry, so trusting its `sourceId` would report a spurious
+    // second defect against an innocent empty dependency.
+    const moduleInitRootSourceIds = new Set(
+      [...this.#entries.values()].flatMap((entry) => {
+        if (entry.entryPoint !== "compileModuleInitBody" || entry.unitId === undefined) return [];
+        const terminal = this.#identity.inventory.terminalUnits.find((unit) => unit.id === entry.unitId);
+        return terminal?.observedKind === "module-init" ? [terminal.sourceId] : [];
+      }),
+    );
     const outcomesById = new Map<IrUnitId, IrObservedOutcome>();
+    const nonExecutableSourceIds = new Set<IrSourceId>();
     for (const outcome of outcomes) {
+      // (#3523 R4 gap 4) A non-executable module init has no terminal unit to
+      // join on, by contract. That is asserted here rather than skipped: the
+      // source must genuinely own zero module-init terminals and zero physical
+      // `compileModuleInitBody` roots, and must not already have such a row.
+      // Anything else is a row claiming an absence the audit can see is false.
+      if (outcome.kind === "non-executable") {
+        const defect =
+          nonExecutableOutcomeDefect(outcome) ??
+          (outcome.sourceId === undefined
+            ? "has no source identity"
+            : nonExecutableSourceIds.has(outcome.sourceId)
+              ? "is the second non-executable row for its source"
+              : this.#moduleInitTerminalSourceIds().has(outcome.sourceId)
+                ? "names a source that owns a module-init terminal"
+                : moduleInitRootSourceIds.has(outcome.sourceId)
+                  ? "names a source with a physical compileModuleInitBody root"
+                  : undefined);
+        if (defect) {
+          violations.push({
+            code: "unjoined-non-executable-outcome",
+            detail: `non-executable module-init outcome for ${outcome.file} ${defect}`,
+          });
+        } else if (outcome.sourceId !== undefined) {
+          nonExecutableSourceIds.add(outcome.sourceId);
+        }
+        continue;
+      }
       if (outcome.unitId === undefined || !this.#identity.terminalByUnitId.has(outcome.unitId)) {
         violations.push({
           code: "unknown-outcome-unit",

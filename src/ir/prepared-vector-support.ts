@@ -62,6 +62,30 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
     return ref;
   };
 
+  /**
+   * (#5166) The physical ValType that carries ONE vec element.
+   *
+   * `asVal` answers for the primitive elements; `string` answers through the
+   * backend's string carrier. A NESTED vec element (`number[][]`, and the
+   * `vec<vec<externref>>` a `string[][]` resolves to) is carried as a CONCRETE
+   * ref to the inner vec's struct — the identical shape legacy's
+   * `resolveWasmType` produces and the one `resolvePositionType` now registers
+   * — so recurse to the inner element, resolve its physical vec, and hand back
+   * a `ref_null` to that struct. `resolveVecForElement` get-or-creates through
+   * the legacy `getOrRegisterVecType` registry, so inner and outer share
+   * identity with every other producer of the same shape.
+   */
+  const physicalElementFor = (elem: IrType): ValType | null => {
+    const direct = asVal(elem);
+    if (direct) return direct;
+    if (elem.kind === "string") return input.resolveString();
+    if (elem.kind !== "vec") return null;
+    const inner = physicalElementFor(elem.elementType);
+    if (!inner) return null;
+    const innerVec = input.resolveVecForElement(inner);
+    return innerVec ? { kind: "ref_null", typeIdx: innerVec.vecStructTypeIdx } : null;
+  };
+
   return input.entries.map((entry) => {
     const attachment = attachIrVecLayouts(
       entry.fn,
@@ -69,7 +93,7 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
         const logicalKey = input.typeKey({ kind: "vec", elementType: type.elementType, nullable: false });
         const cached = layouts.get(logicalKey);
         if (cached) return cached;
-        const element = asVal(type.elementType) ?? (type.elementType.kind === "string" ? input.resolveString() : null);
+        const element = physicalElementFor(type.elementType);
         const materializerElement =
           element && (element.kind === "f64" || element.kind === "i32" || element.kind === "externref")
             ? (element as MaterializerElement)
@@ -78,7 +102,16 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
           type.elementType.kind === "string" &&
           element !== null &&
           (element.kind === "ref" || element.kind === "ref_null");
-        if (!element || (!materializerElement && !nativeStringElement)) {
+        // (#5166) A nested vec element is a concrete `ref_null` to the inner
+        // vec struct, so it is not a materializer element kind. It is still a
+        // fully supported layout — the outer vec is an ordinary
+        // `__vec_ref_<inner>`, byte-identical to what legacy emits for
+        // `number[][]`. Like the native-string vecs it deliberately gets NO
+        // `physicalVectors` entry below: there is no host-array materializer
+        // for a vec-of-vecs element (see the async guard further down, which
+        // keeps `fromExternFor`'s plain-`Error` invariant unreachable).
+        const nestedVecElement = type.elementType.kind === "vec" && element !== null;
+        if (!element || (!materializerElement && !nativeStringElement && !nestedVecElement)) {
           // (#4486) The physical vec registry carries exactly three element
           // kinds. Everything else — most visibly a NESTED vec, i.e. the
           // `vec<vec<externref>>` a `string[][]` param resolves to — is a
@@ -129,6 +162,22 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
             fn.asyncPlan?.states.some(
               (state) => state.resume?.source === "fulfilled" && state.resume.type === logicalType,
             ) === true;
+          // (#5166) A fulfilled async resume needs the host-array
+          // materializer, and a nested vec has no `physicalVectors` entry to
+          // build one from (there is no `__vec_from_extern_*` for a
+          // vec-of-vecs element). Withdraw the claim with the SAME typed
+          // capability-gap verdict the element allowlist uses, so
+          // `fromExternFor`'s "lost its physical layout" plain `Error` — which
+          // `classifyIrFailure` would bucket as an untyped invariant, i.e. a
+          // HARD compile error — stays unreachable. This is the #4486 lesson
+          // applied ahead of the regression rather than after it.
+          if (fulfilled && logicalType.elementType.kind === "vec") {
+            throw new IrUnsupportedError(
+              "type-resolution-unsupported",
+              "resolve",
+              `async fulfilled resume of nested vec ${logicalKey} is not supported`,
+            );
+          }
           return Object.freeze({
             logicalType,
             layout,

@@ -254,6 +254,16 @@ const entrySource = `
     return 42;
   }
 
+  // This entry module reaches the runtime-eval boundary through captured eval,
+  // but it never reads bare Function. The realm binding must still be the same
+  // native singleton exposed as every compiled function's constructor.
+  export function __v8x_probe_deno_realm_function(): number {
+    const realm: any = globalThis;
+    const realmFunction: any = realm.Function;
+    const witness = function () {};
+    return typeof realmFunction === "function" && realmFunction === witness.constructor ? 1 : 0;
+  }
+
   export function __v8x_stage_deno_core_module(): number {
     const global: any = globalThis;
     const state: any = global.__v8xDenoProbeState;
@@ -488,9 +498,9 @@ if (!result.success) {
   throw new Error(result.errors.map((error) => error.message).join("\n"));
 }
 
-const module = new WebAssembly.Module(result.binary);
 const artifactOutput = process.env.DENO_CORE_BOOTSTRAP_WASM_OUTPUT;
 if (artifactOutput) writeFileSync(artifactOutput, result.binary);
+const module = new WebAssembly.Module(result.binary);
 const moduleImports = WebAssembly.Module.imports(module);
 const imports = moduleImports.map(({ module, name }) => `${module}::${name}`).sort();
 const bridgeExports = WebAssembly.Module.exports(module)
@@ -674,6 +684,7 @@ for (let instanceIndex = 0; instanceIndex < 2; instanceIndex++) {
   callStage("__module_init", instance.exports.__module_init as () => void);
   const stageState = exports.__v8x_probe_deno_stage_state as () => number;
   const afterInit = callStage("state after init", stageState);
+  const realmFunction = callStage("realm Function identity", exports.__v8x_probe_deno_realm_function as () => number);
   const wrappers = callStage("wrapper checkpoint", exports.__v8x_stage_deno_core_wrappers as () => number);
   const afterWrappers = callStage("state after wrappers", stageState);
   const coreModule = callStage("module checkpoint", exports.__v8x_stage_deno_core_module as () => number);
@@ -735,6 +746,7 @@ for (let instanceIndex = 0; instanceIndex < 2; instanceIndex++) {
   const usage = captureProbe("hello_world usage", () => callUsageStage(exports));
   stages.push({
     afterInit,
+    realmFunction,
     wrappers,
     afterWrappers,
     module: coreModule,

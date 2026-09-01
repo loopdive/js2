@@ -16,6 +16,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
+import { condenseDirectedGraph } from "../analysis/strongly-connected-components.js";
 import { functionReturnsThroughWithScope } from "../declarations.js";
 import {
   collectNestedCaptureReferences,
@@ -42,6 +43,7 @@ import {
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
+import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
@@ -69,18 +71,24 @@ import {
   getOrRegisterVecType,
 } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
+import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
+  coerceType,
   compileExpression,
   compileStatement,
   ensureLateImport,
   flushLateImportShifts,
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
+  resolveComputedKeyExpression,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
+import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
+import { genericCallbackResultDeclaration } from "../generic-callback-result.js";
+import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -105,6 +113,189 @@ import {
   nestedFuncDeclNeedsShadow,
   shadowNestedFuncName,
 } from "../nested-function-name-scope.js"; // (#4456) lexical scope for the flat funcMap namespace
+import { collectBlockScopedNames } from "./shared.js";
+
+/**
+ * Mirror declarations.ts' omitted-parameter ABI rule for lifted nested
+ * declarations. An optional parameter without an initializer must preserve
+ * JavaScript `undefined`; a scalar Wasm slot would instead receive the numeric
+ * missing-argument sentinel. Explicit native annotations intentionally retain
+ * their scalar ABI.
+ */
+function nestedParameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+  const jsdocType = ts.getJSDocType(param);
+  const jsdocTags = ts.getJSDocParameterTags(param);
+  return (
+    param.initializer === undefined &&
+    (param.questionToken !== undefined ||
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      jsdocTags.some((tag) => tag.isBracketed === true))
+  );
+}
+
+const nestedParamUndefinedObservationCache = new WeakMap<ts.ParameterDeclaration, boolean>();
+
+/**
+ * Prove that this exact parameter's body observes the JavaScript distinction
+ * between omission and a falsey scalar. The symbol check is load-bearing: a
+ * same-spelled local inside a deeper closure must not widen an unrelated ABI.
+ */
+function nestedParameterIsComparedToUndefined(
+  ctx: CodegenContext,
+  owner: ts.FunctionLikeDeclarationBase,
+  param: ts.ParameterDeclaration,
+): boolean {
+  const cached = nestedParamUndefinedObservationCache.get(param);
+  if (cached !== undefined) return cached;
+  if (!owner.body || !ts.isIdentifier(param.name)) {
+    nestedParamUndefinedObservationCache.set(param, false);
+    return false;
+  }
+
+  const parameterName = param.name.text;
+  const isParameterRead = (node: ts.Expression): boolean =>
+    ts.isIdentifier(node) &&
+    node.text === parameterName &&
+    (ctx.checker.getSymbolAtLocation(node)?.valueDeclaration ??
+      ctx.checker.getSymbolAtLocation(node)?.declarations?.[0]) === param;
+  const isUndefinedRead = (node: ts.Expression): boolean => {
+    if (!ts.isIdentifier(node) || node.text !== "undefined") return false;
+    const symbol = ctx.checker.getSymbolAtLocation(node);
+    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    // An unresolved intrinsic or lib declaration is the realm-global
+    // `undefined`. A source declaration is a shadow and proves nothing about
+    // omitted-argument semantics.
+    return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+  };
+  let observed = false;
+  const visit = (node: ts.Node): void => {
+    if (observed) return;
+    if (node !== owner && ts.isFunctionLike(node)) return;
+    if (ts.isBinaryExpression(node)) {
+      const comparison =
+        node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken ||
+        node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      if (
+        comparison &&
+        ((isParameterRead(node.left) && isUndefinedRead(node.right)) ||
+          (isUndefinedRead(node.left) && isParameterRead(node.right)))
+      ) {
+        observed = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(owner.body, visit);
+  nestedParamUndefinedObservationCache.set(param, observed);
+  return observed;
+}
+
+function preserveOmittedNestedParameter(
+  ctx: CodegenContext,
+  owner: ts.FunctionDeclaration,
+  param: ts.ParameterDeclaration,
+  wasmType: ValType,
+): ValType {
+  // Keep i32 optionals on their scalar ABI. Contextual function fields and
+  // shared closure wrappers derive that ABI independently; widening only the
+  // lifted declaration makes an otherwise valid closure fail its guarded cast
+  // and become null. Omitted booleans are instead tracked through `__argc`
+  // below, which preserves the ABI while retaining undefined-vs-false.
+  return wasmType.kind === "f64" &&
+    nestedParameterMayBeOmitted(param) &&
+    nativeTypeOfDeclaration(ctx.checker, param) === null
+    ? { kind: "externref" }
+    : wasmType;
+}
+
+function nestedParameterIsTrailingForwardedArgument(
+  ctx: CodegenContext,
+  owner: ts.FunctionLikeDeclarationBase,
+  param: ts.ParameterDeclaration,
+): boolean {
+  if (!owner.body || !ts.isIdentifier(param.name)) return false;
+  let forwarded = false;
+  const visit = (node: ts.Node): void => {
+    if (forwarded) return;
+    if (node !== owner && ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node) && node.arguments.length > 0) {
+      const argument = node.arguments[node.arguments.length - 1]!;
+      if (
+        ts.isIdentifier(argument) &&
+        (ctx.checker.getSymbolAtLocation(argument)?.valueDeclaration ??
+          ctx.checker.getSymbolAtLocation(argument)?.declarations?.[0]) === param
+      ) {
+        forwarded = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(owner.body, visit);
+  return forwarded;
+}
+
+/**
+ * Cache the source activation's argument count only for optional booleans that
+ * either observe `undefined` themselves or forward the trailing formal to
+ * another call. The latter is the parser -> NodeFactory shape: the syntactic
+ * forwarding call has two arguments, but its second value may still represent
+ * an argument omitted by the parser's caller.
+ */
+function registerNestedOmissionTrackedScalarParams(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  owner: ts.FunctionLikeDeclarationBase,
+  paramTypes: readonly ValType[],
+): boolean {
+  let tracked = false;
+  for (let i = 0; i < owner.parameters.length; i++) {
+    const param = owner.parameters[i]!;
+    const type = paramTypes[i];
+    if (
+      type?.kind !== "i32" ||
+      type.boolean !== true ||
+      !nestedParameterMayBeOmitted(param) ||
+      nativeTypeOfDeclaration(ctx.checker, param) !== null ||
+      (!nestedParameterIsComparedToUndefined(ctx, owner, param) &&
+        !nestedParameterIsTrailingForwardedArgument(ctx, owner, param))
+    ) {
+      continue;
+    }
+    if (!fctx.omissionTrackedScalarParams) fctx.omissionTrackedScalarParams = new Map();
+    fctx.omissionTrackedScalarParams.set(param, i);
+    tracked = true;
+  }
+  return tracked;
+}
+
+/**
+ * A hoisted function declaration can be materialized before a captured
+ * `let`/`const` initializer has finished. The canonical factory shape is:
+ *
+ *     const factory = { createNodeArray, createUnion };
+ *     function createUnion() { return factory.createNodeArray(); }
+ *
+ * `createUnion` is hoisted, but its shorthand closure is created while
+ * `factory` still contains the TDZ/pre-init value. Capturing `factory` by value
+ * therefore freezes that value forever. Prove the exact cycle by declaration
+ * identity so unrelated references in the initializer do not widen captures.
+ */
+function initializerMaterializesHoistedFunction(
+  ctx: CodegenContext,
+  capturedDecl: ts.VariableDeclaration | undefined,
+  functionDecl: ts.FunctionDeclaration,
+): boolean {
+  const initializer = capturedDecl?.initializer;
+  if (!initializer || !ts.isObjectLiteralExpression(initializer)) return false;
+  return initializer.properties.some(
+    (property) =>
+      ts.isShorthandPropertyAssignment(property) && ctx.oracle.valueDeclarationOf(property.name) === functionDecl,
+  );
+}
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -134,55 +325,87 @@ function extendsOwnClass(ctx: CodegenContext, decl: ts.ClassDeclaration | ts.Cla
   return false;
 }
 
+type ModuleStaticInitEntry = CodegenContext["staticInitExprs"][number];
+
+function staticInitOwner(entry: ModuleStaticInitEntry): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  let node: ts.Node | undefined = entry.staticBlock ?? entry.initializer;
+  while (node !== undefined && !ts.isClassDeclaration(node) && !ts.isClassExpression(node)) {
+    node = node.parent;
+  }
+  return node;
+}
+
 /**
- * Emit the runtime evaluation of computed names whose accessor bodies are
- * owned by the exact prepared-IR route.
- *
- * Class shape preparation resolves the semantic key, but it must never execute
- * the source expression: assignments and other effects belong in the enclosing
- * function at ClassDefinitionEvaluation. The exact skip set is the gate, so a
- * dynamic/unsupported computed name keeps the legacy route untouched. Walking
- * `decl.members` preserves source order and evaluates a getter/setter pair's
- * two computed names independently, as JavaScript requires.
+ * Class-declaration statics are collected globally for their storage setup,
+ * but a declaration nested in a statement must evaluate its fields/blocks at
+ * that statement's runtime point. In particular this keeps them under the
+ * enclosing if/loop/try instead of letting a module-level queue flatten them.
  */
-export function emitPreparedAccessorComputedNameEffects(
+function emitNestedDeclarationStaticInitializers(
   ctx: CodegenContext,
   fctx: FunctionContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): void {
-  const routing = ctx.irClassBodyRouting;
-  const identity = ctx.irPlanningIdentityContext;
-  if (!routing?.skipBodyUnitIds || !identity) return;
-  const classId = identity.classIdByDeclaration.get(decl);
-  if (classId === undefined || identity.declarationByClassId.get(classId) !== decl) return;
+  if (!ts.isClassDeclaration(decl) || ts.isSourceFile(decl.parent)) return;
+  for (const entry of ctx.staticInitExprs) {
+    if (staticInitOwner(entry) !== decl) continue;
+    const savedEnclosing = fctx.enclosingClassName;
+    const savedIsStatic = fctx.isStaticContext;
+    if (entry.className !== undefined) {
+      fctx.enclosingClassName = entry.className;
+      fctx.isStaticContext = true;
+    }
+    try {
+      if (entry.staticBlock) {
+        for (const statement of entry.staticBlock.body.statements) {
+          compileStatement(ctx, fctx, statement);
+        }
+        continue;
+      }
+      if (!entry.initializer || entry.globalIdx === undefined) continue;
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, entry.globalIdx)];
+      compileExpression(ctx, fctx, entry.initializer, globalDef?.type);
+      // Lowering the initializer may add late imports. Consult the mutable
+      // collector entry after it runs so this new store uses the shifted index.
+      if (entry.globalIdx !== undefined) {
+        fctx.body.push({ op: "global.set", index: entry.globalIdx });
+      }
+    } finally {
+      fctx.enclosingClassName = savedEnclosing;
+      fctx.isStaticContext = savedIsStatic;
+    }
+  }
+}
 
+/**
+ * Emit the runtime evaluation of unresolved computed accessor names.
+ *
+ * Class shape preparation must never execute the source expression: assignments
+ * and other effects belong in the enclosing function at
+ * ClassDefinitionEvaluation. Both direct and prepared class-body routes share
+ * this emitter, while their distinct evaluation owners invoke it exactly once.
+ * Walking `decl.members` preserves source order and evaluates a getter/setter
+ * pair's two computed names independently, as JavaScript requires.
+ */
+export function emitUnresolvedComputedAccessorNameEffects(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+): void {
   for (const member of decl.members) {
     if (
       (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) ||
-      !ts.isComputedPropertyName(member.name)
+      !ts.isComputedPropertyName(member.name) ||
+      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
     ) {
       continue;
     }
-    const unitId = identity.unitIdByDeclaration.get(member);
-    if (unitId === undefined || routing.skipBodyUnitIds.has(unitId) !== true) continue;
-    const terminal = identity.terminalByUnitId.get(unitId);
-    const callable = ctx.programAbiClassCallables?.functionForUnit(unitId);
-    const accessor =
-      terminal?.kind === "class-instance-getter" ||
-      terminal?.kind === "class-static-getter" ||
-      terminal?.kind === "class-instance-setter" ||
-      terminal?.kind === "class-static-setter";
-    if (
-      !terminal ||
-      !accessor ||
-      terminal.lexicalOwnerId !== classId ||
-      identity.declarationByUnitId.get(unitId) !== member ||
-      !callable
-    ) {
-      throw new Error(`exact prepared computed accessor ${unitId} has no matching class/callable identity`);
+    const resultType = compileExpression(ctx, fctx, member.name.expression, { kind: "externref" });
+    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) {
+      if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+      emitToPropertyKeyOnce(ctx, fctx);
+      fctx.body.push({ op: "drop" });
     }
-    const resultType = compileExpression(ctx, fctx, member.name.expression);
-    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
   }
 }
 
@@ -217,8 +440,21 @@ export function compileNestedClassDeclaration(
   emitRegisterDynamicClassParent(ctx, fctx, decl, className);
 
   const isDeferred = ctx.deferredClassBodies.has(className);
+  // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a
+  // NAME test standing in for a DECLARATION test. `structMap` is name-keyed, so
+  // a class declaration whose name is already registered by a class in another
+  // scope took this early return and never emitted its own bodies; its members
+  // then answered with the first declaration's code (silently wrong results, no
+  // invalid wasm). `collectClassesFromStatements` marks the duplicates it can
+  // see as deferred, but it does not reach every scope — a class inside a
+  // sibling BLOCK, or inside a class/object-literal METHOD body, is invisible to
+  // it. Ask the node-keyed ledger instead: a class DECLARATION only short-
+  // circuits once `compileClassBodies` has actually run for THIS node.
+  // Class EXPRESSIONS keep the name-only rule — `compileClassExpression` owns
+  // their body emission and this path must not duplicate it.
+  const bodiesAlreadyEmitted = !ts.isClassDeclaration(decl) || ctx.compiledClassBodies.has(decl);
   // Skip if already collected AND not deferred (already fully compiled)
-  if (ctx.structMap.has(className) && !isDeferred) {
+  if (ctx.structMap.has(className) && !isDeferred && bodiesAlreadyEmitted) {
     // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
     if (ctx.classThrowsOnEval.has(className)) {
       emitThrowTypeError(ctx, fctx, "Classes may not have a static property named 'prototype'");
@@ -275,7 +511,8 @@ export function compileNestedClassDeclaration(
         }
       }
     }
-    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl);
+    emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
     return;
   }
 
@@ -330,15 +567,17 @@ export function compileNestedClassDeclaration(
       funcByName.set(ctx.mod.functions[i]!.name, i);
     }
 
-    // Computed-name expressions execute in the enclosing frame at runtime,
-    // immediately before this class's prepared bodies are installed/materialized.
-    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    // A declaration's computed accessor names execute in this enclosing frame
+    // at ClassDefinitionEvaluation. Class-expression owners emit the same
+    // shared effect from their own expression route below.
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl);
 
     // Compile constructor and method bodies
     compileClassBodies(ctx, decl, funcByName, syntheticName, ctx.irClassBodyRouting);
 
     // Mark as no longer deferred
     if (isDeferred) ctx.deferredClassBodies.delete(className);
+    emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     reportError(ctx, decl, `Internal error compiling nested class '${className}': ${msg}`);
@@ -359,12 +598,106 @@ interface CompileNestedFunctionOptions {
  */
 const nestedFnMutatedNamesCache = new WeakMap<ts.Node, Set<string>>();
 
+interface SiblingFunctionSyntaxFacts {
+  ownLocals: ReadonlySet<string>;
+  referencedNames: ReadonlySet<string>;
+}
+
 /**
- * Per-container transitive capture analysis for sibling function declarations.
- * The result is syntactic so Phase 0 and body compilation make the same
- * capture/no-capture decision regardless of which sibling compiles first.
+ * Names owned for the whole body of a nested function declaration.
+ *
+ * The shared function-scope collector deliberately omits every `let`/`const`
+ * because a lexical declared in an inner block must not hide a genuine outer
+ * reference elsewhere in the function. Direct children of the function body
+ * are different: that body block is their complete lexical scope, so they
+ * shadow an enclosing same-named binding throughout this lifted function.
+ * Include exactly those direct body lexicals when planning declaration
+ * captures, while retaining the shared collector's block-sensitive behavior
+ * for nested blocks and loop heads.
  */
-const siblingCaptureClosureCache = new WeakMap<ts.Node, Map<string, Set<string>>>();
+function addNestedDeclarationOwnLocals(decl: ts.FunctionDeclaration, out: Set<string>): void {
+  addFunctionOwnLocals(decl, out);
+  if (!decl.body) return;
+  for (const name of collectBlockScopedNames(decl.body)) out.add(name);
+}
+
+/**
+ * Split a source-owned binding from a same-named hidden capture parameter.
+ *
+ * A lifted function may need to forward an outer binding to a capturing
+ * sibling even though its own parameter/var/body lexical shadows that name.
+ * `liftedCaptureSlots` retains the hidden leading parameter for forwarding;
+ * all name-keyed binding metadata must describe the source-visible binding.
+ */
+function isolateSourceBindingsFromLiftedCaptures(fctx: FunctionContext, ownNames: Iterable<string>): void {
+  if (!fctx.liftedCaptureSlots || fctx.liftedCaptureSlots.size === 0) return;
+  for (const name of ownNames) {
+    const captureSlot = fctx.liftedCaptureSlots.get(name);
+    if (captureSlot === undefined) continue;
+    // Identifier parameters are installed after the leading captures and
+    // already own localMap[name]. Delete only when the name still points at
+    // the hidden capture; var/lexical hoisting will then allocate its own slot.
+    if (fctx.localMap.get(name) === captureSlot) fctx.localMap.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+    fctx.boxedTdzFlags?.delete(name);
+    fctx.directEvalOuterBindingNames?.delete(name);
+  }
+}
+
+function nestedDeclarationParameterNames(decl: ts.FunctionDeclaration): Set<string> {
+  const names = new Set<string>();
+  const add = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      names.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) add(element.name);
+    }
+  };
+  for (const parameter of decl.parameters) add(parameter.name);
+  return names;
+}
+
+/** Immutable, declaration-identity keyed facts shared by every frame/phase. */
+const siblingFunctionSyntaxFactsCache = new WeakMap<ts.FunctionDeclaration, SiblingFunctionSyntaxFacts>();
+
+function siblingFunctionSyntaxFacts(decl: ts.FunctionDeclaration): SiblingFunctionSyntaxFacts {
+  const cached = siblingFunctionSyntaxFactsCache.get(decl);
+  if (cached) return cached;
+  const ownLocals = new Set<string>();
+  addNestedDeclarationOwnLocals(decl, ownLocals);
+  const referencedNames = new Set<string>();
+  for (const bodyStmt of decl.body!.statements) {
+    collectReferencedIdentifiers(bodyStmt, referencedNames, ownLocals);
+  }
+  const facts = { ownLocals, referencedNames } satisfies SiblingFunctionSyntaxFacts;
+  siblingFunctionSyntaxFactsCache.set(decl, facts);
+  return facts;
+}
+
+/**
+ * Per-frame capture plan. Unlike the syntax facts above, direct-capture
+ * admission observes `fctx.localMap` / hoisted value bindings and `ctx.funcMap`.
+ * Keying only by the AST container leaked pass-1 decisions into a distinct
+ * module-init FunctionContext; key the snapshot by its exact frame instead.
+ */
+const siblingCaptureClosureCache = new WeakMap<
+  FunctionContext,
+  WeakMap<ts.Node, Map<ts.FunctionDeclaration, ReadonlySet<string>>>
+>();
+
+function siblingCaptureCacheFor(
+  fctx: FunctionContext,
+): WeakMap<ts.Node, Map<ts.FunctionDeclaration, ReadonlySet<string>>> {
+  let cache = siblingCaptureClosureCache.get(fctx);
+  if (!cache) {
+    cache = new WeakMap();
+    siblingCaptureClosureCache.set(fctx, cache);
+  }
+  return cache;
+}
 
 function siblingContainerOf(
   stmt: ts.FunctionDeclaration,
@@ -377,12 +710,65 @@ function siblingContainerOf(
 }
 
 /**
+ * Add captures required by a lexically-visible declaration named by `stmt`.
+ *
+ * This intentionally excludes sibling-graph traversal: callers either seed a
+ * sibling SCC with these cross-container dependencies or add the completed
+ * sibling closure separately. Keeping the lexical owner and frame-local guards
+ * here makes Phase-0 reservation and the real lifted-body compile agree.
+ */
+function addVisibleDeclarationCapturesForName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  functionName: string,
+  out: Set<string>,
+): void {
+  if (observesOnlyHoistedFunctionValue(fctx, stmt, functionName)) return;
+  const owner = ctx.funcMapOwnerDecl?.get(functionName);
+  const captures = ctx.nestedFuncCaptures?.get(functionName);
+  if (!owner || !captures || captures.length === 0) return;
+
+  let ownerScope: ts.Node = owner.parent;
+  while (
+    !ts.isSourceFile(ownerScope) &&
+    !ts.isFunctionDeclaration(ownerScope) &&
+    !ts.isFunctionExpression(ownerScope) &&
+    !ts.isArrowFunction(ownerScope) &&
+    !ts.isMethodDeclaration(ownerScope) &&
+    !ts.isConstructorDeclaration(ownerScope) &&
+    !ts.isGetAccessorDeclaration(ownerScope) &&
+    !ts.isSetAccessorDeclaration(ownerScope)
+  ) {
+    if (!ownerScope.parent) break;
+    ownerScope = ownerScope.parent;
+  }
+
+  let visible = false;
+  for (let node: ts.Node | undefined = stmt; node !== undefined; node = node.parent) {
+    if (node === ownerScope) {
+      visible = true;
+      break;
+    }
+  }
+  if (!visible) return;
+
+  for (const capture of captures) {
+    if (capture.name === RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME) continue;
+    // A descendant can only re-capture a value that its immediate declaring
+    // frame actually carries. Inaccessible cross-frame captures remain
+    // diagnosed by the existing frame guard.
+    if (fctx.localMap.has(capture.name)) out.add(capture.name);
+  }
+}
+
+/**
  * Outer names a declaration must capture because it references another
  * sibling that captures them. Nested declarations are lifted to module-level
  * Wasm functions, so the forwarding sibling needs its own leading capture
  * parameters; the declaring frame's local indices are not valid in it.
  */
-function transitiveSiblingCaptures(
+export function transitiveSiblingCaptures(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmt: ts.FunctionDeclaration,
@@ -390,7 +776,8 @@ function transitiveSiblingCaptures(
   const container = siblingContainerOf(stmt);
   if (!container || !stmt.name) return new Set();
 
-  let closure = siblingCaptureClosureCache.get(container.node);
+  const cache = siblingCaptureCacheFor(fctx);
+  let closure = cache.get(container.node);
   if (!closure) {
     // FunctionDeclarationInstantiation is last-wins for duplicate names.
     const decls = new Map<string, ts.FunctionDeclaration>();
@@ -400,65 +787,88 @@ function transitiveSiblingCaptures(
       }
     }
 
-    const ownLocalsByName = new Map<string, Set<string>>();
-    const referencedByName = new Map<string, Set<string>>();
-    closure = new Map<string, Set<string>>();
-
-    for (const [name, decl] of decls) {
-      const ownLocals = new Set<string>();
-      addFunctionOwnLocals(decl, ownLocals);
-      const referenced = new Set<string>();
-      for (const bodyStmt of decl.body!.statements) {
-        collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
-      }
-      ownLocalsByName.set(name, ownLocals);
-      referencedByName.set(name, referenced);
-
-      const directCaptures = new Set<string>();
-      for (const referencedName of referenced) {
+    const directCapturesByDecl = new Map<ts.FunctionDeclaration, Set<string>>();
+    const propagationEdges = new Map<ts.FunctionDeclaration, Set<ts.FunctionDeclaration>>();
+    for (const decl of decls.values()) {
+      const { ownLocals, referencedNames } = siblingFunctionSyntaxFacts(decl);
+      const captures = new Set<string>();
+      const edges = new Set<ts.FunctionDeclaration>();
+      for (const referencedName of referencedNames) {
         if (referencedName === "this" || referencedName === "super") continue;
         if (ownLocals.has(referencedName)) continue;
-        if (decls.has(referencedName)) {
+        const sibling = decls.get(referencedName);
+        if (sibling) {
           if (observesHoistedFunctionValueBinding(fctx, decl, referencedName)) {
-            directCaptures.add(referencedName);
+            captures.add(referencedName);
+          }
+          if (sibling !== decl && !observesOnlyHoistedFunctionValue(fctx, decl, referencedName)) {
+            edges.add(sibling);
           }
           continue;
         }
-        if (
-          ctx.funcMap.has(referencedName) &&
-          ctx.funcMap.get(referencedName) !== ctx.jsStringImports.get(referencedName)
-        ) {
-          continue;
+        // A sibling may reach a declaration owned by an ancestor container.
+        // Seed that declaration's already-planned captures before condensing
+        // the immediate sibling graph, so Phase 0 reserves the same ABI that
+        // body compilation will later observe.
+        addVisibleDeclarationCapturesForName(ctx, fctx, decl, referencedName, captures);
+        // The current activation's lexical binding wins over every projected
+        // graph-global function spelling. Otherwise a same-named namespace or
+        // top-level function suppresses a real sibling capture and Phase 0
+        // reserves one fewer leading parameter than the body later requires.
+        if (fctx.localMap.has(referencedName)) {
+          captures.add(referencedName);
         }
-        if (fctx.localMap.has(referencedName)) directCaptures.add(referencedName);
       }
-      closure.set(name, directCaptures);
+      directCapturesByDecl.set(decl, captures);
+      propagationEdges.set(decl, edges);
+    }
+    // Collapse the sibling-reference graph into SCCs. Every declaration in one
+    // recursive component has the same transitive capture union; the condensed
+    // graph is acyclic and needs one reverse-topological propagation instead of
+    // repeatedly rescanning all siblings until no Set changes.
+    const {
+      components,
+      componentByNode: componentByDecl,
+      successorsByComponent: componentEdges,
+      predecessorsByComponent: reverseComponentEdges,
+    } = condenseDirectedGraph(decls.values(), (decl) => propagationEdges.get(decl) ?? []);
+    const capturesByComponent = components.map(() => new Set<string>());
+    for (let componentIdx = 0; componentIdx < components.length; componentIdx++) {
+      for (const decl of components[componentIdx]!) {
+        for (const capture of directCapturesByDecl.get(decl) ?? []) {
+          capturesByComponent[componentIdx]!.add(capture);
+        }
+      }
+    }
+    const remainingSuccessors = componentEdges.map((edges) => edges.size);
+    const worklist: number[] = [];
+    for (let componentIdx = 0; componentIdx < components.length; componentIdx++) {
+      if (remainingSuccessors[componentIdx] === 0) worklist.push(componentIdx);
+    }
+    while (worklist.length > 0) {
+      const componentIdx = worklist.pop()!;
+      for (const predecessor of reverseComponentEdges[componentIdx]!) {
+        for (const capture of capturesByComponent[componentIdx]!) {
+          capturesByComponent[predecessor]!.add(capture);
+        }
+        remainingSuccessors[predecessor] = remainingSuccessors[predecessor]! - 1;
+        if (remainingSuccessors[predecessor] === 0) worklist.push(predecessor);
+      }
     }
 
-    // Close direct captures over sibling-reference edges.
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const [name, referenced] of referencedByName) {
-        const into = closure.get(name)!;
-        const ownLocals = ownLocalsByName.get(name)!;
-        for (const siblingName of referenced) {
-          if (siblingName === name) continue;
-          const siblingCaptures = closure.get(siblingName);
-          if (!siblingCaptures) continue;
-          if (observesOnlyHoistedFunctionValue(fctx, decls.get(name)!, siblingName)) continue;
-          for (const captureName of siblingCaptures) {
-            // Forward the callee's outer binding even across a same-named local.
-            if (into.has(captureName)) continue;
-            into.add(captureName);
-            changed = true;
-          }
-        }
-      }
+    closure = new Map();
+    for (const sibling of container.stmts) {
+      if (!ts.isFunctionDeclaration(sibling) || !sibling.name || !sibling.body) continue;
+      const survivingDeclaration = decls.get(sibling.name.text)!;
+      closure.set(sibling, capturesByComponent[componentByDecl.get(survivingDeclaration)!]!);
     }
-    siblingCaptureClosureCache.set(container.node, closure);
+    cache.set(container.node, closure);
   }
 
-  return closure.get(stmt.name.text) ?? new Set();
+  // Earlier same-name declarations were mapped to the surviving declaration's
+  // set when the plan was built, preserving FunctionDeclarationInstantiation's
+  // last-wins behavior without a bare-name cache lookup.
+  return closure.get(stmt) ?? new Set();
 }
 
 /**
@@ -494,42 +904,7 @@ function transitiveVisibleDeclarationCaptures(
 
   for (const functionName of referencedNames) {
     if (ownLocals.has(functionName)) continue;
-    if (observesOnlyHoistedFunctionValue(fctx, stmt, functionName)) continue;
-    const owner = ctx.funcMapOwnerDecl.get(functionName);
-    const captures = ctx.nestedFuncCaptures.get(functionName);
-    if (!owner || !captures || captures.length === 0) continue;
-
-    let ownerScope: ts.Node = owner.parent;
-    while (
-      !ts.isSourceFile(ownerScope) &&
-      !ts.isFunctionDeclaration(ownerScope) &&
-      !ts.isFunctionExpression(ownerScope) &&
-      !ts.isArrowFunction(ownerScope) &&
-      !ts.isMethodDeclaration(ownerScope) &&
-      !ts.isConstructorDeclaration(ownerScope) &&
-      !ts.isGetAccessorDeclaration(ownerScope) &&
-      !ts.isSetAccessorDeclaration(ownerScope)
-    ) {
-      if (!ownerScope.parent) break;
-      ownerScope = ownerScope.parent;
-    }
-
-    let visible = false;
-    for (let node: ts.Node | undefined = stmt; node !== undefined; node = node.parent) {
-      if (node === ownerScope) {
-        visible = true;
-        break;
-      }
-    }
-    if (!visible) continue;
-
-    for (const capture of captures) {
-      if (capture.name === RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME) continue;
-      // A descendant can only re-capture a value that its immediate declaring
-      // frame actually carries. This is the narrow, sound case; inaccessible
-      // cross-module/cross-frame captures remain diagnosed by the frame guard.
-      if (fctx.localMap.has(capture.name)) out.add(capture.name);
-    }
+    addVisibleDeclarationCapturesForName(ctx, fctx, stmt, functionName, out);
   }
 
   return out;
@@ -691,6 +1066,9 @@ function compileNestedFunctionDeclarationInScope(
       foreignEvalDeclaration || restBindingOverridesToExternref(p)
         ? { kind: "externref" }
         : resolveWasmType(ctx, paramType!);
+    if (!foreignEvalDeclaration) {
+      wasmType = preserveOmittedNestedParameter(ctx, stmt, p, wasmType);
+    }
     // If the parameter has a default value and is a non-null ref type,
     // widen to ref_null so callers can pass ref.null as a sentinel for "use default"
     if (p.initializer && wasmType.kind === "ref") {
@@ -768,6 +1146,13 @@ function compileNestedFunctionDeclarationInScope(
     // `with` receiver shadows, so its inferred return type describes the wrong
     // value (see `functionReturnsThroughWithScope`). Carry it as `any`.
     returnType = { kind: "externref" };
+  } else if (genericCallbackResultDeclaration(ctx, stmt)) {
+    // (#1058) A nested `<T>(callback: () => T): T` declaration cannot use the
+    // checker's abstract `T` as its physical Wasm result. TypeScript's parser
+    // feeds both scalar predicates and concrete AST structs through the same
+    // lifted speculation helper; externref is the common identity-preserving
+    // carrier. Keep this identical to the Phase-0 sibling reservation below.
+    returnType = { kind: "externref" };
   } else if (sig) {
     let retType = ctx.checker.getReturnTypeOfSignature(sig);
     // For async functions, unwrap Promise<T> to get T
@@ -775,7 +1160,7 @@ function compileNestedFunctionDeclarationInScope(
       retType = unwrapPromiseType(retType, ctx.checker);
     }
     if (!isVoidType(retType)) {
-      const inferredReturn = resolveWasmType(ctx, retType);
+      const inferredReturn = widenMixedUndefinedReturn(retType, resolveWasmType(ctx, retType));
       returnType = functionReturnsPreInitVarValue(ctx, stmt) ? { kind: "externref" } : inferredReturn;
     }
   }
@@ -787,7 +1172,7 @@ function compileNestedFunctionDeclarationInScope(
   // function body shadow outer references — otherwise a function with its own
   // `var i;` would be treated as capturing the outer `i` (#995).
   const ownLocals = new Set<string>();
-  addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
+  addNestedDeclarationOwnLocals(stmt, ownLocals);
 
   const referencedNames = new Set<string>();
   for (const s of stmt.body.statements) {
@@ -847,6 +1232,33 @@ function compileNestedFunctionDeclarationInScope(
     if (enclosingBody) mutatedInSiblingScope = collectNamesMutatedInNestedFunctions(enclosingBody);
   }
   const writtenAfterDeclaration = collectOwnerBindingsWrittenAfterDeclaration(stmt);
+
+  // (#5148 checkpoint) Resolve the VariableDeclaration a captured NAME refers
+  // to, scanning outward from the nested declaration through its enclosing
+  // function-like scopes (stopping at the first hit — inner shadows win).
+  // Purely syntactic on purpose: this runs during hoisting, when the checker
+  // symbol for the not-yet-compiled binding is the only alternative and the
+  // oracle has no identifier NODE to resolve from.
+  const findScopedVariableDeclaration = (from: ts.Node, name: string): ts.VariableDeclaration | undefined => {
+    let scope: ts.Node | undefined = from.parent;
+    while (scope !== undefined) {
+      let found: ts.VariableDeclaration | undefined;
+      const scan = (node: ts.Node): void => {
+        if (found) return;
+        if (node !== scope && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+          found = node;
+          return;
+        }
+        ts.forEachChild(node, scan);
+      };
+      scan(scope);
+      if (found) return found;
+      if (ts.isFunctionLike(scope) || ts.isSourceFile(scope)) return undefined;
+      scope = scope.parent;
+    }
+    return undefined;
+  };
 
   const captures: {
     name: string;
@@ -910,10 +1322,37 @@ function compileNestedFunctionDeclarationInScope(
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
-    const type =
+    let type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
         : (fctx.locals[localIdx - fctx.params.length]?.type ?? { kind: "f64" });
+    const capturedDecl = findScopedVariableDeclaration(stmt, name);
+    // (#5148 checkpoint) Function declarations hoist, so captures are
+    // collected BEFORE the captured binding's declaration statement compiles —
+    // and the pre-allocated local can still carry the closed anonymous-shape
+    // struct for an object literal that the declaration will PROMOTE to the
+    // open `$Object` (externref) representation (`{ __proto__: null }`,
+    // accessor literals, runtime-computed keys …). Freezing the stale struct
+    // type into the lifted signature makes the reify site `ref.cast` the
+    // widened externref value to that struct — an illegal-cast trap (Deno's
+    // primordials `state = { __proto__: null }` + nested `write`). Apply the
+    // same literal checks the declaration path applies and capture as
+    // externref when the promotion will happen.
+    if (
+      (type.kind === "ref" || type.kind === "ref_null") &&
+      !ctx.closureInfoByTypeIdx.has((type as { typeIdx: number }).typeIdx)
+    ) {
+      const capturedInit = capturedDecl?.initializer;
+      if (
+        capturedInit !== undefined &&
+        ts.isObjectLiteralExpression(capturedInit) &&
+        (ctx.dynamicProtoLiteralNodes.has(capturedInit) ||
+          objectLiteralForcesHostPath(ctx, capturedInit) ||
+          objectLiteralSpreadTakesHostPath(ctx, capturedInit))
+      ) {
+        type = { kind: "externref" };
+      }
+    }
     // #1205 Stage 3: detect TDZ flag in outer scope (mirrors closures.ts:1326-1336
     // for the arrow path). The `__tdz_<name>` slot scan is the fallback for the
     // case where a block-scope shadow cleared `tdzFlagLocals` but the underlying
@@ -952,7 +1391,11 @@ function compileNestedFunctionDeclarationInScope(
     // (`localMap.get(cap.name) ?? cap.outerLocalIdx`) to be re-applied AND
     // the destructure-assign path to be box-aware. Both are out of scope
     // for this PR; the test is marked `.todo` until that follow-up lands.
-    const isMutable = writtenInBody.has(name) || mutatedInSiblingScope.has(name) || writtenAfterDeclaration.has(name);
+    const isMutable =
+      writtenInBody.has(name) ||
+      mutatedInSiblingScope.has(name) ||
+      writtenAfterDeclaration.has(name) ||
+      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a
@@ -971,7 +1414,6 @@ function compileNestedFunctionDeclarationInScope(
       boxedValType: outerBoxedEntry?.valType,
     });
   }
-
   if (shouldCaptureEnclosingDirectEvalState(ctx, fctx, stmt, reachesDirectEval)) {
     // Phase 0 only needs a stable slot/type so its reserved signature matches
     // the real compile. Runtime materialization belongs to the real hoist pass,
@@ -1042,6 +1484,35 @@ function compileNestedFunctionDeclarationInScope(
   // formal param count.
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
+  }
+
+  // (#5148 checkpoint) Classify referenced sibling registry functions for the
+  // lift-time transitive-capture promotion both branches below perform. The
+  // capture registry is NAME-keyed across frames, so a same-named local can
+  // shadow a foreign frame's function (Deno's 01_core destructures 00_infra's
+  // `__resolvePromise` from `window.__infra`). Discriminate by whether the
+  // registry entry's recorded captures are actually sourceable from THIS
+  // frame: if any capture's recorded slot neither names the captured binding
+  // here nor has a same-named local, the registry entry is foreign — the only
+  // sound call target is the local VALUE, so value-promote it instead of
+  // chasing unresolvable captures.
+  const referencedSiblingFns = new Set<string>();
+  const shadowedSiblingFnValues = new Set<string>();
+  for (const name of referencedNames) {
+    if (name === funcName || !ctx.funcMap.has(name) || !ctx.nestedFuncCaptures.has(name)) continue;
+    const sibCaps = ctx.nestedFuncCaptures.get(name)!;
+    const capsForeign =
+      fctx.localMap.has(name) &&
+      sibCaps.some((cap) => {
+        if (fctx.localMap.has(cap.name)) return false;
+        const def =
+          cap.outerLocalIdx < fctx.params.length
+            ? fctx.params[cap.outerLocalIdx]
+            : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+        return def?.name !== cap.name;
+      });
+    if (capsForeign) shadowedSiblingFnValues.add(name);
+    else referencedSiblingFns.add(name);
   }
 
   if (captures.length === 0) {
@@ -1119,6 +1590,20 @@ function compileNestedFunctionDeclarationInScope(
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
       ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
+    }
+
+    // (#5148 checkpoint) Same lift-time transitive-capture promotion as the
+    // has-captures branch below: a ZERO-capture lifted body can still call a
+    // sibling registered with foreign-frame capture indices (Deno's
+    // `__eventLoopTick` → `__resolvePromise`, whose caps live in the infra
+    // frame). Promote those transitive captures from the DECLARING frame,
+    // where their slots are still valid, before the body bakes them in.
+    if (referencedSiblingFns.size > 0 || shadowedSiblingFnValues.size > 0) {
+      promoteAccessorCapturesToGlobals(ctx, fctx, undefined, undefined, undefined, undefined, {
+        fnNames: referencedSiblingFns,
+        excludeNames: new Set(),
+        forceValueNames: shadowedSiblingFnValues,
+      });
     }
 
     // Emit default-value initialization for parameters with initializers
@@ -1431,6 +1916,7 @@ function compileNestedFunctionDeclarationInScope(
     recordLiftedCaptureSlots(
       liftedFctx,
       captures.map((capture) => capture.name),
+      { leadingParamOffset: 0 },
     );
 
     // Register mutable captures as boxed so reads/writes use struct.get/set.
@@ -1562,6 +2048,23 @@ function compileNestedFunctionDeclarationInScope(
       return;
     }
 
+    // (#5148 checkpoint) Promote — from the DECLARING frame, where
+    // `cap.outerLocalIdx` is still a valid slot — the TRANSITIVE captures of
+    // sibling nested functions this body references but does not itself
+    // capture-carry. Without this, a sibling call/reify inside the lifted body
+    // bakes a declaring-frame local index into this function ("references
+    // local N … out of range" — Deno's createTimer → __isLeakTracingEnabled).
+    // The lifted function's own captures arrive as leading params and are
+    // excluded. Idempotent: already-promoted names are skipped inside.
+    if (referencedSiblingFns.size > 0 || shadowedSiblingFnValues.size > 0) {
+      const ownCaptureNames = new Set(captures.map((c) => c.name));
+      promoteAccessorCapturesToGlobals(ctx, fctx, undefined, undefined, undefined, undefined, {
+        fnNames: referencedSiblingFns,
+        excludeNames: ownCaptureNames,
+        forceValueNames: shadowedSiblingFnValues,
+      });
+    }
+
     // (#2758) Pre-box any by-value capture that a sibling this function CALLS
     // mutably captures, BEFORE the parameter default-init / destructuring below
     // can emit that call inside a conditionally-executed default `then`-arm.
@@ -1575,6 +2078,11 @@ function compileNestedFunctionDeclarationInScope(
       }
       emitEagerNestedCallCaptureBoxes(ctx, liftedFctx, captures, referencedCalleeNames);
     }
+
+    // Parameter bindings are already in scope while defaults run. A hidden
+    // same-named outer capture remains available through liftedCaptureSlots,
+    // but name-keyed reads/writes must describe the parameter environment.
+    isolateSourceBindingsFromLiftedCaptures(liftedFctx, nestedDeclarationParameterNames(stmt));
 
     // #2669: the user parameters are preceded by BOTH the value-capture params
     // AND the TDZ-flag-box params (layout above:
@@ -1624,6 +2132,14 @@ function compileNestedFunctionDeclarationInScope(
       // by decl node for aliased-`arguments` strict-delete resolution.
       if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
     }
+
+    // Body var/function/lexical declarations are NOT visible while parameter
+    // defaults evaluate. Split them from any same-named hidden capture only
+    // after default/destructuring initialization, immediately before body
+    // hoisting installs the source-visible bindings.
+    const bodyOwnNames = new Set<string>();
+    addNestedDeclarationOwnLocals(stmt, bodyOwnNames);
+    isolateSourceBindingsFromLiftedCaptures(liftedFctx, bodyOwnNames);
 
     prepareBodyBindings(liftedFctx);
 
@@ -2134,13 +2650,16 @@ function preRegisterCapturingSibling(
       (siblingFuncNames.has(name) && !observesHoistedFunctionValueBinding(fctx, stmt, name))
     )
       continue;
-    // A user function in funcMap is not an outer capture. wasm:js-string
-    // builtins are excluded because a same-named outer local may shadow them.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    // Lexical bindings in the exact owner frame shadow graph-global callable
+    // projections. Check them before the compatibility funcMap suppression so
+    // sibling reservation and real capture analysis agree on the ABI.
     if (fctx.localMap.has(name)) {
       capturesOuter = true;
       break;
     }
+    // A user function in funcMap is not an outer capture. wasm:js-string
+    // builtins are excluded because a same-named outer local may shadow them.
+    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
   }
   if (shouldCaptureEnclosingDirectEvalState(ctx, fctx, stmt)) capturesOuter = true;
   if (!capturesOuter) return false;
@@ -2309,6 +2828,7 @@ export function hoistFunctionDeclarations(
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
         let wt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(p));
+        wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
         }
@@ -2334,10 +2854,15 @@ export function hoistFunctionDeclarations(
         resultType = { kind: "externref" };
       } else if (foreignNoSig) {
         resultType = { kind: "externref" };
+      } else if (genericCallbackResultDeclaration(ctx, stmt)) {
+        // Mirror the real lifted-body signature above. Forward/recursive
+        // sibling calls compile against this bodyless reservation first, so a
+        // stale abstract-T carrier here survives even when the body is fixed.
+        resultType = { kind: "externref" };
       } else if (sig) {
         let rt = ctx.checker.getReturnTypeOfSignature(sig);
         if (isAsync) rt = unwrapPromiseType(rt, ctx.checker);
-        if (!isVoidType(rt)) resultType = resolveWasmType(ctx, rt);
+        if (!isVoidType(rt)) resultType = widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
       }
       const funcTypeIdx = addFuncType(ctx, paramTypes, resultType ? [resultType] : [], `${funcName}_type`);
       const reservedFuncIdx = mintDefinedFunc(ctx);
@@ -2619,12 +3144,15 @@ export function emitDefaultParamInit(
   paramTypes: ValType[],
   paramOffset: number,
 ): void {
-  const defaultArgcLocal = stmt.parameters.some((param, i) => {
-    if (!param.initializer) return false;
-    return paramDefaultNeedsArgc(paramTypes[i]);
-  })
-    ? cacheParamDefaultArgc(ctx, liftedFctx)
-    : undefined;
+  const tracksScalarOmission = registerNestedOmissionTrackedScalarParams(ctx, liftedFctx, stmt, paramTypes);
+  const defaultArgcLocal =
+    tracksScalarOmission ||
+    stmt.parameters.some((param, i) => {
+      if (!param.initializer) return false;
+      return paramDefaultNeedsArgc(paramTypes[i]);
+    })
+      ? cacheParamDefaultArgc(ctx, liftedFctx)
+      : undefined;
   for (let i = 0; i < stmt.parameters.length; i++) {
     const param = stmt.parameters[i]!;
     if (!param.initializer) continue;

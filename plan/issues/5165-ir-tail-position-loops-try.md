@@ -1,10 +1,12 @@
 ---
 id: 5165
 title: "IR: adopt tail-position loops and try/catch that return from the body (`tail-unhandled` residual of #2952)"
-status: ready
+status: done
+completed: 2026-08-29
+assignee: ttraenkler/opus-5165
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: high
 horizon: m
 feasibility: medium
@@ -131,3 +133,74 @@ scripts/gen-ir-adoption.mjs + regen (`pnpm run gen:ir-adoption`).
 3. `pnpm run check:ir-fallbacks` bare — unintended buckets must not grow.
 4. Ratchet gates chained bare before commit; CI merge_group is the conformance
    gate.
+
+## Outcome (2026-08-29, Opus lane)
+
+**S1, S2, S3, S5 landed. S4 deferred as planned** (a separate follow-up issue —
+returns crossing a `finally`; nothing in this change-set touches it, and the
+`body-return-context` bar that keeps it on legacy is pinned by four probes and
+four tests).
+
+### Probe matrix — measured before/after (`.tmp/tailcf-*.ts`, `.tmp/ir-probe.mts`)
+
+| probe | shape | before | after |
+| --- | --- | --- | --- |
+| 1 | tail `for (;;)` , body returns | `tail-unhandled:ForStatement` | **emitted** |
+| 2 | tail `while (true)`, body returns | `tail-unhandled:WhileStatement` | **emitted** |
+| 4 | tail `do … while (true)`, body returns | `tail-unhandled:DoStatement` | **emitted** |
+| 5 | tail `try`/`catch`, both arms return | `tail-unhandled:TryStatement` | **emitted** |
+| 6 | NONTAIL finally-less `try`, catch returns | `body-return-context:ReturnStatement` | **emitted** |
+| 10 | VOID tail loop, genuine fall-through | `tail-unhandled:ForStatement` | **emitted** |
+| 3 | control — loop + trailing return | emitted | emitted (unchanged) |
+| 7 | control — `catch {}` no binding | emitted | emitted (unchanged) |
+| 9 | control — return at if-depth-2 in a nontail loop | emitted | emitted (unchanged) |
+| 16 | control — module-level finally-less try | emitted | emitted (unchanged) |
+| 8 | NEGATIVE — `while (true) { if (x) return 1; break; }`, non-void | `tail-unhandled` | `tail-loop-falls-through` (still legacy) |
+| 11 | S4 — return inside `try`/`finally` | `body-return-context` | unchanged (still legacy) |
+| 12 | S4 — catch returns, finally present | `body-return-context` | unchanged (still legacy) |
+| 13 | DEPTH — finally-less try inside a finally-bearing try | `body-return-context` | unchanged (still legacy) |
+| 14 | DEPTH — finally-less try inside a for-of body | `body-return-context` | unchanged (still legacy) |
+| 15 | DEPTH — finally-less try inside a CONSTRUCTOR | `body-return-context` | unchanged (still legacy) |
+
+Emission bar met for every flip: `compile({ trackIrOutcomes: true })` reports
+`kind: "emitted"` + `irBodyEmitted: true`, zero post-claim demotions.
+
+### Extra rejection found by measurement, NOT in the plan: generators are OUT
+
+Probing the new arms against generators (the plan only required the existing
+`body-return-generator` guard to stay) surfaced a shape that guard does not
+cover — a generator tail loop with **no** `return` in it:
+
+```ts
+function* g(n: number) { let i = n; while (true) { yield i; i = i + 1; } }
+```
+
+`loopNeverFallsThrough` proves it correctly, so the S1 arm claimed it — and the
+IR generator lowering is **eager** (the body runs to completion into a yield
+buffer), so a loop with no normal completion never terminates. Measured
+2026-08-29: legacy/Node yield `5, 6, 7`; the claimed IR build threw
+`RangeError: Eager generator buffer exceeded 1000000 yields`. The tail-try arm
+had the twin defect (a generator tail `try { throw "a" } catch { throw "b" }`
+surfaced a raw `WebAssembly.Exception` instead of the string `"b"`). Both arms
+now reject generators outright (`tail-loop-generator` / `tail-try-generator`),
+pinned by two runtime tests. Async functions were probed the same way and ARE
+equivalent, so they stay in.
+
+### Validation
+
+- `tests/issue-5165-tail-control-flow.test.ts` — 31 tests, all green. Every
+  adopted case is checked three ways (Node oracle / legacy / IR) and asserts the
+  IR body was genuinely emitted, so a silent demote fails instead of passing
+  vacuously. Throwing AND non-throwing executions of every try shape.
+- `pnpm run check:ir-fallbacks` — OK, no unintended/post-claim/module-level growth.
+- Ratchet chain (loc / func / coercion-sites / oracle-ratchet / dead-exports) —
+  all green, plus the `LOC_GATE_BASE=origin/main` CI-base simulation
+  (`select.ts` +153, `from-ast.ts` +33, both under this file's grant).
+- `node scripts/gen-ir-adoption.mjs --check` — OK.
+- Fix-on-touch: `tests/issue-3583.test.ts` (its tail-`for (;;)` negative is the
+  shape S1 adopts — flipped to a positive, and a still-valid negative added in
+  its place) and `tests/issue-1169q.test.ts` (its `body-shape-rejected` marker
+  was a whole tail try/catch, now adopted — swapped for a destructuring catch
+  param; while there, its stale `non-export-modifier` async expectation, red on
+  `origin/main` since the #1373 async/async-generator split, was corrected to
+  `async-function`). Both files fully green.

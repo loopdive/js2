@@ -549,7 +549,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
     name: "__combinator_subscribe",
     typeIdx: subscribeTypeIdx,
     locals: buildSubscribeLocals(promiseTypeIdx),
-    body: buildSubscribeBody(ids, rt),
+    body: buildSubscribeBody(ids, rt, ctx.funcMap.get("__promise_resolve_value") ?? -1),
     exported: false,
   });
   ctx.funcMap.set("__combinator_subscribe", subscribeFuncIdx);
@@ -733,7 +733,7 @@ function buildSubscribeLocals(promiseTypeIdx: number): LocalDef[] {
   ];
 }
 
-function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Instr[] {
+function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, resolveValueFuncIdx: number): Instr[] {
   const INPUT = 0;
   const STATE = 1;
   const INDEX = 2;
@@ -758,14 +758,36 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Ins
         { op: "ref.cast", typeIdx: ids.promiseTypeIdx },
         { op: "local.set", index: P },
       ],
-      else: [
-        { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-        { op: "local.get", index: INPUT },
-        { op: "ref.null.extern" },
-        { op: "ref.null.extern" },
-        { op: "struct.new", typeIdx: ids.promiseTypeIdx },
-        { op: "local.set", index: P },
-      ],
+      else:
+        resolveValueFuncIdx >= 0
+          ? // (#5143 Step 1a) Spec PromiseResolve(C, x): allocate a fresh
+            // PENDING `$Promise` and drive it through
+            // `__promise_resolve_value`, which implements §27.2.1.3.2 in full
+            // — a user THENABLE element gets a PromiseResolveThenableJob on
+            // the microtask ring (its `then` is actually invoked), a poisoned
+            // `then` getter rejects, and a plain value still fulfils
+            // synchronously (same observable result as the old sync-FULFILLED
+            // wrap, one extra struct + call).
+            ([
+              { op: "i32.const", value: PROMISE_STATE_PENDING },
+              { op: "ref.null.extern" },
+              { op: "ref.null.extern" },
+              closureBagInitInstr(),
+              { op: "struct.new", typeIdx: ids.promiseTypeIdx },
+              { op: "local.set", index: P },
+              { op: "local.get", index: P },
+              { op: "local.get", index: INPUT },
+              { op: "call", funcIdx: resolveValueFuncIdx },
+              { op: "drop" },
+            ] satisfies Instr[])
+          : ([
+              { op: "i32.const", value: PROMISE_STATE_FULFILLED },
+              { op: "local.get", index: INPUT },
+              { op: "ref.null.extern" },
+              closureBagInitInstr(),
+              { op: "struct.new", typeIdx: ids.promiseTypeIdx },
+              { op: "local.set", index: P },
+            ] satisfies Instr[]),
     },
 
     // caps = $CombinatorElemCaps{ state, index } (boxed to externref).
@@ -1192,7 +1214,7 @@ export function emitStandalonePromiseCombinator(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: resultLocal });
 
@@ -1348,7 +1370,7 @@ export function emitStandalonePromiseCombinatorRuntime(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: resultLocal });
 
@@ -1704,20 +1726,6 @@ export function fillCombinatorToVec(ctx: CodegenContext): void {
   const sgetValueIdx = ctx.funcMap.get("__sget_value");
   const sgetDoneIdx = ctx.funcMap.get("__sget_done");
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
-  if (
-    callIteratorIdx === undefined ||
-    callNextIdx === undefined ||
-    sgetValueIdx === undefined ||
-    sgetDoneIdx === undefined ||
-    isTruthyIdx === undefined
-  ) {
-    return;
-  }
-  const fn = definedFuncAt(ctx, funcIdx);
-  if (!fn) return;
-
-  const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
 
   // Bare-`next` iterator structs (generator-shaped objects handed where an
   // iterable is expected — spec-wise %GeneratorPrototype%[@@iterator] returns
@@ -1739,6 +1747,28 @@ export function fillCombinatorToVec(ctx: CodegenContext): void {
     if (!ctx.funcMap.has(`${structName}_next`)) continue;
     nextStructTypeIdxs.push(tIdx);
   }
+
+  // A Deno SafePromise helper hands the result of `Array.prototype.values()`
+  // straight to an inherited combinator. That carrier has a native `next()`
+  // method but does not make the module register an `@@iterator` dispatcher:
+  // the iterator was already obtained by the caller. Do not leave the eager
+  // vec-only body in place merely because `__call_@@iterator` is absent. The
+  // bare-next fallback below is sufficient to use the object itself as the
+  // iterator. A genuine custom iterable still needs the iterator dispatcher.
+  if (
+    (callIteratorIdx === undefined && nextStructTypeIdxs.length === 0) ||
+    callNextIdx === undefined ||
+    sgetValueIdx === undefined ||
+    sgetDoneIdx === undefined ||
+    isTruthyIdx === undefined
+  ) {
+    return;
+  }
+  const fn = definedFuncAt(ctx, funcIdx);
+  if (!fn) return;
+
+  const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
 
   // Grow: cap *= 2; grow = new arr[cap]; copy data[0..len] → grow; data = grow.
   const growInstrs: Instr[] = [
@@ -1768,31 +1798,39 @@ export function fillCombinatorToVec(ctx: CodegenContext): void {
     hasNextChain.push({ op: "i32.or" });
   }
 
-  fn.body = [
-    ...buildToVecCommonHead(ctx, vecTypeIdx),
-
-    // it = __call_@@iterator(x)  (null when x has no @@iterator method)
-    { op: "local.get", index: TOVEC_X },
-    { op: "call", funcIdx: callIteratorIdx },
-    { op: "local.set", index: TOVEC_IT },
-    { op: "local.get", index: TOVEC_IT },
-    { op: "ref.is_null" },
+  const useBareNextOrReturnNull: Instr[] = [
+    ...hasNextChain,
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        ...hasNextChain,
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: TOVEC_X },
-            { op: "local.set", index: TOVEC_IT },
-          ],
-          else: [{ op: "ref.null.extern" }, { op: "return" }],
-        },
+        { op: "local.get", index: TOVEC_X },
+        { op: "local.set", index: TOVEC_IT },
       ],
+      else: [{ op: "ref.null.extern" }, { op: "return" }],
     },
+  ];
+
+  const acquireIterator: Instr[] =
+    callIteratorIdx === undefined
+      ? useBareNextOrReturnNull
+      : [
+          // it = __call_@@iterator(x)  (null when x has no @@iterator method)
+          { op: "local.get", index: TOVEC_X },
+          { op: "call", funcIdx: callIteratorIdx },
+          { op: "local.set", index: TOVEC_IT },
+          { op: "local.get", index: TOVEC_IT },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: useBareNextOrReturnNull,
+          },
+        ];
+
+  fn.body = [
+    ...buildToVecCommonHead(ctx, vecTypeIdx),
+    ...acquireIterator,
 
     // cap = 4; data = new arr[4]; len = 0
     { op: "i32.const", value: 4 },

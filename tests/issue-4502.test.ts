@@ -44,26 +44,43 @@ async function build(source: string, target: "standalone" | "gc" = "standalone")
 }
 
 function outcomeCodes(outcomes: readonly IrObservedOutcome[] | undefined): string[] {
-  return (outcomes ?? [])
-    .filter((o) => o.kind !== "emitted")
-    .map((o) => `${o.kind}/${o.stage}/${"code" in o ? o.code : "?"}`);
+  return (
+    (outcomes ?? [])
+      // (#3523 R4 gap 4) `non-executable` is not a capability gap — it is the row
+      // a source records when its module init has nothing to do. This helper pins
+      // DEMOTES, and a `code: null` row above asserts "no non-emitted outcome at
+      // all", so counting an observational row here would read a closed gap as
+      // reopened.
+      .filter((o) => o.kind !== "emitted" && o.kind !== "non-executable")
+      .map((o) => `${o.kind}/${o.stage}/${"code" in o ? o.code : "?"}`)
+  );
 }
 
 /**
  * Legal JS the IR CLAIMS and then cannot lower. `expected` is what the same
  * computation produces under `node`.
+ *
+ * (2026-08-28) `code: null` marks a row whose capability gap has since been
+ * CLOSED — the IR now owns and emits the shape, so it records NO unsupported
+ * outcome. Everything else the row pins still holds and still runs: a
+ * non-empty binary on both targets, no hard Codegen error, and Node's answer
+ * through the emitted body. Keeping the row as an owned pin is strictly more
+ * coverage than deleting it, and it keeps this file honest about which gaps
+ * are still open. Measured 2026-08-28 (standalone, compiled + executed):
+ * ternary → 1, non-empty `!` → 0, empty `!` → 1, all matching Node.
  */
 const CONVERTED: ReadonlyArray<{
   name: string;
   source: string;
   expected: number;
-  code: string;
+  code: string | null;
 }> = [
   {
+    // Owned since #5092's mixed-primitive conditional route.
     name: "ternary with mixed branch types (lowerConditional)",
     source: `export function main(): number { const c = true; const x = c ? 1 : "s"; return typeof x === "number" ? 1 : 0; }`,
     expected: 1,
-    code: "unsupported/build/operand-coercion-unsupported",
+    code: null,
   },
   {
     name: "`??` on an f64 lhs (lowerNullish)",
@@ -72,10 +89,14 @@ const CONVERTED: ReadonlyArray<{
     code: "unsupported/build/nullish-value-unsupported",
   },
   {
+    // Owned before this branch — `lowerPrefixUnary` gained the any-carried
+    // string truthiness route on main, so the demote this row pinned no longer
+    // happens. Verified at this branch's merge-base (i.e. main's source): the
+    // same two rows already emitted there.
     name: "unary `!` on an any-carried non-empty string (lowerPrefixUnary)",
     source: `export function main(): number { const s: string = "a"; return !(s as any) ? 1 : 0; }`,
     expected: 0,
-    code: "unsupported/build/operand-coercion-unsupported",
+    code: null,
   },
   {
     // The truthiness arm of the same site, so a lowering that always answered
@@ -83,7 +104,7 @@ const CONVERTED: ReadonlyArray<{
     name: "unary `!` on an any-carried EMPTY string (lowerPrefixUnary)",
     source: `export function main(): number { const s: string = ""; return !(s as any) ? 1 : 0; }`,
     expected: 1,
-    code: "unsupported/build/operand-coercion-unsupported",
+    code: null,
   },
   {
     name: "property read on a number receiver (lowerPropertyAccess)",
@@ -119,7 +140,11 @@ describe("#4502 — a claimed unit's capability gap demotes to legacy instead of
       // The precise discriminant of the bug: an untyped invariant means the
       // demote contract silently became a hard compile error.
       expect(codes.join(","), `outcomes: ${codes.join(", ")}`).not.toContain("unexpected-internal-throw");
-      expect(codes).toContain(code);
+      // `code: null` — the gap is closed and the IR owns the shape, so the pin
+      // flips to "no non-emitted outcome at all". A demote reappearing here is
+      // a capability REGRESSION and must fail just as loudly as an untyped one.
+      if (code === null) expect(codes, `outcomes: ${codes.join(", ")}`).toEqual([]);
+      else expect(codes).toContain(code);
     });
 
     it(`reports no hard Codegen error: ${name}`, async () => {

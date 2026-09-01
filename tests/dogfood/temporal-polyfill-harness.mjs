@@ -27,6 +27,13 @@
 //   4. VALIDATE — WebAssembly.compile(binary). Compiling and validating are
 //                 DIFFERENT gates: #4627 is exactly a case where the first
 //                 passed and the second did not.
+//   4b. INSTANTIATE — WebAssembly.instantiate(binary). A THIRD gate, added in
+//                 #4628 step 3, for the same reason 4 exists: on 2026-08-29
+//                 the ESM lane passed 3 and 4 and still threw the instant its
+//                 module init ran. Option A installs `Temporal` from this
+//                 module's exports, so a module that never finishes init has
+//                 no exports to install and no wiring can route around it.
+//                 Disable with `--no-instantiate`.
 //   5. BUCKET   — group diagnostics by normalized rejection reason, largest
 //                 first. This list is the real artifact — a prioritized
 //                 compiler-bug backlog against a real-world library, useful
@@ -130,9 +137,9 @@ function bucketDiagnostics(errors) {
 }
 
 // ---------------------------------------------------------------------------
-// One compile+validate lane.
+// One compile + validate + instantiate lane.
 // ---------------------------------------------------------------------------
-async function measure({ label, fileName, source, log }) {
+async function measure({ label, fileName, source, log, instantiate = true }) {
   const lane = { label, fileName, sourceBytes: source.length };
 
   const t0 = performance.now();
@@ -194,6 +201,57 @@ async function measure({ label, fileName, source, log }) {
       ? `[dogfood] ${label}: WebAssembly.compile() OK — binary validates`
       : `[dogfood] ${label}: WebAssembly.compile() FAILED — ${validationError}`,
   );
+
+  // INSTANTIATE — a THIRD gate, separate from both above (#4628 step 3).
+  //
+  // The spike stopped at validate, and that left the decisive question
+  // unasked: a module can compile and validate and still throw the moment its
+  // module-init runs. It does. Option A installs `Temporal` from this module's
+  // exports, so an instantiate failure is a hard blocker — no wiring choice
+  // can route around a module that never produces exports. Reported as its
+  // own lane so a future run cannot mistake "validates" for "works".
+  if (instantiate && validates) {
+    const t1 = performance.now();
+    let instantiated = false;
+    let instantiateError = null;
+    try {
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
+      result.importObject?.__setInstance?.(instance);
+      instantiated = true;
+      lane.instantiation = {
+        instantiated,
+        ms: Math.round(performance.now() - t1),
+        exportCount: Object.keys(instance.exports).length,
+      };
+    } catch (e) {
+      // A module-init throw arrives as a WebAssembly.Exception whose payload
+      // needs the module's own `__exn_tag` export to read — unavailable here,
+      // because the throw happened BEFORE there is an instance. Record the
+      // shape; `.tmp` bisection is how the offending statement gets named.
+      //
+      // (#5209) A HOST-side TypeError (the common module-init blocker: the
+      // runtime refusing a compiled value at a host boundary) does carry a
+      // stack, and it names the polyfill function chain down from
+      // `__module_init` — which is the single most useful line for filing the
+      // next blocker. `JS2WASM_DOGFOOD_STACK=1` prints it. Off by default so
+      // the report output stays the stable artifact it is today.
+      if (process.env.JS2WASM_DOGFOOD_STACK) console.error("[dogfood] init stack:\n" + (e?.stack ?? e));
+      instantiateError =
+        typeof WebAssembly !== "undefined" && e instanceof WebAssembly.Exception
+          ? "WebAssembly.Exception thrown from module init (payload unreadable: no instance, so no __exn_tag)"
+          : e instanceof Error
+            ? `${e.name}: ${e.message}`
+            : String(e);
+      lane.instantiation = { instantiated, ms: Math.round(performance.now() - t1), error: instantiateError };
+    }
+    log(
+      instantiated
+        ? `[dogfood] ${label}: WebAssembly.instantiate() OK — module init ran`
+        : `[dogfood] ${label}: WebAssembly.instantiate() FAILED — ${instantiateError}`,
+    );
+  } else {
+    lane.instantiation = { instantiated: false, skipped: instantiate ? "binary does not validate" : "lane disabled" };
+  }
 
   return lane;
 }
@@ -331,7 +389,14 @@ async function measureSlices({ source, fileName, perSlice, skip, log }) {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-export async function runHarness({ quiet = false, umd = true, slices = 0, skipSlices = [], whole = true } = {}) {
+export async function runHarness({
+  quiet = false,
+  umd = true,
+  slices = 0,
+  skipSlices = [],
+  whole = true,
+  instantiate = true,
+} = {}) {
   const log = quiet ? () => {} : (...a) => console.log(...a);
 
   const report = {
@@ -382,6 +447,7 @@ export async function runHarness({ quiet = false, umd = true, slices = 0, skipSl
       fileName: "temporal-polyfill.esm.mjs",
       source: linked.source,
       log,
+      instantiate,
     });
   }
 
@@ -391,6 +457,7 @@ export async function runHarness({ quiet = false, umd = true, slices = 0, skipSl
       fileName: "temporal-polyfill.umd.js",
       source: readUmdSource(setup),
       log,
+      instantiate,
     });
   }
 
@@ -398,22 +465,31 @@ export async function runHarness({ quiet = false, umd = true, slices = 0, skipSl
   const esm = report.lanes.esm ?? {
     compile: { threw: null, success: false, errorCount: null, distinctReasons: null },
     validation: { validates: false },
+    instantiation: { instantiated: false },
     compileMs: null,
   };
   report.summary = {
     headline:
-      esm.compile.threw != null
-        ? "compile() THREW on the polyfill"
-        : !esm.compile.success
-          ? `compile reported failure — ${esm.compile.errorCount} errors`
-          : esm.validation.validates
-            ? "compiled + binary validates"
-            : "compiled, but binary INVALID",
+      report.lanes.esm === undefined
+        ? "esm lane NOT RUN (--no-whole) — this summary describes no measurement"
+        : esm.compile.threw != null
+          ? "compile() THREW on the polyfill"
+          : !esm.compile.success
+            ? `compile reported failure — ${esm.compile.errorCount} errors`
+            : !esm.validation.validates
+              ? "compiled, but binary INVALID"
+              : esm.instantiation?.instantiated
+                ? "compiled + validates + module init ran"
+                : "compiled + validates, but module init THROWS",
     // The number #4628 exists to produce.
     compileErrorCount: esm.compile.errorCount,
     distinctReasons: esm.compile.distinctReasons ?? null,
     compileSuccess: esm.compile.success ?? false,
     binaryValidates: esm.validation.validates,
+    // The gate the spike never reached. `false` here means Option A is blocked
+    // no matter how the Temporal global is wired — see #4628 step 3.
+    moduleInitRuns: esm.instantiation?.instantiated ?? false,
+    moduleInitError: esm.instantiation?.error ?? null,
     compileMs: esm.compileMs,
     // #661's thresholds: <50 ship A · 50-200 staged A · >200 Option B.
     threshold661:
@@ -428,6 +504,7 @@ export async function runHarness({ quiet = false, umd = true, slices = 0, skipSl
       ? {
           compileErrorCount: report.lanes.umd.compile.errorCount,
           binaryValidates: report.lanes.umd.validation.validates,
+          moduleInitRuns: report.lanes.umd.instantiation?.instantiated ?? false,
         }
       : null,
   };
@@ -475,6 +552,7 @@ if (invokedDirectly) {
     whole: !process.argv.includes("--no-whole"),
     slices: sliceArg ? Number(sliceArg.split("=")[1] ?? 25) : 0,
     skipSlices: numListArg("--skip-slices"),
+    instantiate: !process.argv.includes("--no-instantiate"),
   });
   if (json) process.stdout.write(JSON.stringify(report) + "\n");
 }

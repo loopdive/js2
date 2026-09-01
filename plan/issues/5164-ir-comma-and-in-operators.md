@@ -1,10 +1,12 @@
 ---
 id: 5164
 title: "IR: adopt the comma operator (value/for-incr positions) and a bounded dynamic-lane `in`"
-status: ready
+status: done
+completed: 2026-08-29
+assignee: ttraenkler/opus-5164
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-08-29
 priority: medium
 horizon: m
 feasibility: medium
@@ -18,6 +20,27 @@ origin: "2026-08-28 IR-takeover session — expr-binary-op-, / expr-binary-op-in
 loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
+  # 2026-08-29 — S3 adds `preregisterInOperatorSupport`, the pre-Phase-3
+  # registration of `__extern_has`. It has to live beside the sibling
+  # pre-registrations it mirrors (`preregisterForInSupport`,
+  # `preregisterDynamicSupport`) because they share the one preparation
+  # boundary where a funcidx shift is still hazard-free. Without it the `in`
+  # slice depends on LEGACY's dual compile to register the import, which
+  # IR-first skips — an `unknown-function-ref` HARD error, not a demote (the
+  # #3143 `__extern_is_undefined` failure mode).
+  - src/ir/integration.ts
+# 2026-08-29 — each grant below is ONE guarded arm added to an existing large
+# dispatcher, not new complexity inside it. The arm bodies were extracted to
+# `selectorValuePositionComma` / `selectorDynamicLaneIn` / `lowerDynamicLaneIn`
+# (measured: that halved the growth, from +37/+20/+13 to +17/+17/+10); what
+# remains is the dispatch guard itself, which by construction has to live in the
+# dispatcher. `dynamicUsesAreMoveOnly` and `scanExpr` are the same single edit
+# counted twice — `scanExpr` is nested inside `dynamicUsesAreMoveOnly`.
+func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExpr
+  - src/ir/from-ast.ts::lowerBinary
 ---
 
 # #5164 — IR adoption of the comma operator and a bounded `in`
@@ -119,3 +142,85 @@ needs the statement-arm assignment bookkeeping reused in value position.
    the S11.8.7 family for the `in` slice).
 6. Update the stale `**` note in scripts/gen-ir-adoption.mjs (BinaryExpression
    row) + `pnpm run gen:ir-adoption` in whichever slice lands first.
+
+## Results (measured 2026-08-29)
+
+S1, S2 and S3 all landed. S4 stays deferred, with its reason now written into
+the `InKeyword` capability row itself.
+
+### Probe flips
+
+Probes are `.tmp/ci-*.ts`; selector lines via
+`JS2WASM_IR_SHAPE_DIAG=1 npx tsx .tmp/ir-probe.mts`, emission via a real
+`compile({ trackIrOutcomes: true })`. Claim alone is never the evidence — the
+probe's `claimed=` line is always empty, so a flip is "FALLBACK line gone" AND
+`kind:emitted` + `irBodyEmitted:true`.
+
+| probe | before | after |
+| --- | --- | --- |
+| `const c = (a, b)` | REJECT `expr-binary-op-,` | emitted |
+| `(a, b, c)` + nested `(a, b)` | REJECT `expr-binary-op-,` | emitted |
+| `for (…; …; i++, j++)` | REJECT `expr-binary-op-,` | emitted |
+| `(a = 1, b)` | REJECT `expr-binary-op-,` | REJECT `expr-binary-op-,` (unchanged — purity line held) |
+| `"x" in <any>` / `k in <any>` / `i in <any>` | REJECT (`param-type-not-resolvable`) | emitted |
+| `"a" in {a:1}` / `"x" in <number>` | REJECT `expr-binary-op-in` | REJECT `expr-binary-op-in` (unchanged) |
+| `"zzz" in new Proxy(…)` | REJECT | REJECT `constructor-resolution-unsupported` |
+| `in`, `target: standalone` / `wasi` | REJECT | REJECT `body-shape-rejected` |
+
+Zero post-claim demotions in every row.
+
+### Three findings the plan could not have predicted
+
+1. **Flipping a capability row off `defer` also opens `isPhase1BinaryOp`**
+   (`binaryOpCapability(op) !== "defer"`), so the generic binary tail began
+   accepting EVERY `in` — including a typed object literal and a primitive
+   receiver, which then post-claim-demoted. Both new arms are therefore
+   TERMINAL: they answer accept-or-`expr-binary-op-<op>` themselves and never
+   fall through. (The comma arm was already terminal by construction.)
+2. **S3's bounded lane was unreachable one layer above the operator.** The
+   pre-claim dynamic-value flow scan (`dynamicUsesAreMoveOnly`/`scanExpr`) has
+   no `in` arm, so every `any`-receiver function rejected at
+   `param-type-not-resolvable` before the `in` arm ever ran. Added a
+   three-line arm that admits a dynamic receiver into a concrete-result `in`.
+   It changes no representation — the receiver reaches `__extern_has` as the
+   dynamic carrier it already is, exactly as the #2952 for-in arm does.
+3. **`__extern_has` was registered only as a side effect of LEGACY compiling
+   the same function.** Under IR-first that body is skipped and the resolver
+   throws `unknown-function-ref` — a HARD compile error, not a demote (the
+   #3143 `__extern_is_undefined` failure mode). Added
+   `preregisterInOperatorSupport`, mirroring `preregisterForInSupport`; the two
+   cannot share, because for-in's host-mode liveness helper is the DIFFERENT
+   `__for_in_has` import.
+
+### Bound on S3, tightened past the plan
+
+The plan's receiver gate alone still claimed-then-demoted the WHOLE standalone
+lane: with native strings a key is `(ref $AnyString)`, which no externref
+host-arg position accepts. S3 therefore also requires the host-string carrier
+certificate, so standalone/WASI reject PRE-claim. Measured before/after: 2
+post-claim demotions → 0.
+
+### Validation
+
+- `tests/issue-5164-comma-and-in.test.ts` — 17/17. Every runtime case asserts
+  legacy ≡ IR ≡ the JavaScript reference for the VALUE and for the ordered
+  side-effect log; `in` covers string-literal hit/miss, present-but-undefined,
+  inherited (prototype-chain), variable key, `"length"` on an array, and a
+  numeric key on an array receiver — 10 receiver/key shapes.
+- Gates, run bare: `check:ir-fallbacks` OK (no unintended/post-claim/module
+  growth) · loc + func + coercion + oracle-ratchet + dead-exports OK, also
+  under `LOC_GATE_BASE=origin/main` · `gen-ir-adoption --check` OK.
+- Pre-existing and NOT caused by this change (identical failures on the
+  `origin/main` base, verified by revert-and-measure): 3 failing tests plus 2
+  collection errors across `issue-2949-s5-2-eq`, `issue-2949-s5-3-relational`,
+  `issue-3053-u2-claim-flip`, `issue-3529-dataflow-outcomes`.
+
+### Follow-ups this work leaves open
+
+- The mutating value-position comma (`(a = 1, b)`) is still legacy — the
+  test262 `(NUMBER = Number, "MAX_VALUE") in NUMBER` idiom needs BOTH that and
+  S3's comma-key fold, so neither half alone unlocks it.
+- S3 consumes two certificates that are named for for-in
+  (`isDynamicForInReceiver`, `forInHeadValueIsHostString`) because both ask a
+  CARRIER question, not a statement-shape one. Renaming them is a pure-rename
+  cleanup, deliberately not taken here to keep this PR off #2949's surface.

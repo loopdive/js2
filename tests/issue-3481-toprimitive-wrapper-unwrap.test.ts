@@ -111,6 +111,15 @@ describe("#3481 — shapes that already worked keep working", () => {
     expect(exports.test()).toBe(4n);
   });
 
+  it("unwraps a boxed BigInt before an object that reduces to BigInt", async () => {
+    const exports = await run(`return Object(2n) * { valueOf: function () { return 2n; } };`);
+    expect(exports.test()).toBe(4n);
+  });
+
+  it("rejects a boxed BigInt mixed with an object that reduces to Number", async () => {
+    expect(await throwsWith(`return Object(2n) * { valueOf: function () { return 1; } };`)).toBe("TypeError");
+  });
+
   it("valueOf returning a BigInt", async () => {
     const exports = await run(`return { valueOf: function () { return 2n; } } * 2n;`);
     expect(exports.test()).toBe(4n);
@@ -146,6 +155,10 @@ describe("#3481 — Symbol / non-callable negatives still throw", () => {
     expect(
       await throwsWith(`var o: any = { [Symbol.toPrimitive]: function () { return Symbol("s"); } }; return o * 2n;`),
     ).toBe("TypeError");
+  });
+
+  it("toString returning a Symbol beside BigInt still throws TypeError", async () => {
+    expect(await throwsWith(`return { toString: function () { return Symbol("s"); } } * 2n;`)).toBe("TypeError");
   });
 
   it("@@toPrimitive returning a Symbol into a number coercion throws TypeError", async () => {

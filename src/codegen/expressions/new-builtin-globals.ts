@@ -20,15 +20,23 @@ import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
 import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
-import { emitTaViewConstruct, emitTaViewConstructWindowed } from "../dataview-native.js";
+import {
+  emitDynamicUint8ArrayBufferAlias,
+  emitDynamicTypedArrayConstructFromAny,
+  emitTaViewConstruct,
+  emitTaViewConstructWindowed,
+  nativeBufferBuiltinOf,
+} from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
-import { ensureAnyToStringHelper } from "../native-strings.js";
+import { ensureAnyToStringHelper, ensureNativeStringBoundaryBridge } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureNativeProxyRuntime } from "../object-runtime.js";
 import { ensureSymbolCarrier } from "../symbol-native.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
+import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { isInertNonCallableLiteral } from "../promise-newtarget.js"; // (#5143)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
@@ -36,7 +44,6 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
-import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
@@ -60,6 +67,7 @@ import {
 } from "./new-super.js";
 import { tryEmitStandaloneDateCtorValueArg } from "../date-ctor-value-arg.js"; // (#5156) §21.4.2.2 step 4
 import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
+import { reportError } from "../context/errors.js";
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
@@ -170,9 +178,10 @@ function nativeProxyArgsMayCarrySymbol(ctx: CodegenContext, args: readonly ts.Ex
 /**
  * Mirror the existing static call/new spread fast path: direct array-literal
  * spreads can be flattened without materializing an intermediate iterable.
- * A non-literal source stays on the iterator path; nested spread elements are
- * intentionally retained for that path, matching the canonical one-level
- * call-argument flattener.
+ * A non-literal source returns `null`; the host arm selects the canonical
+ * strict materializer and the standalone arm declines the Proxy-specific
+ * native path until the strict provider from #5131 exists. Nested spread
+ * elements are retained and likewise declined by the standalone arm.
  */
 function flattenProxyArguments(args: readonly ts.Expression[]): ts.Expression[] | null {
   const flattened: ts.Expression[] = [];
@@ -192,22 +201,19 @@ interface ExpandedProxyArgumentLocals {
   handler: number;
   count: number;
   value: number;
-  source: number;
-  iterator: number;
-  done: number;
+  cleanup: readonly number[];
 }
 
 /**
- * Emit Proxy's full ArgumentListEvaluation for a call containing a spread.
+ * Emit Proxy's full ArgumentListEvaluation for a statically flattened spread.
  *
- * A SpreadElement contributes zero or more positional values. Drive every
- * spread through the iterator protocol used by for-of and array spread,
- * retaining only the first two expanded values while evaluating all the rest.
- * The caller resolves the Proxy provider after this emitter has finished, so
- * late imports registered by argument expressions cannot stale that call.
+ * `flattenProxyArguments` has already removed every direct array-literal
+ * SpreadElement, so this helper only evaluates ordinary expressions. Keeping
+ * this path separate from the generic iterator provider is deliberate: the
+ * native iterator bridge has an internal flattenable fallback and is not an
+ * ECMAScript spread implementation.
  */
 function emitExpandedProxyArguments(
-  ctx: CodegenContext,
   fctx: FunctionContext,
   args: readonly ts.Expression[],
   compileValue: (arg: ts.Expression) => void,
@@ -216,11 +222,110 @@ function emitExpandedProxyArguments(
   const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
   const countLocal = allocTempLocal(fctx, { kind: "i32" });
   const valueLocal = allocTempLocal(fctx, { kind: "externref" });
-  const sourceLocal = allocTempLocal(fctx, { kind: "externref" });
-  const iteratorLocal = allocTempLocal(fctx, { kind: "externref" });
-  const doneLocal = allocTempLocal(fctx, { kind: "i32" });
 
   // Missing target/handler use the same nullish carrier as the ordinary path.
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "local.set", index: targetLocal },
+    { op: "ref.null.extern" },
+    { op: "local.set", index: handlerLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: countLocal },
+  );
+
+  const captureValue = (): Instr[] => [
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: valueLocal },
+        { op: "local.set", index: targetLocal },
+      ],
+      else: [
+        { op: "local.get", index: countLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: valueLocal },
+            { op: "local.set", index: handlerLocal },
+          ],
+          else: [{ op: "local.get", index: valueLocal }, { op: "drop" }],
+        },
+      ],
+    },
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: countLocal },
+  ];
+
+  for (const arg of args) {
+    // The caller proves this invariant before selecting the helper. Keep a
+    // defensive skip rather than treating an unsupported spread as one value;
+    // unsupported dynamic cases are rejected before any body is emitted.
+    if (ts.isSpreadElement(arg)) continue;
+    compileValue(arg);
+    fctx.body.push({ op: "local.set", index: valueLocal });
+    fctx.body.push(...captureValue());
+  }
+
+  return {
+    target: targetLocal,
+    handler: handlerLocal,
+    count: countLocal,
+    value: valueLocal,
+    cleanup: [valueLocal, countLocal, handlerLocal, targetLocal],
+  };
+}
+
+/**
+ * Emit Proxy ArgumentListEvaluation through the canonical host strict spread
+ * materializer. This is the host-only fallback for a non-literal or nested
+ * spread: `__array_from_iter_strict` owns ECMAScript GetIterator validation,
+ * while the ordinary externref readers expose every materialized element in
+ * source order. The Proxy-specific path never calls the internal iterator
+ * bridge here.
+ */
+function emitHostCanonicalExpandedProxyArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  compileValue: (arg: ts.Expression | undefined) => void,
+): ExpandedProxyArgumentLocals {
+  const targetLocal = allocTempLocal(fctx, { kind: "externref" });
+  const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
+  const countLocal = allocTempLocal(fctx, { kind: "i32" });
+  const valueLocal = allocTempLocal(fctx, { kind: "externref" });
+  const sourceLocal = allocTempLocal(fctx, { kind: "externref" });
+  const iteratorLocal = allocTempLocal(fctx, { kind: "externref" });
+  const lengthLocal = allocTempLocal(fctx, { kind: "f64" });
+  const indexLocal = allocTempLocal(fctx, { kind: "f64" });
+
+  // Reserve all canonical provider imports before compiling any argument.
+  // Later source expressions can register additional imports; the terminal
+  // flush and name lookups below keep every emitted call index current.
+  const iterFn = ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
+  const lengthFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const getFn = ensureLateImport(
+    ctx,
+    "__extern_get_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  const iterIdx = ctx.funcMap.get("__array_from_iter_strict") ?? iterFn;
+  const lengthIdx = ctx.funcMap.get("__extern_length") ?? lengthFn;
+  const getIdx = ctx.funcMap.get("__extern_get_idx") ?? getFn;
+  if (iterIdx === undefined || lengthIdx === undefined || getIdx === undefined) {
+    throw new Error("strict host spread providers were not registered");
+  }
+
   fctx.body.push(
     { op: "ref.null.extern" },
     { op: "local.set", index: targetLocal },
@@ -270,33 +375,21 @@ function emitExpandedProxyArguments(
       continue;
     }
 
-    // Evaluate the source once, obtain its iterator, and drain it before the
-    // next argument. Abrupt source/iterator steps therefore win over Proxy
-    // validation exactly as they do in JavaScript ArgumentListEvaluation.
-    const sourceType = compileExpression(ctx, fctx, arg.expression);
-    if (sourceType === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    } else if (sourceType.kind !== "externref") {
-      coerceTypeImpl(ctx, fctx, sourceType, { kind: "externref" });
-    }
+    // Evaluate the spread source once, then strictly materialize it before
+    // evaluating the following argument. This preserves both source and
+    // iterator-step ordering, including a later abrupt completion.
+    compileValue(arg.expression);
     fctx.body.push({ op: "local.set", index: sourceLocal });
     flushLateImportShifts(ctx, fctx);
-
-    const iterIdx = ctx.funcMap.get("__iterator");
-    const nextIdx = ctx.funcMap.get("__iterator_next");
-    if (iterIdx === undefined || nextIdx === undefined) {
-      // The iterator runtime/imports are registered before this helper. Keep a
-      // defensive index-space-frozen fallback that still evaluates the source
-      // and preserves the old one-positional behavior without invalid Wasm.
-      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "local.set", index: valueLocal });
-      fctx.body.push(...captureValue());
-      continue;
-    }
-
     fctx.body.push(
       { op: "local.get", index: sourceLocal },
       { op: "call", funcIdx: iterIdx },
       { op: "local.set", index: iteratorLocal },
+      { op: "local.get", index: iteratorLocal },
+      { op: "call", funcIdx: lengthIdx },
+      { op: "local.set", index: lengthLocal },
+      { op: "f64.const", value: 0 },
+      { op: "local.set", index: indexLocal },
       {
         op: "block",
         blockType: { kind: "empty" },
@@ -305,13 +398,19 @@ function emitExpandedProxyArguments(
             op: "loop",
             blockType: { kind: "empty" },
             body: [
-              { op: "local.get", index: iteratorLocal },
-              { op: "call", funcIdx: nextIdx },
-              { op: "local.set", index: valueLocal },
-              { op: "local.set", index: doneLocal },
-              { op: "local.get", index: doneLocal },
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: lengthLocal },
+              { op: "f64.ge" },
               { op: "br_if", depth: 1 },
+              { op: "local.get", index: iteratorLocal },
+              { op: "local.get", index: indexLocal },
+              { op: "call", funcIdx: getIdx },
+              { op: "local.set", index: valueLocal },
               ...captureValue(),
+              { op: "local.get", index: indexLocal },
+              { op: "f64.const", value: 1 },
+              { op: "f64.add" },
+              { op: "local.set", index: indexLocal },
               { op: "br", depth: 0 },
             ],
           },
@@ -325,9 +424,7 @@ function emitExpandedProxyArguments(
     handler: handlerLocal,
     count: countLocal,
     value: valueLocal,
-    source: sourceLocal,
-    iterator: iteratorLocal,
-    done: doneLocal,
+    cleanup: [iteratorLocal, sourceLocal, indexLocal, lengthLocal, valueLocal, countLocal, handlerLocal, targetLocal],
   };
 }
 
@@ -564,6 +661,23 @@ export function tryCompileBuiltinGlobalNew(
     // below (byte-unchanged in host/gc mode). Guard the ambient-global binding so
     // a user `class Promise {}` / local shadow keeps the normal ctor path.
     const promiseArgs = expr.arguments ?? [];
+    // (#5143 C3) §27.2.3.1 step 2: `IsCallable(executor)` is false → throw a
+    // TypeError. The native lowerings below only admit a resolvable closure, so
+    // a syntactically non-callable executor (`new Promise(1)`, `new Promise({})`,
+    // `new Promise()`) fell through to the `Promise_new` host import — which in
+    // standalone mode is a host-import LEAK that silently constructs nothing and
+    // throws nothing. Only literal shapes the compiler can prove non-callable are
+    // claimed here; a runtime value stays on the value path below, which does its
+    // own callability check. Standalone-carrier gated, so host/gc is byte-inert.
+    if (
+      isStandalonePromiseActive(ctx) &&
+      !ctx.classSet.has("Promise") &&
+      resolvesToAmbientGlobal(ctx, expr.expression) &&
+      (promiseArgs.length === 0 || isInertNonCallableLiteral(ctx, fctx, promiseArgs[0]!))
+    ) {
+      emitThrowTypeError(ctx, fctx, "Promise resolver is not a function");
+      return { kind: "externref" };
+    }
     if (
       promiseArgs.length >= 1 &&
       !ctx.classSet.has("Promise") &&
@@ -933,6 +1047,19 @@ export function tryCompileBuiltinGlobalNew(
       if (emitTest262ErrorWithModuleCtor(ctx, fctx, expr, ctorName)) {
         return { kind: "externref" };
       }
+      // (#5161) In the `nativeStrings` / `fast` lanes the message about to be
+      // handed to the host ctor is a WasmGC `array i16` carrier, not a host
+      // string. `_errorMessageToString` decodes it with the module's own
+      // `__str_is_native` / `__str_to_extern` discriminator — but those exports
+      // are otherwise emitted only when some UNRELATED part of the module needs
+      // the boundary bridge. Measured 2026-08-28: `new Error("m")` threw
+      // "Cannot convert object to primitive value" in a module that merely
+      // constructs the error, and did not in one that also did
+      // `String(e.message)` — the same source, two outcomes, decided by
+      // unrelated content. Request the bridge here so the decode is available
+      // whenever a host Error ctor is emitted. No-op in the default host lane
+      // (`ctx.nativeStrings` false), which keeps that lane byte-identical.
+      if (ctx.nativeStrings) ensureNativeStringBoundaryBridge(ctx);
       // Use host import to create a real Error object with correct .name/.message/.stack
       const funcIdx = ensureLateImport(
         ctx,
@@ -1020,6 +1147,10 @@ export function tryCompileBuiltinGlobalNew(
     } else {
       fctx.body.push({ op: "ref.null.extern" });
     }
+    // (#5161) Same native-string message decode as the plain Error family
+    // above — `__new_AggregateError` reaches the SAME `_errorMessageToString`,
+    // so it needs the same discriminator exports to be present.
+    if (ctx.nativeStrings) ensureNativeStringBoundaryBridge(ctx);
     const funcIdx = ensureLateImport(
       ctx,
       "__new_AggregateError",
@@ -1050,6 +1181,10 @@ export function tryCompileBuiltinGlobalNew(
         fctx.body.push({ op: "ref.null.extern" });
       }
     }
+    // (#5161) Third caller of `_errorMessageToString` — kept consistent with
+    // the Error / AggregateError sites so the three cannot drift. Unverifiable
+    // today: this host has no `SuppressedError` (see the #5159 record).
+    if (ctx.nativeStrings) ensureNativeStringBoundaryBridge(ctx);
     const funcIdx = ensureLateImport(
       ctx,
       "__new_SuppressedError",
@@ -1103,12 +1238,24 @@ export function tryCompileBuiltinGlobalNew(
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy") {
     if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
       const args = expr.arguments ?? [];
+      const hasSpread = args.some((arg) => ts.isSpreadElement(arg));
+      const proxyArgs = hasSpread ? flattenProxyArguments(args) : args;
+      if (hasSpread && (proxyArgs === null || proxyArgs.some((arg) => ts.isSpreadElement(arg)))) {
+        reportError(
+          ctx,
+          expr,
+          "Proxy spread requires the strict iterator provider; dynamic and nested spreads are not available in standalone (#5131)",
+          "error",
+          { sticky: true },
+        );
+        return null;
+      }
       // `ensureNativeProxyRuntime` mints `__proxy_create` before the argument
       // expressions are visited.  Pre-register the already-supported native
       // Symbol carrier whenever the target or handler can carry one, so the
       // construction-time object classifier has a stable carrier to test even
       // when this callee is compiled before its Symbol-producing caller.
-      if (nativeProxyArgsMayCarrySymbol(ctx, args)) ensureSymbolCarrier(ctx);
+      if (nativeProxyArgsMayCarrySymbol(ctx, proxyArgs ?? args)) ensureSymbolCarrier(ctx);
       // Force the object runtime (which registers the native __proxy_create +
       // the trap dispatch helpers + the front-guards) before we look up the idx.
       ensureNativeProxyRuntime(ctx);
@@ -1154,14 +1301,8 @@ export function tryCompileBuiltinGlobalNew(
         }
       };
 
-      if (args.some((arg) => ts.isSpreadElement(arg))) {
-        const proxyArgs = flattenProxyArguments(args) ?? args;
-        // Standalone/native-first uses the native GetIterator bridge for
-        // non-literal sources (and for nested spreads retained by the
-        // canonical one-level flattener). Register it before compiling any
-        // such source so late helper registration cannot stale its calls.
-        if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) ensureNativeIteratorRuntime(ctx);
-        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileToExternref(arg));
+      if (hasSpread) {
+        const locals = emitExpandedProxyArguments(fctx, proxyArgs!, (arg) => compileToExternref(arg));
         flushLateImportShifts(ctx, fctx);
         const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
         if (proxyCreateIdx !== undefined) {
@@ -1181,15 +1322,7 @@ export function tryCompileBuiltinGlobalNew(
             { op: "ref.null.extern" },
           );
         }
-        for (const local of [
-          locals.done,
-          locals.iterator,
-          locals.source,
-          locals.value,
-          locals.count,
-          locals.handler,
-          locals.target,
-        ]) {
+        for (const local of locals.cleanup) {
           releaseTempLocal(fctx, local);
         }
         return { kind: "externref" };
@@ -1250,16 +1383,12 @@ export function tryCompileBuiltinGlobalNew(
       };
 
       if (args.some((arg) => ts.isSpreadElement(arg))) {
-        const proxyArgs = flattenProxyArguments(args) ?? args;
-        // The host provider exposes the same iterator protocol as for-of. Do
-        // the registration up front for any source that remains dynamic, then
-        // resolve its indices after each source expression adds late imports.
-        if (proxyArgs.some((arg) => ts.isSpreadElement(arg))) {
-          ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
-          ensureLateImport(ctx, "__iterator_next", [{ kind: "externref" }], [{ kind: "i32" }, { kind: "externref" }]);
-          flushLateImportShifts(ctx, fctx);
-        }
-        const locals = emitExpandedProxyArguments(ctx, fctx, proxyArgs, (arg) => compileHostProxyArg(arg));
+        const flattenedProxyArgs = flattenProxyArguments(args);
+        const isStaticSpread =
+          flattenedProxyArgs !== null && !flattenedProxyArgs.some((arg) => ts.isSpreadElement(arg));
+        const locals = isStaticSpread
+          ? emitExpandedProxyArguments(fctx, flattenedProxyArgs, (arg) => compileHostProxyArg(arg))
+          : emitHostCanonicalExpandedProxyArguments(ctx, fctx, args, (arg) => compileHostProxyArg(arg));
 
         // Emit the provider only after ArgumentListEvaluation has completed.
         let proxyIdx = ensureLateImport(
@@ -1285,15 +1414,7 @@ export function tryCompileBuiltinGlobalNew(
             { op: "ref.null.extern" },
           );
         }
-        for (const local of [
-          locals.done,
-          locals.iterator,
-          locals.source,
-          locals.value,
-          locals.count,
-          locals.handler,
-          locals.target,
-        ]) {
+        for (const local of locals.cleanup) {
           releaseTempLocal(fctx, local);
         }
         return { kind: "externref" };
@@ -1795,7 +1916,13 @@ export function tryCompileBuiltinGlobalNew(
         // `new Int32Array(new SharedArrayBuffer(...))`. Host mode already
         // handles the buffer arg correctly via the runtime, so skip the
         // native view path there.
-        const argSymName = argSym?.name;
+        // Query the provenance-aware oracle here, rather than only the widened
+        // checker type.  In bootstrap-style code the buffer is commonly stored
+        // in an `any` binding before it is passed to a TypedArray constructor;
+        // the checker then has no symbol, while the oracle can still recover the
+        // ArrayBuffer initializer.  This must stay in lock-step with
+        // `inferTaViewType` so the emitted carrier matches the binding's local.
+        const argSymName = nativeBufferBuiltinOf(ctx, args[0]!);
         // (#3054 B1) Build a SHARED-BACKING `$__ta_view` that refs the buffer's
         // vec (not a copy) so sibling views / DataViews observe writes. Gated on
         // `noJsHost` (standalone/WASI): the native `i32_byte` vec representation
@@ -1813,6 +1940,31 @@ export function tryCompileBuiltinGlobalNew(
             compileExpression(ctx, fctx, e, h),
           );
           if (viewResult) return viewResult;
+        }
+        // (#5194) `copyIntoArrayBuffer(destBuffer, srcBuffer)` from the
+        // Test262 resizable-buffer harness intentionally erases both buffer
+        // parameters.  A boxed native `$__vec_i32_byte` therefore misses the
+        // static provenance oracle and would enter the numeric-length arm
+        // (`ToNumber(buffer) -> NaN -> 0`).  The helper keeps the existing
+        // count fallback for non-buffer any/unknown values while aliasing the
+        // packed bytes when the runtime value is an ArrayBuffer carrier.
+        const dynamicAnyArg =
+          (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 && argSymName === undefined;
+        if (noJsHost(ctx) && typedArrayName === "Uint8Array" && dynamicAnyArg) {
+          const dynamicBufferResult = emitDynamicUint8ArrayBufferAlias(ctx, fctx, args[0]!, (e, h) =>
+            compileExpression(ctx, fctx, e, h),
+          );
+          if (dynamicBufferResult) return finishNativeTypedArray();
+        }
+        if (noJsHost(ctx) && typedArrayName !== "Uint8Array" && dynamicAnyArg) {
+          const dynamicTypedArrayResult = emitDynamicTypedArrayConstructFromAny(
+            ctx,
+            fctx,
+            typedArrayName,
+            args[0]!,
+            (e, h) => compileExpression(ctx, fctx, e, h),
+          );
+          if (dynamicTypedArrayResult) return dynamicTypedArrayResult;
         }
         const isArrayLike =
           argSym?.name === "Array" ||
@@ -1854,7 +2006,11 @@ export function tryCompileBuiltinGlobalNew(
               fieldIdx: 0,
             });
             const lenLocal = allocLocal(fctx, `__ta_len_${fctx.locals.length}`, { kind: "i32" });
-            fctx.body.push({ op: "local.tee", index: lenLocal });
+            // Consume the source length here. Keeping it on the operand stack
+            // leaks an i32 underneath the constructed TypedArray, so an inline
+            // `receiver.call(new Uint8Array(arrayLike))` later tries to store
+            // that stale length as the externref receiver.
+            fctx.body.push({ op: "local.set", index: lenLocal });
             // Create new array of that length
             fctx.body.push({ op: "local.get", index: lenLocal });
             fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
@@ -2014,6 +2170,30 @@ export function tryCompileBuiltinGlobalNew(
         return finishNativeTypedArray();
       }
 
+      // (#5194) An erased ArrayBuffer argument can also use the windowed
+      // `(buffer, byteOffset[, length])` form.  Keep every argument evaluated
+      // once and let the existing runtime-kind constructor dispatcher select
+      // the shared-buffer arm after its byte-vector carrier test; the static
+      // provenance gate below cannot identify `same.buffer` when `same` is
+      // itself `any`.
+      if (noJsHost(ctx) && args.length >= 2 && !ts.isNumericLiteral(args[0]!)) {
+        const multiArgFact = ctx.oracle.typeFactOf(args[0]!);
+        const multiArgSymName = nativeBufferBuiltinOf(ctx, args[0]!);
+        const dynamicMultiArg =
+          (multiArgFact.kind === "any" || multiArgFact.kind === "unknown") && multiArgSymName === undefined;
+        if (dynamicMultiArg) {
+          const dynamicWindowResult = emitDynamicTypedArrayConstructFromAny(
+            ctx,
+            fctx,
+            typedArrayName,
+            args[0]!,
+            (e, h) => compileExpression(ctx, fctx, e, h),
+            args.slice(1),
+          );
+          if (dynamicWindowResult) return dynamicWindowResult;
+        }
+      }
+
       // (#3054 B2) `new <TA>(buffer, byteOffset[, length])` — windowed
       // shared-backing view. Build a `$__ta_view` with the byteOffset field
       // populated (B1 pinned it 0) so `a[i]` addresses `byteOffset + i*width`
@@ -2025,7 +2205,7 @@ export function tryCompileBuiltinGlobalNew(
         // (#1930) Query the type-oracle boundary, not the raw checker — this
         // also keeps the gate in lock-step with `inferTaViewType` (variables.ts),
         // which resolves the buffer arg through the same oracle.
-        const winArgSymName = ctx.oracle.builtinReceiverOf(args[0]!);
+        const winArgSymName = nativeBufferBuiltinOf(ctx, args[0]!);
         if (winArgSymName === "ArrayBuffer" || winArgSymName === "SharedArrayBuffer" || winArgSymName === "DataView") {
           const winResult = emitTaViewConstructWindowed(
             ctx,
@@ -2120,23 +2300,30 @@ export function tryCompileErrorCtorCallWithoutNew(
  * The ambient-global and class checks are important: a user binding named
  * `WeakSet` must retain ordinary call semantics, just like the Error and Date
  * guards above.
+ *
+ * (#5151) The same clause governs the other three keyed collections
+ * (§24.1.1.1 / §24.2.1.1 / §24.3.1.1 step 1), which were never added here — so
+ * `Map()`, `Set()` and `WeakMap()` each returned an object instead of throwing.
+ * They are table-driven off the one set below rather than three copies.
  */
-export function tryCompileWeakSetCallWithoutNew(
+const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
+
+export function tryCompileCollectionCtorCallWithoutNew(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (expr.questionDotToken) return undefined;
   const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || callee.text !== "WeakSet") return undefined;
-  if (ctx.classSet.has("WeakSet")) return undefined;
+  if (!ts.isIdentifier(callee) || !CALL_WITHOUT_NEW_COLLECTION_CTORS.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
   if (!resolvesToAmbientGlobal(ctx, callee)) return undefined;
 
   for (const arg of expr.arguments ?? []) {
     const argResult = compileExpression(ctx, fctx, arg);
     if (argResult) fctx.body.push({ op: "drop" });
   }
-  emitThrowTypeError(ctx, fctx, "Constructor WeakSet requires 'new'");
+  emitThrowTypeError(ctx, fctx, `Constructor ${callee.text} requires 'new'`);
   return { kind: "externref" };
 }
 

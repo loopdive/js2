@@ -80,6 +80,15 @@ beforeAll(async () => {
         return eval(source);
       }
 
+      export function directEvalFunctionReassignment(source: any): number {
+        function fn(): number { return 1; }
+        const original: any = fn;
+        if (original() !== 1) return 100;
+        eval(source);
+        const current: any = fn;
+        return current();
+      }
+
       export function catchesSyntaxError(source: any): number {
         try {
           (0, eval)(source);
@@ -167,6 +176,7 @@ describe("isolated JS-host evaluator", () => {
     expect(exports.directEvalLocal("value = value + 2; value")).toBe(4242);
     expect(exports.directEvalClosure("() => ++value")).toBe(42);
     expect(exports.directEvalWriteBeforeThrow("value = 42; throw new Error('after write')")).toBe(42);
+    expect(exports.directEvalFunctionReassignment("fn = function(){ return 9; }")).toBe(9);
     expect(() => exports.directEvalMissing("missingDirectEvalName")).toThrowError(
       expect.objectContaining({ name: "ReferenceError" }),
     );

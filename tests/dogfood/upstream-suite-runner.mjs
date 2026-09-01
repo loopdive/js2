@@ -793,6 +793,7 @@ const __qunitAssert = {
   expect(_count) {},
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value") + "; got " + __upstreamValue(value)); },
   notOk(value, message) { const n = ++__upstreamAssertion; if (value) __upstreamFail("assertion " + n + ": " + (message || "expected falsey value") + "; got " + __upstreamValue(value)); },
+  isDefined(value, message) { const n = ++__upstreamAssertion; if (value === undefined) __upstreamFail("assertion " + n + ": " + (message || "expected defined value")); },
   equal(actual, expected, message) { const n = ++__upstreamAssertion; if (actual != expected) __upstreamFail("assertion " + n + ": " + (message || "equal mismatch") + "; " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
   notEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual == expected) __upstreamFail("assertion " + n + ": " + (message || "notEqual mismatch") + "; unexpected " + __upstreamValue(actual)); },
   strictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual !== expected) __upstreamFail("assertion " + n + ": " + (message || "strictEqual mismatch") + "; " + __upstreamValue(actual) + " !== " + __upstreamValue(expected)); },
@@ -1273,11 +1274,13 @@ export function writeUpstreamReport(reportPath, report) {
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 }
 
-export function cliUpstreamHarness(runHarness) {
+export function cliUpstreamHarness(runHarness, { reportSucceeded } = {}) {
   const jsonOnly = process.argv.includes("--json");
-  runHarness({ quiet: jsonOnly })
+  return runHarness({ quiet: jsonOnly })
     .then((report) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify(report)}\n`);
+      if (reportSucceeded && !reportSucceeded(report)) process.exitCode = 1;
+      return report;
     })
     .catch((error) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify({ fatal: errorText(error) })}\n`);

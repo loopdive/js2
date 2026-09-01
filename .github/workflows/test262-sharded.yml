@@ -32,6 +32,8 @@ on:
       - "vitest.config.ts"
       - "src/**"
       - "scripts/build-test262-report.mjs"
+      - "scripts/test262-concurrency.mjs"
+      - "scripts/validate-test262-completeness.mjs"
       - "scripts/compiler-fork-worker.mjs"
       - "scripts/compiler-pool.ts"
       - "scripts/diff-test262.ts"
@@ -96,6 +98,11 @@ on:
         type: boolean
       layout_emit:
         description: "(#3927) Measurement lane for the per-type-layout default-ON decision: export JS2WASM_FNCTOR_LAYOUT_EMIT=1 into the shard env. Same contract as ir_first: NEVER promotes a baseline — the merged report artifact is the measurement output, diffed against the same-SHA committed baseline."
+        required: false
+        default: false
+        type: boolean
+      skip_promote:
+        description: "Measure only: run the shard matrix but NEVER promote. Use for bisects and any manual rerun on a non-tip ref. Unlike ir_first / layout_emit / eval_engine=interpreter — the three existing promote suppressors — this changes NOTHING about how the corpus is compiled or run, so its merged report is directly comparable to the published QuickJS baseline. Without it, a workflow_dispatch measures an arbitrary ref and then overwrites loopdive/js2wasm-baselines (the regression-gate baseline EVERY open PR is diffed against) with that ref's numbers, re-stamps the #2097 high-water mark and redeploys Pages."
         required: false
         default: false
         type: boolean
@@ -961,11 +968,15 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
-          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
-          if [ ! -s "$completion_marker" ]; then
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
             echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
             exit 2
           fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
@@ -981,7 +992,7 @@ jobs:
           name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
-            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
       # #3404 — a single transient artifact-upload flake (e.g. `Failed to
@@ -1000,6 +1011,7 @@ jobs:
           overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
   test262-shard-mg:
@@ -1161,11 +1173,15 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
-          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
-          if [ ! -s "$completion_marker" ]; then
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
             echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
             exit 2
           fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
@@ -1187,7 +1203,7 @@ jobs:
           name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
-            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once (see the matching
@@ -1203,6 +1219,7 @@ jobs:
           overwrite: true
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
   merge-report:
@@ -1348,6 +1365,37 @@ jobs:
           mkdir -p merged-reports
           find shard-artifacts/test262-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
+
+      - name: Validate merged JS-host Test262 verdict completeness (#5215)
+        if: env.HOST_RAN == 'true'
+        env:
+          # Static push/dispatch matrices have 57 shards; the capacity-sized
+          # merge_group matrix keeps 52 js-host shards. Missing artifact
+          # directories must fail the aggregate, not disappear in `find`.
+          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '52' || '57' }}
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/test262-js-host-shard-* -type f -name 'test262-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
+
+      - name: Validate merged standalone Test262 verdict completeness (#5215)
+        if: env.STANDALONE_RAN == 'true'
+        env:
+          # Static push/dispatch matrices have 57 shards; the capacity-sized
+          # merge_group matrix keeps 50 standalone shards.
+          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '50' || '57' }}
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/test262-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-standalone-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
 
       - name: Build merged JS-host test262 report
         if: env.HOST_RAN == 'true'
@@ -2482,6 +2530,7 @@ jobs:
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
       !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.skip_promote) &&
       !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')
     name: promote merged report to main baseline
     # Explicit interpreter dispatches are anti-rot measurements for the kept
