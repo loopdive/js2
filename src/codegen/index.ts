@@ -12574,6 +12574,10 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     return;
   }
   if (!(tsType.flags & ts.TypeFlags.Object)) return;
+  // Augmented array interfaces such as `NodeArray<T>` share the vec carrier
+  // selected by resolveWasmType. Do not eagerly register their inherited
+  // Array surface as a separate closed struct.
+  if (inheritedArrayElementType(ctx.checker, tsType)) return;
   if (isExternalDeclaredClass(tsType, ctx.checker)) return;
   // (#2937) Never register a struct for the evolved checker type of a poisoned
   // `$Object`-hash-consumer `{}` var — it must stay externref/host-MOP end to
