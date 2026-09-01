@@ -253,6 +253,11 @@ Post-CI validation on the worktree over
 - Typecheck, focused Biome lint, oracle ratchet, and LOC/function budget gates
   pass.
 
+After the one upstream synchronization to
+`d36e706738546c6c89ddb3d73a420e5e2c931651`, the combined focused lane
+remained **81 active pass, 1 existing todo**, and the isolated seven-path
+standalone cohort remained **4/7 pass, 3 fail** with the same three residuals.
+
 This remains a draft/in-progress handoff. A mixed module containing both a
 native synchronous producer and a typed async-generator receiver may still
 need a caller-side async exclusion; an `any`-typed heterogeneous sync/async
