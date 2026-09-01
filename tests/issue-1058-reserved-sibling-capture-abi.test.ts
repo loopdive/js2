@@ -97,4 +97,50 @@ describe("#1058 reserved sibling capture ABI", () => {
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     expect((instance.exports.reproBooleanCell as (keep: number) => number)(1)).toBe(1);
   });
+
+  it("stabilizes local interface carriers before reserving sibling signatures", async () => {
+    const result = await compile(
+      `
+        export function reproLocalInterface(seed: number): number {
+          interface FlowNode {
+            id: number;
+          }
+          interface FlowGraphNode {
+            id: number;
+            edges: FlowGraphEdge[];
+          }
+          interface FlowGraphEdge {
+            source: FlowGraphNode;
+            target: FlowGraphNode;
+          }
+
+          const offset = 1;
+
+          function buildGraphNode(flowNode: FlowNode): FlowGraphNode {
+            const graphNode: FlowGraphNode = { id: flowNode.id, edges: [] };
+            if (flowNode.id < 2) {
+              buildGraphEdge(graphNode, flowNode, flowNode.id);
+            }
+            return graphNode;
+          }
+
+          function buildGraphEdge(source: FlowGraphNode, antecedent: FlowNode, seen: number): void {
+            const target = buildGraphNode({ id: antecedent.id + seen + offset });
+            const edge: FlowGraphEdge = { source, target };
+            source.edges.push(edge);
+          }
+
+          const root = buildGraphNode({ id: seed });
+          return root.edges.length * 100 + root.edges[0].target.id;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-local-interface-signature.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproLocalInterface as (seed: number) => number)(1)).toBe(103);
+  });
 });

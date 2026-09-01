@@ -55,6 +55,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  ensureStructForType,
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
@@ -747,8 +748,13 @@ function assertReservedNestedFunctionType(
     !arraysMatch(reservedType.params, params) ||
     !arraysMatch(reservedType.results, results)
   ) {
+    const signature = (signatureParams: readonly ValType[], signatureResults: readonly ValType[]): string =>
+      `${JSON.stringify(signatureParams)} -> ${JSON.stringify(signatureResults)}`;
     throw new Error(
-      `nested function ${stmt.name?.text ?? "<anonymous>"} changed its full physical ABI after reservation`,
+      `nested function ${stmt.name?.text ?? "<anonymous>"} changed its full physical ABI after reservation: ` +
+        `reserved ${
+          reservedType?.kind === "func" ? signature(reservedType.params, reservedType.results) : "<missing func type>"
+        }; observed ${signature(params, results)}`,
     );
   }
 }
@@ -1307,6 +1313,7 @@ function compileNestedFunctionDeclarationInScope(
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
+    if (paramType !== undefined) ensureStructForType(ctx, paramType);
     let wasmType: ValType =
       foreignEvalDeclaration || restBindingOverridesToExternref(p)
         ? { kind: "externref" }
@@ -1405,6 +1412,7 @@ function compileNestedFunctionDeclarationInScope(
       retType = unwrapPromiseType(retType, ctx.checker);
     }
     if (!isVoidType(retType)) {
+      ensureStructForType(ctx, retType);
       const inferredReturn = widenMixedUndefinedReturn(retType, resolveWasmType(ctx, retType));
       returnType = functionReturnsPreInitVarValue(ctx, stmt) ? { kind: "externref" } : inferredReturn;
     }
@@ -3049,7 +3057,9 @@ export function hoistFunctionDeclarations(
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
-        let wt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(p));
+        const paramType = ctx.checker.getTypeAtLocation(p);
+        ensureStructForType(ctx, paramType);
+        let wt = resolveWasmType(ctx, paramType);
         wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
@@ -3084,7 +3094,10 @@ export function hoistFunctionDeclarations(
       } else if (sig) {
         let rt = ctx.checker.getReturnTypeOfSignature(sig);
         if (isAsync) rt = unwrapPromiseType(rt, ctx.checker);
-        if (!isVoidType(rt)) resultType = widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
+        if (!isVoidType(rt)) {
+          ensureStructForType(ctx, rt);
+          resultType = widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
+        }
       }
       const funcTypeIdx = addFuncType(ctx, paramTypes, resultType ? [resultType] : [], `${funcName}_type`);
       const reservedFuncIdx = mintDefinedFunc(ctx);
