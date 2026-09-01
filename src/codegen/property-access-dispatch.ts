@@ -4521,6 +4521,27 @@ export function finalizeStructAndDynamicMemberGet(
               ? fctx.params[localIdx]!.type
               : fctx.locals[localIdx - fctx.params.length]?.type;
           return localType?.kind === "externref";
+        })()) ||
+      // (#5195 Step 3.2) Same rule one scope up, and ONLY where the read would
+      // otherwise fall to the terminal `ref.null.extern`: a MODULE-level
+      // binding whose static type is purely `undefined`/`void` but whose wasm
+      // global slot is externref. The local-slot clause above only sees
+      // function locals, so `var caught; function f(){ …catch(e){ caught = e } }`
+      // — the idiom every `expressions/super/*` error test uses — read
+      // `caught.constructor` as a constant null, even though the write had
+      // physically stored an externref in the global. The slot's representation
+      // is the honest source of truth about the runtime value, exactly as it is
+      // for locals; the checker's flow type (`undefined`, because the only
+      // write is inside a nested closure) is not. Restricted to the
+      // purely-undefined static type so every resolvable receiver keeps its
+      // existing (often struct/fast) lane byte-for-byte.
+      (ts.isIdentifier(expr.expression) &&
+        (objType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0 &&
+        fctx.localMap.get(expr.expression.text) === undefined &&
+        (() => {
+          const globalIdx = ctx.moduleGlobals.get(expr.expression!.text);
+          if (globalIdx === undefined) return false;
+          return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
         })());
     if (isExternObj) {
       // These bindings were deliberately placed on the dynamic object carrier

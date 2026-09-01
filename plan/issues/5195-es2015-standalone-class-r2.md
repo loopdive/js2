@@ -48,6 +48,7 @@ func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::compileNestedClassDeclaration
   - src/codegen/typeof-delete.ts::compileTypeofExpression
   - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
 ---
 
 # #5195 — class r2: cluster and fix the residual class-bucket failures
@@ -62,6 +63,15 @@ TDZ arms in `nested-declarations.ts`/`class-bodies.ts`/`control-flow.ts`, and
 (4) a `new.target` value carrier in `new-target.ts`. Each is an arm added at
 the decision point that already owns the case; the listed functions grow by
 those arms.
+
+Growth allowance amendment (2026-09-01, implementation pass):
+`property-access-dispatch.ts::finalizeStructAndDynamicMemberGet` (+21) — Step
+3.2 turned out to live in that function's `isExternObj` admission test, not in
+a separate receiver-classification helper as the plan guessed. The added arm is
+one more clause in the same disjunction that already admits externref LOCALS
+(#3033 Bug 2b); it admits the module-GLOBAL twin under the same
+slot-representation rule, restricted to receivers whose static type is purely
+`undefined`/`void` so no resolvable receiver changes lane.
 
 ## Problem
 
