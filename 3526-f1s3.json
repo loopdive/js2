@@ -2,10 +2,11 @@
   "id": "3526",
   "slice": "f1s3",
   "assignee": "ttraenkler/fable-ir-takeover",
-  "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3526-f1s3-generator-boxprovider",
   "claimed_at": "2026-09-01T09:12:22Z",
-  "updated_at": "2026-09-01T09:12:22Z",
-  "write_id": "7293-iaet63fd"
+  "updated_at": "2026-09-01T11:20:56Z",
+  "write_id": "1747-njm3zmsb",
+  "released_at": "2026-09-01T11:20:56Z"
 }
