@@ -3387,14 +3387,10 @@ export function compileBuiltinStaticCall(
     const onlyArg = expr.arguments[0]!;
     const argType = compileExpression(ctx, fctx, onlyArg);
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-    // In the #2106 undefined-singleton regime (standalone / native strings)
-    // `undefined` is a DISTINCT non-null sentinel externref, so the native
-    // `__extern_is_undefined` predicate is the authoritative test. Outside that
-    // regime `undefined` lowers to `ref.null.extern` (indistinguishable from
-    // `null` at the boundary — the same conflation the arity-2 host path has),
-    // so a bare `ref.is_null` is the matching answer.
-    if (undefinedSingletonActive(ctx)) {
-      ensureObjectRuntime(ctx);
+    // Use the predicate for the host undefined value or the standalone
+    // singleton; legacy null externrefs retain the ref.is_null fallback.
+    if (undefinedSingletonActive(ctx) || (!ctx.standalone && !ctx.wasi && !ctx.nativeStrings)) {
+      if (undefinedSingletonActive(ctx)) ensureObjectRuntime(ctx);
       const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       flushLateImportShifts(ctx, fctx);
       const resolved = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;

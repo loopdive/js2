@@ -69,6 +69,17 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
+  # 2026-08-31 F1-S1: owner-local number-boundary partition + policy projection
+  # + attached-provider materialization trigger (integration.ts); the linear
+  # adapter's explicit disabled number-boundary policy (linear-integration.ts).
+  - src/ir/backend/linear-integration.ts
+  - src/ir/intrinsics.ts
+  - src/ir/runtime-manifest.ts
+  - src/ir/intrinsic-support.ts
+  - src/ir/async-runtime-providers.ts
+  - src/ir/async-prepare.ts
+  - src/codegen/stdlib-selfhost.ts
+  - src/ir/math-runtime-providers.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -1247,3 +1258,212 @@ The PR stays draft until an independent Sol reviews the exact pushed head SHA
 and explicitly approves provider policy, owner-local failure accounting,
 canonical materialization, bytes, tests, and the no-overlap census. Only then,
 if the PR is mergeable and green, may root mark it ready.
+
+## 2026-08-31 F1-S1 implementation checkpoint — Opus lane
+
+**Branch** `claude/issue-3526-f1s1-number-boundary`, grounded on `origin/main`
+`87002f1fe4dd373e8e3c791dcd964f561e02c78e`. Implemented from the 2026-08-30 Sol
+correction (which supersedes the 2026-08-29 plan wherever the two disagree).
+
+### Coordination gate
+
+The Sol correction blocked source implementation until Claude IR PR #5218 had
+merged. **#5218 merged 2026-08-31T01:32:04Z** (`feat(ir): nested-vec element
+carrier + destructuring for-of heads`), so the gate is clear. The branch is
+based on post-#5218 `main`; per project convention `main` is merged in, never
+rebased. Exact-file collision census against the grounded tree: no open work
+overlaps the eleven owned files.
+
+### Required pre-implementation verifications (answers)
+
+1. **Full-repo trace of `hasHostNumberBox` / `hasNativeNumberUnbox`.** The Sol
+   correction is right and the 2026-08-29 plan was not.
+   - `hasHostNumberBox` had **two** from-ast reads (`coerceToExpectedExtern`
+     f64→externref box arm; `coerceReturnValue`'s externref→f64 provider pick)
+     and **three** executable implementations —
+     `integration.ts` (`!ctx.nativeStrings`),
+     `backend/linear-integration.ts` (`false`), and
+     `codegen/stdlib-selfhost.ts` (`false`).
+   - `hasNativeNumberUnbox` had **one** from-ast read (the same unbox arm) and
+     **one** implementation (`integration.ts`,
+     `semanticProviders === "native-first"`).
+   - Everything else in the tree was doc prose. All reads, both contract
+     entries, all four implementations and every dangling prose reference are
+     deleted; `hasHostBooleanBox` is untouched.
+2. **`gen.setReturn`.** Confirmed it does **not** route through
+   `coerceToExpectedExtern`. `generator-support.ts` attaches a direct
+   `irRuntimeFuncRef("__box_number")` through `gen.setReturn`'s own
+   `boxProvider`, which `lower.ts` reads (`instr.boxProvider ?? irRuntimeFuncRef
+   (...)`). It is a named control and is unchanged in this slice — a follow-up
+   row, not silent scope.
+3. **Who guarantees the union-native `__unbox_number` exists.**
+   `preregisterDynamicSupport` (`integration.ts`) is the trigger and remains the
+   owner: `usesNamedUnionImport` (an `env.*` union member) and
+   `usesRuntimeUnboxNumber` (a runtime `__unbox_number`) each call
+   `addUnionImports(ctx)`, the whole-family materializer. Its detector used to
+   key on `call` instructions only, so the migration would have removed the
+   trigger. It now also recognizes the **exact attached provider target** of
+   `js.number.box` / `js.number.unbox`. This is safe because
+   `prepareBuiltFnRuntimeManifest` (provider attachment) runs at the top of the
+   preparation sequence and `preregisterDynamicAndForInSupport` runs later in
+   the same sequence — attachment always precedes the trigger, and both precede
+   any Phase-3 body that could bake a funcidx. No name scanning and no second
+   allocator were added. Measured result: **import set and order are identical
+   in every lane, before and after.**
+4. **Callable-backed intrinsic lowering with externref args/results.**
+   `emitPreparedIntrinsic` (`lower.ts`) is already ABI-generic for the callable
+   arm — it emits the operands and then
+   `emitter.emitCall(resolver.resolveFunc(instr.provider.target))`, with no f64
+   assumption; typing flows through the ordinary `IrType` → ValType converter.
+   No lowering change was needed. What was **not** generic was the provider
+   model, exactly as the Sol correction says: `providerAttachment` always built
+   an `irIntrinsicFuncRef`, and provider resolution admitted only the prepared
+   self-hosted Math index. Hence the two new implementation kinds.
+
+### What landed
+
+- **`src/ir/runtime-host-capabilities.ts` (new)** — the one central
+  host-capability catalogue: closed ID union (seven async + `number.box` /
+  `number.unbox`), value types widened to `externref | i32 | f64`, canonical
+  object identity, exact-ABI validation, catalogue canonicalization and
+  fail-closed resolution.
+- **`src/ir/async-runtime-providers.ts`** — derives its async-only projection
+  from that table (the *same* frozen objects, so identity guards accept either
+  view). `AsyncHostAdapterValueType` stays exactly `externref | i32` and
+  `asAsyncHostAdapter` is a **checked** narrowing, not a cast, so no f64 row can
+  reach the async adapter materializer (which maps every non-`i32` row to
+  externref and would mislower it).
+- **`src/ir/intrinsics.ts`** — `js.number.box` `(f64) -> externref` and
+  `js.number.unbox` `(externref) -> f64`, versioned, with 1:1 feature rows.
+- **`src/ir/runtime-manifest.ts`** — `host-callable` / `runtime-callable`
+  implementation kinds; the three providers; the explicit `numberBoundary`
+  policy on `RuntimeManifestPolicy`, canonicalized at construction and published
+  on the frozen manifest; policy-driven selection whose unavailable arm is a
+  typed `provider-target-unavailable` naming the intrinsic and the resolved
+  policy.
+- **`src/ir/intrinsic-support.ts`** — attachment derives the canonical physical
+  `irImportFuncRef` from the exact capability record (host arm) or the canonical
+  `irRuntimeFuncRef` (native arm); verification admits a physical target only
+  when the closed provider catalogue names it for that intrinsic.
+- **`src/ir/from-ast.ts`** — both arms emit provider-free intrinsics and read no
+  lane fact; both resolver contract entries deleted.
+- **`src/ir/integration.ts`** — the caller-resolved policy projection; the
+  owner-local unsupported partition; the materialization trigger.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both arms explicitly disabled.
+- **`src/ir/async-prepare.ts`** — the exact numeric-return roundtrip is
+  recognized in its intrinsic form (provider-free, since async preparation runs
+  before manifest freeze) **and** its existing raw-import form.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **Host-lane byte-parity is not literal byte-identity — measured, and it is a
+   consequence of the plan's own design.** A semantic `intrinsic` is *pure*
+   under the existing `effectsOf` authority, while the opaque `call` it replaces
+   was not. `lower.ts`'s effects-aware emission scheduler therefore stops
+   anchoring the boxed/unboxed value into a local and emits it lazily at its
+   consumer. Measured over 5 fixtures × 5 lanes (25 cells) before/after:
+   - **22 cells byte-identical**, including every standalone, WASI,
+     native-strings and linear cell;
+   - **3 gc-host cells shrink** (283→273, 626→614, 990→976 bytes). The full WAT
+     diff on those cells is *only* removed `(local $$irN externref)` declarations
+     and the resulting local renumbering: identical instruction sequence,
+     identical call targets, identical `env` import set **and order**, identical
+     runtime results (the `Map`-memo fixture returns 15181 both ways).
+     Preserving the old bytes would require classifying these two intrinsics as
+     impure — i.e. a second, per-ID effect table, which R6 forbids and which
+     would also be untrue (`__box_number` allocates a fresh object;
+     `__unbox_number` reads a primitive).
+   - Follow-up worth naming: purity is correct **at the two producing sites**,
+     where the operand is a proven-numeric carrier. A future producer that could
+     hand `js.number.unbox` an object with a user `valueOf` would need the
+     effect question re-opened.
+2. **`RuntimeManifestPolicy.numberBoundary` is optional in the type**, defaulted
+   to `NUMBER_BOUNDARY_POLICY_DISABLED` and canonicalized at builder
+   construction; all three production callers pass it explicitly, so every
+   frozen manifest publishes an explicit resolved policy. This keeps the
+   fail-closed default without churning unrelated manifest tests.
+3. **`src/ir/math-runtime-providers.ts` edited (one expression), outside the Sol
+   ownership list.** Authority trace: `materializePreparedMathProviders`
+   projected Math method names as `use.id.slice("math.".length)` over **every**
+   intrinsic use. With a number-boundary use in the same manifest that yields
+   `"js.number.box".slice(5)` → `"mber.box"` handed to the Math emitter. The
+   projection now filters on the `math.` prefix. This is a required consequence
+   of the approved change, not a scope expansion; recorded here rather than
+   silently absorbed.
+4. **The `gc-native-strings` unsupported-unbox population changes outcome code,
+   not outcome.** Shapes that previously returned the unconverted externref and
+   demoted at the verifier as `return-type-legacy-coupling` / `verify` now
+   demote in preparation as `late-preparation-unsupported` / `resolve`, per the
+   Sol correction's step 2. Both demote to legacy and **the emitted bytes are
+   identical** (measured: `MAPGET` and `MIXED` on `gc-native-strings` are
+   byte-identical before and after). The strict fixed-corpus census
+   (`pnpm run check:ir-fallbacks`) is **unchanged, output-identical**, with all
+   unintended, module-level and post-claim buckets still empty.
+
+### The async-prepare join needed the resolved policy, not a shape match
+
+The Sol correction called the `async-prepare` numeric-return roundtrip a
+*mechanical* substitution. It is not, and CI proved it: the standalone IR
+cutover corpus failed with `compile/async expected derivedUnitCount=12,
+observed 11`.
+
+Cause: before this slice, from-ast emitted `env.__unbox_number` on the host lane
+and the union-native runtime symbol on native-first, so `async-prepare`'s
+raw-import match **also encoded "this is a host owner"** — and the elision is
+only validated against the host Promise ABI. A provider-free intrinsic carries
+no lane fact (freeze runs after async preparation), so a plain shape match is
+not equivalent to what it replaced. Both naive options were measured and both
+change behaviour:
+
+| approach | standalone cutover corpus | host (#4106) |
+| --- | --- | --- |
+| match the intrinsic unconditionally | **FAIL** — derived 18/19, elision fires where it never did | pass |
+| match only the raw-import form | pass — derived 19/19 | **FAIL** — resume function regains the unbox call |
+
+Resolved by threading the caller's **already-resolved** `NumberBoundaryPolicy`
+— the same frozen fact manifest freeze consumes — from `compileIrPathFunctions`
+through `prepareSuspendingAsyncLowering` into `prepareSingleAwaitIrFunction`.
+The intrinsic form is admitted iff `unbox === "host"`, which is exactly the
+population the import form matched. Both lanes are now neutral: corpus
+`derived=19/19`, #4106 green. The parameter defaults to
+`NUMBER_BOUNDARY_POLICY_DISABLED`, so an uninformed caller keeps its
+continuation rather than silently eliding.
+
+This is the one place where F1-S1's goal (a lane-free front-end node) and an
+existing consumer genuinely conflict; the policy hand-off is the narrow fix. A
+cleaner long-term home is a post-freeze pass that reads the attached provider.
+
+### `check:ir-kind-neutrality` baseline refresh
+
+The `quality` lane initially failed on `check:ir-kind-neutrality`. **This was
+caused by this change-set**, not pre-existing: the gate passes with exit 0 on a
+clean `origin/main` worktree (an earlier stash-based check wrongly suggested
+otherwise, and the wrong conclusion was reported before the worktree
+measurement corrected it).
+
+The cause is line-number drift in the baseline's `evidence` citations — this
+slice's edits moved three cited lines. No verdict, kind, placement, ratchet
+count or `settledBy` rationale changed:
+
+| kind | cited file | before → after |
+| --- | --- | --- |
+| `forof.string` | `src/ir/integration.ts` | 6001 → 6054 |
+| `string.len` | `src/ir/backend/linear-integration.ts` | 1611 → 1614 |
+| `vec.new_fixed` | `src/ir/from-ast.ts` | 4562 → 4542 |
+
+Refreshed per the gate's own instruction (`--update-on-decrease`, then commit
+the baseline diff for review). The three citations plus the `generated` date
+were patched surgically rather than committing the regenerator's output, which
+reflows every array and would have buried a 4-line semantic change in a
+356-line formatting diff. This is the gate's documented refresh flow and is
+distinct from `scripts/loc-budget-baseline.json`, which remains main's alone.
+
+### Not touched (per the lock)
+
+`src/codegen/index.ts`, declarations, raw union registration (`addUnionImports`
+itself), `compiler-timer-shim-preparation.ts` (a different dynamic
+box/to-number family — no mechanical join proven), timer shims, generator
+`setReturn`, `__box_boolean` / `__box_symbol` / `$AnyValue`, the `#2108`
+coercion-sites baseline, the public `ImportIntent` projection, and every direct
+codegen `__box_number` / `__unbox_number` handler.

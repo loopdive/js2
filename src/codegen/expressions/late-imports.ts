@@ -13,6 +13,7 @@ import { addImport } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
 import { addUnionImportsViaRegistry } from "../shared.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
+import { UNDEF_F64_BITS } from "../value-tags.js";
 import { ensureObjectRuntime, OBJECT_RUNTIME_HELPER_NAMES } from "../object-runtime.js";
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "../symbol-native.js";
 // (#3100 S4) Native standalone iteration substrate: the four `__iterator*`
@@ -780,25 +781,33 @@ export function patchStructNewForAddedField(
   typeIdx: number,
   fieldType: ValType,
 ): void {
-  function defaultInstrFor(ft: ValType): Instr {
+  function defaultInstrFor(ft: ValType): Instr[] {
     switch (ft.kind) {
       case "f64":
-        return { op: "f64.const", value: 0 };
+        // Object-carrier fields are JS properties, so a field added after an
+        // earlier struct.new represents an absent property. Preserve the
+        // canonical undefined sentinel instead of exposing Wasm's numeric
+        // zero through a later nested destructuring read.
+        // Object-carrier fields are JS properties, so a field added after an
+        // earlier struct.new represents an absent property. Preserve the
+        // canonical undefined sentinel instead of exposing Wasm's numeric
+        // zero through a later nested destructuring read.
+        return [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }];
       case "i32":
-        return { op: "i32.const", value: 0 };
+        return [{ op: "i32.const", value: 0 }];
       case "externref":
-        return { op: "ref.null.extern" };
+        return [{ op: "ref.null.extern" }];
       case "ref":
       case "ref_null":
-        return { op: "ref.null", typeIdx: (ft as { typeIdx: number }).typeIdx };
+        return [{ op: "ref.null", typeIdx: (ft as { typeIdx: number }).typeIdx }];
       default:
         if ((ft as any).kind === "i64") {
-          return { op: "i64.const", value: 0n };
+          return [{ op: "i64.const", value: 0n }];
         }
         if ((ft as any).kind === "eqref") {
-          return { op: "ref.null.eq" };
+          return [{ op: "ref.null.eq" }];
         }
-        return { op: "i32.const", value: 0 };
+        return [{ op: "i32.const", value: 0 }];
     }
   }
 
@@ -820,7 +829,7 @@ export function patchStructNewForAddedField(
           // Insert a default value right before the struct.new. The inserted
           // instr has no nested blocks, so enqueueing children of `instr`
           // below is still correct — `instr` is captured by reference.
-          arr.splice(i, 0, defaultInstrFor(fieldType));
+          arr.splice(i, 0, ...defaultInstrFor(fieldType));
         }
         if ("body" in instr && Array.isArray((instr as any).body)) {
           work.push((instr as any).body);

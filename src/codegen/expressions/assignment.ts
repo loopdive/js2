@@ -4605,7 +4605,7 @@ function compilePropertyAssignment(
   }
 
   // Handle shape-inferred array-like variables: obj.length = N
-  if (ts.isIdentifier(target.expression)) {
+  if (ts.isIdentifier(target.expression) && !ctx.externrefAccessorVars.has(target.expression.text)) {
     const shapeInfo = ctx.shapeMap.get(target.expression.text);
     if (shapeInfo) {
       const fieldName = target.name.text;

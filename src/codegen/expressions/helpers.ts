@@ -20,6 +20,7 @@ import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+export { tryCompileCallableStaticField } from "./static-callable-field.js";
 
 // (#3191 — bloat S1) The JS-error-throw lowering was hoisted into the
 // layering-safe leaf module `../js-errors.ts` so runtime modules (dataview-

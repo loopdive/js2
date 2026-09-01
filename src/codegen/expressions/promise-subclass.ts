@@ -34,11 +34,13 @@
  * value position and the receiver position can never diverge again.
  */
 import { ts } from "../../ts-api.js";
-import type { Instr } from "../../ir/types.js";
+import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addStringConstantGlobal } from "../index.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitLazyClassObjectGet } from "./extern.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#2637 B2.1) onhost-ctor funcMap key
 import { emitFuncRefAsClosure } from "../closures.js"; // (#2637 B2.1) materialize $Class_new__onhost as a no-capture closure
@@ -69,6 +71,52 @@ export function resolvePromiseSubclassName(ctx: CodegenContext, name: string): s
     cursor = ctx.classParentMap.get(cursor);
   }
   return undefined;
+}
+
+/** Whether a variable statement binds a Promise-subclass class expression. */
+export function variableStatementContainsPromiseSubclass(
+  ctx: CodegenContext,
+  statement: ts.VariableStatement,
+): boolean {
+  return statement.declarationList.declarations.some((declaration) => {
+    if (declaration.initializer === undefined || !ts.isClassExpression(declaration.initializer)) return false;
+    const syntheticName = ctx.anonClassExprNames.get(declaration.initializer);
+    return syntheticName !== undefined && resolvePromiseSubclassName(ctx, syntheticName) !== undefined;
+  });
+}
+
+/** Emit the host constructor value for a Promise-subclass class expression. */
+export function tryEmitPromiseSubclassClassExpressionValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initializer: ts.Expression,
+  valueType: ValType,
+): ValType | undefined {
+  if (ctx.standalone || ctx.wasi || !ts.isClassExpression(initializer)) return undefined;
+  const syntheticName = ctx.anonClassExprNames.get(initializer);
+  const resolved = syntheticName === undefined ? undefined : resolvePromiseSubclassName(ctx, syntheticName);
+  if (resolved === undefined || !emitPromiseSubclassCtor(ctx, fctx, resolved)) return undefined;
+  return emitClassExpressionStaticsBeforeValue(ctx, fctx, initializer, valueType);
+}
+
+/** Compile a class-expression binding, preserving Promise and class-object values. */
+export function tryCompileClassExpressionBindingValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initializer: ts.Expression,
+  valueType: ValType,
+): ValType | undefined {
+  if (!ts.isClassExpression(initializer)) return undefined;
+  const syntheticName = ctx.anonClassExprNames.get(initializer);
+  const promiseValue = tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, initializer, valueType);
+  if (promiseValue !== undefined) return promiseValue;
+  if (
+    syntheticName === undefined ||
+    !ctx.classObjectGlobals?.has(syntheticName) ||
+    !emitLazyClassObjectGet(ctx, fctx, syntheticName)
+  )
+    return undefined;
+  return emitClassExpressionStaticsBeforeValue(ctx, fctx, initializer, valueType);
 }
 
 /** Resolve a Promise-subclass identifier by its lexical declaration identity. */
