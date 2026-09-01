@@ -18,7 +18,8 @@ import {
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { isStaticFunctionSelfName } from "./static-function-self-names.js";
-import { compileExpression, skipTransparentExpressions } from "./shared.js";
+import { compileExpression, skipTransparentExpressions, type InnerResult } from "./shared.js";
+import { tryCompileRegExpLegacyStaticWrite } from "./regexp-legacy-static.js";
 
 type MemberExpression = ts.PropertyAccessExpression | ts.ElementAccessExpression;
 
@@ -104,7 +105,9 @@ export function tryCompileStrictFunctionPoisonAssignment(
   fctx: FunctionContext,
   target: MemberExpression,
   value: ts.Expression,
-): ValType | undefined {
+): InnerResult | undefined {
+  const regexpResult = tryCompileRegExpLegacyStaticWrite(ctx, fctx, target, value);
+  if (regexpResult !== undefined) return regexpResult;
   const member = poisonMember(target);
   if (!member || (member.name !== "caller" && member.name !== "arguments")) return undefined;
   const sourceFunction = sourceFunctionForValue(ctx, member.receiver);

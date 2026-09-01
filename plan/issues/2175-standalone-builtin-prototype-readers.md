@@ -4355,3 +4355,42 @@ other invocation. The retry PATH prefixes that local directory and the
 prescribed existing runtime/root-node-modules paths; it neither downloads
 dependencies nor changes repository configuration. Stage this provenance note
 with the existing tracker before retrying the ordinary hook-running commit.
+
+### c112 durable merge evidence — 2026-09-01
+
+The normal c112 merge committed at
+`36ddfd42847491f64c3c3f483362fc08e12fe341` with parents
+`2918a145147c0c6d9e6287efe10f12e7ebd79d9b` and
+`c11206262088a69815d6126787b10942df148b6d`. Its full, unskipped hook was run
+in a durable session and passed the LOC/function budgets and oracle ratchet.
+The changed-root controls were all green: #2175 **30 / 30**, fresh-cache
+Temporal **11 / 11** using the unique worktree-local
+`JS2WASM_TEMPORAL_CACHE=.tmp/temporal-cache-c112`, #5225 **2 / 2**, #5242
+**2 / 2**, #5243 **1 / 1**, and #5244 **9 / 9**. This is c112-head evidence;
+it does not replace the required current-main merge and exact-head validation
+below. No hook skip, `--no-verify`, source rewrite, push, or GitHub operation
+was used for this commit.
+
+### e59 live-main execution plan — 2026-09-01
+
+Fresh `upstream/main` is
+`e59af10496753d38352fdac74059872cd6033c7e`. The complete post-c112 delta has
+the same two owned-path overlaps already audited: `object-runtime.ts` and
+`variables.ts`; no other #2175 path moved. Merge normally without committing.
+Keep e59's vec numeric miss/inherited-setter sequence in
+`fillExternSetVecArms` and retain all earlier #2175 D5 terminal-gating code;
+the regions are mechanically disjoint.
+
+For `variables.ts`, retain e59's centralized Promise/class-expression,
+Proxy, and RegExp helpers. The #2175 computed-accessor effect must be emitted
+only after that centralized binding helper has actually handled a class value,
+but must execute at runtime before its materialization. Use a local
+transactional owner wrapper: remember the `fctx.body` length, call
+`tryCompileClassExpressionBindingValue`, and only for a non-`undefined`
+result remove its newly appended instruction suffix; emit
+`emitUnresolvedComputedAccessorNameEffects`, remove that suffix, then append
+the effect suffix followed by the handled materialization suffix. An
+`undefined` result leaves the generic `compileExpression`/`new-super.ts` owner
+unchanged, so it emits the effect exactly once itself. This covers both
+singleton and Promise fast paths without an unconditional pre-emission,
+fallback duplication, or a ninth PR path.

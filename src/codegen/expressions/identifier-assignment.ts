@@ -25,6 +25,11 @@ export function emitIdentifierAssignmentTdzGuard(
   id: ts.Identifier,
   pendingStackValue = false,
 ): boolean {
+  // Annex B B.3.3 creates a mutable `var`-style outer binding initialized to
+  // undefined. Its shared flag selects undefined versus the evaluated block
+  // function on reads; it is not a lexical TDZ and must not reject an earlier
+  // assignment such as `f = 123` before `if (...) function f() {}`.
+  if (fctx.annexBOuterBindings?.has(id.text)) return false;
   const localFlag = fctx.tdzFlagLocals?.get(id.text);
   const moduleFlagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
   if (localFlag === undefined && moduleFlagIdx === undefined) return false;
@@ -53,6 +58,7 @@ export function tryConstSet(
   id: ts.Identifier,
   right: ts.Expression,
 ): boolean {
+  if (fctx.annexBOuterBindings?.has(id.text)) return false;
   const isConst = isConstIdentifierAssignmentTarget(ctx, fctx, id);
   const hasTdzFlag =
     fctx.tdzFlagLocals?.has(id.text) === true || moduleTdzGlobalIndexForIdentifier(ctx, id) !== undefined;

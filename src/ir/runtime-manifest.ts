@@ -16,24 +16,29 @@ import {
   type IrIntrinsicBackendSequence,
 } from "./nodes.js";
 import {
-  ASYNC_HOST_CAPABILITY_RECORDS,
-  ASYNC_HOST_CAPABILITY_IDS,
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
   ASYNC_RUNTIME_PROVIDERS,
   ASYNC_RUNTIME_PROVIDER_IDS,
-  canonicalizeAsyncHostCapabilityCatalog,
-  resolveAsyncHostCapabilityRecord,
-  type AsyncHostAdapter,
-  type AsyncHostCapabilityId,
   type AsyncRuntimeFeature,
   type AsyncRuntimeProviderId,
 } from "./async-runtime-providers.js";
 import {
+  canonicalizeRuntimeHostCapabilityCatalog,
+  resolveRuntimeHostCapabilityRecord,
+  RUNTIME_HOST_CAPABILITY_IDS,
+  RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityId,
+  type RuntimeHostCapabilityRecord,
+} from "./runtime-host-capabilities.js";
+import {
+  EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
   F64_BINARY_INTRINSIC_SIGNATURE,
+  F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
+  NUMBER_BOUNDARY_RUNTIME_FEATURES,
   NUMERIC_COERCION_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
   PURE_MATH_RUNTIME_FEATURES,
@@ -42,6 +47,7 @@ import {
   type IntrinsicSignature,
   type IntrinsicUse,
   type IntrinsicVerificationCode,
+  type NumberBoundaryRuntimeFeature,
   type PureMathRuntimeFeature,
   type RuntimeFeature as IntrinsicRuntimeFeature,
   verifyIntrinsicUse,
@@ -50,7 +56,7 @@ import {
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
 export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature;
-export type HostCapabilityId = AsyncHostCapabilityId;
+export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
   "async.native.drive",
@@ -59,10 +65,42 @@ export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
 ] as const);
 export type RuntimeBackendRequirement = (typeof RUNTIME_BACKEND_REQUIREMENTS)[number];
 
+/**
+ * (#3526 F1-S1) The exact, already-resolved number-boundary provider policy of
+ * ONE preparation caller. `target` alone cannot answer this: ordinary
+ * host-assisted GC, GC native-first, and host-assisted GC with explicit native
+ * strings all map to `target: "host"` while the existing box/unbox decision
+ * additionally depends on `nativeStrings` and `semanticProviders`. Callers
+ * resolve their truth table BEFORE freeze; nothing below reads a live codegen
+ * context.
+ */
+export interface NumberBoundaryPolicy {
+  /** `host` selects `env.__box_number`. There is no native box arm in F1-S1. */
+  readonly box: "host" | "unsupported";
+  /** `host` selects `env.__unbox_number`; `native` the union-native function. */
+  readonly unbox: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no number boundary resolve both arms to this. */
+export const NUMBER_BOUNDARY_POLICY_DISABLED: NumberBoundaryPolicy = Object.freeze({
+  box: "unsupported",
+  unbox: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
+  /**
+   * Omission resolves to {@link NUMBER_BOUNDARY_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly numberBoundary?: NumberBoundaryPolicy;
 }
+
+/** The frozen manifest's policy always carries an explicit resolved decision. */
+export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
+  readonly numberBoundary: NumberBoundaryPolicy;
+};
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "backend.f64.abs",
@@ -104,7 +142,20 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
 export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
 export const NUMERIC_COERCION_RUNTIME_PROVIDER_IDS = Object.freeze(["backend.js.to_uint32"] as const);
 export type NumericCoercionRuntimeProviderId = (typeof NUMERIC_COERCION_RUNTIME_PROVIDER_IDS)[number];
-export type RuntimeProviderId = MathRuntimeProviderId | NumericCoercionRuntimeProviderId | AsyncRuntimeProviderId;
+
+/** (#3526 F1-S1) One provider per admitted number-boundary policy arm. */
+export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.number.box",
+  "host.js.number.unbox",
+  "native.js.number.unbox",
+] as const);
+export type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
+
+export type RuntimeProviderId =
+  | MathRuntimeProviderId
+  | NumericCoercionRuntimeProviderId
+  | NumberBoundaryRuntimeProviderId
+  | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
   | {
@@ -129,6 +180,25 @@ export type RuntimeProviderImplementation =
       readonly kind: "host-capability";
     }
   | {
+      /**
+       * (#3526 F1-S1) A synchronous callable answered by one exact central
+       * host capability. Lowering derives the canonical physical
+       * `irImportFuncRef` from that record — the semantic identity stays the
+       * versioned `IntrinsicId`, the physical target stays the existing import
+       * so legacy consumers and import order do not drift.
+       */
+      readonly kind: "host-callable";
+      readonly capability: RuntimeHostCapabilityId;
+    }
+  | {
+      /**
+       * (#3526 F1-S1) A synchronous callable answered by one exact runtime
+       * symbol, lowered through the canonical `irRuntimeFuncRef`.
+       */
+      readonly kind: "runtime-callable";
+      readonly symbol: string;
+    }
+  | {
       /** Scheduling is supplied by the host Promise job queue, with no import. */
       readonly kind: "host-managed";
       readonly service: "promise-job-queue";
@@ -146,7 +216,15 @@ export type MathRuntimeProviderImplementation = Extract<
 
 export type IntrinsicRuntimeProviderImplementation = Extract<
   RuntimeProviderImplementation,
-  { readonly kind: "backend-op" | "backend-sequence" | "backend-composite" | "self-hosted" }
+  {
+    readonly kind:
+      | "backend-op"
+      | "backend-sequence"
+      | "backend-composite"
+      | "self-hosted"
+      | "host-callable"
+      | "runtime-callable";
+  }
 >;
 
 export interface RuntimeProviderDefinition {
@@ -210,14 +288,14 @@ export interface RuntimeProviderComponent {
 }
 
 export interface FrozenRuntimeManifest {
-  readonly policy: RuntimeManifestPolicy;
+  readonly policy: FrozenRuntimeManifestPolicy;
   readonly intrinsicUses: readonly IntrinsicUse[];
   readonly features: readonly RuntimeFeature[];
   readonly providers: readonly RuntimeProviderDefinition[];
   readonly providerComponents: readonly RuntimeProviderComponent[];
   readonly hostCapabilities: readonly HostCapabilityId[];
   /** Exact selected ABI records, in the same canonical capability-ID order. */
-  readonly hostCapabilityRecords: readonly AsyncHostAdapter[];
+  readonly hostCapabilityRecords: readonly RuntimeHostCapabilityRecord[];
   /** Canonical union of concrete backend reservations selected before lowering. */
   readonly backendRequirements: readonly RuntimeBackendRequirement[];
 }
@@ -265,6 +343,8 @@ const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc
 
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
   "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
+  "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+  "js.number.unbox": EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -326,6 +406,76 @@ export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
     operation: "to-uint32",
   }),
 ]);
+
+function numberBoundaryProvider(
+  id: NumberBoundaryRuntimeProviderId,
+  feature: NumberBoundaryRuntimeFeature,
+  signature: IntrinsicSignature,
+  implementation: RuntimeProviderImplementation,
+  hostCapabilities: readonly HostCapabilityId[],
+): RuntimeProviderDefinition {
+  return Object.freeze({
+    id,
+    feature,
+    signature,
+    dependencies: Object.freeze([] as readonly RuntimeFeature[]),
+    hostCapabilities: Object.freeze([...hostCapabilities]),
+    // Target/backend admission stays wide; the exact arm is chosen by the
+    // caller-resolved `numberBoundary` policy, which is the only fact that can
+    // separate the three GC combinations that share `target: "host"`.
+    supportedTargets: ALL_TARGETS,
+    supportedBackends: ALL_BACKENDS,
+    implementation: Object.freeze({ ...implementation }),
+  });
+}
+
+/**
+ * (#3526 F1-S1) The synchronous number boundary. `js.number.box` is HOST-ONLY
+ * by policy in this slice: standalone does define a native `__box_number`
+ * through the union-native family, but the current front-end arm is gated on
+ * `!nativeStrings`, and support may not be inferred from helper presence. The
+ * `$AnyValue` standalone boxing family is explicitly not this intrinsic.
+ */
+export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.number.box",
+    "js.number.box",
+    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "number.box" },
+    ["number.box"],
+  ),
+  numberBoundaryProvider(
+    "host.js.number.unbox",
+    "js.number.unbox",
+    EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "number.unbox" },
+    ["number.unbox"],
+  ),
+  numberBoundaryProvider(
+    "native.js.number.unbox",
+    "js.number.unbox",
+    EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__unbox_number" },
+    [],
+  ),
+]);
+
+/** The exact provider each admitted policy arm selects, or `null` when the
+ * caller resolved the arm to unsupported. */
+function numberBoundaryProviderId(
+  feature: NumberBoundaryRuntimeFeature,
+  policy: NumberBoundaryPolicy,
+): NumberBoundaryRuntimeProviderId | null {
+  if (feature === "js.number.box") return policy.box === "host" ? "host.js.number.box" : null;
+  if (policy.unbox === "host") return "host.js.number.unbox";
+  return policy.unbox === "native" ? "native.js.number.unbox" : null;
+}
+
+const NUMBER_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(NUMBER_BOUNDARY_RUNTIME_FEATURES);
+
+function isNumberBoundaryFeature(feature: RuntimeFeature): feature is NumberBoundaryRuntimeFeature {
+  return NUMBER_BOUNDARY_FEATURE_SET.has(feature);
+}
 
 const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
   "math.abs": provider("backend.f64.abs", "math.abs", F64_UNARY_INTRINSIC_SIGNATURE, {
@@ -523,23 +673,28 @@ export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] =
 
 /** Closed, canonically ordered catalogue used by production manifest builders. */
 export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
-  [...PURE_MATH_RUNTIME_PROVIDERS, ...NUMERIC_COERCION_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort(
-    (left, right) => left.id.localeCompare(right.id),
-  ),
+  [
+    ...PURE_MATH_RUNTIME_PROVIDERS,
+    ...NUMERIC_COERCION_RUNTIME_PROVIDERS,
+    ...NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
+    ...ASYNC_RUNTIME_PROVIDERS,
+  ].sort((left, right) => left.id.localeCompare(right.id)),
 );
 
 const FEATURE_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
+  ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
 ]);
 const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_PROVIDER_IDS,
+  ...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
-const HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(ASYNC_HOST_CAPABILITY_IDS);
+const HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);
 const TARGET_SET: ReadonlySet<string> = new Set(ALL_TARGETS);
 const BACKEND_SET: ReadonlySet<string> = new Set(ALL_BACKENDS);
 
@@ -709,18 +864,18 @@ function buildProviderComponents(
 export interface RuntimeManifestBuilderOptions {
   /** Test/integration seam; omission uses the exhaustive production catalogue. */
   readonly providers?: readonly RuntimeProviderDefinition[];
-  /** Test-only traversal/mutation seam; production uses the one closed async catalog. */
-  readonly hostCapabilityRecords?: readonly AsyncHostAdapter[];
+  /** Test-only traversal/mutation seam; production uses the one central catalog. */
+  readonly hostCapabilityRecords?: readonly RuntimeHostCapabilityRecord[];
 }
 
 type BuilderState = "open" | "building" | "frozen" | "failed";
 
 export class RuntimeManifestBuilder {
-  readonly #policy: RuntimeManifestPolicy;
+  readonly #policy: FrozenRuntimeManifestPolicy;
   readonly #uses: IntrinsicUse[] = [];
   readonly #requestedFeatures = new Set<RuntimeFeature>();
   readonly #providers: RuntimeProviderDefinition[];
-  readonly #hostCapabilityRecords: readonly AsyncHostAdapter[];
+  readonly #hostCapabilityRecords: readonly RuntimeHostCapabilityRecord[];
   readonly #addedDependencies = new Map<RuntimeFeature, Set<RuntimeFeature>>();
   readonly #declaredCycles = new Map<string, readonly RuntimeFeature[]>();
   readonly #plannedIntrinsicIds = new Set<IntrinsicId>();
@@ -737,9 +892,13 @@ export class RuntimeManifestBuilder {
         `invalid runtime manifest policy ${String(policy.target)}/${String(policy.backend)}`,
       );
     }
-    this.#policy = Object.freeze({ ...policy });
+    const numberBoundary = policy.numberBoundary ?? NUMBER_BOUNDARY_POLICY_DISABLED;
+    this.#policy = Object.freeze({
+      ...policy,
+      numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
+    });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
-    this.#hostCapabilityRecords = options.hostCapabilityRecords ?? ASYNC_HOST_CAPABILITY_RECORDS;
+    this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
   }
 
   addIntrinsicUse(use: IntrinsicUse, effects: IntrinsicEffectEvidence): void {
@@ -913,9 +1072,9 @@ export class RuntimeManifestBuilder {
       for (const capability of provider.hostCapabilities) hostCapabilityIds.add(capability);
     }
     const hostCapabilities = Object.freeze([...hostCapabilityIds].sort(compareStrings));
-    let capabilityCatalog: readonly AsyncHostAdapter[];
+    let capabilityCatalog: readonly RuntimeHostCapabilityRecord[];
     try {
-      capabilityCatalog = canonicalizeAsyncHostCapabilityCatalog(this.#hostCapabilityRecords);
+      capabilityCatalog = canonicalizeRuntimeHostCapabilityCatalog(this.#hostCapabilityRecords);
     } catch (error) {
       throw new RuntimeManifestInvariantError(
         "invalid-host-capability-catalog",
@@ -923,7 +1082,7 @@ export class RuntimeManifestBuilder {
       );
     }
     const hostCapabilityRecords = Object.freeze(
-      hostCapabilities.map((capability) => resolveAsyncHostCapabilityRecord(capabilityCatalog, capability)),
+      hostCapabilities.map((capability) => resolveRuntimeHostCapabilityRecord(capabilityCatalog, capability)),
     );
     const backendRequirements = projectRuntimeBackendRequirements(providers);
 
@@ -1015,7 +1174,33 @@ export class RuntimeManifestBuilder {
     if (candidates.length === 0) {
       throw new RuntimeManifestInvariantError("missing-runtime-provider", `runtime feature ${feature} has no provider`);
     }
-    const targetCandidates = candidates.filter((candidate) => candidate.supportedTargets.includes(this.#policy.target));
+    // (#3526 F1-S1) The number boundary is decided by the caller-resolved
+    // policy, not by target: three GC combinations share `target: "host"` and
+    // disagree about both arms. An unsupported arm is a typed
+    // `provider-target-unavailable` naming the exact intrinsic and policy, so
+    // the owner-local preparation partition can classify it without guessing.
+    const policyCandidates = isNumberBoundaryFeature(feature)
+      ? ((): readonly RuntimeProviderDefinition[] => {
+          const selectedId = numberBoundaryProviderId(feature, this.#policy.numberBoundary);
+          if (selectedId === null) {
+            throw new RuntimeManifestInvariantError(
+              "provider-target-unavailable",
+              `semantic intrinsic ${feature} is unavailable under number-boundary policy ` +
+                `box=${this.#policy.numberBoundary.box}/unbox=${this.#policy.numberBoundary.unbox}`,
+            );
+          }
+          return candidates.filter((candidate) => candidate.id === selectedId);
+        })()
+      : candidates;
+    if (policyCandidates.length === 0) {
+      throw new RuntimeManifestInvariantError(
+        "missing-runtime-provider",
+        `runtime feature ${feature} has no provider for its resolved policy`,
+      );
+    }
+    const targetCandidates = policyCandidates.filter((candidate) =>
+      candidate.supportedTargets.includes(this.#policy.target),
+    );
     if (targetCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "provider-target-unavailable",
