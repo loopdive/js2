@@ -3,7 +3,7 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -1538,7 +1538,7 @@ function compileNestedFunctionDeclarationInScope(
       // passed by reference as an array-HOF callback, which installs the spec
       // `thisArg` into `__current_this`; direct calls retain the null-guarded
       // undefined fallback (#1702).
-      readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
+      readsCurrentThis: functionLikeReferencesOwnThis(stmt),
     };
     if (reachesDirectEval) {
       liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
@@ -1882,7 +1882,7 @@ function compileNestedFunctionDeclarationInScope(
       // into `__current_this` before the `call_ref`. Allow its `this` to read
       // that global; for direct calls the global is null and the null-guarded
       // read (#1702) falls back to `undefined` — behaviour-preserving.
-      readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
+      readsCurrentThis: functionLikeReferencesOwnThis(stmt),
     };
     if (reachesDirectEval) {
       liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);

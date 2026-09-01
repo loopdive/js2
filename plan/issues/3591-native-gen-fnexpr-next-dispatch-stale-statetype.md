@@ -63,9 +63,11 @@ all original acceptance criteria below are satisfied without adding `env`
 imports to the standalone generator shapes.
 
 The seven-row Test262 list was a diagnostic expansion, not the original
-acceptance scope. Its two captured-closure `chunks`/`windows` exhaustion rows
-are handed to [#5254](5254-es2015-native-generator-capture-carrier.md), and
-its `GeneratorPrototype/next/context-method-invocation` dynamic-`this` row is
+acceptance scope. Its two `chunks`/`windows` exhaustion rows are handed to
+[#5254](5254-test262-original-harness-iterator-shim.md), whose original-harness
+trace proved that the authoritative assembler omits the existing minimal
+`Iterator` preamble before the compiled helper path can be selected. Its
+`GeneratorPrototype/next/context-method-invocation` dynamic-`this` row is
 handed to [#5255](5255-es2015-generator-method-this-transport.md). Those
 independent residuals do not reopen #3591's stale-dispatch fix.
 

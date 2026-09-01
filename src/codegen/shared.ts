@@ -164,6 +164,7 @@ const _registeredDelegates = new Set<string>();
  */
 const REQUIRED_DELEGATE_OWNERS: Readonly<Record<string, string>> = {
   compileExpression: "expressions.ts",
+  compileThisKeyword: "expressions/this-keyword.ts (registered by expressions.ts)",
   compileArrowAsClosure: "closures.ts",
   emitBoundsCheckedArrayGet: "array-methods.ts",
   coerceType: "type-coercion.ts",
@@ -242,6 +243,21 @@ export function compileExpression(
   expectedType?: ValType,
 ): ValType | null {
   return _compileExpression(ctx, fctx, expr, expectedType);
+}
+
+type CompileThisKeywordFn = (ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node) => ValType | null;
+
+let _compileThisKeyword: CompileThisKeywordFn = () => {
+  throw unregisteredDelegateError("compileThisKeyword");
+};
+
+export function registerCompileThisKeyword(fn: CompileThisKeywordFn): void {
+  _compileThisKeyword = fn;
+  markRegistered("compileThisKeyword");
+}
+
+export function compileThisKeywordLate(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): ValType | null {
+  return _compileThisKeyword(ctx, fctx, expr);
 }
 
 // ── compileArrowAsClosure ─────────────────────────────────────────────
