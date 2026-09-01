@@ -799,6 +799,18 @@ export interface FunctionContext {
    */
   isFnctorConstructor?: boolean;
   /**
+   * (#3371) A source function admitted as the stable target of the narrow
+   * standalone `Reflect.construct` route. Its ordinary body reads the runtime
+   * NewTarget only while the matching owner id is active.
+   */
+  reflectConstructNewTargetId?: number;
+  /**
+   * (#3371) A synthesized ordinary-function constructor reached from a marked
+   * class's `super()` chain. It inherits the active Reflect.construct
+   * NewTarget without claiming a new owner id of its own.
+   */
+  reflectConstructNewTargetPassThrough?: boolean;
+  /**
    * (#4464) Local index of the constructed `this` receiver when the
    * construction result is an EXTERNREF object rather than a nominal struct —
    * the `new function(){…}` FunctionExpression lowering. Set ⇒
@@ -1602,6 +1614,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   usesNewTarget: boolean;
   newTargetGlobalIdx: number | undefined;
   classNewTargetIds: Map<string, number>;
+  /**
+   * (#3371) Runtime state for the narrow standalone `Reflect.construct`
+   * ordinary/class route. The owner/value pair is visible to a source function
+   * body that is statically known to be the construct target; the separate
+   * prototype-owner/value pair is consumed once by a marked class allocation
+   * wrapper before its `_init` body (and therefore `super()`) runs. All four
+   * are cached absolute global indices and must follow imported-global shifts.
+   */
+  reflectConstructNewTargetOwnerGlobalIdx: number | undefined;
+  reflectConstructNewTargetValueGlobalIdx: number | undefined;
+  reflectConstructNewTargetProtoOwnerGlobalIdx: number | undefined;
+  reflectConstructNewTargetProtoGlobalIdx: number | undefined;
   /**
    * (#802) Dynamic prototype support. Set by the `scanForDynamicProto` pre-scan
    * when the program mutates an object's [[Prototype]] at runtime

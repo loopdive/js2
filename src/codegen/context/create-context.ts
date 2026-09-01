@@ -163,6 +163,10 @@ export function createCodegenContext(
     usesNewTarget: false, // (#2023) set by the pre-scan in generateModule
     newTargetGlobalIdx: undefined, // (#2023)
     classNewTargetIds: new Map(), // (#2023) className → stable 1-based i32 id
+    reflectConstructNewTargetOwnerGlobalIdx: undefined, // (#3371)
+    reflectConstructNewTargetValueGlobalIdx: undefined, // (#3371)
+    reflectConstructNewTargetProtoOwnerGlobalIdx: undefined, // (#3371)
+    reflectConstructNewTargetProtoGlobalIdx: undefined, // (#3371)
     usesDynamicProto: false, // (#802) set by the scanForDynamicProto pre-scan
     dynamicProtoClasses: new Set(), // (#802) hierarchy-ROOT class names receiving proto mutation (Slice B)
     dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)

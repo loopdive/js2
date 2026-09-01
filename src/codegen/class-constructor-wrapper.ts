@@ -4,6 +4,8 @@ import type { FieldDef, FuncHandle, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
+import { dynamicProtoFieldIdx, dynamicProtoRootFor } from "./dynamic-proto.js";
+import { reflectConstructClassTargetId } from "./new-target.js";
 
 export interface AstFreeClassConstructorNewWrapperInput {
   readonly className: string;
@@ -100,6 +102,41 @@ function astFreeClassConstructorNewWrapperPlan(
   body.push({ op: "struct.new", typeIdx: structTypeIdx });
   const selfLocal = newSignature.params.length;
   body.push({ op: "local.set", index: selfLocal });
+  // (#3371) A marked Reflect.construct class target installs its selected
+  // NewTarget prototype BEFORE `_init` begins, so a derived constructor's
+  // `super()` sees the same allocated receiver and live new.target contract.
+  // The separate proto-owner slot is consumed here: nested ordinary `new C()`
+  // calls made by the constructor body must not inherit the outer override.
+  const protoOwnerGlobal = ctx.reflectConstructNewTargetProtoOwnerGlobalIdx;
+  const protoValueGlobal = ctx.reflectConstructNewTargetProtoGlobalIdx;
+  const reflectOwnerId = reflectConstructClassTargetId(ctx, className);
+  const protoRoot = dynamicProtoRootFor(ctx, className);
+  const protoFieldIdx = protoRoot === undefined ? undefined : dynamicProtoFieldIdx(ctx, protoRoot);
+  const protoRootTypeIdx = protoRoot === undefined ? undefined : ctx.structMap.get(protoRoot);
+  if (
+    protoOwnerGlobal !== undefined &&
+    protoValueGlobal !== undefined &&
+    reflectOwnerId !== undefined &&
+    protoFieldIdx !== undefined &&
+    protoRootTypeIdx !== undefined
+  ) {
+    body.push(
+      { op: "global.get", index: protoOwnerGlobal },
+      { op: "i32.const", value: reflectOwnerId },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: selfLocal },
+          { op: "global.get", index: protoValueGlobal },
+          { op: "struct.set", typeIdx: protoRootTypeIdx, fieldIdx: protoFieldIdx },
+          { op: "i32.const", value: 0 },
+          { op: "global.set", index: protoOwnerGlobal },
+        ],
+      },
+    );
+  }
   for (let index = 0; index < newSignature.params.length; index++) {
     body.push({ op: "local.get", index });
   }

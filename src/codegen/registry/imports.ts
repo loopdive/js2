@@ -305,6 +305,19 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   if (ctx.newTargetGlobalIdx !== undefined && ctx.newTargetGlobalIdx >= threshold) {
     ctx.newTargetGlobalIdx += delta;
   }
+  // (#3371) The ordinary/class Reflect.construct NewTarget contract keeps four
+  // cached module-global indices. They are emitted before arbitrary later
+  // string/global imports, so every cached value must follow the same absolute
+  // index shift as the established class-id new.target global above.
+  for (const key of [
+    "reflectConstructNewTargetOwnerGlobalIdx",
+    "reflectConstructNewTargetValueGlobalIdx",
+    "reflectConstructNewTargetProtoOwnerGlobalIdx",
+    "reflectConstructNewTargetProtoGlobalIdx",
+  ] as const) {
+    const index = ctx[key];
+    if (index !== undefined && index >= threshold) ctx[key] = index + delta;
+  }
   // (#2001 S1 regress) Same hazard for the `$__hole` singleton global. When a
   // string-constant import is inserted after `$Hole` was registered,
   // `shiftGlobalIndices` correctly bumps the already-emitted `global.get

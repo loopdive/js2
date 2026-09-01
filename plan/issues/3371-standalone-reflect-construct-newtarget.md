@@ -18,7 +18,21 @@ goal: standalone-mode
 umbrella: 1781
 related: [1472, 1781, 1905, 2026, 2046, 2618, 3240, 4196, 4661, 5138, 5140, 5143, 5150, 5153, 5154, 5156]
 origin: "2026-09-01 immutable f841 standalone census; reopened because the prior done closure still refuses arbitrary distinct NewTarget."
-checkpoint: ordinary-slice-authorized
+checkpoint: draft-architecture-unmergeable
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/expressions.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions.ts::compileExpressionInner
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::generateModule
+  - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/function-body.ts::compileFunctionBody
 ---
 
 # #3371 — standalone Reflect.construct with arbitrary distinct NewTarget
@@ -232,6 +246,85 @@ for all #3371 work: it must still honor any newly landed #2026/#5153/#5154
 interfaces, and all view, native, bound, and Proxy groups remain separately
 owned.
 
+## Ordinary/class implementation checkpoint — 2026-09-01
+
+The implementation worktree is pinned at planning commit
+`b51340b359d0c27c252496a31bf40c3848630fcb` (base
+`2c3c27a54f78df2b71e034080dc509139776a2af`). A fresh overlap audit found no
+active implementation PR for this arm: the only overlapping open change was
+the frozen, nonmergeable #2046 draft, while #5394 is this planning record and
+the adjacent #5153/#5154 work is already merged or does not touch the
+namespace-static lowering.
+
+The exact standalone baseline remains four explicit-refusal rows (10--13)
+and a passing omitted-NewTarget control. The same five host invocations fail
+for pre-existing host-carrier reasons and are retained as non-regression
+controls, not acceptance criteria for this standalone-only slice.
+
+Source and runtime audit established the following contract before any
+production edit:
+
+- `reserveNativeConstructDriver` already creates an ordinary `$Object`, calls
+  the ordinary closure with that object as `this`, and returns an object result
+  or the receiver. A standalone probe confirms that an `$Object` created from
+  `Array.prototype` preserves `Object.getPrototypeOf(x) === Array.prototype`.
+- A user function's `.prototype` has a dedicated native storage path, while
+  class prototypes require the class/runtime-prototype machinery. A direct
+  generic class-prototype probe currently answers false, so the class branch
+  must set the existing conditional dynamic-prototype field before `_init`,
+  rather than post-mutating a completed instance.
+- The runtime contract therefore carries the evaluated `newTarget` identity
+  and its runtime-read prototype across the construct call, saves/restores it
+  for nesting, and lets the class allocation wrapper consume it before a
+  derived constructor reaches `super()`. Ordinary function targets use the
+  existing native construct driver with the selected runtime prototype.
+- Admission is intentionally limited to source-proven stable local ordinary
+  functions/classes plus the ambient `Array`/`Object` shapes exercised by
+  rows 10--13. It declines bound values, Proxies, native view/buffer/Date/
+  Error/Promise carriers, dynamic aliases, direct-eval/`with` scopes, and
+  mutable target/NewTarget bindings. This is carrier admission, not the old
+  `NewTarget.prototype = ...` source-value substitution: the accepted route
+  performs the property/prototype operation at runtime.
+
+The focused implementation will add regressions for source evaluation order,
+ordinary `new.target`, class/super `new.target`, and retained refusal of an
+excluded carrier. It will not expand the other 29 census rows.
+
+### Frozen implementation checkpoint — 2026-09-01
+
+The first implementation pass is deliberately **not mergeable**. It is an
+uncommitted architectural checkpoint only: it records source-proven candidate
+sites and wires the runtime NewTarget state through ordinary function bodies,
+class allocation, and the existing dynamic-prototype field. The
+`Reflect.construct` namespace-static dispatcher is intentionally still
+unwired, so this checkpoint cannot change the accepted carrier surface.
+
+Focused evidence at this checkpoint:
+
+- `pnpm run typecheck:ts7` — pass (exit 0).
+- Standalone rows 10--13 each retain the exact prior loud #3371
+  `compile_error`; none has become a runtime failure or a different refusal.
+- `test/built-ins/Reflect/construct/return-without-newtarget-argument.js` —
+  pass.
+
+The partial diff is approximately 740 added lines, including 511 lines in
+`src/codegen/new-target.ts`, before it even owns the dispatcher. Do not extend
+that file with the call-site lowering. A successor must first extract a small,
+cohesive `Reflect.construct` ordinary-route module and use it to connect the
+already-existing `reserveNativeConstructDriver` to a runtime
+GetPrototypeFromConstructor-equivalent contract. That design must preserve
+target, argument-list, and NewTarget evaluation order; selected NewTarget
+identity for ordinary `new.target`; class allocation before `_init`/`super`;
+and save/restore nesting. It must retain loud refusal for all view/buffer,
+Date/Error/Promise, bound, Proxy, dynamic-alias, and other unproven carriers.
+No claim of rows 10--13 is justified until the exact paths are pass.
+
+The frontmatter's narrowly enumerated LOC/function allowances exist only
+because the repository's normal commit hook requires a passing ratchet even
+for this draft publication. They document the architectural fault rather than
+waive it: the successor must remove them while moving the state and dispatcher
+seam into a dedicated module.
+
 ## Future acceptance and regression gate
 
 Run these only in the later implementation worktree, after acquiring ownership;
@@ -270,9 +363,17 @@ they were intentionally **not** run for this planning audit.
 
 ## Handoff
 
-The next owner should begin with slice 1's post-#2046 audit, then implement only
-the four ordinary/class paths if the interfaces are still unowned. Record a fresh
-precise result for all 33 paths after each slice, retain the no-distinct-
-NewTarget positive control, and leave each carrier group as a separate
-coordination decision. This document is the corrected reopen record; it does
-not certify the historical closure or authorize a broad source rewrite.
+This published draft is a **nonmergeable architectural checkpoint**, not an
+implementation claim. It has zero pass gain: its exact evidence is TS7 green,
+rows 10--13 still loud compile errors, and the omitted-NewTarget control pass.
+The dispatcher is unwired and all excluded carriers remain unchanged.
+
+The next owner must begin by decomposing the inert #3371 substrate into a
+dedicated ordinary `Reflect.construct` module before wiring a dispatcher. Only
+then implement the four ordinary/class paths if the interfaces are still
+unowned, with targeted semantic regressions and a fresh exact result. Record a
+precise result for all 33 paths after each later carrier slice, retain the
+no-distinct-NewTarget positive control, and leave view/buffer, native,
+bound-function, and Proxy groups as separate coordination decisions. This
+document neither certifies the historical closure nor authorizes a broad source
+rewrite.
