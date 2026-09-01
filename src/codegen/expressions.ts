@@ -79,7 +79,7 @@ import { compileCallExpression } from "./expressions/calls.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
-import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
+import { emitNewTargetClassId, emitReflectConstructNewTargetRead } from "./new-target.js"; // (#2023 / #3371)
 
 import { compileConditionalExpression, compileYieldExpression } from "./expressions/misc.js";
 
@@ -1621,6 +1621,12 @@ function compileExpressionInner(
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.NewKeyword && expr.name.text === "target") {
+    // (#3371) An admitted ordinary Reflect.construct target keeps its source
+    // function body on the normal closure path, so it needs the explicit
+    // runtime NewTarget value rather than the class-only i32 id. Synthesized
+    // fnctor bodies in an admitted class's super chain use the pass-through
+    // variant. Every other function retains the existing undefined result.
+    if (emitReflectConstructNewTargetRead(ctx, fctx)) return { kind: "externref" };
     if (fctx.isConstructor) {
       // (#2023) Read the live new.target class-id (set at the outermost `new`
       // site, preserved through super()). Non-zero inside a construction, so

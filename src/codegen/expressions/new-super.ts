@@ -58,7 +58,15 @@ import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
 import { COLLECTION_KIND, ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
-import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
+import {
+  activateReflectConstructNewTarget,
+  emitSetNewTargetBeforeCall,
+  ensureNewTargetGlobal,
+  reflectConstructFnctorPassesNewTarget,
+  restoreReflectConstructNewTargetState,
+  saveReflectConstructNewTargetState,
+  type SavedReflectConstructNewTargetState,
+} from "../new-target.js"; // (#2023 / #3371)
 import {
   ensureNativeProxyRuntime,
   ensureObjectRuntime,
@@ -75,6 +83,7 @@ import {
   resolveComputedKeyExpression,
 } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
+import { emitLazyProtoGet } from "./extern.js";
 import {
   MAX_NATIVE_CONSTRUCT_ARITY,
   reserveNativeConstructDriver,
@@ -2085,6 +2094,7 @@ function compileNewFunctionDeclaration(
     });
   }
   appendFnctorConstructorParam(ctx, paramDefs);
+  const reflectConstructPassThrough = reflectConstructFnctorPassesNewTarget(ctx, funcDecl);
 
   const ctorFctx: FunctionContext = {
     name: ctorName,
@@ -2105,6 +2115,7 @@ function compileNewFunctionDeclaration(
     // return type — i.e. pushed `ref.null $__fnctor_<F>` — and the `new` site
     // trapped on the first property read. See `isFnctorConstructor`.
     isFnctorConstructor: true,
+    ...(reflectConstructPassThrough ? { reflectConstructNewTargetPassThrough: true } : {}),
     // The JS-host constructor executes with a concrete fnctor receiver, which
     // lets constructor-time prototype calls use the in-Wasm driver before
     // exports are available. Standalone keeps the historical dynamic `this`
@@ -4959,7 +4970,23 @@ function usesHostConstructClosureBase(ctx: CodegenContext, expression: ts.Expres
   );
 }
 
-function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: ts.NewExpression): ValType | null {
+export interface ReflectConstructClassNewTarget {
+  readonly expression: ts.Expression;
+  readonly ownerId: number;
+  /** A local class uses its prototype singleton rather than a generic carrier read. */
+  readonly className?: string;
+}
+
+export interface CompileNewExpressionOptions {
+  readonly reflectConstructNewTarget?: ReflectConstructClassNewTarget;
+}
+
+function compileNewExpression(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.NewExpression,
+  options?: CompileNewExpressionOptions,
+): ValType | null {
   // (#3927 per-type layouts) Publish the allocation-label hint when this `new`
   // is a recorded label site of a split family. BEFORE the arguments compile —
   // a labelled allocation nested in them consumes and resets the hint, so the
@@ -6574,6 +6601,52 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       }
     }
 
+    // (#3371) Reflect.construct evaluates NewTarget after the argument list,
+    // then makes both its identity and GetPrototypeFromConstructor result live
+    // for this one allocation. The class wrapper consumes the proto owner
+    // before `_init`/`super`; the owner/value pair stays live for an admitted
+    // ordinary-function parent that reads `new.target`.
+    let reflectConstructSaved: SavedReflectConstructNewTargetState | undefined;
+    const reflectConstructNewTarget = options?.reflectConstructNewTarget;
+    if (reflectConstructNewTarget) {
+      const newTargetType = compileExpression(ctx, fctx, reflectConstructNewTarget.expression, { kind: "externref" });
+      if (newTargetType && newTargetType.kind !== "externref") {
+        coerceType(ctx, fctx, newTargetType, { kind: "externref" });
+      } else if (newTargetType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      const newTargetLocal = allocLocal(fctx, `__reflect_construct_nt_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: newTargetLocal });
+
+      if (reflectConstructNewTarget.className && emitLazyProtoGet(ctx, fctx, reflectConstructNewTarget.className)) {
+        // The class prototype singleton is the compiler's authoritative
+        // representation; generic `__extern_get` cannot recover it reliably.
+      } else {
+        ensureObjectRuntime(ctx);
+        addStringConstantGlobal(ctx, "prototype");
+        const getPrototypeIdx = ctx.funcMap.get("__extern_get");
+        if (getPrototypeIdx !== undefined) {
+          fctx.body.push(
+            { op: "local.get", index: newTargetLocal },
+            ...stringConstantExternrefInstrs(ctx, "prototype"),
+            { op: "call", funcIdx: getPrototypeIdx },
+          );
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+      }
+      const prototypeLocal = allocLocal(fctx, `__reflect_construct_proto_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: prototypeLocal });
+      reflectConstructSaved = saveReflectConstructNewTargetState(ctx, fctx);
+      activateReflectConstructNewTarget(
+        ctx,
+        fctx.body,
+        reflectConstructNewTarget.ownerId,
+        newTargetLocal,
+        prototypeLocal,
+      );
+    }
+
     // (#2023) With args on the stack, set new.target to THIS class's id right
     // before the call. The ctor body (and the super() chain it drives, which
     // calls `_init` and never touches the global) reads this id.
@@ -6602,6 +6675,13 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       fctx.body.push({ op: "local.get", index: resultLocal });
       releaseTempLocal(fctx, resultLocal);
       releaseTempLocal(fctx, ntPrevLocal);
+    }
+    if (reflectConstructSaved !== undefined) {
+      const resultLocal = allocTempLocal(fctx, { kind: "ref", typeIdx: structTypeIdx });
+      fctx.body.push({ op: "local.set", index: resultLocal });
+      restoreReflectConstructNewTargetState(ctx, fctx.body, reflectConstructSaved);
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      releaseTempLocal(fctx, resultLocal);
     }
     return { kind: "ref", typeIdx: structTypeIdx };
   }

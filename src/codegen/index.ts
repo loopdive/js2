@@ -272,7 +272,7 @@ import type {
 } from "./context/types.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
-import { scanForNewTarget } from "./new-target.js"; // (#2023)
+import { scanForNewTarget, scanForStandaloneReflectConstructNewTarget } from "./new-target.js"; // (#2023 / #3371)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import {
@@ -5421,6 +5421,10 @@ export function generateModule(
     // Off by default — programs without holes are byte-identical.
     scanForArrayHoles(ctx, ast.sourceFile);
 
+    // (#3371) This must run after scanForArrayHoles populates dynamicCodeDirty
+    // and before collectDeclarations fixes the marked class-root layout.
+    scanForStandaloneReflectConstructNewTarget(ctx, ast.sourceFile);
+
     if (
       options?.experimentalIR &&
       ctx.standalone &&
@@ -10362,6 +10366,15 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("array-hole-scan", () => {
       for (const sf of multiAst.sourceFiles) {
         scanForArrayHoles(ctx, sf);
+      }
+    });
+
+    // (#3371) Admit only stable ordinary/class Reflect.construct sites after
+    // the direct-eval scan, but before declaration collection fixes class
+    // layouts. A direct eval makes an otherwise lexical binding unsafe here.
+    profilePhase("reflect-construct-newtarget-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForStandaloneReflectConstructNewTarget(ctx, sf);
       }
     });
 

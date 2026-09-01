@@ -81,6 +81,7 @@ import {
   functionMayReachDirectEval,
   reifyCurrentDirectEvalBindings,
 } from "./direct-eval-environment.js";
+import { reflectConstructFunctionTargetId } from "./new-target.js"; // (#3371)
 
 /** Maximum number of instructions for a function body to be considered inlinable */
 export const INLINE_MAX_INSTRS = 10;
@@ -358,6 +359,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // ordinary calls and only changes the value when a receiver was actually
   // installed by an enclosing dispatch.
   const readsThis = decl.body ? bodyReferencesOwnThis(decl.body) : false;
+  const reflectConstructTargetId = reflectConstructFunctionTargetId(ctx, decl);
 
   const fctx: FunctionContext = {
     name: func.name,
@@ -373,6 +375,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     savedBodies: [],
     isGenerator,
     readsCurrentThis: readsThis,
+    ...(reflectConstructTargetId !== undefined ? { reflectConstructNewTargetId: reflectConstructTargetId } : {}),
     i32CoercedLocals: i32CoercedLocals.size > 0 ? i32CoercedLocals : undefined,
     i32SpecializedArrays: i32SpecializedArrays.size > 0 ? i32SpecializedArrays : undefined,
   };
