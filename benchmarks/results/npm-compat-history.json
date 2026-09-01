@@ -11678,22 +11678,6 @@
       }
     },
     {
-      "generatedAt": "2026-09-01T09:35:42.459Z",
-      "sourceRevision": "9ace5d439b7f6763ecf5d29ebf95416b2c63e078",
-      "optimizationLevels": {
-        "js-host": 4,
-        "standalone": 4
-      },
-      "packages": {
-        "lit": {
-          "jsHost": {
-            "dynamic": 0.010263892279533489
-          },
-          "standalone": {}
-        }
-      }
-    },
-    {
       "generatedAt": "2026-09-01T09:52:33.388Z",
       "sourceRevision": "2dfb839622aa20e893facfc46d4a86c937e22e4c",
       "optimizationLevels": {
@@ -11807,6 +11791,22 @@
         "redux": {
           "jsHost": {
             "dynamic": 0.001491259862127837
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-01T10:43:55.063Z",
+      "sourceRevision": "9ace5d439b7f6763ecf5d29ebf95416b2c63e078",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010465402051562635
           },
           "standalone": {}
         }
