@@ -1,10 +1,10 @@
 ---
 id: 5150
 title: "ES2015 standalone: buffers conformance wave 1"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-01
 priority: high
 horizon: l
 feasibility: medium
@@ -14,26 +14,35 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
-  - src/runtime.ts
   - src/codegen/dataview-native.ts
   - src/codegen/builtin-value-read.ts
-  - src/codegen/builtin-fn-meta.ts
+  - src/codegen/property-access.ts
   - src/codegen/property-access-dispatch.ts
-  - src/codegen/expressions/new-super.ts
+  - src/codegen/declarations.ts
+  - src/codegen/closed-method-dispatch.ts
   - src/codegen/expressions/new-indexed.ts
   - src/codegen/expressions/new-builtin-globals.ts
-  - src/codegen/expressions/calls.ts
-  - src/codegen/expressions/call-namespace-static.ts
-  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
 ---
 
 # ES2015 standalone: buffers conformance wave 1
 
-LOC-growth allowance rationale (2026-08-28): the clusters below add codegen
-arms (setter-undefined return, ArrayBuffer.prototype.slice SpeciesConstructor,
-ctor argument validation, isView closure body, NewTarget.prototype
-observability) to the files in `loc-budget-allow` — measured growth is
-expected and granted for this change-set.
+LOC/function-growth allowance rationale (2026-09-01, measured on the landed
+change-set): the wave adds codegen arms — the explicit-`undefined` tests and
+the shared `isView` carrier chain (`dataview-native.ts` +128), the DataView
+constructor's brand / detached / bounds validation (`new-indexed.ts` +196 in
+`tryCompileIndexedBuiltinNew`), the module-global `$__ta_view` slot lookups
+(`property-access*.ts`, `declarations.ts`), the `undefined`-singleton argument
+padding (`closed-method-dispatch.ts`) and the `ArrayBuffer.isView` value
+closure (`builtin-value-read.ts`). The `new-indexed.ts` function growth is the
+one that deserves a follow-up: `tryCompileIndexedBuiltinNew` is now 884 lines
+and its DataView arm should be lifted into its own `tryCompileDataViewNew`
+before the next buffer wave adds to it.
 
 ## Problem
 
