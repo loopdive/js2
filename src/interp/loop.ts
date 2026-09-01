@@ -37,11 +37,13 @@
 import {
   Builtin,
   BUILTIN_ASSIGN_OUTER_NAME,
+  BUILTIN_DYNAMIC_IMPORT,
   BUILTIN_DIRECT_EVAL,
   BUILTIN_DEFINE_CLASS_METHOD,
   BUILTIN_FINALIZE_CLASS,
   BUILTIN_FOR_IN_KEYS,
   BUILTIN_FOR_OF_VALUES,
+  BUILTIN_PUSH_FUNCTION_ENV,
   BUILTIN_OBJECT_DEFINE_PROPERTY,
   BUILTIN_PUSH_OBJECT_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
@@ -86,6 +88,7 @@ import {
 } from "./runtime-ops.js";
 import {
   createLexicalEnvironment,
+  createFunctionEnvironment,
   createObjectEnvironment,
   createRuntimeEvalGlobalEnvironment,
   deleteOwnEnvironmentBinding,
@@ -111,10 +114,10 @@ import {
   type JSValue,
   type Regs,
 } from "./types.js";
+import { constructValue, describe, intrinsicErrorConstructor } from "./call-helpers.js";
 
 /** A genuine interpreter-invariant violation (bad opcode, stalled decode). Never
- *  routed through the exception table — rethrown so it cannot be masked by a
- *  program `try/catch`. */
+ * routed through the exception table, so program try/catch cannot mask it. */
 export class InterpInternalError extends Error {
   constructor(message: string) {
     super(`interp/loop: ${message}`);
@@ -152,10 +155,34 @@ export type RuntimeDirectEvalHook = (
  * parser callback outside loop.ts avoids a dynamic-function↔loop import cycle. */
 export type RuntimeFunctionHook = (args: JSValue[]) => JSValue;
 
+/** Loader-neutral metadata supplied to a realm's dynamic-import hook. ESTree
+ * locations use one-based lines and zero-based columns. `options` is the raw
+ * second ImportCall argument after ordinary expression evaluation. */
+export interface RuntimeDynamicImportMetadata {
+  referrer: JSValue;
+  line: JSValue;
+  column: JSValue;
+  options: JSValue;
+}
+
+/** Realm-local dynamic-import policy. The interpreter owns evaluation,
+ * ToString, and Promise conversion; the hook owns resolution and loading. */
+export type RuntimeDynamicImportHook = (specifier: string, metadata: RuntimeDynamicImportMetadata) => JSValue;
+
 const RUNTIME_EVAL_INTRINSICS: WeakMap<object, JSValue> = new WeakMap();
 const RUNTIME_DIRECT_EVAL_HOOKS: WeakMap<object, RuntimeDirectEvalHook> = new WeakMap();
 const RUNTIME_FUNCTION_INTRINSICS: WeakMap<object, JSValue> = new WeakMap();
 const RUNTIME_FUNCTION_HOOKS: WeakMap<object, RuntimeFunctionHook> = new WeakMap();
+const RUNTIME_DYNAMIC_IMPORT_HOOKS: WeakMap<object, RuntimeDynamicImportHook> = new WeakMap();
+const RUNTIME_ARRAY_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
+const RUNTIME_PROMISE_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
+
+/** Install or replace the loader for one runtime-eval realm. Replacing is
+ * intentional: repeated script entries share a realm, while an embedder may
+ * update loader state without rebuilding already-emitted bytecode. */
+export function installRuntimeDynamicImportHook(globalObject: JSValue, hook: RuntimeDynamicImportHook): void {
+  RUNTIME_DYNAMIC_IMPORT_HOOKS.set(globalObject as object, hook);
+}
 
 /** Install one stable `%eval%` identity for a realm. Re-entering the provider
  * must not overwrite a later source-level assignment to `globalThis.eval`, so
@@ -170,6 +197,16 @@ export function installRuntimeEvalRealm(
   const key = globalObject as object;
   const existing = RUNTIME_EVAL_INTRINSICS.get(key);
   if (existing !== undefined) return existing;
+  // Interpreted arrays reach their methods through the generic vec property
+  // reader. Retaining the realm's intrinsic prototype makes standalone builds
+  // materialize and seed that reader's Array-prototype companion before a call
+  // such as `[1].every(callback)` crosses the boundary.
+  RUNTIME_ARRAY_PROTOTYPES.set(key, Array.prototype);
+  // Dynamic import is specified to return a Promise, and interpreted property
+  // reads resolve `.then`/`.catch`/`.finally` through the generic carrier path.
+  // Retain the intrinsic prototype so standalone provider compilation emits
+  // and seeds its native-prototype companion just as it does for arrays.
+  RUNTIME_PROMISE_PROTOTYPES.set(key, Promise.prototype);
   const realmFunction = __runtime_eval_wrap_intrinsic_function_callback(intrinsicFunction, "Function", 1);
   const realmEval = __runtime_eval_wrap_intrinsic_callback(intrinsicEval, "eval", 1, realmFunction);
   RUNTIME_EVAL_INTRINSICS.set(key, realmEval);
@@ -481,9 +518,21 @@ export function exposeRuntimeEvalValue(value: JSValue): JSValue {
  * normalize an existing carrier first and wrap primitive payloads exactly
  * once. Interpreted closures retain their callable callback marker. */
 export function exposeRuntimeEvalSharedValue(value: JSValue): JSValue {
-  const normalized = __runtime_eval_unwrap_result(value);
+  const normalized = normalizeRuntimeEvalSharedValue(value);
   if (isInterpClosure(normalized)) return exposeRuntimeEvalValue(normalized);
   return __runtime_eval_wrap_result(normalized);
+}
+
+/** Import one value read from caller-owned shared storage into the provider's
+ * primitive domain. A caller module's private undefined singleton can cross as
+ * a genuine reference when it was written before the boundary carrier was
+ * installed. It remains observably undefined to `typeof`, but letting that
+ * foreign singleton flow into provider-owned objects makes later provider-
+ * local null fast paths conflate it with null. Re-materialize only that
+ * primitive; null and all genuine references retain their exact identity. */
+function normalizeRuntimeEvalSharedValue(value: JSValue): JSValue {
+  const normalized = __runtime_eval_unwrap_result(value);
+  return typeof normalized === "undefined" ? undefined : normalized;
 }
 
 /** Replace provider-owned closures stored on the shared realm object with
@@ -574,18 +623,6 @@ export function interpEnter(meta: FuncMeta, envRec: EnvRec | null, thisArg: JSVa
  * after the complete chain misses.  `null` is the private "not intrinsic"
  * sentinel because none of these constructor values can itself be null.
  */
-function intrinsicErrorConstructor(name: JSValue): JSValue {
-  if (name === "Error") return Error;
-  if (name === "TypeError") return TypeError;
-  if (name === "RangeError") return RangeError;
-  if (name === "SyntaxError") return SyntaxError;
-  if (name === "ReferenceError") return ReferenceError;
-  if (name === "EvalError") return EvalError;
-  if (name === "URIError") return URIError;
-  if (name === "AggregateError") return AggregateError;
-  return null;
-}
-
 function envLookup(env: EnvRec | null, name: JSValue): JSValue {
   let e = env;
   for (;;) {
@@ -596,13 +633,13 @@ function envLookup(env: EnvRec | null, name: JSValue): JSValue {
     }
     const cell = ownEnvCell(e, name);
     if (cell !== null) {
-      const value = __runtime_eval_unwrap_result(cell.value);
+      const value = normalizeRuntimeEvalSharedValue(cell.value);
       if (value === EVAL_TDZ) throw new ReferenceError(`${String(name)} is not initialized`);
       if (runtimeEvalEnvironment(env, value) !== null) return value;
       return __runtime_eval_unwrap_interpreted_callback(value);
     }
     if (e.kind !== ENV_DECLARATIVE && name in e.backing) {
-      const value = __runtime_eval_unwrap_result(e.backing[name]);
+      const value = normalizeRuntimeEvalSharedValue(e.backing[name]);
       if (runtimeEvalEnvironment(env, value) !== null) return value;
       return __runtime_eval_unwrap_interpreted_callback(value);
     }
@@ -658,7 +695,7 @@ function interpretedPropertyGet(env: EnvRec | null, value: JSValue, key: JSValue
     }
     return anyGet(normalized, key);
   }
-  return anyGet(value, key);
+  return anyGet(normalized, key);
 }
 
 /** Return one binding cell owned by a declarative record. */
@@ -873,13 +910,11 @@ function typeofName(env: EnvRec | null, name: JSValue): JSValue {
   }
 }
 
-// ── exception-table scan ──────────────────────────────────────────────────────
-// Returns the packed [handlerPC, handlerReg] of the innermost (tightest-span)
-// covering row, or -1 in `.pc` when there is no handler.
 interface Handler {
   pc: number;
   reg: number;
 }
+
 function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   if (exnTable === null) return { pc: -1, reg: -1 };
   let bestPc = -1;
@@ -889,10 +924,10 @@ function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   const n = exnTable.length;
   for (;;) {
     if (i + EXN_ROW > n) break;
-    const s = exnTable[i]!;
+    const start = exnTable[i]!;
     const end = exnTable[i + 1]!;
-    if (s <= throwPc && throwPc < end) {
-      const span = end - s;
+    if (start <= throwPc && throwPc < end) {
+      const span = end - start;
       if (span < bestSpan) {
         bestSpan = span;
         bestPc = exnTable[i + 2]!;
@@ -904,407 +939,429 @@ function findHandler(exnTable: number[] | null, throwPc: number): Handler {
   return { pc: bestPc, reg: bestReg };
 }
 
+class DispatchState {
+  readonly frames: Frame[] = [];
+  readonly callSites: number[] = [];
+  frame: Frame;
+  meta: FuncMeta;
+  code: number[];
+  consts: JSValue[];
+  regs: Regs;
+  pc: number;
+  acc: JSValue;
+  curInstrPc: number;
+  steps: number;
+
+  constructor(bottom: Frame) {
+    this.frame = bottom;
+    this.meta = bottom.meta;
+    this.code = bottom.meta.code;
+    this.consts = bottom.meta.consts;
+    this.regs = bottom.regs;
+    this.pc = bottom.pc;
+    this.acc = undefined;
+    this.curInstrPc = 0;
+    this.steps = 0;
+  }
+}
+
+function installActiveFrame(state: DispatchState, frame: Frame, pc: number): void {
+  state.frame = frame;
+  state.meta = frame.meta;
+  state.code = frame.meta.code;
+  state.consts = frame.meta.consts;
+  state.regs = frame.regs;
+  state.pc = pc;
+}
+
+// These intentionally remain separate, substantial opcode-family functions.
+// The runtime-eval provider self-compiles this interpreter; folding every
+// opcode back into `run` creates a Wasm body too large for V8's optimizing tier.
+function dispatchValueAndOperatorOp(state: DispatchState, op: number, a: number, b: number): void {
+  const consts = state.consts;
+  const regs = state.regs;
+  let acc = state.acc;
+
+  switch (op) {
+    // ── const / register moves ──
+    case Op.LdaConst:
+      acc = consts[a];
+      break;
+    case Op.LdaUndef:
+      acc = undefined;
+      break;
+    case Op.LdaNull:
+      acc = null;
+      break;
+    case Op.LdaTrue:
+      acc = true;
+      break;
+    case Op.LdaFalse:
+      acc = false;
+      break;
+    case Op.LdaZero:
+      acc = 0;
+      break;
+    case Op.Star:
+      regs[a] = acc;
+      break;
+    case Op.Ldar:
+      acc = regs[a];
+      break;
+    case Op.Mov:
+      regs[b] = regs[a];
+      break;
+
+    // ── arithmetic / comparison (acc = op(regs[a], acc)) ──
+    case Op.Add:
+      acc = anyAdd(regs[a], acc);
+      break;
+    case Op.Sub:
+      acc = anySub(regs[a], acc);
+      break;
+    case Op.Mul:
+      acc = anyMul(regs[a], acc);
+      break;
+    case Op.Div:
+      acc = anyDiv(regs[a], acc);
+      break;
+    case Op.Mod:
+      acc = anyMod(regs[a], acc);
+      break;
+    case Op.Shl:
+      acc = anyShl(regs[a], acc);
+      break;
+    case Op.Shr:
+      acc = anyShr(regs[a], acc);
+      break;
+    case Op.ShrU:
+      acc = anyShrU(regs[a], acc);
+      break;
+    case Op.BitOr:
+      acc = anyBitOr(regs[a], acc);
+      break;
+    case Op.BitAnd:
+      acc = anyBitAnd(regs[a], acc);
+      break;
+    case Op.BitXor:
+      acc = anyBitXor(regs[a], acc);
+      break;
+    case Op.Neg:
+      acc = anyNeg(acc);
+      break;
+    case Op.Not:
+      acc = anyLogicalNot(acc);
+      break;
+    case Op.TypeOf:
+      acc = runtimeEvalEnvironment(state.frame.envRec, acc) === null ? anyTypeof(acc) : "function";
+      break;
+    case Op.Eq:
+      acc = anyLooseEq(regs[a], acc);
+      break;
+    case Op.StrictEq:
+      acc = anyStrictEq(regs[a], acc);
+      break;
+    case Op.Lt:
+      acc = anyLt(regs[a], acc);
+      break;
+    case Op.Le:
+      acc = anyLe(regs[a], acc);
+      break;
+    case Op.Gt:
+      acc = anyGt(regs[a], acc);
+      break;
+    case Op.Ge:
+      acc = anyGe(regs[a], acc);
+      break;
+    default:
+      throw new InterpInternalError(`unexpected value/operator opcode ${op} at pc ${state.curInstrPc}`);
+  }
+
+  state.acc = acc;
+}
+
+function dispatchPropertyAndEnvironmentOp(state: DispatchState, op: number, a: number, b: number): void {
+  const frame = state.frame;
+  const meta = state.meta;
+  const consts = state.consts;
+  const regs = state.regs;
+  let acc = state.acc;
+
+  switch (op) {
+    // ── property (the shared dynamic MOP) ──
+    case Op.GetProp:
+      acc = interpretedPropertyGet(frame.envRec, acc, consts[a]);
+      break;
+    case Op.GetElem:
+      acc = interpretedPropertyGet(frame.envRec, acc, regs[a]);
+      break;
+    case Op.SetProp:
+      acc = anySet(regs[b], consts[a], acc);
+      mirrorMappedArgumentsWrite(frame.envRec, regs[b], consts[a], acc);
+      break;
+    case Op.SetElem:
+      acc = anySet(regs[b], regs[a], acc);
+      mirrorMappedArgumentsWrite(frame.envRec, regs[b], regs[a], acc);
+      break;
+    case Op.DeleteProp: {
+      const object = acc;
+      const deleted = deletePropertyWithMappedArguments(frame.envRec, object, consts[a]);
+      if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
+      acc = deleted;
+      break;
+    }
+    case Op.DeleteElem: {
+      const object = acc;
+      const key = regs[a];
+      const deleted = deletePropertyWithMappedArguments(frame.envRec, object, key);
+      if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
+      acc = deleted;
+      break;
+    }
+    case Op.DeleteName:
+      acc = envDelete(frame.envRec, consts[a]);
+      break;
+
+    // ── variables (env-record chain, doc §14) ──
+    case Op.LdGlobal:
+    case Op.LdName:
+      acc = envLookup(frame.envRec, consts[a]);
+      break;
+    case Op.StGlobal:
+    case Op.StName:
+      envAssign(frame.envRec, consts[a], acc, (meta.flags & FLAG_STRICT) !== 0);
+      break;
+    case Op.InitName:
+      envInitialize(frame.envRec, consts[a], acc);
+      break;
+    default:
+      throw new InterpInternalError(`unexpected property/environment opcode ${op} at pc ${state.curInstrPc}`);
+  }
+
+  state.acc = acc;
+}
+
+function dispatchCallOp(state: DispatchState, op: number, a: number, b: number): void {
+  const frame = state.frame;
+  const regs = state.regs;
+  let acc = state.acc;
+
+  switch (op) {
+    case Op.Call: {
+      const base = a;
+      const argc = b;
+      const originalCallee = acc;
+      const evalEnv = runtimeEvalEnvironment(frame.envRec, originalCallee);
+      const callee = evalEnv === null ? __runtime_eval_unwrap_interpreted_callback(originalCallee) : originalCallee;
+      if (evalEnv !== null) {
+        const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(evalEnv.backing as object);
+        if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
+        acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, evalEnv.backing, false);
+      } else if (isInterpClosure(callee)) {
+        const binding = INTERP_BINDINGS.get(callee as object)!;
+        const cm = binding.meta;
+        if ((cm.flags & FLAG_RUNTIME_EVAL) !== 0) {
+          const globalEnv = globalEnvironment(binding.envRec);
+          if (globalEnv === null) throw new InterpInternalError("runtime eval closure has no realm");
+          const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(globalEnv.backing as object);
+          if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
+          acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, globalEnv.backing, false);
+        } else if ((cm.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
+          const globalEnv = globalEnvironment(binding.envRec);
+          if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
+          const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
+          if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
+          const args: JSValue[] = new Array(argc);
+          for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
+          acc = hook(args);
+        } else if ((cm.flags & FLAG_CLASS_CONSTRUCTOR) !== 0) {
+          throw new TypeError("Class constructor cannot be invoked without 'new'");
+        } else {
+          const cregs: Regs = new Array(cm.regCount);
+          for (let i = 0; i < cm.regCount; i += 1) cregs[i] = undefined;
+          cregs[0] = (cm.flags & FLAG_STRICT) !== 0 ? regs[base] : normalizeSloppyThis(binding.envRec, regs[base]);
+          const np = argc < cm.paramCount ? argc : cm.paramCount;
+          for (let i = 0; i < np; i += 1) cregs[1 + i] = regs[base + 1 + i];
+          // Suspend the caller, install the callee frame (no host recursion).
+          frame.pc = state.pc;
+          state.frames.push(frame);
+          state.callSites.push(state.curInstrPc);
+          installActiveFrame(state, new Frame(cm, 0, cregs, binding.envRec, frame), 0);
+        }
+      } else {
+        // Host boundary (E1↔E2 SEAM #2). TypeError on a non-callable is a
+        // real JS exception → routed through the exn table.
+        if (typeof callee !== "function") {
+          throw new TypeError(`${describe(callee)} is not a function`);
+        }
+        const recv = regs[base];
+        const args: JSValue[] = new Array(argc);
+        for (let i = 0; i < argc; i += 1) {
+          // A closure written through the erased register vector can be carried
+          // as `$AnyValue` in a standalone build. Normalize that carrier before
+          // testing the provider-local closure identity; otherwise an inline HOF
+          // callback crosses as a non-callable raw value instead of its marker.
+          const arg = __runtime_eval_unwrap_interpreted_callback(regs[base + 1 + i]);
+          args[i] = isInterpClosure(arg) ? exposeRuntimeEvalValue(arg) : arg;
+        }
+        acc = __runtime_eval_apply_callable(callee as (...a: JSValue[]) => JSValue, recv, args);
+      }
+      break;
+    }
+    case Op.Construct: {
+      const base = a;
+      const argc = b;
+      const originalCallee = acc;
+      const args: JSValue[] = new Array(argc);
+      for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
+      if (runtimeEvalEnvironment(frame.envRec, originalCallee) !== null) {
+        throw new TypeError("eval is not a constructor");
+      }
+      const callee = __runtime_eval_unwrap_interpreted_callback(originalCallee);
+      if (isInterpClosure(callee)) {
+        const binding = INTERP_BINDINGS.get(callee as object)!;
+        if ((binding.meta.flags & FLAG_RUNTIME_EVAL) !== 0) {
+          throw new TypeError("eval is not a constructor");
+        }
+        if ((binding.meta.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
+          const globalEnv = globalEnvironment(binding.envRec);
+          if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
+          const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
+          if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
+          acc = hook(args);
+        } else {
+          const proto = (callee as { prototype?: JSValue }).prototype;
+          const self: JSValue = Object.create(proto && typeof proto === "object" ? proto : Object.prototype);
+          const r = interpEnter(binding.meta, binding.envRec, self, args); // boundary recursion (Phase 1)
+          acc = r !== null && (typeof r === "object" || typeof r === "function") ? r : self;
+        }
+      } else if (typeof callee === "function") {
+        acc = constructValue(callee, args);
+      } else {
+        throw new TypeError(`${describe(callee)} is not a constructor`);
+      }
+      break;
+    }
+    case Op.CallBuiltin: {
+      const builtinId = a;
+      const base = b;
+      const argc = state.code[state.pc]!;
+      state.pc += 1;
+      acc = callBuiltin(builtinId, regs, base, argc, frame);
+      break;
+    }
+    default:
+      throw new InterpInternalError(`unexpected call opcode ${op} at pc ${state.curInstrPc}`);
+  }
+
+  state.acc = acc;
+}
+
+/** Return true only when the bottom activation has completed. */
+function dispatchControlOp(state: DispatchState, op: number, a: number): boolean {
+  if (op === Op.Jump) state.pc = a;
+  else if (op === Op.JumpIfTrue) {
+    if (isTruthy(state.acc)) state.pc = a;
+  } else if (op === Op.JumpIfFalse) {
+    if (!isTruthy(state.acc)) state.pc = a;
+  } else if (op === Op.Return) {
+    const result = state.acc;
+    if (state.frames.length === 0) return true;
+    const caller = state.frames.pop()!;
+    state.callSites.pop();
+    installActiveFrame(state, caller, caller.pc);
+    state.acc = result;
+  } else if (op === Op.Throw) throw new ThrowSignal(state.acc);
+  else throw new InterpInternalError(`unexpected control opcode ${op} at pc ${state.curInstrPc}`);
+  return false;
+}
+
+/** Decode and execute one bytecode instruction. Returns true on bottom Return. */
+function dispatchNext(state: DispatchState): boolean {
+  state.steps += 1;
+  if (state.steps > MAX_STEPS) throw new InterpInternalError("step budget exceeded (malformed bytecode?)");
+  state.curInstrPc = state.pc;
+  const word = state.code[state.pc]!;
+  state.pc += 1;
+  const op = word & OP_MASK;
+  const b = (word >>> 20) & OPERAND_MASK;
+  let a: number;
+  if ((word & WIDE_FLAG) !== 0) {
+    a = state.code[state.pc]!;
+    state.pc += 1;
+  } else {
+    a = (word >>> 8) & OPERAND_MASK;
+  }
+
+  if (
+    op <= Op.Le ||
+    op === Op.Gt ||
+    op === Op.Ge ||
+    op === Op.Shl ||
+    op === Op.Shr ||
+    op === Op.BitOr ||
+    op === Op.BitAnd ||
+    op === Op.BitXor ||
+    op === Op.ShrU
+  ) {
+    dispatchValueAndOperatorOp(state, op, a, b);
+    return false;
+  }
+  if (
+    (op >= Op.GetProp && op <= Op.StName) ||
+    op === Op.InitName ||
+    op === Op.DeleteProp ||
+    op === Op.DeleteElem ||
+    op === Op.DeleteName
+  ) {
+    dispatchPropertyAndEnvironmentOp(state, op, a, b);
+    return false;
+  }
+  if (op >= Op.Call && op <= Op.CallBuiltin) {
+    dispatchCallOp(state, op, a, b);
+    return false;
+  }
+  if (op >= Op.Jump && op <= Op.Throw) {
+    return dispatchControlOp(state, op, a);
+  }
+  throw new InterpInternalError(`unknown opcode ${op} at pc ${state.curInstrPc}`);
+}
+
+function routeException(state: DispatchState, error: unknown): void {
+  if (error instanceof InterpInternalError) throw error;
+  const value: JSValue = error instanceof ThrowSignal ? error.value : error;
+  let throwPc = state.curInstrPc;
+  for (;;) {
+    const handler = findHandler(state.meta.exnTable, throwPc);
+    if (handler.pc >= 0) {
+      state.regs[handler.reg] = value;
+      state.pc = handler.pc;
+      return;
+    }
+    if (state.frames.length === 0) throw value;
+    const caller = state.frames.pop()!;
+    const callSite = state.callSites.pop()!;
+    installActiveFrame(state, caller, caller.pc);
+    throwPc = callSite;
+  }
+}
+
 /** Run a whole activation to completion, returning its `Return` value. */
 function run(bottom: Frame): JSValue {
   // Explicit frame stack (suspended callers) + parallel call-site PCs (needed for
   // correct exn-region coverage on unwind — the return PC is one past the Call,
   // which would fall on `tryEnd` and miss the half-open interval).
-  const frames: Frame[] = [];
-  const callSites: number[] = [];
-
-  let frame = bottom;
-  let meta = frame.meta;
-  let code = meta.code;
-  let consts = meta.consts;
-  let regs = frame.regs;
-  let pc = frame.pc;
-  let acc: JSValue = undefined;
-  let curInstrPc = 0;
-  let steps = 0;
+  const state = new DispatchState(bottom);
 
   for (;;) {
     try {
-      for (;;) {
-        steps += 1;
-        if (steps > MAX_STEPS) throw new InterpInternalError("step budget exceeded (malformed bytecode?)");
-        curInstrPc = pc;
-        const word = code[pc]!;
-        pc += 1;
-        const op = word & OP_MASK;
-        const b = (word >>> 20) & OPERAND_MASK;
-        let a: number;
-        if ((word & WIDE_FLAG) !== 0) {
-          a = code[pc]!;
-          pc += 1;
-        } else {
-          a = (word >>> 8) & OPERAND_MASK;
-        }
-
-        switch (op) {
-          // ── const / register moves ──
-          case Op.LdaConst:
-            acc = consts[a];
-            break;
-          case Op.LdaUndef:
-            acc = undefined;
-            break;
-          case Op.LdaNull:
-            acc = null;
-            break;
-          case Op.LdaTrue:
-            acc = true;
-            break;
-          case Op.LdaFalse:
-            acc = false;
-            break;
-          case Op.LdaZero:
-            acc = 0;
-            break;
-          case Op.Star:
-            regs[a] = acc;
-            break;
-          case Op.Ldar:
-            acc = regs[a];
-            break;
-          case Op.Mov:
-            regs[b] = regs[a];
-            break;
-
-          // ── arithmetic / comparison (acc = op(regs[a], acc)) ──
-          case Op.Add:
-            acc = anyAdd(regs[a], acc);
-            break;
-          case Op.Sub:
-            acc = anySub(regs[a], acc);
-            break;
-          case Op.Mul:
-            acc = anyMul(regs[a], acc);
-            break;
-          case Op.Div:
-            acc = anyDiv(regs[a], acc);
-            break;
-          case Op.Mod:
-            acc = anyMod(regs[a], acc);
-            break;
-          case Op.Shl:
-            acc = anyShl(regs[a], acc);
-            break;
-          case Op.Shr:
-            acc = anyShr(regs[a], acc);
-            break;
-          case Op.ShrU:
-            acc = anyShrU(regs[a], acc);
-            break;
-          case Op.BitOr:
-            acc = anyBitOr(regs[a], acc);
-            break;
-          case Op.BitAnd:
-            acc = anyBitAnd(regs[a], acc);
-            break;
-          case Op.BitXor:
-            acc = anyBitXor(regs[a], acc);
-            break;
-          case Op.Neg:
-            acc = anyNeg(acc);
-            break;
-          case Op.Not:
-            acc = anyLogicalNot(acc);
-            break;
-          case Op.TypeOf:
-            acc = runtimeEvalEnvironment(frame.envRec, acc) === null ? anyTypeof(acc) : "function";
-            break;
-          case Op.Eq:
-            acc = anyLooseEq(regs[a], acc);
-            break;
-          case Op.StrictEq:
-            acc = anyStrictEq(regs[a], acc);
-            break;
-          case Op.Lt:
-            acc = anyLt(regs[a], acc);
-            break;
-          case Op.Le:
-            acc = anyLe(regs[a], acc);
-            break;
-          case Op.Gt:
-            acc = anyGt(regs[a], acc);
-            break;
-          case Op.Ge:
-            acc = anyGe(regs[a], acc);
-            break;
-
-          // ── property (the shared dynamic MOP) ──
-          case Op.GetProp:
-            acc = interpretedPropertyGet(frame.envRec, acc, consts[a]);
-            break;
-          case Op.GetElem:
-            acc = interpretedPropertyGet(frame.envRec, acc, regs[a]);
-            break;
-          case Op.SetProp:
-            acc = anySet(regs[b], consts[a], acc);
-            mirrorMappedArgumentsWrite(frame.envRec, regs[b], consts[a], acc);
-            break;
-          case Op.SetElem:
-            acc = anySet(regs[b], regs[a], acc);
-            mirrorMappedArgumentsWrite(frame.envRec, regs[b], regs[a], acc);
-            break;
-          case Op.DeleteProp: {
-            const object = acc;
-            const deleted = deletePropertyWithMappedArguments(frame.envRec, object, consts[a]);
-            if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
-            acc = deleted;
-            break;
-          }
-          case Op.DeleteElem: {
-            const object = acc;
-            const key = regs[a];
-            const deleted = deletePropertyWithMappedArguments(frame.envRec, object, key);
-            if (!deleted && (meta.flags & FLAG_STRICT) !== 0) throw new TypeError("Cannot delete property");
-            acc = deleted;
-            break;
-          }
-          case Op.DeleteName:
-            acc = envDelete(frame.envRec, consts[a]);
-            break;
-
-          // ── variables (env-record chain, doc §14) ──
-          case Op.LdGlobal:
-          case Op.LdName:
-            acc = envLookup(frame.envRec, consts[a]);
-            break;
-          case Op.StGlobal:
-          case Op.StName:
-            envAssign(frame.envRec, consts[a], acc, (meta.flags & FLAG_STRICT) !== 0);
-            break;
-          case Op.InitName:
-            envInitialize(frame.envRec, consts[a], acc);
-            break;
-          // ── calls ──
-          case Op.Call: {
-            const base = a;
-            const argc = b;
-            const originalCallee = acc;
-            const evalEnv = runtimeEvalEnvironment(frame.envRec, originalCallee);
-            const callee =
-              evalEnv === null ? __runtime_eval_unwrap_interpreted_callback(originalCallee) : originalCallee;
-            if (evalEnv !== null) {
-              const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(evalEnv.backing as object);
-              if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
-              acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, evalEnv.backing, false);
-            } else if (isInterpClosure(callee)) {
-              const binding = INTERP_BINDINGS.get(callee as object)!;
-              const cm = binding.meta;
-              if ((cm.flags & FLAG_RUNTIME_EVAL) !== 0) {
-                const globalEnv = globalEnvironment(binding.envRec);
-                if (globalEnv === null) throw new InterpInternalError("runtime eval closure has no realm");
-                const hook = RUNTIME_DIRECT_EVAL_HOOKS.get(globalEnv.backing as object);
-                if (hook === undefined) throw new InterpInternalError("runtime eval realm has no eval hook");
-                acc = hook(argc > 0 ? regs[base + 1] : undefined, null, null, globalEnv.backing, false);
-              } else if ((cm.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
-                const globalEnv = globalEnvironment(binding.envRec);
-                if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
-                const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
-                if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
-                const args: JSValue[] = new Array(argc);
-                for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
-                acc = hook(args);
-              } else if ((cm.flags & FLAG_CLASS_CONSTRUCTOR) !== 0) {
-                throw new TypeError("Class constructor cannot be invoked without 'new'");
-              } else {
-                const cregs: Regs = new Array(cm.regCount);
-                for (let i = 0; i < cm.regCount; i += 1) cregs[i] = undefined;
-                cregs[0] =
-                  (cm.flags & FLAG_STRICT) !== 0 ? regs[base] : normalizeSloppyThis(binding.envRec, regs[base]);
-                const np = argc < cm.paramCount ? argc : cm.paramCount;
-                for (let i = 0; i < np; i += 1) cregs[1 + i] = regs[base + 1 + i];
-                // Suspend the caller, install the callee frame (no host recursion).
-                frame.pc = pc;
-                frames.push(frame);
-                callSites.push(curInstrPc);
-                frame = new Frame(cm, 0, cregs, binding.envRec, frame);
-                meta = cm;
-                code = cm.code;
-                consts = cm.consts;
-                regs = cregs;
-                pc = 0;
-              }
-            } else {
-              // Host boundary (E1↔E2 SEAM #2). TypeError on a non-callable is a
-              // real JS exception → routed through the exn table.
-              if (typeof callee !== "function") {
-                throw new TypeError(`${describe(callee)} is not a function`);
-              }
-              const recv = regs[base];
-              const args: JSValue[] = new Array(argc);
-              for (let i = 0; i < argc; i += 1) {
-                const arg = regs[base + 1 + i];
-                args[i] = isInterpClosure(arg) ? exposeRuntimeEvalValue(arg) : arg;
-              }
-              acc = __runtime_eval_apply_callable(callee as (...a: JSValue[]) => JSValue, recv, args);
-            }
-            break;
-          }
-          case Op.Construct: {
-            const base = a;
-            const argc = b;
-            const originalCallee = acc;
-            const args: JSValue[] = new Array(argc);
-            for (let i = 0; i < argc; i += 1) args[i] = regs[base + 1 + i];
-            if (runtimeEvalEnvironment(frame.envRec, originalCallee) !== null) {
-              throw new TypeError("eval is not a constructor");
-            }
-            const callee = __runtime_eval_unwrap_interpreted_callback(originalCallee);
-            if (isInterpClosure(callee)) {
-              const binding = INTERP_BINDINGS.get(callee as object)!;
-              if ((binding.meta.flags & FLAG_RUNTIME_EVAL) !== 0) {
-                throw new TypeError("eval is not a constructor");
-              }
-              if ((binding.meta.flags & FLAG_RUNTIME_FUNCTION) !== 0) {
-                const globalEnv = globalEnvironment(binding.envRec);
-                if (globalEnv === null) throw new InterpInternalError("runtime Function closure has no realm");
-                const hook = RUNTIME_FUNCTION_HOOKS.get(globalEnv.backing as object);
-                if (hook === undefined) throw new InterpInternalError("runtime Function realm has no constructor hook");
-                acc = hook(args);
-              } else {
-                const proto = (callee as { prototype?: JSValue }).prototype;
-                const self: JSValue = Object.create(proto && typeof proto === "object" ? proto : Object.prototype);
-                const r = interpEnter(binding.meta, binding.envRec, self, args); // boundary recursion (Phase 1)
-                acc = r !== null && (typeof r === "object" || typeof r === "function") ? r : self;
-              }
-            } else if (typeof callee === "function") {
-              acc = constructValue(callee, args);
-            } else {
-              throw new TypeError(`${describe(callee)} is not a constructor`);
-            }
-            break;
-          }
-          case Op.CallBuiltin: {
-            const builtinId = a;
-            const base = b;
-            const argc = code[pc]!;
-            pc += 1;
-            acc = callBuiltin(builtinId, regs, base, argc, frame);
-            break;
-          }
-
-          // ── control (absolute PCs; jumps are always WIDE so `a` = target) ──
-          case Op.Jump:
-            pc = a;
-            break;
-          case Op.JumpIfTrue:
-            if (isTruthy(acc)) pc = a;
-            break;
-          case Op.JumpIfFalse:
-            if (!isTruthy(acc)) pc = a;
-            break;
-          case Op.Return: {
-            const result = acc;
-            if (frames.length === 0) return result;
-            const caller = frames.pop()!;
-            callSites.pop();
-            frame = caller;
-            meta = caller.meta;
-            code = meta.code;
-            consts = meta.consts;
-            regs = caller.regs;
-            pc = caller.pc;
-            acc = result; // callee's result becomes the caller's acc
-            break;
-          }
-
-          // ── exceptions ──
-          case Op.Throw:
-            throw new ThrowSignal(acc);
-
-          default:
-            throw new InterpInternalError(`unknown opcode ${op} at pc ${curInstrPc}`);
-        }
-      }
+      if (dispatchNext(state)) return state.acc;
     } catch (e) {
-      if (e instanceof InterpInternalError) throw e; // never route interpreter bugs
-      const value: JSValue = e instanceof ThrowSignal ? e.value : e;
-      // Unwind: scan the current frame, then callers (at their call-site PCs).
-      let throwPc = curInstrPc;
-      for (;;) {
-        const h = findHandler(meta.exnTable, throwPc);
-        if (h.pc >= 0) {
-          regs[h.reg] = value;
-          pc = h.pc;
-          break; // resume dispatch at the handler
-        }
-        if (frames.length === 0) {
-          // Escape across the host boundary (E4 replaces this with a Wasm EH tag).
-          // Rethrow the RAW value so a host `try/catch` sees the real exception.
-          throw value;
-        }
-        const caller = frames.pop()!;
-        const cs = callSites.pop()!;
-        frame = caller;
-        meta = caller.meta;
-        code = meta.code;
-        consts = meta.consts;
-        regs = caller.regs;
-        throwPc = cs;
-      }
-      // loop back to the outer `for`, re-entering dispatch at the handler pc
+      routeException(state, e);
     }
   }
 }
 
-/**
- * Construct a non-interpreted callable at the E1/E2 runtime seam.
- *
- * Standalone Reflect.construct deliberately accepts only an array-literal
- * argsList (#3371). Keeping the arity dispatch here lets the self-compiled E2
- * payload use positional `new` lowering while Node E1 retains real constructor
- * semantics. Eight arguments matches the generic standalone call/closure ABI
- * raised by #3310; arities above eight remain an explicit Phase-1 limit.
- * Preserving dynamic constructor arguments in AOT code remains the #3098
- * classifier's responsibility.
- */
-function constructValue(callee: JSValue, args: JSValue[]): JSValue {
-  switch (args.length) {
-    case 0:
-      return new (callee as new (...a: JSValue[]) => JSValue)();
-    case 1:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0]);
-    case 2:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1]);
-    case 3:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2]);
-    case 4:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2], args[3]);
-    case 5:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2], args[3], args[4]);
-    case 6:
-      return new (callee as new (...a: JSValue[]) => JSValue)(args[0], args[1], args[2], args[3], args[4], args[5]);
-    case 7:
-      return new (callee as new (...a: JSValue[]) => JSValue)(
-        args[0],
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args[5],
-        args[6],
-      );
-    case 8:
-      return new (callee as new (...a: JSValue[]) => JSValue)(
-        args[0],
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args[5],
-        args[6],
-        args[7],
-      );
-    default:
-      throw new RangeError("interpreter Construct supports at most 8 arguments in Phase 1");
-  }
-}
-
-/** Op.Throw's carrier so the catch can recover the exact thrown value (which may
- *  itself be an Error, a primitive, or undefined). */
 class ThrowSignal {
   readonly value: JSValue;
   constructor(value: JSValue) {
@@ -1362,6 +1419,9 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       frame.envRec = createLexicalEnvironment(parent, regs[base]);
       return parent;
     }
+    case BUILTIN_PUSH_FUNCTION_ENV:
+      frame.envRec = createFunctionEnvironment(frame.envRec, regs[base], regs[base + 1], frame.regs);
+      return undefined;
     case BUILTIN_PUSH_OBJECT_ENV: {
       const parent = frame.envRec;
       frame.envRec = createObjectEnvironment(parent, regs[base]);
@@ -1398,6 +1458,15 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       return definePropertyWithMappedArguments(frame.envRec, regs[base], regs[base + 1], regs[base + 2]);
     case BUILTIN_REGEXP_CREATE:
       return buildRegExpLiteral(regs[base], regs[base + 1]);
+    case BUILTIN_DYNAMIC_IMPORT:
+      return callRuntimeDynamicImport(
+        frame.envRec,
+        regs[base],
+        regs[base + 1],
+        regs[base + 2],
+        regs[base + 3],
+        regs[base + 4],
+      );
     case BUILTIN_FOR_IN_KEYS:
       return buildForInKeys(regs[base]);
     case BUILTIN_FOR_OF_VALUES:
@@ -1439,6 +1508,34 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
   }
 }
 
+/** Perform ImportCall's host boundary. Argument-expression errors have already
+ * propagated synchronously before this builtin runs. From this point onward,
+ * ToString and loader failures reject the returned promise, while a returned
+ * value/thenable is assimilated through Promise.resolve. */
+function callRuntimeDynamicImport(
+  env: EnvRec | null,
+  specifier: JSValue,
+  referrer: JSValue,
+  line: JSValue,
+  column: JSValue,
+  options: JSValue,
+): JSValue {
+  try {
+    // String(symbol) is a deliberately forgiving constructor call, whereas
+    // ImportCall uses the abstract ToString operation, which rejects Symbols.
+    if (typeof specifier === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    const request = String(specifier);
+    const globalEnv = globalEnvironment(env);
+    if (globalEnv === null) throw new TypeError("Dynamic import requires a runtime-eval realm");
+    const hook = RUNTIME_DYNAMIC_IMPORT_HOOKS.get(globalEnv.backing as object);
+    if (hook === undefined) throw new TypeError("Dynamic import requires a realm loader hook");
+    const metadata: RuntimeDynamicImportMetadata = { referrer, line, column, options };
+    return Promise.resolve(hook(request, metadata));
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
 /** Host-free Math.max/min over the bytecode argument window. The signed-zero
  * tie-breaks match ECMA-262: max prefers +0 and min prefers -0. */
 function builtinMathExtremum(regs: Regs, base: number, argc: number, wantMax: boolean): JSValue {
@@ -1456,14 +1553,4 @@ function builtinMathExtremum(regs: Regs, base: number, argc: number, wantMax: bo
     i += 1;
   }
   return result;
-}
-
-/** A short description of a non-callable value for TypeError messages. */
-function describe(v: JSValue): string {
-  if (v === null) return "null";
-  if (v === undefined) return "undefined";
-  const t = typeof v;
-  if (t === "string") return JSON.stringify(v);
-  if (t === "number" || t === "boolean") return String(v);
-  return t;
 }

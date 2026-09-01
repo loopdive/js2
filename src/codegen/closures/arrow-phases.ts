@@ -16,14 +16,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import {
-  addFuncType,
-  destructureParamArray,
-  destructureParamObjectExternref,
-  getArrTypeIdxFromVec,
-  getOrRegisterRefCellType,
-  resolveWasmType,
-} from "../index.js";
+import { addFuncType, destructureParamArray, destructureParamObject, getOrRegisterRefCellType } from "../index.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
 import { isFunctionScopeBoundary } from "../../ir/analysis/ast-scope.js";
 import {
@@ -35,8 +28,8 @@ import {
 } from "./funcref-wrapper-types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
-import { emitBoundsCheckedArrayGet, valTypesMatch } from "../shared.js";
-import { spliceNullGuarded } from "./param-emit-helpers.js";
+import { valTypesMatch } from "../shared.js";
+import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
@@ -349,6 +342,26 @@ function referencedBindingDeclaration(
   return ambiguous ? undefined : declaration;
 }
 
+/**
+ * True when a declaration is owned directly by an emitted TypeScript
+ * namespace/module block rather than by a nested function inside it.
+ * Runtime-namespace bindings have dedicated module globals and must remain
+ * live when an arrow created during namespace initialization observes a later
+ * assignment (the TypeScript parser's lazily initialized constructors are the
+ * production witness).
+ */
+function isDirectRuntimeModuleVariableBinding(declaration: ts.Declaration | undefined): boolean {
+  if (declaration === undefined) return false;
+  let sawVariableDeclaration = false;
+  for (let current: ts.Node | undefined = declaration; current?.parent; current = current.parent) {
+    if (ts.isVariableDeclaration(current)) sawVariableDeclaration = true;
+    if (ts.isModuleBlock(current.parent)) return sawVariableDeclaration;
+    if (current !== declaration && (ts.isFunctionLike(current) || ts.isClassLike(current))) return false;
+    if (ts.isSourceFile(current.parent)) return false;
+  }
+  return false;
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -369,6 +382,36 @@ function collectClosureParameterReferences(
 ): void {
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
   for (const parameter of arrow.parameters) collectReferencedIdentifiers(parameter, referencedNames, ownLocals);
+}
+
+/**
+ * True when evaluating `closure` is part of evaluating the initializer that
+ * will later store the captured binding's first value.
+ *
+ * `var scanner = { self: () => scanner }` is observably a live binding, even
+ * when no later assignment exists: the closure is constructed while
+ * `scanner` still contains its hoisted `undefined`/null value, and the
+ * declarator store happens only after the whole object literal completes.
+ * Such a capture therefore needs the same ref-cell treatment as an explicit
+ * outer assignment. Declaration identity comes from the checker; ancestry is
+ * used only to establish the evaluation ordering within that declaration.
+ */
+function closurePrecedesBindingInitializerStore(
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  declaration: ts.Declaration | undefined,
+): boolean {
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) {
+    return false;
+  }
+  for (let current: ts.Node | undefined = closure; current && current !== declaration; current = current.parent) {
+    if (current === declaration.initializer) return true;
+    // A nested closure in another function's body is constructed only when
+    // that outer function runs, not while the declarator evaluates. The outer
+    // function value itself will independently capture this binding at the
+    // actual initializer site.
+    if (current !== closure && ts.isFunctionLike(current)) return false;
+  }
+  return false;
 }
 
 /**
@@ -650,6 +693,13 @@ export function planClosureCaptures(
     }
     if (localIdx === undefined) continue;
     const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
+    // A runtime namespace initializer is compiled in the shared module-init
+    // frame, whose staging locals can have the same spelling as both the
+    // namespace slot and an unrelated top-level binding. Capturing that local
+    // snapshots the hoisted null value. The exact namespace projection in
+    // `ctx.moduleGlobals` is active for this whole closure compilation, so
+    // leave the name uncaptured and let the lifted body read that live global.
+    if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
     // A lexical capture can share its spelling with a function declaration
     // already registered in funcMap (for example `{ dispatch }` beside a
     // module-local `dispatch`).  The old spelling-only guard dropped every
@@ -711,7 +761,9 @@ export function planClosureCaptures(
     // so all closures see the final value of the loop variable.
     const tdzFlagPresent = !!fctx.tdzFlagLocals?.has(name) || tdzFlagIdxFromScan !== undefined;
     const hasTdzFlag = tdzFlagPresent && !closureProvablyAfterLetDecl(ctx, arrow, name);
-    const isMutable = writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag;
+    const initializerStoreFollowsCapture = closurePrecedesBindingInitializerStore(arrow, bindingDeclaration);
+    const isMutable =
+      writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag || initializerStoreFollowsCapture;
     // Check if the variable is already boxed from a previous closure capture.
     // If so, the local already holds a ref cell — don't wrap it again.
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
@@ -812,7 +864,16 @@ export function mintClosureStructTypes(
   // `FunctionExpression` for the closure compile). `fnMetaSlot` declines those —
   // §10.2.9 for an accessor is `"get p"` / `"set p"`, which comes from the
   // property KEY, not from a function name. The member walk answers it.
-  const metaSlot = fnMetaSlot(ctx, opts.decl) ?? fnMetaSlotForMemberDecl(ctx, opts.decl);
+  //
+  // (#5149 cluster B) The member walk runs FIRST for a member declaration.
+  // `fnInstanceMetaOf` accepts a `MethodDeclaration` and answers `""` for it —
+  // §10.2.9 for a method comes from the property KEY, which only the member
+  // walk reads — so the old `fnMetaSlot ?? member` order published that empty
+  // name and never consulted the member walk at all. Measured on
+  // `{ id() {} }` reached through the open-object literal path: the descriptor
+  // `Object.getOwnPropertyDescriptor(o.id, "name").value` read `""` while the
+  // static `.name` fold answered `"id"` — one function, two answers.
+  const metaSlot = fnMetaSlotForMemberDecl(ctx, opts.decl) ?? fnMetaSlot(ctx, opts.decl);
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
   let liftedSelfTypeIdx: number;
@@ -977,21 +1038,6 @@ export function emitClosureParamDestructuring(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   arrowParams: ValType[],
 ): void {
-  // Fallback: allocate externref locals for each name in a binding pattern.
-  // Used when the param type doesn't match any known struct/vec — locals are
-  // initialized to null/undefined (best-effort; the type is unknown at compile time).
-  function allocBindingLocals(pattern: ts.BindingPattern): void {
-    for (const element of pattern.elements) {
-      if (ts.isOmittedExpression(element)) continue;
-      if (!ts.isBindingElement(element)) continue;
-      if (ts.isIdentifier(element.name)) {
-        allocLocal(liftedFctx, element.name.text, { kind: "externref" });
-      } else {
-        allocBindingLocals(element.name);
-      }
-    }
-  }
-
   // Destructuring parameter initialization: for parameters with binding patterns
   // (e.g. function([x, y]) or function({a, b})), extract values from the parameter
   // and assign them to local variables. Delegate to the shared destructuring
@@ -1008,201 +1054,20 @@ export function emitClosureParamDestructuring(
     const paramIdx = pi + 1; // +1 for __self
     const paramType = arrowParams[pi]!;
 
-    // Helper: allocate locals for all identifiers in a binding pattern
-    // using TS type inference for each element. Fallback used when the
-    // Wasm type doesn't provide enough info to extract values.
-    const allocBindingLocals = (pattern: ts.BindingPattern) => {
-      for (const element of pattern.elements) {
-        if (ts.isOmittedExpression(element)) continue;
-        if (ts.isIdentifier(element.name)) {
-          const localName = element.name.text;
-          if (!liftedFctx.localMap.has(localName)) {
-            const elemTsType = ctx.checker.getTypeAtLocation(element);
-            const elemWasmType = resolveWasmType(ctx, elemTsType);
-            allocLocal(liftedFctx, localName, elemWasmType);
-          }
-        } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-          allocBindingLocals(element.name);
-        }
-      }
-    };
-
+    // Keep closure parameter binding-patterns on the same shared lowering as
+    // declarations and ordinary function bodies.  The old closure-only
+    // struct/vec extractors handled identifiers, but skipped nested patterns
+    // and their default initializers (for example `[{x} = fallback]`), which
+    // left those bindings at their zero/null local defaults.  The shared
+    // helpers already select the native carrier and preserve the required
+    // undefined/null checks for every ABI type.
     if (ts.isArrayBindingPattern(param.name)) {
-      // Array destructuring: function([a, b, c]) { ... }
-      let handled = false;
-
-      // For externref params (e.g. typed as `any`), delegate to destructureParamArray
-      // which handles multi-type vec conversion with ref.test guards.
-      // A bare ref.cast to a single vec type (e.g. __vec_f64) will trap at runtime
-      // if the actual value is a different vec type (e.g. __vec_externref from []).
-      if (paramType.kind === "externref") {
-        destructureParamArray(ctx, liftedFctx, paramIdx, param.name, paramType);
-        handled = true;
-      }
-
-      let resolvedParamType = paramType;
-      let srcParamIdx = paramIdx;
-      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
-        resolvedParamType = paramType;
-        srcParamIdx = paramIdx;
-      }
-
-      if (resolvedParamType.kind === "ref" || resolvedParamType.kind === "ref_null") {
-        const typeIdx = resolvedParamType.typeIdx;
-        const typeDef = ctx.mod.types[typeIdx];
-        if (typeDef && typeDef.kind === "struct") {
-          const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
-          const arrDef = ctx.mod.types[arrTypeIdx];
-          if (arrDef && arrDef.kind === "array") {
-            const elemType = arrDef.element;
-            const savedBodyFPAD = liftedFctx.body;
-            const fpadInstrs: Instr[] = [];
-            liftedFctx.body = fpadInstrs;
-            for (let ei = 0; ei < param.name.elements.length; ei++) {
-              const element = param.name.elements[ei]!;
-              if (ts.isOmittedExpression(element)) continue;
-              if (!ts.isBindingElement(element)) continue;
-
-              // Handle rest element: function([a, ...rest])
-              if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
-                const restName = element.name.text;
-                const restLenLocal = allocLocal(liftedFctx, `__rest_len_${liftedFctx.locals.length}`, { kind: "i32" });
-                // Compute rest length: max(0, param.length - ei)
-                liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-                liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
-                liftedFctx.body.push({ op: "i32.const", value: ei });
-                liftedFctx.body.push({ op: "i32.sub" });
-                liftedFctx.body.push({ op: "local.set", index: restLenLocal });
-                // Clamp to 0 if negative
-                liftedFctx.body.push({ op: "i32.const", value: 0 });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "i32.const", value: 0 });
-                liftedFctx.body.push({ op: "i32.lt_s" });
-                liftedFctx.body.push({ op: "select" });
-                liftedFctx.body.push({ op: "local.set", index: restLenLocal });
-
-                // Create new data array
-                const restArrLocal = allocLocal(liftedFctx, `__rest_arr_${liftedFctx.locals.length}`, {
-                  kind: "ref",
-                  typeIdx: arrTypeIdx,
-                });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-                liftedFctx.body.push({ op: "local.set", index: restArrLocal });
-
-                // array.copy(restArr, 0, srcData, ei, restLen)
-                liftedFctx.body.push({ op: "local.get", index: restArrLocal });
-                liftedFctx.body.push({ op: "i32.const", value: 0 });
-                liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-                liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // src data
-                liftedFctx.body.push({ op: "i32.const", value: ei });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx });
-
-                // Create new vec struct: struct.new(restLen, restArr)
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "local.get", index: restArrLocal });
-                liftedFctx.body.push({ op: "struct.new", typeIdx });
-
-                const vecType: ValType = { kind: "ref_null", typeIdx };
-                const restLocal = allocLocal(liftedFctx, restName, vecType);
-                liftedFctx.body.push({ op: "local.set", index: restLocal });
-                continue;
-              }
-
-              if (!ts.isIdentifier(element.name)) continue;
-              const localName = element.name.text;
-              const localIdx = allocLocal(liftedFctx, localName, elemType);
-              liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-              liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
-              liftedFctx.body.push({ op: "i32.const", value: ei });
-              emitBoundsCheckedArrayGet(liftedFctx, arrTypeIdx, elemType);
-              liftedFctx.body.push({ op: "local.set", index: localIdx });
-            }
-            liftedFctx.body = savedBodyFPAD;
-            spliceNullGuarded(liftedFctx, srcParamIdx, resolvedParamType.kind === "ref_null", fpadInstrs);
-            handled = true;
-          } else if (typeDef.fields.length > 0 && typeDef.fields[0]!.name === "_0") {
-            // Tuple struct destructuring: extract positional fields via struct.get
-            const savedBodyFPAD = liftedFctx.body;
-            const fpadInstrs: Instr[] = [];
-            liftedFctx.body = fpadInstrs;
-            for (let ei = 0; ei < param.name.elements.length; ei++) {
-              const element = param.name.elements[ei]!;
-              if (ts.isOmittedExpression(element)) continue;
-              if (!ts.isBindingElement(element)) continue;
-              if (ei >= typeDef.fields.length) break;
-
-              const fieldType = typeDef.fields[ei]!.type;
-              if (!ts.isIdentifier(element.name)) continue;
-              const localName = element.name.text;
-              const localIdx = allocLocal(liftedFctx, localName, fieldType);
-              liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-              liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: ei });
-              liftedFctx.body.push({ op: "local.set", index: localIdx });
-            }
-            liftedFctx.body = savedBodyFPAD;
-            spliceNullGuarded(liftedFctx, srcParamIdx, resolvedParamType.kind === "ref_null", fpadInstrs);
-            handled = true;
-          }
-        }
-      }
-      if (!handled) {
-        allocBindingLocals(param.name);
-      }
-    } else if (ts.isObjectBindingPattern(param.name)) {
-      // Object destructuring: function({a, b}) { ... }
-      let handled = false;
-
-      // Externref params (e.g. callback from JS host or `: any`-typed) need
-      // the host-import-driven extraction path that mirrors the array case
-      // above. Without this, the object pattern's binding locals get
-      // allocated but never written, so any code reading w/x/y/z sees the
-      // default-zero/null value of the local instead of the property pulled
-      // off the argument object. (#43 cluster — function-expression dstr
-      // on `any` params)
-      if (paramType.kind === "externref") {
-        destructureParamObjectExternref(ctx, liftedFctx, paramIdx, param.name);
-        handled = true;
-      }
-
-      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
-        const typeIdx = paramType.typeIdx;
-        const typeDef = ctx.mod.types[typeIdx];
-        if (typeDef && typeDef.kind === "struct") {
-          let allFound = true;
-          const savedBodyFPOD = liftedFctx.body;
-          const fpodInstrs: Instr[] = [];
-          liftedFctx.body = fpodInstrs;
-          for (const element of param.name.elements) {
-            if (ts.isOmittedExpression(element)) continue;
-            if (!ts.isIdentifier(element.name)) continue;
-            const localName = element.name.text;
-            const propName = element.propertyName
-              ? ts.isIdentifier(element.propertyName)
-                ? element.propertyName.text
-                : localName
-              : localName;
-            const fieldIdx = typeDef.fields.findIndex((f: any) => f.name === propName);
-            if (fieldIdx < 0) {
-              allFound = false;
-              continue;
-            }
-            const fieldType = typeDef.fields[fieldIdx]!.type;
-            const localIdx = allocLocal(liftedFctx, localName, fieldType);
-            liftedFctx.body.push({ op: "local.get", index: paramIdx });
-            liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
-            liftedFctx.body.push({ op: "local.set", index: localIdx });
-          }
-          liftedFctx.body = savedBodyFPOD;
-          spliceNullGuarded(liftedFctx, paramIdx, paramType.kind === "ref_null", fpodInstrs);
-          handled = allFound;
-        }
-      }
-      if (!handled) {
-        allocBindingLocals(param.name);
-      }
+      destructureParamArray(ctx, liftedFctx, paramIdx, param.name, paramType);
+      continue;
+    }
+    if (ts.isObjectBindingPattern(param.name)) {
+      if (tryEmitNativeIteratorResultParam(ctx, liftedFctx, paramIdx, param.name, paramType)) continue;
+      destructureParamObject(ctx, liftedFctx, paramIdx, param.name, paramType);
     }
   }
 }
@@ -1323,7 +1188,7 @@ export function emitClosureConstruction(
     // Function value even when this closure never names it directly. Fill the
     // hoisted binding before the closure snapshots/passes its slot; otherwise
     // the lifted caller receives the preallocated null value.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
       if (fctx.boxedCaptures?.has(cap.name)) {
@@ -1417,11 +1282,14 @@ export function registerClosureBindingInfo(
     ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && closureBodyUsesOwnArguments(arrow.body);
   // 8. Register closure info so call sites can emit call_ref
   const structDef = ctx.mod.types[structTypeIdx];
+  const inheritedInfo = ctx.closureInfoByTypeIdx.get(structTypeIdx);
   const closureInfo: ClosureInfo = {
     structTypeIdx,
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: closureReturnType,
     paramTypes: arrowParams,
+    minimumArgumentCount:
+      ctx.closureMinimumArgumentCountByFuncTypeIdx.get(liftedFuncTypeIdx) ?? inheritedInfo?.minimumArgumentCount,
     hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
     hasRestParam: params.some((p) => p.dotDotDotToken !== undefined),
     needsCallSiteArity:

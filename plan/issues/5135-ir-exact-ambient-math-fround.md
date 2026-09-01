@@ -133,8 +133,8 @@ than silently dropping the popped value.
 3. Add `math.fround` and `backend.f64.fround` to the intrinsic, feature,
    provider, and signature catalogues with no dependencies/capabilities.
 4. Add a sequence-marked `fround` method plan so both the WasmGC symbolic path
-   and linear selector admit it, and add independent
-   `JS2WASM_IR_MATH_FROUND=0` rollback. Keep generic from-AST emission.
+   and linear selector admit it; initial rollout added the independent
+   per-method rollback. Keep generic from-AST emission.
 5. Widen linear legality from five to six native Math semantics only for the
    closed fround sequence. Unknown/malformed sequence values, missing
    providers, unsupported adapters, and provider-shape drift must fail closed.
@@ -163,8 +163,8 @@ than silently dropping the popped value.
   missing providers/adapters, and unsupported non-Wasm sinks fail loudly.
 - Coercive and all other excluded shapes preserve direct behavior and decline
   before claim without invariants or post-claim errors.
-- The narrow rollback, affected regressions, TypeScript 7, and all pre-push
-  gates pass.
+- The former narrow rollback was validated alongside the affected regressions,
+  TypeScript 7, and all pre-push gates.
 
 ## Outcome
 
@@ -179,8 +179,8 @@ Completed on 2026-08-28 in non-draft PR
   Bytecode remains fail-loud and Porffor now rejects both conversions
   explicitly.
 - Exact ambient one-number calls are IR-owned on WasmGC and production linear;
-  excluded/coercive forms still decline before claim, and
-  `JS2WASM_IR_MATH_FROUND=0` provides narrow rollback.
+  excluded/coercive forms still decline before claim, and the per-method
+  control provided narrow rollback during initial rollout.
 - Focused validation passed 15/15 cases, including production-linear ownership,
   malformed-sequence rejection, zero-import standalone execution, and raw-bit
   parity across custom NaNs, signed zero, f32 midpoint ties, subnormal/normal
@@ -207,5 +207,12 @@ The main architectural risk is turning one exact closed sequence into an
 untyped raw-instruction escape hatch; the one-member vocabulary and exhaustive
 switch prevent that. Numeric risk is conversion order or hidden re-evaluation,
 guarded by raw-bit direct parity and exact WAT assertions.
-`JS2WASM_IR_MATH_FROUND=0` provides narrow rollback;
+The rollout-only per-method withdrawal provided narrow rollback;
 `JS2WASM_IR_FIRST=0` remains the global control.
+
+## 2026-08-30 retirement update
+
+The rollout-only per-method withdrawal is retired by the #4522 Math checkpoint.
+Exact ambient, global-direct parity, and all existing numeric and near-miss
+coverage remain. The shared #3518 matrix provides the literal closed cross-method
+census; `experimentalIR: false` is the retained observational oracle.

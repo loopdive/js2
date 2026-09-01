@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-08-22
+updated: 2026-08-31
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -17,11 +17,112 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-08-28: PR #5148 checkpoint (Deno runtime integration — linked
+  # shared-realm/callable boundaries, runtime-eval + exception transport,
+  # Promise/reflection/buffer-view/finalizer behavior). Broad, measured
+  # growth across codegen accepted for the checkpoint; consolidation is
+  # follow-up work under this issue.
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/declarations.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/async-scheduler.ts
+  - src/interp/emitter.ts
+  - src/interp/loop.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/index.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/context/types.ts
+  - src/codegen/vec-overlay.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/dyn-read.ts
+  - src/codegen/promise-combinators.ts
+  - src/compiler.ts
+  - src/codegen/expressions/new-builtin-globals.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/proto-index-store.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions.ts
+  - src/codegen/property-access.ts
+  # 2026-08-30: unchanged deno_core publication through the captured
+  # Object.assign primordial, plus native-string sentinel registration for
+  # linked standalone/provider graphs.
+  - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/registry/imports.ts
+  # 2026-08-29: deno-core bootstrap local-index remapping (createTimer /
+  # __eventLoopTick / runImmediates class): lift-time transitive-capture
+  # promotion incl. no-captures branch, recorded-slot fallbacks, stale
+  # name-keyed box guard, plus env-gated standalone debug facilities
+  # (JS2WASM_DUMP_TYPES / JS2WASM_TRACE_LAST_STMT).
+  - src/codegen/closures.ts
+  - src/emit/binary.ts
+  - src/codegen/statements.ts
+  - src/link/linker.ts
+  # 2026-08-29 (post-merge): terminal-flat-body relaxation of the #1058
+  # shared-body refusal + instr-level double-shift guard commentary.
+  - src/codegen/stack-balance.ts
+  - src/codegen/expressions/late-imports.ts
+  - src/codegen/async-scheduler.ts
 func-budget-allow:
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  # 2026-08-28: PR #5148 checkpoint (same rationale as the loc grants above).
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::generateModule
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/vec-props.ts::fillVecPropHelpers
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  # 2026-08-29: deno-core bootstrap remapping (see loc grants above).
+  - src/codegen/closures.ts::promoteAccessorCapturesToGlobals
+  - src/link/linker.ts::emitLinked
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/object-runtime.ts::fillApplyClosure
+  - src/codegen/object-runtime.ts::fillExternSetVecArms
+  - src/codegen/property-access-dispatch.ts::tryBufferViewAttributeReads
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/interp/loop.ts::run
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/property-access.ts::compileElementAccess
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
+  - src/codegen/class-bodies.ts::compileSuperCall
+  # 2026-08-30: closed-struct Object.assign publication and dynamic reads in
+  # unchanged deno_core bootstrap code.
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+oracle-ratchet-allow:
+  # 2026-08-28: PR #5148 checkpoint — new raw-checker queries in DataView
+  # lowering and source-scan predicates; migrate to ctx.oracle in follow-up.
+  - src/codegen/dataview-native.ts
+  - src/codegen/index.ts
+  - src/codegen/source-scan-predicates.ts
+coercion-sites-allow:
+  # Multi-source finalization checks whether the shared ToBoolean helper is
+  # already registered before asking the existing union engine to add it.
+  - src/codegen/index.ts
 files:
   - .prettierignore
   - examples/v8x-js2wasm-spike/README.md
@@ -397,6 +498,57 @@ pristine `origin/main`; simdutf passed 14/14; and the first `Deno.cwd()`
 source-compile and compiler-free AOT integrations passed 1/1 each. The smaller
 1,434,192-byte precompiled fixture belongs to that earlier `cwd` proof, not the
 current Deno-core artifact.
+
+## PR #5148 checkpoint continuation (2026-08-29, branch claude/deno-integration-map52s)
+
+The draft checkpoint PR #5148 (codex/deno-runtime-integration-checkpoint) was
+merged onto `claude/deno-integration-map52s`, reconciled with current main,
+and its declared test gaps driven down. Fixed on that branch:
+
+- Promise expandos on the native `$Promise` (`$bag` slot was added but
+  `$Promise` never joined `BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES`) — 3 tests.
+- Reflected Symbol/Promise constructor statics + runtime-eval slot peel: the
+  nullish-callee arm's non-nullish half now dispatches through
+  `__apply_closure` instead of answering `undefined` — 3 tests.
+- Linked-realm bare identifier reads (symbol-less names no longer classified
+  as #3505 cross-module leaks) — fixed shared-globalThis bareRead/bareCall
+  and both v8x graph-compiler failures — 3 tests.
+- Detached-buffer `.byteLength` (dyn-view arm gated to dynamic receivers;
+  bare-vec fallback clamps the -1 marker) — 1 test.
+- Realm `Int8Array` identity (seed the #4490 identity carrier, not
+  `$__ta_ctor`) and hoisted-capture types for literals the declaration
+  promotes to the open `$Object` representation (`{ __proto__: null }`) —
+  2 tests.
+
+Remaining known gaps (all reproduce at the checkpoint merge point or on
+origin/main — none introduced by the continuation):
+
+- `uncurryThis`: a bare `Function.prototype` VALUE read
+  (`const fp = Function.prototype`) throws a raw wasm exception during
+  module init (pre-existing; direct `Function.prototype.bind` reads work).
+- deno-core bootstrap `createTimer`: lifted-body local-index remapping
+  (`references local 2413, but only 35 params + 350 locals`) — the
+  PR-documented remapping gap.
+- compile-multi finalizer parity's Array-proto-iterator case: sits on the
+  host-lane CPR override machinery, which fails 6/7 of
+  `tests/issue-1719-cpr.test.ts` on origin/main in this container.
+- `#2623` box-depth (3) and `#1312` async recursion (1): pre-existing at the
+  merge point.
+- `tests/issue-2928-runtime-link.test.ts` "returns and invokes an interpreted
+  closure across the Wasm module boundary": hangs in an uninterruptible wasm
+  loop until the 20-minute vitest timeout — present since the checkpoint
+  merge (reproduced at the merge point with none of the continuation fixes
+  applied).
+
+## Current artifact refresh (2026-08-31)
+
+The current exact artifact measures 10,004,942 bytes with SHA-256
+`88e2d7dfef7e5fba490bdf79802b7242a11d0cb1eedc2d0ca393ed24416af024`.
+It imports exactly nine `v8x:deno` bridges and two deferred `runtime-eval`
+imports, with no `env::Promise_new` import. Two isolated stores still complete
+the `42`/`43`/`44` stages and all bridge checks. Against the clean checkpoint
+without the composed patch (10,007,948 bytes), the patch reduces the artifact
+by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
 

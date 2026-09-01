@@ -16,7 +16,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
   getOrCreateFuncRefWrapperTypes,
 } from "../closures.js";
-import { compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { ARRAY_METHODS, compileArrayJoinExtern, emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
 import { noJsHost } from "../js-errors.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -24,7 +24,12 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"
 import { emitRuntimeEvalCarrierUnwrapAny } from "../runtime-eval-callable.js";
 import { expressionDescendsFromRealmStructuralBinding } from "../analysis/realm-global-structural-carrier.js";
 import { allocLocal } from "../context/locals.js";
-import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import type {
+  ClosureInfo,
+  CodegenContext,
+  DeferredCallablePropertyDispatchPlan,
+  FunctionContext,
+} from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
 import {
   emitExternrefToStructGet,
@@ -40,6 +45,7 @@ import {
   emitGuardedRefCast,
   getVecInfo,
   pushDefaultValue,
+  pushParamSentinel,
 } from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
@@ -64,6 +70,7 @@ import { ensureStandaloneNativeMethodClosure } from "../native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
+import { programDeclaresClassMethod, receiverOriginRejectsExternBinding } from "../class-instance-method-names.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
 import {
   captureObjectLiteralMethodReceiver,
@@ -73,13 +80,57 @@ import {
   planElementAccessMethodReceiverBind,
   planObjectLiteralMethodReceiverBind,
 } from "../object-literal-method-receiver.js";
+import { isDeclaredStructRefSubtypeAssignable } from "../struct-hierarchy-layout.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { getArrTypeIdxFromVec } from "../registry/types.js";
 
 /**
  * (#3205) A single funcref-type dispatch candidate for a callable property /
  * element call: the concrete closure struct type, its lifted funcref type, and
  * the wasm return type that funcref yields.
  */
-type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: ValType | null };
+type FuncCandidate = {
+  funcTypeIdx: number;
+  structTypeIdx: number;
+  returnType: ValType | null;
+  paramTypes: ValType[];
+};
+
+/**
+ * Import-free ABI bridge for a callable property's erased generic reference.
+ *
+ * A generic implementation such as `identity<T>(value: T): T` lowers to
+ * `(externref) -> externref`, while a concrete interface field holding it can
+ * be called as `(ref Box) -> ref Box`. Both crossings preserve the same GC
+ * reference: export the concrete argument and narrow the declared concrete
+ * result at the field boundary. In standalone, #5255 admits the analogous
+ * result-only crossing only for a registered native-generator state. `$AnyValue`
+ * is a tagged carrier rather than a raw object reference, so it must keep its
+ * semantic projection path.
+ */
+function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
+  const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
+  if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
+  if (ctx.standalone || ctx.wasi) {
+    if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
+      for (const info of ctx.nativeGenerators.values()) {
+        if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
+      }
+    }
+    return null;
+  }
+
+  if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
+    return [{ op: "extern.convert_any" }];
+  }
+  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null")) {
+    return [
+      { op: "any.convert_extern" },
+      { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },
+    ];
+  }
+  return null;
+}
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
 const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
@@ -185,10 +236,9 @@ export function runtimeSignatureParameters(sig: ts.Signature): readonly ts.Symbo
  * exact (true-signature) type instead. Mirrors the calls.ts callable-param fix
  * (#2873).
  */
-function buildClosureFuncCandidates(
+function reserveSpeculativeClosureFuncCandidateTypes(
   ctx: CodegenContext,
   declared: FuncCandidate,
-  sigParamCount: number,
   sigParamWasmTypes: ValType[],
 ): FuncCandidate[] {
   const funcCandidates: FuncCandidate[] = [declared];
@@ -212,6 +262,7 @@ function buildClosureFuncCandidates(
         funcTypeIdx: alt.closureInfo.funcTypeIdx,
         structTypeIdx: alt.closureInfo.structTypeIdx,
         returnType: alt.closureInfo.returnType,
+        paramTypes: alt.closureInfo.paramTypes,
       });
     }
   };
@@ -225,13 +276,46 @@ function buildClosureFuncCandidates(
   if (declared.returnType !== null) tryAlt([]);
   if (declaredKind !== "f64") tryAlt([{ kind: "f64" }]);
   if (declaredKind !== "i32") tryAlt([{ kind: "i32" }]);
+  return funcCandidates;
+}
+
+/**
+ * Read-only half of callable-property candidate discovery.  The deferred
+ * dispatcher finalizer calls this only after every source has populated
+ * `closureInfoByTypeIdx`, so unlike the speculative reserve above this helper
+ * must never mint wrapper types or any other module state.
+ */
+function collectClosureFuncCandidates(
+  ctx: CodegenContext,
+  declared: FuncCandidate,
+  sigParamCount: number,
+  sigParamWasmTypes: ValType[],
+  admitShorterArity = false,
+  rejectRestCandidates = false,
+  initialCandidates: FuncCandidate[] = [declared],
+): FuncCandidate[] {
+  const funcCandidates: FuncCandidate[] = [...initialCandidates];
+  const seen = new Set<number>(initialCandidates.map((candidate) => candidate.funcTypeIdx));
 
   for (const [, info] of ctx.closureInfoByTypeIdx) {
-    if (info.paramTypes.length !== sigParamCount) continue;
+    // A positional helper ABI cannot synthesize a source rest vector.  The
+    // deferred scalar/no-arg admission makes a matching rest candidate
+    // impossible in normal programs; keep this explicit fail-closed guard for
+    // shared/synthetic wrapper registries whose provenance is conservative.
+    if (rejectRestCandidates && info.hasRestParam === true) continue;
+    const shorterArity = info.paramTypes.length < sigParamCount;
+    if (info.paramTypes.length > sigParamCount) continue;
+    // A callable property may expose a wider interface signature than the
+    // closure stored in that field. JavaScript still invokes the shorter
+    // function and ignores surplus arguments. Only admit a shorter source
+    // closure when its body cannot observe the call-site arity through
+    // `arguments`, rest parameters, or defaults; otherwise the declared-width
+    // argc/extras setup below would be observably wrong for that candidate.
+    if (shorterArity && (!admitShorterArity || info.needsCallSiteArity !== false)) continue;
     if (seen.has(info.funcTypeIdx)) continue;
     let paramsMatch = true;
-    for (let pi = 0; pi < sigParamCount; pi++) {
-      if (!valTypesMatch(info.paramTypes[pi]!, sigParamWasmTypes[pi]!)) {
+    for (let pi = 0; pi < info.paramTypes.length; pi++) {
+      if (callablePropertyRefBridge(ctx, sigParamWasmTypes[pi]!, info.paramTypes[pi]!) === null) {
         paramsMatch = false;
         break;
       }
@@ -242,10 +326,30 @@ function buildClosureFuncCandidates(
         funcTypeIdx: info.funcTypeIdx,
         structTypeIdx: info.structTypeIdx,
         returnType: info.returnType,
+        paramTypes: info.paramTypes,
       });
     }
   }
   return funcCandidates;
+}
+
+function buildClosureFuncCandidates(
+  ctx: CodegenContext,
+  declared: FuncCandidate,
+  sigParamCount: number,
+  sigParamWasmTypes: ValType[],
+  admitShorterArity = false,
+): FuncCandidate[] {
+  const speculative = reserveSpeculativeClosureFuncCandidateTypes(ctx, declared, sigParamWasmTypes);
+  return collectClosureFuncCandidates(
+    ctx,
+    declared,
+    sigParamCount,
+    sigParamWasmTypes,
+    admitShorterArity,
+    false,
+    speculative,
+  );
 }
 
 /**
@@ -261,6 +365,7 @@ function collectPropertyCallArgLocals(
   expr: ts.CallExpression,
   paramTypes: ValType[],
   evaluateOverflow = true,
+  pushMissingArgument: (index: number, type: ValType) => void = (_index, type) => pushDefaultValue(fctx, type, ctx),
 ): number[] {
   const argLocals: number[] = [];
   const paramCount = paramTypes.length;
@@ -282,7 +387,7 @@ function collectPropertyCallArgLocals(
   // Pad missing args with defaults.
   for (let i = expr.arguments.length; i < paramCount; i++) {
     const pt = paramTypes[i]!;
-    pushDefaultValue(fctx, pt, ctx);
+    pushMissingArgument(i, pt);
     const al = allocLocal(fctx, `__cparg_${fctx.locals.length}`, pt);
     fctx.body.push({ op: "local.set", index: al });
     argLocals.push(al);
@@ -309,7 +414,9 @@ function emitRootFuncrefDispatch(
   rootIdx: number,
   funcCandidates: FuncCandidate[],
   argLocals: number[],
+  argTypes: ValType[],
   expectedReturn: ValType | null,
+  terminal: Instr[] = typeErrorThrowInstrs(ctx),
 ): void {
   // Fetch the funcref off the ROOT (field 0 is the root's own field, present on
   // every wrapper subtype), then dispatch on its exact type.
@@ -323,7 +430,7 @@ function emitRootFuncrefDispatch(
   const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
 
   // Build the dispatch chain bottom-up; innermost else = throw TypeError.
-  let funcDispatch: Instr[] = typeErrorThrowInstrs(ctx);
+  let funcDispatch: Instr[] = terminal;
   for (const fc of [...funcCandidates].reverse()) {
     const fcCallBody: Instr[] = [];
     // Shared lifted funcs take canonical-root self. Private/named closure funcs
@@ -335,7 +442,18 @@ function emitRootFuncrefDispatch(
     if (candidateSelfTypeIdx !== rootIdx) {
       fcCallBody.push({ op: "ref.cast", typeIdx: candidateSelfTypeIdx });
     }
-    for (const al of argLocals) fcCallBody.push({ op: "local.get", index: al });
+    // A shorter-arity runtime candidate consumes only its formal prefix. Every
+    // source argument was already evaluated into `argLocals`; leaving the
+    // surplus locals unread implements JavaScript's ignored-extra-argument
+    // rule without dropping their side effects.
+    for (let index = 0; index < fc.paramTypes.length; index++) {
+      fcCallBody.push({ op: "local.get", index: argLocals[index]! });
+      const bridge = callablePropertyRefBridge(ctx, argTypes[index]!, fc.paramTypes[index]!);
+      if (bridge === null) {
+        throw new Error("callable-property candidate admitted without an argument ABI bridge");
+      }
+      fcCallBody.push(...bridge);
+    }
     fcCallBody.push({ op: "local.get", index: funcrefLocal });
     fcCallBody.push({ op: "ref.cast", typeIdx: fc.funcTypeIdx });
     fcCallBody.push({ op: "call_ref", typeIdx: fc.funcTypeIdx });
@@ -345,10 +463,26 @@ function emitRootFuncrefDispatch(
     // padding, so the coercion MUST be import-free (a late import would shift
     // indices and corrupt already-baked ref.func operands — the #2174 hazard).
     const matchedDispatch = expectedReturn !== null && fc.returnType !== null;
+    const referenceReturnBridge =
+      matchedDispatch && !valTypesMatch(fc.returnType!, expectedReturn!)
+        ? callablePropertyRefBridge(ctx, fc.returnType!, expectedReturn!)
+        : null;
     if (expectedReturn === null && fc.returnType !== null) {
       fcCallBody.push({ op: "drop" });
     } else if (expectedReturn !== null && fc.returnType === null) {
       fcCallBody.push(...defaultValueInstrs(expectedReturn));
+    } else if (
+      matchedDispatch &&
+      !valTypesMatch(fc.returnType!, expectedReturn!) &&
+      isDeclaredStructRefSubtypeAssignable(ctx.mod, fc.returnType!, expectedReturn!)
+    ) {
+      // A covariant declared struct result already has the exact runtime value
+      // the wider result block expects. Preserve its identity; projecting or
+      // defaulting here would turn a SourceFile-returning NodeFactory closure
+      // into null before its caller can narrow the same object back to
+      // SourceFile.
+    } else if (referenceReturnBridge !== null) {
+      fcCallBody.push(...referenceReturnBridge);
     } else if (
       matchedDispatch &&
       !valTypesMatch(fc.returnType!, expectedReturn!) &&
@@ -371,6 +505,170 @@ function emitRootFuncrefDispatch(
     ];
   }
   fctx.body.push(...funcDispatch);
+}
+
+function deferredCallableTypeKey(type: ValType | null): string {
+  if (type === null) return "void";
+  switch (type.kind) {
+    case "ref":
+    case "ref_null":
+      return `${type.kind}:${type.typeIdx}`;
+    default:
+      return type.kind;
+  }
+}
+
+function deferredCallablePropertyDispatchKey(declaredFuncTypeIdx: number, expectedReturn: ValType | null): string {
+  return `${declaredFuncTypeIdx}/${deferredCallableTypeKey(expectedReturn)}`;
+}
+
+function deferredCallablePropertyDispatchEligible(paramTypes: readonly ValType[], declared: ClosureInfo): boolean {
+  if (declared.hasRestParam === true) return false;
+  // Every admitted prefix must also be provably non-rest. Checking only the
+  // final formal is insufficient: `(items: T[], flag: number)` can otherwise
+  // admit a shorter `(...items: T[])` candidate and pass the explicit array as
+  // an already-packed rest vector. Scalar-only prefixes cannot alias the
+  // compiler's ref/externref rest carriers. Keep f32 out until the mixed-result
+  // dispatch bridge treats it as a numeric carrier too.
+  return paramTypes.every((type) => type.kind === "i32" || type.kind === "i64" || type.kind === "f64");
+}
+
+function validateDeferredCallablePropertyPlan(
+  plan: DeferredCallablePropertyDispatchPlan,
+  rootTypeIdx: number,
+  declared: FuncCandidate,
+  paramTypes: readonly ValType[],
+  expectedReturn: ValType | null,
+): void {
+  const sameParams =
+    plan.paramTypes.length === paramTypes.length &&
+    plan.paramTypes.every((type, index) => valTypesMatch(type, paramTypes[index]!));
+  if (
+    plan.rootTypeIdx !== rootTypeIdx ||
+    plan.declaredFuncTypeIdx !== declared.funcTypeIdx ||
+    plan.declaredStructTypeIdx !== declared.structTypeIdx ||
+    deferredCallableTypeKey(plan.declaredReturnType) !== deferredCallableTypeKey(declared.returnType) ||
+    deferredCallableTypeKey(plan.expectedReturn) !== deferredCallableTypeKey(expectedReturn) ||
+    !sameParams
+  ) {
+    throw new Error(`deferred callable-property ABI key collision for ${plan.helperName}`);
+  }
+}
+
+/**
+ * Reserve one typed private callable-property dispatcher while the caller body
+ * is still relocatable.  The placeholder is the final TypeError terminal: this
+ * eagerly registers every throw dependency and lets the finalize pass move the
+ * already-built terminal into the completed ladder without minting anything.
+ */
+function reserveDeferredCallablePropertyDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rootTypeIdx: number,
+  declared: FuncCandidate,
+  paramTypes: ValType[],
+  expectedReturn: ValType | null,
+): number {
+  const key = deferredCallablePropertyDispatchKey(declared.funcTypeIdx, expectedReturn);
+  const plans = (ctx.deferredCallablePropertyDispatches ??= new Map());
+  const existing = plans.get(key);
+  if (existing !== undefined) {
+    validateDeferredCallablePropertyPlan(existing, rootTypeIdx, declared, paramTypes, expectedReturn);
+    return existing.helperFuncIdx;
+  }
+
+  let ordinal = plans.size;
+  let helperName = `__call_cprop_deferred_${ordinal}`;
+  while (ctx.funcMap.has(helperName)) {
+    ordinal++;
+    helperName = `__call_cprop_deferred_${ordinal}`;
+  }
+
+  // Host TypeError construction may add a late import. Do that before minting
+  // the helper and flush the caller whose earlier instructions need relocating.
+  const terminal = typeErrorThrowInstrs(ctx, undefined, fctx);
+  const rootType: ValType = { kind: "ref_null", typeIdx: rootTypeIdx };
+  const helperParams = [rootType, ...paramTypes];
+  const helperResults = expectedReturn === null ? [] : [expectedReturn];
+  const typeIdx = addFuncType(ctx, helperParams, helperResults, `$deferred_callable_property_type_${ordinal}`);
+  const helperFuncIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, helperFuncIdx, {
+    name: helperName,
+    typeIdx,
+    locals: [],
+    body: terminal,
+    exported: false,
+  });
+  ctx.funcMap.set(helperName, helperFuncIdx);
+  plans.set(key, {
+    helperName,
+    helperFuncIdx,
+    rootTypeIdx,
+    declaredFuncTypeIdx: declared.funcTypeIdx,
+    declaredStructTypeIdx: declared.structTypeIdx,
+    declaredReturnType: declared.returnType,
+    paramTypes: [...paramTypes],
+    expectedReturn,
+  });
+  return helperFuncIdx;
+}
+
+/**
+ * Complete all reserved callable-property ladders from the final closure
+ * registry.  Apart from replacing each reserved helper's locals/body, this is
+ * read-only over codegen state: no type, function, global, or import is added.
+ */
+export function fillDeferredCallablePropertyDispatches(ctx: CodegenContext): void {
+  for (const plan of ctx.deferredCallablePropertyDispatches?.values() ?? []) {
+    const helper = definedFuncAt(ctx, plan.helperFuncIdx);
+    if (helper === undefined) throw new Error(`deferred callable-property helper ${plan.helperName} was not defined`);
+
+    const declared: FuncCandidate = {
+      funcTypeIdx: plan.declaredFuncTypeIdx,
+      structTypeIdx: plan.declaredStructTypeIdx,
+      returnType: plan.declaredReturnType,
+      paramTypes: plan.paramTypes,
+    };
+    const candidates = collectClosureFuncCandidates(ctx, declared, plan.paramTypes.length, plan.paramTypes, true, true);
+    const rootType: ValType = { kind: "ref_null", typeIdx: plan.rootTypeIdx };
+    const fctx: FunctionContext = {
+      name: plan.helperName,
+      params: [
+        { name: "__closure", type: rootType },
+        ...plan.paramTypes.map((type, index) => ({ name: `arg${index}`, type })),
+      ],
+      locals: [],
+      localMap: new Map(),
+      returnType: plan.expectedReturn,
+      body: [],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+    for (let index = 0; index < fctx.params.length; index++) {
+      fctx.localMap.set(fctx.params[index]!.name, index);
+    }
+
+    // `helper.body` is still the fail-closed terminal reserved at the call
+    // site. It owns all throw dependencies already; moving it into the final
+    // ladder keeps this pass strictly allocation-free at module scope.
+    const terminal = helper.body;
+    emitRootFuncrefDispatch(
+      ctx,
+      fctx,
+      0,
+      plan.rootTypeIdx,
+      candidates,
+      plan.paramTypes.map((_type, index) => index + 1),
+      plan.paramTypes,
+      plan.expectedReturn,
+      terminal,
+    );
+    helper.locals = fctx.locals;
+    helper.body = fctx.body;
+  }
 }
 
 /**
@@ -1061,6 +1359,27 @@ export function compileCallablePropertyCall(
     ? "__priv_" + propAccess.name.text.slice(1)
     : propAccess.name.text;
 
+  // An augmented-array interface such as TypeScript's `NodeArray<T>` is a
+  // checker-only named view over the ordinary vec carrier. Its inherited
+  // Array methods therefore do not live in the separately registered named
+  // interface struct. Let the native array-method lowering claim them below;
+  // treating `slice` as that struct's externref callable field guarded-casts
+  // the real vec method closure to the unrelated wrapper root and calls the
+  // deferred helper with null.
+  if (ARRAY_METHODS.has(methodName)) {
+    const receiverWasm = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(propAccess.expression));
+    const receiverTypeIdx =
+      receiverWasm.kind === "ref" || receiverWasm.kind === "ref_null" ? receiverWasm.typeIdx : undefined;
+    if (
+      receiverTypeIdx !== undefined &&
+      getArrTypeIdxFromVec(ctx, receiverTypeIdx) >= 0 &&
+      ctx.structMap.has(className) &&
+      ctx.structMap.get(className) !== receiverTypeIdx
+    ) {
+      return undefined;
+    }
+  }
+
   // (#2875 b2) `o.charAt(1)` where `o`'s literal seeded `charAt` from
   // `String.prototype.charAt` — the arity-filtered dispatch below can never
   // match that lifted `(self, this, …args)` closure. See
@@ -1229,6 +1548,24 @@ export function compileCallablePropertyCall(
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
   }
+  const pushMissingCallablePropertyArgument = (index: number, type: ValType): void => {
+    const declaration = sigParameters[index]?.valueDeclaration;
+    const isOptionalScalar =
+      type.kind === "f64" &&
+      declaration !== undefined &&
+      ts.isParameter(declaration) &&
+      (declaration.questionToken !== undefined || declaration.initializer !== undefined);
+    if (isOptionalScalar) {
+      // A callable property is dispatched through the stored closure's native
+      // ABI. An omitted optional number must therefore use the compiler's f64
+      // undefined sentinel; `f64.const 0` makes `x === undefined` false. This
+      // is TypeScript's Scanner.setText(text, start?, length?) witness: padding
+      // length with zero makes every source appear empty.
+      pushParamSentinel(fctx, type, ctx);
+      return;
+    }
+    pushDefaultValue(fctx, type, ctx);
+  };
 
   if (
     !noJsHost(ctx) &&
@@ -1364,7 +1701,7 @@ export function compileCallablePropertyCall(
         }
         // Pad missing arguments
         for (let i = expr.arguments.length; i < closureInfo.paramTypes.length; i++) {
-          pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
+          pushMissingCallablePropertyArgument(i, closureInfo.paramTypes[i]!);
         }
       }
 
@@ -1397,26 +1734,56 @@ export function compileCallablePropertyCall(
 
     if (wrapperTypes) {
       const { structTypeIdx: wrapperStructIdx, closureInfo: matchedClosureInfo } = wrapperTypes;
+      const declaredCandidate: FuncCandidate = {
+        funcTypeIdx: matchedClosureInfo.funcTypeIdx,
+        structTypeIdx: wrapperStructIdx,
+        returnType: matchedClosureInfo.returnType,
+        paramTypes: matchedClosureInfo.paramTypes,
+      };
 
-      // (#3205) Candidate set: the declared wrapper + every same-arity closure
-      // whose funcref type differs (covariant return / activated async closure).
-      // A byte-neutral read of ctx.closureInfoByTypeIdx (no emission).
-      const funcCandidates = buildClosureFuncCandidates(
+      // Reserve the predictable covariant wrappers while body emission may
+      // still mutate the type section. Candidate COLLECTION is separate: an
+      // eligible all-scalar/no-arg call routes through a finalize-filled helper so
+      // closures registered by later sources are admitted too.
+      const speculativeCandidates = reserveSpeculativeClosureFuncCandidateTypes(
         ctx,
-        {
-          funcTypeIdx: matchedClosureInfo.funcTypeIdx,
-          structTypeIdx: wrapperStructIdx,
-          returnType: matchedClosureInfo.returnType,
-        },
-        sigParamCount,
+        declaredCandidate,
         sigParamWasmTypes,
       );
+      const calleeIsAsync = isPromiseType(sigRetType);
+      const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType;
+      const rootIdx = getFuncRefWrapperRootTypeIdx(ctx) ?? wrapperStructIdx;
+      const deferredDispatchIdx = deferredCallablePropertyDispatchEligible(
+        matchedClosureInfo.paramTypes,
+        matchedClosureInfo,
+      )
+        ? reserveDeferredCallablePropertyDispatch(
+            ctx,
+            fctx,
+            rootIdx,
+            declaredCandidate,
+            matchedClosureInfo.paramTypes,
+            expectedReturn,
+          )
+        : undefined;
+      const funcCandidates =
+        deferredDispatchIdx === undefined
+          ? collectClosureFuncCandidates(
+              ctx,
+              declaredCandidate,
+              sigParamCount,
+              sigParamWasmTypes,
+              true,
+              false,
+              speculativeCandidates,
+            )
+          : [];
 
       // Compile receiver (normalized to the struct type, #1734), get field value.
       bind = planObjectLiteralMethodReceiverBind(ctx, fctx, propAccess.name);
       compileCallableFieldValue();
 
-      if (funcCandidates.length <= 1) {
+      if (deferredDispatchIdx === undefined && funcCandidates.length <= 1) {
         // ── Single-candidate path ──
         // The only closure of this arity in the module is the declared
         // signature, so dispatch needs only one funcref test. The wrapper itself
@@ -1452,7 +1819,7 @@ export function compileCallablePropertyCall(
         }
         // Pad missing arguments
         for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
-          pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
+          pushMissingCallablePropertyArgument(i, matchedClosureInfo.paramTypes[i]!);
         }
 
         // Get funcref from closure struct and call_ref — null-check → TypeError (#728)
@@ -1483,9 +1850,6 @@ export function compileCallablePropertyCall(
       // Promise<T> but a stored async closure yields the raw Promise (externref),
       // widen the dispatch result to externref so the Promise flows through
       // intact (mirrors calls.ts #2174).
-      const calleeIsAsync = isPromiseType(sigRetType);
-      const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType;
-      const rootIdx = getFuncRefWrapperRootTypeIdx(ctx) ?? wrapperStructIdx;
       const rootRefType: ValType = { kind: "ref_null", typeIdx: rootIdx };
       const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, rootRefType);
       fctx.body.push({ op: "any.convert_extern" });
@@ -1500,7 +1864,14 @@ export function compileCallablePropertyCall(
       fctx.body.push({ op: "drop" });
 
       // Save args to locals so each dispatch arm can re-push them.
-      const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, matchedClosureInfo.paramTypes, false);
+      const argLocals = collectPropertyCallArgLocals(
+        ctx,
+        fctx,
+        expr,
+        matchedClosureInfo.paramTypes,
+        false,
+        pushMissingCallablePropertyArgument,
+      );
 
       // (#4373) A property value can be a lower-arity JavaScript closure whose
       // body reads `arguments`. Preserve every overflow value and the exact
@@ -1511,7 +1882,22 @@ export function compileCallablePropertyCall(
 
       // After the args (they may read the caller's `this`), before the ladder.
       if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
-      emitRootFuncrefDispatch(ctx, fctx, closureLocal, rootIdx, funcCandidates, argLocals, expectedReturn);
+      if (deferredDispatchIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: closureLocal });
+        for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
+        fctx.body.push({ op: "call", funcIdx: deferredDispatchIdx });
+      } else {
+        emitRootFuncrefDispatch(
+          ctx,
+          fctx,
+          closureLocal,
+          rootIdx,
+          funcCandidates,
+          argLocals,
+          matchedClosureInfo.paramTypes,
+          expectedReturn,
+        );
+      }
 
       // A target that does not itself read `arguments` leaves the module
       // globals untouched. Clear them after the indirect call while preserving
@@ -1590,7 +1976,7 @@ export function compileCallablePropertyCall(
         }
       }
       for (let i = expr.arguments.length; i < matchedClosureInfo.paramTypes.length; i++) {
-        pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
+        pushMissingCallablePropertyArgument(i, matchedClosureInfo.paramTypes[i]!);
       }
 
       // Get funcref and call_ref — null-check → TypeError (#728)
@@ -1764,7 +2150,12 @@ export function compileCallableElementAccessCall(
   // externref). See buildClosureFuncCandidates + compileCallablePropertyCall.
   const funcCandidates = buildClosureFuncCandidates(
     ctx,
-    { funcTypeIdx: closureInfo.funcTypeIdx, structTypeIdx: wrapperStructIdx, returnType: closureInfo.returnType },
+    {
+      funcTypeIdx: closureInfo.funcTypeIdx,
+      structTypeIdx: wrapperStructIdx,
+      returnType: closureInfo.returnType,
+      paramTypes: closureInfo.paramTypes,
+    },
     sigParamCount,
     sigParamWasmTypes,
   );
@@ -1863,7 +2254,16 @@ export function compileCallableElementAccessCall(
 
   const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, closureInfo.paramTypes);
   if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
-  emitRootFuncrefDispatch(ctx, fctx, closureLocal, rootIdx, funcCandidates, argLocals, expectedReturn);
+  emitRootFuncrefDispatch(
+    ctx,
+    fctx,
+    closureLocal,
+    rootIdx,
+    funcCandidates,
+    argLocals,
+    closureInfo.paramTypes,
+    expectedReturn,
+  );
   return finishObjectLiteralMethodCall(ctx, fctx, bind, expectedReturn ?? VOID_RESULT);
 }
 
@@ -2067,6 +2467,21 @@ export function tryExternClassMethodOnAny(
   // handles genuine extern receivers correctly host-side.
   if (
     sourceDefinesFunctionMember(expr.getSourceFile(), methodName) ||
+    // (#5241) The same refusal, asked of the whole PROGRAM rather than of this
+    // one file. `sourceDefinesFunctionMember` stops applying the moment the
+    // class and the call site are in different modules — a provider declaring
+    // `class K { add(n) {…} }` plus a consumer calling `inst.add(2)` on an
+    // `any` receiver first-matched `Set.prototype.add` and emitted
+    // `env::Set_add`, which answered `undefined`, and (because this arm returns
+    // before the class-member dispatcher below is consulted) the
+    // `__class_call_add_1` bridge export was never demanded either. See
+    // class-instance-method-names.ts for the measurement.
+    programDeclaresClassMethod(ctx, methodName) ||
+    // (#5241, linked lane) The consumer of a `separate` link plan compiles on
+    // its own, so the provider's classes are absent from the sets above. Ask
+    // where the RECEIVER's value came from instead — see
+    // receiverOriginRejectsExternBinding.
+    receiverOriginRejectsExternBinding(ctx.oracle, propAccess.expression, methodName) ||
     // (#4439) `noJsHost` widens the alias shape to a borrowed BUILTIN method
     // (`o.match = String.prototype.match`), which otherwise first-matched the
     // DOM `Cache.match` extern class and leaked `env::Cache_match` host-free.
@@ -2167,13 +2582,28 @@ export function tryExternClassMethodOnAny(
       compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
     }
     for (let i = expr.arguments.length; i < argCount; i++) {
-      fctx.body.push({ op: "ref.null.extern" });
+      // (#5221) An OMITTED argument is `undefined`, not `null` — the same rule
+      // #4644 states for synthesized zero-arg method calls. It matters here
+      // because this arm binds an `any` receiver to the FIRST extern class that
+      // declares the name, and that class's fixed arity is then padded out. For
+      // `a.sort()` on an `any` array the first match is
+      // `Uint8ClampedArray_sort(self, comparator)`, so the raw `ref.null.extern`
+      // reached the host as an EXPLICIT `null` comparator and native
+      // `Array.prototype.sort` threw "The comparison function must be either a
+      // function or undefined: null" (§23.1.3.30 step 1 accepts `undefined`, not
+      // `null`). That is the third of the three defects behind
+      // `Temporal.PlainDate.from({…})`: the polyfill's `PrepareCalendarFields`
+      // sorts its field-name list with a bare `a.sort()`.
+      pushDefaultValue(fctx, sig.params[i + 1] ?? { kind: "externref" }, ctx);
     }
     for (let i = argCount; i < expr.arguments.length; i++) {
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!);
       if (argType) fctx.body.push({ op: "drop" });
     }
-    fctx.body.push({ op: "call", funcIdx });
+    // `pushDefaultValue` may have registered `__get_undefined` as a late import,
+    // which shifts every function index above the import block — so re-read the
+    // callee rather than emitting the index captured before the padding.
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? funcIdx });
     if (sig.results.length === 0) return VOID_RESULT;
     return sig.results[0]!;
   }

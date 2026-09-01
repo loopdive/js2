@@ -19,6 +19,14 @@ import { compileForOfDestructuring } from "./statements/for-of-destructuring.js"
 import { collectInstrs } from "./statements/shared.js";
 import { addIteratorImports } from "./registry/imports.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import {
+  blockHasTopLevelReturn,
+  countAwaitsInStatement,
+  findAwaitInStatement,
+  isNestedFunctionScope,
+  statementContainsNode,
+  transparentLinearBlockStatements,
+} from "./async-cps-ast.js";
 
 /**
  * Master gate for the AST-side async CPS lowering.
@@ -818,6 +826,12 @@ function lowerLinearStatements(
       pushLead(stmt);
       continue;
     }
+
+    const transparentBlock = transparentLinearBlockStatements(stmt);
+    if (transparentBlock !== undefined) {
+      if (!lowerLinearStatements(transparentBlock, st, awaitSet)) return false;
+      continue;
+    }
     if (awaitsHere > 1) return false; // two awaits in one statement — not linear-canonical
 
     // (#2906 Gap 3) try/finally spanning an await — the try body carries the
@@ -963,68 +977,6 @@ function lowerLinearStatements(
     return false; // await sits in a non-canonical position within this statement
   }
   return true;
-}
-
-/** True if `block` contains a `return` at any depth (not crossing nested fn scopes). */
-function blockHasTopLevelReturn(block: ts.Block): boolean {
-  let found = false;
-  const walk = (node: ts.Node): void => {
-    if (found || isNestedFunctionScope(node)) return;
-    if (ts.isReturnStatement(node)) {
-      found = true;
-      return;
-    }
-    forEachChild(node, walk);
-  };
-  forEachChild(block, walk);
-  return found;
-}
-
-/** Count how many of `awaitSet`'s awaits sit inside `stmt` (not crossing fn scopes). */
-function countAwaitsInStatement(stmt: ts.Node, awaitSet: ReadonlySet<ts.AwaitExpression>): number {
-  let n = 0;
-  const walk = (node: ts.Node): void => {
-    if (isNestedFunctionScope(node) && node !== stmt) return;
-    if (ts.isAwaitExpression(node) && awaitSet.has(node)) n++;
-    forEachChild(node, walk);
-  };
-  walk(stmt);
-  return n;
-}
-
-/** The single `awaitSet` await inside `stmt`, or `undefined`. */
-function findAwaitInStatement(
-  stmt: ts.Node,
-  awaitSet: ReadonlySet<ts.AwaitExpression>,
-): ts.AwaitExpression | undefined {
-  let found: ts.AwaitExpression | undefined;
-  const walk = (node: ts.Node): void => {
-    if (found) return;
-    if (isNestedFunctionScope(node) && node !== stmt) return;
-    if (ts.isAwaitExpression(node) && awaitSet.has(node)) {
-      found = node;
-      return;
-    }
-    forEachChild(node, walk);
-  };
-  walk(stmt);
-  return found;
-}
-
-/** True if `node` appears anywhere within `stmt`'s subtree (not crossing fn scopes). */
-function statementContainsNode(stmt: ts.Node, node: ts.Node): boolean {
-  let found = false;
-  const walk = (n: ts.Node): void => {
-    if (found) return;
-    if (n === node) {
-      found = true;
-      return;
-    }
-    if (isNestedFunctionScope(n) && n !== stmt) return;
-    forEachChild(n, walk);
-  };
-  walk(stmt);
-  return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -4025,19 +3977,6 @@ function collectAllDeclaredNames(fn: ts.FunctionLikeDeclaration, out: Set<string
     forEachChild(node, walk);
   };
   walk(body);
-}
-
-/** True for nodes that open a new function scope (awaits inside don't suspend us). */
-function isNestedFunctionScope(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isConstructorDeclaration(node)
-  );
 }
 
 /** Collect `await` expressions in pre-order, not descending into nested fn scopes. */

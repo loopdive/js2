@@ -1,0 +1,13 @@
+language/statements/class/subclass/builtin-objects/Array/contructor-calls-super-multiple-arguments.js
+language/statements/class/subclass/builtin-objects/Array/length.js
+language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/Boolean/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/DataView/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/Promise/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/String/length.js
+language/statements/class/subclass/builtin-objects/String/regular-subclassing.js
+language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js
+language/statements/class/subclass/builtin-objects/TypedArray/regular-subclassing.js
+language/statements/class/subclass/builtins.js

@@ -1,0 +1,10 @@
+var obj = {
+  toString() { throw new Test262Error('unreachable toString'); },
+  valueOf() { throw new Test262Error('unreachable valueOf'); },
+  [Symbol.toPrimitive]() { return 'success'; }
+};
+if (escape(obj) !== 'success') throw new Test262Error('escape: ' + escape(obj));
+if ("__foo__".indexOf({ [Symbol.toPrimitive]: function () { return "foo"; } }) !== 2) throw new Test262Error('indexOf');
+var o2 = { valueOf: function () { return Infinity; } };
+o2[Symbol.toPrimitive] = function () { return 42; };
+if (isNaN(o2) !== false) throw new Test262Error('isNaN via assigned @@toPrimitive');

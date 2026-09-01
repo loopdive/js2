@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import type { CompileResult, LinkedModuleArtifact } from "./index.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
 import { appendBundleManifest, bundleArtifactHash, type BundleManifestV1 } from "./bundle-manifest.js";
+import { BINARYEN_PORTABLE_FEATURE_FLAGS } from "./binaryen-features.js";
 import {
   decodeProviderManifest,
   providerArtifactHash,
@@ -175,7 +176,7 @@ export function mergePackageProviders(
       writeFileSync(providerPath, artifact.binary);
       mergeArgs.push(providerPath, artifact.namespace);
     });
-    mergeArgs.push("--all-features", "--disable-custom-descriptors", "--rename-export-conflicts", "-o", mergedPath);
+    mergeArgs.push(...BINARYEN_PORTABLE_FEATURE_FLAGS, "--rename-export-conflicts", "-o", mergedPath);
     runBinaryenTool("wasm-merge", mergeArgs);
 
     const graph = manifest.rootExports.map((name, index) => ({
@@ -186,8 +187,7 @@ export function mergePackageProviders(
     writeFileSync(graphPath, JSON.stringify(graph));
     runBinaryenTool("wasm-metadce", [
       mergedPath,
-      "--all-features",
-      "--disable-custom-descriptors",
+      ...BINARYEN_PORTABLE_FEATURE_FLAGS,
       "--graph-file",
       graphPath,
       "-o",
@@ -197,14 +197,7 @@ export function mergePackageProviders(
     let finalPath = dcePath;
     if (options.optimize) {
       const level = options.optimize === true ? 3 : options.optimize;
-      runBinaryenTool("wasm-opt", [
-        dcePath,
-        `-O${level}`,
-        "--all-features",
-        "--disable-custom-descriptors",
-        "-o",
-        optimizedPath,
-      ]);
+      runBinaryenTool("wasm-opt", [dcePath, `-O${level}`, ...BINARYEN_PORTABLE_FEATURE_FLAGS, "-o", optimizedPath]);
       finalPath = optimizedPath;
     }
 

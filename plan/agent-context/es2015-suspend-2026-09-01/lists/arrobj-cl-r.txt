@@ -1,0 +1,3 @@
+built-ins/Array/prototype/splice/property-traps-order-with-species.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-delete-proxy-target.js
+built-ins/Array/prototype/copyWithin/return-abrupt-from-has-start.js

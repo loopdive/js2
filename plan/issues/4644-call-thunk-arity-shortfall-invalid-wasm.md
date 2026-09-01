@@ -1,10 +1,12 @@
 ---
 id: 4644
 title: "Compiler-emitted call thunks push one operand fewer than the callee's declared arity → invalid Wasm"
-status: ready
+status: done
 sprint: current
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-28
+completed: 2026-08-28
+assignee: ttraenkler/opus-dev-4644
 priority: high
 horizon: m
 feasibility: medium
@@ -14,6 +16,19 @@ area: codegen, calls
 language_feature: calls, varargs, toString
 goal: correctness
 related: [4628, 4627, 4645]
+# The fixes are argument-padding at four existing emit sites; each one has to
+# state WHY the old operand count was wrong, and the explanation is the point
+# (see "Implementation notes"). Splitting these functions is #3399's job and
+# would bury a one-operand fix inside a refactor.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/type-coercion.ts
+func-budget-allow:
+  - src/codegen/index.ts::emitToPrimitiveMethodExports
+  - src/codegen/index.ts::emitIteratorMethodExport
+  - src/codegen/index.ts::emitMethodDispatch
+  - src/codegen/index.ts::emitDispatchForMethod
+  - src/codegen/type-coercion.ts::coerceType
 ---
 
 # #4644 — Call thunks push one operand fewer than the callee's declared arity
@@ -85,6 +100,62 @@ validator's message and the offending function name.
 3. No net regression on the test262 baseline.
 4. If any of the five turns out to need a separate fix that is out of scope,
    file it and say so — do not leave a slice silently failing.
+
+## Implementation notes (2026-08-28)
+
+**Answer to the issue's own question — FOUR producers, not one, and not two.**
+The two validator message shapes do not partition them: three producers can
+emit either message depending on which consumer trips first, and the fifth
+sample (`IslamicBaseHelper_estimateIsoDate`) was right to look different — it is
+the only one whose producer is ordinary user-method dispatch.
+
+| # | Producer | Bug | Sample |
+| --- | --- | --- | --- |
+| 1 | `emitVirtualMethodDispatchByTag` (`src/codegen/expressions/virtual-dispatch.ts`) | Shared argument temps sized from `candidates[0]`'s Wasm signature, then pushed unchanged into EVERY arm | `IslamicBaseHelper_estimateIsoDate`, `need 5, got 4` |
+| 2 | `emitToPrimitiveMethodExports` + the `${Class}_toString` / `${Class}_valueOf` calls in `type-coercion.ts` | ToPrimitive passes zero arguments; the emitters pushed only the receiver, ignoring parameters the method DECLARES | `__call_toString` ×3 |
+| 3 | The host vararg class bridge `__class_call_<m>_vararg` (`src/codegen/index.ts`) | `funcRestParams.restIndex` is a SOURCE param index; the bridge read it as a Wasm param index | `__class_call_formatToParts_vararg` |
+| 4 | The same virtual-dispatch cascade's `__tag` read | "Field 0 is `__tag` in every class struct this path can see" was asserted, never checked; an object-literal struct's field 0 is its first property | `i32.eq[0] expected i32, found struct.get of type externref` |
+
+Producer 4 was **already on `main` and invisible**: the validator stops at the
+first bad function, and in every affected module an earlier function failed
+first. It only surfaced *after* producer 1 was fixed. That is the general shape
+of this issue — one invalid function hides every later one, so "5 failing
+slices" was a floor, not a count.
+
+Two details worth carrying forward:
+
+- **Producer 1's failure MODE depends on declaration order.** The candidate list
+  follows `classParentMap` insertion order. Narrow-first gives the issue's
+  `need N, got N−1`; wide-first gives a surplus operand, which surfaces as
+  `type error in fallthru[0]`. Same defect, and a repro that only covers one
+  ordering tests half of it.
+- **Padding `externref` with `ref.null.extern` is WRONG, not merely
+  approximate.** It reads as JS `null`, and `null === undefined` is false, so a
+  method that inspects its omitted argument takes the wrong branch — measured
+  8 instead of 42 on `class N { valueOf(hint) { return hint === undefined ? 41
+  : 7 } } ; new N() + 1`. `canonicalUndefinedExternInstrs` degrades to that
+  silently when `__get_undefined` is not imported, which is exactly the case
+  for a module whose only use of it IS the pad. `emitToPrimitiveMethodExports`
+  now registers the import up front, and the mid-body sites route through
+  `pushDefaultValue`, which registers it and flushes the index shift.
+  **Consequence for callers: a `funcIdx` read BEFORE the pad may be stale** —
+  every one of the five sites re-reads it from `funcMap` afterwards.
+
+### Result
+
+All **14/14** slices of the polyfill harness pass `WebAssembly.validate()` (was
+9/14). Regression tests: `tests/issue-4644-call-thunk-arity.test.ts`, one
+minimized case per producer, each verified to FAIL on `main` and pass after.
+Each asserts a clean `compile()` *and* a successful `WebAssembly.compile()` —
+asserting only the first passes on the buggy compiler, which is the whole
+character of this bug family.
+
+### Out of scope — filed separately
+
+- **#5168** — the host dynamic method bridge does not RESOLVE a rest-parameter
+  class method at run time (`TypeError: formatToParts is not a function`).
+  Pre-existing and independent of the arity fix: it reproduces identically for
+  `m(...rest)`, whose operand count was never wrong.
 
 ## Notes
 

@@ -1,0 +1,8 @@
+/*---
+description: probe .tmp/es2015/probes5195/proto-write.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class A { ma() {} }
+A.prototype.x = 'a';
+assert.sameValue(A.prototype.x, 'a', 'proto expando read-back');
+assert.sameValue(new A().x, 'a', 'instance inherits proto expando');

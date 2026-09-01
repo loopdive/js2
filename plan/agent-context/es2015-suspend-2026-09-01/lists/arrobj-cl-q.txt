@@ -1,0 +1,4 @@
+built-ins/Array/prototype/flat/target-array-non-extensible.js
+built-ins/Array/prototype/flat/target-array-with-non-configurable-property.js
+built-ins/Array/prototype/flatMap/target-array-non-extensible.js
+built-ins/Array/prototype/flat/target-array-with-non-writable-property.js

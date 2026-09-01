@@ -1,0 +1,8 @@
+/*---
+description: probe .tmp/es2015/probes5195/static-setter.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var ss = 0;
+class C { static set staticX(v) { ss = v; } }
+assert.sameValue(C.staticX = 2, 2, 'assignment value');
+assert.sameValue(ss, 2, 'static setter invoked');

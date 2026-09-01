@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/gpo-class.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C {}
+class D extends C {}
+assert.sameValue(Object.getPrototypeOf(D), C, 'gPO(D) === C');
+assert.sameValue(Object.getPrototypeOf(C), Function.prototype, 'gPO(C) === Function.prototype');
+assert.sameValue(Object.getPrototypeOf(C.prototype), Object.prototype, 'gPO(C.prototype) === Object.prototype');

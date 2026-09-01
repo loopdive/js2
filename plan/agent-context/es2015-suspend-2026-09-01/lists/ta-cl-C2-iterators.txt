@@ -1,0 +1,6 @@
+built-ins/TypedArray/prototype/values/iter-prototype.js
+built-ins/TypedArray/prototype/entries/iter-prototype.js
+built-ins/TypedArray/prototype/entries/return-itor.js
+built-ins/TypedArray/prototype/keys/return-itor.js
+built-ins/TypedArray/prototype/keys/iter-prototype.js
+built-ins/TypedArray/prototype/values/return-itor.js

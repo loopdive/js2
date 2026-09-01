@@ -44,7 +44,7 @@ import {
 } from "../closed-method-dispatch.js";
 import { compileArrowAsClosure, computeClosureWrapperSig } from "../closures.js";
 import { tryEmitDirectTwinCall } from "../typed-this.js"; // (#3683 S3) direct-call devirtualization
-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "../any-helpers.js"; // (#3683 S3b) arity-padding sentinel; (#5150) setter return
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "../any-helpers.js"; // (#2864) semantic undefined producer
 import { pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -66,11 +66,12 @@ import {
   ensureTaDynCopyWithinHelper,
   ensureTaDynFillHelper,
   ensureTaDynReverseHelper,
+  ensureTaDynSetHelper,
   ensureTaFromArrayLikeHelper,
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
-import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped } from "../iterator-native.js";
+import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import {
@@ -79,6 +80,7 @@ import {
   addUnionImports,
   ensureExnTag,
   getOrRegisterVecType,
+  hostMapCarrierClassName,
   nativeStringType,
   reserveVecMethodHelper,
   resolveWasmType,
@@ -86,7 +88,8 @@ import {
   typedArrayVecStorage,
 } from "../index.js";
 import { isTaViewTypeIdx } from "../registry/types.js";
-import { LAZY_ITER_METHODS } from "../iter-lazy-native.js";
+import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
+import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
@@ -175,7 +178,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
+import { resolveStructName, resolveStructNameForExpr, tryCompileCallableStaticField } from "./misc.js";
 
 /**
  * A source-level delete removes the builtin prototype member before the call
@@ -237,6 +240,7 @@ function sourceDeletesBuiltinPrototypeMember(
   const callStart = receiver.getStart(sourceFile);
   return (positions.get(key) ?? []).some((deleteStart) => deleteStart < callStart);
 }
+import { resolvePromiseSubclassName } from "./promise-subclass.js";
 import {
   BUILTIN_CLASS_NAMES,
   coerceNumberMethodArgToF64,
@@ -575,6 +579,92 @@ function tryCompileLateFnctorPrototypeMethodCall(
 }
 
 /**
+ * A standalone fnctor subclass can inherit Iterator helpers from the live
+ * prototype installed by the Test262 harness. Static class lookup cannot see
+ * that runtime installation, while the generic fnctor miss uses a host bridge
+ * that standalone deliberately does not provide. Admit only classes whose
+ * compiled class chain exposes the iterator protocol's `next` callable (as a
+ * method or getter), and only helper forms already owned by the closed lazy
+ * iterator dispatcher. Every other fnctor miss keeps the legacy path.
+ */
+function tryCompileStandaloneFnctorLazyMethodMiss(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  receiverClassName: string,
+  methodName: string,
+): InnerResult | undefined {
+  if (!ctx.standalone || fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
+
+  let owner: string | undefined = receiverClassName;
+  let hasCompiledNextMethod = false;
+  let nextGetterIdx: number | undefined;
+  const seen = new Set<string>();
+  while (owner !== undefined && ctx.classSet.has(owner) && !seen.has(owner)) {
+    seen.add(owner);
+    const methodKey = classMemberFuncKey(ctx, `${owner}_next`, "instance");
+    const getterKey = classMemberFuncKey(ctx, `${owner}_get_next`, "instance");
+    if (ctx.funcMap.has(methodKey) || ctx.funcMap.has(`${owner}_next`)) {
+      hasCompiledNextMethod = true;
+      break;
+    }
+    nextGetterIdx = ctx.funcMap.get(getterKey) ?? ctx.funcMap.get(`${owner}_get_next`);
+    if (nextGetterIdx !== undefined) {
+      break;
+    }
+    owner = ctx.classParentMap.get(owner);
+  }
+  if (!hasCompiledNextMethod && nextGetterIdx === undefined) return undefined;
+
+  const dispatchArgs = expr.arguments.some((arg) => ts.isSpreadElement(arg))
+    ? flattenCallArgs(expr.arguments)
+    : [...expr.arguments];
+  if (dispatchArgs === null || !isLazyIterForm(methodName, dispatchArgs.length)) return undefined;
+
+  const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, dispatchArgs.length);
+  const nextCallableTypeIdx = nextGetterIdx === undefined ? undefined : ensureIteratorNextCallableHandle(ctx);
+  if (nextGetterIdx !== undefined && nextCallableTypeIdx === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  if (nextGetterIdx !== undefined && nextCallableTypeIdx !== undefined) {
+    const getterReceiverType = getFuncParamTypes(ctx, nextGetterIdx)?.[0];
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, getterReceiverType);
+    const recvLocalType = getterReceiverType ?? recvType ?? { kind: "externref" as const };
+    if (recvType && !valTypesMatch(recvType, recvLocalType)) coerceType(ctx, fctx, recvType, recvLocalType);
+    else if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+    const recvLocal = allocLocal(fctx, `__iter_next_getter_recv_${fctx.locals.length}`, recvLocalType);
+    fctx.body.push({ op: "local.set", index: recvLocal });
+
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: nextGetterIdx });
+    const getterResultType = getWasmFuncReturnType(ctx, nextGetterIdx);
+    if (getterResultType && getterResultType.kind !== "externref") {
+      coerceType(ctx, fctx, getterResultType, { kind: "externref" });
+    } else if (getterResultType === undefined) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    if (recvLocalType.kind !== "externref") coerceType(ctx, fctx, recvLocalType, { kind: "externref" });
+    fctx.body.push({ op: "struct.new", typeIdx: nextCallableTypeIdx });
+    fctx.body.push({ op: "extern.convert_any" });
+  } else {
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+    if (recvType && recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+    else if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  for (const arg of dispatchArgs) {
+    const argType = compileInternalCallArgument(ctx, fctx, arg, { kind: "externref" });
+    if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    else if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+  }
+  fctx.body.push({ op: "call", funcIdx: dispatchIdx });
+  return { kind: "externref" };
+}
+
+/**
  * (#4482) True when the native String-family arm below must DECLINE because the
  * member being called is provably not on the receiver's own prototype, so it can
  * only have come from somewhere the arm cannot see:
@@ -871,9 +961,9 @@ export function compileReceiverMethodCall(
         // strict equality). Statement position keeps the zero-cost
         // VOID_RESULT.
         if (!ts.isExpressionStatement(expr.parent)) {
-          // (#5150) The #2106 distinct-undefined singleton — a bare
-          // `ref.null.extern` compares as JS `null`, which is what made every
-          // `set-values-return-undefined.js` read SameValue(«null»,«undefined»).
+          // Setters return semantic `undefined`; the result is carried as an
+          // externref in expression position, so preserve the distinction
+          // between standalone's canonical tag-1 singleton and `null`.
           fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
           return { kind: "externref" };
         }
@@ -933,7 +1023,7 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker)) {
+  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
@@ -949,7 +1039,7 @@ export function compileReceiverMethodCall(
     const isAsyncGenRecv =
       recvSymName === "AsyncGenerator" || recvSymName === "AsyncIterableIterator" || recvSymName === "AsyncIterator";
     if (isAsyncGenRecv && propAccess.name.text === "next" && expr.arguments.length === 0) {
-      const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+      const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression, expr);
       if (dispatched !== null) return dispatched;
     }
     // (#3389 slice 2a) `.return(v)` / `.throw(e)` on a driven async-gen — the
@@ -982,8 +1072,14 @@ export function compileReceiverMethodCall(
     );
     if (nativeResult !== undefined) return nativeResult;
     if (methodName === "next") {
+      // (#5147) `Iterator`/`IterableIterator`-typed receivers include the
+      // NATIVE carriers (`[1,2][Symbol.iterator]()` → `$IterRec`), which
+      // `__gen_next` does not recognize. `__any_iter_next` tests for them and
+      // falls back to `__gen_next` on a miss.
+      const anyIterNextIdx = reserveAnyIterNext(ctx);
+      if (anyIterNextIdx !== undefined) flushLateImportShifts(ctx, fctx);
       compileExpression(ctx, fctx, propAccess.expression);
-      const funcIdx = ctx.funcMap.get("__gen_next");
+      const funcIdx = anyIterNextIdx ?? ctx.funcMap.get("__gen_next");
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" }; // Returns IteratorResult as externref
@@ -1039,7 +1135,7 @@ export function compileReceiverMethodCall(
     // wrap). Zero-arg `.finally()` is admitted ONLY when the native lowering
     // will consume it; every other lane keeps the historical ≥1-argument
     // gate so its generic paths (and bytes) are untouched.
-    const nativeFinallyActive =
+    let nativeFinallyActive =
       method === "finally" &&
       isStandaloneThenChainNativeActive(ctx) &&
       (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
@@ -1076,7 +1172,23 @@ export function compileReceiverMethodCall(
       const receiverTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
       const recvSym = receiverTsType.getSymbol()?.name;
       const apparentSym = ctx.checker.getApparentType(receiverTsType).getSymbol()?.name;
-      const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise";
+      // A statically-known `class P extends Promise` value carries the same
+      // native `$Promise` representation as Promise itself when its forwarding
+      // constructor takes the standalone super(executor) path. TypeScript
+      // preserves the subclass symbol on `new P(...)`, so checking only for the
+      // literal `Promise` symbol sends `new P(...).then/finally` through the
+      // generic member-call path even though the runtime value is a real native
+      // promise. Recognize transitive Promise ancestry only on the native lane,
+      // keeping host/gc dispatch unchanged.
+      const isNativePromiseSubclassReceiver =
+        isStandaloneThenChainNativeActive(ctx) &&
+        [recvSym, apparentSym].some(
+          (name): name is string => name !== undefined && resolvePromiseSubclassName(ctx, name) !== undefined,
+        );
+      const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise" || isNativePromiseSubclassReceiver;
+      if (method === "finally" && isNativePromiseSubclassReceiver) {
+        nativeFinallyActive = true;
+      }
 
       // (#2865) ANY-typed receiver under ACTIVE native chaining: the value
       // may be a native `$Promise` minted by the driven async-gen machinery
@@ -1140,7 +1252,17 @@ export function compileReceiverMethodCall(
         // fail to instantiate for their own unrelated missing import), so
         // this preserves WASI's behaviour byte-for-byte.
         if (isStandaloneThenChainNativeActive(ctx) && method === "then") {
-          if (ctx.wasi === true || nativeFirstPromise) {
+          if (isNativePromiseSubclassReceiver) {
+            emitStandaloneThenWithNativeFallback(
+              ctx,
+              fctx,
+              propAccess.expression,
+              "then",
+              expr.arguments[0],
+              expr.arguments[1],
+              { nullMiss: true },
+            );
+          } else if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1177,7 +1299,19 @@ export function compileReceiverMethodCall(
         // user's onRejected continuation. (#2980 class 1: same wasi/standalone
         // split as `.then` above.)
         if (isStandaloneThenChainNativeActive(ctx) && method === "catch") {
-          if (ctx.wasi === true || nativeFirstPromise) {
+          if (isNativePromiseSubclassReceiver) {
+            emitStandaloneThenWithNativeFallback(
+              ctx,
+              fctx,
+              propAccess.expression,
+              "catch",
+              undefined,
+              expr.arguments[0],
+              {
+                nullMiss: true,
+              },
+            );
+          } else if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1213,11 +1347,17 @@ export function compileReceiverMethodCall(
         // exact legacy host route below.
         if (nativeFinallyActive) {
           (ctx.standaloneNativeFinallyNodes ??= new Set()).add(expr);
-          if (ctx.wasi === true || nativeFirstPromise) {
+          if (isNativePromiseSubclassReceiver) {
+            emitStandaloneFinallyWithNativeFallback(ctx, fctx, propAccess.expression, expr.arguments[0], {
+              nullMiss: true,
+            });
+          } else if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
-              const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers);
+              const onFinally = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers, {
+                allowDynamic: true,
+              });
               emitStandalonePromiseFinally(ctx, fctx, promiseInstrs, onFinally);
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);
@@ -1620,15 +1760,9 @@ export function compileReceiverMethodCall(
     // namespace.  `typeof C` has construct signatures; `new C()` instances do
     // not.  This keeps inherited/virtual dispatch on the instance side while
     // preserving ordinary static calls through a class value.
-    // Bundled JavaScript compiled with `allowJs` can give a class-valued
-    // module binding the *instance* class type (the declaration has no
-    // `typeof` annotation), even though the property access is on the
-    // constructor object.  The declaration pass still records that binding
-    // in classExprNameMap, which is a stronger identity signal than the
-    // checker-side construct-signature result here.  Without this fallback a
-    // detached conditional such as `flag ? Lexer.lex : Lexer.lexInline`
-    // enters the instance dispatcher, drops the static method's return, and
-    // materializes null for the caller.
+    // Bundled JavaScript can type a class-valued binding as an instance even
+    // when the access is on the constructor; classExprNameMap is the stronger
+    // identity signal, so detached conditional static calls retain their value.
     const staticReceiverExpr = skipTransparentExpressions(propAccess.expression);
     const mappedStaticReceiver = ts.isIdentifier(staticReceiverExpr)
       ? ctx.classExprNameMap.get(staticReceiverExpr.text)
@@ -1636,6 +1770,8 @@ export function compileReceiverMethodCall(
     const receiverIsClassObject =
       (receiverType.getConstructSignatures?.().length ?? 0) > 0 || mappedStaticReceiver === receiverClassName;
     const receiverMemberKind = receiverIsClassObject ? "static" : "instance";
+    if (receiverIsClassObject && tryCompileCallableStaticField(ctx, fctx, expr, propAccess, fullName))
+      return { kind: "externref" };
     const hasReceiverMember = receiverIsClassObject
       ? ctx.staticMethodSet.has(fullName)
       : ctx.classMethodSet.has(fullName);
@@ -1802,6 +1938,15 @@ export function compileReceiverMethodCall(
     // in `_fnctorInstanceCtor`, so the host resolves the member through the
     // live prototype chain) instead of falling to the graceful-null tail.
     if (funcIdx === undefined && fnctorAncestorOfClass(ctx, receiverClassName) !== undefined) {
+      const nativeLazyResult = tryCompileStandaloneFnctorLazyMethodMiss(
+        ctx,
+        fctx,
+        expr,
+        propAccess,
+        receiverClassName,
+        methodName,
+      );
+      if (nativeLazyResult !== undefined) return nativeLazyResult;
       const dynResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
       if (dynResult !== undefined) return dynResult;
     }
@@ -2012,7 +2157,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "empty" },
-            then: receiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+            then: receiverWasCast ? [] : typeErrorThrowInstrs(ctx, expr.expression),
             else: elseInstrs,
           });
           return VOID_RESULT;
@@ -2025,7 +2170,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val" as const, type: resultType },
-            then: receiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+            then: receiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx, expr.expression),
             else: elseInstrs,
           });
           return resultType;
@@ -2235,7 +2380,7 @@ export function compileReceiverMethodCall(
             fctx.body.push({
               op: "if",
               blockType: { kind: "empty" },
-              then: smReceiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+              then: smReceiverWasCast ? [] : typeErrorThrowInstrs(ctx, expr.expression),
               else: elseInstrs,
             });
             return VOID_RESULT;
@@ -2251,7 +2396,7 @@ export function compileReceiverMethodCall(
             fctx.body.push({
               op: "if",
               blockType: { kind: "val" as const, type: resultType },
-              then: smReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+              then: smReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx, expr.expression),
               else: elseInstrs,
             });
             return resultType;
@@ -3320,15 +3465,28 @@ export function compileReceiverMethodCall(
         // when `args[0]` exists — a zero-argument call never reached it.)
         // Also covers indexOf's boxed fromIndex slot, which is spec-equivalent:
         // ToIntegerOrInfinity of `null` and of `undefined` are both +0.
-        // Deliberately NOT widened to `includes`/`startsWith`/`search`, which
-        // have the identical defect from this list — see the follow-up section
-        // in `plan/issues/5155-string-indexof-no-argument-gc.md`.
+        // #5160 — the three siblings #5155 deliberately left out join the list.
+        // Same one-cell defect, same lane: the absent search slot reached the
+        // host as `ref.null.extern`, so `"aundefinedb".includes()` searched for
+        // "null" (false, spec true), `"undefinedb".startsWith()` likewise
+        // (false, spec true), and `"aundefinedb".search()` built `RegExp(null)`
+        // = /null/ (-1, spec 0). `search` is NOT a ToString case: §22.1.3.19
+        // routes an absent/undefined argument through `RegExp(undefined)` = the
+        // empty regexp `/(?:)/`, which matches at 0 — measured on the base, the
+        // gc lane's `search()` and `search(null)` compiled to ONE binary while
+        // `search(undefined)` already answered 0, so passing `undefined` is all
+        // that is needed here too. The f64 position slot of
+        // includes/startsWith is untouched by this set — it keeps the #2002 NaN
+        // sentinel below.
         const padsUndefined =
           method === "endsWith" ||
+          method === "includes" ||
           method === "indexOf" ||
           method === "lastIndexOf" ||
           method === "padStart" ||
-          method === "padEnd";
+          method === "padEnd" ||
+          method === "search" ||
+          method === "startsWith";
         let undefIdx: number | undefined;
         if (padsUndefined) {
           undefIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
@@ -3605,11 +3763,19 @@ export function compileReceiverMethodCall(
         // the miss arm preserves this site's original `__gen_next` behavior
         // (see tryEmitAsyncGenNextDispatch). Zero-arg only.
         if (expr.arguments.length === 0) {
-          const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+          const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression, expr);
           if (dispatched !== null) return dispatched;
         }
         const genNextIdx = ctx.funcMap.get("__gen_next");
         if (genNextIdx !== undefined) {
+          // (#5147) An `any`-typed receiver may hold a NATIVE iterator carrier
+          // (`$IterRec` from `[1,2][Symbol.iterator]()`, or a `$LazyIterHelper`
+          // from `.chunks(2)`), which `__gen_next` does not recognize — it
+          // answered null and the following `.value` read threw. Route through
+          // `__any_iter_next`, whose miss arm IS `__gen_next`.
+          const anyIterNextIdx = reserveAnyIterNext(ctx);
+          const nextTargetIdx = anyIterNextIdx ?? genNextIdx;
+          flushLateImportShifts(ctx, fctx);
           compileExpression(ctx, fctx, propAccess.expression, {
             kind: "externref",
           });
@@ -3620,7 +3786,7 @@ export function compileReceiverMethodCall(
               fctx.body.push({ op: "drop" });
             }
           }
-          fctx.body.push({ op: "call", funcIdx: genNextIdx });
+          fctx.body.push({ op: "call", funcIdx: nextTargetIdx });
           return { kind: "externref" };
         }
       }
@@ -3866,12 +4032,19 @@ export function compileReceiverMethodCall(
         // (slice-1 fill path is byte-identical — same helper funcIdx/arity).
         // Helpers mint defined functions only (no imports — post-flush safe).
         let taFillIdx: number | undefined;
-        if (ctx.moduleUsesDynTaView && arity <= 3) {
-          if (methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
-          else if (methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
-          else if (methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
+        let taSetIdx: number | undefined;
+        if (ctx.moduleUsesDynTaView) {
+          if (methodName === "set") taSetIdx = ensureTaDynSetHelper(ctx);
+          else if (arity <= 3 && methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
+          else if (arity <= 3 && methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
+          else if (arity <= 3 && methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
         }
-        if (taFillIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {
+        const taDynMethodIdx = taSetIdx ?? taFillIdx;
+        if (taDynMethodIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {
+          // The set helper self-registers the canonical object readers and
+          // coercion substrate. Reconcile any late-import shifts before the
+          // outer call site captures its receiver/argument instructions.
+          flushLateImportShifts(ctx, fctx);
           const dynIdx = ctx.taDynViewTypeIdx;
           const recvT = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
           if (recvT && recvT.kind !== "externref") {
@@ -3891,11 +4064,22 @@ export function compileReceiverMethodCall(
             argLocals.push(aLocal);
           }
           const thenArm: Instr[] = [{ op: "local.get", index: recvLocal }];
+          // `set` consumes only source + offset, but all supplied arguments
+          // have already been evaluated into locals above. Keep the same
+          // five-parameter native helper ABI as the other dyn-view mutators;
+          // the unused slot is deliberately padded so extra arguments retain
+          // their evaluation/abrupt-completion behavior without being read by
+          // the native set implementation.
+          const helperArgCount = methodName === "set" ? 2 : 3;
           for (let a = 0; a < 3; a++) {
-            thenArm.push(a < argLocals.length ? { op: "local.get", index: argLocals[a]! } : { op: "ref.null.extern" });
+            thenArm.push(
+              a < helperArgCount && a < argLocals.length
+                ? { op: "local.get", index: argLocals[a]! }
+                : { op: "ref.null.extern" },
+            );
           }
           thenArm.push({ op: "i32.const", value: arity });
-          thenArm.push({ op: "call", funcIdx: taFillIdx });
+          thenArm.push({ op: "call", funcIdx: taDynMethodIdx });
           const elseArm: Instr[] = [{ op: "local.get", index: recvLocal }];
           for (const aLocal of argLocals) elseArm.push({ op: "local.get", index: aLocal });
           elseArm.push({ op: "call", funcIdx: dispatchIdx });

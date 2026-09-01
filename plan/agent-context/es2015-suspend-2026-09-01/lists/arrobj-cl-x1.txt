@@ -1,0 +1,1 @@
+built-ins/Object/subclass-object-arg.js

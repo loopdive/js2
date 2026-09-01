@@ -45,6 +45,12 @@ async function runHost(source: string): Promise<unknown> {
   expect(result.success, `Compile failed: ${result.errors.map((e) => e.message).join("; ")}`).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  // The host bridge resolves values through the module's own generated
+  // exports (`__sget_*`, `__struct_field_names`, …), which only exist after
+  // instantiation. Without this wiring every property read answers NaN — the
+  // canonical order used by `compileAndInstantiate` and every other host
+  // harness in this suite.
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 

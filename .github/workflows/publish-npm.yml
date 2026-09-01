@@ -14,6 +14,14 @@ on:
         options:
           - "true"
           - "false"
+      target:
+        description: "Registry target (use jsr only for an isolated JSR recovery)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "all"
+          - "jsr"
 
 permissions:
   contents: read
@@ -76,6 +84,7 @@ jobs:
     needs: verify-version
     if: |
       always() &&
+      (github.event_name == 'push' || inputs.target != 'jsr') &&
       needs.verify-version.result != 'failure' &&
       needs.verify-version.result != 'cancelled'
     steps:
@@ -128,6 +137,7 @@ jobs:
     needs: verify-version
     if: |
       always() &&
+      (github.event_name == 'push' || inputs.target != 'jsr') &&
       needs.verify-version.result != 'failure' &&
       needs.verify-version.result != 'cancelled'
     steps:
@@ -177,17 +187,22 @@ jobs:
           node-version: 24
           cache: "pnpm"
 
-      # `jsr publish` runs `deno publish --unstable-byonm` (bring-your-own-node-
-      # modules), which type-resolves the published source (src/**/*.ts). That
-      # source imports `typescript` (src/ts-api.ts), so node_modules must exist
-      # or Deno fails with "Could not find typescript in a node_modules folder".
+      # The JSR dist build and its package.json-resolved runtime dependencies
+      # both require the installed dependency graph.
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # --allow-slow-types: the exported API has many inferred types; JSR's
-      # slow-type check would otherwise reject the publish.
+      # Source publication crossed JSR's 20 MiB aggregate package limit in
+      # v0.71.0. Publish the equivalent minified library build with names kept
+      # and explicit @ts-self-types declarations on all three public entries.
+      - name: Build compact JSR package
+        run: pnpm run build:jsr
+
+      - name: Check JSR package size budget
+        run: pnpm run check:jsr-package-budget
+
       - name: Publish to JSR
-        run: npx jsr publish --allow-slow-types
+        run: npx jsr publish
 
   # Publish (or create) the GitHub Release for the tag so it goes live
   # automatically alongside the npm/JSR pushes. Previously the GH release object

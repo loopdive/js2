@@ -1,0 +1,10 @@
+/*---
+description: probe .tmp/es2015/probes5195/newtarget-fn.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var nt = null;
+function f() { nt = new.target; }
+f();
+assert.sameValue(nt, undefined, 'plain call');
+new f();
+assert.sameValue(nt, f, 'new f');

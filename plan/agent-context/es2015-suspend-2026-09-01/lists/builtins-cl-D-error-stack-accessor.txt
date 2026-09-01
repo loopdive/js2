@@ -1,0 +1,7 @@
+built-ins/Error/prototype/stack/setter-proxy-wrapping-prototype.js
+built-ins/Error/prototype/stack/setter-not-a-constructor.js
+built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js
+built-ins/Error/prototype/stack/getter-receiver-is-proxy.js
+built-ins/Error/prototype/stack/getter-not-a-constructor.js
+built-ins/Error/prototype/stack/setter-proxy-trap-throws.js
+built-ins/Error/prototype/stack/setter-receiver-is-proxy.js

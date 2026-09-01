@@ -1,0 +1,8 @@
+/*---
+description: probe .tmp/es2015/probes5195/proto-gopn-symbol.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var s = Symbol();
+class C { a() {} [s]() {} }
+assert.compareArray(Object.getOwnPropertyNames(C.prototype), ['constructor', 'a']);
+assert.sameValue(typeof new C()[s], 'function', 'symbol-keyed method reachable');

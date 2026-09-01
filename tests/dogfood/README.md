@@ -56,10 +56,13 @@ node tests/dogfood/typescript-upstream-build-probe.mjs \
   --root /path/to/TypeScript-5.9.3 --mode bundle --timeout-ms 1800000 --heap-mb 4096 --json
 
 node tests/dogfood/typescript-upstream-build-probe.mjs \
-  --root /path/to/TypeScript-5.9.3 --mode source --entry js2-parser-workload.ts \
-  --consumer-driven-barrels --invoke-export runCase \
-  --invoke-string 'export const answer: number = 6 * 7;' \
-  --expected-number 308001 --timeout-ms 300000 --heap-mb 4096 --json
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source \
+  --entry ../../fixtures/typescript-parser-workload.ts \
+  --consumer-driven-barrels --invoke-export runCase --require-invocations 3 \
+  --invoke-case src/compiler/builderStatePublic.ts=13386537220945 \
+  --invoke-case src/compiler/corePublic.ts=40098163538143 \
+  --invoke-case src/compiler/performanceCore.ts=49645738923599 \
+  --timeout-ms 300000 --heap-mb 4096 --json
 ```
 
 `--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
@@ -68,10 +71,18 @@ narrow upstream-source entry such as a parser workload. The probe defaults to
 a 30-minute budget, a 4 GiB worker heap, and 30-second heartbeats. It reports
 compile and validation separately and never treats elapsed CPU time or a valid
 binary as a package test pass. `--consumer-driven-barrels` is an explicit,
-default-off source-tree specialization experiment. When `--invoke-export` is
-provided, the probe passes `--invoke-string` at runtime and requires the result
-to equal `--expected-number`; a source literal folded during compilation cannot
-satisfy that check.
+default-off source-tree specialization experiment. A one-off runtime oracle can
+use `--invoke-string` plus `--expected-number`. The parser gate instead repeats
+`--invoke-case <path>=<safe-integer>` and sets an explicit
+`--require-invocations` floor: one compiled parser instance must consume every
+unchanged upstream file and match each independently verified structural AST
+fingerprint. A constant result, ignored input, invalid binary, missing case, or
+reported match whose actual value differs all fail the command.
+`--prepare-pinned-typescript` verifies the exact v5.9.3 checkout, runs
+TypeScript's checked-in `processDiagnosticMessages.mjs` generator, and verifies
+both generated diagnostic artifacts against pinned SHA-256 digests before the
+compiler worker starts. This keeps `Diagnostics` in the source graph even from
+a fresh upstream checkout.
 
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
@@ -134,7 +145,7 @@ then compares its result with the same operation in native Node.
 | **webpack upstream suite**              | #3995 | `lib/util/*.js`         | pinned original utility callbacks; complete top-level unit inventory tracked |
 | **jest upstream suite**                 | #3995 | `jest-get-type/src/index.ts` | pinned original get-type callbacks; complete monorepo unit inventory tracked |
 | **tailwindcss upstream suite**          | #3995 | `src/utils/{segment,to-key-path}.ts` | pinned original utility callbacks; complete package test inventory tracked |
-| **typescript upstream suite**           | #3995 | `unittests/base64.ts`   | pinned original base64 callback; complete compiler-unit inventory tracked |
+| **typescript upstream suite**           | #3995 | 4 original utility-unit files | 14 pinned base64/pseudo-BigInt/comment-scanner callbacks; all 256 files / 1,761 registrations inventoried |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)

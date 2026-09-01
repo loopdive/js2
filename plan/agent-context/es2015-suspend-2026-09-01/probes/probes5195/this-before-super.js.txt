@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/this-before-super.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class Base { constructor() {} }
+var exn;
+class Sub extends Base { constructor() { try { this.p = 3; } catch (e) { exn = e; } super(); } }
+new Sub();
+assert.sameValue(exn instanceof ReferenceError, true, 'this before super -> ReferenceError');

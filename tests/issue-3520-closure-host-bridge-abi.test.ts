@@ -3,20 +3,35 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { SINGLE_HOST_ENTRIES } from "../scripts/check-ir-only.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import { stripHostBridgeExports } from "../src/codegen/host-bridge-exports.js";
 import { generateModule } from "../src/codegen/index.js";
+import {
+  finalizeCtorClosureHostBridgeExports,
+  isCompilerOwnedCtorClosureHostBridgeExport,
+  isCoreCtorClosureHostBridgePublicName,
+} from "../src/codegen/closure-exports.js";
 import {
   planProgramAbiEntrySourceSupportCallable,
   PROGRAM_ABI_CALLABLE_ROLE,
   resolveProgramAbiSupportCallableHandle,
 } from "../src/codegen/program-abi-planning.js";
+import { ProgramAbiCallableRegistry } from "../src/codegen/program-abi-callable-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
+import { emitBinary } from "../src/emit/binary.js";
+import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
-import { createEmptyModule, type FuncTypeDef, type Import, type WasmFunction } from "../src/ir/types.js";
+import {
+  createEmptyModule,
+  type FuncTypeDef,
+  type Import,
+  type WasmExport,
+  type WasmFunction,
+} from "../src/ir/types.js";
 import { compile } from "../src/index.js";
 import { buildImports, wrapExports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
@@ -42,6 +57,12 @@ const REQUIRED_BRIDGES = Object.freeze([
   { name: "__is_closure", ordinal: 12 },
 ] as const);
 
+const CLOSURE_BRIDGES = Object.freeze([
+  ...REQUIRED_BRIDGES,
+  { name: "__closure_has_rest", ordinal: 13 },
+  { name: "__is_ctor_closure", ordinal: 14 },
+] as const);
+
 const CLOSURE_PHYSICAL_BASES = [
   "$c0",
   "$c1",
@@ -60,6 +81,60 @@ const CLOSURE_PHYSICAL_BASES = [
   "$ce",
   "$cf",
   "$cg",
+  "$ch",
+] as const;
+
+const CONSTRUCTIBLE_CLOSURE_SOURCE = `
+  const ctor = function (value: number): number { return value + 1; };
+  export function getCtor(): any { return ctor; }
+  export function invokeCtor(): number { return ctor(41); }
+`;
+
+const CLOSURE_COLLISION_SOURCE = `
+  export function __is_ctor_closure(): number { return 901; }
+  export function $ch(): number { return 902; }
+  export function $ch$$(): number { return 903; }
+  const ctor = function (value: number): number { return value + 1; };
+  export function getCtor(): any { return ctor; }
+  export function invokeCtor(): number { return ctor(41); }
+`;
+
+const CLOSURE_CROSS_NAMESPACE_COLLISION_SOURCE = `
+  export function $v0(): number { return 911; }
+  const ctor = function (value: number): number { return value + 1; };
+  export function getCtor(): any { return ctor; }
+  export function invokeCtor(): number { return ctor(41); }
+`;
+
+const CLOSURE_FREE_SPOOF_SOURCE = `
+  export function __is_ctor_closure(): number { return 801; }
+  export function $ch(): number { return 802; }
+  export function $ch$$(): number { return 803; }
+  export function $ch0(): number { return 804; }
+  export function $ch_extra(): number { return 805; }
+  export function __is_ctor_closure_extra(): number { return 806; }
+  export function add(): number { return 42; }
+`;
+
+const CLOSURE_STANDALONE_HELPER_EXPORTS = [
+  "__\0js2_call_fn_method_argc_1",
+  "__\0js2_call_fn_method_argc_2",
+  "__\0js2_call_fn_method_argc_3",
+  "__\0js2_call_fn_method_argc_4",
+  "__\0js2_call_fn_method_argc_5",
+  "__any_box_null",
+  "__any_box_undefined",
+  "__box_bigint",
+  "__box_boolean",
+  "__box_number",
+  "__dynamic_boundary_tag",
+  "__exn_tag",
+  "__to_bigint",
+  "__typeof_bigint",
+  "__typeof_boolean",
+  "__typeof_number",
+  "__unbox_boolean",
+  "__unbox_number",
 ] as const;
 
 const ZERO_ARITY_SOURCE = `
@@ -94,15 +169,55 @@ function hardErrors(result: ReturnType<typeof generateModule>) {
   return result.errors.filter((error) => error.severity !== "warning");
 }
 
-async function instantiate(source: string): Promise<{
+function generateWithCapturedRegistry(
+  source: string,
+  fileName: string,
+): {
+  readonly registry: ProgramAbiCallableRegistry;
+  readonly result: ReturnType<typeof generateModule>;
+} {
+  let registry: ProgramAbiCallableRegistry | undefined;
+  const originalObserve = ProgramAbiCallableRegistry.prototype.observeEntrySourceSupports;
+  const observe = vi
+    .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
+    .mockImplementation(function (observations) {
+      registry = this;
+      return originalObserve.call(this, observations);
+    });
+  let result: ReturnType<typeof generateModule>;
+  try {
+    // Keep a real vec support observation in this focused harness so the
+    // generated context is available for direct provenance mutation checks.
+    // The probe is unrelated to the constructor helper under test.
+    const sourceWithRegistryProbe = `${source}
+      export function __c38_registry_probe(): number {
+        const values: any = [1];
+        values.push(2);
+        values.pop();
+        return values[0];
+      }
+    `;
+    const ast = analyzeSource(sourceWithRegistryProbe, fileName);
+    result = generateModule(ast, { experimentalIR: true, trackIrOutcomes: true });
+  } finally {
+    observe.mockRestore();
+  }
+  if (!registry) throw new Error(`missing closure Program ABI session for ${fileName}`);
+  return { registry, result: result! };
+}
+
+async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof compile>>): Promise<{
   readonly exports: Record<string, unknown>;
   readonly result: Awaited<ReturnType<typeof compile>>;
 }> {
-  const result = await compile(source, {
-    fileName: "issue-3520-closure-host-runtime.ts",
-    experimentalIR: true,
-    trackIrOutcomes: true,
-  });
+  const result =
+    typeof sourceOrResult === "string"
+      ? await compile(sourceOrResult, {
+          fileName: "issue-3520-closure-host-runtime.ts",
+          experimentalIR: true,
+          trackIrOutcomes: true,
+        })
+      : sourceOrResult;
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool) as Record<string, unknown> & {
     env?: Record<string, unknown>;
@@ -116,6 +231,230 @@ async function instantiate(source: string): Promise<{
 }
 
 describe("#3520 C31 closure host bridge Program ABI ownership", () => {
+  it("classifies only exact constructor-closure logical and physical names", () => {
+    expect(isCoreCtorClosureHostBridgePublicName("__is_ctor_closure")).toBe(true);
+    expect(["$ch", "$ch$", "$ch$$", "$ch$$$$"].every(isCoreCtorClosureHostBridgePublicName)).toBe(true);
+    expect(
+      ["$ch0", "$chi", "$ch_extra", "__is_ctor_closure_extra", "__is_ctor_closure$"].some(
+        isCoreCtorClosureHostBridgePublicName,
+      ),
+    ).toBe(false);
+  });
+
+  it("publishes the bit-17 classifier under ordinal 14 and binds its exact allocator", async () => {
+    const result = trackedModule(CONSTRUCTIBLE_CLOSURE_SOURCE);
+    expect(
+      hardErrors(result),
+      hardErrors(result)
+        .map((error) => error.message)
+        .join("\n"),
+    ).toEqual([]);
+    const entrySource = entrySourceRecord(CONSTRUCTIBLE_CLOSURE_SOURCE);
+    const expectedId = createIrBindingId({
+      ownerId: entrySource.id,
+      domain: "support",
+      role: CLOSURE_HOST_BRIDGE_ROLE,
+      ordinal: 14,
+    });
+    expect(result.programAbi!.abi.get(expectedId)).toMatchObject({
+      id: expectedId,
+      displayName: "__is_ctor_closure",
+      slotPolicy: "required",
+      slotSpace: "function",
+      intent: {
+        kind: "callable",
+        origin: "support",
+        sourceId: entrySource.id,
+      },
+    });
+
+    const exportsByName = new Map(result.module.exports.map((entry) => [entry.name, entry]));
+    const logical = exportsByName.get("__is_ctor_closure");
+    const physical = exportsByName.get("$ch");
+    expect(logical?.desc).toEqual(physical?.desc);
+    if (!logical || logical.desc.kind !== "func") throw new Error("missing logical constructor classifier");
+    const importCount = result.module.imports.filter((entry) => entry.desc.kind === "func").length;
+    expect(result.module.functions[logical.desc.index - importCount]?.name).toBe("__is_ctor_closure");
+    const finalSlot = result.programAbi!.abi.resolveFinalIndex(expectedId);
+    expect(finalSlot).toEqual({ space: "function", index: logical.desc.index });
+
+    for (const [label, options] of [
+      ["default", {}],
+      ["always", { hostBridge: "always" as const }],
+    ] as const) {
+      const compiled = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, {
+        fileName: `issue-3520-closure-ctor-${label}.ts`,
+        experimentalIR: true,
+        ...options,
+      });
+      const { exports: rawExports } = await instantiate(compiled);
+      expect(rawExports.__is_ctor_closure, label).toBe(rawExports.$ch);
+      expect(rawExports.__is_ctor_closure, label).toEqual(expect.any(Function));
+      const manifest = rawExports.$cm;
+      expect(manifest).toBeInstanceOf(WebAssembly.Global);
+      expect((manifest as WebAssembly.Global).value & (1 << 17), label).not.toBe(0);
+      const ctor = (rawExports.getCtor as () => unknown)();
+      expect((rawExports.__is_ctor_closure as (value: unknown) => number)(ctor), label).toBe(1);
+      expect((rawExports.invokeCtor as () => number)(), label).toBe(42);
+    }
+  });
+
+  it("strips compiler constructor-closure exports in standalone and WASI with exact parity", async () => {
+    const expectedNames = [...CLOSURE_STANDALONE_HELPER_EXPORTS, "getCtor", "invokeCtor"];
+    for (const target of ["standalone", "wasi"] as const) {
+      const options = {
+        fileName: `issue-3520-closure-ctor-${target}.ts`,
+        experimentalIR: true,
+        target,
+      } as const;
+      const untracked = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, options);
+      const tracked = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, { ...options, trackIrOutcomes: true });
+      expect(untracked.success, `${target} untracked`).toBe(true);
+      expect(tracked.success, `${target} tracked`).toBe(true);
+      expect(untracked.imports, `${target} untracked imports`).toEqual([]);
+      expect(tracked.imports, `${target} tracked imports`).toEqual([]);
+      expect(tracked.binary, `${target} tracked/untracked bytes`).toEqual(untracked.binary);
+
+      const targetExpectedNames = [...expectedNames, ...(target === "wasi" ? ["_start", "memory"] : [])].sort();
+      for (const [label, result] of [
+        ["untracked", untracked],
+        ["tracked", tracked],
+      ] as const) {
+        const { exports: rawExports } = await instantiate(result);
+        expect(Object.keys(rawExports).sort(), `${target} ${label} public names`).toEqual(targetExpectedNames);
+        expect(
+          Object.keys(rawExports).filter((name) => name.startsWith("$ch")),
+          `${target} ${label} constructor physical names`,
+        ).toEqual([]);
+        expect(rawExports.__is_ctor_closure, `${target} ${label} logical classifier`).toBeUndefined();
+        expect((rawExports.invokeCtor as () => number)(), `${target} ${label} runtime value`).toBe(42);
+      }
+    }
+  });
+
+  it("preserves exact constructor-closure collisions while publishing only free host aliases", async () => {
+    const userValues = [
+      ["__is_ctor_closure", 901],
+      ["$ch", 902],
+      ["$ch$$", 903],
+    ] as const;
+    const expectedNames = [
+      ...CLOSURE_STANDALONE_HELPER_EXPORTS,
+      ...userValues.map(([name]) => name),
+      "getCtor",
+      "invokeCtor",
+    ];
+    for (const target of ["standalone", "wasi"] as const) {
+      const options = {
+        fileName: `issue-3520-closure-collisions-${target}.ts`,
+        experimentalIR: true,
+        target,
+      } as const;
+      const untracked = await compile(CLOSURE_COLLISION_SOURCE, options);
+      const tracked = await compile(CLOSURE_COLLISION_SOURCE, { ...options, trackIrOutcomes: true });
+      expect(untracked.success, `${target} untracked`).toBe(true);
+      expect(tracked.success, `${target} tracked`).toBe(true);
+      expect(untracked.imports, `${target} untracked imports`).toEqual([]);
+      expect(tracked.imports, `${target} tracked imports`).toEqual([]);
+      expect(tracked.binary, `${target} tracked/untracked bytes`).toEqual(untracked.binary);
+      const targetExpectedNames = [...expectedNames, ...(target === "wasi" ? ["_start", "memory"] : [])].sort();
+      for (const [label, result] of [
+        ["untracked", untracked],
+        ["tracked", tracked],
+      ] as const) {
+        const { exports: rawExports } = await instantiate(result);
+        expect(Object.keys(rawExports).sort(), `${target} ${label} public names`).toEqual(targetExpectedNames);
+        expect(
+          Object.keys(rawExports).filter((name) => name.startsWith("$ch")),
+          `${target} ${label} physical names`,
+        ).toEqual(["$ch", "$ch$$"]);
+        for (const [name, value] of userValues) {
+          expect(rawExports[name], `${target} ${label} ${name}`).toEqual(expect.any(Function));
+          expect((rawExports[name] as () => number)(), `${target} ${label} ${name}`).toBe(value);
+        }
+        expect(rawExports["$ch$"], `${target} ${label} generated gap`).toBeUndefined();
+        expect(rawExports["$ch$$$"], `${target} ${label} generated terminal`).toBeUndefined();
+        expect((rawExports.invokeCtor as () => number)(), `${target} ${label} runtime value`).toBe(42);
+      }
+    }
+
+    for (const [label, options] of [
+      ["default", {}],
+      ["always", { hostBridge: "always" as const }],
+    ] as const) {
+      const compiled = await compile(CLOSURE_COLLISION_SOURCE, {
+        fileName: `issue-3520-closure-collisions-${label}.ts`,
+        experimentalIR: true,
+        ...options,
+      });
+      const { exports: rawExports } = await instantiate(compiled);
+      expect(
+        Object.keys(rawExports)
+          .filter((name) => name.startsWith("$ch"))
+          .sort(),
+        label,
+      ).toEqual(["$ch", "$ch$", "$ch$$", "$ch$$$"]);
+      expect(rawExports["$ch$"], label).toBe(rawExports["$ch$$$"]);
+      expect(rawExports["$ch$"], label).not.toBe(rawExports.$ch);
+      expect(rawExports["$ch$"], label).not.toBe(rawExports["$ch$$"]);
+      for (const [name, value] of userValues) {
+        expect((rawExports[name] as () => number)(), `${label} ${name}`).toBe(value);
+      }
+    }
+  });
+
+  it("keeps exact constructor-closure spoof names public without creating a classifier", async () => {
+    const spoofValues = [
+      ["__is_ctor_closure", 801],
+      ["$ch", 802],
+      ["$ch$$", 803],
+      ["$ch0", 804],
+      ["$ch_extra", 805],
+      ["__is_ctor_closure_extra", 806],
+    ] as const;
+    const generated = trackedModule(CLOSURE_FREE_SPOOF_SOURCE);
+    expect(
+      generated
+        .programAbi!.abi.entries()
+        .filter(
+          (entry) =>
+            entry.displayName === "__is_ctor_closure" &&
+            entry.slotPolicy === "required" &&
+            entry.intent.kind === "callable" &&
+            entry.intent.origin === "support",
+        ),
+    ).toEqual([]);
+    for (const target of ["standalone", "wasi"] as const) {
+      const options = {
+        fileName: `issue-3520-closure-spoof-${target}.ts`,
+        experimentalIR: true,
+        target,
+      } as const;
+      const untracked = await compile(CLOSURE_FREE_SPOOF_SOURCE, options);
+      const tracked = await compile(CLOSURE_FREE_SPOOF_SOURCE, { ...options, trackIrOutcomes: true });
+      expect(untracked.success, `${target} untracked`).toBe(true);
+      expect(tracked.success, `${target} tracked`).toBe(true);
+      expect(untracked.imports, `${target} imports`).toEqual([]);
+      expect(tracked.imports, `${target} tracked imports`).toEqual([]);
+      expect(tracked.binary, `${target} tracked/untracked bytes`).toEqual(untracked.binary);
+      const expectedNames = [
+        ...spoofValues.map(([name]) => name),
+        "add",
+        ...(target === "wasi" ? ["memory"] : []),
+      ].sort();
+      const { exports: rawExports } = await instantiate(tracked);
+      expect(Object.keys(rawExports).sort(), `${target} public names`).toEqual(expectedNames);
+      for (const [name, value] of spoofValues) {
+        expect((rawExports[name] as () => number)(), `${target} ${name}`).toBe(value);
+      }
+      expect(Object.keys(rawExports).filter((name) => name.startsWith("$ch"))).toEqual([
+        "$ch",
+        "$ch$$",
+        "$ch0",
+        "$ch_extra",
+      ]);
+    }
+  });
   it("plans fixed entry-source IDs and publishes each exact final helper slot", () => {
     const result = trackedModule();
     expect(
@@ -257,61 +596,103 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(tracked.binary).toEqual(untracked.binary);
   });
 
-  it("moves exactly 26 five-entry census rows without changing functions or routing", () => {
-    let definedFunctions = 0;
-    let genericRows = 0;
-    let closureRows = 0;
-    let vecRows = 0;
-    let dateRows = 0;
-    let dataRows = 0;
-    let terminalUnits = 0;
-    let emitted = 0;
-    let unsupported = 0;
-    let invariants = 0;
-    let legacyBodies = 0;
-    let irBodies = 0;
+  it("derives the exact five-entry census from terminal and allocator ownership", () => {
+    expect([...SINGLE_HOST_ENTRIES]).toEqual([
+      "website/playground/examples/dom/calendar.ts",
+      "website/playground/examples/js/algorithms.ts",
+      "website/playground/examples/js/async.ts",
+      "website/playground/examples/js/builtins.ts",
+      "website/playground/examples/js/classes.ts",
+    ]);
 
+    let corpusOwnedFunctions = 0;
+    let corpusRetainedFallbacks = 0;
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
-      const ast = analyzeSource(source, entry);
-      const result = generateModule(ast, {
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      const errors = hardErrors(result);
-      expect(errors, `${entry}\n${errors.map((error) => error.message).join("\n")}`).toEqual([]);
-      definedFunctions += result.module.functions.length;
-      const entries = result.programAbi!.abi.entries();
-      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
-      closureRows += entries.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
-      vecRows += entries.filter((candidate) => candidate.id.includes(":vec-host-bridge:")).length;
-      dateRows += entries.filter((candidate) => candidate.id.includes(":date-civil-support:")).length;
-      dataRows += entries.filter((candidate) => candidate.id.includes(":data-struct-host-bridge:")).length;
-      for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
-        if (outcome.kind === "emitted") emitted++;
-        if (outcome.kind === "unsupported") unsupported++;
-        if (outcome.kind === "invariant") invariants++;
-        if (outcome.legacyBodyEmitted) legacyBodies++;
-        if (outcome.irBodyEmitted) irBodies++;
-      }
-    }
+      const trackedAst = analyzeSource(source, entry);
+      const untrackedAst = analyzeSource(source, entry);
+      const tracked = generateModule(trackedAst, { experimentalIR: true, trackIrOutcomes: true });
+      const untracked = generateModule(untrackedAst, { experimentalIR: true, trackIrOutcomes: false });
+      const trackedErrors = hardErrors(tracked);
+      const untrackedErrors = hardErrors(untracked);
+      expect(trackedErrors, `${entry}\n${trackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(untrackedErrors, `${entry}\n${untrackedErrors.map((error) => error.message).join("\n")}`).toEqual([]);
+      expect(emitBinary(tracked.module), `${entry} binary`).toEqual(emitBinary(untracked.module));
+      expect(tracked.module.functions.length, `${entry} function population`).toBe(untracked.module.functions.length);
+      expect(tracked.irCompiledFuncs, `${entry} routing`).toEqual(untracked.irCompiledFuncs);
+      expect(
+        tracked.module.exports.map(({ name, desc }) => ({ name, kind: desc.kind, index: desc.index })),
+        `${entry} public exports`,
+      ).toEqual(untracked.module.exports.map(({ name, desc }) => ({ name, kind: desc.kind, index: desc.index })));
+      expect(untracked.irOutcomes, `${entry} untracked outcomes`).toBeUndefined();
 
-    expect({ definedFunctions, closureRows }).toEqual({ definedFunctions: 166, closureRows: 26 });
-    // C30, C32, and C33 are independent structural-ownership slices. Each
-    // moves its rows one-for-one out of the generic retained-function bucket.
-    expect([0, 24]).toContain(vecRows);
-    expect([0, 1]).toContain(dateRows);
-    expect(dataRows).toBe(5);
-    expect(genericRows).toBe(75 - vecRows - dateRows - dataRows);
-    expect({ terminalUnits, emitted, unsupported, invariants, legacyBodies, irBodies }).toEqual({
-      terminalUnits: 37,
-      emitted: 30,
-      unsupported: 7,
-      invariants: 0,
-      legacyBodies: 37,
-      irBodies: 30,
-    });
+      const inventory = buildIrUnitInventory([trackedAst.sourceFile], {
+        entrySource: trackedAst.sourceFile,
+        checker: trackedAst.checker,
+      });
+      const outcomes = tracked.irOutcomes ?? [];
+      const outcomeIds = outcomes.map((outcome) => outcome.unitId);
+      expect(
+        outcomeIds.every((id) => id !== undefined),
+        `${entry} structural outcome ids`,
+      ).toBe(true);
+      expect(new Set(outcomeIds).size, `${entry} unique outcome ids`).toBe(outcomes.length);
+      expect([...outcomeIds].sort(), `${entry} terminal outcome closure`).toEqual(
+        inventory.terminalUnits.map((unit) => unit.id).sort(),
+      );
+      for (const outcome of outcomes) {
+        expect(outcome.kind === "emitted" ? outcome.irBodyEmitted : !outcome.irBodyEmitted, outcome.key).toBe(true);
+        if (outcome.kind === "unsupported") expect(outcome.legacyBodyEmitted, outcome.key).toBe(true);
+        expect(outcome.kind, outcome.key).not.toBe("invariant");
+      }
+
+      const entrySource = inventory.sources.find((candidate) => candidate.kind === "entry");
+      if (!entrySource) throw new Error(`missing entry source for ${entry}`);
+      const abiEntries = tracked.programAbi!.abi.entries();
+      const familyEntries = abiEntries.filter(
+        (candidate) => candidate.intent.kind === "callable" && candidate.id.includes(`:${CLOSURE_HOST_BRIDGE_ROLE}:`),
+      );
+      const retainedFallbacks = abiEntries.filter(
+        (candidate) =>
+          candidate.intent.kind === "callable" &&
+          candidate.id.includes(":retained-module-function:") &&
+          CLOSURE_BRIDGES.some((bridge) => bridge.name === candidate.displayName),
+      );
+      expect(retainedFallbacks, `${entry} closure retained-module-function fallbacks`).toEqual([]);
+      corpusRetainedFallbacks += retainedFallbacks.length;
+      const ownedFunctions = new Set<WasmFunction>();
+      for (const bridge of CLOSURE_BRIDGES) {
+        const id = createIrBindingId({
+          ownerId: entrySource.id,
+          domain: "support",
+          role: CLOSURE_HOST_BRIDGE_ROLE,
+          ordinal: bridge.ordinal,
+        });
+        const matchingEntries = familyEntries.filter((candidate) => candidate.id === id);
+        const helperFunctions = tracked.module.functions.filter((candidate) => candidate.name === bridge.name);
+        expect(matchingEntries.length, `${entry} ${bridge.name} owner count`).toBe(helperFunctions.length);
+        if (matchingEntries.length === 0) continue;
+        expect(matchingEntries).toHaveLength(1);
+        const row = matchingEntries[0]!;
+        expect(row).toMatchObject({
+          slotPolicy: "required",
+          slotSpace: "function",
+          intent: { kind: "callable", origin: "support", sourceId: entrySource.id },
+        });
+        const slot = tracked.programAbi!.abi.resolveFinalIndex(row.id);
+        if (!slot || slot.space !== "function") throw new Error(`missing ${entry} ${bridge.name} final locator`);
+        const importCount = tracked.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+        const helper = tracked.module.functions[slot.index - importCount];
+        expect(helper, `${entry} ${bridge.name} exact helper`).toBe(helperFunctions[0]);
+        if (!helper) throw new Error(`missing ${entry} ${bridge.name} helper allocation`);
+        expect(ownedFunctions.has(helper), `${entry} duplicate closure helper owner`).toBe(false);
+        ownedFunctions.add(helper);
+      }
+      expect(familyEntries, `${entry} unbounded closure family rows`).toHaveLength(ownedFunctions.size);
+      corpusOwnedFunctions += ownedFunctions.size;
+    }
+    expect(corpusOwnedFunctions, "five-entry closure ownership anti-vacuity").toBeGreaterThan(0);
+    expect(corpusRetainedFallbacks, "five-entry closure retained-module-function fallback census").toBe(0);
   });
 
   it("preserves public labels, closure identity, direct calls, and method receivers", async () => {
@@ -399,6 +780,8 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
 
     expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(801);
     expect((exports.$v0 as (value: unknown) => number)(null)).toBe(802);
+    expect((exports.__vec_get as (value: unknown, index: number) => number)(null, 0)).toBe(803);
+    expect((exports.$v1 as (value: unknown, index: number) => number)(null, 0)).toBe(804);
     expect((exports.__call_fn_1 as (fn: unknown, value: unknown) => number)(null, null)).toBe(805);
     expect((exports.$c1 as () => number)()).toBe(806);
     expect((exports.__is_closure as (value: unknown) => number)(null)).toBe(1);
@@ -485,16 +868,16 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     assertBoxedObject(mutableManifest);
 
     const reservedBitManifest = clone();
-    reservedBitManifest["$cm$"] = new WebAssembly.Global({ value: "i32", mutable: false }, manifestValue | (1 << 17));
+    reservedBitManifest["$cm$"] = new WebAssembly.Global({ value: "i32", mutable: false }, manifestValue | (1 << 18));
     assertBoxedObject(reservedBitManifest);
 
     const f64Manifest = clone();
     f64Manifest["$cm$"] = new WebAssembly.Global({ value: "f64", mutable: false }, manifestValue);
     assertBoxedObject(f64Manifest);
 
-    const externrefBindings = new WebAssembly.Table({ element: "externref", initial: 17, maximum: 17 });
+    const externrefBindings = new WebAssembly.Table({ element: "externref", initial: 18, maximum: 18 });
     const externrefForge = clone();
-    const availabilityBits = manifestValue & 0x0001ffff;
+    const availabilityBits = manifestValue & 0x0003ffff;
     for (let bit = 0; bit < CLOSURE_PHYSICAL_BASES.length; bit++) {
       externrefBindings.set(bit, null);
     }
@@ -513,6 +896,204 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     }
     externrefForge["$cu$"] = externrefBindings;
     assertBoxedObject(externrefForge);
+  });
+
+  it("does not grant post-freeze replacement copies constructor provenance", () => {
+    const { registry, result } = generateWithCapturedRegistry(
+      CONSTRUCTIBLE_CLOSURE_SOURCE,
+      "closure-ctor-cloned-descriptor.ts",
+    );
+    const entryIndex = result.module.exports.findIndex(
+      (candidate) => candidate.name === "__is_ctor_closure" && candidate.desc.kind === "func",
+    );
+    if (entryIndex < 0) throw new Error("missing compiler-owned constructor classifier descriptor");
+    const entry = result.module.exports[entryIndex]!;
+    if (entry.desc.kind !== "func") throw new Error("constructor classifier descriptor changed export kind");
+    expect(registry.ctx.indexSpaceFrozen).toBe(true);
+    const clone: WasmExport = { name: entry.name, desc: { kind: "func", index: entry.desc.index } };
+    result.module.exports[entryIndex] = clone;
+    const originalEmitHostBridge = registry.ctx.emitHostBridge;
+    try {
+      registry.ctx.emitHostBridge = false;
+      expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, clone)).toBe(false);
+      expect(stripHostBridgeExports(registry.ctx)).toBeGreaterThan(0);
+      expect(result.module.exports).toContain(clone);
+    } finally {
+      registry.ctx.emitHostBridge = originalEmitHostBridge;
+    }
+  });
+
+  it("retains same-spelled user and near-prefix descriptors without constructor provenance", () => {
+    const collision = generateWithCapturedRegistry(CLOSURE_COLLISION_SOURCE, "closure-ctor-user-collision.ts");
+    const userLogical = collision.result.module.exports.find(
+      (candidate) => candidate.name === "__is_ctor_closure" && candidate.desc.kind === "func",
+    );
+    if (!userLogical) throw new Error("missing user constructor-classifier collision");
+    expect(isCompilerOwnedCtorClosureHostBridgeExport(collision.registry.ctx, userLogical)).toBe(false);
+
+    const compilerPhysical = collision.result.module.exports.find(
+      (candidate) => candidate.name === "$ch$" && candidate.desc.kind === "func",
+    );
+    if (!compilerPhysical || compilerPhysical.desc.kind !== "func") {
+      throw new Error("missing compiler constructor-classifier physical descriptor");
+    }
+    const nearPrefix: WasmExport = { name: "$ch0", desc: { kind: "func", index: compilerPhysical.desc.index } };
+    collision.result.module.exports.push(nearPrefix);
+    expect(isCompilerOwnedCtorClosureHostBridgeExport(collision.registry.ctx, nearPrefix)).toBe(false);
+
+    const originalEmitHostBridge = collision.registry.ctx.emitHostBridge;
+    try {
+      collision.registry.ctx.emitHostBridge = false;
+      stripHostBridgeExports(collision.registry.ctx);
+      expect(collision.result.module.exports).toContain(userLogical);
+      expect(collision.result.module.exports).toContain(nearPrefix);
+    } finally {
+      collision.registry.ctx.emitHostBridge = originalEmitHostBridge;
+    }
+  });
+
+  it("strips recorded constructor provenance before retaining a cross-namespace user collision", () => {
+    const { registry, result } = generateWithCapturedRegistry(
+      CLOSURE_CROSS_NAMESPACE_COLLISION_SOURCE,
+      "closure-ctor-cross-namespace-collision.ts",
+    );
+    const recorded = result.module.exports.find(
+      (candidate) =>
+        candidate.name === "__is_ctor_closure" && isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, candidate),
+    );
+    if (!recorded) throw new Error("missing recorded constructor classifier descriptor");
+    const user = result.module.exports.find((candidate) => candidate.name === "$v0" && candidate !== recorded);
+    if (!user) throw new Error("missing user vec-namespace collision descriptor");
+    expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, user)).toBe(false);
+
+    recorded.name = "$v0";
+    expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, recorded)).toBe(true);
+    const originalEmitHostBridge = registry.ctx.emitHostBridge;
+    try {
+      registry.ctx.emitHostBridge = false;
+      expect(stripHostBridgeExports(registry.ctx)).toBeGreaterThan(0);
+      expect(result.module.exports).toContain(user);
+      expect(result.module.exports).not.toContain(recorded);
+    } finally {
+      registry.ctx.emitHostBridge = originalEmitHostBridge;
+    }
+  });
+
+  it("fails closed for recorded constructor descriptor mutations before manifest publication", () => {
+    const cases: readonly {
+      readonly name: string;
+      readonly mutate: (
+        registry: ProgramAbiCallableRegistry,
+        result: ReturnType<typeof generateModule>,
+        entry: WasmExport,
+      ) => void;
+      readonly expected: RegExp;
+    }[] = [
+      {
+        name: "replaced",
+        mutate: (_registry, result, entry) => {
+          const index = result.module.exports.indexOf(entry);
+          result.module.exports[index] = { name: entry.name, desc: { ...entry.desc } };
+        },
+        expected: /disappeared before finalization/,
+      },
+      {
+        name: "duplicated",
+        mutate: (_registry, result, entry) => {
+          result.module.exports.push(entry);
+        },
+        expected: /appears more than once in the module/,
+      },
+      {
+        name: "cloned-extra",
+        mutate: (registry, result, entry) => {
+          const clone: WasmExport = { name: entry.name, desc: { ...entry.desc } };
+          result.module.exports.push(clone);
+          expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, clone)).toBe(false);
+        },
+        expected:
+          /unrecorded constructor-closure host bridge export descriptor .* resolves to a recorded allocator function/,
+      },
+      {
+        name: "foreign-context-donor",
+        mutate: (registry, result, entry) => {
+          const donor = generateWithCapturedRegistry(
+            CONSTRUCTIBLE_CLOSURE_SOURCE,
+            "closure-ctor-identically-laid-out-donor.ts",
+          );
+          const donorEntry = donor.result.module.exports.find(
+            (candidate) => candidate.name === "__is_ctor_closure" && candidate.desc.kind === "func",
+          );
+          if (!donorEntry || donorEntry.desc.kind !== "func" || entry.desc.kind !== "func") {
+            throw new Error("missing function descriptor for constructor classifier donor mutation");
+          }
+          expect(donorEntry).not.toBe(entry);
+          expect(donorEntry.desc.index).toBe(entry.desc.index);
+          expect(isCompilerOwnedCtorClosureHostBridgeExport(donor.registry.ctx, donorEntry)).toBe(true);
+          expect(isCompilerOwnedCtorClosureHostBridgeExport(registry.ctx, donorEntry)).toBe(false);
+          result.module.exports.push(donorEntry);
+        },
+        expected:
+          /unrecorded constructor-closure host bridge export descriptor .* resolves to a recorded allocator function/,
+      },
+      {
+        name: "name-changed",
+        mutate: (_registry, _result, entry) => {
+          entry.name = "$ch0";
+        },
+        expected: /changed its published name to \$ch0/,
+      },
+      {
+        name: "retargeted",
+        mutate: (_registry, result, entry) => {
+          const other = result.module.exports.find(
+            (candidate) => candidate.name === "__is_closure" && candidate.desc.kind === "func",
+          );
+          if (!other || other.desc.kind !== "func") throw new Error("missing alternate closure helper export");
+          entry.desc.index = other.desc.index;
+        },
+        expected: /resolves to a different allocator function/,
+      },
+      {
+        name: "one-past-defined-functions",
+        mutate: (_registry, result, entry) => {
+          const liveImportCount = result.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+          entry.desc.index = liveImportCount + result.module.functions.length;
+          expect(entry.desc.index).toBeLessThan(STABLE_FUNC_BASE);
+        },
+        expected: /resolves to a different allocator function/,
+      },
+      {
+        name: "kind-changed",
+        mutate: (_registry, _result, entry) => {
+          entry.desc = { kind: "global", index: entry.desc.index };
+        },
+        expected: /changed kind to global/,
+      },
+      {
+        name: "allocator-removed",
+        mutate: (_registry, result, entry) => {
+          if (entry.desc.kind !== "func") throw new Error("constructor classifier descriptor changed export kind");
+          const func = result.module.functions.find((candidate) => candidate.name === "__is_ctor_closure");
+          if (!func) throw new Error("missing constructor classifier allocator");
+          result.module.functions.splice(result.module.functions.indexOf(func), 1);
+        },
+        expected: /lost its allocator function/,
+      },
+    ];
+
+    for (const mutation of cases) {
+      const { registry, result } = generateWithCapturedRegistry(
+        CONSTRUCTIBLE_CLOSURE_SOURCE,
+        `closure-ctor-${mutation.name}.ts`,
+      );
+      const entry = result.module.exports.find(
+        (candidate) => candidate.name === "__is_ctor_closure" && candidate.desc.kind === "func",
+      );
+      if (!entry) throw new Error(`missing compiler-owned constructor classifier for ${mutation.name}`);
+      mutation.mutate(registry, result, entry);
+      expect(() => finalizeCtorClosureHostBridgeExports(registry.ctx), mutation.name).toThrow(mutation.expected);
+    }
   });
 
   it("owns closure_has_rest at ordinal 13 only when that helper is emitted", async () => {

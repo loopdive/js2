@@ -100,3 +100,18 @@ export function bodyReferencesOwnThis(node: ts.Node): boolean {
   cache.set(node, false);
   return false;
 }
+
+/** Whether any call-time parameter initializer reads this function's receiver. */
+export function parametersReferenceOwnThis(parameters: readonly ts.ParameterDeclaration[]): boolean {
+  return parameters.some((parameter) =>
+    parameter.initializer === undefined ? false : bodyReferencesOwnThis(parameter.initializer),
+  );
+}
+
+/** Receiver demand across both call-time parameter initialization and the body. */
+export function functionLikeReferencesOwnThis(declaration: ts.FunctionLikeDeclaration): boolean {
+  return (
+    parametersReferenceOwnThis(declaration.parameters) ||
+    (declaration.body !== undefined && bodyReferencesOwnThis(declaration.body))
+  );
+}

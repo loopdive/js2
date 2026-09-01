@@ -28,7 +28,6 @@ import {
 } from "./shared.js";
 import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
 import { allocLocal } from "./context/locals.js";
-import { getOrRegisterDvWindowType } from "./dataview-native.js"; // (#5150) isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
 import { ensureRegExpNativeProtoGlue } from "./regexp-standalone.js";
 import {
@@ -82,6 +81,20 @@ import {
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import {
+  emitStandalonePromiseReject,
+  emitStandalonePromiseResolve,
+  ensurePromiseSettleFunctions,
+  isStandalonePromiseActive,
+} from "./async-scheduler.js";
+import {
+  ensureNativeSymbolBoundaryBridge,
+  ensureSymbolCarrier,
+  ensureSymbolRegistry,
+  usesNativeSymbolProvider,
+} from "./symbol-native.js";
+import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
+import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -108,6 +121,7 @@ export const BUILTIN_CTOR_NAMES = new Set([
   "Map",
   "Set",
   "Error",
+  "AggregateError",
   "TypeError",
   "RangeError",
   "SyntaxError",
@@ -581,6 +595,7 @@ export function tryEnsureNativeProtoBrand(ctx: CodegenContext, builtinName: stri
   // entanglement), so wiring the glue flips the `<NativeError>.prototype[.member]`
   // value-read CE → host-free value object.
   if (
+    builtinName === "AggregateError" ||
     builtinName === "TypeError" ||
     builtinName === "RangeError" ||
     builtinName === "ReferenceError" ||
@@ -1053,6 +1068,40 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       paramTypes = [{ kind: "externref" }];
       returnType = { kind: "externref" };
       break;
+    // Deno snapshots these constructor statics through its primordials
+    // carrier, so their VALUE closures must be executable rather than merely
+    // descriptor-shaped. Keep the all-externref callable ABI and delegate to
+    // the same native registry / scheduler used by direct calls.
+    case "Symbol.for":
+    case "Symbol.keyFor":
+      if (!usesNativeSymbolProvider(ctx)) {
+        paramTypes = [{ kind: "externref" }];
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      ensureObjectRuntime(ctx);
+      ensureNativeSymbolBoundaryBridge(ctx);
+      ensureSymbolCarrier(ctx);
+      ensureSymbolRegistry(ctx);
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Promise.resolve":
+    case "Promise.reject":
+      if (!isStandalonePromiseActive(ctx)) {
+        paramTypes = [{ kind: "externref" }];
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      // Register the whole settle substrate before the closure function is
+      // minted. The emitters below then append instructions only, avoiding a
+      // mid-body function-index registration hazard.
+      ensurePromiseSettleFunctions(ctx);
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     // (#2933) Math.max / Math.min as VALUES — genuinely VARIADIC. Reified with
     // the canonical variadic closure convention: ONE `(ref null $vec_externref)`
     // args param carrying every call-site argument (packed by the variadic
@@ -1135,18 +1184,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // natives are standalone-DEFINED funcs (host-free) registered by
     // `addUnionImports`; if the substrate is unavailable, degrade to the generic
     // catchable-TypeError body (identity/meta still hold).
-    // (#5150) `ArrayBuffer.isView` as a first-class VALUE
-    // (`isView/invoked-as-a-fn.js` does `var isView = ArrayBuffer.isView;
-    // isView(x)`). The direct-call site is already host-free
-    // (call-namespace-static.ts); only the value read fell to the generic
-    // "not yet implemented in --target standalone" throw. Same 1-arg boxed
-    // predicate shape as the `Number.is*` closures.
-    case "ArrayBuffer.isView": {
-      if (!noJsHost(ctx)) return null;
-      paramTypes = [{ kind: "externref" }];
-      returnType = BOOLEAN_PREDICATE_RESULT;
-      break;
-    }
     case "Number.isInteger":
     case "Number.isFinite":
     case "Number.isNaN":
@@ -1269,9 +1306,9 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         [{ kind: "externref" }],
       );
       if (gopdIdx === undefined) return null;
-      closureFctx.body.push({ op: "local.get", index: 1 });
-      closureFctx.body.push({ op: "local.get", index: 2 });
-      closureFctx.body.push({ op: "call", funcIdx: gopdIdx });
+      flushLateImportShifts(ctx, closureFctx);
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertyDescriptor") ?? gopdIdx });
     } else if (key === "Object.hasOwn") {
       const hasOwnIdx = ensureLateImport(
         ctx,
@@ -1357,27 +1394,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // extracted function value.
       const idx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (idx === undefined) return null;
+      emitNativeReflectTargetGuard(ctx, closureFctx, 1, "Reflect.ownKeys called on non-object");
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "call", funcIdx: idx });
     } else if (key === "Reflect.getOwnPropertyDescriptor") {
       // The first-class Reflect method must share the direct call path's
       // native descriptor provider. Deno snapshots this method through object
       // destructuring before using it to copy every primordial descriptor.
-      const runtime = ensureObjectRuntime(ctx);
-      const beforeThrow = closureFctx.body.length;
-      emitThrowTypeError(ctx, closureFctx, "Reflect.getOwnPropertyDescriptor called on non-object");
-      const throwInstrs = closureFctx.body.splice(beforeThrow);
-      closureFctx.body.push(
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
-      );
+      emitNativeReflectTargetGuard(ctx, closureFctx, 1, "Reflect.getOwnPropertyDescriptor called on non-object");
       const idx = ensureLateImport(
         ctx,
         "__getOwnPropertyDescriptor",
@@ -1391,21 +1415,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // objects returned by Reflect.getOwnPropertyDescriptor. Route that
       // first-class call through the same native dynamic-descriptor applier as
       // the direct syntax and surface its boolean [[DefineOwnProperty]] result.
-      const runtime = ensureObjectRuntime(ctx);
-      const beforeThrow = closureFctx.body.length;
-      emitThrowTypeError(ctx, closureFctx, "Reflect.defineProperty called on non-object");
-      const throwInstrs = closureFctx.body.splice(beforeThrow);
-      closureFctx.body.push(
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
-      );
+      emitNativeReflectTargetGuard(ctx, closureFctx, 1, "Reflect.defineProperty called on non-object");
       const defineIdx = ctx.funcMap.get("__obj_define_from_desc");
       const truthyIdx = ctx.funcMap.get("__is_truthy");
       if (defineIdx === undefined || truthyIdx === undefined) return null;
@@ -1435,6 +1445,59 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "any.convert_extern" });
       closureFctx.body.push({ op: "call", funcIdx: rootIdx });
       closureFctx.body.push({ op: "extern.convert_any" });
+    } else if ((key === "Symbol.for" || key === "Symbol.keyFor") && !genericThrowBody) {
+      const symbolTypeIdx = ctx.symbolTypeIdx;
+      const { forIdx, keyForIdx } = ensureSymbolRegistry(ctx);
+      const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+      if (symbolTypeIdx < 0 || boxSymbolIdx === undefined) return null;
+
+      const beforeThrow = closureFctx.body.length;
+      emitThrowTypeError(
+        ctx,
+        closureFctx,
+        key === "Symbol.for" ? "Cannot convert a Symbol value to a string" : "Symbol.keyFor requires a symbol",
+      );
+      const throwInstrs = closureFctx.body.splice(beforeThrow);
+
+      if (key === "Symbol.for") {
+        // §20.4.2.2 first applies ToString. A native Symbol is the one
+        // primitive for which abstract ToString throws; every other dynamic
+        // externref is routed through the shared standalone ToString helper.
+        closureFctx.body.push(
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+          { op: "local.get", index: 1 },
+        );
+        emitExternrefSlotToAnyStr(ctx, closureFctx);
+        closureFctx.body.push({ op: "call", funcIdx: forIdx }, { op: "call", funcIdx: boxSymbolIdx });
+      } else {
+        // The dynamic callable boundary carries symbols as their canonical
+        // boxed `$Symbol` externref. Validate the brand, recover its i32 id,
+        // and return the registry key as an externref native string (or null
+        // for an unregistered symbol), matching the direct native call path.
+        closureFctx.body.push(
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symbolTypeIdx },
+          { op: "struct.get", typeIdx: symbolTypeIdx, fieldIdx: 0 },
+          { op: "call", funcIdx: keyForIdx },
+          { op: "extern.convert_any" },
+        );
+      }
+    } else if ((key === "Promise.resolve" || key === "Promise.reject") && !genericThrowBody) {
+      const argument = [{ op: "local.get", index: 1 } satisfies Instr];
+      if (key === "Promise.resolve") {
+        emitStandalonePromiseResolve(ctx, closureFctx, argument);
+      } else {
+        emitStandalonePromiseReject(ctx, closureFctx, argument);
+      }
     } else if ((key === "Math.max" || key === "Math.min") && !genericThrowBody) {
       // (#2933) Variadic fold body. Params: 0=self, 1=argsVec
       // (ref null $vec_externref: field0 = i32 len, field1 = externref array).
@@ -1551,27 +1614,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           else: [{ op: "i32.const", value: 0 }],
         },
       );
-    } else if (key === "ArrayBuffer.isView" && !genericThrowBody) {
-      // (#5150) §25.1.4.1 — true iff the argument has a [[ViewedArrayBuffer]]
-      // slot. Decided host-free by the SAME carrier `ref.test` chain the direct
-      // call emits (call-namespace-static.ts): every registered vec carrier
-      // (TypedArrays lower to one) plus the `$__dv_window` DataView brand.
-      const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
-      const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
-      const anyTmp = allocLocal(closureFctx, "isview_any", { kind: "anyref" });
-      closureFctx.body.push({ op: "local.get", index: 1 });
-      closureFctx.body.push({ op: "any.convert_extern" });
-      closureFctx.body.push({ op: "local.set", index: anyTmp });
-      let emittedIsView = false;
-      for (const vi of vecTypeIdxs) {
-        closureFctx.body.push({ op: "local.get", index: anyTmp });
-        closureFctx.body.push({ op: "ref.test", typeIdx: vi });
-        if (emittedIsView) closureFctx.body.push({ op: "i32.or" });
-        emittedIsView = true;
-      }
-      closureFctx.body.push({ op: "local.get", index: anyTmp });
-      closureFctx.body.push({ op: "ref.test", typeIdx: dvWinTypeIdx });
-      if (emittedIsView) closureFctx.body.push({ op: "i32.or" });
     } else if (key === "Object.is" && !genericThrowBody) {
       // (#2963 Tier 2b) Body. Params: 0=self, 1=x, 2=y (both boxed externref).
       const typeofNumIdx = ctx.funcMap.get("__typeof_number");
@@ -1621,6 +1663,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // (unreachable tail).
       emitThrowTypeError(ctx, closureFctx, `${key} is not yet implemented in --target standalone`);
     }
+
+    // Several first-class builtin bodies register late runtime imports after
+    // emitting their target guards (notably extracted Reflect methods). Shift
+    // every already-emitted call before publishing the closure; otherwise the
+    // guard calls the pre-import function index and rejects every target.
+    flushLateImportShifts(ctx, closureFctx);
 
     funcIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, funcIdx, {

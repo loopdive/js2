@@ -755,6 +755,19 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     if (objArrayLikeArms) ctx.externGetIdxReserved = true;
   }
   const externSetIdx = ctx.funcMap.get("__extern_set")!;
+  // (#5148 cluster 4b/4c) `Object.assign`'s copy loop is a §20.1.2.1 step 5.c
+  // `Get(from, key)` + `Set(to, key, value, true)` pair, NOT a raw table copy:
+  // a source getter must RUN (and its abrupt completion propagate), and a
+  // refused write on a frozen / sealed / non-extensible / non-writable target
+  // must THROW. Both helpers are registered earlier in `ensureObjectRuntime`
+  // (`__extern_get` with the enumeration natives, `__extern_set_strict` right
+  // after `__reflect_set`), so their funcIdx is stable here. When either is
+  // absent the loop keeps its historical raw-read/lenient-write pair.
+  const assignGetIdx = ctx.funcMap.get("__extern_get");
+  const assignStrictSetIdx = ctx.funcMap.get("__extern_set_strict");
+  const objectKeysIdx = ctx.funcMap.get("__object_keys");
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdx = ctx.funcMap.get("__extern_get_idx");
 
   // ── __object_values(externref obj) -> externref ──────────────────────────
   //
@@ -1078,6 +1091,19 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     );
   }
 
+  // Finalized once the complete closed-struct shape set is known. Keeping this
+  // false while eager helpers are built prevents arbitrary externref sources
+  // (builtins, strings, symbols, proxies) from being mistaken for structs.
+  const closedSourceClassifierIdx = ctx.standalone
+    ? registerNative(
+        "__object_assign_closed_struct_source",
+        [{ kind: "externref" }],
+        [{ kind: "i32" }],
+        [],
+        [{ op: "i32.const", value: 0 }],
+      )
+    : undefined;
+
   // ── __object_assign(externref target, externref sources) -> externref ─────
   //
   // ES §20.1.2.1 Object.assign(target, ...sources). Step 1 applies §7.1.20
@@ -1085,11 +1111,12 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // therefore throw a TypeError. `sources` is a $ObjVec of
   // source externrefs (the call sites build it via __js_array_new/__js_array_push,
   // which standalone routes to __objvec_new/__objvec_push — same signatures). For
-  // each source that is one of our $Objects, copy every LIVE + enumerable own
-  // property into `target` via the native __extern_set (which itself grows/inserts
-  // and is a no-op on a non-$Object target). Sources that are not $Objects (e.g.
-  // null/undefined/primitives) are skipped, matching the spec's "ignore nullish
-  // sources" + our open-object-only own-key enumeration. Returns `target`.
+  // each open `$Object` source, copy every LIVE + enumerable own property into
+  // `target` via the native __extern_set. Finalization additionally admits
+  // user-declared closed structs through a screened classifier, then delegates
+  // their enumeration to `__object_keys` plus `__extern_get`. Other non-$Object
+  // sources (including nullish values, primitives, builtins, and proxies) retain
+  // their established paths. Returns `target`.
   //
   // params: 0=target(externref) 1=sources(externref)
   // locals: 2=any(anyref) 3=sv(ref null $ObjVec) 4=slen 5=si
@@ -1115,6 +1142,74 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
               then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
                 forceInModuleCtor: true,
               }),
+            },
+          ]
+        : [];
+    // The `$Object` table walk remains the fast path. A stored builtin function
+    // value can receive a closed compiler struct through its uniform externref
+    // ABI, though: Deno reflectively copies `Object.assign` into primordials,
+    // then calls `ObjectAssign(globalThis, { __infra: infra })`. Such a source
+    // fails the `$Object` test, so the former helper silently copied nothing.
+    // The finalized `__object_keys` and `__extern_get` helpers already model
+    // closed-struct enumerable properties; reuse them only for that miss.
+    const classifiedClosedStructSourceCopy: Instr[] =
+      ctx.standalone &&
+      closedSourceClassifierIdx !== undefined &&
+      objectKeysIdx !== undefined &&
+      externLengthIdx !== undefined &&
+      externGetIdx !== undefined &&
+      assignGetIdx !== undefined &&
+      assignStrictSetIdx !== undefined
+        ? [
+            { op: "local.get", index: 12 },
+            { op: "call", funcIdx: closedSourceClassifierIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 12 },
+                { op: "call", funcIdx: objectKeysIdx },
+                { op: "local.set", index: 13 },
+                { op: "local.get", index: 13 },
+                { op: "call", funcIdx: externLengthIdx },
+                { op: "i32.trunc_sat_f64_s" },
+                { op: "local.set", index: 14 },
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: 15 },
+                {
+                  op: "block",
+                  blockType: { kind: "empty" },
+                  body: [
+                    {
+                      op: "loop",
+                      blockType: { kind: "empty" },
+                      body: [
+                        { op: "local.get", index: 15 },
+                        { op: "local.get", index: 14 },
+                        { op: "i32.ge_s" },
+                        { op: "br_if", depth: 1 },
+                        { op: "local.get", index: 13 },
+                        { op: "local.get", index: 15 },
+                        { op: "f64.convert_i32_s" },
+                        { op: "call", funcIdx: externGetIdx },
+                        { op: "local.set", index: 16 },
+                        // Set(target, key, Get(source, key), true)
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: 16 },
+                        { op: "local.get", index: 12 },
+                        { op: "local.get", index: 16 },
+                        { op: "call", funcIdx: assignGetIdx },
+                        { op: "call", funcIdx: assignStrictSetIdx },
+                        { op: "local.get", index: 15 },
+                        { op: "i32.const", value: 1 },
+                        { op: "i32.add" },
+                        { op: "local.set", index: 15 },
+                        { op: "br", depth: 0 },
+                      ],
+                    },
+                  ],
+                },
+              ],
             },
           ]
         : [];
@@ -1219,20 +1314,44 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                               {
                                 op: "if",
                                 blockType: { kind: "empty" },
-                                then: [
-                                  // __extern_set(target, extern.convert_any(e.key),
-                                  //              extern.convert_any(e.value))
-                                  { op: "local.get", index: 0 },
-                                  { op: "local.get", index: 11 },
-                                  { op: "ref.as_non_null" },
-                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                                  { op: "extern.convert_any" },
-                                  { op: "local.get", index: 11 },
-                                  { op: "ref.as_non_null" },
-                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                                  { op: "extern.convert_any" },
-                                  { op: "call", funcIdx: externSetIdx },
-                                ],
+                                then:
+                                  assignGetIdx !== undefined && assignStrictSetIdx !== undefined
+                                    ? ([
+                                        // §20.1.2.1 step 5.c.ii:
+                                        //   propValue = ? Get(from, nextKey)
+                                        //   ? Set(to, nextKey, propValue, true)
+                                        // Reading through `__extern_get` runs a
+                                        // source ACCESSOR (and lets its throw
+                                        // escape); writing through
+                                        // `__extern_set_strict` turns a refused
+                                        // write into the spec's TypeError.
+                                        { op: "local.get", index: 0 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "local.get", index: 12 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "call", funcIdx: assignGetIdx },
+                                        { op: "call", funcIdx: assignStrictSetIdx },
+                                      ] satisfies Instr[])
+                                    : ([
+                                        // __extern_set(target, extern.convert_any(e.key),
+                                        //              extern.convert_any(e.value))
+                                        { op: "local.get", index: 0 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                                        { op: "extern.convert_any" },
+                                        { op: "call", funcIdx: externSetIdx },
+                                      ] satisfies Instr[]),
                               },
                             ],
                           },
@@ -1247,6 +1366,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                   },
                 ],
               },
+              ...classifiedClosedStructSourceCopy,
               // si++
               { op: "local.get", index: 5 },
               { op: "i32.const", value: 1 },
@@ -1276,6 +1396,10 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "srcExt", type: { kind: "externref" } },
+        { name: "closedKeys", type: { kind: "externref" } },
+        { name: "closedKeyCount", type: { kind: "i32" } },
+        { name: "closedKeyIndex", type: { kind: "i32" } },
+        { name: "closedKey", type: { kind: "externref" } },
       ],
       body,
     );

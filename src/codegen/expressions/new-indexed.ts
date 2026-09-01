@@ -20,7 +20,6 @@ import { getOrRegisterHoleyArrayType } from "../registry/types.js";
 import { ensureHoleyArrayNew } from "../vec-elem-set.js";
 import { sparseArrayNewSplitInstrs } from "../vec-sparse-index.js";
 import { compileExpression } from "../shared.js";
-import { coerceType } from "../type-coercion.js"; // (#5150) ToIndex via the ToPrimitive chokepoint
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js";
 import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
@@ -180,49 +179,20 @@ export function tryCompileIndexedBuiltinNew(
         return { kind: "ref_null", typeIdx: vecTypeIdx };
       }
       // new ArrayBuffer(byteLength) → create vec with byteLength elements, all 0
-      // (#5150) §25.1.3.1 step 2 `ToIndex(length)` is ToNumber-based, so a plain
-      // object argument must run its `valueOf`/`Symbol.toPrimitive`. Compiling
-      // straight to the f64 hint skipped ToPrimitive for object arguments
-      // (`new ArrayBuffer({valueOf(){return 42}})` became NaN → RangeError);
-      // routing the compiled value through `coerceType` hits the standalone
-      // externref→f64 chokepoint, which calls `__to_primitive`.
-      {
-        // A statically-numeric argument keeps the direct f64 hint (byte-identical
-        // to pre-#5150); anything else is compiled as a value and coerced.
-        const numericArg = ctx.oracle.staticJsTypeOf(args[0]!) === "number";
-        const lenTy = compileExpression(ctx, fctx, args[0]!, numericArg ? { kind: "f64" } : { kind: "externref" });
-        if (lenTy === null) fctx.body.push({ op: "f64.const", value: NaN });
-        else if (lenTy.kind !== "f64") coerceType(ctx, fctx, lenTy, { kind: "f64" });
-      }
+      compileExpression(ctx, fctx, args[0]!, { kind: "f64" });
 
       // RangeError validation: byteLength must be a non-negative integer < 2^31
       // (We use i32 internally so cap at i32 max)
       const lenF64Local = allocLocal(fctx, `__ab_len_f64_${fctx.locals.length}`, { kind: "f64" });
       fctx.body.push({ op: "local.tee", index: lenF64Local });
-      // (#5150) ToIndex NaN→0, truncate toward zero. Without this an object
-      // whose valueOf returns a non-integer, or `undefined`, tripped the
-      // integrality check below instead of coercing per spec.
-      fctx.body.push({ op: "f64.const", value: 0 });
+      // Check len != floor(len) (non-integer or NaN)
       fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.eq" });
-      fctx.body.push({ op: "select" });
-      fctx.body.push({ op: "f64.trunc" }); // ToIntegerOrInfinity: truncate TOWARD ZERO
-      fctx.body.push({ op: "local.set", index: lenF64Local });
-      // Check len < 0 (`ToIndex` step 2b) — a fractional length is NOT an error,
-      // it truncates (`new ArrayBuffer(1.9).byteLength === 1`), which the old
-      // `len !== floor(len)` test rejected outright.
+      fctx.body.push({ op: "f64.floor" });
+      fctx.body.push({ op: "f64.ne" });
+      // Check len < 0
       fctx.body.push({ op: "local.get", index: lenF64Local });
       fctx.body.push({ op: "f64.const", value: 0 });
       fctx.body.push({ op: "f64.lt" });
-      // (#5150) …and an upper bound BEFORE `array.new_default`, which otherwise
-      // traps uncatchably ("requested new array is too large" —
-      // allocation-limit.js / length-is-too-large-throws.js). §25.1.3.1 allows a
-      // RangeError for any length the implementation cannot allocate; the vec is
-      // i32-indexed, so 2^31-1 is the ceiling.
-      fctx.body.push({ op: "local.get", index: lenF64Local });
-      fctx.body.push({ op: "f64.const", value: 2147483647 });
-      fctx.body.push({ op: "f64.gt" });
       fctx.body.push({ op: "i32.or" });
       {
         const rangeErrMsg = "RangeError: Invalid array buffer length";
@@ -257,78 +227,10 @@ export function tryCompileIndexedBuiltinNew(
     const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", elemType);
     const args = expr.arguments ?? [];
 
-    // (#5150) §25.3.2.1 step 2: `buffer` must have an [[ArrayBufferData]] slot,
-    // and that TypeError fires BEFORE `ToIndex(byteOffset)` runs the offset's
-    // `valueOf` (buffer-not-object-throws.js asserts exactly that order). A
-    // statically-primitive first argument also mis-compiled: its f64/i32 result
-    // was stored into the externref buffer local, which failed Wasm validation
-    // ("struct.get[0] expected type …") and made the whole module a
-    // COMPILE_ERROR. Evaluate every argument for its side effects, drop, throw.
-    if (args.length >= 1) {
-      const arg0Tag = ctx.oracle.staticJsTypeOf(args[0]!);
-      const arg0Builtin = ctx.oracle.builtinReceiverOf(args[0]!);
-      const staticallyNotABuffer =
-        arg0Tag === "number" ||
-        arg0Tag === "string" ||
-        arg0Tag === "boolean" ||
-        arg0Tag === "bigint" ||
-        arg0Tag === "symbol" ||
-        arg0Tag === "undefined" ||
-        // A statically-known OBJECT that is a DIFFERENT builtin (a TypedArray, a
-        // DataView, a Map…). Its compiled carrier is not the i32_byte vec, so
-        // the later `struct.get` on it is a Wasm VALIDATION failure — the whole
-        // module became a COMPILE_ERROR, not merely a wrong answer.
-        ((arg0Tag === "object" || arg0Tag === "function") &&
-          arg0Builtin !== undefined &&
-          arg0Builtin !== "ArrayBuffer" &&
-          arg0Builtin !== "SharedArrayBuffer");
-      if (staticallyNotABuffer) {
-        for (const arg of args) {
-          const t = compileExpression(ctx, fctx, arg);
-          if (t) fctx.body.push({ op: "drop" });
-        }
-        fctx.body.push(
-          ...buildThrowJsErrorInstrs(
-            ctx,
-            "TypeError",
-            "First argument to DataView constructor must be an ArrayBuffer",
-            { flush: fctx },
-          ),
-        );
-        return { kind: "ref_null", typeIdx: vecTypeIdx };
-      }
-    }
-
     if (args.length >= 1) {
       // Compile buffer arg first
       const resultType = compileExpression(ctx, fctx, args[0]!);
       const isStructBuf = resultType !== null && (resultType.kind === "ref" || resultType.kind === "ref_null");
-
-      // (#5150) The compiled carrier is a struct, but NOT the i32_byte buffer
-      // vec (nor the resizable-AB subtype): `new DataView({}, …)` /
-      // `new DataView([], …)`. Every downstream `struct.get` would be a Wasm
-      // VALIDATION failure, which turned the enclosing module into a
-      // COMPILE_ERROR. §25.3.2.1 step 2 wants a TypeError here anyway.
-      if (isStructBuf && nativeDataView) {
-        const structIdx = (resultType as { typeIdx?: number }).typeIdx;
-        const rabIdx = getOrRegisterResizableAbType(ctx);
-        if (structIdx !== undefined && structIdx !== vecTypeIdx && structIdx !== rabIdx) {
-          fctx.body.push({ op: "drop" });
-          for (const arg of args.slice(1)) {
-            const t = compileExpression(ctx, fctx, arg);
-            if (t) fctx.body.push({ op: "drop" });
-          }
-          fctx.body.push(
-            ...buildThrowJsErrorInstrs(
-              ctx,
-              "TypeError",
-              "First argument to DataView constructor must be an ArrayBuffer",
-              { flush: fctx },
-            ),
-          );
-          return { kind: "ref_null", typeIdx: vecTypeIdx };
-        }
-      }
 
       // Always stash the buffer in a local so we can validate, register the
       // view window via __dv_register_view (#1064), and restore it on stack.
@@ -342,43 +244,6 @@ export function tryCompileIndexedBuiltinNew(
       const lenF64 = allocLocal(fctx, `__dv_len_f64_${fctx.locals.length}`, {
         kind: "f64",
       });
-
-      // (#5150) Push the buffer's byte length as f64. Works for BOTH carriers:
-      // an already-struct-typed local and the common standalone case where an
-      // `ArrayBuffer` binding is an externref that has to be recovered. Only
-      // called on the native lane, where the buffer really is an i32_byte vec.
-      const canReadBufLen = isStructBuf || nativeDataView;
-      const pushBufByteLenF64 = (): void => {
-        fctx.body.push({ op: "local.get", index: bufLocal });
-        if (!isStructBuf) {
-          fctx.body.push({ op: "any.convert_extern" });
-          fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
-        }
-        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
-        fctx.body.push({ op: "f64.convert_i32_s" });
-      };
-
-      // (#5150) §25.3.2.1 step 2 brand check on the RUNTIME carrier, for the
-      // externref lane where the static type could not decide (a DataView
-      // instance, an `any` binding). Runs BEFORE ToIndex(byteOffset), which is
-      // what `buffer-does-not-have-arraybuffer-data-throws.js` asserts.
-      if (!isStructBuf && nativeDataView) {
-        fctx.body.push({ op: "local.get", index: bufLocal });
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
-        fctx.body.push({ op: "i32.eqz" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(
-            ctx,
-            "TypeError",
-            "First argument to DataView constructor must be an ArrayBuffer",
-            { flush: fctx },
-          ),
-          else: [],
-        });
-      }
 
       if (args.length >= 2) {
         // #1515 ToIndex(byteOffset) per ECMA §7.1.22:
@@ -424,6 +289,20 @@ export function tryCompileIndexedBuiltinNew(
         fctx.body.push({ op: "f64.gt" });
         fctx.body.push({ op: "i32.or" });
 
+        // If buffer is a vec struct, also check offset > bufferByteLength
+        if (isStructBuf) {
+          fctx.body.push({ op: "local.get", index: offsetF64 });
+          fctx.body.push({ op: "local.get", index: bufLocal });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: vecTypeIdx,
+            fieldIdx: 0,
+          }); // buffer length
+          fctx.body.push({ op: "f64.convert_i32_s" });
+          fctx.body.push({ op: "f64.gt" });
+          fctx.body.push({ op: "i32.or" });
+        }
+
         {
           const rangeErrMsg = "RangeError: Start offset is outside the bounds of the buffer";
           fctx.body.push({
@@ -437,46 +316,6 @@ export function tryCompileIndexedBuiltinNew(
         // No explicit byteOffset — default to 0
         fctx.body.push({ op: "f64.const", value: 0 });
         fctx.body.push({ op: "local.set", index: offsetF64 });
-      }
-
-      // (#5150) §25.3.2.1 step 7: IsDetachedBuffer(buffer) → TypeError. Runs
-      // AFTER ToIndex(byteOffset) — `detached-buffer.js` asserts the offset's
-      // `valueOf` ran exactly once first — and BEFORE the step-9 bounds check,
-      // or a detached buffer answers RangeError instead of TypeError. The
-      // standalone detach marker is the vec's `length` field forced to -1
-      // (dataview-native.ts), so a NEGATIVE byte length is the test.
-      if (canReadBufLen) {
-        pushBufByteLenF64();
-        fctx.body.push({ op: "f64.const", value: 0 });
-        fctx.body.push({ op: "f64.lt" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot construct a DataView on a detached ArrayBuffer", {
-            flush: fctx,
-          }),
-          else: [],
-        });
-      }
-
-      // §25.3.2.1 step 9: offset > bufferByteLength → RangeError. (#5150) also
-      // for the externref-carried buffer, which is the common standalone shape
-      // (`var ab = new ArrayBuffer(1); new DataView(ab, 2)`).
-      if (canReadBufLen && args.length >= 2) {
-        fctx.body.push({ op: "local.get", index: offsetF64 });
-        pushBufByteLenF64();
-        fctx.body.push({ op: "f64.gt" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: buildThrowJsErrorInstrs(
-            ctx,
-            "RangeError",
-            "RangeError: Start offset is outside the bounds of the buffer",
-            { flush: fctx },
-          ),
-          else: [],
-        });
       }
 
       if (args.length >= 3) {
@@ -514,12 +353,18 @@ export function tryCompileIndexedBuiltinNew(
         fctx.body.push({ op: "f64.gt" });
         fctx.body.push({ op: "i32.or" });
 
-        // Check: offset + length > bufferByteLength (§25.3.2.1 step 11b)
-        if (canReadBufLen) {
+        // Check: offset + length > bufferByteLength
+        if (isStructBuf) {
           fctx.body.push({ op: "local.get", index: offsetF64 });
           fctx.body.push({ op: "local.get", index: lenF64 });
           fctx.body.push({ op: "f64.add" });
-          pushBufByteLenF64();
+          fctx.body.push({ op: "local.get", index: bufLocal });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: vecTypeIdx,
+            fieldIdx: 0,
+          });
+          fctx.body.push({ op: "f64.convert_i32_s" });
           fctx.body.push({ op: "f64.gt" });
           fctx.body.push({ op: "i32.or" });
         }

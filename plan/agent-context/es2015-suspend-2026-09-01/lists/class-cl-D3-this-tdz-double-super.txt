@@ -1,0 +1,5 @@
+language/expressions/super/call-bind-this-value-twice.js
+language/expressions/super/prop-dot-cls-this-uninit.js
+language/expressions/super/prop-expr-cls-this-uninit.js
+language/statements/class/definition/this-access-restriction.js
+language/statements/class/definition/this-check-ordering.js

@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/call-with-subclass.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class Base1 {}
+class Sub extends Base1 {}
+function run(fn) { try { fn(); } catch (e) { return e instanceof TypeError; } return false; }
+assert.sameValue(run(function() { Base1(); }), true, 'base call with subclass present');
+assert.sameValue(run(function() { Sub(); }), true, 'derived call');

@@ -7,7 +7,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { functionLikeReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
@@ -262,8 +262,10 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   assertDirectFunctionBodyAllowed(func.name);
   const effectiveRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
 
-  // Use call-site resolved types for generic functions
-  const resolved = ctx.genericResolved.get(func.name);
+  // Use call-site resolved types only for the generic declaration that could
+  // have populated this cache. The registry is name-keyed, so a non-generic
+  // declaration must never inherit a same-named function's specialization.
+  const resolved = decl.typeParameters?.length ? ctx.genericResolved.get(func.name) : undefined;
 
   const restInfo = ctx.funcRestParams.get(func.name);
   const params: { name: string; type: ValType }[] = [];
@@ -303,8 +305,14 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // Prefer the type already established in the function signature (which
       // may have been inferred from call sites for untyped params).
       const sigParamType = sigParamTypes?.[wasmParamCursor];
+      // The registered function type is the ABI this body must satisfy. The
+      // generic-resolution cache is name-keyed and can be overwritten by a
+      // same-named declaration in another module after this function's type
+      // has already been allocated (TypeScript's parser and visitor modules
+      // both declare `visitNode`). Use the cache only as a fallback when no
+      // registered parameter exists.
       const paramType =
-        resolved?.params[i] ?? sigParamType ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+        sigParamType ?? resolved?.params[i] ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
       params.push({ name: paramName, type: paramType });
       wasmParamCursor++;
     }
@@ -314,6 +322,13 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   if (isGenerator) {
     // Generator functions return externref (JS Generator object)
     returnType = { kind: "externref" };
+  } else if (funcType?.kind === "func") {
+    // The allocated signature is authoritative for body lowering. In a linked
+    // graph, `genericResolved` is keyed by the bare function name; a later
+    // same-named generic can therefore replace the cached specialization while
+    // this function keeps its already-allocated type. Compiling returns from
+    // that stale cache leaves an externref on the stack for a ref-typed ABI.
+    returnType = funcType.results[0] ?? null;
   } else if (resolved) {
     returnType = resolved.results.length > 0 ? (resolved.results[0] ?? null) : null;
   } else {
@@ -321,13 +336,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     // signature — collectDeclarations may have promoted an implicit-any return
     // to f64 via #1121's numericReturnTypes inference, and the body must
     // match that signature exactly to keep recursive call sites consistent.
-    const funcType = ctx.mod.types[func.typeIdx];
-    const sigResultType = funcType?.kind === "func" && funcType.results.length > 0 ? funcType.results[0] : undefined;
-    if (sigResultType) {
-      returnType = sigResultType;
-    } else {
-      returnType = isVoidType(effectiveRetType) ? null : resolveWasmType(ctx, effectiveRetType);
-    }
+    returnType = isVoidType(effectiveRetType) ? null : resolveWasmType(ctx, effectiveRetType);
   }
 
   // #1120: detect locals that should be promoted to i32 because every
@@ -348,7 +357,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // the spec-correct free-function `this`, so this is behavior-preserving for
   // ordinary calls and only changes the value when a receiver was actually
   // installed by an enclosing dispatch.
-  const readsThis = decl.body ? bodyReferencesOwnThis(decl.body) : false;
+  const readsThis = functionLikeReferencesOwnThis(decl);
 
   const fctx: FunctionContext = {
     name: func.name,

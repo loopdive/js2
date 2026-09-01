@@ -13,6 +13,7 @@ import { addImport } from "../registry/imports.js";
 import { addFuncType } from "../registry/types.js";
 import { addUnionImportsViaRegistry } from "../shared.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
+import { UNDEF_F64_BITS } from "../value-tags.js";
 import { ensureObjectRuntime, OBJECT_RUNTIME_HELPER_NAMES } from "../object-runtime.js";
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "../symbol-native.js";
 // (#3100 S4) Native standalone iteration substrate: the four `__iterator*`
@@ -166,12 +167,23 @@ export function shiftLateImportIndices(
   // that is also reachable from a savedBody via recursive walk, we must
   // ensure it is only shifted once (#1109).
   const shifted = new Set<Instr[]>();
+  // (#1302 class, at THIS sink) The array-level guard cannot see an instr
+  // OBJECT aliased into two DIFFERENT arrays: a detached side buffer whose
+  // instrs a helper pushes into `fctx.body` while the buffer itself is still
+  // registered in `ctx.liveBodies` (emitStandalonePromiseResolve's
+  // `valueInstrs`, with the Deno promise-hook ensure minting a late import in
+  // between) walks the same `call` twice and applies the shift twice — the
+  // observed __async_resume_frun `call __box_number` landing 30 slots high on
+  // number_toString_radix. One flush is one `+added` per instruction, however
+  // many arrays alias it.
+  const shiftedInstrObjects = new WeakSet<object>();
   function shiftInstrs(instrs: Instr[]): void {
     if (shifted.has(instrs)) return;
     shifted.add(instrs);
     for (const instr of instrs) {
       if ("funcIdx" in instr && typeof (instr as any).funcIdx === "number") {
-        if (inLiveShiftRange((instr as any).funcIdx, importsBefore)) {
+        if (inLiveShiftRange((instr as any).funcIdx, importsBefore) && !shiftedInstrObjects.has(instr)) {
+          shiftedInstrObjects.add(instr);
           (instr as any).funcIdx += added;
         }
       }
@@ -769,41 +781,55 @@ export function patchStructNewForAddedField(
   typeIdx: number,
   fieldType: ValType,
 ): void {
-  function defaultInstrFor(ft: ValType): Instr {
+  function defaultInstrFor(ft: ValType): Instr[] {
     switch (ft.kind) {
       case "f64":
-        return { op: "f64.const", value: 0 };
+        // Object-carrier fields are JS properties, so a field added after an
+        // earlier struct.new represents an absent property. Preserve the
+        // canonical undefined sentinel instead of exposing Wasm's numeric
+        // zero through a later nested destructuring read.
+        // Object-carrier fields are JS properties, so a field added after an
+        // earlier struct.new represents an absent property. Preserve the
+        // canonical undefined sentinel instead of exposing Wasm's numeric
+        // zero through a later nested destructuring read.
+        return [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }];
       case "i32":
-        return { op: "i32.const", value: 0 };
+        return [{ op: "i32.const", value: 0 }];
       case "externref":
-        return { op: "ref.null.extern" };
+        return [{ op: "ref.null.extern" }];
       case "ref":
       case "ref_null":
-        return { op: "ref.null", typeIdx: (ft as { typeIdx: number }).typeIdx };
+        return [{ op: "ref.null", typeIdx: (ft as { typeIdx: number }).typeIdx }];
       default:
         if ((ft as any).kind === "i64") {
-          return { op: "i64.const", value: 0n };
+          return [{ op: "i64.const", value: 0n }];
         }
         if ((ft as any).kind === "eqref") {
-          return { op: "ref.null.eq" };
+          return [{ op: "ref.null.eq" }];
         }
-        return { op: "i32.const", value: 0 };
+        return [{ op: "i32.const", value: 0 }];
     }
   }
 
   // Iterative to avoid composing JS call-stack depth with the enclosing
-  // codegen stack: same reasoning as walkInstructions (#1087).
+  // codegen stack: same reasoning as walkInstructions (#1087). One visited
+  // set spans every reachable root: a shared instruction array represents the
+  // same physical sequence even when several parents or ownership registries
+  // point at it, so inserting a pad more than once would overfill struct.new.
+  const visited = new WeakSet<Instr[]>();
   function patchInstrs(root: Instr[]): void {
     const work: Instr[][] = [root];
     while (work.length > 0) {
       const arr = work.pop()!;
+      if (visited.has(arr)) continue;
+      visited.add(arr);
       for (let i = arr.length - 1; i >= 0; i--) {
         const instr = arr[i]!;
         if (instr.op === "struct.new" && (instr as any).typeIdx === typeIdx) {
           // Insert a default value right before the struct.new. The inserted
           // instr has no nested blocks, so enqueueing children of `instr`
           // below is still correct — `instr` is captured by reference.
-          arr.splice(i, 0, defaultInstrFor(fieldType));
+          arr.splice(i, 0, ...defaultInstrFor(fieldType));
         }
         if ("body" in instr && Array.isArray((instr as any).body)) {
           work.push((instr as any).body);
@@ -827,22 +853,31 @@ export function patchStructNewForAddedField(
   }
 
   // Patch all already-compiled function bodies
-  const patched = new Set<Instr[]>();
   for (const func of ctx.mod.functions) {
     patchInstrs(func.body);
-    patched.add(func.body);
   }
-  // Patch current function body (if not already part of mod.functions)
-  if (!patched.has(fctx.body)) {
-    patchInstrs(fctx.body);
-    patched.add(fctx.body);
-  }
-  // Patch saved bodies from the savedBody swap pattern
+  // Match the in-progress body ownership coverage used by
+  // shiftLateImportIndices above. During nested closure/accessor compilation,
+  // an enclosing function is not yet installed in mod.functions and may be
+  // reachable only through currentFunc, funcStack, or parentBodiesStack.
+  patchInstrs(fctx.body);
   for (const sb of fctx.savedBodies) {
-    if (!patched.has(sb)) {
+    patchInstrs(sb);
+  }
+  if (ctx.currentFunc) {
+    patchInstrs(ctx.currentFunc.body);
+    for (const sb of ctx.currentFunc.savedBodies) {
       patchInstrs(sb);
-      patched.add(sb);
     }
+  }
+  for (const parentFctx of ctx.funcStack) {
+    patchInstrs(parentFctx.body);
+    for (const sb of parentFctx.savedBodies) {
+      patchInstrs(sb);
+    }
+  }
+  for (const pb of ctx.parentBodiesStack) {
+    patchInstrs(pb);
   }
   // (#2503) Patch DETACHED live bodies — buffers temporarily swapped onto
   // `fctx.body` via a plain JS-local swap (not `pushBody`, so absent from
@@ -856,9 +891,9 @@ export function patchStructNewForAddedField(
   // the grown 3-field type → invalid Wasm ("struct.new need 3, got 2"). Same bug
   // class as #2158 (late-import shift) but for the field-pad patch.
   for (const lb of ctx.liveBodies) {
-    if (!patched.has(lb)) {
-      patchInstrs(lb);
-      patched.add(lb);
-    }
+    patchInstrs(lb);
+  }
+  if (ctx.pendingInitBody) {
+    patchInstrs(ctx.pendingInitBody);
   }
 }

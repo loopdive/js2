@@ -1,0 +1,2 @@
+built-ins/Proxy/deleteProperty/targetdesc-is-not-configurable.js
+built-ins/Proxy/deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js

@@ -520,6 +520,24 @@ export interface CompileOptions {
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
   /**
+   * Import the canonical realm-global object for a linked standalone runtime.
+   *
+   * Standalone modules normally allocate a private native `globalThis`
+   * singleton. Embedders that instantiate several independently compiled
+   * modules in one realm can instead provide a zero-argument getter returning
+   * the shared object. The provider namespace must also be listed in `link` so
+   * the import is treated as an intentional Wasm-to-Wasm edge.
+   *
+   * An optional `call` import provides `(callable, receiver, args) -> result`
+   * for values owned by that realm. Module-local closure shapes still use the
+   * normal direct dispatcher; only its terminal miss crosses this bridge.
+   *
+   * This option is valid only with `target: "standalone"`. It is deliberately
+   * explicit and has no default, preserving host-free standalone output for
+   * all existing callers.
+   */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *
    * `"legacy"` (default) preserves the historical `(source, isDirect)` host
@@ -918,10 +936,13 @@ export interface CompileOptions {
   link?: string[];
   /**
    * Compile bare npm package edges as cached core-Wasm providers when using
-   * {@link compileProject}. `true` and `"separate"` instantiate provider
-   * modules independently; `"merge"` asks Binaryen to statically combine safe
+   * {@link compileProject}. `true` automatically attempts independent provider
+   * modules while retaining the compatibility fallback to a monolithic source
+   * compile. `"separate"` also instantiates providers independently, but treats
+   * a linked consumer compiler failure as authoritative instead of recompiling
+   * cached provider sources. `"merge"` asks Binaryen to statically combine safe
    * direct-function providers and embeds `js2wasm.bundle.v1`. `false` retains
-   * monolithic source compilation. Unsupported boundaries report their
+   * monolithic source compilation. Unsupported package boundaries report their
    * explicit fallback through {@link CompileResult.linkPlan}. Defaults to
    * `true` for project compiles.
    */
@@ -938,6 +959,8 @@ export interface CompileOptions {
   runtimeProvider?: boolean;
   /** Internal package-linker switch for the frozen cross-module runtime type group. */
   canonicalRuntimeTypes?: boolean;
+  /** Internal package-linker switch (#5226): one imported `env.__exn` tag for the whole linked graph. */
+  sharedExceptionTag?: boolean;
   /**
    * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
    * checker is given an ambient `process` declaration so Node globals js2wasm
@@ -1204,7 +1227,7 @@ export async function instantiateLinkedProject(
     new WebAssembly.Module(result.binary as unknown as BufferSource),
     rootImports,
   );
-  wireCompiledInstance(rootImports, instance);
+  wireCompiledInstance(rootImports, instance, providerExports.size > 0);
   return { instance, providers: providerExports };
 }
 
@@ -1336,6 +1359,13 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     options: withIrCompileRoute(effectiveOptions, "compileProject"),
   });
   if (linkedAttempt.kind === "separate") {
+    // A strict separate-module attempt can return the consumer's authoritative
+    // compiler diagnostic. Keep its plan visible, but do not attach or
+    // instantiate provider artifacts when there is no consumer binary.
+    if (!linkedAttempt.result.success) {
+      linkedAttempt.result.linkPlan = linkedAttempt.plan;
+      return withImportObject(linkedAttempt.result);
+    }
     if (effectiveOptions?.packageLinking === "merge") {
       const merged = mergePackageProviders(linkedAttempt.result, linkedAttempt.artifacts, {
         optimize: effectiveOptions.optimize,

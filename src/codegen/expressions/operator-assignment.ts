@@ -11,13 +11,17 @@ import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import { elementAccessTypedArrayName } from "../array-nonindex-key.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
 import {
   bigIntHostBinopOpcode,
+  compileI64BinaryOp,
   emitAnyAdd,
   emitAnyAddFromExternTemps,
   emitModulo,
+  emitHostTypedArrayElementCoercion,
   emitToInt32,
+  emitToUint8Clamp,
 } from "../binary-ops.js";
 import { compileWithCompoundAssignment } from "../with-rmw.js";
 import { pushBody } from "../context/bodies.js";
@@ -38,10 +42,14 @@ import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   emitImplicitGlobalRead,
+  emitRuntimeEvalSharedValueUnwrap,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { EMIT_COMPOUND_OP_HANDLES, tryEmitTypedThisCompound } from "../typed-this.js"; // (#3683 S2) typed-`this` compound
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js";
+import { reserveMemberSetDispatch } from "../member-set-dispatch.js";
+import { identityPreservingStructuralParamCarrier } from "../identity-preserving-structural-param.js";
+import { isSealedNominalStructParent } from "../struct-hierarchy-layout.js";
 import {
   emitAlternateStructSetDispatch,
   emitBoundsGuardedArraySet,
@@ -80,11 +88,30 @@ import {
   type StringBuilderInfo,
 } from "../string-builder.js";
 import {
+  coerceVecBigIntElementStoreValue,
   compileAssignment,
   compileExternSetFallback,
   isNonWritableDataProperty,
   isStrictContext,
 } from "./assignment.js";
+import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
+
+/** Numeric and BigInt TypedArray view name for the native vec element lane. */
+function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
+  const numericName = elementAccessTypedArrayName(ctx, receiver);
+  if (numericName !== undefined) return numericName;
+  const type = ctx.checker.getTypeAtLocation(receiver);
+  let name = type.getSymbol()?.name ?? type.aliasSymbol?.name;
+  if (
+    name !== "BigInt64Array" &&
+    name !== "BigUint64Array" &&
+    ts.isNewExpression(receiver) &&
+    ts.isIdentifier(receiver.expression)
+  ) {
+    name = receiver.expression.text;
+  }
+  return name === "BigInt64Array" || name === "BigUint64Array" ? name : undefined;
+}
 
 /**
  * Compile logical assignment operators: ??=, ||=, &&=
@@ -376,7 +403,7 @@ function compilePropertyLogicalAssignment(
   const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
 
   // Resolve struct type
-  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (!typeName) {
     // Fallback: treat as externref property access via __extern_get / __extern_set
     return compilePropertyLogicalAssignmentExternref(ctx, fctx, target, rhs, op, propName);
@@ -496,10 +523,52 @@ function compilePropertyLogicalAssignmentExternref(
       const fields = ctx.structFields.get(resolvedTypeName);
       if (fields) {
         let fieldIdx = fields.findIndex((f) => f.name === propName);
+        const sealedMissingField = fieldIdx === -1 && isSealedNominalStructParent(ctx, typeIdx);
+
+        if (sealedMissingField) {
+          // The static receiver is the frozen parent, but the runtime value may
+          // be one of its declared children that owns this field (TypeScript's
+          // `node.jsDoc ??= []` after a HasJSDoc predicate). Keep GetValue and
+          // PutValue on the same finalized candidate set so an existing child
+          // slot is preserved and an absent one is initialized in that slot.
+          const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
+          const setMemberIdx = reserveMemberSetDispatch(
+            ctx,
+            propName,
+            isStrictContext(target, ctx.inferModuleStrictArguments),
+            fctx,
+          );
+          if (getMemberIdx !== undefined && setMemberIdx !== undefined) {
+            coerceType(ctx, fctx, objResult, { kind: "externref" });
+            const objTmp = allocLocal(fctx, `__logprop_sealed_obj_${fctx.locals.length}`, {
+              kind: "externref",
+            });
+            fctx.body.push({ op: "local.set", index: objTmp });
+
+            const emitGet = () => {
+              fctx.body.push({ op: "local.get", index: objTmp });
+              fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+              if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+                emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+              }
+            };
+            const emitSet = () => {
+              const valueTmp = allocLocal(fctx, `__logprop_sealed_val_${fctx.locals.length}`, {
+                kind: "externref",
+              });
+              fctx.body.push({ op: "local.set", index: valueTmp });
+              fctx.body.push({ op: "local.get", index: objTmp });
+              fctx.body.push({ op: "local.get", index: valueTmp });
+              fctx.body.push({ op: "call", funcIdx: setMemberIdx });
+              fctx.body.push({ op: "local.get", index: valueTmp });
+            };
+            return emitLogicalAssignmentPattern(ctx, fctx, rhs, op, { kind: "externref" }, emitGet, emitSet);
+          }
+        }
 
         // If the field doesn't exist yet, try to add it dynamically from TS type info
         // but NEVER for class struct types — their fields are fixed at collection time
-        if (fieldIdx === -1 && !ctx.classSet.has(resolvedTypeName)) {
+        if (fieldIdx === -1 && !ctx.classSet.has(resolvedTypeName) && !isSealedNominalStructParent(ctx, typeIdx)) {
           const objTsType = ctx.checker.getTypeAtLocation(target.expression);
           const tsProps = objTsType.getProperties?.();
           if (tsProps) {
@@ -1789,20 +1858,6 @@ function tryCompileHostBigIntCompoundAssignment(
   return result === VOID_RESULT ? null : result;
 }
 
-function tryCompileConstCompoundAssignment(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  name: string,
-  right: ts.Expression,
-): ValType | undefined {
-  if (!fctx.constBindings?.has(name)) return undefined;
-  const rhsType = compileExpression(ctx, fctx, right);
-  if (rhsType) fctx.body.push({ op: "drop" });
-  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-  fctx.body.push({ op: "unreachable" });
-  return { kind: "f64" };
-}
-
 export function compileCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1849,8 +1904,7 @@ export function compileCompoundAssignment(
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  const constCompound = tryCompileConstCompoundAssignment(ctx, fctx, name, expr.right);
-  if (constCompound !== undefined) return constCompound;
+  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
 
   // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
   const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
@@ -2473,6 +2527,30 @@ function tryCompileExternrefStructFieldPlusEquals(
 }
 
 /**
+ * True when TypeScript changed only the static view of this receiver with an
+ * erased assertion. Parentheses around the assertion are common at compound
+ * assignment sites (`(node as Mutable<Node>).flags |= bit`).
+ */
+function hasErasedReceiverAssertion(expression: ts.Expression): boolean {
+  let current = expression;
+  for (;;) {
+    if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) return true;
+    if (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current) || ts.isSatisfiesExpression(current)) {
+      current = current.expression;
+      continue;
+    }
+    return false;
+  }
+}
+
+/** Struct definition for a concrete carrier type, including explicit `sub`. */
+function structDefForCarrier(ctx: CodegenContext, typeIdx: number): StructTypeDef | undefined {
+  const def = ctx.mod.types[typeIdx];
+  if (def?.kind === "struct") return def;
+  return def?.kind === "sub" && def.type.kind === "struct" ? def.type : undefined;
+}
+
+/**
  * Compile compound assignment on a property access target: obj.prop += value
  * Pattern: read obj.prop, compile RHS, apply op, store back into obj.prop
  */
@@ -2564,7 +2642,7 @@ function compilePropertyCompoundAssignment(
   }
 
   // Resolve struct type
-  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression);
+  const typeName = resolveStructNameForExpr(ctx, fctx, target.expression, target.name, resolveWasmType(ctx, objType));
   if (!typeName) {
     // Fallback: treat as externref property access via __extern_get / __extern_set
     return compilePropertyCompoundAssignmentExternref(ctx, fctx, target, rhs, op, propName);
@@ -2626,24 +2704,64 @@ function compilePropertyCompoundAssignment(
     }
   }
 
-  const structTypeIdx = ctx.structMap.get(typeName);
+  let structTypeIdx = ctx.structMap.get(typeName);
   const fields = ctx.structFields.get(typeName);
   if (structTypeIdx === undefined || !fields) {
     // Struct not found — fall back to externref property access
     return compilePropertyCompoundAssignmentExternref(ctx, fctx, target, rhs, op, propName);
   }
 
-  const fieldIdx = fields.findIndex((f) => f.name === propName);
+  let fieldIdx = fields.findIndex((f) => f.name === propName);
   if (fieldIdx === -1) {
     // Unknown field — fall back to externref property access
     return compilePropertyCompoundAssignmentExternref(ctx, fctx, target, rhs, op, propName);
   }
 
-  const fieldType = fields[fieldIdx]!.type;
+  let fieldType = fields[fieldIdx]!.type;
 
   // Compile the object expression and save to a temp local
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;
+
+  // (#1058) A TypeScript assertion changes no runtime value. In particular,
+  // `(node as Mutable<Node>).flags |= bit` still leaves the original `$Node`
+  // reference on the stack, even when the checker-side mapped `Mutable<Node>`
+  // acquired its own, unrelated struct layout earlier in the program. The
+  // name-first path above then selected that mapped layout and emitted
+  // `local.get $Node; struct.get $Mutable`, which V8 rejects before execution.
+  //
+  // Prefer the actual emitted carrier only with positive layout evidence: it
+  // must be a concrete struct containing the same mutable field. This preserves
+  // the assertion's erased identity and declines to guess for assertions that
+  // invent a field absent from the runtime carrier.
+  if (
+    hasErasedReceiverAssertion(target.expression) &&
+    (objResult.kind === "ref" || objResult.kind === "ref_null") &&
+    objResult.typeIdx !== structTypeIdx
+  ) {
+    const carrierTypeIdx = objResult.typeIdx as number;
+    const carrierDef = structDefForCarrier(ctx, carrierTypeIdx);
+    const carrierFieldIdx = carrierDef?.fields.findIndex((field) => field.name === propName) ?? -1;
+    const carrierField = carrierFieldIdx >= 0 ? carrierDef!.fields[carrierFieldIdx] : undefined;
+    if (carrierField?.mutable === true) {
+      structTypeIdx = carrierTypeIdx;
+      fieldIdx = carrierFieldIdx;
+      fieldType = carrierField.type;
+    } else {
+      // The assertion invented a storage location that the emitted value does
+      // not have (or the carrier slot is not writable). There is no sound
+      // struct.get/set lowering: casting would either trap or mutate a projected
+      // copy rather than the original object. Consume the already-evaluated
+      // receiver and fail compilation here instead of publishing invalid Wasm.
+      fctx.body.push({ op: "drop" });
+      reportError(
+        ctx,
+        target,
+        `Cannot compound-assign asserted-only field '${propName}' on the emitted receiver carrier`,
+      );
+      return null;
+    }
+  }
   const objTmp = allocLocal(fctx, `__cmpd_obj_${fctx.locals.length}`, objResult);
   fctx.body.push({ op: "local.set", index: objTmp });
 
@@ -2718,7 +2836,9 @@ function resolveOrAddCompoundPropertyField(
   const fields = ctx.structFields.get(resolvedTypeName);
   if (!fields) return undefined;
   let fieldIdx = fields.findIndex((field) => field.name === propName);
-  if (fieldIdx !== -1 || ctx.classSet.has(resolvedTypeName)) return { fields, fieldIdx };
+  if (fieldIdx !== -1 || ctx.classSet.has(resolvedTypeName) || isSealedNominalStructParent(ctx, typeIdx)) {
+    return { fields, fieldIdx };
+  }
 
   const objTsType = ctx.checker.getTypeAtLocation(target.expression);
   const tsProp = objTsType.getProperties?.().find((prop) => prop.name === propName);
@@ -2756,10 +2876,12 @@ function compilePropertyCompoundAssignmentExternref(
   // Compile the object expression to discover its runtime type
   const objResult = compileExpression(ctx, fctx, target.expression);
   if (!objResult) return null;
+  let sealedStructReceiver = false;
 
   // --- Path A: The object compiled to a struct ref ---
   if (objResult.kind === "ref" || objResult.kind === "ref_null") {
     const typeIdx = (objResult as { typeIdx: number }).typeIdx;
+    sealedStructReceiver = isSealedNominalStructParent(ctx, typeIdx);
     // Find the struct fields by looking up which typeName maps to this typeIdx
     const resolvedTypeName = ctx.typeIdxToStructName.get(typeIdx);
     if (resolvedTypeName) {
@@ -2885,17 +3007,21 @@ function compilePropertyCompoundAssignmentExternref(
   fctx.body.push({ op: "local.set", index: keyLocal });
 
   // (#2681/#2686) Is the receiver a PINNED reconstructed-fnctor struct (acorn's
-  // `this.pos`, `this`/flow-mapped)? Only THEN do the compound read+write route
-  // through the `__get_member`/`__set_member` struct dispatchers (slot), staying
-  // symmetric with the pinned simple read/write so `this.pos += 1` advances. For
-  // a GENERAL `any`-receiver (a plain object literal lowered to an anonymous
+  // `this.pos`, `this`/flow-mapped), or a source-certified TypeScript Node
+  // identity parameter? Only THEN do the compound read+write route through the
+  // `__get_member`/`__set_member` struct dispatchers. The latter may carry either
+  // the physical Node constraint or a host object: the struct arm sees real
+  // fields while the terminal extern arm retains host-sidecar semantics.
+  // For a GENERAL `any`-receiver (a plain object literal lowered to an anonymous
   // `$__anon_N` struct), the dispatcher's struct arm would read/write the SLOT and
   // bypass the delete-tombstone/ordering sidecar semantics (#2179/#2731 — the
   // `for-in/order-simple-object` regressor), so a general receiver stays on the
   // bare `__extern_get`/`__extern_set` sidecar.
   const pinnedCompound =
+    sealedStructReceiver ||
     (target.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
-    resolveReceiverStruct(ctx, fctx, target.expression) !== undefined;
+    resolveReceiverStruct(ctx, fctx, target.expression) !== undefined ||
+    identityPreservingStructuralParamCarrier(ctx, target.expression)?.compoundStructDispatch === true;
 
   // Read current value. When pinned, route through the symmetric
   // `__get_member_<name>` dispatcher (`struct.get` arms + `__extern_get` terminal)
@@ -3156,11 +3282,30 @@ function compileVecElementCompoundAssignment(
   const arrayTypeIdx = (dataFieldType as { typeIdx: number }).typeIdx;
   const arrayDef = ctx.mod.types[arrayTypeIdx];
   const elemType = arrayDef && arrayDef.kind === "array" ? arrayDef.element : { kind: "f64" as const };
+  const taViewName = vecElementTypedArrayName(ctx, target.expression);
+  const isBigIntTypedArray =
+    elemType.kind === "i64" && (taViewName === "BigInt64Array" || taViewName === "BigUint64Array");
 
   fctx.body.push({ op: "local.get", index: objTmp });
   fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
   fctx.body.push({ op: "local.get", index: idxTmp });
   emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType);
+
+  // BigInt has no unsigned-right-shift operation. Preserve compound-assignment
+  // evaluation order (the receiver/index and GetValue ran above; the RHS still
+  // runs here), then throw before any write-back. Detect this from the
+  // TypedArray view name rather than its physical element type: JS-host BigInt
+  // views use externref slots while standalone views use i64.
+  if (
+    (taViewName === "BigInt64Array" || taViewName === "BigUint64Array") &&
+    op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken
+  ) {
+    fctx.body.push({ op: "drop" });
+    const rhsType = compileExpression(ctx, fctx, rhs);
+    if (rhsType) fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "BigInts have no unsigned right shift, use >> instead");
+    return elemType.kind === "externref" ? { kind: "externref" } : { kind: "i64", bigint: true };
+  }
 
   const hostBigIntResult = tryEmitHostBigIntArrayCompoundAssignment(
     ctx,
@@ -3176,12 +3321,35 @@ function compileVecElementCompoundAssignment(
   );
   if (hostBigIntResult !== undefined) return hostBigIntResult;
 
-  if (elemType.kind !== "f64") coerceType(ctx, fctx, elemType, { kind: "f64" });
-  const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
-  if (!rhsType) return null;
-  emitCompoundOp(ctx, fctx, op);
+  let resultType: ValType;
+  if (isBigIntTypedArray) {
+    // Vec-backed BigInt typed arrays carry their elements as native i64. Keep
+    // both operands and the operation in that representation: routing through
+    // the generic f64 compound lane loses precision above 2^53 and makes
+    // bitwise operations apply Number/ToInt32 semantics.
+    const bigintI64: ValType = { kind: "i64", bigint: true };
+    // Compile without an i64 hint so the source domain remains observable:
+    // a Number RHS must reach ToBigInt and throw, while a real BigInt RHS is
+    // already branded i64 and stays on the native carrier.
+    const rhsType = compileExpression(ctx, fctx, rhs);
+    if (!rhsType) return null;
+    coerceVecBigIntElementStoreValue(ctx, fctx, rhsType);
+    const binaryOp = compoundBinaryOperator(op);
+    if (binaryOp === undefined) {
+      reportError(ctx, target, `Unsupported BigInt compound operator: ${ts.SyntaxKind[op]}`);
+      return null;
+    }
+    compileI64BinaryOp(ctx, fctx, binaryOp, ts.factory.createBinaryExpression(target, binaryOp, rhs));
+    resultType = bigintI64;
+  } else {
+    if (elemType.kind !== "f64") coerceType(ctx, fctx, elemType, { kind: "f64" });
+    const rhsType = compileExpression(ctx, fctx, rhs, { kind: "f64" });
+    if (!rhsType) return null;
+    emitCompoundOp(ctx, fctx, op);
+    resultType = { kind: "f64" };
+  }
 
-  const resultTmp = allocLocal(fctx, `__cmpd_res_${fctx.locals.length}`, { kind: "f64" });
+  const resultTmp = allocLocal(fctx, `__cmpd_res_${fctx.locals.length}`, resultType);
   fctx.body.push({ op: "local.set", index: resultTmp });
 
   fctx.body.push({ op: "local.get", index: idxTmp });
@@ -3196,10 +3364,33 @@ function compileVecElementCompoundAssignment(
       { op: "local.get", index: idxTmp },
       { op: "local.get", index: resultTmp },
     ];
-    if (elemType.kind !== "f64") {
+    if (resultType.kind === "f64" && elemType.kind === "f64" && taViewName !== undefined) {
       const savedBody = fctx.body;
       fctx.body = setInstrs as any;
-      coerceType(ctx, fctx, { kind: "f64" }, elemType);
+      emitHostTypedArrayElementCoercion(fctx, taViewName);
+      fctx.body = savedBody;
+    } else if (resultType.kind === "f64" && taViewName === "Uint8ClampedArray") {
+      // Packed clamped storage still requires ToUint8Clamp before array.set;
+      // `i32.trunc_sat_f64_s` rounds toward zero and gets half-even ties wrong.
+      const savedBody = fctx.body;
+      fctx.body = setInstrs as any;
+      emitToUint8Clamp(fctx);
+      fctx.body = savedBody;
+    } else if (
+      resultType.kind === "f64" &&
+      taViewName !== undefined &&
+      (elemType.kind === "i8" || elemType.kind === "i16" || elemType.kind === "i32")
+    ) {
+      // Integer TypedArray stores use ToInt32 modulo semantics. Saturating
+      // truncation is observably wrong for Infinity and values around 2^32.
+      const savedBody = fctx.body;
+      fctx.body = setInstrs as any;
+      emitToInt32(fctx);
+      fctx.body = savedBody;
+    } else if (resultType.kind !== elemType.kind) {
+      const savedBody = fctx.body;
+      fctx.body = setInstrs as any;
+      coerceType(ctx, fctx, resultType, elemType);
       fctx.body = savedBody;
     }
     setInstrs.push({ op: "array.set", typeIdx: arrayTypeIdx });
@@ -3207,7 +3398,7 @@ function compileVecElementCompoundAssignment(
   }
 
   fctx.body.push({ op: "local.get", index: resultTmp });
-  return { kind: "f64" };
+  return resultType;
 }
 
 /**

@@ -1,0 +1,8 @@
+built-ins/Function/prototype/toString/not-a-constructor.js
+built-ins/Function/prototype/toString/proxy-bound-function.js
+built-ins/Function/prototype/toString/proxy-generator-function.js
+built-ins/Function/prototype/toString/proxy-method-definition.js
+built-ins/Function/prototype/toString/proxy-function-expression.js
+built-ins/Function/prototype/toString/proxy-class.js
+built-ins/Function/prototype/toString/proxy-non-callable-throws.js
+built-ins/Function/prototype/toString/proxy-arrow-function.js

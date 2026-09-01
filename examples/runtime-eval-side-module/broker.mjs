@@ -64,7 +64,11 @@ export const RUNTIME_EVAL_BROKER_WAT = `(module
 
 export function buildRuntimeEvalBroker() {
   const module = binaryen.parseText(RUNTIME_EVAL_BROKER_WAT);
-  module.setFeatures(binaryen.Features.All);
+  // The broker uses externref but no experimental proposal instructions.
+  // Enabling every Binaryen feature can make the writer select proposal
+  // encodings that the embedding engine does not support (for example,
+  // Binaryen 132 emits an invalid import section for Node 24 here).
+  module.setFeatures(binaryen.Features.ReferenceTypes);
   if (!module.validate()) {
     module.dispose();
     throw new Error("runtime-eval side-module broker: Binaryen validation failed");

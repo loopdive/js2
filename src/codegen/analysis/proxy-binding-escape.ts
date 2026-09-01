@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+export { variableStatementContainsPromiseSubclass } from "../expressions/promise-subclass.js";
 
 /** The two direct initializer shapes whose result carrier is Proxy-owned. */
 export function isDirectProxyConstruction(expression: ts.Expression): boolean {
@@ -25,6 +26,81 @@ function enclosingExecutableOrSource(node: ts.Node): ts.Node | undefined {
   return undefined;
 }
 
+/**
+ * `proxyBindingIsTarget` is queried for every variable declaration, including
+ * both module-global declaration passes.  Index actual Proxy targets once per
+ * source instead of walking an enclosing scope for every queried declaration.
+ *
+ * The cached raw-text checks keep the overwhelmingly common no-Proxy query
+ * path constant-time after one cheap source prefilter. A `\u` spelling still
+ * needs the scanner because escaped identifiers such as `P\u0072oxy` have the
+ * normalized AST text `Proxy`. Raw-text false positives only trigger the exact
+ * cached AST scan and cannot change the semantic answer.
+ */
+const sourceHasProxyIdentifierCache = new WeakMap<ts.SourceFile, boolean>();
+const proxyTargetBindingsByContext = new WeakMap<
+  CodegenContext,
+  WeakMap<ts.SourceFile, WeakSet<ts.VariableDeclaration>>
+>();
+
+function sourceHasProxyIdentifier(sourceFile: ts.SourceFile): boolean {
+  const cached = sourceHasProxyIdentifierCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+
+  const text = sourceFile.text;
+  let found = text.includes("Proxy");
+  if (!found && text.includes("\\u")) {
+    const scanner = ts.createScanner(sourceFile.languageVersion, true, sourceFile.languageVariant, text);
+    for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+      if (token === ts.SyntaxKind.Identifier && scanner.getTokenValue() === "Proxy") {
+        found = true;
+        break;
+      }
+    }
+  }
+  sourceHasProxyIdentifierCache.set(sourceFile, found);
+  return found;
+}
+
+function proxyTargetBindings(ctx: CodegenContext, sourceFile: ts.SourceFile): WeakSet<ts.VariableDeclaration> {
+  let bySource = proxyTargetBindingsByContext.get(ctx);
+  if (bySource === undefined) {
+    bySource = new WeakMap();
+    proxyTargetBindingsByContext.set(ctx, bySource);
+  }
+  const cached = bySource.get(sourceFile);
+  if (cached !== undefined) return cached;
+
+  const targets = new WeakSet<ts.VariableDeclaration>();
+  bySource.set(sourceFile, targets);
+  if (!sourceHasProxyIdentifier(sourceFile)) return targets;
+
+  const visit = (node: ts.Node): void => {
+    let target: ts.Expression | undefined;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
+      target = node.arguments?.[0];
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Proxy" &&
+      node.expression.name.text === "revocable"
+    ) {
+      target = node.arguments[0];
+    }
+    if (target !== undefined) {
+      const candidate = innermostTransparentExpression(target);
+      if (ts.isIdentifier(candidate)) {
+        const declaration = ctx.oracle.valueDeclarationOf(candidate);
+        if (declaration !== undefined && ts.isVariableDeclaration(declaration)) targets.add(declaration);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return targets;
+}
+
 function isTransparentWrapperOf(parent: ts.Node, child: ts.Expression): parent is ts.Expression {
   return (
     (ts.isParenthesizedExpression(parent) ||
@@ -44,27 +120,67 @@ function outermostTransparentExpression(expression: ts.Expression): ts.Expressio
   return current;
 }
 
-/** (#5140) `Object.*` meta-object statics that consume an externref carrier. */
-const OBJECT_MOP_STATICS = new Set([
+function innermostTransparentExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * (#5140) Meta-object consumers whose providers take their arguments as raw
+ * externref carriers and dispatch the MOP at runtime. Passing a Proxy binding
+ * here does NOT require the nominal target struct a generic typed consumer
+ * needs — and keeping that struct is actively wrong: the guarded cast of the
+ * live `$Proxy`/host Proxy to its TypeScript target type yields **null**, so
+ * `new Proxy(p, {})` silently created a proxy over null and every trap
+ * disappeared.
+ *
+ * The families are the ones that are definitionally about the carrier:
+ * `new Proxy` / `Proxy.revocable`, all of `Reflect.*`, and the `Object.*`
+ * meta-object statics.
+ */
+const OBJECT_META_STATICS = new Set([
+  "assign",
   "keys",
   "values",
   "entries",
-  "getOwnPropertyNames",
-  "getOwnPropertySymbols",
-  "getOwnPropertyDescriptor",
-  "getOwnPropertyDescriptors",
-  "getPrototypeOf",
-  "setPrototypeOf",
-  "defineProperty",
-  "defineProperties",
-  "isExtensible",
-  "preventExtensions",
   "freeze",
   "isFrozen",
   "seal",
   "isSealed",
+  "preventExtensions",
+  "isExtensible",
+  "getPrototypeOf",
+  "setPrototypeOf",
+  "getOwnPropertyNames",
+  "getOwnPropertySymbols",
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "defineProperty",
+  "defineProperties",
   "create",
 ]);
+
+function consumesExternrefCarrier(parent: ts.CallExpression | ts.NewExpression): boolean {
+  if (ts.isNewExpression(parent)) {
+    return ts.isIdentifier(parent.expression) && parent.expression.text === "Proxy";
+  }
+  const callee = parent.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+  const namespace = callee.expression.text;
+  const member = callee.name.text;
+  if (namespace === "Reflect") return true;
+  if (namespace === "Proxy") return member === "revocable";
+  return namespace === "Object" && OBJECT_META_STATICS.has(member);
+}
 
 function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   const outer = outermostTransparentExpression(expression);
@@ -77,35 +193,7 @@ function expressionIsEscapingArgument(expression: ts.Expression): boolean {
   // struct that generic typed consumers require. Keeping that struct would
   // guarded-cast the actual `$Proxy`/host Proxy to its TypeScript target type,
   // replace it with null, and skip the getOwnPropertyDescriptor trap entirely.
-  if (
-    ts.isCallExpression(parent) &&
-    ts.isPropertyAccessExpression(parent.expression) &&
-    ts.isIdentifier(parent.expression.expression) &&
-    parent.expression.expression.text === "Object" &&
-    parent.expression.name.text === "assign"
-  ) {
-    return false;
-  }
-
-  // (#5140) The same reasoning covers every consumer whose lowering already
-  // takes a raw externref carrier: `new Proxy(p, h)` / `Proxy.revocable(p, h)`
-  // (a proxy is a legal proxy target), the whole `Reflect` namespace, and the
-  // `Object` meta-object statics. Keeping the nominal target struct for those
-  // arguments guarded-casts the live `$Proxy` to null, which is what made
-  // `new Proxy(new Proxy({foo: 1}, {}), {})` throw "Cannot create proxy with a
-  // non-object as target or handler" at ProxyCreate.
-  if (ts.isNewExpression(parent) && ts.isIdentifier(parent.expression) && parent.expression.text === "Proxy") {
-    return false;
-  }
-  if (ts.isCallExpression(parent) && ts.isPropertyAccessExpression(parent.expression)) {
-    const ns = parent.expression.expression;
-    const member = parent.expression.name.text;
-    if (ts.isIdentifier(ns)) {
-      if (ns.text === "Reflect") return false;
-      if (ns.text === "Proxy" && member === "revocable") return false;
-      if (ns.text === "Object" && OBJECT_MOP_STATICS.has(member)) return false;
-    }
-  }
+  if (consumesExternrefCarrier(parent)) return false;
 
   // This includes argument zero of `.call` / `.apply`, the generic-method
   // receiver that motivated #2615. A member receiver (`p.method()`) is not in
@@ -180,4 +268,32 @@ export function proxyBindingEscapesToCall(ctx: CodegenContext, declaration: ts.V
   };
   visit(scope);
   return escapes;
+}
+
+/**
+ * Whether a binding is passed directly as the target of a Proxy in the same
+ * executable scope.
+ *
+ * ProxyConstructor is typed to return its target's structural type, but the
+ * runtime value is an externref Proxy carrier.  A target binding therefore
+ * has to stay on the dynamic object carrier too: a closed-struct slot would
+ * split the object from the Proxy's target and make later reads/writes miss
+ * the Proxy's MOP.  Keep this identity proof next to the escape analysis so
+ * module and function declaration paths use the same rule.
+ */
+export function proxyBindingIsTarget(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  return proxyTargetBindings(ctx, declaration.getSourceFile()).has(declaration);
+}
+
+/** Tag direct Proxy results and target aliases for dynamic module storage. */
+export function proxyBindingNeedsExternref(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  const target = proxyBindingIsTarget(ctx, declaration);
+  const result =
+    declaration.initializer !== undefined &&
+    isDirectProxyConstruction(declaration.initializer) &&
+    !proxyBindingEscapesToCall(ctx, declaration);
+  if (target || result) ctx.externrefAccessorVars.add(declaration.name.text);
+  return target || result;
 }

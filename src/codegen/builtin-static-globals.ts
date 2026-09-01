@@ -93,6 +93,12 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "WeakRef",
   "RegExp",
   "FinalizationRegistry",
+  "ArrayBuffer",
+  "BigInt",
+  "DataView",
+  "Date",
+  "Promise",
+  "Symbol",
   "DisposableStack",
   "AsyncDisposableStack",
   "SuppressedError",
@@ -186,8 +192,8 @@ export function emitBuiltinConstructorIdentity(
 
   // (#2984 ctor-carrier own props) The carrier is materialized through a local
   // so the §17/§20 own data properties (`length`/`name`/`prototype`) can be
-  // installed on it before it is published to the global. Without them the
-  // carrier is an EMPTY `$Object`, and every RUNTIME descriptor query
+  // installed on it before its seed completes. Without them the carrier is an
+  // EMPTY `$Object`, and every RUNTIME descriptor query
   // test262's `verifyProperty` makes through its any-typed harness parameter
   // (`hasOwnProperty`, `gOPD`, for-in, write, delete) answers "absent".
   const objLocal = allocLocal(fctx, `__builtin_ctor_${builtinName}_obj_${fctx.locals.length}`, {
@@ -196,6 +202,11 @@ export function emitBuiltinConstructorIdentity(
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
+    // Publish before seeding: the prototype seed may re-enter this helper via
+    // its native-prototype companion. Leaving the global null until after that
+    // re-entry lets it mint a second carrier, splitting constructor identity.
+    { op: "local.get", index: objLocal },
+    { op: "global.set", index: globalIdx },
   ];
 
   // (#2182 pattern) `savedBody` is detached during the swap; register it in
@@ -203,13 +214,13 @@ export function emitBuiltinConstructorIdentity(
   const savedBody = fctx.body;
   fctx.body = initBody;
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   try {
     pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
-    fctx.body.push({ op: "local.get", index: objLocal });
-    fctx.body.push({ op: "global.set", index: globalIdx });
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });
@@ -502,9 +513,11 @@ export function emitBuiltinNamespaceObject(
   // swap. `emitBuiltinStaticMethodValue` below can trigger a late import (e.g.
   // a host builtin), and `shiftLateImportIndices` only walks `fctx.body` (=
   // initBody here) plus the registered body sets — NOT this raw local. Register
-  // it in `liveBodies` so any `call` funcIdx already accumulated in the outer
-  // body is shifted too; otherwise a late import here would over-shift it.
+  // both arrays in `liveBodies` so a nested closure helper that flushes with
+  // its own FunctionContext still repairs the detached namespace initializer
+  // as well as the outer body.
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   try {
     for (const prop of props) {
       fctx.body.push({ op: "local.get", index: objLocal });
@@ -533,6 +546,7 @@ export function emitBuiltinNamespaceObject(
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });

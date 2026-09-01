@@ -75,27 +75,34 @@ describe("#1169q — IR fallback telemetry", () => {
     expect(reasons.get("withOptional")).toBe("param-shape-rejected");
   });
 
-  it("reports non-export-modifier for async functions (matches existing reject)", () => {
+  it("reports async-function for async functions (matches existing reject)", () => {
+    // (#1373) The async reject moved out of the catch-all `non-export-modifier`
+    // bucket into its own `async-function` one when the async/async-generator
+    // split landed; the assertion here had been stale since.
     const source = `
       async function asyncFn(): Promise<number> { return 1; }
       export function entry(): number { return 1; }
     `;
     const reasons = reasonsFor(source);
-    expect(reasons.get("asyncFn")).toBe("non-export-modifier");
+    expect(reasons.get("asyncFn")).toBe("async-function");
   });
 
-  it("reports body-shape-rejected for unsupported expressions in body", () => {
-    // try/catch is not a Phase-1 statement shape — the selector rejects
-    // bodies containing it. Used as a stable marker for body-shape rejection
-    // even as the IR's accepted expression set grows.
+  it("reports body-shape-rejected for unsupported statement shapes in body", () => {
+    // A DESTRUCTURING catch parameter is not a Phase-1 shape — the selector
+    // rejects bodies containing it (`try-catch-binding`). Used as a stable
+    // marker for body-shape rejection even as the IR's accepted set grows.
+    //
+    // (#5165) The previous marker was a whole `try`/`catch` whose arms return;
+    // that shape is now ADOPTED (S2 + S3), so it no longer marks anything. The
+    // catch-param binding restriction is orthogonal to control flow and stays.
     const source = `
-      function withTry(x: number): number {
-        try { return x + 1; } catch (e) { return -1; }
+      function withDestructuringCatch(x: number): number {
+        try { return x + 1; } catch ({ message }) { return -1; }
       }
       export function entry(): number { return 1; }
     `;
     const reasons = reasonsFor(source);
-    expect(reasons.get("withTry")).toBe("body-shape-rejected");
+    expect(reasons.get("withDestructuringCatch")).toBe("body-shape-rejected");
   });
 
   it("reports external-call when a function calls a non-local identifier", () => {

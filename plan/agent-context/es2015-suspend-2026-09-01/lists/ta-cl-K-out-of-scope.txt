@@ -1,0 +1,13 @@
+built-ins/TypedArrayConstructors/ctors/object-arg/as-generator-iterable-returns.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-reflect-set.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js
+built-ins/TypedArrayConstructors/ctors/object-arg/custom-proto-access-throws.js
+built-ins/TypedArrayConstructors/ctors/typedarray-arg/custom-proto-access-throws.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-reflect-set.js
+built-ins/TypedArrayConstructors/ctors/length-arg/custom-proto-access-throws.js
+built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-proto.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-typed-array.js
+built-ins/TypedArrayConstructors/ctors/no-args/custom-proto-access-throws.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-object.js
+built-ins/TypedArrayConstructors/ctors/typedarray-arg/throw-type-error-before-custom-proto-access.js

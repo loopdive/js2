@@ -22,13 +22,18 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
+import { mintScopedClassIdentity } from "./class-bodies.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
-import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
+import {
+  collectBlockScopedNames,
+  discardBlockScopedShadows,
+  saveBlockScopedShadowsForNames,
+} from "./statements/shared.js";
 import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
@@ -77,7 +82,7 @@ export {
 export { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 export { emitArgumentsObject, hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 export { collectInstrs } from "./statements/shared.js";
-export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
+export { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 
 // ---------------------------------------------------------------------------
 // Dispatcher helpers
@@ -86,8 +91,35 @@ export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
 /**
  * Mark the first instruction emitted for a statement with its source position.
  */
+let traceStmtGlobalSerial = 0;
 function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement, compile: () => void): void {
   const pos = getSourcePos(ctx, stmt);
+  if (process.env.JS2WASM_TRACE_LAST_STMT && pos) {
+    // Debug-only (env-gated): stream every statement boundary into an exported
+    // mutable f64 global so a host harness can read WHERE a standalone module
+    // trapped (file index * 1e6 + line). No imports — global writes don't
+    // shift function indices.
+    const anyCtx = ctx as unknown as { __traceStmtGlobalIdx?: number; __traceStmtFiles?: Map<string, number> };
+    if (anyCtx.__traceStmtGlobalIdx === undefined) {
+      const idx = ctx.numImportGlobals + ctx.mod.globals.length;
+      ctx.mod.globals.push({
+        name: "__trace_last_stmt",
+        type: { kind: "f64" },
+        mutable: true,
+        init: [{ op: "f64.const", value: -1 }],
+      });
+      ctx.mod.exports.push({
+        name: `__trace_last_stmt_${traceStmtGlobalSerial++}`,
+        desc: { kind: "global", index: idx },
+      });
+      anyCtx.__traceStmtGlobalIdx = idx;
+      anyCtx.__traceStmtFiles = new Map();
+    }
+    const files = anyCtx.__traceStmtFiles!;
+    if (!files.has(pos.file)) files.set(pos.file, files.size);
+    fctx.body.push({ op: "f64.const", value: files.get(pos.file)! * 1e6 + pos.line });
+    fctx.body.push({ op: "global.set", index: anyCtx.__traceStmtGlobalIdx });
+  }
   const bodyLenBefore = fctx.body.length;
   compile();
   if (pos && fctx.body.length > bodyLenBefore) {
@@ -452,11 +484,30 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // Save localMap entries for any block-scoped (let/const) names that shadow
     // existing variables.  Wasm locals are flat (no block scope), so we need to
     // restore the outer mapping after the block ends.
-    const savedLocals = saveBlockScopedShadows(fctx, stmt);
+    //
+    // (#5221) The save/restore pair only ever handled names that ALREADY had a
+    // local — a `let`/`const` the block introduces fresh had nothing to save,
+    // so its local stayed in `localMap` after the block closed and leaked into
+    // the enclosing scope. A later same-named declaration out there then reused
+    // the inner slot, INCLUDING ITS WASM TYPE:
+    //
+    //   if (x === 2) { const n = obj(); … }   // $n : (ref null $Anon)
+    //   const n = str();                      // reuses that slot ⇒
+    //                                         // ref.test fails ⇒ ref.null ⇒ null
+    //
+    // which is exactly the Temporal polyfill's `rn()` (`ToTemporalDate`): its
+    // `if (isZonedDateTime(e)) { const n = … }` arm poisoned the outer
+    // `const n = calendarOf(e)`, so the calendar id read back as `null` and the
+    // `%calendarImpl%` lookup that followed dereferenced a null pointer.
+    // `discardBlockScopedShadows` drops the block's own new names and then
+    // restores any genuine outer shadows — the CaseBlock path has used exactly
+    // this for the same reason.
+    const blockNames = collectBlockScopedNames(stmt);
+    const savedLocals = saveBlockScopedShadowsForNames(fctx, blockNames);
     for (const s of stmt.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedLocals);
+    discardBlockScopedShadows(fctx, blockNames, savedLocals);
     return;
   }
 
@@ -644,7 +695,12 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // `const Foo = class {…}` — locals outrank the name-keyed
     // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
     // scope resolve to THIS declaration, not the first same-named one.
-    const scopedSynthetic = ctx.anonClassExprNames.get(stmt);
+    // (#4646) The collection pass mints that identity only for the scopes it
+    // walks — a class in a sibling BLOCK, or in a class/object-literal METHOD
+    // body, is never visited, so its name collision survives to here. Mint on
+    // demand from the same helper: the check is declaration-node identity, so a
+    // class that legitimately owns its name is untouched.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt) ?? mintScopedClassIdentity(ctx, stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
     // Only synthetic nested duplicates need a local singleton binding.  The
     // ordinary class-declaration path intentionally keeps its historical
@@ -684,6 +740,19 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // in the top-level declaration pass, but can reach this statement compiler
   // from a namespace/module block or another nested statement list.
   if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) {
+    return;
+  }
+
+  // A `const enum` is a type-directed compile-time declaration with no runtime
+  // evaluation. Top-level enum declarations are consumed by the declaration
+  // collector, but a function-local const enum reaches this dispatcher (the
+  // TypeScript compiler's Debug.formatControlFlowGraph declares two). Its
+  // member reads are folded through the checker in property-access dispatch;
+  // the declaration itself must disappear just as it does in TypeScript emit.
+  if (
+    ts.isEnumDeclaration(stmt) &&
+    stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ConstKeyword) === true
+  ) {
     return;
   }
 

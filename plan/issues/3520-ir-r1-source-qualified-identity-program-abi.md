@@ -193,6 +193,18 @@ loc-budget-allow:
   - src/codegen/struct-field-exports.ts
   - src/codegen/index.ts
   - src/codegen/expressions/builtins.ts
+  # R1-A (2026-08-29): the vec host-bridge export family gains exact descriptor
+  # ownership — the published-entry records plus the fail-closed finalization
+  # invariants — so standalone/WASI stripping authenticates a compiler-owned
+  # entry by identity instead of by name (a `$v0$$` collision alias matched no
+  # reserved name and survived the strip). Allocation, publication and
+  # finalization of that family all live in this module; splitting the
+  # ownership record away from the allocator it authenticates would reintroduce
+  # exactly the name-matching seam this slice removes. The 1500 threshold is
+  # crossed only after merging main (1492 at the slice tip, 1503 after the
+  # merge), so the grant is restated in a file this PR touches rather than left
+  # stranded.
+  - src/codegen/vec-access-exports.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/context/types.ts
@@ -206,6 +218,14 @@ loc-budget-allow:
   - src/emit/binary.ts
   - src/emit/object.ts
   - src/emit/wat.ts
+  # R1-B (2026-08-29): `currentCallableSignature` — the read accessor returning
+  # a callable binding's contract rebased by every type-layout remap. A draft's
+  # `intent.signature` is frozen at plan time, so an inherited class alias
+  # (raised during class-body compilation, the only point its prepared scope is
+  # open) and its canonical (raised after dead-type elimination) carry different
+  # `typeIdx` numbering for one contract. The rebased contracts are this
+  # module's private state, so the accessor cannot live anywhere else.
+  - src/codegen/program-abi-session.ts
 # R1 must resolve exact checker declarations to the one authoritative identity
 # inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
 # so these two structural joins remain reviewed raw-checker boundaries until
@@ -3530,6 +3550,66 @@ cannot see — and that the generic bucket is empty corpus-wide.
 the 4 that stay green are the pure table/helper assertions, which correctly do
 not depend on the wiring.
 
+### 2026-08-29 Sol review repair: authenticate every graph-global invocation policy
+
+Independent Sol review of draft PR #5210 at `0ccfd486ae5750` found one
+remaining false-pass. `ProgramAbiModuleInitCallableRegistry.planRetained()`
+currently requires a graph-global pass only when `deferTopLevelInit && !wasi`.
+Clearing the registry observation therefore fails closed for the deferred
+public-export policy, but silently succeeds for the default Wasm `start`
+section and WASI `_start` policies even though the physical initializer remains
+live. The post-export check has the same blind spot: it returns for both
+non-public policies, so a rogue `__module_init` alias or a retargeted startup
+adapter is not reconciled. Normal-output tests prove only that the unmutated
+compiler happens to emit zero public aliases; they do not prove the invariant
+can reject a corrupted policy.
+
+Implement the repair as one bounded continuation on the existing #3520 draft:
+
+1. Ground the need for the unitless graph-global pass in an independent
+   production fact, `ctx.mod.hasTopLevelStatements === true`, together with the
+   absence of a reserved exact Prepared unit. Do not infer body existence from
+   the export surface or from the observation list that the invariant is meant
+   to validate. With top-level code present, require exactly one raw and one
+   live observation, the same allocator object, ordinal zero, and the canonical
+   `legacy-module-init-pass` binding/locator. With no emitted initializer, keep
+   the established empty path valid.
+2. Retain the exact current handle/allocator identity of pass zero and replace
+   the public-only final check with invocation-policy reconciliation after
+   export planning. For deferred initialization, require exactly one
+   `__module_init` Program-ABI export alias whose `aliasOf`, `intent.targetId`,
+   and physical target are pass zero. For the default policy, require no
+   compiler module-init alias and require `mod.startFuncIdx` to resolve to that
+   exact pass. For WASI, require no compiler module-init alias, exactly one
+   `_start` export/adapter, and an exact physical call path from that adapter to
+   pass zero (directly for an init-only graph, or through the already-guarded
+   exported `main`). Reject missing, duplicate, and retargeted wiring. Resolve
+   handles through `func-space` helpers; do not introduce positional function
+   arithmetic or display-name ownership.
+3. Extend the existing real multi-source mutation harness to parameterize all
+   three policies. Each policy must reject a cleared observation. Deferred must
+   reject missing/duplicate/retargeted `__module_init`; Wasm start must reject a
+   missing or retargeted `startFuncIdx` and an injected module-init alias; WASI
+   must reject a missing/duplicate/retargeted `_start` adapter or call path and
+   an injected module-init alias. Keep an unmutated positive control for every
+   policy and assert the exact Program-ABI invariant family/message so an
+   earlier generic guard cannot satisfy the test vacuously.
+4. Keep this continuation file-disjoint from parallel #3523 R4 work: do not
+   edit `src/codegen/declarations.ts` or its new call-free module-init helper.
+   The intended ownership is
+   `src/codegen/program-abi-module-init-planning.ts`, the finalization call name
+   if needed, the smallest WASI adapter observation seam in
+   `src/codegen/index.ts`, and
+   `tests/issue-3520-module-init-callable-abi.test.ts` only. Preserve the
+   already-approved canonical-locator and remapped inherited-alias repairs.
+
+Acceptance requires the focused #3520 module-init and class-alias suites,
+typecheck, LOC/function/coercion/oracle/dead-export/IR-fallback gates, and the
+full unskipped precommit/prepush hooks under the strict finite, non-negative
+one-minute load gate `< logical cores - 2`. Luna Max may implement the draft;
+an independent Sol review of the exact pushed head must return **APPROVE** before
+the PR is marked ready or re-enqueued.
+
 **Suite delta.** Across all 61 `tests/issue-3520-*.test.ts` files: 22 failing
 tests in 17 files on `81edcbcaa`, **20 in 15** after C35. C35 converts the
 data-struct and date-civil census assertions (2 tests fixed) and touches nothing
@@ -3555,3 +3635,535 @@ on this corpus, not that no program can produce one. Items 1–3 of the resume
 checkpoint (`LegacyAbiAdapter` routing, exports as ABI aliases, session
 notification from allocator replacement / dead-type elimination / compaction)
 are untouched, and R1 acceptance still requires the red suite above to clear.
+
+## 2026-08-30 C36 implementation lock — fail-closed vec export provenance
+
+This Sol-authored checkpoint is grounded on protected `origin/main`
+`c243892c7f3a757bdecf6215626b08586ce72c58`. PRs #5210 and #5233 are already
+merged; their startup-policy and source-qualified vec-export work is not a
+pending task and must not be reimplemented. No open PR, assignment, or parallel
+Claude lane owns the three files below.
+
+### Current false-pass
+
+`finalizeVecHostBridgeExports(...)` authenticates each compiler-owned export
+descriptor against the exact allocator object before rebasing its public Wasm
+index. Its descriptors still cross the dual handle regime: a live absolute
+index is resolved against the final live import prefix, while a value at or
+above `STABLE_FUNC_BASE` is an allocator-stable handle resolved through
+`definedFuncAt(...)`. The current truthiness check conflates a valid stable
+handle (whose raw subtraction is intentionally outside `mod.functions`) with
+an invalid live index. A live index exactly one past the defined-function
+population therefore returns `undefined`, bypasses the ownership error, and is
+silently rewritten to the expected allocator slot. That is a fail-open
+provenance repair: malformed state becomes valid output at the freeze boundary.
+
+The same function already contains the correct disabled-host-bridge invariant:
+standalone/WASI must remove every recorded compiler-owned vec descriptor, and a
+single survivor is fatal. Its focused mutation table does not exercise that
+branch, so a later deletion of the guard could pass all current tests. The
+function comment still describes the operation as a generic late-import
+"rebase" even though the post-#5233 authority is the captured descriptor and
+allocator identity; update the wording to name the authentication/freeze
+boundary without changing behavior.
+
+### Exact repair and ownership
+
+Own only:
+
+- `plan/issues/3520-ir-r1-source-qualified-identity-program-abi.md`;
+- `src/codegen/vec-access-exports.ts`; and
+- `tests/issue-3520-vec-support-callable-abi.test.ts`.
+
+Resolve the observed allocator through two explicit, non-overlapping regimes:
+for `entry.desc.index < STABLE_FUNC_BASE`, use the existing final live-import
+prefix and direct `mod.functions[currentPosition]` lookup; for a stable handle,
+use `definedFuncAt(...)`. Then apply one unconditional object-identity
+assertion: `currentAllocation !== allocation.func` is fatal whether the
+observed value is another function or `undefined`. Do not choose the stable
+resolver merely because a live lookup is out of range, clamp the index, infer
+ownership from an export name, consult `funcMap`, or repair a malformed
+descriptor before the assertion. Preserve the subsequent assignment as a
+position-only rebase for an already-authenticated descriptor.
+
+Extend the existing table-driven mutation test with an exact live-regime
+out-of-range case whose index is
+`live function-import count + module.functions.length` and is asserted below
+`STABLE_FUNC_BASE`. It must reach `finalizeVecHostBridgeExports(...)` and fail
+with the same different-allocator invariant as an in-range retarget, proving
+`undefined` cannot bypass the guard while genuine stable descriptors still
+resolve. Add a separate disabled-policy mutation that starts
+from a real generated host-bridge descriptor, changes only the policy to
+disabled, retains that exact descriptor in `mod.exports`, and requires the
+existing survivor invariant. The test must restore any captured context state
+even when an assertion fails.
+
+Do not replace the existing semantic corpus anti-vacuity
+`corpusOwnedFunctions > 0` with the historical raw `24` count. The plan's
+current-main drift record deliberately rejects brittle corpus-number pins; C36
+closes the concrete descriptor false-pass and records the remaining denominator
+decision without pretending to finish R1.
+
+### Boundaries and acceptance
+
+This slice changes no normal output, callable allocation, export naming,
+standalone/WASI stripping policy, Program-ABI schema, legacy fallback, or route
+selection. It is file-disjoint from queued #5275, open #5218/#5238/#5269, and
+the dirty shared #3521/#4617 checkout. Larger `LegacyAbiAdapter`, ABI-driven
+export publication, allocator-replacement notification, and red-suite work
+remain separate R1 continuations after their active dependencies land.
+
+Acceptance requires the focused vec support callable-ABI suite, TypeScript
+typecheck, formatting/lint, IR fallback and issue-integrity controls, plus the
+LOC and function regrowth ratchets immediately before every commit. Run every
+heavy command only when the one-minute load is finite, non-negative, and
+strictly below `logical cores - 2`. Let the complete precommit and prepush hooks
+run without bypass. No baseline, LOC, function-size, binary-size, or hook
+exception is authorized. A Luna implementation remains draft until an
+independent Sol review approves the exact pushed SHA; any later push invalidates
+that approval.
+
+## 2026-08-30 C37 implementation lock — preserve user-owned core vec exports
+
+This Sol-authored checkpoint is stacked only on the independently reviewed C36
+head `90fa59a6a771a1fe00fd7c57fdc9a4a2cbfe03fe` (PR #5294). Develop it on
+`codex/3520-c37-user-vec-export-provenance`; never push, amend, or otherwise
+rewrite the queued parent. Refreshed protected `origin/main` is
+`3e89b5f95318b45fd69c9cf8209da84a7a06351a`. After #5294 lands, verify its
+exact head is an ancestor of refreshed main, re-anchor this child through the
+normal signed workflow if required, and repeat collision, focused, ratchet,
+hook, and exact-SHA Sol-review evidence before making the child ready.
+
+The C36/C37 labels in the older #3521 linked-parser validation tracker refer to
+that tracker's signed prerequisite commits, not this prospective #3520
+checkpoint. Its final R2-v2 collector rerun is outside this slice. The unchanged
+#4035 size ceiling remains a control and must not be reported as a new
+regression.
+
+### Current deterministic false-pass
+
+`stripHostBridgeExports(...)` currently removes an export when either its
+descriptor is authenticated as a compiler-published vec bridge **or** its name
+matches the broad host-bridge namespace. Vec collision publication deliberately
+does not publish a compiler logical descriptor when the user already owns that
+name. The user descriptor is therefore absent from the compiler-owned WeakMap,
+but the second spelling test still deletes it in standalone and WASI.
+
+The false-pass covers the six core logical names (`__vec_len`, `__vec_get`,
+`__is_vec`, `__vec_mut_supported`, `__vec_push`, `__vec_pop`) and the exact
+physical families `$v0` through `$v5`. The focused test whose title claims user
+collisions survive exercises only `$v0$`, which the old exact-alias set never
+matched; it proves neither the logical names nor the unsuffixed physical names.
+Host mode appears correct because stripping is disabled there, masking the
+standalone/WASI loss.
+
+### Exact ownership and classification
+
+Own only:
+
+- this issue record;
+- `src/codegen/host-bridge-exports.ts`;
+- `src/codegen/vec-access-exports.ts`; and
+- `tests/issue-3520-vec-support-callable-abi.test.ts`.
+
+Derive and export one exact core-vec public-name predicate from the six frozen
+`VEC_HOST_BRIDGE_DEFINITIONS`: each definition's logical name plus its physical
+base `$v<ordinal>` followed by zero or more literal `$` suffix characters.
+Reject near-prefix spellings (`$v00`, `$v0x`, `$v6`, arbitrary `__vec_*`) from
+this exception. Do not copy a second name table into the stripping sink.
+
+For this bounded core-vec namespace, spelling is not ownership. Strip an entry
+only when exact provenance authenticates it as compiler-owned: the recorded
+descriptor identity remains authoritative, and a replacement/cloned function
+descriptor is also compiler-owned when its current live-or-stable handle
+resolves to one exact captured vec allocator function. A function descriptor
+resolving to a different, genuine user allocator is retained. Keep C36's dual
+handle interpretation and unconditional final allocator-identity checks; do
+not select a stable resolver merely because a live lookup is out of range,
+repair an invalid descriptor, infer ownership from the export name, or consult
+`funcMap`.
+
+`stripHostBridgeExports(...)` must apply that provenance result first. If a
+non-compiler entry has an exact core-vec public name, retain it. For every other
+host-bridge family and spelling, preserve the existing name-based removal
+unchanged; C37 is not a general host-export ownership migration. Memory,
+`_start`, `__exn_tag`, ordinary user exports, bridge markers, closure/struct/
+exception/stdout families, and their compact aliases keep their current policy.
+
+### Required focused matrix
+
+Extend the existing fixtures rather than replacing their host-mode coverage:
+
+1. Compile `ALL_PUBLIC_COLLISION_SOURCE` in standalone and WASI with tracking
+   both disabled and enabled. All eight user-owned collision exports survive
+   and return exactly `101` through `106`, `901`, and `902`; compiler-owned
+   physical successors are absent; the host-import list is empty; and the
+   tracked and untracked binaries are byte-identical for each target.
+2. Compile `PREFIX_ONLY_COLLISION_SOURCE` in standalone and WASI. User `$v0`
+   through `$v5` survive and return exactly `201` through `206`; no
+   compiler-owned successor for those occupied names remains public.
+3. Keep the existing `$v0$` standalone/WASI control green, proving a suffixed
+   user collision remains outside compiler provenance.
+4. Keep array-free logical and physical spoof fixtures host-free and public
+   without allocating or publishing a vec bridge family.
+5. Add a direct mutation that replaces one recorded descriptor object with a
+   clone targeting the same exact compiler allocator. The clone must still be
+   stripped under disabled policy (or rejected before publication); descriptor
+   replacement cannot reclassify compiler code as user-owned.
+6. Preserve the retarget/name/kind/lost-function matrix, C36's exact one-past
+   live mutation, and C36's disabled-policy survivor mutation. Host-mode
+   collision behavior and collision-free GC/standalone/WASI binaries remain
+   unchanged.
+
+Every tracked/untracked and target comparison must assert the complete public
+name/value census rather than only absence of the bridge prefix. No compact
+count may substitute for exact names, descriptor targets, or runtime values.
+The standalone and WASI controls must not introduce host imports merely to
+observe the exports.
+
+### Boundaries and acceptance
+
+This slice changes no vec allocator order, stable-handle minting, Program ABI,
+bridge bodies, collision suffix allocation, host runtime adapter, general
+host-bridge policy, direct/IR routing, or legacy fallback. It is intentionally
+stacked on C36 because both touch the vec ownership helper and focused test;
+it overlaps no other open PR or inspected parallel Claude lane.
+
+Acceptance requires the focused vec support callable-ABI suite, TypeScript
+typecheck, Prettier/Biome and `git diff --check`, IR fallback and issue
+integrity, plus relevant oracle/coercion/dead-export controls. Immediately
+before every signed commit, run both LOC and function regrowth ratchets. Run
+each heavy command only after a finite, non-negative one-minute load sample is
+strictly below `logical cores - 2`; keep complete precommit and prepush hooks
+enabled. No baseline, LOC, function-size, binary-size, size-ceiling, or hook
+exception is authorized. The stacked PR remains draft until an independent Sol
+approves its exact pushed SHA; any later push invalidates that approval.
+
+## 2026-08-30 C38 implementation lock — constructor-closure export provenance
+
+This Sol-authored checkpoint was prepared on exact signed C37 head
+`438017216a585f6a4d3ece1ec51d2a32224e4902`. That reviewed head is now an exact
+ancestor of refreshed main `adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2`
+through merge commit `f6e86d09612581a4030d4d1635bf0773c39f615d`; the only
+later main commit is non-overlapping #5323 merge
+`adc071c4db5e0a70fedb0dc7d1b5ef0cedbff6f2`. Re-anchor the isolated
+`codex/5298-c38-prep-438017` preparation to that exact main before its signed
+commit. Never amend or push C37, C36, or a queued parent, and repeat the complete
+validation/review cycle after re-anchoring. The unchanged #4035 size ceiling
+remains a control, not a new regression claim.
+
+### Deterministic false-pass
+
+#4661 added closure-host-bridge availability bit 17 with logical export
+`__is_ctor_closure` and compact family `$ch`. `stripHostBridgeExports(...)`
+still recognizes only `$c0` through `$cg`; none of its prefixes matches
+`__is_ctor_closure`. When `constructibleClosureTypeIdxs` is populated, both
+compiler-owned exports therefore survive `emitHostBridge=false` in standalone
+and WASI, retaining the classifier and its types through DCE. The closure ABI
+test also stops its physical census at `$cg`, and #4035's marker list omits both
+names, so the leak currently passes every control.
+
+Do not repair this by adding the two spellings to the legacy strip table. That
+would delete genuine user exports and repeat the ownership bug C37 just closed.
+
+### Exact ownership and provenance contract
+
+Own only:
+
+- this issue record;
+- `src/codegen/closure-exports.ts`;
+- `src/codegen/host-bridge-exports.ts`; and
+- `tests/issue-3520-closure-host-bridge-abi.test.ts`.
+
+At bit 17 publication, retain each compiler-published `WasmExport` descriptor
+beside the exact `WasmFunction` already captured for the availability manifest.
+Export one predicate for the bounded shared namespace: exact
+`__is_ctor_closure`, or `$ch` followed by zero or more literal `$` characters.
+Near spellings such as `$ch0`, `$chi`, `$ch_extra`, and
+`__is_ctor_closure_extra` are not in this namespace.
+
+Authenticate an entry as compiler-owned only when it is one recorded bit-17
+descriptor from the same publishing `CodegenContext`, regardless of later
+spelling. Descriptor identity is the context-bound capability: an unrecorded
+replacement/copy has no authority to claim the classifier, including when it
+was donated from an identically laid-out module.
+
+Before the index-space freeze, finalization must census every entry in the exact
+constructor-closure namespace. Resolve each unrecorded function descriptor
+through the live or stable handle regime; if it resolves to any captured bit-17
+allocator, reject it rather than reinterpreting it as local compiler output.
+This catches cloned extras and foreign-context donations while retaining genuine
+user descriptors, including same-spelled entries targeting a different user
+allocator and near spellings. Never fall through from an invalid live lookup to
+the stable regime, repair an index, consult `funcMap`, or infer ownership from
+spelling alone.
+
+The normal policy sink runs before the freeze boundary. A direct post-freeze
+replacement copy cannot prove context ownership, so it remains a noncompiler
+exact-namespace entry rather than being silently stripped; this is intentionally
+fail-closed, not a second authentication path.
+
+`stripHostBridgeExports(...)` must remove authenticated bit-17 entries first,
+then retain noncompiler entries in the exact constructor-closure namespace,
+then apply the existing legacy host-bridge name policy unchanged. This order
+must coexist with C37's vec provenance branch without coupling the two
+registries. Do not change closure allocation, manifest bits/table layout,
+Program ABI role/ordinal 14, runtime lookup, collision suffix allocation, any
+other closure family, direct/IR routing, or fallback.
+
+### Required focused matrix
+
+1. In host mode and `hostBridge: "always"`, prove the logical and terminal
+   physical compiler descriptors resolve to the same exact allocator, the
+   availability manifest binds bit 17, and the Program ABI entry remains
+   closure-host-bridge derived ordinal 14.
+2. In standalone and WASI, with tracking disabled and enabled, compile a
+   constructible-closure fixture and require compiler `__is_ctor_closure` and
+   every `$ch` family member to be absent, host imports empty, tracked/untracked
+   binaries byte-identical, the complete public-name census exact, and the
+   fixture's runtime value unchanged.
+3. Add user collisions for `__is_ctor_closure`, `$ch`, and sparse `$ch$$`.
+   Standalone/WASI must preserve their exact values while removing generated
+   gap/terminal aliases. Host mode must preserve all user values and publish
+   the compiler classifier only at free suffixes, with exact allocator joins.
+4. In a fixture with no constructible closure, exact user logical/physical
+   spoof exports survive standalone/WASI and no ordinal-14 Program ABI row or
+   constructor-classifier family is created.
+5. Direct mutations must prove: an unrecorded extra clone and a descriptor
+   donated from an identically laid-out second context are both rejected before
+   final publication; a post-freeze replacement copy has no compiler
+   provenance and is retained; the same spelling targeting a different user
+   allocator survives; a near-prefix targeting the classifier is not
+   reclassified; and recorded name/kind/target/lost-function/duplicate
+   mutations still fail closed before final publication.
+6. Preserve the complete C31 closure suite, C37 vec suite, and #4035 policy
+   suite as controls. Update a marker/census only if required to make the
+   existing test truthful; do not change #4035's ceiling or characterize the
+   already-present leak as a new size regression.
+
+Every target/tracking comparison must publish exact names, descriptor targets,
+runtime values, import census, and binary parity where specified. Prefix-only
+absence and compact counts are not acceptance evidence.
+
+### Dependencies and acceptance
+
+The open-PR and worktree audit found no other owner of `closure-exports.ts` or
+the focused closure ABI test. The parallel Claude lane owns ProgramABI, #3525,
+and #5092 work and currently overlaps none of these four C38 paths. This
+intentional child overlaps only `host-bridge-exports.ts` in its C37 base. Any
+newly observed overlap is a stop-and-report condition.
+
+Acceptance requires the focused closure and vec suites, #4035 policy controls,
+TypeScript 7, Prettier/Biome and `git diff --check`, IR fallback and issue
+integrity, IR layering/readiness, and applicable oracle/coercion/dead-export
+ratchets. Run every heavy command only after a finite, non-negative one-minute
+load sample is strictly below `logical cores - 2`. Immediately before every
+signed commit run both LOC and function regrowth ratchets, then let all
+precommit and prepush hooks run without bypass. No baseline, size, LOC,
+function, or hook exception is authorized. A Terra implementation remains draft
+until a separate Sol approves the exact pushed SHA; any later push invalidates
+that approval.
+
+## 2026-08-31 C39 implementation lock — Date carrier export provenance
+
+This Sol-authored checkpoint is stacked on the exact independently reviewed
+C38 commit `f8eefc6e9a7e379238bfe06d406f82de779cfd1f` (PR #5342), whose tree is
+`8dae802f55f37e5b932bef34f06905ce2f07e99a`. The current protected-main
+snapshot is `f6de3f79deabfc722368c3e3aaaa83bd8514c5d7`; it does not yet contain C38,
+so C39 is not eligible to leave draft. Develop on
+`codex/3520-c39-date-carrier-provenance-final`, then, after #5342 merges,
+re-anchor without rewriting the reviewed parent, rerun every gate on refreshed
+main, and obtain a new Sol review of the final pushed SHA. Any later push
+invalidates that review. The earlier draft PR #5301 and its allocator-authority
+design are superseded and must never be advanced or copied as an acceptance
+oracle.
+
+### Deterministic false-pass
+
+`emitDateHostBridge(...)` publishes three NUL-named compiler functions whenever
+the native `__Date` carrier exists:
+
+- `__\0js2_is_date`;
+- `__\0js2_date_value`; and
+- `__\0js2_date_set_value`.
+
+The #4035 policy sink does not recognize those spellings. They match neither
+the legacy bridge prefixes nor the `host_bridge` infix, so standalone and WASI
+retain all three exports even when `emitHostBridge` is false. Those exports are
+GC roots and keep the Date classifier/accessors, carrier type, and their
+dependency closure live. Adding these strings to the legacy strip table would
+create the same false ownership inference fixed by C37 and C38: an ordinary
+user can publish an exact same-spelled export, and spelling is not proof that
+the compiler produced its descriptor.
+
+The superseded C39 draft compounded that error by treating an unrecorded exact
+name plus a matching allocator target as compiler ownership. A copied
+descriptor, or a descriptor donated by an identically laid-out second context,
+can resolve to the recipient's allocator by numeric coincidence. Resolution is
+therefore validation evidence only. It must never authorize removal.
+
+### Exact ownership and file boundary
+
+The implementation owns only:
+
+- this issue record (Sol only);
+- `src/codegen/date-host-bridge.ts`;
+- `src/codegen/host-bridge-exports.ts`; and
+- `tests/issue-3520-date-host-bridge-export-provenance.test.ts`.
+
+The Terra implementer must not edit, stage, or restore C38's closure registry,
+C37's vec registry, Program ABI, #3525 publication files, #5092 selector work,
+compiler timing, runtime adapters, baselines, ratchet allowlists, or unrelated
+tests. Parallel Claude work is present; a newly observed path or semantic
+overlap is a stop-and-report condition, not permission to reconcile it.
+
+At Date publication, retain an immutable three-row context-local record. Each
+row binds the exact `WasmExport` descriptor object, its exact published name,
+and the exact `WasmFunction` allocator object. The descriptor identity issued
+by that `CodegenContext` is the sole capability that authorizes policy removal.
+The three names form one exact shared public namespace; there are no suffix or
+prefix members. Near spellings, compact `$d*` names, and any other NUL name are
+outside this C39 namespace.
+
+`isCompilerOwnedDateHostBridgeExport(ctx, entry)` must answer true only for a
+recorded descriptor object from that exact context. It must not consult the
+entry name, numeric index, function map, structural equality, another context,
+or a live/stable allocator match as a fallback. A recorded entry remains owned
+if it is renamed after the validated pre-freeze boundary; an unrecorded copy
+never becomes owned.
+
+### Pre-freeze namespace census
+
+Before the export-policy sink can return for either enabled or disabled host
+bridge policy, validate the current complete Date publication state. Do not
+memoize a successful validation in a way that lets a later pre-freeze mutation
+bypass a second check. The validation must fail closed, before rewriting the
+export array, unless all of the following are true:
+
+1. The context has either no Date publication at all or exactly three immutable
+   publication rows, one for each exact name.
+2. Every recorded descriptor and allocator object is unique; every exact name
+   appears exactly once in the record; and each recorded descriptor appears
+   exactly once in `ctx.mod.exports`.
+3. Every recorded descriptor retains its published name and `func` kind, its
+   allocator remains present exactly once in `ctx.mod.functions`, and its
+   descriptor resolves to that same allocator object.
+4. Live handles are interpreted only against the current function-import
+   prefix. A negative or out-of-range live position fails; it must not fall
+   through into stable resolution. Stable handles use `definedFuncAt(...)`.
+   No check may repair an index, consult `funcMap`, or reconstruct a target by
+   name.
+5. Every current export in the exact three-name Date namespace is examined.
+   For each unrecorded descriptor, resolution to any recorded Date allocator is
+   an invariant violation. This rejects same-context clones and a foreign
+   descriptor donated by an identically laid-out context. An unrecorded exact
+   name resolving to a distinct user allocator is legitimate and remains
+   user-owned.
+
+An entry outside the exact three-name namespace is not reclassified merely
+because it targets a Date allocator. In particular, a near spelling targeting
+the compiler function remains noncompiler. A post-freeze replacement copy of a
+recorded exact-name descriptor has no context-bound provenance and must be
+retained; no late validation or allocator fallback may silently strip it.
+
+### Shared policy-sink composition
+
+`stripHostBridgeExports(...)` must compose C39 with the exact reviewed C38/C37
+ordering. While the index space is still open, run the constructor-closure and
+Date pre-freeze validators before the `emitHostBridge` early return. When
+stripping is enabled, apply the predicates in this order:
+
+1. recorded Date descriptor identity;
+2. recorded constructor-closure descriptor identity;
+3. recorded vec descriptor identity;
+4. exact Date public-name retention for all remaining entries;
+5. exact vec public-name retention;
+6. exact constructor-closure public-name retention; and
+7. the unchanged legacy name policy.
+
+The first three identity checks intentionally precede every public-namespace
+retention rule. Thus a recorded Date descriptor renamed after validation into a
+vec or constructor spelling is still removed, while the genuine user entry at
+that spelling survives. Conversely, an unrecorded exact Date descriptor is
+retained even if its numeric target resembles compiler output; a pre-freeze
+allocator collision is rejected by the census, not converted into ownership.
+Do not add the Date names to `BRIDGE_PREFIXES`, `BRIDGE_ALIASES`, or the generic
+infix rule.
+
+### Required mutation and control matrix
+
+Build the focused test from production-shaped contexts and complete output
+censuses. It must cover all of the following without vacuous prefix checks:
+
+1. Exact namespace predicate: all three Date names are accepted; suffixes,
+   prefixes, `$d*` aliases, and near NUL spellings are rejected.
+2. Host `auto` and `always`: require the exact three descriptor names, distinct
+   exact function targets, expected parameter/result types and bodies, no hard
+   diagnostics, and runtime `dateValue() === 5`.
+3. Standalone and WASI, each with `auto` and `off`, each with IR-outcome
+   tracking disabled and enabled: all authenticated Date exports are absent,
+   host-import census is empty, complete public export census is exact,
+   tracked/untracked generated surfaces and binaries are byte-identical, and
+   runtime remains `5`.
+4. Standalone and WASI with `hostBridge: "always"`: all three authenticated
+   descriptors remain with exact targets/types; tracked/untracked binaries are
+   identical; runtime remains `5`.
+5. Date-free source: no Date publication record, functions, carrier census, or
+   Date exports. The finalizer and sink are true no-ops for this context.
+6. Multi-source provider/entry source order: Date may be materialized in a
+   non-entry provider, yet host/standalone/WASI and tracking matrices retain the
+   same exact policy, import, binary-parity, and runtime evidence.
+7. Genuine same-spelled user descriptor targeting a distinct user allocator is
+   retained. A near spelling targeting a recorded Date allocator is retained.
+8. A same-context exact-name clone targeting a recorded allocator is rejected
+   before any policy rewrite. A descriptor donated by a second, identically
+   laid-out context is likewise rejected in the recipient context. Assert the
+   export array remains byte/object-identical after each rejection.
+9. After one successful pre-freeze validation, a replacement copy inserted
+   only after `indexSpaceFrozen = true` remains unowned and retained. This is
+   the explicit no-fallback control and replaces the superseded draft's
+   copy-strip expectation.
+10. Recorded descriptor mutations fail closed before publication: missing,
+    duplicate object, renamed, kind-changed, retargeted, one-past live handle,
+    invalid live handle despite an available stable ordinal, allocator removed,
+    allocator duplicated, incomplete publication census, and duplicate/unknown
+    recorded names where a bounded test seam can express them.
+11. After a successful pre-freeze validation and freeze, a recorded Date
+    descriptor renamed into the vec namespace and one renamed into the
+    constructor-closure namespace are removed by Date identity, while genuine
+    user descriptors at those names remain. No other family registry changes.
+12. Preserve the full C38 constructor-closure suite, C37 vec suite, and #4035
+    policy suite as controls. The unchanged #4035 size ceiling is inherited
+    evidence, not a new C39 regression; do not change or relabel it.
+
+For every mutation, distinguish validation failure from policy removal and
+assert zero partial rewrite. For every target/tracking comparison, publish the
+complete export names/descriptors, import census, runtime value, and binary
+parity where specified. Counts without identities, prefix-only absence, and a
+successful compile without runtime evidence are not acceptance evidence.
+
+### Non-goals, validation, and publication
+
+C39 changes no Date helper body/type/order, `__Date` carrier layout, allocator
+order, stable-handle minting, late-import shifting, Program ABI, bridge
+manifest, runtime lookup, target selection, DCE algorithm, direct/IR routing,
+fallback behavior, or generic host-bridge spelling policy. It creates no
+compact Date alias family and no new test-only production authority.
+
+Validation requires the focused C39 suite plus the complete C38 closure, C37
+vec, and #4035 policy controls; TypeScript 7; targeted Biome and Prettier;
+`git diff --check`; issue integrity; IR fallback/layering/readiness; and all
+applicable oracle, coercion, dead-export, LOC, and function regrowth ratchets.
+Run every heavy command only after a finite, non-negative one-minute load
+sample is strictly below `logical cores - 2`. Immediately before the signed
+commit, rerun both LOC and function ratchets. Keep the complete precommit and
+prepush hooks enabled; no baseline, size, LOC, function, load, or hook exception
+is authorized.
+
+Commit and push a small checkpoint only after the exact owned diff is clean and
+all gates pass. The implementation PR remains draft while stacked or failing a
+gate. After #5342 merges, rebase/merge current protected main according to the
+repository workflow, rerun the entire matrix and hooks, push once, then obtain
+an independent Sol exact-byte/SHA review. Only that reviewed pushed head may be
+marked ready and entered into the protected merge queue. Close #5301 as
+superseded only after the replacement PR preserves its historical discussion.

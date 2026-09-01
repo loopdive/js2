@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/ctor-write-var.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var C2;
+class C { constructor() { C2 = C; } }
+new C();
+assert.sameValue(typeof C2, 'function', 'ctor wrote module var');
+assert.sameValue(C2, C, 'ctor-written var equals class');

@@ -75,6 +75,7 @@ describe("#3525 M2 prepared multi-source module-init", () => {
         sourceId: audit?.contributorSourceId,
         routeKind: "module-init",
         preparedBeforeDirectBodies: true,
+        publicationPhase: "before-direct-bodies",
       }),
     ]);
 

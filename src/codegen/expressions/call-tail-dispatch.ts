@@ -10,6 +10,7 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { profilePhase } from "../../compile-profile.js";
 import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -95,6 +96,7 @@ import {
   tryEmitInlineDynamicCall,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
+import { compileInlineIifeArguments } from "./inline-iife-arguments.js"; // (#5207)
 
 function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: ts.Expression): boolean {
   return (
@@ -120,31 +122,6 @@ function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: 
  * `return compileTailDispatch(...)`. `expectedType` is threaded through. Moved
  * unchanged so the emitted Wasm is byte-identical.
  */
-/**
- * (#5154 cluster B) Evaluate a call argument that the callee will DISCARD, for
- * its observable side effects only.
- *
- * §12.3.6.1 ArgumentListEvaluation iterates a `...spread` argument to
- * exhaustion regardless of the callee's arity, so `(function(){}(...iter))`
- * must still run `iter[Symbol.iterator]()` and every `next()` — and let any
- * abrupt completion propagate. `compileExpression` on a bare `SpreadElement`
- * produces nothing, so the whole spread (and every throw inside it) used to
- * vanish. Reuse the array-literal spread lowering, which already performs
- * GetIterator + the IteratorStep loop, and drop its result.
- */
-function compileDiscardedArgument(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
-  if (ts.isSpreadElement(arg)) {
-    const drive = ts.factory.createArrayLiteralExpression([arg]);
-    ts.setTextRange(drive, arg);
-    (drive as unknown as { parent: ts.Node }).parent = arg.parent;
-    const driven = compileExpression(ctx, fctx, drive);
-    if (driven) fctx.body.push({ op: "drop" });
-    return;
-  }
-  const t = compileExpression(ctx, fctx, arg);
-  if (t) fctx.body.push({ op: "drop" });
-}
-
 export function compileTailDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -235,6 +212,17 @@ export function compileTailDispatch(
         if (params.length <= args.length) {
           const iifeBindingNames = collectDirectEvalBindingNames(callee);
           if (ts.isFunctionExpression(callee) && callee.name) iifeBindingNames.add(callee.name.text);
+          // (#5207) The ARGUMENT LIST belongs to the CALLER, so it is compiled
+          // BEFORE the callee's binding scope is entered — see
+          // `inline-iife-arguments.ts` for why the moment is the whole fix.
+          const { paramLocals, paramLocalTypes, allArgLocals } = compileInlineIifeArguments(
+            ctx,
+            fctx,
+            params,
+            args,
+            iifeNeedsArguments,
+          );
+
           const leaveIifeBindingScope = enterInlineIifeBindingScope(fctx, iifeBindingNames);
           try {
             // (#3128) Record that this function node is being INLINED into the
@@ -246,48 +234,12 @@ export function compileTailDispatch(
             // outside the IIFE (`p2 = (function(){ return () => p2; })()`)
             // misses the write and captures a stale by-value copy.
             (fctx.inlinedIifeNodes ??= new Set()).add(callee);
-            // Allocate locals for parameters and compile arguments
-            const paramLocals: number[] = [];
-            const paramLocalTypes: ValType[] = [];
-            const allArgLocals: { idx: number; type: ValType }[] = [];
+            // (#5207) Bind the parameter names to the slots filled above, now
+            // that the callee's scope is active. Binding-pattern params are
+            // materialized further down by `destructureParamObject`/`Array`.
             for (let i = 0; i < params.length; i++) {
-              const param = params[i]!;
-              const paramName = ts.isIdentifier(param.name) ? param.name.text : `__iife_p${i}`;
-              const argType = compileExpression(ctx, fctx, args[i]!);
-              const localType = argType ?? { kind: "f64" as const };
-              const idx = allocLocal(fctx, paramName, localType);
-              fctx.body.push({ op: "local.set", index: idx });
-              paramLocals.push(idx);
-              paramLocalTypes.push(localType);
-              if (iifeNeedsArguments) {
-                allArgLocals.push({ idx, type: localType });
-              }
-            }
-            // Extra arguments beyond declared params
-            if (iifeNeedsArguments) {
-              // Store extra args in locals for the arguments object
-              for (let i = params.length; i < args.length; i++) {
-                // A spread contributes no single argument slot to the inlined
-                // `arguments` carrier, but must still be driven (#5154 B).
-                if (ts.isSpreadElement(args[i]!)) {
-                  compileDiscardedArgument(ctx, fctx, args[i]!);
-                  continue;
-                }
-                const t = compileExpression(ctx, fctx, args[i]!);
-                const localType = t ?? { kind: "f64" as const };
-                if (t === null) {
-                  // No value produced — push a default
-                  fctx.body.push({ op: "f64.const", value: 0 });
-                }
-                const idx = allocLocal(fctx, `__iife_extra_${i}`, localType as ValType);
-                fctx.body.push({ op: "local.set", index: idx });
-                allArgLocals.push({ idx, type: localType as ValType });
-              }
-            } else {
-              // Drop extra arguments (evaluate for side effects)
-              for (let i = params.length; i < args.length; i++) {
-                compileDiscardedArgument(ctx, fctx, args[i]!);
-              }
+              const paramName = params[i]!.name;
+              if (ts.isIdentifier(paramName)) fctx.localMap.set(paramName.text, paramLocals[i]!);
             }
 
             // Set up `arguments` vec for the IIFE if needed
@@ -495,16 +447,33 @@ export function compileTailDispatch(
               // body evaluation. Besides read-before-declaration semantics, this
               // pre-allocation makes an IIFE-local var shadow a same-named module
               // global while the body is compiled.
-              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist let/const with TDZ flags so accesses before init throw (#790)
-              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist function declarations so they're available before textual position
-              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              const isLargeIife = bodyStmts.length >= 1_000;
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-hoist-vars", () =>
+                  hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-let-const", () =>
+                  hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-functions", () =>
+                  hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+              } else {
+                hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist let/const with TDZ flags so accesses before init throw (#790)
+                hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist function declarations so they're available before textual position
+                hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              }
 
               // Increase block depth so return→br targets the right level
               fctx.blockDepth++;
-              for (const stmt of bodyStmts) {
-                compileStatement(ctx, fctx, stmt);
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-compile-statements", () => {
+                  for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
+                });
+              } else {
+                for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
               }
               fctx.blockDepth--;
 
@@ -580,16 +549,33 @@ export function compileTailDispatch(
 
               // See the returning arm above: function-scoped vars must exist
               // before the first statement and must shadow outer/global names.
-              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist let/const with TDZ flags so accesses before init throw (#790)
-              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist function declarations so they're available before textual position
-              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              const isLargeIife = bodyStmts.length >= 1_000;
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-hoist-vars", () =>
+                  hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-let-const", () =>
+                  hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-functions", () =>
+                  hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+              } else {
+                hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist let/const with TDZ flags so accesses before init throw (#790)
+                hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist function declarations so they're available before textual position
+                hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              }
 
               // Increase block depth so return→br targets the right level
               fctx.blockDepth++;
-              for (const stmt of bodyStmts) {
-                compileStatement(ctx, fctx, stmt);
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-compile-statements", () => {
+                  for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
+                });
+              } else {
+                for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
               }
               fctx.blockDepth--;
 
@@ -775,6 +761,12 @@ export function compileTailDispatch(
         // keeps the existing `__iterator` bridge (byte-inert). Async iterator and
         // non-array receivers fall through unchanged.
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+          // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
+          // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
+          // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
+          // and is NOT a drop-in — the array-iterator prototype/metadata rows
+          // key off the vec carrier — so the carrier migration is left to the
+          // follow-up that also moves `%ArrayIteratorPrototype%`.
           const nativeResult = compileArrayMethodCall(ctx, fctx, elemAccess, expr, receiverType, "values");
           if (nativeResult !== undefined && nativeResult !== null) return nativeResult as ValType;
           // Fall through to the host bridge if the native path declined.
@@ -1099,7 +1091,7 @@ export function compileTailDispatch(
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "empty" },
-                then: eaReceiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+                then: eaReceiverWasCast ? [] : typeErrorThrowInstrs(ctx, elemAccess.expression),
                 else: elseInstrs,
               });
               return VOID_RESULT;
@@ -1115,7 +1107,9 @@ export function compileTailDispatch(
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "val" as const, type: resultType },
-                then: eaReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+                then: eaReceiverWasCast
+                  ? defaultValueInstrs(resultType)
+                  : typeErrorThrowInstrs(ctx, elemAccess.expression),
                 else: elseInstrs,
               });
               return resultType;

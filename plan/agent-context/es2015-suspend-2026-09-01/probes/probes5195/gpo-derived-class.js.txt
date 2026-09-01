@@ -1,0 +1,7 @@
+/*---
+description: probe .tmp/es2015/probes5195/gpo-derived-class.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C {}
+class D extends C {}
+assert.sameValue(Object.getPrototypeOf(D) === C, true, 'gPO(D) === C');

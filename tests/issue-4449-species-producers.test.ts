@@ -11,7 +11,7 @@ async function run(source: string): Promise<number> {
 }
 
 describe("#4449 dynamic TypedArray species producers", () => {
-  it("map constructs the custom species and writes its result", async () => {
+  it("map runs only the TypedArray custom species and writes its result", async () => {
     expect(
       await run(`
         export function test(): number {
@@ -40,7 +40,7 @@ describe("#4449 dynamic TypedArray species producers", () => {
     ).toBe(1195);
   });
 
-  it("map defaults nullish species to the original constructor", async () => {
+  it("map defaults nullish species to the published original constructor", async () => {
     expect(
       await run(`
         export function test(): number {
@@ -193,5 +193,26 @@ describe("#4449 dynamic TypedArray species producers", () => {
         }
       `),
     ).toBe(1150);
+  });
+
+  it("keeps #5145 Array species active for an ordinary array map", async () => {
+    expect(
+      await run(`
+        export function test(): number {
+          const input: number[] = [2, 3];
+          const holder: any = {};
+          let calls = 0;
+          let target: any = null;
+          holder[Symbol.species] = function(count: number): any {
+            calls++;
+            target = {};
+            return target;
+          };
+          (input as any).constructor = holder;
+          const result: any = input.map(function(value: number): number { return value + 1; });
+          return calls * 100 + (result === target ? 10 : 0) + result[0] + result[1];
+        }
+      `),
+    ).toBe(117);
   });
 });

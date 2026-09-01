@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-27
+updated: 2026-09-01
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -22,16 +22,19 @@ horizon: xl
 complexity: XL
 es_edition: n/a
 lane: ir-retirement-r2
-model: gpt-5.6-luna
+model: gpt-5.6-terra
 related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 loc-budget-allow:
   - src/ir/propagate.ts
   - src/ir/select.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/index.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/legacy-body-audit.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
+  - src/ir/outcomes.ts
   - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
   - src/ir/backend/porffor/assembler.ts
@@ -39,6 +42,7 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/builder.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/codegen/ir-prepared-free-functions.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts
   - src/codegen/program-abi-fnctor-producer.ts
@@ -96,8 +100,12 @@ files:
   - src/codegen/context/create-context.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/legacy-body-audit.ts
   - src/index.ts
   - src/compiler.ts
+  - src/ir/outcomes.ts
+  - tests/issue-3520-outcome-correlation-identity.test.ts
   - tests/issue-3521-prepared-ir-program.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
@@ -2757,3 +2765,276 @@ and `directBodyEmissions:0` gates remain open, and this tracker stays
 `in-progress`. C36/C37 remain scheduled for the final aggregate rerun. The
 unchanged #4035 size ceiling remains a control and is not reported as a new
 regression.
+
+## 2026-08-29 R2-v2 static collector repair record
+
+The 2026-08-28 independent-audit HOLD and its 119-line collector repair plan
+were **authored but never committed** — that section does not exist on `main`
+or on any remote branch. What survived into this session is the enumeration of
+the four FALSE PASSES the audit proved against the collector plus one census
+defect. This record replaces the lost plan.
+
+### Correction to the starting premise: the collector itself was never committed
+
+The repair was dispatched as "repair the existing R2-v2 collector". There is no
+such collector in this repository. Verified before any code was written:
+
+- `scripts/` contains no R2-v2 collector, contract, or manifest file;
+- the strings `r2-linked-parser`, `parserSwitch`, `FAILED-DIAGNOSTIC-NOT-ACCEPTANCE`
+  and `JS2WASM_TEST_DISABLE_LINKED_STRING_PARSER_ABI` occur **only** in this
+  issue file and `plan/agent-context/ir-migration-handover-2026-08-27.md`;
+- the merged R2-v2 branch `codex/3521-r2-v2-validation-plan` (PR #5086) is the
+  **plan** checkpoint and adds no collector source;
+- the v1 adapter root `.tmp/ab-drafts/r2-linked-parser` is under a gitignored
+  path and was never committed either.
+
+So the collector, like the repair plan, existed only in an uncommitted working
+tree on the codex host. **There is no pre-repair code path to run a mutation
+against**, and no evidence in this session is an observation of the original
+collector.
+
+The work delivered is therefore the R2-v2 static contract **implemented
+fail-closed from the start** on all five defect classes, plus a committed
+`baseline-naive.mjs` that RECONSTRUCTS the five pre-repair check shapes the
+audit described. The reconstruction reuses every unrelated check from
+`contract.mjs` and replaces only the five audited strategies, so each
+mutation's PASS/FAIL split isolates exactly one defect and cannot be explained
+by any other divergence. That makes every mutation demonstrably non-vacuous —
+but it is evidence about the reconstruction, not about the lost original.
+
+### Delivered adapter
+
+`scripts/r2-linked-parser-ab-collection-v2/` — `contract.mjs` (fail-closed
+oracle), `fixtures.mjs` (canonical 24-child report + mutation operators),
+`baseline-naive.mjs` (reconstructed pre-repair baseline), `selftest.mjs`,
+`relock.mjs`, `manifest.json`, and a byte-for-byte `bundle/` mirror. Wired as
+`npm run -s check:r2-v2-collector`.
+
+**No collection was run.** The contract validates report objects only; it never
+spawns a child, never invokes the compiler, and never touches a runtime. Per
+"Relock, run, and interpretation gates", only an approved relock may run the
+24-child collection.
+
+### Five defects repaired, with per-mutation former-false-pass evidence
+
+Each row is two-sided and runnable via
+`node scripts/r2-linked-parser-ab-collection-v2/selftest.mjs`:
+
+| # | audited false pass | mutation | reconstructed pre-repair | repaired | fail-closed code |
+| --- | --- | --- | --- | --- | --- |
+| D1 | arbitrary extra unitless `compileDeclarations` call not detected | append an unowned unitless `compileDeclarations` row to one candidate/standalone/prepared child | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `declaration/unsanctioned-unitless-row` |
+| D2 | wrong-file prepared module-init outcome not detected | rewrite that child's module-init outcome `file` to `other.mjs` | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `outcome/join-mismatch` |
+| D3 | duplicate outcome key not detected | append a second outcome under the same key carrying `direct-legacy` | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `outcome/duplicate-key` |
+| D4 | parser's second WAT parameter `i32`→`f32` with hashes recomputed | flip `params[1]`, recompute the carrier SHA-256 **and** the report manifest entry | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `wat/abi-mismatch` |
+| D5 | attempted/spawned/completed collapse when spawn throws | mark one child `spawnOutcome:"threw"` while the census still reports all three states at full count | **PASS** (false pass reproduced) | FAILED-DIAGNOSTIC-NOT-ACCEPTANCE | `census/state-collapse` |
+
+The repairs, in the same order: the physical-row census is **closed** (every row
+joins an inventory unit or is the one sanctioned unitless exception); outcomes
+join their inventory unit on **every field**, not by key presence; the outcome
+index **detects duplicates** instead of `map.set` overwriting; the expected WAT
+ABI is carried **structurally** (`EXPECTED_WAT_ABI`), so self-consistent hash
+recomputation cannot hide a parameter-type change; and attempted / spawned /
+completed are **derived separately per child** and cross-checked against the
+reported counters, so a throwing spawn cannot collapse them.
+
+Non-vacuity is anchored by the unmutated canonical report passing **both**
+validators. Denominators: 24 scheduled children (16 landed-A/B + 8 live), 38
+static assertions — 3 canonical-fixture, 10 defect (5 mutations × 2 sides), 16
+structural, 5 accumulated-failure, 4 digest/reorder — all green, plus the relock
+check.
+
+### Also enforced (not in scope of the five defects)
+
+Expected 16+8 key census with missing/duplicate/extra/unknown-phase/wrong-side
+rejection; base and candidate pin equality with a single frozen live revision;
+`parserSwitch` field and the switch environment variable as schema errors;
+missing/duplicate/mutated graph-global exception; the reviewed base
+standalone/prepared parser-parity withdrawal and its paired caller cascade;
+`direct=1, IR=1` candidate accounting; malformed and empty transport; and
+reorder-stable phase-local plus aggregate digests.
+
+`relock.mjs` recomputes every source digest, requires the `bundle/` mirror to be
+byte-for-byte, and derives a root hash over the sorted per-file digests together
+with the pins, expected census, and expected ABI. Every manifest field is compared on its
+own — deliberately not through a `JSON.stringify` replacer array, which filters
+object properties at every level and would let a hand-edit inside a nested field
+read as equal. Three tamper paths were proven to fail closed: a one-line edit to
+a mirrored file reports `bundle/contract.mjs is DIFFERS`; editing the contract's
+expected ABI reports `expectedWatAbi` / `sources` / `rootHash` drift; and a
+hand-edit to `manifest.json`'s `pins.base` alone reports `pins` drift. Adapter root hash at this
+checkpoint: `d9e2327de0f2a57e3cc612b218f7fa77d940133a8da8a041f14c1312a240958d`.
+
+### Open items the independent auditor must close before any relock
+
+1. **`EXPECTED_WAT_ABI` values are pinned placeholders.** The repair is that the
+   ABI is carried exactly rather than by hash; the specific parameter and result
+   types must be confirmed against the landed L3 production ABI and re-pinned
+   under the approved relock.
+2. **The sole exception is enforced per child.** "Each side must retain exactly
+   one copy" is implemented as exactly one sanctioned unitless row per child
+   record, since each child is a separate compilation of the graph. Confirm this
+   reading.
+3. **The fixture is synthetic.** `fixtures.mjs` hand-builds a canonical report;
+   the inventory shape (one owned module-init unit in `empty.mjs`) follows this
+   issue's description of the bounded multi-source exception and needs
+   confirming against a real frozen inventory.
+
+This tracker stays `in-progress`. Nothing here satisfies R2 compile-once, and no
+runtime replay was performed.
+
+## 2026-08-30 — fast typed-scalar pre-body admission
+
+Status: implemented as a bounded production checkpoint; the broader R2 tracker
+remains `in-progress`.
+
+Model: `gpt-5.6-terra` implementation worker, reviewed and completed by the
+owning Codex session.
+
+The blanket fast-mode rejection in
+`selectR2PreparedOwnerComponents` is narrowed to one fail-closed contract.
+Only an exact top-level function claim with required identifier parameters,
+explicit `number`/`boolean` parameter annotations, and an explicit
+`number`/`boolean`/`void` return may prepare before direct emission. The syntax
+projection must match the final IR override position by position (`number` →
+`f64`, `boolean` → `i32`, `void` → no result), and that override must still
+match the already allocated Program ABI slot exactly.
+
+Generics, async/generator declarations, defaults, rest/optional parameters,
+destructuring, inferred/JSDoc-only positions, strings, vectors, dynamic values,
+and every reference carrier remain on the established direct/post-direct
+route. All existing body-shape, nested-executable, poison-pill, activation,
+function-value, component-closure, and slot-parity guards remain in force.
+
+Focused coverage poisons the direct emitter for a fast numeric leaf and for a
+mixed numeric/boolean component. Both now report one IR body, zero legacy
+bodies, `irFirstSkipped`, and a prepared component identity while preserving
+the `8_000_000_000` result above the i32 range. A route-off poison control proves
+the direct path is still live, and a fast default-parameter negative remains
+direct and fails under the same poison.
+
+The changed-root CI gate also exposed three assertions already stale on
+current `main`. Their coverage is retained rather than suppressed: function
+value identity now pins the exact GC/standalone binary deltas (`0` / `119`
+bytes), the independent `directOnly` scalar owner proves compile-once beside a
+blocked function-value component, and the module-init boundary poisons the
+scalar callee's direct body while proving that the module initializer itself
+remains direct.
+
+## 2026-08-30 — exact function-body UnitId routing checkpoint
+
+This bounded checkpoint makes exact `IrUnitId` skip and preserve receipts the
+authority at the ordinary prepare-before-direct declaration seam, including the
+inherited compatibility route and already-installed prepared free bodies. The
+legacy name sets remain deterministic compatibility/telemetry projections and
+must agree with the exact receipts or fail closed. It changes neither selector
+population nor the legacy-body count.
+
+## 2026-08-30 — production R2 body-emission accounting checkpoint
+
+This follow-up remains bounded to same-source, top-level free-function terminal
+outcomes. It does not alter selector population, Wasm ABI/layout, direct body
+emission, class/member accounting, module-init accounting, or the legacy body
+count.
+
+The outcome ledger now records `prepareAttempts`, `directBodyEmissions`, and
+`irBodyEmissions` for the bounded production population. Direct counts come
+only from exact `compileFunctionBody` AST-entry receipts keyed by `IrUnitId`;
+IR counts come only from exact terminal `patched` evidence. Compatibility
+booleans are derived from these counts and policy validation rejects partial,
+impossible, duplicate, or boolean-inconsistent accounting.
+
+The direct receipt census deliberately ignores known nonterminal/support,
+runtime-namespace, and synthetic function bodies. Unknown, mismatched, or
+foreign identities remain fatal evidence. Reconciliation validates/indexes the
+direct receipt census and raw terminal patch receipts once per source, then
+uses constant-time per-terminal lookups. A skip receipt supplies only the
+expected route: skipped emitted owners require direct `0`; non-skipped emitted
+late-overlay owners require direct `1`.
+
+Required terminal shapes are therefore explicit:
+
+- prepare-before-direct success: `(1, 0, 1)`;
+- typed direct fallback: `(1, 1, 0)`;
+- ordinary prepared invariant/unpatched: `(1, 0, 0)` and fatal; and
+- intentional post-direct linked-overlay success: `(1, 1, 1)`.
+
+Receipt corruption cannot be normalized: missing, duplicate, foreign, or
+impossible direct/IR evidence becomes a typed invariant (or an existing trusted
+boundary invariant), retaining the observed count for diagnosis.
+
+### 2026-08-30 — independent review corrections
+
+The R2 denominator now mirrors the physical top-level declaration contract:
+for a duplicate named Script declaration it contains only the last body-bearing
+declaration that the direct emitter can compile. Shadowed declarations retain
+their existing public outcome rows but do not receive R2 counters. A receipt
+for one of those excluded UnitIds is still foreign to the exact denominator and
+fails the physically accountable owner closed.
+
+Accounting diagnostics now compare the final invariant with the exact
+report-visible failure. Only an unchanged report-visible invariant suppresses a
+second diagnostic. If body accounting replaces either outcome-only or
+report-visible failed evidence, the synthesized `body-emission-evidence`
+invariant emits one public accounting diagnostic.
+
+The direct dispatcher indexes each receipt into its source bucket at record
+time, with one graph-global fail-closed sentinel for evidence that cannot be
+attributed safely. Source audits no longer scan the graph entry ledger. The
+physical R2 terminal populations are likewise cached once per authoritative
+planning context, so the added graph accounting is linear with constant-time
+per-terminal reconciliation.
+
+## Test Results
+
+- Focused exact-routing plus fast-scalar/route-off/direct-negative subset: 6 passed.
+- TypeScript 7 validation, changed-file lint/format, IR fallback/layering, and
+  LOC/function budget ratchets: passed.
+- 2026-08-30 production body-accounting controls:
+  - `tests/issue-3520-outcome-correlation-identity.test.ts`: 9 passed
+    (normal triples plus missing, duplicate, foreign, and impossible receipts).
+  - Four focused `issue-3521-prepared-free-function-routing` controls passed:
+    support-body scoping, direct fallback `(1,1,0)`, prepared success
+    `(1,0,1)`, and prepared invariant `(1,0,0)`.
+  - `tests/issue-3521-linked-string-parser-abi.test.ts`: 4 passed, including
+    the intentional post-direct linked-overlay `(1,1,1)` route.
+  - TypeScript 7, changed-file Biome lint and Prettier check, IR
+    layering/dialect/kind-neutrality/fallback/IR-only readiness, adoption,
+    optimization-retirement, oracle, and LOC/function budget gates: passed.
+- 2026-08-30 independent-review correction:
+  - Six focused regressions first failed against `0e5fbac` (replacement
+    diagnostic, duplicate denominator/foreign receipt, unattributed corruption,
+    source-population indexing, source-local direct indexing, and the production
+    duplicate Script compile), then passed after the correction.
+  - Scoped #3520/#3521 reconciliation, routing, and linked-parser validation:
+    23 passed, 36 skipped across 3 files. The linked-parser controls remain 4/4.
+  - TypeScript 7, changed-file Biome lint and Prettier check, `git diff --check`,
+    IR layering/dialect/kind-neutrality/fallback/IR-only readiness, adoption,
+    optimization-retirement, oracle, and LOC/function budget gates: passed.
+
+## 2026-09-01 — fast JS-host pass-through string-signature checkpoint
+
+Status: bounded production checkpoint only; this tracker remains in-progress.
+
+The separate r2FastJsHostPassThroughStringSignature admission adds only the
+normalized JS-host lane: !ctx.nativeStrings && !ctx.standalone && !ctx.wasi &&
+!ctx.strictNoHostImports. It requires one top-level named function with
+required identifier parameters, explicit string annotations at every parameter
+and result position, no generic/async/generator/default/rest/optional/
+destructured form, and a constructed all-IrType.string override that still
+equals the exact allocated Program ABI slot. The existing fast scalar admission
+is unchanged. Native strings, standalone, WASI, strict no-host imports, and
+defaulted string parameters retain their direct or existing post-direct route.
+
+Focused evidence: tests/issue-3521-prepared-free-function-routing.test.ts
+passed 46/46 with VITEST_FORK_MAX_OLD_SPACE_SIZE=4096. The poisoned fast
+JS-host echo(value: string): string route returned its original string with
+irFirstSkipped, a UnitId and prepared-component identity, and exact post-#5313
+accounting (prepareAttempts, directBodyEmissions, irBodyEmissions) = (1, 0, 1).
+Four isolated excluded-lane controls reached the poisoned direct emitter. The
+unpoisoned native-string control records directBodyEmissions=1 without
+pre-body skip ownership (its established late-overlay patch remains (1,1,1)),
+and the defaulted-string boundary remains direct. Existing standalone and
+native-string routing coverage ran in the same focused suite.
+
+This does not broaden general string admission or complete the overall R2
+prepare-before-emit migration.

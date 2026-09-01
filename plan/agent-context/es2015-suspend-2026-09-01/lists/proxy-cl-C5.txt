@@ -1,0 +1,4 @@
+built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js
+built-ins/Reflect/get/return-abrupt-from-property-key.js
+built-ins/Reflect/set/return-abrupt-from-property-key.js
+built-ins/Reflect/getOwnPropertyDescriptor/return-abrupt-from-property-key.js

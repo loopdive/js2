@@ -1,0 +1,159 @@
+test/built-ins/Object/freeze/abrupt-completion.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/toString/symbol-tag-weakset-builtin.js	compile_error/host_import_leak	standalone target emitted host imports: env::toString (#2961)
+test/built-ins/Array/length/define-own-prop-length-no-value-order.js	fail/type_error	TypeError: TypeError: Cannot redefine property: enumerable attribute of a non-configurable property
+test/built-ins/Array/prototype/filter/create-proto-from-ctor-realm-non-array.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/from/iter-cstm-ctor-err.js	fail/assertion_fail	Test262Error: Array.from.call(C, items) throws a Test262Error exception Expected a Test262Error but got a TypeError
+test/built-ins/Array/prototype/keys/returns-iterator-from-object.js	fail/type_error	TypeError: Array.prototype.keys is not yet callable as a value in --target standalone
+test/built-ins/Object/assign/Override-notstringtarget.js	fail/assertion_fail	Test262Error: The length should be 4 in the final object. Expected SameValue(«0», «4») to be true
+test/built-ins/Array/prototype/splice/property-traps-order-with-species.js	fail/assertion_fail	Test262Error: Actual [defineProperty, defineProperty, set, getOwnPropertyDescriptor, defineProperty] and expected [get, set, has, apply, deleteProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf, isExtensible, preventExtensio
+test/built-ins/Array/prototype/concat/create-proxy.js	fail/assertion_fail	Test262Error: Object.getPrototypeOf(Array.prototype.concat.call(proxy)) returns Ctor.prototype Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/from/iter-set-elem-prop-non-writable.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Array/prototype/splice/create-species-undef-invalid-len.js	fail/assertion_fail	Test262Error: Expected a RangeError to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/toString/symbol-tag-promise-builtin.js	compile_error/host_import_leak	standalone target emitted host imports: env::toString (#2961)
+test/built-ins/Array/from/iter-set-length-err.js	fail/assertion_fail	Test262Error: Array.from.call(poisonedPrototypeLength, items) throws a Test262Error exception Expected a Test262Error but got a TypeError
+test/built-ins/Array/prototype/slice/create-proxied-array-invalid-len.js	fail/assertion_fail	Test262Error: Expected a RangeError to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/toString/symbol-tag-non-str-builtin.js	compile_error/host_import_leak	standalone target emitted host imports: env::toString (#2961)
+test/built-ins/Object/setPrototypeOf/set-failure-cycle.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/getOwnPropertyDescriptors/symbols-included.js	fail/assertion_fail	Test262Error: obj has 2 symbol-keyed descriptors Expected SameValue(«0», «2») to be true
+test/built-ins/Object/freeze/proxy-no-ownkeys-returned-keys-order.js	fail/assertion_fail	Test262Error: Actual [] and expected [0, foo, Symbol()] should have the same contents. 
+test/built-ins/Object/assign/target-is-non-extensible-property-creation-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/from/source-object-iterator-2.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Array/from/iter-map-fn-args.js	fail/assertion_fail	Test262Error: The value of args[0].length is expected to be 2 Expected SameValue(«3», «2») to be true
+test/built-ins/Object/entries/observable-operations.js	fail/type_error	TypeError: Object method called on null or undefined
+test/built-ins/Object/assign/ObjectOverride-sameproperty.js	fail/assertion_fail	Test262Error: The value should be 'c'. Expected SameValue(«NaN», «"c"») to be true
+test/built-ins/Array/prototype/entries/returns-iterator-from-object.js	fail/type_error	TypeError: Array.prototype.entries is not yet callable as a value in --target standalone
+test/built-ins/Array/isArray/proxy-revoked.js	fail/assertion_fail	Test262Error: Array.isArray(handle.proxy) throws a TypeError exception Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/__proto__/set-ordinary-obj.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:11
+test/built-ins/Array/from/source-object-constructor.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Array/from/source-object-length.js	fail/type_error	TypeError: value is not iterable
+test/built-ins/Object/getOwnPropertySymbols/non-object-argument-invalid.js	fail/assertion_fail	Test262Error: `Object.getOwnPropertySymbols(undefined)` throws TypeError Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/getOwnPropertyNames/order-after-define-property.js	fail/assertion_fail	Test262Error: Actual [0, 1, length, a] and expected [length, a] should have the same contents. 
+test/built-ins/Array/of/proto-from-ctor-realm.js	fail/type_error	TypeError: Array.of is not yet implemented in --target standalone
+test/built-ins/Object/getOwnPropertySymbols/proxy-invariant-duplicate-string-entry.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/Symbol.unscopables/value.js	fail/type_error	TypeError: Cannot access property on null or undefined at 858:18
+test/built-ins/Object/assign/Target-Number.js	fail/assertion_fail	Test262Error: Return value should be an object. Expected SameValue(«"number"», «"object"») to be true
+test/built-ins/Array/prototype/slice/create-revoked-proxy.js	fail/illegal_cast	illegal cast [in __closure_65() ← __closure_59 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/Array/from/source-object-missing.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Array/prototype/concat/Array.prototype.concat_array-like-length-to-string-throws.js	fail/illegal_cast	illegal cast [in __call_valueOf() ← __class_to_primitive ← __to_primitive ← __extern_length]
+test/built-ins/Array/length/define-own-prop-length-coercion-order.js	fail/assertion_fail	Test262Error: Object.defineProperty(array, "length", {value: length, writable: true}) throws a TypeError exception Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/flat/target-array-non-extensible.js	compile_error/other	L47:3 Codegen error: Array.prototype.flat() is not yet supported in --target standalone/wasi (#2717) — there is no Wasm-native flatten arm and emitting the host import __array_flat would produce a module that traps at instantiation. Recompi
+test/built-ins/Array/from/this-null.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Object/prototype/toLocaleString/primitive_this_value_getter.js	fail/assertion_fail	Test262Error: Expected SameValue(«"true"», «"boolean"») to be true
+test/built-ins/Object/prototype/hasOwnProperty/topropertykey_before_toobject.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Object/prototype/__proto__/get-ordinary-obj.js	fail/type_error	TypeError: Cannot access property on null or undefined at 329:11
+test/built-ins/Object/prototype/setPrototypeOf-with-non-circular-values-__proto__.js	fail/assertion_fail	Test262Error: Object.setPrototypeOf(ObjProto, { __proto__: null }) throws a TypeError Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/flat/target-array-with-non-configurable-property.js	compile_error/other	L47:3 Codegen error: Array.prototype.flat() is not yet supported in --target standalone/wasi (#2717) — there is no Wasm-native flatten arm and emitting the host import __array_flat would produce a module that traps at instantiation. Recompi
+test/built-ins/Array/prototype/concat/Array.prototype.concat_array-like-to-length-throws.js	fail/assertion_fail	Test262Error: Array.prototype.concat.call(spreadableWithBrokenLength, obj2, arr) throws a TypeError exception Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/getOwnPropertyNames/proxy-invariant-absent-not-configurable-symbol-key.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/seal/abrupt-completion.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/__proto__/set-non-object.js	fail/type_error	TypeError: Cannot access property on null or undefined at 330:11
+test/built-ins/Array/prototype/filter/create-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/prototype/map/create-species-undef-invalid-len.js	fail/assertion_fail	Test262Error: Expected a RangeError to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/toString/symbol-tag-generators-builtin.js	compile_error/host_import_leak	standalone target emitted host imports: env::toString (#2961)
+test/built-ins/Object/getOwnPropertyNames/proxy-invariant-not-extensible-absent-symbol-key.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/proto-from-ctor-realm-two.js	fail/assertion_fail	Test262Error: Object.getPrototypeOf(Reflect.construct(Array, ["a", "b"], newTarget)) returns other.Array.prototype Expected SameValue(«null», «[object Array]») to be true
+test/built-ins/Object/values/observable-operations.js	fail/type_error	TypeError: Object method called on null or undefined
+test/built-ins/Object/prototype/toLocaleString/primitive_this_value.js	fail/assertion_fail	Test262Error: Expected SameValue(«"true"», «"boolean"») to be true
+test/built-ins/Object/entries/symbols-omitted.js	fail/assertion_fail	Test262Error: first entry has value `symValue` Expected SameValue(«Symbol()», «Symbol(value)») to be true
+test/built-ins/Object/prototype/toString/proxy-array.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/Array/prototype/concat/Array.prototype.concat_spreadable-sparse-object.js	fail/other	uncaught Wasm-GC exception (non-stringifiable payload)
+test/built-ins/Array/prototype/concat/Array.prototype.concat_small-typed-array.js	fail/assertion_fail	Test262Error: Actual [0] and expected [NaN] should have the same contents. 
+test/built-ins/Array/length/define-own-prop-length-coercion-order-set.js	fail/assertion_fail	Test262Error: Actual [] and expected [number, number] should have the same contents. The value of hints is expected to be ["number", "number"]
+test/built-ins/Array/prototype/filter/create-revoked-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/freeze/proxy-with-defineProperty-handler.js	fail/type_error	TypeError: Cannot access property on null or undefined at 358:18
+test/built-ins/Object/getOwnPropertySymbols/order-after-define-property.js	fail/assertion_fail	Test262Error: Actual [] and expected [Symbol(a), Symbol(b)] should have the same contents. 
+test/built-ins/Object/prototype/setPrototypeOf-with-different-values.js	fail/assertion_fail	Test262Error: Object.setPrototypeOf(ObjProto, {}) throws a TypeError Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/symbol_object-returns-fresh-symbol.js	fail/assertion_fail	Test262Error: The value of `Object(symA)` is not `symA` Expected SameValue(«Symbol(A)», «Symbol(A)») to be false
+test/built-ins/Object/prototype/__proto__/set-non-extensible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/__proto__/set-cycle-shadowed.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true
+test/built-ins/Array/of/return-abrupt-from-data-property-using-proxy.js	fail/assertion_fail	Test262Error: Array.of.call(T, "Bob") throws a Test262Error exception Expected a Test262Error but got a TypeError
+test/built-ins/Array/prototype/toLocaleString/primitive_this_value.js	fail/assertion_fail	Test262Error: Expected SameValue(«"true,false"», «"boolean,boolean"») to be true
+test/built-ins/Object/prototype/__proto__/set-non-obj-coercible.js	fail/type_error	TypeError: Cannot access property on null or undefined at 328:11
+test/built-ins/Array/prototype/concat/Array.prototype.concat_spreadable-function.js	fail/assertion_fail	Test262Error: Actual [1, 2, 3] and expected [] should have the same contents. [1, 2, 3] must return the same value returned by [].concat(fn)
+test/built-ins/Array/prototype/copyWithin/return-abrupt-from-delete-proxy-target.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Array/prototype/concat/Array.prototype.concat_sloppy-arguments.js	fail/assertion_fail	Test262Error: Actual [1, 2, 3, null, null, null] and expected [1, 2, 3, undefined, undefined, undefined] should have the same contents. [].concat((function(a, b, c) {return arguments;})(1, 2, 3)) must return [1, 2, 3, void 0, void 0, void 0
+test/built-ins/Array/prototype/values/returns-iterator-from-object.js	fail/type_error	TypeError: Array.prototype.values is not yet callable as a value in --target standalone
+test/built-ins/Object/prototype/toString/symbol-tag-override-primitives.js	fail/assertion_fail	Test262Error: Expected SameValue(«"[object Boolean]"», «"[object test262]"») to be true
+test/built-ins/Object/defineProperties/proxy-no-ownkeys-returned-keys-order.js	fail/type_error	TypeError: Object.defineProperties unsupported descriptor shape in standalone mode (#1906) [SITE-PROPS-BAG-NOT-AUTHORITATIVE]
+test/built-ins/Object/prototype/__proto__/set-abrupt.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Object]») to be true
+test/built-ins/Array/prototype/concat/Array.prototype.concat_large-typed-array.js	fail/assertion_fail	Test262Error: Actual [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+test/built-ins/Object/keys/property-traps-order-with-proxied-array.js	fail/assertion_fail	Test262Error: Actual [ownKeys, getOwnPropertyDescriptor] and expected [get, set, has, apply, deleteProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf, isExtensible, preventExtensions, ownKeys, defineProperty, construct] shou
+test/built-ins/Object/assign/target-is-frozen-data-property-set-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/assign/target-is-sealed-property-creation-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/assign/Target-Boolean.js	fail/assertion_fail	Test262Error: Return value should be an object. Expected SameValue(«"boolean"», «"object"») to be true
+test/built-ins/Object/getOwnPropertyDescriptors/order-after-define-property.js	fail/assertion_fail	Test262Error: Actual [] and expected [Symbol(a), Symbol(b)] should have the same contents. 
+test/built-ins/Object/seal/proxy-no-ownkeys-returned-keys-order.js	fail/assertion_fail	Test262Error: Actual [] and expected [0, foo, Symbol()] should have the same contents. 
+test/built-ins/Object/getOwnPropertySymbols/proxy-invariant-absent-not-configurable-string-key.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/keys/order-after-define-property-with-function.js	fail/assertion_fail	Test262Error: Actual [a, length] and expected [length, a] should have the same contents. 
+test/built-ins/Array/prototype/map/create-proto-from-ctor-realm-non-array.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/Symbol.species/symbol-species.js	fail/assertion_fail	Test262Error: Expected obj[5] NOT to be writable, but was.
+test/built-ins/Object/prototype/__proto__/set-cycle.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/entries/order-after-define-property-with-function.js	fail/assertion_fail	Test262Error: Actual [] and expected [name, a] should have the same contents. 
+test/built-ins/Array/prototype/concat/create-proto-from-ctor-realm-non-array.js	fail/assertion_fail	Test262Error: Object.getPrototypeOf(array.concat()) returns CustomCtor.prototype Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Object/keys/proxy-non-enumerable-prop-invariant-2.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/assign/target-is-non-extensible-existing-accessor-property.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Array/prototype/splice/create-revoked-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/proto-from-ctor-realm-zero.js	fail/assertion_fail	Test262Error: Object.getPrototypeOf(Reflect.construct(Array, [], newTarget)) returns other.Array.prototype Expected SameValue(«null», «[object Array]») to be true
+test/built-ins/Array/prototype/slice/target-array-with-non-writable-property.js	fail/assertion_fail	Test262Error: 0 value should be 1
+test/built-ins/Array/prototype/map/create-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/from/iter-cstm-ctor.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Object/isSealed/proxy-no-ownkeys-returned-keys-order.js	fail/assertion_fail	Test262Error: Actual [] and expected [0, foo, Symbol()] should have the same contents. 
+test/built-ins/Object/prototype/toString/symbol-tag-weakmap-builtin.js	compile_error/host_import_leak	standalone target emitted host imports: env::toString (#2961)
+test/built-ins/Array/prototype/slice/create-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/prototype/splice/create-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Array/prototype/splice/create-proto-from-ctor-realm-non-array.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Object/keys/proxy-non-enumerable-prop-invariant-3.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/built-ins/Array/prototype/map/target-array-with-non-writable-property.js	fail/assertion_fail	Test262Error: 0 value should be 2
+test/built-ins/Array/prototype/filter/target-array-with-non-writable-property.js	fail/assertion_fail	Test262Error: 0 value should be 1
+test/built-ins/Object/assign/OnlyOneArgument.js	fail/assertion_fail	Test262Error: Expected SameValue(«"string"», «"object"») to be true
+test/built-ins/Object/isFrozen/proxy-no-ownkeys-returned-keys-order.js	fail/assertion_fail	Test262Error: Actual [] and expected [0, foo, Symbol()] should have the same contents. 
+test/built-ins/Object/prototype/__proto__/get-abrupt.js	fail/type_error	TypeError: Cannot access property on null or undefined at 329:11
+test/built-ins/Object/assign/Target-Symbol.js	fail/assertion_fail	Test262Error: Return value should be a symbol object. Expected SameValue(«"symbol"», «"object"») to be true
+test/built-ins/Object/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 343:44
+test/built-ins/Object/getOwnPropertySymbols/proxy-invariant-not-extensible-absent-string-key.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/concat/Array.prototype.concat_sloppy-arguments-with-dupes.js	fail/assertion_fail	Test262Error: Actual [1, 2, 3, null, null, null] and expected [1, 2, 3, undefined, undefined, undefined] should have the same contents. [].concat((function(a, a, a) {return arguments;})(1, 2, 3)) must return [1, 2, 3, void 0, void 0, void 0
+test/built-ins/Array/of/construct-this-with-the-number-of-arguments.js	fail/type_error	TypeError: Array.of is not yet implemented in --target standalone
+test/built-ins/Object/prototype/__proto__/get-fn-name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 845:16
+test/built-ins/Array/prototype/concat/Array.prototype.concat_spreadable-reg-exp.js	fail/assertion_fail	Test262Error: Actual [] and expected [] should have the same contents. [].concat(/abc/) must return [re]
+test/built-ins/Object/prototype/__proto__/prop-desc.js	fail/type_error	TypeError: Cannot access property on null or undefined at 843:18
+test/built-ins/Object/getOwnPropertySymbols/proxy-invariant-not-extensible-extra-string-key.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/from/source-object-without.js	fail/type_error	TypeError: value is not iterable
+test/built-ins/Array/prototype/concat/arg-length-exceeding-integer-limit.js	fail/assertion_fail	Test262Error: [].concat(1, proxyForArrayWithLengthOutOfRange) throws a TypeError exception Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/copyWithin/return-abrupt-from-has-start.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Array/prototype/concat/is-concat-spreadable-proxy-revoked.js	fail/illegal_cast	illegal cast [in __closure_63() ← __closure_58 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/Array/prototype/concat/is-concat-spreadable-val-falsey.js	fail/assertion_fail	Test262Error: The value of result.length is expected to be 1 Expected SameValue(«2», «1») to be true
+test/built-ins/Array/from/iter-set-elem-prop-err.js	fail/assertion_fail	Test262Error: The value of closeCount is expected to be 1 Expected SameValue(«0», «1») to be true
+test/built-ins/Array/prototype/slice/create-proto-from-ctor-realm-non-array.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Array]», «[object Object]») to be true
+test/built-ins/Object/keys/proxy-keys.js	fail/illegal_cast	illegal cast [in __module_init_chunk_1() ← __module_init]
+test/built-ins/Array/prototype/concat/Array.prototype.concat_spreadable-boolean-wrapper.js	fail/assertion_fail	Test262Error: Actual [true] and expected [] should have the same contents. [true] must return the same value returned by [].concat(true)
+test/built-ins/Array/of/does-not-use-prototype-properties.js	fail/assertion_fail	Test262Error: The value of arr[0] is expected to be true Expected SameValue(«undefined», «true») to be true
+test/built-ins/Array/from/iter-set-elem-prop.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/Array/proto-from-ctor-realm-one.js	fail/assertion_fail	Test262Error: Object.getPrototypeOf(Reflect.construct(Array, [1], newTarget)) returns other.Array.prototype Expected SameValue(«null», «[object Array]») to be true
+test/built-ins/Object/prototype/isPrototypeOf/arg-is-proxy.js	fail/assertion_fail	Test262Error: Expected SameValue(«false», «true») to be true
+test/built-ins/Object/prototype/__proto__/set-invalid-value.js	fail/type_error	TypeError: Cannot access property on null or undefined at 329:11
+test/built-ins/Array/prototype/concat/is-concat-spreadable-get-order.js	fail/assertion_fail	Test262Error: Actual [] and expected [constructor, isConcatSpreadable] should have the same contents. The value of calls is expected to be ["constructor", "isConcatSpreadable"]
+test/built-ins/Object/keys/proxy-non-enumerable-prop-invariant-1.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/prototype/setPrototypeOf-with-non-circular-values.js	fail/assertion_fail	Test262Error: Object.setPrototypeOf(ObjProto, Object.create(null)) throws a TypeError Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/flatMap/target-array-non-extensible.js	compile_error/other	L45:3 Codegen error: Array.prototype.flatMap() with a non-array-returning callback is not yet supported in --target standalone/wasi (#2717) — the native arm handles callbacks that return arrays (flatMap ≡ map+flat(1)); scalar/union/dynamic 
+test/built-ins/Array/from/source-array-boundary.js	fail/assertion_fail	Test262Error: The value of value is expected to equal the value of array[this.arrayIndex] Expected SameValue(«1.7976931348623157e+308», «undefined») to be true
+test/built-ins/Array/prototype/flat/target-array-with-non-writable-property.js	compile_error/other	L43:11 Codegen error: Array.prototype.flat() is not yet supported in --target standalone/wasi (#2717) — there is no Wasm-native flatten arm and emitting the host import __array_flat would produce a module that traps at instantiation. Recomp
+test/built-ins/Array/from/proto-from-ctor-realm.js	fail/type_error	TypeError: Array.from is not yet implemented in --target standalone
+test/built-ins/Object/getOwnPropertyDescriptors/proxy-undefined-descriptor.js	fail/assertion_fail	Test262Error: key is not present in result Expected SameValue(«true», «false») to be true
+test/built-ins/Array/prototype/concat/Array.prototype.concat_spreadable-string-wrapper.js	fail/assertion_fail	Test262Error: Actual [y, u, c, k, �, �] and expected [] should have the same contents. ["y", "u", "c", "k", "uD83D", "uDCA9"] must return the same value returned by [].concat(str1)
+test/built-ins/Array/prototype/toLocaleString/primitive_this_value_getter.js	fail/assertion_fail	Test262Error: Expected SameValue(«"true,false"», «"boolean,boolean"») to be true
+test/built-ins/Object/subclass-object-arg.js	compile_error/runtime_error	L20:10 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Object/getOwnPropertyDescriptors/proxy-no-ownkeys-returned-keys-order.js	fail/assertion_fail	Test262Error: Actual [0, foo] and expected [0, foo, Symbol()] should have the same contents. 
+test/built-ins/Array/prototype/concat/is-concat-spreadable-is-array-proxy-revoked.js	fail/illegal_cast	illegal cast [in __closure_67() ← __closure_61 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/Array/from/iter-map-fn-err.js	fail/other	requested new array is too large
+test/built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/Object/prototype/__proto__/get-to-obj-abrupt.js	fail/type_error	TypeError: Cannot access property on null or undefined at 328:11
+test/built-ins/Array/prototype/Symbol.unscopables/prop-desc.js	fail/assertion_fail	Test262Error: Symbol() should be an own property
+test/built-ins/Array/prototype/splice/target-array-with-non-writable-property.js	fail/assertion_fail	Test262Error: 0 value should be 1
+test/built-ins/Array/prototype/concat/Array.prototype.concat_strict-arguments.js	fail/assertion_fail	Test262Error: Actual [1, 2, 3, null, null, null] and expected [1, 2, 3, undefined, undefined, undefined] should have the same contents. [].concat("(function(a, b, c) {"use strict"; return arguments;})(1, 2, 3)") must return [1, 2, 3, void 0
+test/built-ins/Object/prototype/__proto__/set-fn-name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 845:16
+test/built-ins/Object/assign/target-is-frozen-accessor-property-set-succeeds.js	fail/type_error	TypeError: TypeError: Cannot assign to read only property
+test/built-ins/Object/assign/Target-String.js	fail/assertion_fail	Test262Error: Return value should be an object. Expected SameValue(«"string"», «"object"») to be true
+test/built-ins/Object/prototype/toString/get-symbol-tag-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Array/prototype/concat/is-concat-spreadable-proxy.js	fail/illegal_cast	illegal cast [in __module_init_chunk_0() ← __module_init]
+test/built-ins/Array/prototype/map/create-revoked-proxy.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Object/seal/proxy-with-defineProperty-handler.js	fail/type_error	TypeError: Cannot access property on null or undefined at 349:18

@@ -37,12 +37,7 @@
  * arguments fall through to the existing path (the dispatcher is not used).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import {
-  canonicalUndefinedExternInstrs,
-  ensureExternSameValueZeroHelper,
-  ensureExternStrictEqHelper,
-  undefinedExternInstrs,
-} from "./any-helpers.js";
+import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
@@ -50,7 +45,8 @@ import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
 import { COLLECTION_KIND, ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
 import { ensureNativeIterHof, isIterHofForm, NATIVE_ITER_HOF_METHODS } from "./iter-hof-native.js"; // (#2903)
-import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)
+import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_ARG2_METHODS, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)
+import { ensureNativeIteratorRuntime, ensureNativeIterResultObject } from "./iterator-native.js"; // (#5147)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -405,6 +401,13 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
     ensureNativeLazyIter(ctx, methodName);
   }
 
+  // (#5147) `.next()` on a dynamic receiver may hit a native iterator carrier —
+  // register the GetIterator ladder + the §7.4.11 result-object builder NOW so
+  // the fill only READS funcMap (#1719).
+  // (`__iter_result_obj` itself is registered from `ensureNativeIteratorRuntime`
+  // — registering it HERE would add imports mid-body and shift funcIdxs under
+  // the caller.)
+
   // Signature: (recv, arg0..arg{arity-1}) all externref → externref.
   const params: ValType[] = Array.from({ length: arity + 1 }, () => ({ kind: "externref" }) as ValType);
   const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `$closed_method_dispatch_type_${arity}`);
@@ -604,6 +607,8 @@ function collectFieldEntries(ctx: CodegenContext, methodName: string): FieldEntr
 /** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
 type CoerceIdxs = {
   boxNumIdx?: number;
+  /** (#5241) `__box_boolean` — a boolean-returning method's `i32` result. */
+  boxBoolIdx?: number;
   unboxNumIdx?: number;
   unboxBoolIdx?: number;
   undefinedIdx?: number;
@@ -623,7 +628,7 @@ function buildEntryArm(
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
 ): Instr[] {
-  const { boxNumIdx, unboxNumIdx, unboxBoolIdx } = ci;
+  const { boxNumIdx, boxBoolIdx, unboxNumIdx, unboxBoolIdx } = ci;
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
     { op: "ref.cast", typeIdx: entry.typeIdx }, // `this`
@@ -685,9 +690,20 @@ function buildEntryArm(
     if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
     else arm.push({ op: "drop" }, { op: "ref.null.extern" });
   } else if (entry.resultType.kind === "i32") {
-    arm.push({ op: "f64.convert_i32_s" });
-    if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
-    else arm.push({ op: "drop" }, { op: "ref.null.extern" });
+    // (#5241) A BOOLEAN return also lowers to `i32`, and the ValType carries
+    // the `boolean` marker the ARGUMENT coercion above already honours. Boxing
+    // it as a number answered `1`/`0` where the same call on a TYPED receiver
+    // answered `true`/`false` — measured on a plain class,
+    // `String(inst.bigger(0))` → `"1"` through this dispatcher, `"true"`
+    // direct. Pre-existing; it became reachable for more names once #5241
+    // stopped the extern-class hijack from consuming those calls first.
+    if ((entry.resultType as { boolean?: true }).boolean && boxBoolIdx !== undefined) {
+      arm.push({ op: "call", funcIdx: boxBoolIdx });
+    } else {
+      arm.push({ op: "f64.convert_i32_s" });
+      if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
+      else arm.push({ op: "drop" }, { op: "ref.null.extern" });
+    }
   }
   // externref result: no coercion.
   return arm;
@@ -704,6 +720,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const ci: CoerceIdxs = {
     boxNumIdx: ctx.funcMap.get("__box_number"),
+    boxBoolIdx: ctx.funcMap.get("__box_boolean"),
     unboxNumIdx: ctx.funcMap.get("__unbox_number"),
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
     undefinedIdx: ctx.funcMap.get("__get_undefined"),
@@ -952,9 +969,19 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ) {
         const lazyCall: Instr[] = [
           { op: "local.get", index: 0 }, // recv
-          { op: "local.get", index: 1 }, // arg0 (mapper/predicate | count)
-          { op: "call", funcIdx: lazyCtorIdx },
+          { op: "local.get", index: 1 }, // arg0 (mapper/predicate | count | size)
         ];
+        // (#5147) chunks/windows take a second source-level argument
+        // (`windows(size, undersized)`); pass undefined-as-null when the call
+        // site supplied only one.
+        if (LAZY_ITER_ARG2_METHODS.has(methodName)) {
+          // The trailing i32 says whether the call site SUPPLIED arg1 at all —
+          // `windows(1, null)` must throw while `windows(1)` must not, and a
+          // null externref cannot distinguish "absent" from source-level `null`.
+          lazyCall.push(arity >= 2 ? { op: "local.get", index: 2 } : { op: "ref.null.extern" });
+          lazyCall.push({ op: "i32.const", value: arity >= 2 ? 1 : 0 });
+        }
+        lazyCall.push({ op: "call", funcIdx: lazyCtorIdx });
         // isNotIterTarget = null ∨ $Object ∨ $__vec_base ∨ $ObjVec — a NULL/
         // $Object/vec receiver keeps the legacy route; everything else (iterator
         // carriers) constructs the lazy wrapper.
@@ -986,6 +1013,40 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             blockType: { kind: "val", type: { kind: "externref" } },
             then: current,
             else: lazyCall,
+          },
+        ];
+      }
+    }
+
+    // (#5147) NATIVE-ITERATOR `.next()` arm. `it.next()` on a value holding a
+    // `$IterRec` (what `[1,2][Symbol.iterator]()` / `new Map().keys()` produce)
+    // or a `$LazyIterHelper` (`.chunks(2)`) previously fell to
+    // `__extern_method_call`, which answers null on a non-`$Object` receiver —
+    // so `.value`/`.done` then threw "Cannot access property on null". Step the
+    // carrier through the fully-armed `__iterator_next` and materialize a REAL
+    // §7.4.11 result object. Placed outermost: a user closed struct with its own
+    // `next` is neither carrier, so the `ref.test` misses and precedence holds.
+    if (ctx.standalone && methodName === "next" && arity === 0) {
+      const stepResultIdx = ctx.funcMap.get("__iter_next_result");
+      const carrierTypeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
+        (t): t is number => t !== undefined,
+      );
+      if (stepResultIdx !== undefined && carrierTypeIdxs.length > 0) {
+        const carrierTest: Instr[] = [];
+        for (const t of carrierTypeIdxs) {
+          carrierTest.push({ op: "local.get", index: anyLocalIdx }, { op: "ref.test", typeIdx: t });
+          if (carrierTest.length > 2) carrierTest.push({ op: "i32.or" });
+        }
+        current = [
+          ...carrierTest,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: stepResultIdx },
+            ],
+            else: current,
           },
         ];
       }
@@ -1474,10 +1535,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         const helperArgs = methodName.startsWith("get") ? 2 : 3;
         const dvCall: Instr[] = [{ op: "local.get", index: 0 }];
         for (let i = 0; i < helperArgs; i++) {
-          // (#5150) pad absent args with the `undefined` singleton, not null —
-          // ToNumber(undefined) is NaN, ToNumber(null) is 0.
-          if (i < arity) dvCall.push({ op: "local.get", index: 1 + i });
-          else dvCall.push(...canonicalUndefinedExternInstrs(ctx));
+          dvCall.push(i < arity ? { op: "local.get", index: 1 + i } : { op: "ref.null.extern" });
         }
         dvCall.push({ op: "call", funcIdx: dvHelperIdx });
         current = [

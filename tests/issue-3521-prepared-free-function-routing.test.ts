@@ -5,9 +5,13 @@ import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
 import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
+import { correlateIrSkippedBodyUnitIds } from "../src/codegen/ir-overlay-safety.js";
+import { IrBodyRouteAuditSession } from "../src/codegen/legacy-body-audit.js";
 import { compile, createIncrementalCompiler, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
+import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
+import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { buildImports } from "../src/runtime.js";
 
 // Register the low-level codegen delegates used by generateModule.
@@ -44,7 +48,222 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+async function compileWithPoisonedDirectFunctionBodies(
+  source: string,
+  names: string,
+  options: Parameters<typeof compile>[1],
+): Promise<CompileResult> {
+  const previous = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+  try {
+    process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = names;
+    return await compile(source, options);
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+    else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previous;
+  }
+}
+
 describe("#3521 prepare-before-emit free-function routing", () => {
+  it("routes inherited and prepared free functions by exact UnitId with names as audit mirrors", async () => {
+    const { resolvePreparedFunctionBodyRoute } = await import("../src/codegen/declarations.js");
+    const inheritedUnitId = "ir-unit:source:inherited" as IrUnitId;
+    const preparedUnitId = "ir-unit:source:prepared" as IrUnitId;
+    const sameSpelledForeignUnitId = "ir-unit:foreign:prepared" as IrUnitId;
+    const routing = {
+      skipBodyUnitIds: new Set<IrUnitId>([inheritedUnitId, preparedUnitId]),
+      preserveSkippedBodyUnitIds: new Set<IrUnitId>([preparedUnitId]),
+      skippedUnitIds: [],
+    };
+    const skipBodies = new Set(["inherited", "prepared"]);
+    const preserveSkippedBodies = new Set(["prepared"]);
+
+    // The inherited compatibility route remains skip-only, while the prepared
+    // body keeps the IR installation that already owns its callable slot.
+    expect(
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "fixture.ts",
+        functionName: "inherited",
+        unitId: inheritedUnitId,
+        skipBodies,
+        preserveSkippedBodies,
+        routing,
+      }),
+    ).toEqual({ skip: true, preserve: false });
+    expect(
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "fixture.ts",
+        functionName: "prepared",
+        unitId: preparedUnitId,
+        skipBodies,
+        preserveSkippedBodies,
+        routing,
+      }),
+    ).toEqual({ skip: true, preserve: true });
+
+    // A name match cannot suppress a foreign source-qualified body.
+    expect(() =>
+      resolvePreparedFunctionBodyRoute({
+        sourceFileName: "foreign.ts",
+        functionName: "prepared",
+        unitId: sameSpelledForeignUnitId,
+        skipBodies,
+        preserveSkippedBodies,
+        routing,
+      }),
+    ).toThrow(/routing disagrees/);
+  });
+
+  it("fails closed when exact free-function skip receipts are incomplete or untrusted", () => {
+    const inheritedUnitId = "ir-unit:source:inherited" as IrUnitId;
+    const preparedUnitId = "ir-unit:source:prepared" as IrUnitId;
+    const foreignUnitId = "ir-unit:foreign:prepared" as IrUnitId;
+    const requestedUnitIds = new Set<IrUnitId>([inheritedUnitId, preparedUnitId]);
+
+    expect(correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, preparedUnitId], "function")).toEqual(
+      new Set([inheritedUnitId, preparedUnitId]),
+    );
+    expect(() => correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId], "function")).toThrow(
+      /omitted skipped function UnitIds/,
+    );
+    expect(() =>
+      correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, inheritedUnitId], "function"),
+    ).toThrow(/duplicate skipped function/);
+    expect(() =>
+      correlateIrSkippedBodyUnitIds(requestedUnitIds, [inheritedUnitId, preparedUnitId, foreignUnitId], "function"),
+    ).toThrow(/foreign skipped function/);
+  });
+
+  it("ignores known support-function body entries in the R2 direct receipt census", () => {
+    const sourceFile = ts.createSourceFile(
+      "receipt-scope.ts",
+      `
+      export function owner(value: number): number { return value + 1; }
+      const runtimeNamespace = function runtimeNamespace(value: number): number { return value; };
+      `,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const identityContext = buildIrPlanningIdentityContext(
+      buildIrUnitInventory([sourceFile], { entrySource: sourceFile }),
+    );
+    const owner = sourceFile.statements.find(ts.isFunctionDeclaration);
+    const namespaceStatement = sourceFile.statements.find(ts.isVariableStatement);
+    const runtimeNamespace = namespaceStatement?.declarationList.declarations[0]?.initializer;
+    if (!owner || !runtimeNamespace || !ts.isFunctionExpression(runtimeNamespace)) {
+      throw new Error("receipt-scope fixture lost its expected functions");
+    }
+    const ownerUnitId = identityContext.unitIdByDeclaration.get(owner);
+    const supportUnitId = identityContext.unitIdByDeclaration.get(runtimeNamespace);
+    if (!ownerUnitId || !supportUnitId) throw new Error("receipt-scope fixture lost exact inventory identities");
+
+    const session = new IrBodyRouteAuditSession(identityContext, "gc", "compile");
+    session.recordRoot("compileFunctionBody", "owner", owner);
+    session.recordRoot("compileFunctionBody", "runtimeNamespace", runtimeNamespace);
+    const receipts = session.directFunctionBodyReceiptAudit(sourceFile);
+
+    expect(identityContext.unitByUnitId.get(supportUnitId)?.terminal).toBe(false);
+    expect(receipts.countsByUnitId).toEqual(new Map([[ownerUnitId, 1]]));
+    expect(receipts.violations).toEqual([]);
+  });
+
+  it("keeps direct receipt lookup source-local across a multi-source graph", () => {
+    const sourceFiles = Array.from({ length: 24 }, (_, index) =>
+      ts.createSourceFile(
+        `receipt-source-${index}.ts`,
+        `export function owner${index}(value: number): number { return value + ${index}; }`,
+        ts.ScriptTarget.Latest,
+        true,
+      ),
+    );
+    const identityContext = buildIrPlanningIdentityContext(
+      buildIrUnitInventory(sourceFiles, { entrySource: sourceFiles[0]! }),
+    );
+    let unitLookups = 0;
+    const unitByUnitId = new Proxy(identityContext.unitByUnitId, {
+      get(target, property) {
+        if (property === "get") {
+          return (unitId: IrUnitId) => {
+            unitLookups += 1;
+            return target.get(unitId);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const instrumentedContext = { ...identityContext, unitByUnitId };
+    const session = new IrBodyRouteAuditSession(instrumentedContext, "gc", "compile");
+    const expectedBySource = new Map<ts.SourceFile, IrUnitId>();
+    for (const sourceFile of sourceFiles) {
+      const declaration = sourceFile.statements.find(ts.isFunctionDeclaration);
+      const unitId = declaration && identityContext.unitIdByDeclaration.get(declaration);
+      if (!declaration || !unitId) throw new Error(`${sourceFile.fileName} lost its exact owner`);
+      expectedBySource.set(sourceFile, unitId);
+      session.recordRoot("compileFunctionBody", declaration.name!.text, declaration);
+    }
+
+    unitLookups = 0;
+    for (const [sourceFile, unitId] of expectedBySource) {
+      const receipts = session.directFunctionBodyReceiptAudit(sourceFile);
+      expect(receipts.countsByUnitId).toEqual(new Map([[unitId, 1]]));
+      expect(receipts.violations).toEqual([]);
+    }
+    expect(unitLookups).toBeLessThanOrEqual(sourceFiles.length);
+
+    const unattributedSource = ts.createSourceFile(
+      "unattributed-receipt.ts",
+      "function unknown(value: number): number { return value; }",
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const unknown = unattributedSource.statements.find(ts.isFunctionDeclaration);
+    if (!unknown) throw new Error("unattributed receipt fixture lost its function");
+    session.recordRoot("compileFunctionBody", "unknown", unknown);
+    for (const sourceFile of sourceFiles) {
+      expect(session.directFunctionBodyReceiptAudit(sourceFile).unattributedViolation).toMatchObject({
+        code: "missing-direct-function-body-identity",
+        detail: expect.stringContaining("unknown"),
+      });
+    }
+  });
+
+  it("accounts only the last physically emitted duplicate Script declaration", async () => {
+    const result = await compile(
+      `
+      function duplicate(value) { return value + 1; }
+      function duplicate(value) { return value + 2; }
+      function test() { return duplicate(40); }
+      `,
+      {
+        fileName: "duplicate-r2-accounting.js",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const duplicates =
+      result.irOutcomes?.filter(
+        (candidate) => candidate.unitKind === "function" && candidate.displayName === "duplicate",
+      ) ?? [];
+    expect(duplicates).toHaveLength(2);
+    const accounted = duplicates.filter((candidate) => candidate.prepareAttempts !== undefined);
+    expect(accounted).toEqual([
+      expect.objectContaining({
+        kind: "unsupported",
+        prepareAttempts: 1,
+        directBodyEmissions: 1,
+        irBodyEmissions: 0,
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      }),
+    ]);
+    const shadowed = duplicates.filter((candidate) => candidate.prepareAttempts === undefined);
+    expect(shadowed).toHaveLength(1);
+    expect(shadowed[0]).not.toHaveProperty("directBodyEmissions");
+    expect(shadowed[0]).not.toHaveProperty("irBodyEmissions");
+  });
+
   it.each([
     ["gc", "prepared-host-string-length.ts"],
     ["standalone", "prepared-native-string-length.ts"],
@@ -290,9 +509,11 @@ describe("#3521 prepare-before-emit free-function routing", () => {
   });
 
   it("direct-emits a selector-unsupported free function once", async () => {
-    const result = await compile(`export function withDefault(value: number = 41): number { return value + 1; }`, {
+    const source = `export function withDefault(value: number = 41): number { return value + 1; }`;
+    const result = await compile(source, {
       fileName: "prepared-direct.ts",
       experimentalIR: true,
+      fast: true,
       trackIrOutcomes: true,
     });
 
@@ -301,9 +522,26 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(outcome(result, "withDefault")).toMatchObject({
       kind: "unsupported",
       stage: "select",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 0,
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
+
+    // A default parameter is intentionally outside the fast scalar proof. The
+    // poison control proves that this is a live direct route rather than a
+    // vacuous outcome assertion.
+    const poisoned = await compileWithPoisonedDirectFunctionBodies(source, "withDefault", {
+      fileName: "prepared-direct-poisoned.ts",
+      experimentalIR: true,
+      fast: true,
+      trackIrOutcomes: true,
+    });
+    expect(poisoned.success).toBe(false);
+    expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: withDefault",
+    );
   });
 
   it("preserves the existing fast-mode boolean compile-once population", async () => {
@@ -324,16 +562,12 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).flag!(0)).toBe(1);
   });
 
-  // (#3907) There is no longer a fast-mode numeric ABI drift to keep off the
-  // overlay. The drift WAS the #3907 bug: legacy fast mode grounded every
-  // `number` to i32 while IR's semantic `number` is f64, so the two signatures
-  // disagreed and the IR patch was refused. Fast mode now carries the same f64
-  // representation, the signatures match, and the IR body legitimately patches
-  // over the direct one. This test therefore pins the OPPOSITE outcome to the
-  // one it was written for — the old expectation was recording a consequence of
-  // an unsound representation, not a property worth preserving.
-  it("fast-mode numeric bodies reach the IR patch now that the ABI no longer drifts", async () => {
-    const result = await compile(`export function add(left: number, right: number): number { return left + right; }`, {
+  // #3907 gives `number` the same f64 ABI in both fast-mode front ends. This
+  // tests the narrower consequence: the exact scalar signature can now seal
+  // before a direct function body is emitted.
+  it("prepares fast-mode numeric bodies before direct emission once the ABI no longer drifts", async () => {
+    const source = `export function add(left: number, right: number): number { return left + right; }`;
+    const result = await compileWithPoisonedDirectFunctionBodies(source, "add", {
       fileName: "prepared-fast-number.ts",
       experimentalIR: true,
       fast: true,
@@ -341,28 +575,155 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     });
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("add");
-    expect(outcome(result, "add")).toMatchObject({
+    expect(result.irFirstSkipped).toContain("add");
+    const addOutcome = outcome(result, "add");
+    expect(addOutcome.unitId).toBeDefined();
+    expect(addOutcome).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).add!(20, 22)).toBe(42);
     // The point of the fix: the same body is correct past 2^31, which the i32
     // ABI it used to be grounded to could not represent.
     expect((await instantiate(result)).add!(4_000_000_000, 4_000_000_000)).toBe(8_000_000_000);
+
+    const routeOff = await compileWithPoisonedDirectFunctionBodies(source, "add", {
+      fileName: "prepared-fast-number-route-off.ts",
+      experimentalIR: false,
+      fast: true,
+    });
+    expect(routeOff.success).toBe(false);
+    expect(routeOff.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: add",
+    );
   });
 
-  // (#3907) Same reversal as above, one call edge deeper: the callee no longer
-  // drifts, so neither it nor its boolean caller is held off the IR patch.
-  it("fast boolean callers with a numeric callee also reach the IR patch", async () => {
-    const result = await compile(
+  it("prepares a fast JS-host string pass-through before direct emission", async () => {
+    const source = "export function echo(value: string): string { return value; }";
+    const result = await compileWithPoisonedDirectFunctionBodies(source, "echo", {
+      fileName: "prepared-fast-host-string.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: false,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped).toContain("echo");
+    const echoOutcome = outcome(result, "echo");
+    expect(echoOutcome.unitId).toBeDefined();
+    expect(echoOutcome).toMatchObject({
+      kind: "emitted",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect((await instantiate(result)).echo!("prepared host string")).toBe("prepared host string");
+  });
+
+  it("keeps fast string pass-through signatures direct in every excluded lane", async () => {
+    const source = "export function echo(value: string): string { return value; }";
+    const excludedLanes = [
+      ["nativeStrings", { nativeStrings: true }],
+      ["standalone", { target: "standalone", nativeStrings: false }],
+      ["wasi", { target: "wasi", nativeStrings: false, strictNoHostImports: false }],
+      ["strictNoHostImports", { strictNoHostImports: true, nativeStrings: false }],
+    ] as const;
+
+    for (const [lane, laneOptions] of excludedLanes) {
+      const result = await compileWithPoisonedDirectFunctionBodies(source, "echo", {
+        fileName: "prepared-fast-host-string-excluded-" + lane + ".ts",
+        experimentalIR: true,
+        fast: true,
+        trackIrOutcomes: true,
+        ...laneOptions,
+      });
+      expect(result.success, lane).toBe(false);
+      expect(result.errors.map((error) => error.message).join("\n"), lane).toContain(
+        "injected direct function-body poison: echo",
+      );
+    }
+  });
+
+  it("accounts an unpoisoned fast native-string pass-through as direct with no prepared owner", async () => {
+    const result = await compile("export function echo(value: string): string { return value; }", {
+      fileName: "prepared-fast-native-string-direct.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: true,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("echo");
+    const echoOutcome = outcome(result, "echo");
+    expect(echoOutcome).toMatchObject({
+      kind: "emitted",
+      stage: "patch",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
+  });
+
+  it("keeps a defaulted fast JS-host string parameter on the direct route", async () => {
+    const source = 'export function defaultEcho(value: string = "fallback"): string { return value; }';
+    const result = await compile(source, {
+      fileName: "prepared-fast-host-string-default.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: false,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("defaultEcho");
+    const defaultOutcome = outcome(result, "defaultEcho");
+    expect(defaultOutcome).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      prepareAttempts: 1,
+      directBodyEmissions: 1,
+      irBodyEmissions: 0,
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(defaultOutcome.preparedComponentId).toBeUndefined();
+
+    const poisoned = await compileWithPoisonedDirectFunctionBodies(source, "defaultEcho", {
+      fileName: "prepared-fast-host-string-default-poisoned.ts",
+      experimentalIR: true,
+      fast: true,
+      nativeStrings: false,
+      trackIrOutcomes: true,
+    });
+    expect(poisoned.success).toBe(false);
+    expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
+      "injected direct function-body poison: defaultEcho",
+    );
+  });
+
+  // The same scalar proof must close a mixed f64/i32 component before the
+  // direct loop; poisoning both bodies catches a hidden patch-after-direct.
+  it("prepares fast boolean callers with a numeric callee before direct emission", async () => {
+    const result = await compileWithPoisonedDirectFunctionBodies(
       `
       function numeric(value: number): number { return value + 1; }
       export function positive(value: boolean): boolean {
         return numeric(value ? 1 : 0) > 0;
       }
       `,
+      "numeric,positive",
       {
         fileName: "prepared-fast-mixed-component.ts",
         experimentalIR: true,
@@ -372,15 +733,19 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("numeric");
-    expect(result.irFirstSkipped ?? []).not.toContain("positive");
+    expect(result.irFirstSkipped).toContain("numeric");
+    expect(result.irFirstSkipped).toContain("positive");
     expect(outcome(result, "numeric")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect(outcome(result, "positive")).toMatchObject({
-      legacyBodyEmitted: true,
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).positive!(1)).toBe(1);
   });
@@ -641,7 +1006,10 @@ describe("#3521 prepare-before-emit free-function routing", () => {
         irBodyEmitted: true,
         preparedComponentId: expect.stringMatching(/^prepared-component:/),
       });
-      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+      // Native standalone function-value support is one canonical 119-byte
+      // wrapper larger than the direct module; GC reuses the same-sized slot.
+      // Pin the exact current deltas instead of the stale no-growth assumption.
+      expect(prepared.binary.byteLength - direct.binary.byteLength).toBe(target === "standalone" ? 119 : 0);
     },
   );
 
@@ -822,9 +1190,12 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
+    // The current-function read closes only gNonStrict's function-value
+    // component. The independent scalar owner still prepares exactly once.
     expect(outcome(result, "directOnly")).toMatchObject({
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
   });
 
@@ -906,25 +1277,30 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).run!(41)).toBe(42);
   });
 
-  it("keeps a free function called by a direct module initializer in the direct component", async () => {
-    const result = await compile(
-      `
+  it("prepares a fixed-scalar free function called by a direct module initializer", async () => {
+    const source = `
       function increment(value: number): number { return value + 1; }
       let seeded = increment(41);
       export function run(): number { return seeded; }
-      `,
-      {
-        fileName: "prepared-module-init-call-boundary.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      },
-    );
+      `;
+    const result = await compileWithPoisonedDirectFunctionBodies(source, "increment", {
+      fileName: "prepared-module-init-call-boundary.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("increment");
+    expect(result.irFirstSkipped).toContain("increment");
     expect(outcome(result, "increment")).toMatchObject({
-      legacyBodyEmitted: true,
+      kind: "emitted",
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(result.irOutcomes?.find((candidate) => candidate.unitKind === "module-init")).toMatchObject({
+      kind: "unsupported",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
     });
     expect((await instantiate(result)).run!()).toBe(42);
   });
@@ -1027,6 +1403,9 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       kind: "invariant",
       code: "unexpected-internal-throw",
       stage: "build",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 0,
       legacyBodyEmitted: false,
       irBodyEmitted: false,
     });

@@ -1,0 +1,12 @@
+language/statements/for-of/dstr/array-elem-init-assignment.js
+language/statements/for-of/dstr/array-elem-iter-thrw-close-err.js
+language/statements/for-of/dstr/array-elem-iter-thrw-close.js
+language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close-err.js
+language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close.js
+language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js
+language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js
+language/statements/for-of/dstr/array-elision-val-symbol.js
+language/statements/for-of/dstr/array-rest-iter-thrw-close-err.js
+language/statements/for-of/dstr/array-rest-iter-thrw-close.js
+language/statements/for-of/dstr/array-rest-lref-err.js
+language/statements/for-of/dstr/obj-prop-name-evaluation-error.js

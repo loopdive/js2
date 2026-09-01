@@ -1,0 +1,13 @@
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-tolocalestring.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-tolocalestring.js
+built-ins/TypedArray/prototype/toLocaleString/calls-tostring-from-each-value.js
+built-ins/TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-simple-value.js
+built-ins/TypedArray/prototype/join/return-abrupt-from-separator.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-tostring.js
+built-ins/TypedArray/prototype/toLocaleString/calls-tolocalestring-from-each-value.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-valueof.js
+built-ins/TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-value.js
+built-ins/TypedArray/prototype/join/return-abrupt-from-separator-symbol.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-tostring.js
+built-ins/TypedArray/prototype/toLocaleString/calls-valueof-from-each-value.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-valueof.js
