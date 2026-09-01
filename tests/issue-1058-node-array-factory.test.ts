@@ -18,7 +18,7 @@ describe("#1058 TypeScript node-array factory", () => {
     const result = await compile(
       `
         interface Node { transformFlags: number }
-        interface NodeArray<T extends Node> extends Array<T> {
+        interface NodeArray<T extends Node> extends ReadonlyArray<T> {
           pos: number;
           end: number;
           hasTrailingComma: boolean;
@@ -48,7 +48,15 @@ describe("#1058 TypeScript node-array factory", () => {
             hasTrailingComma?: boolean,
           ): NodeArray<T> {
             if (elements === undefined || elements === emptyArray) elements = [];
-            else if (isNodeArray(elements)) return elements;
+            else if (isNodeArray(elements)) {
+              if (hasTrailingComma === undefined || elements.hasTrailingComma === hasTrailingComma) return elements;
+              const copied = elements.slice() as NodeArray<T>;
+              copied.pos = elements.pos;
+              copied.end = elements.end;
+              copied.hasTrailingComma = hasTrailingComma;
+              copied.transformFlags = elements.transformFlags;
+              return copied;
+            }
             const length = elements.length;
             const array = (length >= 1 && length <= 4 ? elements.slice() : elements) as NodeArray<T>;
             array.pos = -1;
@@ -69,9 +77,17 @@ describe("#1058 TypeScript node-array factory", () => {
             const array = factoryCreateNodeArray(list, false);
             return array.length * 100 + array.pos * 10 + array.end;
           }
+
+          export function parseNonEmptyList(): number {
+            const list: Node[] = [{ transformFlags: 8 }];
+            const first = factoryCreateNodeArray(list, false);
+            const array = factoryCreateNodeArray(first, true);
+            return array.length * 10_000 + array.pos * 1_000 + array.end * 100 + array.transformFlags;
+          }
         }
 
         export function test(): number { return Parser.parseList(); }
+        export function testNonEmpty(): number { return Parser.parseNonEmptyList(); }
       `,
       {
         fileName: "issue-1058-node-array-factory.ts",
@@ -81,6 +97,7 @@ describe("#1058 TypeScript node-array factory", () => {
 
     const exports = await instantiate(result);
     expect(exports.test()).toBe(-11);
+    expect(exports.testNonEmpty()).toBe(8_908);
   });
 
   it("projects an overloaded token implementation's anonymous carrier to its public Token result", async () => {

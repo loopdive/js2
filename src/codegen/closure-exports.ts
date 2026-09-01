@@ -877,8 +877,17 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         funcTypeDef.params.slice(1).some((param) => param.kind === "ref" || param.kind === "ref_null")
       );
     });
+  const needsExplicitUndefinedRefNormalization = entries.some((entry) => {
+    const funcTypeDef = mod.types[entry.funcTypeIdx];
+    return funcTypeDef?.kind === "func" && funcTypeDef.params.slice(1).some((param) => param.kind === "ref_null");
+  });
   if (needsHostFacadeUnwrap) {
     ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+  }
+  if (needsExplicitUndefinedRefNormalization) {
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  if (needsHostFacadeUnwrap || needsExplicitUndefinedRefNormalization) {
     flushLateImportShifts(ctx, null);
   }
 
@@ -1417,9 +1426,41 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
 
+  // Method calls can re-enter Wasm through a host-side facade just like free
+  // callback calls do. Recover the facade's original GC value before narrowing
+  // a concrete reference parameter. In particular, a NodeArray carries
+  // identity-bound `pos`/`end` properties; feeding its facade directly to a
+  // vec materializer creates a fresh vector and drops those properties before
+  // TypeScript's `isNodeArray` predicate can observe them. Keep this in exact
+  // parity with emitClosureCallExportN's argument bridge above.
+  const needsHostFacadeUnwrap =
+    !ctx.standalone &&
+    !ctx.wasi &&
+    entries.some((entry) => {
+      const funcTypeDef = mod.types[entry.funcTypeIdx];
+      return (
+        funcTypeDef?.kind === "func" &&
+        funcTypeDef.params.slice(1).some((param) => param.kind === "ref" || param.kind === "ref_null")
+      );
+    });
+  const needsExplicitUndefinedRefNormalization = entries.some((entry) => {
+    const funcTypeDef = mod.types[entry.funcTypeIdx];
+    return funcTypeDef?.kind === "func" && funcTypeDef.params.slice(1).some((param) => param.kind === "ref_null");
+  });
+  if (needsHostFacadeUnwrap) {
+    ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+  }
+  if (needsExplicitUndefinedRefNormalization) {
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  if (needsHostFacadeUnwrap || needsExplicitUndefinedRefNormalization) {
+    flushLateImportShifts(ctx, null);
+  }
+
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const unwrapForWasmIdx = needsHostFacadeUnwrap ? ctx.funcMap.get("__unwrap_for_wasm") : undefined;
   const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
   // (#2745) Same #820l argc/extras plumbing as `emitClosureCallExportN`, so a
   // method-dispatched closure's `arguments` object observes over-arity args
@@ -1473,7 +1514,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
-      const ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
+      let ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
       if (paramType) {
         if (paramType.kind === "f64") {
           const unboxIdx = ctx.funcMap.get("__unbox_number");
@@ -1496,7 +1537,25 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           // WasmGC struct ref, e.g. a native-strings `string`) needs the host
           // externref lowered into the internal ref domain before `call_ref`.
           // Skipped in gc mode where string params are already externref.
-          ops.push(...externToClosureParamRef(ctx, paramType));
+          if (paramType.kind === "ref_null" && isUndefinedIdx !== undefined) {
+            ops = [
+              { op: "local.get", index: argLocalIdx },
+              { op: "call", funcIdx: isUndefinedIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: paramType },
+                then: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
+                else: [
+                  { op: "local.get", index: argLocalIdx },
+                  ...(unwrapForWasmIdx === undefined ? [] : [{ op: "call", funcIdx: unwrapForWasmIdx } as Instr]),
+                  ...externToClosureParamRef(ctx, paramType),
+                ],
+              },
+            ];
+          } else {
+            if (unwrapForWasmIdx !== undefined) ops.push({ op: "call", funcIdx: unwrapForWasmIdx });
+            ops.push(...externToClosureParamRef(ctx, paramType));
+          }
         }
       }
       // The widened dispatcher receives a real JS `undefined` carrier in each

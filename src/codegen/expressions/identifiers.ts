@@ -15,7 +15,12 @@ import {
   type NullablePrimitiveKind,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
+import {
+  computeClosureWrapperSig,
+  emitCachedFuncClosureAccess,
+  emitFuncRefAsClosure,
+  getFuncSignature,
+} from "../closures.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
@@ -54,6 +59,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { reportError } from "../context/errors.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
+import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
@@ -2000,7 +2006,40 @@ function compileIdentifierCore(
   // (#3505) A foreign module's function declaration must not resolve by bare
   // name (funcMap is graph-wide) — skip the funcref-as-value arm so the read
   // reaches the undeclared -> ReferenceError emission below.
-  const funcRefIdx = graphNameRegistryUnavailable ? undefined : ctx.funcMap.get(name);
+  const functionValueFunctionDeclaration =
+    resolvedValueDeclaration !== undefined &&
+    ts.isFunctionDeclaration(resolvedValueDeclaration) &&
+    resolvedValueDeclaration.body !== undefined
+      ? resolvedValueDeclaration
+      : undefined;
+  // A function used as a value must follow the checker's exact declaration,
+  // not the graph-wide bare-name compatibility map. TypeScript's parser and
+  // NodeFactory both declare a nested `createNodeArray`; compiling the
+  // NodeFactory shorthand `{ createNodeArray }` after parser registration made
+  // the later parser wrapper win `funcMap`, so the factory field recursively
+  // called the parser wrapper and, on larger graphs, returned an unrelated
+  // array carrier. Program ABI retains the allocator handle per declaration;
+  // prefer it wherever the source binding is known and keep the legacy map for
+  // synthetic/internal callables that have no source declaration.
+  const declarationOwnedFunctionHandle =
+    functionValueFunctionDeclaration !== undefined
+      ? sourceFunctionHandleForDeclaration(ctx, functionValueFunctionDeclaration)
+      : undefined;
+  // A nested function's direct handle prepends its captured values. The legacy
+  // capture-construction metadata is still lexically name-scoped, so an exact
+  // handle is independently materializable only when its physical signature
+  // proves there is no capture prefix. Top-level declarations are capture-free
+  // by construction. This keeps the identity repair narrow rather than pairing
+  // one declaration's handle with another same-named declaration's captures.
+  const exactFunctionValueIsCaptureFree = (() => {
+    if (declarationOwnedFunctionHandle === undefined || functionValueFunctionDeclaration === undefined) return false;
+    if (ts.isSourceFile(functionValueFunctionDeclaration.parent)) return true;
+    const directSignature = getFuncSignature(ctx, declarationOwnedFunctionHandle);
+    const valueSignature = computeClosureWrapperSig(ctx, functionValueFunctionDeclaration);
+    return directSignature !== null && directSignature.params.length === valueSignature.params.length;
+  })();
+  const exactFunctionValueHandle = exactFunctionValueIsCaptureFree ? declarationOwnedFunctionHandle : undefined;
+  const funcRefIdx = graphNameRegistryUnavailable ? undefined : (exactFunctionValueHandle ?? ctx.funcMap.get(name));
   // (#1809) Only wrap DEFINED functions (index >= numImportFuncs) in a funcref
   // closure. A host import (e.g. the ambient DOM global `resizeTo`/`resizeBy`
   // from lib.dom.d.ts) has no in-module body to forward to via `ref.func`, so
@@ -2099,7 +2138,7 @@ function compileIdentifierCore(
     // misclassified "wasm_compile" errors. Captures must be filled at the
     // construction site (per-instance), so we only take the cached path when
     // no captures are required.
-    const nestedCaptures = ctx.nestedFuncCaptures.get(name);
+    const nestedCaptures = exactFunctionValueIsCaptureFree ? undefined : ctx.nestedFuncCaptures.get(name);
     if (!nestedCaptures || nestedCaptures.length === 0) {
       const cachedRefType = emitCachedFuncClosureAccess(ctx, fctx, name, funcRefIdx, isOrdinaryFunctionDecl);
       if (cachedRefType) {

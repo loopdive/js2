@@ -509,4 +509,95 @@ export function test(): number {
     const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { test(): number };
     expect(exports.test()).toBe(142);
   });
+
+  it("dispatches a direct nominal callback through an earlier generic helper", async () => {
+    const result = await compileMulti(
+      {
+        "./types.ts": `
+export interface Node {
+  kind: number;
+}
+`,
+        "./core.ts": `
+export function forEach<T, U>(
+  array: readonly T[],
+  callback: (element: T, index: number) => U | undefined,
+): U | undefined {
+  for (let i = 0; i < array.length; i++) {
+    const result = callback(array[i]!, i);
+    if (result) return result;
+  }
+  return undefined;
+}
+`,
+        "./entry.ts": `
+import { forEach } from "./core.js";
+import type { Node } from "./types.js";
+
+function isTarget(node: Node): Node | undefined {
+  return node.kind === 7 ? node : undefined;
+}
+
+export function test(): number {
+  const nodes: Node[] = [{ kind: 7 }];
+  return forEach(nodes, isTarget)?.kind ?? -1;
+}
+`,
+      },
+      "./entry.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { test(): number };
+    expect(exports.test()).toBe(7);
+  });
+
+  it("declines an unsafe undefined-to-nullable-reference generic callback bridge", async () => {
+    const result = await compileMulti(
+      {
+        "./types.ts": `
+export interface Node {
+  kind: number;
+}
+`,
+        "./core.ts": `
+export function invoke<T, U>(value: T, callback: (value: T) => U): U {
+  return callback(value);
+}
+`,
+        "./entry.ts": `
+import { invoke } from "./core.js";
+import type { Node } from "./types.js";
+
+function acceptOptionalNode(node: Node | undefined): Node | undefined {
+  return node;
+}
+
+export function test(): number {
+  return invoke<Node | undefined, Node | undefined>(undefined, acceptOptionalNode) === undefined ? 42 : -1;
+}
+`,
+      },
+      "./entry.ts",
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = result.importObject ?? {};
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: result.exportSignatures }) as unknown as { test(): number };
+
+    // No source-certified arm is emitted for `(Node | undefined) => ...`:
+    // host `undefined` is not Wasm null, so `ref.cast_null` would trap. The
+    // existing dynamic-dispatch miss remains a catchable TypeError instead.
+    expect(() => exports.test()).toThrow(/Cannot access property on null or undefined/);
+    expect(() => exports.test()).not.toThrow(/illegal cast/);
+  });
 });
