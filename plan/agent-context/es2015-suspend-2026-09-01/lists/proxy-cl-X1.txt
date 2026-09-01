@@ -1,0 +1,14 @@
+built-ins/Proxy/construct/trap-is-null-target-is-proxy.js
+built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js
+built-ins/Proxy/construct/trap-is-undefined-target-is-proxy.js
+built-ins/Reflect/construct/arguments-list-is-not-array-like.js
+built-ins/Reflect/construct/return-with-newtarget-argument.js
+built-ins/Proxy/construct/trap-is-undefined.js
+built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js
+built-ins/Proxy/construct/call-parameters-new-target.js
+built-ins/Proxy/construct/trap-is-null.js
+built-ins/Proxy/get-fn-realm-recursive.js
+built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js
+built-ins/Proxy/get-fn-realm.js
+built-ins/Reflect/construct/target-is-not-constructor-throws.js
+built-ins/Proxy/construct/trap-is-undefined-no-property.js

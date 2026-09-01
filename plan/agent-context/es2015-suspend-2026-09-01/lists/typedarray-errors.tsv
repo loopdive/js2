@@ -1,0 +1,300 @@
+test/built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js	fail/assertion_fail	Test262Error: used defaultCtor but still checks the inherited .constructor Expected SameValue(«true», «undefined») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/Symbol.species/length.js	fail/type_error	TypeError: Cannot access property on null or undefined at 1285:16
+test/built-ins/TypedArray/prototype/keys/invoked-as-method.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_keys (#2961)
+test/built-ins/TypedArray/from/iterated-array-changed-by-tonumber.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «100») to be true
+test/built-ins/TypedArray/from/from-typedarray-mapper-detaches-result.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/TypedArrayConstructors/ctors/length-arg/toindex-length.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-valueof-typeerror.js	fail/assertion_fail	Test262Error: abrupt completion from ToNumber(sample) Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/values/iter-prototype.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_values (#2961)
+test/built-ins/TypedArray/prototype/toString.js	fail/assertion_fail	Test262Error: Expected SameValue(«function () { [native code] }», «function () { [native code] }») to be true
+test/built-ins/TypedArray/prototype/fill/coerced-indexes.js	fail/assertion_fail	Test262Error: `null` end coerced to 0 (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/Symbol.toStringTag/name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 1282:16
+test/built-ins/TypedArray/from/arylk-to-length-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/TypedArray/prototype/indexOf/return-abrupt-tointeger-fromindex.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/of/custom-ctor.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/indexOf/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/from/custom-ctor-returns-other-instance.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/TypedArray/prototype/includes/fromIndex-minus-zero.js	fail/assertion_fail	Test262Error: -0 [0] Expected SameValue(«0», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/Symbol.species/prop-desc.js	fail/type_error	TypeError: Cannot access property on null or undefined at 765:18
+test/built-ins/TypedArray/prototype/entries/detached-buffer.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_entries (#2961)
+test/built-ins/TypedArray/prototype/sort/comparefn-calls.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/slice/return-abrupt-from-end-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-invocation.js	fail/assertion_fail	Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/Symbol.toStringTag/length.js	fail/type_error	TypeError: Cannot access property on null or undefined at 1285:16
+test/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/not-enumerable-keys.js	fail/assertion_fail	Test262Error: Expected true but got false (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint32Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/Int16Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/filter/callbackfn-arguments-with-thisarg.js	fail/assertion_fail	Test262Error: results[0][2] - this Expected SameValue(«42,43,44», «42,43,44») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/reduce/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/lastIndexOf/invoked-as-method.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-symbol.js	fail/assertion_fail	Test262Error: Expected obj[102] NOT to be configurable, but was. (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/byteLength/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArray/prototype/map/return-new-typedarray-from-empty-length.js	fail/assertion_fail	Test262Error: result is an instance of Float64Array (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/indexOf/tointeger-fromindex.js	fail/assertion_fail	Test262Error: object [0] Expected SameValue(«0», «-1») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/slice/invoked-as-method.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/reverse/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/values/invoked-as-method.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_values (#2961)
+test/built-ins/TypedArrayConstructors/from/custom-ctor.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-canonical-index.js	fail/type_error	TypeError: Cannot access property on null or undefined at 877:10
+test/built-ins/TypedArrayConstructors/ctors/object-arg/returns.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «NaN») to be true (Testing with Int32Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-bytelength.js	fail/null_deref	dereferencing a null pointer [in __module_init_chunk_2() ← __module_init]
+test/built-ins/TypedArrayConstructors/ctors/object-arg/as-generator-iterable-returns.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/prototype/length/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/sort/sort-tonumber.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/fill/coerced-value-detach.js	fail/assertion_fail	Test262Error: Detachment when coercing value should throw TypeError Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/length-zero-returns-false.js	fail/assertion_fail	Test262Error: returns false Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/not-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor invoked with a non-function value
+test/built-ins/TypedArray/prototype/lastIndexOf/no-arg.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «-1») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/toString/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/name.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/TypedArray/prototype/reduce/callbackfn-is-not-callable-throws.js	fail/assertion_fail	Test262Error: no arg Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/forEach/callbackfn-is-not-callable.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-invocation.js	fail/assertion_fail	Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/iter-invoke-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-keys.js	fail/assertion_fail	Test262Error: result1 (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/slice/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-reflect-set.js	compile_error/other	L43:12 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.; L50:12
+test/built-ins/TypedArray/prototype/length/invoked-as-accessor.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/lastIndexOf/tointeger-fromindex.js	fail/assertion_fail	Test262Error: object [1] Expected SameValue(«-1», «1») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/search-not-found-returns-false.js	fail/assertion_fail	Test262Error: includes(44) Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/lastIndexOf/return-abrupt-tointeger-fromindex-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-valueof.js	fail/assertion_fail	Test262Error: abrupt completion from ToNumber(sample) Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/keys/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/map/callbackfn-set-value-during-interaction.js	fail/assertion_fail	Test262Error: set value during iteration Expected SameValue(«false», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/length.js	fail/assertion_fail	Test262Error: length should be an own property
+test/built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-tolocalestring.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint8Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArray/prototype/sort/comparefn-call-throws.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-and-symbol-keys-.js	fail/assertion_fail	Test262Error: result1 (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-numeric-index.js	fail/assertion_fail	Test262Error: Expected obj[foo] NOT to be configurable, but was. (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/returns-new-instance.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «10») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/entries/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint32Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/sort/sorted-values-nan.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-tolocalestring.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/no-species.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/indexOf/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/of/not-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor invoked with a non-function value
+test/built-ins/TypedArray/prototype/copyWithin/coerced-values-end.js	fail/assertion_fail	Test262Error: null value coerced to 0 (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/Symbol.species/result.js	fail/type_error	TypeError: Cannot access property on null or undefined at 763:14
+test/built-ins/TypedArray/prototype/some/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/other-ctor-returns-new-typedarray.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «7») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/iterator-not-callable-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/name.js	fail/assertion_fail	Test262Error: name should be an own property
+test/built-ins/TypedArray/prototype/sort/comparefn-is-undefined.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/slice/speciesctor-get-species-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js	fail/assertion_fail	Test262Error: should throw TypeError as array is detached Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/prototype/find/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/subarray/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/get-length-uses-internal-arraylength.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/reduceRight/callbackfn-is-not-callable-throws.js	fail/assertion_fail	Test262Error: no arg Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/sort/stability.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/copyWithin/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a Test262Error (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-inherited.js	fail/assertion_fail	Test262Error: used defaultCtor but still checks the inherited .constructor Expected SameValue(«true», «undefined») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/indexOf/return-abrupt-tointeger-fromindex-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/arylk-get-length-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/TypedArrayConstructors/prototype/filter/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/entries/iter-prototype.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_entries (#2961)
+test/built-ins/TypedArrayConstructors/Int8Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js	compile_error/other	L32:8 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/TypedArrayConstructors/prototype/buffer/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int16Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/prototype/every/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/length-excessive-throws.js	fail/other	requested new array is too large
+test/built-ins/TypedArrayConstructors/prototype/forEach/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/harness/testTypedArray.js	fail/assertion_fail	Test262Error: undefined call count Expected SameValue(«undefined», «8») to be true
+test/built-ins/TypedArray/prototype/filter/callbackfn-set-value-during-iteration.js	fail/assertion_fail	Test262Error: set value during interaction Expected SameValue(«false», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/reduce/empty-instance-with-no-initialvalue-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/toLocaleString/calls-tostring-from-each-value.js	fail/assertion_fail	Test262Error: returns expected value Expected SameValue(«"42,0"», «"hacks1,hacks2"») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-simple-value.js	fail/illegal_cast	illegal cast [in __closure_119() ← testWithAllTypedArrayConstructors ← testWithTypedArrayConstructors ← __module_init_chunk_2]
+test/built-ins/TypedArray/prototype/includes/tointeger-fromindex.js	fail/assertion_fail	Test262Error: string [0] Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/fromIndex-infinity.js	fail/assertion_fail	Test262Error: includes(43, Infinity) Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/filter/speciesctor-get-species-custom-ctor-invocation.js	fail/assertion_fail	Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/join/return-abrupt-from-separator.js	fail/illegal_cast	illegal cast [in __closure_121() ← __closure_114 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/TypedArray/from/invoked-as-func.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-tostring.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/toLocaleString/calls-tolocalestring-from-each-value.js	fail/assertion_fail	Test262Error: returns expected value Expected SameValue(«"42,0"», «"hacks1,hacks2"») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-canonical-index.js	fail/assertion_fail	Test262Error: returns true with inherited key [1.0] Expected SameValue(«false», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint32Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «4») to be true
+test/built-ins/TypedArrayConstructors/Uint32Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js	fail/assertion_fail	Test262Error: Expected true but got false (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/values/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Float64Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/sort/return-same-instance.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/sort/arraylength-internal.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/reduceRight/empty-instance-with-no-initialvalue-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/indexOf/fromIndex-minus-zero.js	fail/assertion_fail	Test262Error: -0 [0] Expected SameValue(«-1», «0») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/fill/coerced-start-detach.js	fail/assertion_fail	Test262Error: Detachment when coercing start should throw TypeError Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-valueof.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/of/prop-desc.js	fail/assertion_fail	Test262Error: of should be an own property
+test/built-ins/TypedArray/prototype/includes/invoked-as-method.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/filter/speciesctor-get-species-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/byteLength/invoked-as-accessor.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArrayConstructors/prototype/lastIndexOf/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Float32Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArrayConstructors/prototype/reverse/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/custom-proto-access-throws.js	compile_error/runtime_error	L46:5 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/custom-proto-access-throws.js	compile_error/runtime_error	L45:5 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/TypedArrayConstructors/prototype/byteOffset/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/fromIndex-equal-or-greater-length-returns-false.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/forEach/callbackfn-detachbuffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «2») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/reduce/callbackfn-detachbuffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «2») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/filter/result-empty-callbackfn-returns-false.js	fail/null_deref	dereferencing a null pointer [in __any_unbox_bool() ← __closure_123 ← __closure_122 ← testWithAllTypedArrayConstructors]
+test/built-ins/TypedArrayConstructors/ctors/object-arg/iterated-array-with-modified-array-iterator.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «4») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/of/invoked-as-func.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int32Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArrayConstructors/from/new-instance-using-custom-ctor.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/TypedArrayConstructors/Float64Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «8») to be true
+test/built-ins/TypedArray/Symbol.species/name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 1282:16
+test/built-ins/TypedArray/prototype/map/speciesctor-get-species-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/set/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/entries/return-itor.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_entries (#2961)
+test/built-ins/TypedArray/prototype/keys/return-itor.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_keys (#2961)
+test/built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-byteoffset.js	fail/null_deref	dereferencing a null pointer [in __module_init_chunk_2() ← __module_init]
+test/built-ins/TypedArray/prototype/sort/sorted-values.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/sort/invoked-as-method.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/includes/samevaluezero.js	fail/assertion_fail	Test262Error: no arg Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/return-abrupt-from-end-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/iterator-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-reflect-set.js	compile_error/other	L43:10 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.; L50:10
+test/built-ins/TypedArrayConstructors/prototype/toLocaleString/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int32Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/Uint8Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «1») to be true
+test/built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js	fail/assertion_fail	Test262Error: should throw TypeError as array is detached Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/iter-next-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/TypedArray/prototype/includes/return-abrupt-tointeger-fromindex-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/every/callbackfn-not-callable-throws.js	fail/assertion_fail	Test262Error: no args Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/from-typedarray-into-itself-mapper-detaches-result.js	compile_error/host_import_leak	standalone target emitted host imports: env::__unwrap_for_wasm (#2961)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/iterating-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/from/invoked-as-func.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/of/invoked-as-func.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/map/callbackfn-arguments-without-thisarg.js	fail/assertion_fail	Test262Error: results[0][2] - this Expected SameValue(«42,43,44», «42,43,44») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-to-primitive-typeerror.js	fail/assertion_fail	Test262Error: abrupt completion from sample @@toPrimitive Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int16Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArray/of/name.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/TypedArray/prototype/subarray/speciesctor-get-species-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/from-array-mapper-detaches-result.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-prototype-chain-set.js	fail/assertion_fail	Test262Error: receiver[1] should not be created (receiver: empty object) (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/of/new-instance-using-custom-ctor.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/TypedArrayConstructors/Float32Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «4») to be true
+test/built-ins/TypedArray/from/iter-next-value-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/TypedArray/prototype/sort/comparefn-nonfunction-call-throws.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/reduceRight/callbackfn-detachbuffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «2») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Float64Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/prototype/fill/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/map/callbackfn-arguments-with-thisarg.js	fail/assertion_fail	Test262Error: results[0][2] - this Expected SameValue(«42,43,44», «42,43,44») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/Symbol.iterator.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true
+test/built-ins/TypedArray/from/length.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/TypedArray/prototype/includes/search-found-returns-true.js	fail/assertion_fail	Test262Error: includes(42) Expected SameValue(«1», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/some/callbackfn-not-callable-throws.js	fail/assertion_fail	Test262Error: no args Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/lastIndexOf/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-prototype-chain-set.js	fail/assertion_fail	Test262Error: receiver[0] should be updated (receiver: empty object) Expected SameValue(«[object Object]», «[object Object]») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint16Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArray/prototype/subarray/detached-buffer.js	fail/assertion_fail	Test262Error: observable ToInteger(begin) (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/join/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/reduceRight/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-inherited.js	fail/assertion_fail	Test262Error: used defaultCtor but still checks the inherited .constructor Expected SameValue(«true», «undefined») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/from/prop-desc.js	fail/assertion_fail	Test262Error: from should be an own property
+test/built-ins/TypedArray/prototype/subarray/return-abrupt-from-begin-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/set/array-arg-set-values-in-order.js	fail/assertion_fail	Test262Error: values are set for src length (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int32Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js	fail/assertion_fail	Test262Error: Actual [20, 30, 40] and expected [20, 20, 20, 60] should have the same contents. (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/find/predicate-is-not-callable-throws.js	fail/assertion_fail	Test262Error: object Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/from/set-value-abrupt-completion.js	fail/assertion_fail	Test262Error: interrupted source iteration Expected SameValue(«1», «[object Object]») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int8Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «1») to be true
+test/built-ins/TypedArray/prototype/Symbol.toStringTag/this-has-no-typedarrayname-internal.js	fail/type_error	TypeError: Cannot access property on null or undefined at 766:14
+test/built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-returns-another-instance.js	fail/type_error	TypeError: TypedArray species constructor returned a non-TypedArray
+test/built-ins/TypedArrayConstructors/Uint16Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/Uint8Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/Symbol.iterator/not-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor invoked with a non-function value
+test/built-ins/TypedArrayConstructors/of/custom-ctor-returns-other-instance.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/TypedArray/invoked.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/non-extensible-redefine-key.js	fail/assertion_fail	Test262Error: Expected obj[foo] to be enumerable, but was not. (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/toString/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-value.js	fail/illegal_cast	illegal cast [in __closure_134() ← testWithAllTypedArrayConstructors ← testWithTypedArrayConstructors ← __module_init_chunk_2]
+test/built-ins/TypedArray/prototype/reduceRight/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/indexOf/invoked-as-method.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArray/prototype/fill/coerced-end-detach.js	fail/assertion_fail	Test262Error: Detachment when coercing end should throw TypeError Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-tostring.js	fail/assertion_fail	Test262Error: abrupt completion from ToNumber(sample) Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/indexOf/no-arg.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «-1») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/lastIndexOf/fromIndex-minus-zero.js	fail/assertion_fail	Test262Error: -0 [0] Expected SameValue(«-1», «0») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/from/mapfn-is-not-callable.js	fail/assertion_fail	Test262Error: IsCallable(mapfn) check occurs before getting source[@@iterator] Expected SameValue(«14», «0») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/length-arg/custom-proto-access-throws.js	compile_error/runtime_error	L41:5 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/TypedArrayConstructors/prototype/findIndex/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/HasProperty/inherited-property.js	fail/assertion_fail	Test262Error: subarray Expected SameValue(«false», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws.js	compile_error/runtime_error	L45:5 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/TypedArrayConstructors/Uint16Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «2») to be true
+test/built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-to-primitive.js	fail/assertion_fail	Test262Error: abrupt completion from sample @@toPrimitive Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/sort/sortcompare-with-no-tostring.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/forEach/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/fill/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError but got a Test262Error (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/keys/detached-buffer.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_keys (#2961)
+test/built-ins/TypedArray/prototype/join/return-abrupt-from-separator-symbol.js	fail/illegal_cast	illegal cast [in __closure_119() ← __closure_113 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/TypedArrayConstructors/prototype/some/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-inherited.js	fail/assertion_fail	Test262Error: used defaultCtor but still checks the inherited .constructor Expected SameValue(«true», «undefined») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js	fail/assertion_fail	Test262Error: should throw TypeError as array is detached Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/findIndex/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Float64Array/prototype/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 435:11
+test/built-ins/TypedArrayConstructors/Int16Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «2») to be true
+test/built-ins/TypedArray/prototype/Symbol.toStringTag/invoked-as-func.js	fail/type_error	TypeError: Cannot access property on null or undefined at 764:14
+test/built-ins/TypedArray/prototype/Symbol.toStringTag/this-is-not-object.js	fail/type_error	TypeError: Cannot access property on null or undefined at 764:14
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-proto.js	compile_error/other	L38:8 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/TypedArray/prototype/map/speciesctor-get-species-custom-ctor-invocation.js	fail/assertion_fail	Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/sort/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-typed-array.js	compile_error/other	L32:8 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/TypedArray/from/iter-access-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/TypedArray/prototype/entries/invoked-as-method.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_entries (#2961)
+test/built-ins/TypedArray/prototype/map/speciesctor-get-ctor-returns-throws.js	fail/assertion_fail	Test262Error: false Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/toLocaleString/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/prototype/copyWithin/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/desc-value-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/keys/iter-prototype.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_keys (#2961)
+test/built-ins/TypedArray/prototype/sort/detached-buffer.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_sort (#2961)
+test/built-ins/TypedArray/prototype/slice/return-abrupt-from-start-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/result-is-new-instance-from-same-ctor.js	fail/assertion_fail	Test262Error: instanceof (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/join/detached-buffer.js	fail/illegal_cast	illegal cast [in __closure_140() ← __closure_133 ← __call_fn_method_3 ← __apply_closure]
+test/built-ins/TypedArrayConstructors/Uint8Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/from/mapfn-arguments.js	fail/assertion_fail	Test262Error: Expected SameValue(«3», «2») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/filter/callbackfn-arguments-without-thisarg.js	fail/assertion_fail	Test262Error: results[0][2] - this Expected SameValue(«42,43,44», «42,43,44») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/values/detached-buffer.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_values (#2961)
+test/built-ins/TypedArrayConstructors/prototype/map/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Float32Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-tostring.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/join/invoked-as-method.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/ctors/no-args/custom-proto-access-throws.js	compile_error/runtime_error	L41:5 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/TypedArrayConstructors/Float32Array/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-object.js	compile_error/other	L32:8 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/built-ins/TypedArray/prototype/every/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/includes/searchelement-not-integer.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/of/length.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/TypedArray/prototype/slice/length.js	fail/assertion_fail	Test262Error: length descriptor value should be 2; length value should be 2
+test/built-ins/TypedArray/prototype/toLocaleString/calls-valueof-from-each-value.js	fail/assertion_fail	Test262Error: returns expected value Expected SameValue(«"42,0"», «"hacks1,hacks2"») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/some/callbackfn-detachbuffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «2») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/values/return-itor.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_values (#2961)
+test/built-ins/TypedArrayConstructors/Int32Array/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «4») to be true
+test/built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/find/detached-buffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Int8Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/prototype/reduce/inherited.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint16Array/prototype/proto.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArray/prototype/constructor.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «[object Function]») to be true
+test/built-ins/TypedArray/prototype.js	fail/assertion_fail	Test262Error: prototype descriptor should not be enumerable; prototype descriptor should not be writable; prototype descriptor should not be configurable
+test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/throw-type-error-before-custom-proto-access.js	compile_error/runtime_error	L47:5 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes.js	fail/assertion_fail	Test262Error: result1 (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArrayConstructors/Uint8ClampedArray/prototype/BYTES_PER_ELEMENT.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «1») to be true
+test/built-ins/TypedArray/prototype/Symbol.toStringTag/prop-desc.js	fail/type_error	TypeError: Cannot access property on null or undefined at 1282:18
+test/built-ins/TypedArray/prototype/findIndex/predicate-is-not-callable-throws.js	fail/assertion_fail	Test262Error: {} Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-returns-another-instance.js	fail/type_error	TypeError: TypedArray species constructor returned a non-TypedArray
+test/built-ins/TypedArray/prototype/includes/return-abrupt-tointeger-fromindex.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/every/callbackfn-detachbuffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «2») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/lastIndexOf/return-abrupt-tointeger-fromindex.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-valueof.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)
+test/built-ins/TypedArray/prototype/subarray/byteoffset-with-detached-buffer.js	fail/type_error	TypeError: TypeError: Cannot perform operation on a detached ArrayBuffer

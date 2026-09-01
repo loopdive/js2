@@ -1,0 +1,6 @@
+language/expressions/arrow-function/lexical-new.target-closure-returned.js
+language/expressions/arrow-function/lexical-new.target.js
+language/expressions/new.target/asi.js
+language/expressions/new.target/value-via-new.js
+language/expressions/new.target/value-via-super-call.js
+language/global-code/new.target-arrow.js

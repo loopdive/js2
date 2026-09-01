@@ -1,0 +1,7 @@
+/*---
+description: probe .tmp/es2015/probes5195/method-named-new.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C { new() { return 42; } }
+var o = new C();
+assert.sameValue(o['new'](), 42);

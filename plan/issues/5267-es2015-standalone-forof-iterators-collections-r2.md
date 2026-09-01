@@ -735,3 +735,37 @@ The 4 generator-inside-accessor rows stay in X.
 - #3371, #2046, #5198, #680 / #2864 — owners of the X rows.
 - Handover: `plan/agent-context/es2015-standalone-session-handover.md`
   (draft PR #5225 verdict, method notes).
+
+## Suspended Work (2026-09-01T21:56Z — user-requested 2-hour pause)
+
+- **Branch**: local lane branch `worktree-agent-a2fe6fd871d2d1eef` at `b67a7dd3f`
+  (WIP snapshot commit on top of base `881ee7095`; NOT pushed — the lane's full
+  diff is the durable patch `plan/agent-context/es2015-suspend-2026-09-01/patches/lane-5267.mbox`,
+  apply with `git am --3way` onto current main).
+- **Worktree at suspension**: `/home/user/js2/.claude/worktrees/agent-a2fe6fd871d2d1eef`
+  (treat as gone; the patch is the truth).
+- **State**: mid-implementation — Steps A, A-2 and B landed and gate-validated;
+  Steps C–G not started; the snapshot itself is unverified as a commit (taken
+  by the lead with hooks bypassed).
+- **Verified so far** (implementer's own runs, standalone, in-process, 148
+  comparable rows of `forof-head-safe`): before 1 pass / 145 fail / 2 CE →
+  after **20 pass / 123 fail / 5 CE = +19, 0 pass regressions**. Cluster A
+  17/25 flipped, A-2 2/2, cluster B 0/17 (the live `$__IterRec` mechanism works —
+  17/17 focused tests in `tests/issue-5267-es2015-forof-iterators-r2.test.ts` —
+  but the test262 harness shape still fails at `assert.sameValue(result.value, …)`).
+  Controls 28/28. Gates green: LOC, func, coercion, oracle-ratchet, dead-exports,
+  TS7 typecheck.
+- **NOT yet verified / next steps in order**: (1) `pnpm run test:equivalence:gate`;
+  (2) the related-suite run (31 collection/iterator vitest files) that was in
+  flight; (3) root-cause the cluster-B harness-shape failure (`result.value`
+  read on the live record) — 17 rows; (4) commit + results section; (5) Steps
+  C → D → F → E → G per the plan.
+- **Traps for the resumer**: `Map`/`WeakMap` `iterator-item-{first,second}-entry-returns-abrupt.js`
+  (4 rows) now **hang** (infinite drive loop): an accessor installed via
+  `Object.defineProperty(arr, 0, {get})` is a silent no-op in the standalone
+  lane, so the test's deliberately infinite iterator never throws — exclude
+  them from head runs and resolve (or accept the risk) before CI. Per-row
+  `--isolate` runs pay ~15–25 s JIT warm-up per process and report bogus
+  compile-timeout CEs; measure in-process with a throwaway warm-up row. A/B on
+  the same file showed no slowdown (12.1 s new vs 14.6 s base). The lane base
+  (`881ee7095`) predates PRs #5434/#5437 (docs only) — merge, never rebase.

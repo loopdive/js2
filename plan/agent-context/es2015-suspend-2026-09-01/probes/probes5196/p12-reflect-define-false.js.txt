@@ -1,0 +1,5 @@
+var o = {}; o.p1 = 'foo';
+Object.freeze(o);
+var r = Reflect.defineProperty(o, 'p1', { value: 43 });
+if (r !== false) throw new Error("Reflect.defineProperty on frozen must be false, got " + r);
+if (o.p1 !== 'foo') throw new Error("value changed");

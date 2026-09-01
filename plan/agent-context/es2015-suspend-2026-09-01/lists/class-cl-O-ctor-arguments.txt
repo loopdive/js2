@@ -1,0 +1,3 @@
+language/statements/class/arguments/access.js
+language/statements/class/arguments/default-constructor.js
+language/statements/class/subclass/class-definition-evaluation-empty-constructor-heritage-present.js

@@ -1,0 +1,2 @@
+built-ins/NativeErrors/message_property_native_error.js
+built-ins/Error/prototype/stack/getter-subclass.js

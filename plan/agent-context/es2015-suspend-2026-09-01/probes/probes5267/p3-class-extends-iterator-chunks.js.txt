@@ -1,0 +1,12 @@
+/*---
+description: class extends Iterator source for chunks (protocol tail probe)
+---*/
+var returnReads = 0;
+class T extends Iterator {
+  next() { throw new Test262Error(); }
+  get return() { returnReads++; throw new TypeError(); }
+}
+var it = new T().chunks(1);
+var got = null;
+try { it.next(); } catch (e) { got = e; }
+assert.sameValue(got instanceof Test262Error, true, 'next() error identity; returnReads=' + returnReads + ' got=' + got);

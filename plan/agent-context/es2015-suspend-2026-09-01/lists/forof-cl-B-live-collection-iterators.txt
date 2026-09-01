@@ -1,0 +1,17 @@
+built-ins/Map/prototype/clear/map-data-list-is-preserved.js
+built-ins/Map/prototype/delete/does-not-break-iterators.js
+built-ins/Map/prototype/entries/returns-iterator-empty.js
+built-ins/Map/prototype/entries/returns-iterator.js
+built-ins/Map/prototype/keys/returns-iterator-empty.js
+built-ins/Map/prototype/keys/returns-iterator.js
+built-ins/Map/prototype/values/returns-iterator-empty.js
+built-ins/Map/prototype/values/returns-iterator.js
+built-ins/MapIteratorPrototype/next/iteration-mutable.js
+built-ins/MapIteratorPrototype/next/iteration.js
+built-ins/Set/prototype/entries/returns-iterator-empty.js
+built-ins/Set/prototype/entries/returns-iterator.js
+built-ins/Set/prototype/values/returns-iterator-empty.js
+built-ins/Set/prototype/values/returns-iterator.js
+built-ins/Set/prototype/values/values-iteration-mutable.js
+built-ins/SetIteratorPrototype/next/iteration-mutable.js
+built-ins/SetIteratorPrototype/next/iteration.js

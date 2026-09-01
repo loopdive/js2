@@ -1,0 +1,10 @@
+/*---
+description: probe .tmp/es2015/probes5195/extends-nonctor.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var threw = false;
+try { var C = class extends (() => {}) {}; } catch (e) { threw = e instanceof TypeError; }
+assert.sameValue(threw, true, 'extends arrow throws TypeError');
+var threw2 = false;
+try { class D extends 42 {} } catch (e) { threw2 = e instanceof TypeError; }
+assert.sameValue(threw2, true, 'extends 42 throws TypeError');

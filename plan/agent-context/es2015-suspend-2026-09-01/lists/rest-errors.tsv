@@ -1,0 +1,18 @@
+test/language/computed-property-names/to-name-side-effects/class.js	fail/assertion_fail	Test262Error: Actual [] and expected [0] should have the same contents. order set for key1
+test/language/computed-property-names/object/method/symbol.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/language/computed-property-names/object/accessor/getter.js	fail/assertion_fail	Test262Error: The value of `A[s]` is `Symbol()` Expected SameValue(«undefined», «Symbol()») to be true
+test/language/expressions/comma/tco-final.js	fail/range_error	Maximum call stack size exceeded
+test/annexB/language/function-code/function-redeclaration-switch.js	compile_error/runtime_error	L32:12 Cannot redeclare block-scoped variable 'a'
+test/language/computed-property-names/to-name-side-effects/numbers-class.js	fail/assertion_fail	Test262Error: Actual [] and expected [0] should have the same contents. order set for key1
+test/language/computed-property-names/object/accessor/getter-super.js	fail/assertion_fail	Test262Error: The value of `object.a` is `'a proto m'`. Defined as `get ['a']() { return 'a' + super.m(); }` Expected SameValue(«"anull"», «"a proto m"») to be true
+test/language/expressions/logical-or/tco-right.js	fail/range_error	Maximum call stack size exceeded
+test/language/expressions/logical-and/tco-right.js	fail/range_error	Maximum call stack size exceeded
+test/language/computed-property-names/object/accessor/setter-super.js	fail/assertion_fail	Test262Error: The value of `value` is `'a 2'`, after executing `object.a = 2;` Expected SameValue(«undefined», «"a 2"») to be true
+test/language/computed-property-names/object/method/super.js	fail/assertion_fail	Test262Error: `object.a()` returns `'a proto m'`, after executing `Object.setPrototypeOf(object, proto);` Expected SameValue(«"anull"», «"a proto m"») to be true
+test/language/expressions/typeof/symbol.js	fail/assertion_fail	Test262Error: typeof Object(Symbol()) === 'object' Expected SameValue(«"symbol"», «"object"») to be true
+test/annexB/language/statements/labeled/function-declaration.js	compile_error/other	L12:9 Function declaration in a labeled statement within iteration/if body is a SyntaxError
+test/language/computed-property-names/object/accessor/setter.js	fail/assertion_fail	Test262Error: The value of `calls` is `1`, after executing `A.a = 'A'; A[1] = 1; A[s] = s;` Expected SameValue(«2», «3») to be true
+test/language/computed-property-names/basics/symbol.js	fail/assertion_fail	Test262Error: The value of `object[sym2]` is `'D'`. Defined in `object` as `[ID(sym2)]: 'D'` Expected SameValue(«undefined», «"D"») to be true
+test/annexB/language/literals/regexp/identity-escape.js	compile_error/other	L19:9 Codegen error: standalone RegExp engine does not support Unicode property escape \P{…} — #1539 Phase 2d (#1539 Phase 2a). Use a supported pattern/flag set, or recompile with a JS host target.
+test/language/expressions/new/non-ctor-err-realm.js	fail/assertion_fail	Test262Error: production including Arguments Expected a TypeError to be thrown but no exception was thrown at all
+test/language/computed-property-names/object/method/number.js	fail/illegal_cast	illegal cast [in __module_init()]

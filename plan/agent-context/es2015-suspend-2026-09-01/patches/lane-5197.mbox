@@ -1,0 +1,1210 @@
+From 772cd49e8c344c615b3ffc4603e9fdc8c3f48653 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 20:09:04 +0000
+Subject: [PATCH 1/2] =?UTF-8?q?fix(#5197):=20promise=20resolve/reject=20es?=
+ =?UTF-8?q?cape=20as=20built-in=20function=20objects=20=E2=80=94=20Slice?=
+ =?UTF-8?q?=20B?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+§27.2.1.3.1/.2 make a promise resolve/reject function an anonymous BUILT-IN
+function object. Standalone materialized them as a bare `$__promise_settle_cap`
+closure struct: callable, with a `length` inherited from the `$arity` header,
+but with no `name`, `null` for `[[Prototype]]`, only one own property name, and
+no [[Construct]] refusal — so every reflective row over the escaped closure
+failed.
+
+Mechanism — reuse the carrier, do not add a second one. `$__promise_settle_cap`
+now SUBTYPES the repository's builtin-function metadata type
+(`ensureBuiltinFnMetaType`, `{name: "", length: 1}`) instead of the bare
+signature wrapper, so the finalize-time arms that already answer `name`/`length`
+/gOPD/delete/getOwnPropertyNames (`fillBuiltinFnMeta`) and
+isExtensible/isFrozen/isSealed/getPrototypeOf (`prependBuiltinFnObjectSemantics`)
+cover it for free. Both settle functions share ONE metadata entry because the
+spec gives them identical `{name, length}`. The capture moves from field 3 to
+field 5; `capPromiseFieldIdx` carries that index and one factory
+(`buildPromiseSettleClosureInstrs`) owns the `struct.new` operand order for all
+three mint sites (executor, executor-value, thenable job), so they cannot drift.
+
+§7.2.4 IsConstructor at a dynamic `new` site: a new `__builtinfn_is_builtin`
+native — filled from the SAME finalized predicate as the integrity helpers, so
+the answers cannot disagree — lets the two standalone unknown-ctor bases throw
+the spec TypeError for a built-in function value. Deliberately narrow: it fires
+only for a registered metadata family, never for a user `function f(){}`, and
+emits nothing when the object runtime is absent. Placed after
+ArgumentListEvaluation, per §13.3.5.1 step 3.
+
+Measured, `built-ins/Promise/**` ES2015 corpus, `--standalone`, 140 rows:
+baseline 0 pass / 134 fail / 6 compile_error. Slice B flips six rows to pass —
+`{resolve,reject}-function-{name,property-order,prototype}.js` — with zero
+possible regression inside the corpus (nothing passed before) and all six
+verified host-import clean (#5272: the in-process probe does not apply that
+check, so it was run separately).
+
+Not fixed here, and why: the six `executor-function-*` rows exercise
+GetCapabilitiesExecutor via `Promise.resolve.call(NotPromise)` and need Slice D's
+generic NewPromiseCapability; `exec-args.js` and the two `*-nonconstructor.js`
+rows fail earlier, in the harness-level `var` binding (the receiver reads null
+before any of this is consulted) — the same error text as at baseline.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+
+✓
+---
+ .../5197-es2015-standalone-promise-r2.md      |  22 +++-
+ src/codegen/async-scheduler.ts                | 104 ++++++++++++++----
+ src/codegen/expressions/new-super.ts          |  42 +++++++
+ src/codegen/object-runtime.ts                 |  21 ++++
+ src/codegen/promise-executor.ts               |  23 ++--
+ tests/issue-5197-es2015-promise-r2.test.ts    |  96 +++++++++++++++-
+ 6 files changed, 271 insertions(+), 37 deletions(-)
+
+diff --git a/plan/issues/5197-es2015-standalone-promise-r2.md b/plan/issues/5197-es2015-standalone-promise-r2.md
+index 592aeff7e..3c35e654f 100644
+--- a/plan/issues/5197-es2015-standalone-promise-r2.md
++++ b/plan/issues/5197-es2015-standalone-promise-r2.md
+@@ -4,7 +4,27 @@ title: "ES2015 standalone promise — r2 residual pass"
+ status: in-progress
+ sprint: current
+ created: 2026-08-29
+-updated: 2026-08-30
++updated: 2026-09-01
++loc-budget-allow:
++  # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
++  # metadata carrier. Each grant lives in the module that already OWNS the
++  # mechanism being extended, so there is no smaller home for it:
++  #   async-scheduler — mints `$__promise_settle_cap`; the metadata supertype and
++  #     the one `struct.new` factory the three mint sites share belong beside it.
++  #   object-runtime  — owns the `__builtinfn_*` native family; the new
++  #     `__builtinfn_is_builtin` is one more member, filled from the SAME
++  #     finalized predicate as isExtensible/getPrototypeOf.
++  #   new-super       — owns every `new`-site arm; §7.2.4 IsConstructor for a
++  #     built-in function is a `new`-site refusal, not a Promise concern.
++  - src/codegen/async-scheduler.ts
++  - src/codegen/object-runtime.ts
++  - src/codegen/expressions/new-super.ts
++func-budget-allow:
++  # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
++  # reservation block, and two three-line guard call sites on the `new` path.
++  - src/codegen/object-runtime.ts::ensureObjectRuntime
++  - src/codegen/expressions/new-super.ts::compileNewExpression
++  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
+ priority: high
+ horizon: m
+ feasibility: hard
+diff --git a/src/codegen/async-scheduler.ts b/src/codegen/async-scheduler.ts
+index 6ce6d1d58..db9b065ea 100644
+--- a/src/codegen/async-scheduler.ts
++++ b/src/codegen/async-scheduler.ts
+@@ -17,7 +17,7 @@
+ //                   wrappers, chained-resolution machinery, rejection
+ //                   propagation.
+ 
+-import type { Instr, LocalDef, ValType } from "../ir/types.js";
++import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
+ import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+ import { allocLocal } from "./context/locals.js";
+ import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
+@@ -31,12 +31,12 @@ import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stab
+ // never at module evaluation). The other three are cycle-free leaves relative
+ // to this module.
+ import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
+-import {
+-  CLOSURE_CAPTURE_FIELD_BASE,
+-  closureArityField,
+-  closureBagField,
+-  closureBagInitInstr,
+-} from "./closures/funcref-wrapper-types.js";
++import { closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
++// (#5197 Slice B) The settle closures escape to user code as real function
++// objects, so they carry the standard builtin-function metadata subtype rather
++// than a Promise-local imitation. Cycle-free: builtin-fn-meta.ts imports only
++// the closure-header leaf and func-space.
++import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
+ import { emitWasiErrorConstructor } from "./registry/error-types.js";
+ import { stringConstantExternrefInstrs } from "./native-strings.js";
+ import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+@@ -965,12 +965,57 @@ export interface PromiseExecutorClosures {
+   rejectClFuncIdx: number;
+   /** The `$__promise_settle_cap` struct typeIdx (subtype of the canonical `(externref)->()` wrapper). */
+   capTypeIdx: number;
++  /**
++   * (#5197 Slice B) Field index of the captured `$Promise` inside
++   * `$__promise_settle_cap`. NOT `CLOSURE_CAPTURE_FIELD_BASE`: the cap struct
++   * subtypes the §27.2.1.3 builtin-function METADATA type, whose two extra
++   * header slots (`bfnstate`, `bfnid`) sit between the closure header and the
++   * capture. Every read/write of the capture derives from this, never a literal.
++   */
++  capPromiseFieldIdx: number;
++  /**
++   * (#5197 Slice B) The `$__promise_settle_meta` typeIdx — the shared
++   * builtin-function metadata subtype (`{name: "", length: 1}`) both settle
++   * closures carry, so `resolve`/`reject` escape as real function objects.
++   */
++  capMetaTypeIdx: number;
+   /** `$Promise` struct typeIdx. */
+   promiseTypeIdx: number;
+   /** `__promise_reject(promise, reason) -> reason` funcIdx (used by the executor-throw catch). */
+   rejectFuncIdx: number;
+ }
+ 
++/**
++ * (#5197 Slice B) The `struct.new` sequence for one settle closure VALUE
++ * (`resolve` / `reject`), leaving `(ref $__promise_settle_cap)` on the stack.
++ *
++ * A FACTORY, not a shared constant: the three mint sites splice the result into
++ * three different function bodies, and aliasing one `Instr[]` across them would
++ * be double-remapped by the late-import index walks (the `ref.func` operand is
++ * a DEFINED-function index).
++ *
++ * `promiseInstrs` must leave the captured `(ref $Promise)` on the stack.
++ */
++export function buildPromiseSettleClosureInstrs(
++  closures: PromiseExecutorClosures,
++  clFuncIdx: number,
++  promiseInstrs: readonly Instr[],
++): Instr[] {
++  return [
++    { op: "ref.func", funcIdx: clFuncIdx },
++    { op: "i32.const", value: 1 }, // (#3673) $arity — settle fns take 1 arg
++    closureBagInitInstr(), // (#4241) $bag
++    // (#5197) `bfnstate` delete-bits + the `bfnid` metadata anchor, in the
++    // layout `ensureBuiltinFnMetaType` fixed. Both settle functions share ONE
++    // metadata entry because §27.2.1.3.1/.2 give them identical `{name: "",
++    // length: 1}`; the id therefore selects that single entry for both.
++    { op: "i32.const", value: 0 },
++    { op: "i32.const", value: closures.capMetaTypeIdx },
++    ...promiseInstrs,
++    { op: "struct.new", typeIdx: closures.capTypeIdx },
++  ];
++}
++
+ /**
+  * Idempotently mint the two capturing settle-closure trampolines and register
+  * the `$__promise_settle_cap` wrapper subtype. Cached on the context.
+@@ -1003,19 +1048,38 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
+   const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [{ kind: "externref" }], []);
+   if (!wrapper) return null;
+ 
++  // (#5197 Slice B) §27.2.1.3.1/.2 — a promise resolve/reject function is an
++  // anonymous BUILT-IN function object: `typeof === "function"`,
++  // `[[Prototype]] === %Function.prototype%`, extensible, own `length` (1) then
++  // `name` ("") with `{writable:F, enumerable:F, configurable:T}`, and no
++  // [[Construct]]. All of that is exactly what the repository's builtin-function
++  // metadata carrier already answers (`builtin-fn-meta.ts` + the finalize-time
++  // arms in `fillBuiltinFnMeta` / `prependBuiltinFnObjectSemantics`), so the cap
++  // struct SUBTYPES that carrier instead of introducing a second function-object
++  // representation. Both settle functions share ONE metadata entry: the spec
++  // gives them identical `{name, length}`, and the entry is keyed by
++  // (name,length) identity, not by which of the two is being materialized.
++  const capMetaTypeIdx = ensureBuiltinFnMetaType(
++    ctx,
++    wrapper.structTypeIdx,
++    wrapper.closureInfo,
++    "promise:settle",
++    "",
++    1,
++  );
++  const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
++  const capPromiseFieldIdx = capMetaFields.length;
+   const capTypeIdx = ctx.mod.types.length;
+   ctx.mod.types.push({
+     kind: "struct",
+     name: "$__promise_settle_cap",
+     fields: [
+-      // Field 0 is inherited from the wrapper root (funcref); it MUST be
+-      // redeclared identically in the subtype — as must the #3673 $arity slot.
+-      { name: "func", type: { kind: "funcref" }, mutable: false },
+-      closureArityField(),
+-      closureBagField(),
++      // The metadata supertype's fields MUST be redeclared verbatim (closure
++      // header + `bfnstate` + `bfnid`); the capture is appended after them.
++      ...capMetaFields.map((f) => ({ ...f })),
+       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
+     ],
+-    superTypeIdx: wrapper.structTypeIdx,
++    superTypeIdx: capMetaTypeIdx,
+   });
+ 
+   // Mint both trampolines UP-FRONT (stable-regime handles) before any code
+@@ -1032,7 +1096,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
+   const makeBody = (settleFuncIdx: number): Instr[] => [
+     { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
+     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
+-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE }, // captured (ref $Promise)
++    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: capPromiseFieldIdx }, // captured (ref $Promise)
+     { op: "local.get", index: 1 }, // value: externref
+     { op: "call", funcIdx: settleFuncIdx }, // settle -> externref
+     { op: "drop" }, // trampoline result type is () — discard the settled value
+@@ -1060,6 +1124,8 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
+     resolveClFuncIdx,
+     rejectClFuncIdx,
+     capTypeIdx,
++    capPromiseFieldIdx,
++    capMetaTypeIdx,
+     promiseTypeIdx,
+     rejectFuncIdx,
+   };
+@@ -1193,12 +1259,10 @@ function ensurePromiseThenableSubstrate(
+     { name: "$argvec", type: { kind: "externref" } },
+   ];
+   const emitSettleCap = (clFuncIdx: number): Instr[] => [
+-    { op: "ref.func", funcIdx: clFuncIdx },
+-    { op: "i32.const", value: 1 }, // (#3673) $arity — settle callbacks take 1 arg
+-    closureBagInitInstr(), // (#4241) $bag
+-    { op: "local.get", index: promiseLocal },
+-    { op: "ref.as_non_null" },
+-    { op: "struct.new", typeIdx: execClosures.capTypeIdx },
++    ...buildPromiseSettleClosureInstrs(execClosures, clFuncIdx, [
++      { op: "local.get", index: promiseLocal },
++      { op: "ref.as_non_null" },
++    ]),
+     { op: "extern.convert_any" },
+   ];
+   const jobTryBody: Instr[] = [
+diff --git a/src/codegen/expressions/new-super.ts b/src/codegen/expressions/new-super.ts
+index aad1d2fcc..c4aa72818 100644
+--- a/src/codegen/expressions/new-super.ts
++++ b/src/codegen/expressions/new-super.ts
+@@ -3247,6 +3247,44 @@ function tryCompileNativeConstructFromValue(
+  * fallback is new, so there is no perf or shape change for statically-resolved
+  * construction.
+  */
++/**
++ * (#5197 Slice B) §7.2.4 IsConstructor for a runtime callee that turned out to
++ * be one of the compiler's own §17 built-in function objects — a promise
++ * `resolve`/`reject`, a GetCapabilitiesExecutor, a reified `Array.isArray`, …
++ *
++ * "Built-in function objects that are not identified as constructors do not
++ * implement the [[Construct]] internal method", so `new resolveFn()` is a
++ * TypeError. Without this the standalone unknown-ctor base evaluated to a bare
++ * null externref and the `assert.throws(TypeError, …)` rows silently passed
++ * through (`built-ins/Promise/{resolve,reject}-function-nonconstructor.js`).
++ *
++ * Deliberately narrow: it fires ONLY for a value that `ref.test`s as a
++ * registered builtin-function metadata family. A user `function f(){}` reaching
++ * this base is untouched, so this cannot convert a working construction into a
++ * throw. Emits NOTHING when the object runtime is absent (host/gc mode, or a
++ * standalone module with no reified builtin function), keeping those byte-identical.
++ *
++ * `descLocal` is the `anyref` slot already holding the evaluated callee.
++ */
++function emitBuiltinFnNotAConstructorGuard(ctx: CodegenContext, fctx: FunctionContext, descLocal: number): void {
++  const isBuiltinIdx = ctx.funcMap.get("__builtinfn_is_builtin");
++  if (isBuiltinIdx === undefined) return;
++  const guardBody: Instr[] = [];
++  const savedBody = fctx.body;
++  fctx.body = guardBody;
++  try {
++    emitThrowTypeError(ctx, fctx, "is not a constructor");
++  } finally {
++    fctx.body = savedBody;
++  }
++  fctx.body.push(
++    { op: "local.get", index: descLocal },
++    { op: "extern.convert_any" },
++    { op: "call", funcIdx: isBuiltinIdx },
++    { op: "if", blockType: { kind: "empty" }, then: guardBody },
++  );
++}
++
+ function emitDynamicNewFallback(
+   ctx: CodegenContext,
+   fctx: FunctionContext,
+@@ -3875,6 +3913,7 @@ function emitDynamicNewFallback(
+     const base: Instr[] = [];
+     const savedBase = fctx.body;
+     fctx.body = base;
++    emitBuiltinFnNotAConstructorGuard(ctx, fctx, descLocal);
+     emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
+     fctx.body = savedBase;
+     noMatchBase = base;
+@@ -6389,6 +6428,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
+             fctx.body.push({ op: "local.set", index: aLocal });
+             taArgLocals.push(aLocal);
+           }
++          // (#5197) §13.3.5.1 step 3 runs AFTER ArgumentListEvaluation, so the
++          // IsConstructor refusal is emitted here rather than beside the callee.
++          emitBuiltinFnNotAConstructorGuard(ctx, fctx, taDescLocal);
+           emitTaDynCtorConstructFromLocals(ctx, fctx, taDescLocal, taArgLocals);
+           // (#4196) A `$__bound_fn` is not a `$__ta_ctor`, so the arm above
+           // yields null for it. Retry as §10.4.1.2 [[Construct]] on null.
+diff --git a/src/codegen/object-runtime.ts b/src/codegen/object-runtime.ts
+index 67baeb0c3..95f22782e 100644
+--- a/src/codegen/object-runtime.ts
++++ b/src/codegen/object-runtime.ts
+@@ -1420,6 +1420,23 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+       ],
+       [{ op: "i32.const", value: 0 }],
+     );
++    // (#5197) `__builtinfn_is_builtin(v) -> i32` — 1 iff v is one of the §17
++    // built-in function objects this module materializes (a registered
++    // `ctx.builtinFnMetaByTypeIdx` family). Filled from the SAME finalized
++    // predicate `prependBuiltinFnObjectSemantics` uses for
++    // `isExtensible`/`getPrototypeOf`, so the three answers cannot disagree
++    // about what counts as a builtin function object.
++    //
++    // Its consumer is §7.2.4 IsConstructor at a dynamic `new` site: a built-in
++    // function that is not identified as a constructor has no [[Construct]], so
++    // `new resolveFn()` must throw a TypeError rather than evaluate to null.
++    registerNative(
++      "__builtinfn_is_builtin",
++      [{ kind: "externref" }],
++      [{ kind: "i32" }],
++      [],
++      [{ op: "i32.const", value: 0 }],
++    );
+   }
+   const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
+   const bfnGopdIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
+@@ -11942,6 +11959,10 @@ function prependBuiltinFnObjectSemantics(ctx: CodegenContext, typeIdxs: readonly
+     ["__object_isExtensible", 1],
+     ["__object_isFrozen", 0],
+     ["__object_isSealed", 0],
++    // (#5197) `__builtinfn_is_builtin` answers the same question the three
++    // integrity predicates are being taught, so it is filled from the same
++    // predicate rather than a second `ref.test` chain that could drift.
++    ["__builtinfn_is_builtin", 1],
+   ] as const) {
+     const integrityFn = findFn(name);
+     if (!integrityFn) continue;
+diff --git a/src/codegen/promise-executor.ts b/src/codegen/promise-executor.ts
+index d63b50352..f6381868f 100644
+--- a/src/codegen/promise-executor.ts
++++ b/src/codegen/promise-executor.ts
+@@ -52,6 +52,9 @@ import {
+   // module already imports from async-scheduler (the reverse import would be
+   // an eval-time cycle).
+   ensurePromiseExecutorClosures,
++  // (#5197 Slice B) One factory for the settle-closure `struct.new` sequence —
++  // the metadata slots must agree byte-for-byte across all three mint sites.
++  buildPromiseSettleClosureInstrs,
+   isStandalonePromiseActive,
+ } from "./async-scheduler.js";
+ 
+@@ -120,7 +123,7 @@ export function emitStandalonePromiseFromExecutor(
+     ctx.liveBodies.delete(execInstrs);
+     return false;
+   }
+-  const { resolveClFuncIdx, rejectClFuncIdx, capTypeIdx, promiseTypeIdx, rejectFuncIdx } = closures;
++  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+ 
+   // 2. Allocate the pending $Promise: {state: PENDING, value: null, callbacks: null}.
+   const pLocal = allocLocal(fctx, `__pexec_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
+@@ -133,13 +136,11 @@ export function emitStandalonePromiseFromExecutor(
+   fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
+ 
+   // 3. Materialise resolve / reject as capturing closure VALUES (externref):
+-  //    struct{ func: ref.func $cl, cap_promise: p } upcast to externref.
++  //    struct{ func: ref.func $cl, …builtin-fn metadata…, cap_promise: p }
++  //    upcast to externref. (#5197) The metadata slots make the escaped
++  //    `resolve`/`reject` real §27.2.1.3 function objects.
+   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
+-    fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
+-    fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
+-    fctx.body.push(closureBagInitInstr()); // (#4241) $bag
+-    fctx.body.push({ op: "local.get", index: pLocal });
+-    fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
++    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+     fctx.body.push({ op: "extern.convert_any" });
+     fctx.body.push({ op: "local.set", index: dst });
+   };
+@@ -248,7 +249,7 @@ export function emitStandalonePromiseFromExecutorValue(
+   const exnTag = ensureExnTag(ctx);
+   const closures = ensurePromiseExecutorClosures(ctx);
+   if (!closures) return false;
+-  const { resolveClFuncIdx, rejectClFuncIdx, capTypeIdx, promiseTypeIdx, rejectFuncIdx } = closures;
++  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+ 
+   // Open-`any` closure bridge + the boxed-any args vec builders.
+   ensureObjectRuntime(ctx);
+@@ -276,11 +277,7 @@ export function emitStandalonePromiseFromExecutorValue(
+ 
+   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
+   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
+-    fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
+-    fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
+-    fctx.body.push(closureBagInitInstr()); // (#4241) $bag
+-    fctx.body.push({ op: "local.get", index: pLocal });
+-    fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
++    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
+     fctx.body.push({ op: "extern.convert_any" });
+     fctx.body.push({ op: "local.set", index: dst });
+   };
+diff --git a/tests/issue-5197-es2015-promise-r2.test.ts b/tests/issue-5197-es2015-promise-r2.test.ts
+index 5034f7102..c1a1b3a2f 100644
+--- a/tests/issue-5197-es2015-promise-r2.test.ts
++++ b/tests/issue-5197-es2015-promise-r2.test.ts
+@@ -1,5 +1,6 @@
+ // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+-// #5197 — ES2015 Promise Symbol.species / Symbol.toStringTag object model.
++// #5197 — ES2015 Promise Symbol.species / Symbol.toStringTag object model
++// (Slice A) and the synthesized promise callables (Slice B).
+ 
+ import { existsSync } from "node:fs";
+ import { join } from "node:path";
+@@ -19,6 +20,18 @@ const EXACT_ROWS = [
+   "built-ins/Promise/Symbol.species/prop-desc.js",
+   "built-ins/Promise/Symbol.species/symbol-species.js",
+   "built-ins/Promise/prototype/Symbol.toStringTag.js",
++  // Slice B — the escaped `resolve`/`reject` are §27.2.1.3 built-in function
++  // objects. These four rows were `fail` in BOTH lanes at the 2026-09-01
++  // standalone baseline (0 pass / 134 fail / 6 CE over the 140-row corpus).
++  "built-ins/Promise/resolve-function-name.js",
++  "built-ins/Promise/reject-function-name.js",
++  "built-ins/Promise/resolve-function-property-order.js",
++  "built-ins/Promise/reject-function-property-order.js",
++  // `{resolve,reject}-function-prototype.js` also flipped fail -> pass, but
++  // reading `%Function.prototype%` pulls the native-prototype glue, which makes
++  // the runner instantiate the runtime-eval provider. That provider is a
++  // prebuilt artifact, absent in a bare checkout, so those two rows are covered
++  // by the compiled control below (which needs no runner) instead of here.
+ ] as const;
+ 
+ // The species checks intentionally use both the syntactic constructor and an
+@@ -85,9 +98,80 @@ async function runExactRow(relativePath: (typeof EXACT_ROWS)[number], lane: Lane
+   }
+ }
+ 
+-async function runControl(lane: Lane): Promise<number> {
++// Slice B — §27.2.1.3.1/.2 promise resolve/reject functions are anonymous
++// BUILT-IN function objects. The escaped `resolve` must therefore answer every
++// §10.2 function-object surface, not merely be callable: `typeof`, an own
++// `length` (1) BEFORE an own `name` (""), both `{writable:F, enumerable:F,
++// configurable:T}`, `%Function.prototype%` as [[Prototype]], extensible, no own
++// `prototype`, and no [[Construct]].
++//
++// The reads are deliberately DYNAMIC (runtime keys through `getOwnPropertyNames`
++// / `getOwnPropertyDescriptor` / `hasOwnProperty.call`) because that is what
++// test262's propertyHelper does and what a compile-time direct-access fold would
++// silently paper over.
++const SETTLE_CALLABLE_SOURCE = `
++  export function test(): number {
++    let resolveFn: any = undefined;
++    let rejectFn: any = undefined;
++    new Promise(function (resolve: any, reject: any) {
++      resolveFn = resolve;
++      rejectFn = reject;
++    });
++
++    if (typeof resolveFn !== "function") return 1;
++    if (typeof rejectFn !== "function") return 2;
++    if (resolveFn === rejectFn) return 3;
++
++    const names: any = Object.getOwnPropertyNames(resolveFn);
++    if (names.length !== 2) return 4;
++    if (names[0] !== "length") return 5;
++    if (names[1] !== "name") return 6;
++
++    const nameDesc: any = Object.getOwnPropertyDescriptor(resolveFn, "name");
++    if (
++      nameDesc === undefined ||
++      nameDesc.value !== "" ||
++      nameDesc.writable !== false ||
++      nameDesc.enumerable !== false ||
++      nameDesc.configurable !== true
++    ) return 7;
++    const lengthDesc: any = Object.getOwnPropertyDescriptor(rejectFn, "length");
++    if (
++      lengthDesc === undefined ||
++      lengthDesc.value !== 1 ||
++      lengthDesc.writable !== false ||
++      lengthDesc.enumerable !== false ||
++      lengthDesc.configurable !== true
++    ) return 8;
++
++    if (Object.getPrototypeOf(resolveFn) !== Function.prototype) return 9;
++    if (Object.getPrototypeOf(rejectFn) !== Function.prototype) return 10;
++    if (!Object.isExtensible(resolveFn)) return 11;
++    if (Object.prototype.hasOwnProperty.call(resolveFn, "prototype")) return 12;
++
++    let threw: any = 0;
++    try {
++      new resolveFn();
++    } catch (e) {
++      threw = e instanceof TypeError ? 1 : 2;
++    }
++    if (threw !== 1) return 13;
++
++    // The metadata must not cost the settle functions their actual job.
++    let settled: any = 0;
++    const p: any = new Promise(function (resolve: any) {
++      resolve(42);
++    });
++    p.then(function (v: any) {
++      settled = v;
++    });
++    return 0;
++  }
++`;
++
++async function runControl(lane: Lane, source: string = CONTROL_SOURCE): Promise<number> {
+   try {
+-    const result = await compile(CONTROL_SOURCE, {
++    const result = await compile(source, {
+       fileName: "issue-5197-es2015-promise-r2-control.ts",
+       ...(lane === "standalone" ? { target: "standalone" as const, nativeStrings: true } : {}),
+     });
+@@ -140,4 +224,10 @@ describe("#5197 ES2015 Promise Symbol.species and Symbol.toStringTag", () => {
+       await expect(runControl(lane)).resolves.toBe(0);
+     });
+   }
++
++  for (const lane of ["host", "standalone"] as const) {
++    it(`${lane}: escapes promise resolve/reject as real built-in function objects`, async () => {
++      await expect(runControl(lane, SETTLE_CALLABLE_SOURCE)).resolves.toBe(0);
++    });
++  }
+ });
+-- 
+2.43.0
+
+
+From df3746897161f52c15bdc87109f69db2e3024e41 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 21:57:25 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?wip(#5197):=20suspension=20snapshot=202026-?=
+ =?UTF-8?q?09-01T21:57Z=20=E2=9C=93?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Unverified WIP snapshot taken by the lead at user-requested suspension (plumbing commit per the /suspend protocol; gates not run).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+---
+ .../5197-es2015-standalone-promise-r2.md      | 122 +++++++++++
+ src/codegen/array-object-proto.ts             | 168 ++++++++++++++-
+ src/codegen/expressions/calls.ts              |  13 ++
+ tests/issue-5197-es2015-promise-r2.test.ts    |  30 ++-
+ .../issue-5197-promise-generic-catch.test.ts  | 195 ++++++++++++++++++
+ 5 files changed, 517 insertions(+), 11 deletions(-)
+ create mode 100644 tests/issue-5197-promise-generic-catch.test.ts
+
+diff --git a/plan/issues/5197-es2015-standalone-promise-r2.md b/plan/issues/5197-es2015-standalone-promise-r2.md
+index 3c35e654f..4a3624d8d 100644
+--- a/plan/issues/5197-es2015-standalone-promise-r2.md
++++ b/plan/issues/5197-es2015-standalone-promise-r2.md
+@@ -19,6 +19,12 @@ loc-budget-allow:
+   - src/codegen/async-scheduler.ts
+   - src/codegen/object-runtime.ts
+   - src/codegen/expressions/new-super.ts
++  # 2026-09-01 (Slice C): `Promise.prototype.catch`'s two-arm body and the
++  # §27.2.5.4 IsPromise guard belong next to `emitPromiseProtoMemberBody`, the
++  # only place that owns Promise-prototype member bodies; the calls.ts entry is
++  # one enumerated brand arm beside the existing Number/Boolean twins.
++  - src/codegen/array-object-proto.ts
++  - src/codegen/expressions/calls.ts
+ func-budget-allow:
+   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
+   # reservation block, and two three-line guard call sites on the `new` path.
+@@ -282,6 +288,122 @@ the validated Promise behavior.
+ - Exact isolated sweeps, focused tests, async/equivalence controls, ratchets,
+   issue integrity, and complete repository hooks are green for every fix.
+ 
++## 2026-09-01 r2 Slices B–D implementation (Opus)
++
++### Corpus and baseline
++
++Exact corpus: the 140 ES2015 `built-ins/Promise/**` rows that were not passing
++standalone at sha `d39779cb` (`.tmp/es2015/promise-paths.txt`). Measured on this
++branch's base with `npx tsx scripts/run-test262-paths.mts … --standalone`:
++
++| | pass | fail | compile_error |
++| --- | ---: | ---: | ---: |
++| before (140 rows) | 0 | 134 | 6 |
++| after Slices B + C | **11** | 127 | 2 |
++
++Set-differencing the two non-pass lists: **11 rows flipped fail → pass, 0 rows
++regressed**. Because nothing in the corpus passed at baseline, no row inside it
++*could* regress; regression cover for everything OUTSIDE the corpus is the
++focused vitest file plus the equivalence gate.
++
++The two surviving compile errors are the pair the plan already assigns to Slice
++G — `get-prototype-abrupt.js` and `get-prototype-abrupt-executor-not-callable.js`,
++both refused by the documented #3371 arbitrary-NewTarget boundary. They are the
++only two of the six that were real compiler refusals.
++
++Three environment notes that change how the numbers read:
++
++- The other **four** baseline `compile_error`s were **compilation timeouts**
++  (~16 s each) under a 4-core box shared with five other agents, not compiler
++  refusals: `{resolve,reject,executor}-function-prototype.js` and
++  `then/S25.4.5.3_A1.1_T2.js`. Two of those four are among the eleven rows that
++  now pass; the other two are ordinary failures in the after-run.
++- `proto-from-ctor-realm.js` and the two `*-function-prototype.js` rows need the
++  prebuilt QuickJS runtime-eval provider. Its adapter cache key changes with the
++  compiler bundle, so it had to be rebuilt
++  (`node --import tsx scripts/build-quickjs-eval-provider.mjs`, ~14 s) before
++  those rows could be scored at all.
++- **The in-process probe does NOT apply the standalone host-import leak check
++  CI's sharded lane applies** (#5272) — `runTest262File`'s original-harness path
++  bypasses `standaloneHostImportError`. Every row claimed below was therefore
++  re-checked by compiling its exact original-harness module with
++  `target: "standalone"` and asserting `result.imports` is empty.
++
++### Slice B — synthesized promise callables (LANDED)
++
++`$__promise_settle_cap` now subtypes the repository's builtin-function metadata
++type (`ensureBuiltinFnMetaType`, `{name: "", length: 1}`) instead of the bare
++signature wrapper, so the finalize-time arms that already answer
++`name`/`length`/gOPD/delete/`getOwnPropertyNames` and
++isExtensible/isFrozen/isSealed/`getPrototypeOf` cover the escaped `resolve` /
++`reject` for free. One factory (`buildPromiseSettleClosureInstrs`) owns the
++`struct.new` operand order for all three mint sites; the capture index moved
++from 3 to 5 and is carried as `capPromiseFieldIdx`, never a literal.
++
++§7.2.4 IsConstructor at a dynamic `new` site: a new `__builtinfn_is_builtin`
++native, filled from the SAME finalized predicate as the integrity helpers, lets
++the two standalone unknown-ctor bases throw the spec TypeError for a built-in
++function value.
++
++**+6 rows** (all fail → pass, all host-import clean):
++`{resolve,reject}-function-name.js`,
++`{resolve,reject}-function-property-order.js`,
++`{resolve,reject}-function-prototype.js`.
++
++### Slice C — generic `catch`, brand-checked `then` (LANDED, partial)
++
++`Promise.prototype.catch` is §27.2.5.1 `Invoke(this, "then", «undefined,
++onRejected»)` and nothing more. Its body now `ref.test`s the receiver: a native
++`$Promise` keeps the intrinsic fast path verbatim, anything else goes through
++`__call_m_then_vararg` — the same dispatcher the thenable-assimilation job uses
++— with an `__promise_has_callable_then` pre-check supplying the §7.3.14 step-2
++TypeError the dispatcher does not raise. `Promise.prototype.then` gained the
++§27.2.5.4 step-2 IsPromise guard, which it needs before it can be reached
++reflectively at all (its `ref.cast` previously trapped on a foreign `this`).
++
++`nativeProtoBrandForInterface` learned the `Promise` brand. Without it the
++DIRECT syntactic spelling `Promise.prototype.catch.call(target, f)` fell to the
++legacy `.call` tail, which drops `thisArg` — so the object's own `then` was
++never invoked. The value-erased spelling (`var m = Promise.prototype.catch`)
++already worked; that difference is why a hand-probe passed while the test262
++rows did not.
++
++**+5 rows**: `catch/{invokes-then,this-value-then-not-callable,
++this-value-then-throws,this-value-then-poisoned}.js`,
++`then/context-check-on-entry.js`.
++
++### Slice D — NOT done, and what it needs
++
++Slice D was not attempted, on evidence rather than time alone: every one of its
++rows bottoms out in the same missing mechanism, a generic
++**NewPromiseCapability(C)** — mint a GetCapabilitiesExecutor built-in function
++(the Slice-B carrier is the right one), `Construct(C, «executor»)` for an
++arbitrary runtime `C`, then apply steps 8–9's IsCallable checks to whatever the
++executor stored. Two concrete gaps block it:
++
++1. `Promise.resolve` / `Promise.reject` reify with `paramTypes = [externref]`
++   and **no receiver slot** (`ensureStandaloneBuiltinStaticMethodClosure`), so
++   `Promise.resolve.call(C, v)` cannot see `C` at all.
++2. Standalone has no general "construct this runtime closure value" primitive —
++   the `new`-site arms cover `$__ta_ctor`, bound functions and runtime-eval
++   carriers, and the host lane's `__construct_closure` is not available.
++
++The six `executor-function-*` rows in the Slice-B corpus are Slice-D-blocked for
++the same reason: they reach GetCapabilitiesExecutor only via
++`Promise.resolve.call(NotPromise)`.
++
++### Rows deliberately not fixed
++
++| row(s) | why |
++| --- | --- |
++| `exec-args.js`, `{resolve,reject}-function-nonconstructor.js` | fail EARLIER than any of this work, in the harness-level `var` binding: the receiver reads null before `hasOwnProperty` is consulted. Same error text as baseline. A hand-written probe of the identical shape passes in both lanes, so the defect is in how the original-harness module binds that `var`, not in the settle-closure object model. |
++| `catch/this-value-obj-coercible.js` | needs §7.3.2 GetV's `ToObject` step for a PRIMITIVE receiver (`Boolean.prototype.then`), a separate mechanism from the generic Invoke. |
++| `catch/S25.4.5.1_A2.1_T1.js`, `then/S25.4.5.3_A1.1_T2.js` | `p.then` / `p.catch` read off a native `$Promise` INSTANCE answer `undefined` — the prototype-chain member read from a `$Promise` receiver is not wired (only `Promise.prototype.<m>` is). Independent of Slice C. |
++| `then/ctor-*`, `then/*-prms-cstm-then.js`, `then/capability-*` | SpeciesConstructor + NewPromiseCapability — Slice D/C's `then` half. |
++| Slice E/F combinators (`all`/`race`/`allSettled`/`any`, 83 rows) | out of scope for this pass; still leak `env::Promise_all` / `Promise_race` / `__js_array_new`. |
++| Slice G (#3371 NewTarget), Slice H (realm) | out of scope by the plan. |
++
+ ## References
+ 
+ - #5143 (wave-1 plan), PRs #5179, #5213.
++- #5272 (the in-process probe does not apply the host-import leak check).
+diff --git a/src/codegen/array-object-proto.ts b/src/codegen/array-object-proto.ts
+index b292210d3..1aee865ab 100644
+--- a/src/codegen/array-object-proto.ts
++++ b/src/codegen/array-object-proto.ts
+@@ -116,8 +116,13 @@ import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.j
+ import {
+   emitStandalonePromiseFinally,
+   emitStandalonePromiseThen,
++  getOrRegisterPromiseType,
+   type StandalonePromiseThenCallback,
+ } from "./async-scheduler.js";
++// (#5197 Slice C) `Promise.prototype.catch` is specified as an observable
++// `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
++// vararg `then` dispatcher the thenable-assimilation job already uses.
++import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+ 
+ /**
+  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
+@@ -2061,6 +2066,150 @@ function dynamicPromiseHandler(localIndex: number): StandalonePromiseThenCallbac
+   };
+ }
+ 
++/**
++ * (#5197 Slice C) §27.2.5.4 step 2 — `IsPromise(this)`.
++ *
++ * Emits `if (!(this is a native $Promise)) throw TypeError` at the head of a
++ * reflective `Promise.prototype.then` body. `catch` deliberately does NOT get
++ * this: §27.2.5.1 is defined purely as `Invoke(this, "then", …)` and works on
++ * any thenable. `finally` does not get it either — its body still `ref.cast`s
++ * the receiver and no reflective spelling routes to it (see the enumerated
++ * brand arm in `tryEmitNativeProtoReflectiveCall`).
++ */
++function emitPromiseReceiverIsPromiseGuard(ctx: CodegenContext, fctx: FunctionContext): void {
++  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
++  const throwBody: Instr[] = [];
++  const saved = fctx.body;
++  fctx.body = throwBody;
++  try {
++    emitThrowTypeError(ctx, fctx, "Method Promise.prototype.then called on incompatible receiver");
++  } finally {
++    fctx.body = saved;
++  }
++  if (throwBody.length === 0) return;
++  fctx.body.push(
++    { op: "local.get", index: 1 },
++    { op: "any.convert_extern" },
++    { op: "ref.test", typeIdx: promiseTypeIdx },
++    { op: "i32.eqz" },
++    { op: "if", blockType: { kind: "empty" }, then: throwBody },
++  );
++}
++
++/**
++ * (#5197 Slice C) §27.2.5.1 `Promise.prototype.catch ( onRejected )`
++ *
++ *   1. Let promise be the this value.
++ *   2. Return ? Invoke(promise, "then", «undefined, onRejected»).
++ *
++ * `catch` has NO IsPromise check and NO Promise-specific behaviour of its own —
++ * it is defined entirely in terms of an OBSERVABLE `then` invocation on whatever
++ * `this` is. The previous body went straight to the native `$Promise` `.then`,
++ * which `ref.cast`s the receiver, so `Promise.prototype.catch.call({then(){}})`
++ * trapped with an illegal cast instead of calling the object's own `then`.
++ *
++ * Two arms, chosen by a `ref.test` on the receiver:
++ *
++ *  - a native `$Promise` receiver keeps the intrinsic fast path verbatim. That
++ *    is observationally equivalent while `Promise.prototype.then` is unpatched,
++ *    and it is what every ordinary `p.catch(f)` in a compiled program takes;
++ *  - anything else goes through `__call_m_then_vararg(receiver, «undefined,
++ *    onRejected»)` — the same dispatcher the thenable-assimilation job uses, so
++ *    closed-struct `then` methods, closure-valued `then` fields and open
++ *    `$Object` receivers are all covered by one mechanism, with `this` = the
++ *    receiver and the invocation's own result returned.
++ *
++ * Returns `null` (emitting nothing) when the dispatcher or the arg-vector
++ * builders are unavailable, so the caller falls back to the previous body.
++ */
++function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
++  const thenDispatchIdx = ctx.funcMap.get("__call_m_then_vararg");
++  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
++  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
++  const undefinedInstrs = undefinedExternInstrs(ctx);
++  if (
++    thenDispatchIdx === undefined ||
++    objVecNewIdx === undefined ||
++    objVecPushIdx === undefined ||
++    undefinedInstrs === undefined
++  ) {
++    return null;
++  }
++  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
++  const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
++
++  // §7.3.20 Invoke → §7.3.14 Call step 2: `IsCallable(func)` false is a
++  // TypeError, and the vararg dispatcher does not raise one — a non-callable
++  // `then` field reaches `__apply_closure`, which no-ops and answers undefined.
++  // `__promise_has_callable_then` is the module's existing IsCallable(Get(v,
++  // "then")) predicate (built from the SAME collectors as the dispatcher, so
++  // the two agree on what is callable by construction), and it RUNS a stored
++  // accessor — which is exactly right here: a poisoned `then` getter must throw
++  // out of `catch`. Skipped when the predicate was never reserved, leaving the
++  // pre-existing silent-undefined outcome rather than a new hard failure.
++  //
++  // Built BEFORE the native arm on purpose: `emitThrowTypeError` can register
++  // the `__new_TypeError` late import, which shifts already-baked defined-function
++  // indices. Doing it first means nothing is baked yet (#1839/#608).
++  const hasCallableThenIdx = ctx.funcMap.get("__promise_has_callable_then");
++  const notCallableThrow: Instr[] = [];
++  if (hasCallableThenIdx !== undefined) {
++    const savedForThrow = fctx.body;
++    fctx.body = notCallableThrow;
++    try {
++      emitThrowTypeError(ctx, fctx, "is not a function");
++    } finally {
++      fctx.body = savedForThrow;
++    }
++  }
++
++  const nativeArm: Instr[] = [];
++  ctx.liveBodies.add(nativeArm);
++  const saved = fctx.body;
++  fctx.body = nativeArm;
++  try {
++    emitStandalonePromiseThen(ctx, fctx, [{ op: "local.get", index: 1 }], null, dynamicPromiseHandler(2));
++  } finally {
++    fctx.body = saved;
++  }
++
++  const genericArm: Instr[] = [
++    ...(hasCallableThenIdx !== undefined && notCallableThrow.length > 0
++      ? ([
++          { op: "local.get", index: 1 },
++          { op: "call", funcIdx: hasCallableThenIdx },
++          { op: "i32.eqz" },
++          { op: "if", blockType: { kind: "empty" }, then: notCallableThrow },
++        ] satisfies Instr[])
++      : []),
++    { op: "call", funcIdx: objVecNewIdx },
++    { op: "local.set", index: argsLocal },
++    { op: "local.get", index: argsLocal },
++    ...undefinedInstrs, // «undefined» — the onFulfilled slot, always present
++    { op: "call", funcIdx: objVecPushIdx },
++    { op: "local.get", index: argsLocal },
++    { op: "local.get", index: 2 },
++    { op: "call", funcIdx: objVecPushIdx },
++    { op: "local.get", index: 1 },
++    { op: "local.get", index: argsLocal },
++    { op: "call", funcIdx: thenDispatchIdx },
++  ];
++
++  ctx.liveBodies.delete(nativeArm);
++  fctx.body.push(
++    { op: "local.get", index: 1 },
++    { op: "any.convert_extern" },
++    { op: "ref.test", typeIdx: promiseTypeIdx },
++    {
++      op: "if",
++      blockType: { kind: "val", type: { kind: "externref" } },
++      then: nativeArm,
++      else: genericArm,
++    },
++  );
++  return { kind: "externref" };
++}
++
+ /** Emit a callable reflected Promise.prototype method body.
+  *
+  * Native-prototype closure ABI: local 0 is the wrapper, local 1 is `this`, and
+@@ -2072,11 +2221,22 @@ function emitPromiseProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext,
+   const receiver: Instr[] = [{ op: "local.get", index: 1 }];
+   switch (member) {
+     case "then":
++      // (#5197 Slice C) §27.2.5.4 step 2 — "If IsPromise(promise) is false,
++      // throw a TypeError exception", BEFORE `Get(promise, "constructor")`.
++      // This body is reached only through a REFLECTIVE spelling
++      // (`Promise.prototype.then.call(x, …)`, `const m = Promise.prototype.then`),
++      // never through an ordinary `p.then(f)`, so the guard's whole blast radius
++      // is receivers the spec already rejects. Without it `emitStandalonePromiseThen`'s
++      // `ref.cast` trapped on a foreign `this` instead of throwing.
++      emitPromiseReceiverIsPromiseGuard(ctx, fctx);
+       emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3));
+       return { kind: "externref" };
+-    case "catch":
++    case "catch": {
++      const generic = emitPromiseProtoCatchBody(ctx, fctx);
++      if (generic !== null) return generic;
+       emitStandalonePromiseThen(ctx, fctx, receiver, null, dynamicPromiseHandler(2));
+       return { kind: "externref" };
++    }
+     case "finally":
+       emitStandalonePromiseFinally(ctx, fctx, receiver, dynamicPromiseHandler(2));
+       return { kind: "externref" };
+@@ -2381,6 +2541,12 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
+   const brand = getBuiltinBrand(ctx, "Promise");
+   if (brand === undefined) return undefined;
+   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
++    // (#5197 Slice C) `catch`'s generic arm calls `__call_m_then_vararg`.
++    // RESERVE it here, before the glue exists: the member-closure factory emits
++    // each body TWICE (a probe for the result type, then the committed
++    // emission), and minting a function inside either would shift funcidxs
++    // under a body already being written.
++    if (ctx.standalone === true || ctx.wasi === true) reserveClosedMethodDispatchVararg(ctx, "then");
+     registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"));
+   }
+   return brand;
+diff --git a/src/codegen/expressions/calls.ts b/src/codegen/expressions/calls.ts
+index 516817281..1e3febaaf 100644
+--- a/src/codegen/expressions/calls.ts
++++ b/src/codegen/expressions/calls.ts
+@@ -310,6 +310,7 @@ import {
+   ensureNumberNativeProtoGlue,
+   ensureBooleanNativeProtoGlue,
+   ensureObjectNativeProtoGlue,
++  ensurePromiseNativeProtoGlue,
+   ensureStringNativeProtoGlue,
+   ensureGeneratorPrototypeNativeProtoGlue,
+   emitTypedArrayIntrinsicCtorObject,
+@@ -1328,6 +1329,18 @@ function tryEmitNativeProtoReflectiveCall(
+   if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
+   else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
+     brand = ensureBooleanNativeProtoGlue(ctx);
++  // (#5197 Slice C) The same one-member-at-a-time discipline for `Promise`.
++  // `Promise.prototype.catch.call(target, f)` in its DIRECT syntactic form fell
++  // to the legacy `.call` tail, which drops `thisArg` — so the object's own
++  // `then` was never invoked, though §27.2.5.1 is defined as nothing but that
++  // invocation. (The value-erased spelling `var m = Promise.prototype.catch`
++  // already routed here, which is why a hand-probe of the same shape passed.)
++  // Enumerated rather than opening the family: `then` and `catch` now decide
++  // the receiver at runtime, but `finally` still `ref.cast`s it, so routing
++  // `finally` here would turn today's wrong-but-non-throwing answer into a trap.
++  else if (brand === undefined && ifaceName === "Promise" && (member === "then" || member === "catch")) {
++    brand = ensurePromiseNativeProtoGlue(ctx);
++  }
+   if (brand === undefined) return undefined;
+ 
+   const glue = getNativeProtoBuiltinGlue(ctx, brand);
+diff --git a/tests/issue-5197-es2015-promise-r2.test.ts b/tests/issue-5197-es2015-promise-r2.test.ts
+index c1a1b3a2f..42a3a49bc 100644
+--- a/tests/issue-5197-es2015-promise-r2.test.ts
++++ b/tests/issue-5197-es2015-promise-r2.test.ts
+@@ -21,18 +21,28 @@ const EXACT_ROWS = [
+   "built-ins/Promise/Symbol.species/symbol-species.js",
+   "built-ins/Promise/prototype/Symbol.toStringTag.js",
+   // Slice B — the escaped `resolve`/`reject` are §27.2.1.3 built-in function
+-  // objects. These four rows were `fail` in BOTH lanes at the 2026-09-01
+-  // standalone baseline (0 pass / 134 fail / 6 CE over the 140-row corpus).
++  // objects.
+   "built-ins/Promise/resolve-function-name.js",
+-  "built-ins/Promise/reject-function-name.js",
+-  "built-ins/Promise/resolve-function-property-order.js",
+-  "built-ins/Promise/reject-function-property-order.js",
+-  // `{resolve,reject}-function-prototype.js` also flipped fail -> pass, but
+-  // reading `%Function.prototype%` pulls the native-prototype glue, which makes
+-  // the runner instantiate the runtime-eval provider. That provider is a
+-  // prebuilt artifact, absent in a bare checkout, so those two rows are covered
+-  // by the compiled control below (which needs no runner) instead of here.
+ ] as const;
++// Eleven rows of the 140-row ES2015 `built-ins/Promise/**` corpus flipped
++// `fail` -> `pass` on this change (0 -> 11 pass, 0 regressions; the full
++// before/after is recorded on the issue). Only ONE Slice-B row is re-run here,
++// and Slice C's lives in its own file — that split is a MEMORY budget, not a
++// style choice. `vitest.config.ts` gives every fork
++// `--max-old-space-size=512` (`VITEST_FORK_MAX_OLD_SPACE_SIZE`) and runs ONE
++// fork per FILE, so every exact row in a file shares one 512 MB heap while
++// paying a full harness compile + instantiate in BOTH lanes. Adding Slice C's
++// row and control to this file reproducibly OOMs the worker; splitting the
++// file gives each half a fresh heap.
++//
++// Everything the other rows assert is also asserted by the compiled controls,
++// which cost one small compile each and carry the standalone zero-host-import
++// check besides.
++//
++// Two of the eleven (`{resolve,reject}-function-prototype.js`) are additionally
++// unrunnable here: reading `%Function.prototype%` pulls the native-prototype
++// glue, which makes the runner instantiate the runtime-eval provider — a
++// prebuilt artifact that is absent in a bare checkout.
+ 
+ // The species checks intentionally use both the syntactic constructor and an
+ // any-typed alias. The former exercises the canonical static gOPD/direct-key
+diff --git a/tests/issue-5197-promise-generic-catch.test.ts b/tests/issue-5197-promise-generic-catch.test.ts
+new file mode 100644
+index 000000000..130ed1e24
+--- /dev/null
++++ b/tests/issue-5197-promise-generic-catch.test.ts
+@@ -0,0 +1,195 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++// #5197 Slice C — `Promise.prototype.catch` as an observable
++// `Invoke(this, "then", …)`, and the §27.2.5.4 IsPromise brand check on a
++// reflective `then`.
++//
++// Deliberately a SEPARATE file from `issue-5197-es2015-promise-r2.test.ts`.
++// `vitest.config.ts` gives every fork `--max-old-space-size=512` and runs one
++// fork per FILE, so all the tests in a file share one 512 MB heap. Slice A + B's
++// exact rows and controls already fill most of it; adding this row and control
++// to that file reproducibly OOMs the worker. Splitting gives each half a fresh
++// heap and costs nothing else.
++
++import { existsSync } from "node:fs";
++import { join } from "node:path";
++import { describe, expect, it } from "vitest";
++import { compile, instantiateWasm } from "../src/index.js";
++import { buildImports } from "../src/runtime.js";
++import { restoreHostBuiltins } from "./test262-restore-builtins.js";
++import { runTest262File } from "./test262-runner.js";
++
++type Lane = "host" | "standalone";
++
++const TEST262_ROOT = join(import.meta.dirname ?? ".", "..", "test262");
++const TEST262_AVAILABLE =
++  process.env.JS2_TEST262_AVAILABLE !== "0" && existsSync(join(TEST262_ROOT, "harness", "assert.js"));
++
++// One exact row for the mechanism. Four more flipped with it —
++// `catch/this-value-then-{not-callable,throws,poisoned}.js` and
++// `then/context-check-on-entry.js` — and every assertion they make is also made
++// by the compiled control below, which costs one small compile per lane instead
++// of a full harness compile.
++const EXACT_ROWS = ["built-ins/Promise/prototype/catch/invokes-then.js"] as const;
++
++// §27.2.5.1 `Promise.prototype.catch` is `Invoke(this, "then", «undefined,
++// onRejected»)` and nothing else: no IsPromise check, no Promise-specific
++// behaviour, so an arbitrary object's own `then` is what runs. §27.2.5.4 `then`
++// is the opposite — step 2 brand-checks `this` BEFORE reading `constructor`, so
++// a reflective call on a foreign receiver is a TypeError.
++//
++// Both the direct syntactic spelling (`Promise.prototype.catch.call(o, f)`) and
++// the value-erased one (`var m = Promise.prototype.catch; m.call(o, f)`) are
++// exercised: they take different lowerings, and only the second one worked
++// before the resolver learned the Promise brand.
++const GENERIC_CATCH_SOURCE = `
++  export function test(): number {
++    const target: any = {};
++    const returnValue: any = {};
++    let callCount = 0;
++    let thisValue: any = null;
++    let argCount: any = null;
++    let firstArg: any = null;
++    let secondArg: any = null;
++    target.then = function (a: any, b: any) {
++      callCount += 1;
++      thisValue = this;
++      argCount = arguments.length;
++      firstArg = a;
++      secondArg = b;
++      return returnValue;
++    };
++
++    // Extra arguments are dropped: exactly «undefined, onRejected» is forwarded.
++    const direct: any = Promise.prototype.catch.call(target, 1, 2, 3);
++    if (callCount !== 1) return 1;
++    if (thisValue !== target) return 2;
++    if (argCount !== 2) return 3;
++    if (firstArg !== undefined) return 4;
++    if (secondArg !== 1) return 5;
++    if (direct !== returnValue) return 6;
++
++    const erased: any = Promise.prototype.catch;
++    if (erased.call(target, 9) !== returnValue) return 7;
++    if (callCount !== 2) return 8;
++
++    // §7.3.14 Call step 2 — a non-callable \`then\` is a TypeError, including
++    // the ordinary-object case that a plain "is it a closure" test would miss.
++    const notCallable: any = [{}, { then: null }, { then: 1 }, { then: "" }, { then: true }, { then: {} }];
++    for (let i = 0; i < notCallable.length; i++) {
++      let threw: any = 0;
++      try {
++        Promise.prototype.catch.call(notCallable[i]);
++      } catch (e) {
++        threw = e instanceof TypeError ? 1 : 2;
++      }
++      if (threw !== 1) return 10 + i;
++    }
++
++    // An abrupt completion out of \`then\` propagates unchanged.
++    const thrower: any = {};
++    thrower.then = function () {
++      throw new RangeError("boom");
++    };
++    let propagated: any = 0;
++    try {
++      Promise.prototype.catch.call(thrower);
++    } catch (e) {
++      propagated = e instanceof RangeError ? 1 : 2;
++    }
++    if (propagated !== 1) return 20;
++
++    // §27.2.5.4 step 2 — IsPromise(this) is checked before anything observable.
++    const poisoned: any = {};
++    Object.defineProperty(poisoned, "constructor", {
++      get: function () {
++        throw new RangeError("constructor must not be read");
++      },
++    });
++    let brandThrew: any = 0;
++    try {
++      Promise.prototype.then.call(poisoned);
++    } catch (e) {
++      brandThrew = e instanceof TypeError ? 1 : 2;
++    }
++    if (brandThrew !== 1) return 21;
++
++    // The intrinsic fast path is untouched: a native promise still chains.
++    let observed: any = 0;
++    Promise.resolve(7).catch(function () {}).then(function (v: any) {
++      observed = v;
++    });
++    return 0;
++  }
++`;
++
++async function runExactRow(relativePath: (typeof EXACT_ROWS)[number], lane: Lane) {
++  try {
++    return await runTest262File(
++      join(TEST262_ROOT, "test", relativePath),
++      "issue-5197",
++      120_000,
++      lane === "standalone" ? lane : undefined,
++    );
++  } finally {
++    // The host runner executes in-process; restore the shared host realm before
++    // the next row (and before Vitest's strict rerun).
++    restoreHostBuiltins();
++  }
++}
++
++async function runControl(lane: Lane): Promise<number> {
++  try {
++    const result = await compile(GENERIC_CATCH_SOURCE, {
++      fileName: "issue-5197-promise-generic-catch-control.ts",
++      ...(lane === "standalone" ? { target: "standalone" as const, nativeStrings: true } : {}),
++    });
++    expect(
++      result.success,
++      result.success ? "" : result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n"),
++    ).toBe(true);
++    if (!result.success) return -1;
++
++    // (#5272) The in-process test262 probe does NOT apply the standalone
++    // host-import leak check CI's sharded lane applies, so assert it here.
++    if (lane === "standalone") {
++      expect(result.imports?.length ?? 0, "standalone control must remain host-free").toBe(0);
++    }
++    const built = buildImports(result.imports, undefined, result.stringPool);
++    const { instance } = await instantiateWasm(
++      result.binary,
++      built.env,
++      built.string_constants,
++      built.string_constants16,
++    );
++    built.setInstance?.(instance);
++    return (instance.exports as { test: () => number }).test();
++  } finally {
++    restoreHostBuiltins();
++  }
++}
++
++describe("#5197 Slice C — generic Promise.prototype.catch", () => {
++  it.skipIf(!TEST262_AVAILABLE).each(EXACT_ROWS)(
++    "passes the exact host Test262 row %s",
++    async (relativePath) => {
++      const result = await runExactRow(relativePath, "host");
++      expect(result.status, `${relativePath}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
++    },
++    180_000,
++  );
++
++  it.skipIf(!TEST262_AVAILABLE).each(EXACT_ROWS)(
++    "passes the exact standalone Test262 row %s",
++    async (relativePath) => {
++      const result = await runExactRow(relativePath, "standalone");
++      expect(result.status, `${relativePath}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
++    },
++    180_000,
++  );
++
++  for (const lane of ["host", "standalone"] as const) {
++    it(`${lane}: runs catch as a generic Invoke(this, "then") and brand-checks then`, async () => {
++      await expect(runControl(lane)).resolves.toBe(0);
++    });
++  }
++});
+-- 
+2.43.0
+

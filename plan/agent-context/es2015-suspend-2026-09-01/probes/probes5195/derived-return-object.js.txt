@@ -1,0 +1,11 @@
+/*---
+description: probe .tmp/es2015/probes5195/derived-return-object.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var calls = 0;
+class Base { constructor() { this.prop = 1; calls++; } }
+class Derived extends Base { constructor() { super(); return {}; } }
+var o = new Derived();
+assert.sameValue(calls, 1);
+assert.sameValue(typeof o.prop, 'undefined', 'this discarded');
+assert.sameValue(o instanceof Derived, false);

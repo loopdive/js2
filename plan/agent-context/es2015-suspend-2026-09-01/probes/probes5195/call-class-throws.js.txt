@@ -1,0 +1,10 @@
+/*---
+description: probe .tmp/es2015/probes5195/call-class-throws.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class Base1 {}
+assert.throws(TypeError, function() { Base1(); });
+class Sub extends Base1 {}
+assert.throws(TypeError, function() { Sub(); });
+var obj = {};
+assert.throws(TypeError, function() { Sub.apply(obj, []); });

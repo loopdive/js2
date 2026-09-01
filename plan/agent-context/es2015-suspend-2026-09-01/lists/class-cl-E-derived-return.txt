@@ -1,0 +1,8 @@
+language/expressions/super/call-bind-this-value.js
+language/expressions/super/call-expr-value.js
+language/statements/class/definition/this-access-restriction-2.js
+language/statements/class/subclass/class-definition-null-proto-contains-return-override.js
+language/statements/class/subclass/derived-class-return-override-with-empty.js
+language/statements/class/subclass/derived-class-return-override-with-null.js
+language/statements/class/subclass/derived-class-return-override-with-object.js
+language/statements/class/subclass/derived-class-return-override-with-undefined.js

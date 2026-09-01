@@ -1,0 +1,5 @@
+var s = Function.prototype.toString.call(new Proxy(function () {}, {}));
+if (typeof s !== 'string') throw new Test262Error('proxy toString: ' + typeof s + ' ' + String(s));
+var threw = false;
+try { Function.prototype.toString.call(new Proxy({}, {})); } catch (e) { threw = e instanceof TypeError; }
+if (!threw) throw new Test262Error('non-callable proxy did not throw TypeError');

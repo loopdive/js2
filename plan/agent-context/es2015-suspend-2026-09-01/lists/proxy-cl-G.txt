@@ -1,0 +1,5 @@
+built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js
+built-ins/Proxy/deleteProperty/trap-is-undefined-not-strict.js
+built-ins/Proxy/getOwnPropertyDescriptor/trap-is-undefined.js
+built-ins/Proxy/deleteProperty/trap-is-undefined-strict.js
+built-ins/Proxy/has/return-false-target-prop-exists.js

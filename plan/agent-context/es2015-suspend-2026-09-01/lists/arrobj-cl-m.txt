@@ -1,0 +1,3 @@
+built-ins/Array/prototype/keys/returns-iterator-from-object.js
+built-ins/Array/prototype/entries/returns-iterator-from-object.js
+built-ins/Array/prototype/values/returns-iterator-from-object.js

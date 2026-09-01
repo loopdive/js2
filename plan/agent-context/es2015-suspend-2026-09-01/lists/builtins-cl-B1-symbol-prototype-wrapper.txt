@@ -1,0 +1,10 @@
+built-ins/Symbol/auto-boxing-non-strict.js
+built-ins/Symbol/prototype/intrinsic.js
+built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-symbol.js
+built-ins/Symbol/prototype/Symbol.toStringTag.js
+built-ins/Symbol/prototype/toString/toString-default-attributes-strict.js
+built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js
+built-ins/Symbol/prototype/toString/toString.js
+built-ins/Symbol/prototype/Symbol.toPrimitive/this-val-obj-symbol-wrapper.js
+built-ins/Symbol/prototype/Symbol.toPrimitive/redefined-symbol-wrapper-ordinary-toprimitive.js
+built-ins/Symbol/auto-boxing-strict.js

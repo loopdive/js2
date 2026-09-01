@@ -1032,3 +1032,43 @@ index-coercion helper and retire part of them.
 - Zero host imports in every standalone module of the sub-lists (the runner's
   `host_import_leak` category must stay at 0 for the 286 rows).
 - Issue integrity: `node scripts/update-issues.mjs --check` green.
+
+## Suspended Work (2026-09-01T21:56Z — user-requested 2-hour pause)
+
+- **Branch**: local lane branch `worktree-agent-a1eb4f40f876e3f07` at `de01ce774`
+  (WIP snapshot on top of base `dc29e1f15`; NOT pushed — durable copy is
+  `plan/agent-context/es2015-suspend-2026-09-01/patches/lane-5194.mbox`, 1
+  patch = the snapshot of the implementer's uncommitted edits in
+  `array-object-proto.ts`, `builtin-proto-constructor.ts`,
+  `builtin-value-read.ts`, `expressions/object-get-prototype-of.ts`,
+  `native-proto-value-read.ts`, `native-proto.ts`, `object-runtime.ts`, the
+  new `tests/issue-5194-es2015-typedarray-r2.test.ts`, and this file's
+  allowance amendments).
+- **Worktree at suspension**: `/home/user/js2/.claude/worktrees/agent-a1eb4f40f876e3f07`
+  (treat as gone).
+- **State** (implementer's handoff): Step 1 (cluster A, prototype graph —
+  `$parent` link, empty-view CSV + parent walk in value-read and
+  `__protoidx_{get,has}_k`, `constructor` + `BYTES_PER_ELEMENT` own props,
+  `getPrototypeOf` TA arms, `$__ta_ctor` `prototype` own property) is
+  code-complete and typechecks; Step 2 PARTIAL (`%TypedArray%` own
+  `name`/`length`/`prototype`/`@@species`/`from`/`of`, `@@toStringTag` getter,
+  `@@iterator` → `values` alias, `slice.length` 2). Steps 3–7 not started.
+- **Verified so far**: BEFORE (pre-edit, `typedarray-head.txt`, 300 rows,
+  standalone) = 0 pass / 244 fail / 56 CE (under load). Direct probes
+  `p1.js` mask 0/16, `p3.js` mask 32768 (only `TypedArray()` must-throw still
+  red). Focused vitest 4/4 green with zero standalone host imports. All five
+  ratchet gates green. **No AFTER number** — the after-run
+  (`head-controls.txt`, 321 rows) was mid-flight at suspension.
+- **NOT yet verified / next steps**: (1) `git am` + `pnpm run typecheck`; (2)
+  `npx tsx scripts/run-test262-paths.mts .tmp/es2015/head-controls.txt --standalone`
+  for the after-number and 21/21 controls (Step 1 target ≥ 55 of 63); (3)
+  neighbour vitest files one at a time with `NODE_OPTIONS=--max-old-space-size=3072`;
+  (4) `pnpm run test:equivalence:gate`; (5) commit Step 1 + Step 2 so far,
+  then Steps 2 (rest) → 7 per the 2026-09-01 plan.
+- **Traps**: importing `builtin-value-read.ts` from `array-object-proto.ts`
+  creates a module cycle that TDZ-crashes `builtin-ctor-own-props.ts` — import
+  from `registry/types.ts` instead. Backticks inside the test's template-literal
+  sources break esbuild. 10 rows are unmeasurable locally (QuickJS artifact key
+  gap); 16 baseline "CEs" are load-induced compile timeouts — re-run alone.
+  #5150 edits neighbouring functions in `dataview-native.ts` — reconcile at
+  merge, never rebase. Local probes skip the standalone leak check (#5272).

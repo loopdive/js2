@@ -1,0 +1,2 @@
+built-ins/Proxy/set/target-property-is-accessor-not-configurable-set-is-undefined.js
+built-ins/Proxy/set/target-property-is-not-configurable-not-writable-not-equal-to-v.js

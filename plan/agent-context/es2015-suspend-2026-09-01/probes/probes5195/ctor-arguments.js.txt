@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/ctor-arguments.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var n = -1, a0;
+class Base { constructor() { n = arguments.length; a0 = arguments[0]; } }
+new Base(1, 2);
+assert.sameValue(n, 2, 'arguments.length in class ctor');
+assert.sameValue(a0, 1, 'arguments[0]');
