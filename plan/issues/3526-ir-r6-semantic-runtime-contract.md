@@ -3524,3 +3524,185 @@ the `extern.*` lowering quartet (family 6); and `numberBoundary` /
 `booleanBoundary` / `externIsUndefined` / `generatorNumberBox`, all four
 unchanged. `scripts/*-baseline.json` is untouched apart from the sanctioned
 two-line `check:ir-kind-neutrality` citation refresh.
+
+## 2026-09-01 F2-S2 implementation plan — capability-record schema widening (family 2, slice 2)
+
+Grounded on `origin/main` `dc29e1f15d` (first parent = PR #5433, the merged
+F2-S1). Slice claim: `#3526:f2s2` (`ttraenkler/fable-ir-takeover`). Three
+probe lanes (schema+consumers / boundary sites / test-evidence) ran against
+that commit; every line number below is theirs.
+
+**This slice moves NO boundary.** It widens the central capability-record
+schema so that family 2's remaining host crossings — which live in the
+`wasm:js-string` module and in `string_constants` / `string_constants16`
+GLOBAL imports — become *expressible* as exact-ABI catalogue rows. No policy
+field, no provider row, no resolve/attach/from-ast edit. Byte identity holds
+by construction: no provider references the new rows, so `freeze()`
+(`runtime-manifest.ts:1430-1446`) never selects them and every frozen
+manifest, import and body stays exactly as today. This is what makes the
+issue's anti-vacuity item 10 ("typed projections include intentional
+non-`env` string import namespaces", :856-857) satisfiable at all — today
+the record type cannot spell a non-`env` namespace.
+
+### The frozen schema, measured (`src/ir/runtime-host-capabilities.ts`)
+
+- Record type `:72-83`: `module: "env"` (`:77`), `kind: "func"` (`:79`),
+  `params`/`results` over the value union `"externref" | "i32" | "f64"`
+  (`:54`, set `:56-60`); factory `record()` `:85-101` hardcodes both literals;
+  12 ids `:27-40` (F2-S1's `string.compare` at `:39`, row `:140`);
+  `assertRuntimeHostCapabilityRecord` `:189-223` checks the exact key list
+  (`:204-206`), `module` (`:207-209`), `field` (`:210-212`), `kind`
+  (`:213-215`), value types (`:216-217`), exception policy (`:218-222`);
+  `canonicalizeRuntimeHostCapabilityCatalog` `:236-253` demands completeness
+  (ids ↔ rows). No `Record<Id,…>` table or `never`-check here — completeness
+  is dynamic (`:248-251`).
+- Consumers that ASSUME func-kind (each must gain a kind guard or narrow
+  type): `intrinsic-support.ts` `ADMITTED_CALLABLE_TARGETS` `:84-90`,
+  `providerAttachment` `:229-230`, `preparedGeneratorNumberBoxProvider`
+  `:274-278`, `preparedStringCompareProvider` `:309-313`, async adapters
+  `:521-529`; `async-runtime-providers.ts` `asAsyncHostAdapter` `:90-100`
+  iterates `[...params, ...results]` unguarded (`:94-98`) and the
+  `AsyncHostAdapter` alias `:83`; `runtime-manifest.ts` `host-callable`
+  implementation `:366-376` admits any id; provider index checks
+  `:1484-1509` never verify func-kind; `ir-async-runtime-adapters.ts`
+  `expectedSignature` `:27-33` / `assertImportSignature` `:35-` (typed on the
+  narrow async union — unaffected if `AsyncHostAdapter` is retargeted to the
+  func arm).
+- Two measured facts that shape the design:
+  1. **`wasm:js-string.concat` returns `(ref extern)`**, not `externref`
+     (`imports.ts:628`; binary dump `(result (ref extern))`; `substring`
+     `:649-653` likewise). The value union must grow `"ref_extern"` (already a
+     `ValType` member, `src/ir/types.ts` after `:265`).
+  2. **`string_constants` globals use the literal itself as the import
+     field** (`imports.ts:177` `importName = useSurrogateNs ? hexCodeUnits(value) : value`;
+     measured `string_constants."f"`, `"ab"`, `""`; lone surrogates go to
+     `string_constants16` keyed by `hexCodeUnits`, `STRING_CONSTANTS16_NS`
+     `src/string-surrogate.ts:20`). A closed catalogue cannot enumerate
+     per-literal fields, so a global record carries a **field scheme**, not a
+     field name.
+
+### Contract
+
+1. **Kind-discriminated record union.**
+   ```ts
+   type RuntimeHostCapabilityFuncModule = "env" | "wasm:js-string";
+   type RuntimeHostCapabilityGlobalModule = "string_constants" | "string_constants16";
+   interface RuntimeHostCapabilityFuncRecord<Id, V>   { capability: Id; module: FuncModule;   field: string; kind: "func";   params: readonly V[]; results: readonly V[]; exceptionPolicy?: … }
+   interface RuntimeHostCapabilityGlobalRecord<Id, V> { capability: Id; module: GlobalModule; field: { scheme: "literal" | "literal-utf16-hex" }; kind: "global"; valueType: V; mutable: boolean }
+   type RuntimeHostCapabilityRecord<Id, V> = Func | Global;
+   ```
+   Module unions are **closed** (`as const` tuple → union, the `:27-42`
+   idiom) and live on the kind arm, so `env.<global>` and
+   `wasm:js-string.<global>` are unrepresentable. Value union `:54` grows
+   `"ref_extern"` (+ set `:56-60`). Factories: `funcRecord(capability, module,
+   field, params, results, exceptionPolicy?)` (the 12 existing rows pass
+   `"env"`; `record()` may remain as an `env`-defaulting alias so existing
+   call sites and tests are untouched) and
+   `globalRecord(capability, module, fieldScheme, valueType, mutable)`.
+2. **New ids + rows (sorted; catalogue stays complete):**
+   - `funcRecord("string.char_code_at", "wasm:js-string", "charCodeAt", ["externref","i32"], ["i32"])` (`imports.ts:640-645`)
+   - `funcRecord("string.concat", "wasm:js-string", "concat", ["externref","externref"], ["ref_extern"])` (`:628`)
+   - `funcRecord("string.eq", "wasm:js-string", "equals", ["externref","externref"], ["i32"])`
+   - `funcRecord("string.len", "wasm:js-string", "length", ["externref"], ["i32"])`
+   - `globalRecord("string.const", "string_constants", { scheme: "literal" }, "externref", false)` (matches `addStringConstantGlobal`, `imports.ts:179-183`: `{kind:"global", type:externref, mutable:false}`)
+   - `globalRecord("string.const.utf16", "string_constants16", { scheme: "literal-utf16-hex" }, "externref", false)`
+   Each row's ABI is pinned against the registration site it names
+   (`addStringImports` `imports.ts:627-664`; `addStringConstantGlobal`
+   `:179-183`/`:224-228`) — a catalogue-level equality, no emission.
+3. **Validator grows kind arms**: key list per kind (`func`: today's six ±
+   `exceptionPolicy`; `global`: `capability, field, kind, module, mutable,
+   valueType`); module membership checked against the arm's union (a
+   runtime twin of the type — "unknown host capability module/kind" is a
+   pinnable message, distinct from the equality rejections); `global` arm
+   compares `field.scheme`, `valueType` (via `assertValueTypes`), `mutable`;
+   `exceptionPolicy` is func-only.
+4. **Fail-closed kind guards** at every func-assuming consumer (list above):
+   `kind !== "func"` ⇒ throw naming the capability ("not a callable host
+   capability"). Prefer the type-level narrowing for `host-callable`
+   (`capability: Extract<…, func ids>`) so a global id in a provider row is a
+   compile error; keep the runtime check in `#indexProviders` (`:1484-1509`)
+   as the twin. `asAsyncHostAdapter` gets the guard BEFORE `:94`;
+   `AsyncHostAdapter` (`:83`) retargets to the func arm.
+5. **Nothing else moves**: no `IrIntrinsicProvider` global arm
+   (`nodes.ts:856-860` — a global capability attaches as an `IrGlobalRef` on
+   `IrInstrStringConst.storage`, a later slice's concern), no policy field
+   (the `tests/issue-4104…:432-445` whole-shape pin does not move), no
+   provider row, `integration.ts:6284` / `:7142` keep reading
+   `ctx.nativeStrings` (pin that they do — the F1-S4 grep-gate idiom, so a
+   reviewer cannot mistake this slice for the move).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — un-requested ids**: grep `scripts/` and `src/` for any gate
+  asserting "every capability id is requested by some provider" (none found
+  in `runtime-manifest.ts`; `scripts/` unverified). If one exists, name it
+  and decide: exempt the family-2 rows explicitly or sequence the first
+  provider row (F2-S3) into this PR — do NOT silently weaken the gate.
+- **P2 — `ref_extern` reach**: confirm the widened value type cannot leak
+  into `lowerAdapterType` (`ir-async-runtime-adapters.ts:19-21`, typed on
+  the narrow async union) and that `assertValueTypes` accepts it only where
+  a row declares it.
+- **P3 — key-order canonicalization**: the `semanticView` helper
+  (`tests/issue-3526-ir-runtime-manifest.test.ts:88-97`) serializes
+  `hostCapabilityRecords` verbatim — verify the reversed-catalogue
+  canonicalization pin (`:440-452` idiom) stays byte-equal with the new
+  rows present, i.e. sorting is by id and the new rows land in a stable
+  position.
+- **P4 — F2-S3 handoff**: record the exact split of the eq arm out of
+  `integration.ts:6277-6296` and the `stringEq` policy shape (`{eq: "host" |
+  "native" | "unsupported"}`, projected `nativeStrings ? native : host`) as
+  the next slice's starting point — no code for it in this PR.
+
+### Verification matrix
+
+- **V-A byte cells**: the F2-S1 six fixtures (`STRCMP`, `STRCMP4`,
+  `STRMIX`, `FOROFSTR`, `BOTH`, `CLEAN`) **plus a literal-heavy `CONST`
+  fixture** (so the `string_constants`/`string_constants16` global path is in
+  the matrix) × five lanes (gc-host, gc-native-strings, standalone, WASI,
+  linear), before/after on the same tree: byte length, sha256, import set
+  AND order, full WAT, error list, `irOutcomes` — **100 % identical**; any
+  delta is a defect.
+- **V-B schema pins** (new `tests/issue-3526-string-boundary-schema.test.ts`,
+  the F1/F2 per-slice anatomy, header stating the slice moves no boundary):
+  each new row resolves via `resolveRuntimeHostCapabilityRecord` to the exact
+  literal (whole-shape `toEqual`) and is canonical (`toContain` identity
+  `:282-284` idiom); reversed-catalogue canonicalization byte-equal; async
+  projection excludes the new ids and `asAsyncHostAdapter` throws on a global
+  record; a Math-only / async-only / compare-only manifest's
+  `hostCapabilityRecords` is free of the new rows; validator rejections for
+  `env`+`global`, `wasm:js-string`+`global`, `string_constants`+`func`, wrong
+  `mutable`, wrong `valueType`, wrong scheme, unknown module, unknown kind;
+  every func-assuming consumer throws (not misbehaves) on a global id.
+- **V-C exhaustiveness lives in `src/`**: `tsconfig` excludes `tests/`, so
+  `@ts-expect-error` in a test is unenforced — closedness is enforced by the
+  `as const`-tuple unions and factory parameter types under `pnpm run
+  typecheck` (the `quality` gate), with the runtime membership check as the
+  vitest-pinnable twin.
+- **V-D revert non-vacuity**: reverting the widening fails exactly the new
+  file's pins and **0 tests elsewhere** — record that count as the measured
+  baseline (the probes' Exp 1/2 showed a no-pin revert fails 0 tests, which
+  is why the slice's own pins are its only observability).
+- **V-E** the five ratchet gates chained bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`; `runtime-manifest.ts` is
+  already over the 1500-line god-file threshold (1670), so any growth needs
+  the dated `loc-budget-allow` rationale block (the `:123-140` template; all
+  four likely-touched paths already carry grants at `:78-80`, `:94`);
+  controls run unchanged: `issue-2955-depolymorph-gate`,
+  `issue-3502-string-contract`, `issue-3518-string-repeat-ir`, `issue-3167`,
+  `issue-1183`, `issue-4550-linear-ir-census` (baseline byte-pin), both
+  async suites, all #3526 suites, `#3520` callable-provider-abi.
+
+### After this slice (ranked, from the boundary probe)
+
+| rank | boundary | why |
+| --- | --- | --- |
+| **F2-S3** | `string.eq` | one import, one native symbol (`__str_equals`), no mode sub-arm, ABI in the existing union (only the module axis is new); resolve arm = F2-S1's shape verbatim; demand = `string.eq` instr scan; policy `stringEq` |
+| F2-S4 | `string.len` | host arm trivial; native struct-field arm needs manifest provider vocabulary |
+| F2-S5 | `string.concat` | `owned-append` sub-arm, `__concat_N` late-import sibling, `string-builder-candidate` census bucket |
+| later | `charCodeAt` | `host-capability` two-record provider behind a defined helper (`char-code-at-helpers.ts:173-224`) |
+| later | `string.const` | global kind, derived field, two namespaces, oversized materializer, legacy pre-pass ordering |
+
+Out of scope here: every resolve-table arm (`integration.ts:6186-6347`),
+`stringMethodPlan`, `String()` coercion, `src/ir/from-ast.ts`, the
+`host-import-policy.ts:283-286` classifier (retire once records are typed),
+and `import-manifest.ts:337`'s `env`-only walk.
