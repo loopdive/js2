@@ -1467,3 +1467,162 @@ box/to-number family — no mechanical join proven), timer shims, generator
 `setReturn`, `__box_boolean` / `__box_symbol` / `$AnyValue`, the `#2108`
 coercion-sites baseline, the public `ImportIntent` projection, and every direct
 codegen `__box_number` / `__unbox_number` handler.
+
+## 2026-09-01 F1-S2 implementation plan — boolean-boundary intrinsic (family 1, slice 2)
+
+**Fable lane.** Grounded on `origin/main` at `e0b46482fd` (post-F1-S1 merge
+PR #5364, post-gap-4 merge PR #5367). Opus implements against this plan. This
+slice migrates the LAST resolver-mode predicate at the from-ast externref
+coercion boundary — `hasHostBooleanBox` — onto the F1-S1 machinery, which now
+exists on main and is the template: mirror it, do not re-derive it.
+
+### Measured facts (verified on the grounded tree)
+
+- **One from-ast read.** `src/ir/from-ast.ts:7227-7241`: the boolean-branded
+  i32 → externref arm (`got.kind === "i32" && got.boolean === true`) is gated
+  on `cx.resolver?.hasHostBooleanBox?.() === true` and emits a direct
+  `emitCall(irImportFuncRef("env", "__box_boolean"), [value], externref)`.
+  When the predicate is false the arm FALLS THROUGH to the typed
+  `operand-coercion-unsupported` build throw below it (designed
+  non-claimability → legacy fallback, the #3553 comment).
+- **Three resolver implementations**, exactly the pre-F1-S1 number shape:
+  `src/ir/integration.ts:5666` (`!ctx.nativeStrings`),
+  `src/ir/backend/linear-integration.ts:1537` (`false`),
+  `src/codegen/stdlib-selfhost.ts:190` (`false`). Contract entry at
+  `from-ast.ts:421`, prose at `:365`. No other executable read exists —
+  pre-implementation verification 1 re-proves this.
+- **Box arm only.** There is NO `hasNativeBooleanUnbox` and no unbox arm; the
+  integration comment states the boolean capability "has no widening
+  follow-up". F1-S2 therefore mints ONE intrinsic, not a pair.
+- **ABI** `(i32) -> externref` — confirmed by both `ensureLateImport` sites
+  (`array-object-proto.ts:1451`, `array-prototype-borrow.ts:502`).
+- **Union-import trigger.** `__box_boolean` ∈ `UNION_IMPORT_FUNC_NAMES`
+  (`integration.ts:7244`). The F1-S1 attached-target recognizer
+  (`integration.ts:7410-7428`) filters on
+  `i.id === "js.number.box" || i.id === "js.number.unbox"` before the
+  membership check — the migration removes the raw `call` this detector
+  otherwise keys on, so the id filter must admit `js.boolean.box`. The
+  membership check itself already covers `__box_boolean`; no other edit.
+- **F1-S1 machinery to mirror** (all on main): intrinsic rows + feature rows
+  (`intrinsics.ts:60/116/234`), the central capability catalogue
+  (`runtime-host-capabilities.ts` — closed ID union currently seven async +
+  `number.box`/`number.unbox`), provider definitions and policy-driven
+  selection (`runtime-manifest.ts:77-102` policy type, `:410-474` providers,
+  `:895-898` canonicalization, `:1184` selection), the owner-local
+  unsupported partition (`integration.ts:3481-3493`,
+  `unsupportedNumberBoundaryIntrinsic`), and the caller policy projections
+  (`integration.ts:829`, `linear-integration.ts:666`,
+  `stdlib-selfhost.ts:499`).
+
+### Contract
+
+1. **Intrinsic.** `js.boolean.box` `(i32) -> externref`, versioned, 1:1
+   feature row, added beside the number rows (a `BOOLEAN_BOUNDARY_*` sibling
+   of `NUMBER_BOUNDARY_INTRINSIC_IDS` / `NUMBER_BOUNDARY_RUNTIME_FEATURES` —
+   do not widen the number constants).
+2. **Capability.** One record `boolean.box` → `env.__box_boolean`
+   `(i32) -> externref` in the central catalogue
+   (`runtime-host-capabilities.ts`), same exact-ABI validation and canonical
+   identity as the number rows. The async projection must remain unable to
+   see it only if its value union would mislower it — an `i32`-typed row IS
+   admissible under `AsyncHostAdapterValueType`, so the async-only projection
+   must filter by the async ID set, not by value type alone (pre-impl
+   verification 2 proves the seven-ID filter already does this).
+3. **Policy.** `booleanBoundary: { box: "host" | "unsupported" }` on
+   `RuntimeManifestPolicy`, optional in the type, defaulted to a frozen
+   `BOOLEAN_BOUNDARY_POLICY_DISABLED`, canonicalized at builder construction,
+   published resolved on the frozen manifest — the exact `numberBoundary`
+   pattern. All three production callers pass it explicitly:
+   integration projects `{ box: !ctx.nativeStrings ? "host" : "unsupported" }`
+   (the exact former truth table); linear and self-hosted-stdlib pass
+   disabled. Host arm resolves through the existing `host-callable` provider
+   kind to the SAME physical target `env.__box_boolean`; there is no
+   runtime-callable arm (no native boolean boxer exists).
+4. **from-ast.** The branded-i32 type gate stays (it is a type fact); the
+   resolver predicate read is deleted (it is a lane fact); the arm emits the
+   provider-free `cx.builder.emitIntrinsic("js.boolean.box", [value])`.
+   Delete the `hasHostBooleanBox` contract entry, all three implementations,
+   and the prose references.
+5. **Preparation.** An unavailable arm classifies the OWNER as
+   `late-preparation-unsupported` / `resolve` owner-locally, before any body,
+   slot, alias, outcome or manifest prefix is published — extend or sibling
+   the `unsupportedNumberBoundaryIntrinsic` partition; one demoting owner
+   must not fail unrelated owners through the aggregate manifest.
+6. **Trigger.** Widen the `integration.ts:7410` id filter to admit
+   `js.boolean.box` attached callable targets. Attachment-precedes-trigger
+   sequencing is the F1-S1 argument verbatim (manifest preparation runs at
+   the top of the sequence, `preregisterDynamicAndForInSupport` later in the
+   same sequence); no name scanning, no second allocator.
+
+### Behavior-neutrality obligations (each is a test or a measured record)
+
+1. `pnpm run check:ir-fallbacks` census output-identical; unintended,
+   module-level and post-claim buckets stay empty.
+2. Import set AND order identical in every lane, before and after.
+3. Byte parity: every standalone, WASI, native-strings and linear cell
+   byte-identical. Host-lane cells may exhibit ONLY the F1-S1 purity class of
+   diff (removed `(local $$irN externref)` declarations + renumbering from
+   the effects-aware scheduler no longer spilling a pure intrinsic's result;
+   identical instruction sequence, call targets, imports and answers) — any
+   other WAT delta is a defect. Record the measured cells in the checkpoint.
+4. Outcome-code shift, F1-S1 divergence-4 class: shapes that previously fell
+   through to the BUILD-time `operand-coercion-unsupported` demote on no-box
+   lanes now demote in PREPARATION as `late-preparation-unsupported`. Both
+   demote to legacy; emitted bytes must be measured identical on those lanes.
+5. Non-vacuity: reverting ONLY the from-ast arm while keeping the schema must
+   fail named tests (the owner-local demote code and the intrinsic-emission
+   assertion), while schema/policy tests stay green.
+6. The boolean-branded gate population is unchanged: nothing that was not
+   emitted before may be emitted now (the resolver predicate never gated
+   EMISSION population on host lanes — it only picked demote-vs-box; state
+   this as an explicit before/after claim-census comparison).
+
+### Required pre-implementation verifications (record answers in the checkpoint)
+
+1. **Full-repo trace of `hasHostBooleanBox`.** Expected: one from-ast read,
+   one contract entry, three implementations, prose only elsewhere. Any
+   additional executable read invalidates the one-arm premise — stop and
+   re-plan rather than absorb it.
+2. **Async non-involvement.** Prove `async-prepare.ts` and the async adapter
+   materializer have no `__box_boolean` join (the F1-S1 standalone-cutover
+   failure came from exactly such a hidden lane-fact join on the number side;
+   grep + run the #4103/#4104/#4106 suites and `check:standalone-ir-cutover`
+   locally BEFORE pushing). Also prove the async-only capability projection
+   filters by the seven async IDs, not by value type.
+3. **`box-boolean-fuse.ts` interaction.** The peephole matches emitted
+   `call $__box_boolean` leaves. Establish by measurement whether it ever
+   fires on IR-path bodies today; if it does, the lowered intrinsic must
+   produce the same call shape it matches (the callable provider emits the
+   same `emitCall` — verify on a boolean-condition fixture, byte-comparing
+   with the fuse pass on and off).
+4. **Brand producers.** Enumerate what sets `boolean: true` on i32 IrTypes
+   feeding this arm; confirm none consults the resolver predicate to decide
+   whether to produce the branded carrier (emission population must be a pure
+   type fact after the migration).
+
+### Validation
+
+Typecheck; `check:ir-fallbacks` bare; ratchet chain bare
+(`node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs &&
+node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet &&
+npm run -s check:dead-exports`) plus the `LOC_GATE_BASE=$(git rev-parse
+origin/main)` CI-base simulation; `check:ir-dialect`, `check:ir-layering`,
+`check:ir-only`, `check:linear-ir`, `check:host-import-policy`,
+`check:standalone-ir-cutover` (run locally — F1-S1's one CI failure was this
+gate); the focused #3526 suites and the F1-S1 tests (which must stay green
+untouched); hooks without bypass. Growth allowances in THIS issue file's
+frontmatter with a dated rationale; no `scripts/*-baseline.json` edits (the
+`check:ir-kind-neutrality` evidence-line refresh via its own
+`--update-on-decrease` flow is the sanctioned exception if line drift trips
+it, per the F1-S1 checkpoint).
+
+### Explicitly out of scope
+
+Generator `setReturn`'s `boxProvider` (a number-family row — F1-S3 candidate),
+`compiler-timer-shim-preparation.ts` (no mechanical join proven), every direct
+codegen `__box_boolean` handler and the `box-boolean-fuse` peephole itself,
+`__box_symbol` / `$AnyValue`, `__unbox_boolean` (a union member with no IR
+producer today), and the #2108 coercion-sites baseline. One owner for the
+same file family as F1-S1 minus the async files; check the claim ledger before
+touching `integration.ts` (#3525 codex lane overlaps it — coordinate, never
+parallel-write).
