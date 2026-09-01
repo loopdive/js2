@@ -64,9 +64,9 @@ imports to the standalone generator shapes.
 
 The seven-row Test262 list was a diagnostic expansion, not the original
 acceptance scope. Its two `chunks`/`windows` exhaustion rows are handed to
-[#5254](5254-es2015-inherited-iterator-helper-getter-dispatch.md), whose
-assembled-WAT trace corrected the initial closure-carrier hypothesis to the
-outer inherited-helper admission path. Its
+[#5254](5254-test262-original-harness-iterator-shim.md), whose original-harness
+trace proved that the authoritative assembler omits the existing minimal
+`Iterator` preamble before the compiled helper path can be selected. Its
 `GeneratorPrototype/next/context-method-invocation` dynamic-`this` row is
 handed to [#5255](5255-es2015-generator-method-this-transport.md). Those
 independent residuals do not reopen #3591's stale-dispatch fix.
