@@ -154,6 +154,13 @@ export class ProgramAbiModuleInitCallableRegistry {
   private preparedExactUnitId?: IrUnitId;
   private preparedExactFunction?: WasmFunction;
   private preparedExactHandle?: FuncHandle;
+  /** (#3523 R4 gap 3) The exact source-owned module-init pass, when one exists. */
+  private exactUnitPass?: {
+    readonly bindingId: IrBindingId;
+    readonly handle: FuncHandle;
+    readonly func: WasmFunction;
+    readonly entrySourceId: IrSourceId;
+  };
   private graphGlobalPass?: {
     readonly bindingId: IrBindingId;
     readonly handle: FuncHandle;
@@ -414,7 +421,19 @@ export class ProgramAbiModuleInitCallableRegistry {
     const isExact = (observation: ModuleInitCallableObservation): boolean =>
       exactUnitId !== undefined && exactObservation !== undefined && observation === exactObservation;
     for (const { observation, func } of liveObservations) {
-      if (isExact(observation)) this.planExactUnit(exactUnitId!, func);
+      if (!isExact(observation)) continue;
+      this.planExactUnit(exactUnitId!, func);
+      // (#3523 R4 gap 3) Retain the exact unit's pass shape. Recording it costs
+      // nothing and changes no behavior; `assertGraphGlobalInvocationPolicy`
+      // consults it only under the Prepared WASI policy (see
+      // `preparedInvocationPass`), which is the one case where no adapter check
+      // would otherwise run at all.
+      this.exactUnitPass = Object.freeze({
+        bindingId: irUnitCallableBindingId(exactUnitId!),
+        handle: observation.funcIdx,
+        func,
+        entrySourceId,
+      });
     }
 
     // The graph-global (legacy multi-source) pass is ONE physical initializer
@@ -537,20 +556,16 @@ export class ProgramAbiModuleInitCallableRegistry {
         readonly invocation: ModuleInitInvocationPolicy;
       }
     | undefined {
-    const unitId = this.preparedExactUnitId;
-    const func = this.preparedExactFunction;
-    const handle = this.preparedExactHandle;
-    if (unitId === undefined || !func || handle === undefined) return undefined;
+    // Scoped by the guard RECEIPT, not by the target flag: `planted` is set
+    // only when prepared emission actually constructed the body around the
+    // reserved `__init_done` global. So this adds no check to the legacy WASI
+    // lane, whose Unsupported shapes keep their established wiring until the
+    // typed Unsupported policy is retired.
+    if (this.ctx.preparedWasiModuleInitGuard?.planted === undefined) return undefined;
     if (moduleInitInvocationPolicy(this.ctx) !== "wasi-start-export") return undefined;
-    const entrySourceId = this.identityContext?.terminalByUnitId.get(unitId)?.sourceId;
-    if (entrySourceId === undefined) return undefined;
-    return Object.freeze({
-      bindingId: irUnitCallableBindingId(unitId),
-      handle,
-      func,
-      entrySourceId,
-      invocation: "wasi-start-export" as const,
-    });
+    const pass = this.exactUnitPass;
+    if (!pass) return undefined;
+    return Object.freeze({ ...pass, invocation: "wasi-start-export" as const });
   }
 
   assertGraphGlobalInvocationPolicy(): void {

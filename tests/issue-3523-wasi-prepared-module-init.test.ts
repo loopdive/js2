@@ -24,8 +24,16 @@
  *
  * These must hold identically before and after the mechanism moves.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { analyzeSource } from "../src/checker/index.js";
+import { generateModule } from "../src/codegen/index.js";
+import { definedFuncAt } from "../src/codegen/func-space.js";
+import { ProgramAbiExportRegistry } from "../src/codegen/program-abi-export-planning.js";
+import type { CodegenContext } from "../src/codegen/context/types.js";
 import { compile } from "../src/index.js";
+
+// Register the codegen expression/statement delegates used by generateModule.
+import "../src/codegen/expressions.js";
 
 /** Shape (b) of the R4 census: one initialized top-level lexical binding. */
 const SHAPE_B = `let v = 7;
@@ -130,3 +138,133 @@ function topLevelSectionIds(binary: Uint8Array): number[] {
   }
   return ids;
 }
+
+/**
+ * (#3523 R4 gap 3, V-D) Fail-closed reachability for the PREPARED WASI route.
+ *
+ * `assertGraphGlobalInvocationPolicy`'s `wasi-start-export` case was written
+ * for the unitless graph-global pass and never ran against a Prepared unit,
+ * because `graphGlobalPass` is unset when a prepared exact unit owns the init.
+ * `issue-3520-module-init-callable-abi` pins the four adapter mutations
+ * (strip `_start`, retarget its call, duplicate `_start`, inject a compiler
+ * `__module_init` alias) on the MULTI-source graph-global route. These are the
+ * single-source prepared equivalents: same mutations, same diagnostics, now
+ * reached through `preparedInvocationPass`.
+ *
+ * Without them the new authentication is unfalsifiable — it would pass whether
+ * or not it ran.
+ */
+describe("#3523 gap 3 — the prepared WASI route fails closed", () => {
+  const SOURCE = `let total = 0;
+total = total + 1;
+export function read(): number { return total; }`;
+
+  function hardErrors(result: { readonly errors: readonly { readonly severity?: string }[] }) {
+    return result.errors.filter((error) => error.severity !== "warning");
+  }
+
+  /** One real single-source WASI compile, optionally corrupting the wiring
+   *  after the generic export registry has sealed its denominator — so a
+   *  mutation cannot pass vacuously through an earlier duplicate-name or
+   *  unowned-target guard. */
+  function compilePreparedWasi(mutateAfterExports?: (ctx: CodegenContext) => void) {
+    const ast = analyzeSource(SOURCE, "test.ts");
+    const original = ProgramAbiExportRegistry.prototype.planRetained;
+    const spy = vi.spyOn(ProgramAbiExportRegistry.prototype, "planRetained").mockImplementation(function (
+      this: ProgramAbiExportRegistry,
+    ) {
+      const result = original.call(this);
+      mutateAfterExports?.(this.ctx);
+      return result;
+    });
+    try {
+      return generateModule(ast, { experimentalIR: true, wasi: true, trackIrOutcomes: true });
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("authenticates the single prepared _start adapter (positive control)", () => {
+    expect(hardErrors(compilePreparedWasi())).toEqual([]);
+  });
+
+  it("rejects a stripped _start export", () => {
+    const violated = compilePreparedWasi((ctx) => {
+      ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "_start");
+    });
+    expect(
+      hardErrors(violated)
+        .map((error) => error.message)
+        .join("\n"),
+    ).toMatch(/expects exactly one observed _start adapter, found 0/);
+  });
+
+  it("rejects a duplicated _start export", () => {
+    const violated = compilePreparedWasi((ctx) => {
+      const start = ctx.mod.exports.find((entry) => entry.name === "_start");
+      if (!start) throw new Error("missing exact _start export");
+      ctx.mod.exports.push({ name: start.name, desc: { ...start.desc } });
+    });
+    expect(
+      hardErrors(violated)
+        .map((error) => error.message)
+        .join("\n"),
+    ).toMatch(/expects exactly one observed _start adapter, found 2/);
+  });
+
+  it("rejects a _start adapter retargeted away from the prepared initializer", () => {
+    const violated = compilePreparedWasi((ctx) => {
+      const start = ctx.mod.exports.find((entry) => entry.name === "_start");
+      const other = ctx.mod.exports.find((entry) => entry.name === "read");
+      if (!start || !other || start.desc.kind !== "func" || other.desc.kind !== "func") {
+        throw new Error("missing exact _start/read function exports");
+      }
+      const adapter = definedFuncAt(ctx, start.desc.index);
+      if (!adapter) throw new Error("missing exact _start allocator function");
+      // Mutate the adapter's real first call, not just an export label, so the
+      // recorded target-object / call-path seam is what rejects it.
+      const first = adapter.body.find((instruction) => instruction.op === "call");
+      if (!first || first.op !== "call") throw new Error("missing _start direct call");
+      first.funcIdx = other.desc.index;
+    });
+    expect(
+      hardErrors(violated)
+        .map((error) => error.message)
+        .join("\n"),
+    ).toMatch(/_start adapter does not retain its exact selected entry call path/);
+  });
+
+  it("rejects an injected compiler __module_init alias", () => {
+    const violated = compilePreparedWasi((ctx) => {
+      const handle = ctx.programAbiModuleInitCallables?.firstHandle();
+      if (handle === undefined) throw new Error("missing exact prepared init handle");
+      ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: handle } });
+    });
+    expect(
+      hardErrors(violated)
+        .map((error) => error.message)
+        .join("\n"),
+    ).toMatch(/must not publish a compiler __module_init alias/);
+  });
+
+  it("rejects a prepared initializer whose planted idempotence guard is gone", async () => {
+    // `applyModuleInitGuard` no longer splices a prepared body — it
+    // authenticates the guard preparation planted. Strip that guard and the
+    // compile must fail rather than emit a silently unguarded binary, in which
+    // every exported entry would re-run module init on every call.
+    const seam = "JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD";
+    const previous = process.env[seam];
+    process.env[seam] = "1";
+    try {
+      const violated = await compile(SOURCE, { fileName: "test.ts", target: "wasi" });
+      expect(violated.success).toBe(false);
+      expect(violated.errors.map((error) => error.message).join("\n")).toMatch(
+        /lost its exact planted idempotence guard/,
+      );
+      expect(violated.binary?.length ?? 0).toBe(0);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, seam);
+      else process.env[seam] = previous;
+    }
+  });
+});
