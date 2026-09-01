@@ -87,6 +87,14 @@ candidate seam, so the code was removed rather than shipping an inert
 host-free-looking route. TS7 type checking passed while the candidate was
 present; it is recorded only as a structural check, not semantic validation.
 
+After merging live `upstream/main` at
+`ca4b31eb12d4bae3275d02a17ca6b42f745932a6` (which contains the required
+`4a285f684ecf7a7e89f1222c457f689086749c35`), the exact isolated command was
+repeated unchanged: **3 pass / 4 fail** with the same control, QuickJS, and
+three reachable-semantic partitions. A fresh TS7 `--noEmit` check also passed.
+Because the candidate source is absent, this repeat makes no new zero-host-import
+claim; the only host-import observation is the frozen residual census above.
+
 ### Precise handoff
 
 1. Instrument the canonical `runOriginalHarnessVariant` compilation shape (not
