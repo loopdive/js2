@@ -258,6 +258,11 @@ describe("#3101 exceptions (side-table, cross-call unwind)", () => {
     expectValue("var caught='no'; try { try { throw 'x'; } finally {} } catch(e){ caught=e; } caught", "x"));
   it("unwinds a throw across a call boundary into a caller's catch", () =>
     expectValue("function boom(){ throw 'x'; } var r='no'; try { boom(); } catch(e){ r=e; } r", "x"));
+  it("restores nested call state before and after an unwind into the original caller", () =>
+    expectValue(
+      "function leaf(n){if(n===0)throw 'boom';return n;} function middle(n){return leaf(n)+1;} function outer(){var returned=middle(2);try{return returned*10+middle(0);}catch(e){return e==='boom'?returned+middle(3):-1;}} outer()",
+      7,
+    ));
   it("host TypeError on a non-callable is catchable", () =>
     expectValue("var r = 'no'; try { var n = 5; n(); } catch(e) { r = e.name; } r", "TypeError"));
   it("constructs an unshadowed native Error through CallBuiltin", () =>
