@@ -2,7 +2,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../src/codegen/generic-struct-factory.js";
+import {
+  genericIdentityReturnParamIndex,
+  genericStructFactoryCall,
+  genericStructFactorySourceResultAbi,
+} from "../src/codegen/generic-struct-factory.js";
 import { compile, compileMulti, wrapExports } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
 
@@ -120,6 +124,70 @@ describe("#1058 generic base-node factories", () => {
       },
     } as unknown as Parameters<typeof genericStructFactoryCall>[0];
     expect(genericStructFactoryCall(context, call!)).toBeNull();
+  });
+
+  it("does not assign an owned source ABI to a constructor that may return a shared object", async () => {
+    const { checker, sourceFile } = typedSource(`
+      interface Node { kind: number; }
+      const shared: Node = { kind: 1 };
+      class ReusingNode implements Node {
+        kind = 2;
+        constructor() { return shared as ReusingNode; }
+      }
+      function make<T extends Node>(): T {
+        return new ReusingNode() as T;
+      }
+    `);
+    const declaration = sourceFile.statements.find(
+      (statement): statement is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(statement) && statement.name?.text === "make",
+    );
+    expect(declaration).toBeDefined();
+    const context = {
+      checker,
+      callableSourceFiles: [sourceFile],
+      oracle: {
+        valueDeclarationOf(node: ts.Node) {
+          const symbol = checker.getSymbolAtLocation(node);
+          return symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+        },
+      },
+    } as unknown as Parameters<typeof genericStructFactorySourceResultAbi>[0];
+
+    expect(genericStructFactorySourceResultAbi(context, declaration!)).toBeUndefined();
+
+    const result = await compile(
+      `
+        interface Node { kind: number; }
+        const shared: Node = { kind: 1 };
+        class ReusingNode implements Node {
+          kind = 2;
+          constructor() { return shared as ReusingNode; }
+        }
+        function detected<T extends Node>(): T {
+          return new ReusingNode() as T;
+        }
+        function control<T extends Node>(): T {
+          const value = new ReusingNode();
+          return value as T;
+        }
+        export function detectedKind(): number {
+          const value: any = detected<any>();
+          return value.kind;
+        }
+        export function controlKind(): number {
+          const value: any = control<any>();
+          return value.kind;
+        }
+      `,
+      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
+    );
+    const exports = (await instantiate(result)) as unknown as {
+      controlKind(): number;
+      detectedKind(): number;
+    };
+    expect(exports.detectedKind()).toBe(exports.controlKind());
+    expect(exports.controlKind()).toBe(2);
   });
 
   it("keeps a memoized callback's later factory capture live", async () => {

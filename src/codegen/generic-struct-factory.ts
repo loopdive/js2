@@ -17,6 +17,8 @@ export interface GenericStructFactoryCall {
   declaration: ts.FunctionDeclaration;
   /** Physical struct carried by the generic function before call-site refinement. */
   sourceConstraint: ts.Type;
+  /** The declaration proof owns the physical source carrier for opaque results. */
+  sourceResultAbi?: true;
   /** Concrete call result, or its enclosing generic's structural constraint. */
   target: ts.Type;
 }
@@ -24,6 +26,8 @@ export interface GenericStructFactoryCall {
 export interface StructFactoryExpression {
   /** Physical struct produced before an asserted fresh-result refinement. */
   sourceConstraint: ts.Type;
+  /** The expression proof owns the physical source carrier for opaque results. */
+  sourceResultAbi?: true;
   /** Structural destination that must be materialized around that source. */
   target: ts.Type;
 }
@@ -1111,26 +1115,27 @@ function provenFreshFactoryCall(ctx: CodegenContext, call: ts.CallExpression): b
   return declaration !== undefined && genericStructFactoryDeclaration(ctx, declaration) !== null;
 }
 
-function directFactoryReturn(
+function directFactoryReturnKind(
   ctx: CodegenContext,
   declaration: ts.FunctionDeclaration,
   resultTypeParameter: ts.Type,
   sourceConstraint: ts.Type,
-): boolean {
-  if (declaration.body?.statements.length !== 1) return false;
+): "proven-call" | "constructor" | undefined {
+  if (declaration.body?.statements.length !== 1) return undefined;
   const statement = declaration.body.statements[0];
-  if (!statement || !ts.isReturnStatement(statement) || !statement.expression) return false;
+  if (!statement || !ts.isReturnStatement(statement) || !statement.expression) return undefined;
 
   const returned = unwrapExpression(statement.expression);
-  if (!ts.isAsExpression(returned) && !ts.isTypeAssertionExpression(returned)) return false;
+  if (!ts.isAsExpression(returned) && !ts.isTypeAssertionExpression(returned)) return undefined;
   const assertedType = eraseReadonlyView(ctx.checker.getTypeAtLocation(returned));
-  if (!sameTypeParameter(assertedType, resultTypeParameter)) return false;
+  if (!sameTypeParameter(assertedType, resultTypeParameter)) return undefined;
 
   const operand = unwrapExpression(returned.expression);
-  if (!ts.isCallExpression(operand) && !ts.isNewExpression(operand)) return false;
-  if (ts.isCallExpression(operand) && !provenFreshFactoryCall(ctx, operand)) return false;
+  if (!ts.isCallExpression(operand) && !ts.isNewExpression(operand)) return undefined;
+  if (ts.isCallExpression(operand) && !provenFreshFactoryCall(ctx, operand)) return undefined;
   const operandType = ctx.checker.getTypeAtLocation(operand);
-  return ctx.checker.isTypeAssignableTo(operandType, sourceConstraint);
+  if (!ctx.checker.isTypeAssignableTo(operandType, sourceConstraint)) return undefined;
+  return ts.isCallExpression(operand) ? "proven-call" : "constructor";
 }
 
 /**
@@ -1383,11 +1388,10 @@ function genericStructFactoryDeclaration(
     resultTypeParameter,
     sourceConstraint,
   );
+  const directFactoryKind = directFactoryReturnKind(ctx, declaration, resultTypeParameter, sourceConstraint);
+  const returnsDirectFactory = directFactoryKind !== undefined;
   const wrapsFreshFactory = wrapperFactoryReturn(ctx, declaration, resultTypeParameter);
-  const admitted =
-    identityWrappedSource !== undefined ||
-    directFactoryReturn(ctx, declaration, resultTypeParameter, sourceConstraint) ||
-    wrapsFreshFactory;
+  const admitted = identityWrappedSource !== undefined || returnsDirectFactory || wrapsFreshFactory;
   if (!admitted) {
     memo.set(declaration, null);
     return null;
@@ -1404,11 +1408,11 @@ function genericStructFactoryDeclaration(
         declaration,
         resultTypeParameter,
         sourceConstraint,
-        // A wrapper that initializes and returns a fresh T still owns only the
-        // constraint's physical fields. Freezing its body ABI to the first
-        // concrete instantiation makes the exact fresh constraint fail a
-        // nominal downcast before callers can materialize their own layout.
-        ...(wrapsFreshFactory ? { sourceResultAbi: true as const } : {}),
+        // A proven factory call or wrapper that initializes and returns a fresh
+        // T still owns only the constraint's physical fields. A bare `new` is
+        // intentionally excluded from the ABI override: JavaScript constructors
+        // may explicitly return a shared object.
+        ...(directFactoryKind === "proven-call" || wrapsFreshFactory ? { sourceResultAbi: true as const } : {}),
       };
   memo.set(declaration, descriptor);
   return descriptor;
@@ -1416,8 +1420,9 @@ function genericStructFactoryDeclaration(
 
 /**
  * A declaration whose first call-site T cannot define its physical result ABI.
- * Only the identity-wrapped fresh-factory proof above can request this override;
- * ordinary generic factories retain their established ABI planning.
+ * Only the proven-call, identity-wrapped, and wrapper fresh-factory proofs above
+ * can request this override; constructors and ordinary generic factories retain
+ * their established ABI planning.
  */
 export function genericStructFactorySourceResultAbi(
   ctx: CodegenContext,
@@ -1466,7 +1471,12 @@ export function genericStructFactoryCall(
     target = constraint;
   }
 
-  return { declaration, sourceConstraint: factory.sourceConstraint, target };
+  return {
+    declaration,
+    sourceConstraint: factory.sourceConstraint,
+    ...(factory.sourceResultAbi ? { sourceResultAbi: true as const } : {}),
+    target,
+  };
 }
 
 /**
@@ -1670,7 +1680,7 @@ function directBaseNodeFactoryAssertion(
   ) {
     return null;
   }
-  return { sourceConstraint, target };
+  return { sourceConstraint, sourceResultAbi: true, target };
 }
 
 function freshWrapperLocalReferenceIsAllowed(
@@ -1811,7 +1821,13 @@ function assertedFreshWrapperFactory(
     ts.forEachChild(node, visit);
   };
   visit(declaration.body);
-  return valid ? { sourceConstraint, target } : null;
+  return valid
+    ? {
+        sourceConstraint,
+        ...(ts.isObjectLiteralExpression(seed) || factory?.sourceResultAbi ? { sourceResultAbi: true as const } : {}),
+        target,
+      }
+    : null;
 }
 
 /** Resolve only the direct asserted BaseNodeFactory expression form. */

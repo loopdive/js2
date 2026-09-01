@@ -216,6 +216,7 @@ import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declar
 import {
   collectInterface,
   collectObjectType,
+  isTypeScriptZeroCostSyntaxTypesSource,
   publishDeclaredShapesForDedup,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
@@ -630,6 +631,19 @@ function directIdentityReturnParamIndex(stmt: ts.FunctionDeclaration): number | 
 
 interface AssertedMutableStructuralParamCarrier {
   open: true;
+  compoundStructDispatch?: true;
+}
+
+function typeScriptNodeCompoundDispatchConstraint(ctx: CodegenContext, paramType: ts.Type): boolean {
+  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
+  const symbol = constraint?.getSymbol();
+  return (
+    symbol?.name === "Node" &&
+    symbol.declarations?.some(
+      (declaration) =>
+        ts.isInterfaceDeclaration(declaration) && isTypeScriptZeroCostSyntaxTypesSource(declaration.getSourceFile()),
+    ) === true
+  );
 }
 
 function assertedMutableStructuralParamCarrier(
@@ -648,7 +662,13 @@ function assertedMutableStructuralParamCarrier(
     assertedStructuralParamsByContext.get(ctx)?.get(stmt)?.has(index);
   const hasGenericAssertedWrite =
     isDirectObjectTypeParameter(ctx, param, stmt, paramType) && parameterHasAssertedPropertyWrite(ctx, param, stmt);
-  return hasDoublyAssertedCall || hasGenericAssertedWrite ? { open: true } : undefined;
+  if (!hasDoublyAssertedCall && !hasGenericAssertedWrite) return undefined;
+  return {
+    open: true,
+    ...(hasGenericAssertedWrite && typeScriptNodeCompoundDispatchConstraint(ctx, paramType)
+      ? { compoundStructDispatch: true as const }
+      : {}),
+  };
 }
 
 function preserveIdentityForStructuralParam(
@@ -661,7 +681,7 @@ function preserveIdentityForStructuralParam(
 ): ValType {
   const carrier = assertedMutableStructuralParamCarrier(ctx, param, index, stmt, wasmType, paramType);
   if (!carrier) return wasmType;
-  markIdentityPreservingStructuralParam(ctx, param);
+  markIdentityPreservingStructuralParam(ctx, param, carrier);
   return { kind: "externref" };
 }
 
