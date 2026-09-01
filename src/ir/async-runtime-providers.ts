@@ -8,12 +8,14 @@
  * validate and deduplicate them before any backend starts emitting code.
  */
 import {
+  asCallableRuntimeHostCapabilityRecord,
   assertCanonicalRuntimeHostCapabilityRecord,
   assertRuntimeHostCapabilityRecord,
   HOST_CALLBACK_EXCEPTION_POLICY,
   resolveRuntimeHostCapabilityRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
   type HostCallbackExceptionPolicy,
+  type RuntimeHostCapabilityFuncRecord,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
 import type { RuntimeProviderDefinition, RuntimeProviderImplementation } from "./runtime-manifest.js";
@@ -79,24 +81,35 @@ export type AsyncHostAdapterValueType = "externref" | "i32";
 export const ASYNC_CALLBACK_EXCEPTION_POLICY = HOST_CALLBACK_EXCEPTION_POLICY;
 export type AsyncCallbackExceptionPolicy = HostCallbackExceptionPolicy;
 
-/** Exact concrete capability record selected by the frozen semantic manifest. */
-export type AsyncHostAdapter = RuntimeHostCapabilityRecord<AsyncHostCapabilityId, AsyncHostAdapterValueType>;
+/**
+ * Exact concrete capability record selected by the frozen semantic manifest.
+ *
+ * (#3526 F2-S2) Retargeted to the FUNC arm of the now kind-discriminated
+ * central record. Every async capability is a callable host import; typing the
+ * adapter on the union would have handed `materializePreparedAsyncHostAdapters`
+ * a record with no `params`/`results` at all.
+ */
+export type AsyncHostAdapter = RuntimeHostCapabilityFuncRecord<AsyncHostCapabilityId, AsyncHostAdapterValueType>;
 
 /**
  * Narrow one central record to the async projection. Fails closed on a
- * non-async capability and on any value type the async materializer cannot
- * represent, so the narrowing can never become a silent cast.
+ * non-async capability, on a non-callable KIND, and on any value type the
+ * async materializer cannot represent, so the narrowing can never become a
+ * silent cast.
  */
 export function asAsyncHostAdapter(value: RuntimeHostCapabilityRecord): AsyncHostAdapter {
   if (!isAsyncHostCapabilityId(value.capability)) {
     throw new Error(`host capability ${value.capability} is not an async capability`);
   }
-  for (const entry of [...value.params, ...value.results]) {
+  // (#3526 F2-S2) BEFORE the value-type walk: a global record has no `params`
+  // or `results` to walk, so the kind guard is what makes the loop total.
+  const callable = asCallableRuntimeHostCapabilityRecord(value);
+  for (const entry of [...callable.params, ...callable.results]) {
     if (entry !== "externref" && entry !== "i32") {
       throw new Error(`async host capability ${value.capability} cannot carry value type ${entry}`);
     }
   }
-  return value as AsyncHostAdapter;
+  return callable as AsyncHostAdapter;
 }
 
 /**
