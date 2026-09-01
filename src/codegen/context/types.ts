@@ -136,6 +136,14 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   runtimeProvider?: boolean;
   /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
   canonicalRuntimeTypes?: boolean;
+  /**
+   * (#5226) Import the throw/catch exception tag from `env.__exn` instead of
+   * defining a module-local one. Set by the package linker on BOTH sides of a
+   * separately-linked graph so a provider's `throw` and its consumer's `catch`
+   * name the SAME tag — without it every module owns a private tag, the
+   * consumer's `catch` never matches, and the payload is lost in `catch_all`.
+   */
+  sharedExceptionTag?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -2628,6 +2636,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   toPrimitiveForkedStructs: Set<string>;
   /** Tag index for the exception tag (-1 if not yet registered) */
   exnTagIdx: number;
+  /**
+   * (#5226) True when this module's exception tag is IMPORTED (`env.__exn`)
+   * rather than module-defined, so every module of one linked graph throws and
+   * catches with the same tag identity. `exnTagIdx` stays an ABSOLUTE tag index
+   * either way (imported tags occupy the low indices).
+   */
+  sharedExnTag: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**

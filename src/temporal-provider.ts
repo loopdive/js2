@@ -267,6 +267,9 @@ export async function compileWithTemporalGlobal(
     ...options,
     allowJs: options?.allowJs ?? true,
     canonicalRuntimeTypes: true,
+    // (#5226) Match the provider's imported `env.__exn` tag so a polyfill throw
+    // keeps its host-native identity in the consumer's `catch`.
+    sharedExceptionTag: true,
     link: [...new Set([...(options?.link ?? []), provider.namespace])],
     linkedPackageBindings: bindings,
   });
