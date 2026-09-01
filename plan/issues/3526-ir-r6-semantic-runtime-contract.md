@@ -2444,3 +2444,75 @@ was re-confirmed to fail identically with this change-set reverted to
 The merge resolved the issue file as a chronological union — main's F1-S3 plan
 section (PR #5409, merged while this branch was in flight) followed by this
 branch's verifications and checkpoint. No other file conflicted.
+
+### Merge-queue park (2026-09-01) — diagnosed as not-this-PR, with a gate finding
+
+PR #5412 was auto-parked from the merge queue: the `merge_group` re-validation's
+`check for test262 regressions` reported one regression —
+`test/language/statements/class/subclass/class-definition-null-proto-super.js`,
+pass → fail, `Maximum call stack size exceeded` (`range_error`), net −1 — and
+flagged it `Regressions with wasm-hash change: 1` on a content-current
+baseline. Read at face value that says a generator-boxing slice moved the bytes
+of a non-generator class test, which would violate obligation 1 outright.
+
+**It does not move them.** Compiled on clean `origin/main` and on this branch,
+same tree, four shapes: the raw test body; body + `assert.js`/`sta.js` sloppy;
+the same strict; and — the shape that settles it — the runner's OWN
+`assembleOriginalHarness` output under the runner's exact `compileOptions`,
+hashed with the runner's own `computeWasmSha`, for both the primary and the
+strict-rerun variant. Every cell is byte-, sha- and WAT-identical
+(`aa0313d0d7f6` / `c0a8b0c96fcb` on both sides), and the output is
+deterministic across processes.
+
+**Why the gate said otherwise, measured rather than guessed.**
+`scripts/diff-test262.ts:1747` computes
+`wasmUnchanged = typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha`,
+so the #1222 byte-identity noise filter requires a `wasm_sha` on BOTH sides.
+The current baseline JSONL carries **`wasm_sha` on 0 of 48,735 entries** (0 of
+35,659 `pass` entries). Against that baseline `wasmUnchanged` can never be
+true: every pass→fail transition is counted "with wasm-hash change", and the
+companion `Wasm-identical noise: 0` line is structurally guaranteed, not
+measured. The filter that exists to absorb exactly this class of runner-variance
+failure is therefore **inert**. That is a baseline-schema gap, not something
+this slice can fix — it deserves its own issue.
+
+With the bytes identical the behavior is identical, so the stack overflow is
+runner-side variance on a stack-depth-sensitive test. The run's other signals
+agree (`compile_error → compile_timeout` +1; aggregate compile time +1.8%), and
+this change-set is not the cause of those either: on the honest-lane module the
+branch compiles marginally FASTER (median 792 ms vs 824 ms over 5 runs).
+
+Resolution: one sanctioned re-admission (hold removed) on a confirmed
+not-this-PR determination, with no code change — there is nothing in the diff to
+fix. Recorded on the PR as the standing-down comment the park rules require.
+
+**Outcome:** the re-validation passed on re-admission and PR #5412 merged
+(`2e74deee` is an ancestor of main), which is the confirmation the diagnosis
+predicted — the same head, unchanged, went green on the second `merge_group`
+run. This note could not ride that PR because a queued branch is locked against
+pushes, so it lands separately.
+
+### Two follow-ups this slice surfaced but does not own
+
+Both were measured here and neither has an issue id yet:
+`node scripts/claim-issue.mjs --allocate` refuses in this container (exit 6 —
+`gh` is unauthenticated, so the open-PR id scan degrades and the reservation
+would not be verified against in-flight PRs). Reserving under
+`--allow-unscanned` to file them would risk exactly the permanent hole in the
+sequence that #3890/#3891 burned, so they are recorded here for whoever can
+allocate cleanly:
+
+1. **The test262 baseline carries no `wasm_sha`, which disables the #1222
+   byte-identity noise filter.** `scripts/diff-test262.ts:1747` requires the
+   field on BOTH sides; the baseline has it on 0 of 48,735 entries. Every
+   pass→fail transition is therefore reported "with wasm-hash change" and
+   `Wasm-identical noise: 0` is structurally guaranteed. The filter exists to
+   absorb runner-variance failures and currently cannot. Fix is on the
+   baseline-producing side (record `wasm_sha` per row), not in the gate.
+2. **A generator returning a boolean yields `1`, not `true`.** `return n > 2`
+   in a generator stashes a boolean-branded i32, which `gen.setReturn` boxes
+   through `__box_number`. Measured identical on the IR and legacy paths
+   (`IR_FIRST=1` and `=0` both answer `1`), so it is a whole-compiler
+   conformance gap, not an IR-path defect. Out of scope for a byte-neutral
+   slice; the `BOOL_RETURN_GEN` fixture added here pins the current behavior
+   and would need updating alongside the fix.
