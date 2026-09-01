@@ -40,27 +40,22 @@ const NON_MATCHING_TOP_LEVEL_CONTROLS = [
   {
     label: "post-initialization let read",
     source: "let x = 1; x;",
-    outcome: "complete",
   },
   {
     label: "post-initialization const read",
     source: "const x = 1; x;",
-    outcome: "complete",
   },
   {
     label: "forward var read",
     source: "x; var x = 1;",
-    outcome: "complete",
   },
   {
     label: "block-local forward lexical read (#5154)",
     source: "{ x; let x = 1; }",
-    outcome: "complete",
   },
   {
     label: "unbound bare identifier",
     source: "x;",
-    outcome: "complete",
   },
 ] as const;
 
@@ -157,7 +152,7 @@ describe("#5253 — retain guaranteed top-level TDZ reads", () => {
 
   it.each(NON_MATCHING_TOP_LEVEL_CONTROLS)(
     "leaves the $label control outside the direct top-level lexical proof",
-    async ({ label, source, outcome }) => {
+    async ({ label, source }) => {
       const result = await compile(source, {
         allowJs: true,
         deferTopLevelInit: true,
@@ -171,16 +166,11 @@ describe("#5253 — retain guaranteed top-level TDZ reads", () => {
       expectStandaloneHostFree(result);
       const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), {});
       const thrown = runModuleInit(instance);
-      if (outcome === "reference-error") {
-        expect(thrown, `${label} must retain its existing TDZ behavior`).toBeDefined();
-        expect(renderHarnessThrownText(thrown, instance)).toContain("ReferenceError");
-      } else {
-        // The generic atom collector remains intentionally unchanged here:
-        // post-init and var reads are inert; the block-local gap is #5154;
-        // and unbound reads stay #3623 work rather than being misclassified
-        // as a lexical TDZ proof.
-        expect(thrown, `${label} must not enter #5253's TDZ exception`).toBeUndefined();
-      }
+      // The generic atom collector remains intentionally unchanged here:
+      // post-init and var reads are inert; the block-local gap is #5154;
+      // and unbound reads stay #3623 work rather than being misclassified as
+      // a lexical TDZ proof.
+      expect(thrown, `${label} must not enter #5253's TDZ exception`).toBeUndefined();
     },
   );
 });

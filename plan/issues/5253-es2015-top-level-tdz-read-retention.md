@@ -1,10 +1,11 @@
 ---
 id: 5253
 title: "ES2015 standalone: retain guaranteed top-level TDZ reads"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
+completed: 2026-09-01
 priority: high
 horizon: s
 feasibility: medium
@@ -22,6 +23,7 @@ loc-budget-allow:
   - tests/issue-5253.test.ts
 func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
+commit: 0b60ac4c9db6b21cd10d743a7e7a8103ab11d933
 ---
 
 # #5253 — Retain guaranteed top-level TDZ reads
@@ -84,3 +86,62 @@ the repository's `issue-assignments` ref.
   top-level lexical binding; all listed controls retain their prior behavior.
 - Focused tests, TDZ/error controls, typecheck, lint/format, and repository
   ratchets pass.
+
+## Root cause
+
+`collectDeclarations` already retained a CaseBlock lexical exception, but sent
+a direct source-level `x;` to the generic module-init expression classifier.
+That classifier correctly treats ordinary bare atoms as inert for its broad
+scope, so the read never reached existing TDZ lowering and the required
+`ReferenceError` was silently omitted.
+
+## Implementation summary
+
+The collector now builds a source-local map of unambiguous direct runtime
+`let`/`const` declarations. It retains a direct bare identifier statement only
+when the declaration is from that exact source, the oracle resolves the
+identifier to that exact declaration node, and the source position proves the
+read occurs before the declaration completes. At a direct `SourceFile` child
+there is no closure or loop deferral, so this is the static TDZ analyser's
+guaranteed-throw case.
+
+Each retained statement increments
+`module-init-direct-top-level-tdz-forward-read-statements`; no generic atom
+collection or identifier storage behavior changed. The implementation is
+`0b60ac4c9db6b21cd10d743a7e7a8103ab11d933`; this closeout also removes an
+unreachable test-control branch only.
+
+## Test Results (2026-09-01)
+
+- Red baseline: the authoritative isolated standalone runner reported **0
+  pass / 2 fail** for the exact `const` and `let`
+  `global-use-before-initialization-in-prior-statement.js` rows; both completed
+  instead of throwing `ReferenceError`.
+- After the fix, the same command,
+  `node --import tsx scripts/run-test262-paths.mts .tmp/issue-5253-test262-paths.txt --isolate --standalone`,
+  reported **2 pass / 0 non-pass**.
+- `tests/issue-5253.test.ts`: **13/13 pass**. It covers both exact Test262
+  rows, `let`/`const` direct standalone reads, actual in-module
+  `error instanceof ReferenceError` identity, zero compiler/Wasm/host imports,
+  and the host/GC control.
+- Combined substrate sweep: **44/44 pass** across #5253, #1597, #1473, #723,
+  and #906 in one single-fork run.
+- Profiled direct standalone `let` and `const` probes each reported
+  `module-init-direct-top-level-tdz-forward-read-statements=1`.
+- `pnpm run typecheck`, `pnpm run lint`, `pnpm run format:check`,
+  `check:loc-budget`, `check:func-budget`, `check:oracle-ratchet`, and
+  `check:coercion-sites` all passed.
+- Differential harness: **115/120 match** (the expected five pre-existing
+  non-matches make the harness exit nonzero); `pnpm run test:diff:gate` passed
+  with **0 new regressions** and **3 improvements**.
+
+## Residuals
+
+- `{ x; let x = 1; }` remains the existing block-local bare-read gap owned by
+  #5154; this change deliberately does not collect it through the new direct
+  top-level predicate.
+- An unbound top-level `x;` remains generic atom-collection work owned by
+  #3623/#4433. `var` and post-initialization lexical reads likewise retain
+  their prior inert collector behavior.
+
+No GitHub issue was created.
