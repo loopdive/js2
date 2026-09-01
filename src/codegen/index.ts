@@ -12555,6 +12555,24 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     ensureStructForType(ctx, readonlyErasureTarget);
     return;
   }
+  // `resolveWasmType` lowers exactly `T | nullish` through T and makes a
+  // registered struct nullable. Register that one object member before a
+  // published function signature is resolved; otherwise an optional local
+  // interface can start as externref and become ref_null after the return type
+  // or an earlier sibling materializes the same checker type (#1058 binder
+  // createBindBinaryExpressionFlow/onEnter).
+  if (tsType.isUnion()) {
+    const nonNullish = tsType.types.filter(
+      (member) =>
+        !(member.flags & ts.TypeFlags.Null) &&
+        !(member.flags & ts.TypeFlags.Undefined) &&
+        !(member.flags & ts.TypeFlags.Void),
+    );
+    if (nonNullish.length === 1 && tsType.types.length === 2) {
+      ensureStructForType(ctx, nonNullish[0]!);
+    }
+    return;
+  }
   if (!(tsType.flags & ts.TypeFlags.Object)) return;
   if (isExternalDeclaredClass(tsType, ctx.checker)) return;
   // (#2937) Never register a struct for the evolved checker type of a poisoned

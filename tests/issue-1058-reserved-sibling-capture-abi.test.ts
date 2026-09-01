@@ -143,4 +143,33 @@ describe("#1058 reserved sibling capture ABI", () => {
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     expect((instance.exports.reproLocalInterface as (seed: number) => number)(1)).toBe(103);
   });
+
+  it("stabilizes an optional local-interface parameter before its return type registers the struct", async () => {
+    const result = await compile(
+      `
+        export function reproOptionalLocalInterface(value: number): number {
+          interface WorkArea {
+            value: number;
+          }
+
+          function sibling(): number {
+            return value;
+          }
+
+          function onEnter(node: number, state: WorkArea | undefined): WorkArea {
+            return state ?? { value: node + sibling() };
+          }
+
+          return onEnter(2, undefined).value;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-optional-local-interface-signature.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproOptionalLocalInterface as (value: number) => number)(3)).toBe(5);
+  });
 });
