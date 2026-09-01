@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { discoverFixtureGraph } from "./test262-fixture-graph.mjs";
+import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "./test262-iterator-binding.mjs";
 
 export {
   discoverFixtureGraph,
@@ -99,13 +100,40 @@ function shadowRuntime262ForOwnDeclarations(tests, runtime) {
   return tests;
 }
 
+// test262.fyi assembles the upstream harness before it exposes records to this
+// runner. Keep its records aligned with tests/test262-original-harness.ts by
+// adding the same feature-gated, compiled `%Iterator%` binding immediately
+// before the literal upstream body. The body itself remains byte-for-byte
+// untouched, which is important both to the Test262 source contract and to
+// strict reruns (the runner prepends their directive outside `contents`).
+export function provisionIteratorBindingsInOriginalHarnessRecords(tests) {
+  for (const test of tests) {
+    if (typeof test?.contents !== "string") continue;
+    const raw = Array.isArray(test.flags) ? test.flags.includes("raw") : test.flags?.raw === true;
+    if (raw) continue;
+
+    const body = fs.readFileSync(join(TEST262_ROOT, "test", normalizeTestPath(test.file)), "utf8");
+    if (!needsIteratorBinding(body)) continue;
+    if (!test.contents.endsWith(body)) {
+      throw new Error(`original-harness record does not preserve literal body: ${test.file}`);
+    }
+
+    const prefix = test.contents.slice(0, -body.length);
+    if (prefix.endsWith(ITERATOR_BINDING_PREAMBLE)) continue;
+    test.contents = prefix + ITERATOR_BINDING_PREAMBLE + body;
+  }
+  return tests;
+}
+
 export async function loadOriginalHarnessTests(selectedPaths) {
   const reader = requireOptionalInputs();
   const { default: readTests } = await import(pathToFileURL(reader).href);
   const runtime = fs.readFileSync(RUNTIME_PATH, "utf8");
   if (!selectedPaths)
     return attachFixtureGraphs(
-      shadowRuntime262ForOwnDeclarations(await readTests(TEST262_ROOT, readHarnessPreludes(), runtime), runtime),
+      provisionIteratorBindingsInOriginalHarnessRecords(
+        shadowRuntime262ForOwnDeclarations(await readTests(TEST262_ROOT, readHarnessPreludes(), runtime), runtime),
+      ),
     );
 
   // test262.fyi's reader eagerly retains every assembled source in the corpus.
@@ -120,7 +148,9 @@ export async function loadOriginalHarnessTests(selectedPaths) {
       fs.copyFileSync(join(TEST262_ROOT, "test", normalized), destination);
     }
     return attachFixtureGraphs(
-      shadowRuntime262ForOwnDeclarations(await readTests(scratch, readHarnessPreludes(), runtime), runtime),
+      provisionIteratorBindingsInOriginalHarnessRecords(
+        shadowRuntime262ForOwnDeclarations(await readTests(scratch, readHarnessPreludes(), runtime), runtime),
+      ),
     );
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
