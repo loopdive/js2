@@ -46,6 +46,7 @@ import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
+  compileThisKeywordLate,
   compileExpression,
   compileStatement,
   ensureLateImport,
@@ -58,7 +59,6 @@ import { addUnionImports, ensureI32Condition, resolveWasmType } from "./index.js
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
-import { compileThisKeyword } from "./expressions/this-keyword.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
@@ -5271,7 +5271,7 @@ export function compileNativeGeneratorFunction(
   // ladder. The resume function reads the resulting frame field as a local.
   if (info.capturesDynamicThis) {
     const thisExpr = decl.body ? findOwnThisReference(decl.body) : undefined;
-    const thisType = compileThisKeyword(ctx, fctx, thisExpr ?? decl);
+    const thisType = compileThisKeywordLate(ctx, fctx, thisExpr ?? decl);
     if (thisType === null) {
       fctx.body.push({ op: "ref.null.extern" });
     } else if (!valTypesMatch(thisType, { kind: "externref" })) {

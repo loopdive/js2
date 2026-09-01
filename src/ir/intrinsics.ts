@@ -61,9 +61,42 @@ export const NUMBER_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.number.box", "js
 
 export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];
 
+/**
+ * (#3526 F1-S2) The synchronous BOOLEAN boundary — the branded-i32→externref
+ * carrier the front-end used to emit as a direct named call to
+ * `__box_boolean` after reading the `hasHostBooleanBox` resolver predicate.
+ *
+ * A deliberate SIBLING of the number constants, not a widening of them: this
+ * family is one-armed. There is no `js.boolean.unbox` because there is no
+ * front-end producer for one — `__unbox_boolean` is a union member with no IR
+ * consumer, and the boolean capability has no widening follow-up.
+ */
+export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box"] as const);
+
+export type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];
+
+/**
+ * (#3526 F1-S4) The externref UNDEFINED PROBE — the last surviving pre-F1
+ * two-armed shape in from-ast. `x !== undefined` on an externref-shaped value
+ * used to pick between the `env.__extern_is_undefined` host import and the
+ * host-free lanes' real Wasm function IN THE FRONT-END, by reading the
+ * `externIsUndefinedIsNative` resolver predicate.
+ *
+ * A SIBLING of the number/boolean constants, never a widening of them: this
+ * family has no boxing at all. It is one-armed at the ID level (one probe) but
+ * TWO-armed at the provider level, unlike `js.boolean.box` — both a host
+ * capability and a runtime symbol can answer it, so its policy carries the
+ * same three-valued shape the number boundary's unbox arm does.
+ */
+export const EXTERN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.extern.is_undefined"] as const);
+
+export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[number];
+
 export const INTRINSIC_IDS = Object.freeze([
   ...NUMERIC_COERCION_INTRINSIC_IDS,
   ...NUMBER_BOUNDARY_INTRINSIC_IDS,
+  ...BOOLEAN_BOUNDARY_INTRINSIC_IDS,
+  ...EXTERN_BOUNDARY_INTRINSIC_IDS,
   ...PURE_MATH_INTRINSIC_IDS,
 ] as const);
 
@@ -115,15 +148,25 @@ export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"] 
 /** Feature rows mirror the number-boundary intrinsic IDs 1:1. */
 export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.number.box", "js.number.unbox"] as const);
 
+/** (#3526 F1-S2) The boolean-boundary feature row, 1:1 with its one ID. */
+export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"] as const);
+
+/** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */
+export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);
+
 export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
+  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
 ] as const);
 
 export type PureMathRuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
 export type NumericCoercionRuntimeFeature = (typeof NUMERIC_COERCION_RUNTIME_FEATURES)[number];
 export type NumberBoundaryRuntimeFeature = (typeof NUMBER_BOUNDARY_RUNTIME_FEATURES)[number];
+export type BooleanBoundaryRuntimeFeature = (typeof BOOLEAN_BOUNDARY_RUNTIME_FEATURES)[number];
+export type ExternBoundaryRuntimeFeature = (typeof EXTERN_BOUNDARY_RUNTIME_FEATURES)[number];
 export type RuntimeFeature = (typeof INTRINSIC_RUNTIME_FEATURES)[number];
 
 /**
@@ -181,6 +224,17 @@ const F64_TYPE = Object.freeze({
   val: Object.freeze({ kind: "f64" as const }),
 });
 
+/**
+ * (#3526 F1-S2) The boolean carrier's PARAMETER type. `valTypeEquals` compares
+ * only the ValType `kind`, so the `boolean` brand (#4503) is erasable here: the
+ * signature accepts the branded carrier the from-ast arm passes without the
+ * brand having to appear in the ABI. The brand stays the arm's own TYPE GATE.
+ */
+const I32_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "i32" as const }),
+});
+
 const U32_TYPE = Object.freeze({
   kind: "val" as const,
   val: Object.freeze({ kind: "i32" as const }),
@@ -204,6 +258,36 @@ export const EXTERNREF_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([EXTERNREF_TYPE]),
   result: F64_TYPE,
+});
+
+/** `(i32) -> externref` — the exact ABI of the `__box_boolean` carrier. */
+export const I32_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([I32_TYPE]),
+  result: EXTERNREF_TYPE,
+});
+
+/**
+ * `(externref) -> i32` — the exact ABI of the `__extern_is_undefined` probe,
+ * shared by its host import and its host-free Wasm function (#4461 registered
+ * both under exactly this signature).
+ */
+export const EXTERNREF_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE]),
+  result: I32_TYPE,
+});
+
+/**
+ * `(externref, externref) -> i32` — the exact ABI of the string relational
+ * compare helper, shared by the `env.string_compare` host import and the
+ * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
+ * sign; #3526 F2-S1 made the manifest the authority over which one answers.
+ */
+export const EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
+  result: I32_TYPE,
 });
 
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
@@ -233,6 +317,8 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.to_uint32": definition("js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE),
   "js.number.box": definition("js.number.box", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.number.unbox": definition("js.number.unbox", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),
+  "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),

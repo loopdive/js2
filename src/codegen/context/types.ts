@@ -3313,6 +3313,39 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  prepended init call on exports) has been applied. */
   moduleInitGuardApplied: boolean;
   /**
+   * (#3523 R4 gap 3) The WASI `__init_done` idempotence guard, reserved at
+   * module-init PREALLOCATION rather than minted by the post-emission splice.
+   *
+   * `applyModuleInitGuard` used to mint this global and prepend an
+   * early-`return` prologue to an ALREADY EMITTED `__module_init`. A Prepared
+   * module-init body cannot take that splice: its identity is sealed at the
+   * preparation snapshot, and the early-`return` form is exactly what
+   * `bodyContainsReturnClassOp` withdraws the IR patch over (#3142/#3168),
+   * because every later epilogue (`finalizeInModuleInitFlag`'s
+   * `__in_module_init = 0` most critically) would become unreachable.
+   *
+   * So the global is reserved here, before body emission, and the prepared
+   * body is CONSTRUCTED around a wrapping `if` — no return-class op, inside
+   * the body at snapshot time. `planted` records the exact instruction
+   * objects so `applyModuleInitGuard` can authenticate the guard by identity
+   * instead of trusting that preparation planted one; a prepared WASI init
+   * that reaches the splice unguarded is an invariant failure, never a
+   * silently unguarded binary.
+   *
+   * `undefined` outside WASI, and outside a prepared module-init compile.
+   */
+  preparedWasiModuleInitGuard?: {
+    /** Module-global index of the reserved `(mut i32) __init_done`. */
+    readonly doneGlobalIdx: number;
+    /**
+     * The three top-level instruction objects planted into the prepared body,
+     * in order. `fixupModuleGlobalIndices` shifts their baked global indices in
+     * place on a late import-global insertion, so identity survives every
+     * legitimate late mutation while a body REPLACEMENT does not.
+     */
+    planted?: { readonly doneGet: Instr; readonly eqz: Instr; readonly guard: Instr };
+  };
+  /**
    * #1984 — freeze-point discipline (child of #2043 Option 3). Set to `true`
    * by `generateModule`/`generateMultiModule` once the module's index spaces
    * are final (right before `stackBalance`, after the last legitimate

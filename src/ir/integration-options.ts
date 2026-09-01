@@ -31,4 +31,16 @@ export interface IrIntegrationOptions {
   };
   /** Opaque module-callable-alias descriptor staged with the open scope. */
   readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
+  /**
+   * (#3523 R4 gap 3) Construct the module-init body around the reserved WASI
+   * `__init_done` idempotence guard (`ctx.preparedWasiModuleInitGuard`).
+   *
+   * Set ONLY by the prepared module-init preparation call, so the post-direct
+   * overlay integration — which patches the same unit on the legacy WASI lane —
+   * can never plant a second guard. Planting is a body-CONSTRUCTION step, not a
+   * later splice: the wrapping `if` is inside the body the preparation snapshot
+   * seals, and carries no return-class op, so `bodyContainsReturnClassOp` does
+   * not withdraw the patch and every later appended epilogue still runs.
+   */
+  readonly plantPreparedWasiModuleInitGuard?: boolean;
 }

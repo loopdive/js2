@@ -1,7 +1,7 @@
 ---
 id: 5255
 title: "ES2015 standalone: preserve generator method receiver context"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
@@ -17,6 +17,7 @@ assignee: ttraenkler/codex-gen-method-this-terra-20260901
 related: [3591, 4168, 5147]
 origin: "Post-#3591 exact Test262 validation: obj.g() drops both the native generator state carrier and the deferred dynamic receiver context."
 loc-budget-allow:
+  - src/codegen/expressions.ts
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/generators-native.ts
   - src/codegen/object-literal-method-receiver.ts
@@ -302,3 +303,21 @@ dispatcher candidate. Implementation may be developed as a temporary stack on
 that head, but the final PR must target `loopdive/js2:main`, contain only
 #5255's completed fix after dependencies land, and remain draft while it is
 dependency-blocked or otherwise not mergeable.
+
+## Corrective completion evidence (2026-09-01)
+
+The corrective plan is complete after merging upstream `main`
+`dc29e1f15d`. Generator declarations are no longer admitted by the runtime-key
+receiver planner; static property and statically resolved element calls retain
+receiver transport. Receiver demand now includes parameter initializers at
+call time, while the native frame stores `dynamic_this` only when the deferred
+body reads it. The `generators-native.ts -> expressions/this-keyword.ts`
+initialization edge now uses the shared late-bound delegate pattern, preserving
+the full receiver ladder without closing the collections import cycle.
+
+Focused controls pass: `tests/issue-5255.test.ts` 8/8, including strict dynamic
+key evaluation, throwing-key restoration, parameter-default `this`, and the
+combined body/default/arguments/params/spills layout. The two cold-import IR
+allocation suites pass 16/16, and the authoritative standalone Test262 row
+`built-ins/GeneratorPrototype/next/context-method-invocation.js` passes 1/1.
+No host-import, baseline, or hold bypass was added.

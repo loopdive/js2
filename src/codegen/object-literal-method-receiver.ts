@@ -72,7 +72,7 @@
  * `planObjectLiteralMethodReceiverBind` fires only when EVERY declaration of the
  * member symbol is an object-literal `PropertyAssignment` whose initializer is a
  * plain `FunctionExpression`, or a named native-generator declaration reference,
- * that references its own `this`:
+ * that references its own `this` (in the body or a parameter initializer):
  *
  *  - **`FunctionExpression`, never an arrow.** An arrow's `this` is lexical;
  *    installing a dynamic receiver would replace a correct answer with a wrong
@@ -81,10 +81,10 @@
  *    property-assignment shape.** Its native frame snapshots the receiver while
  *    this call installs it; a plain declaration or any other receiver remains
  *    on its established path.
- *  - **The body must reference its own `this`** — the SAME predicate
- *    (`bodyReferencesOwnThis`) the body used to decide it would read the global,
- *    so the writer and the reader can never disagree. A method that ignores its
- *    receiver is byte-identical to before.
+ *  - **The body or a parameter initializer must reference its own `this`** —
+ *    the same function-like predicate used by the callee prologue, so the
+ *    call-time writer and the deferred-body reader can never disagree. A
+ *    method that ignores its receiver is byte-identical to before.
  *  - **Not a generator, not `async`, no explicit `this` parameter** — those
  *    carry their own receiver conventions.
  *  - **A shorthand `MethodDeclaration` is admitted when its own body contains
@@ -104,7 +104,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { innerResultValType } from "./closure-receiver-install.js";
 
@@ -138,7 +138,7 @@ function isThisReadingFunctionExpression(initializer: ts.Expression): boolean {
   if (initializer.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true) return false;
   const first = initializer.parameters[0];
   if (first && ts.isIdentifier(first.name) && first.name.text === "this") return false;
-  return bodyReferencesOwnThis(initializer.body);
+  return functionLikeReferencesOwnThis(initializer);
 }
 
 /**
@@ -161,14 +161,15 @@ function methodBodyReferencesSuper(body: ts.Node): boolean {
 /**
  * True when a shorthand object-literal method must receive the call-time
  * receiver. Dynamic-prototype literals use the open object representation, so
- * an own-`this` method in the same literal as a `super` method must not use the
- * static `__anon_*_method` stub (it has no current-this install).
+ * an own-`this` method (including one with a receiver-sensitive parameter
+ * initializer) in the same literal as a `super` method must not use the static
+ * `__anon_*_method` stub (it has no current-this install).
  */
 function shorthandMethodNeedsReceiver(ctx: CodegenContext, declaration: ts.MethodDeclaration): boolean {
   if (!declaration.body || !ts.isObjectLiteralExpression(declaration.parent)) return false;
   return (
     methodBodyReferencesSuper(declaration.body) ||
-    (ctx.dynamicProtoLiteralNodes.has(declaration.parent) && bodyReferencesOwnThis(declaration.body))
+    (ctx.dynamicProtoLiteralNodes.has(declaration.parent) && functionLikeReferencesOwnThis(declaration))
   );
 }
 
@@ -207,7 +208,7 @@ function isThisReadingFunctionDeclarationReference(
   if (declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true) return false;
   const first = declaration.parameters[0];
   if (first && ts.isIdentifier(first.name) && first.name.text === "this") return false;
-  return bodyReferencesOwnThis(declaration.body);
+  return functionLikeReferencesOwnThis(declaration);
 }
 
 /**
@@ -307,8 +308,8 @@ export function planElementAccessMethodReceiverBind(
  *  - **no property of that literal is arrow-valued.** With a runtime key any
  *    property could be the callee, so one arrow anywhere in the literal is
  *    enough to refuse the whole thing;
- *  - at least one property IS a `this`-reading function expression or native
- *    generator-declaration reference — otherwise there is nothing to fix and
+ *  - at least one property IS a `this`-reading function expression — otherwise
+ *    there is nothing to fix and
  *    the module must stay byte-identical;
  *  - **neither the KEY nor any ARGUMENT references `this`.** This is the
  *    ordering gate, and unlike the static arms it cannot be satisfied by moving
@@ -335,10 +336,7 @@ export function planDynamicElementReceiverBind(
   for (const p of literal.properties) {
     if (!ts.isPropertyAssignment(p)) continue;
     if (ts.isArrowFunction(p.initializer)) return undefined;
-    if (
-      isThisReadingFunctionExpression(p.initializer) ||
-      isThisReadingFunctionDeclarationReference(ctx, p.initializer, /* generator */ true)
-    ) {
+    if (isThisReadingFunctionExpression(p.initializer)) {
       demanded = true;
     }
   }

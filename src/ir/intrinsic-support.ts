@@ -24,11 +24,14 @@ import {
   type IrValueId,
 } from "./nodes.js";
 import {
+  GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
+  STRING_COMPARE_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
   type FrozenRuntimeManifest,
   type RuntimeManifestPolicy,
+  type RuntimeProviderDefinition,
   type RuntimeProviderPlan,
 } from "./runtime-manifest.js";
 
@@ -237,6 +240,81 @@ function providerAttachment(
   });
 }
 
+/** The one generator-boxing feature row; named once so no caller spells it. */
+const GENERATOR_NUMBER_BOX_RUNTIME_FEATURE = GENERATOR_NUMBER_BOX_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F1-S3) The callable the frozen manifest selected for the numeric
+ * `gen.setReturn` arm, as the generator seam must bind it.
+ *
+ * The binding kind is `runtime`, not `import`, and that is a MEASURED
+ * constraint rather than a preference: `attachIrGeneratorSupport`'s providers
+ * are observed through `resolveAndObserveCallableProvider`, which admits only
+ * `runtime` and `intrinsic` references by design. Attaching the host arm's
+ * canonical `env.__box_number` import reference instead fails every generator
+ * owner with `unexpected-internal-throw` on both host lanes (measured on the
+ * grounded tree before this change). So the manifest decides WHICH physical
+ * symbol answers the seam — through the central capability record on the host
+ * arm, through the union-native runtime symbol on the native arm — and the
+ * seam binds that symbol the only way its observation path accepts. The
+ * physical target is identical either way, which is why the migration is
+ * byte-neutral.
+ */
+export function preparedGeneratorNumberBoxProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+): IrFuncRef | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === GENERATOR_NUMBER_BOX_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return irRuntimeFuncRef(provider.implementation.symbol);
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return irRuntimeFuncRef(record.field);
+  }
+  throw new Error(`IR generator number-box provider ${provider.id} is not a callable implementation`);
+}
+
+/** The one string-compare feature row; named once so no caller spells it. */
+const STRING_COMPARE_RUNTIME_FEATURE = STRING_COMPARE_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S1) Which arm of the string relational compare seam the frozen
+ * manifest selected, or `undefined` when no manifest carries the row.
+ *
+ * This returns the CLASSIFICATION plus the exact physical spelling the selected
+ * authority names — not an `IrFuncRef`. The seam's two arms are materialized by
+ * different existing routines (`ctx.funcMap` lookup of the base import on the
+ * host arm; `ensureNativeStringHelpers` + `nativeStrHelperHandle` on the native
+ * one), so a single callable reference could not carry the decision without
+ * moving a registration — and moving one would move import indices, which is
+ * exactly what this slice must not do.
+ */
+export function preparedStringCompareProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+): { readonly arm: "host"; readonly field: string } | { readonly arm: "native"; readonly symbol: string } | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_COMPARE_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", field: record.field };
+  }
+  throw new Error(`IR string-compare provider ${provider.id} is not a callable implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -298,6 +376,23 @@ export function prepareIrRuntimeManifest(input: {
   readonly functions: readonly IrFunction[];
   readonly sourceFile: string;
   readonly policy: RuntimeManifestPolicy;
+  /**
+   * (#3526 F1-S3) True when some generator in `functions` stashes a numeric
+   * return value. The manifest walk below collects `intrinsic` uses only, so a
+   * generator-only module would otherwise freeze NO manifest at all and the
+   * seam would have no provider row to answer to. The demand is requested as a
+   * feature exactly the way an async plan requests its runtime intents.
+   */
+  readonly generatorNumberBoxDemand?: boolean;
+  /**
+   * (#3526 F2-S1) True when some function in `functions` performs a string
+   * relational compare. Same shape and same reason as
+   * `generatorNumberBoxDemand`: the seam is a plain `call` through the
+   * `__ir_str_compare` sentinel func-ref, not an `intrinsic` the walk below
+   * collects, so a compare-only module would otherwise freeze no manifest at
+   * all and the resolve arm would have no provider row to read.
+   */
+  readonly stringCompareDemand?: boolean;
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -330,12 +425,16 @@ export function prepareIrRuntimeManifest(input: {
     for (const block of fn.blocks) collectBuffer(block.instrs);
     for (const state of fn.asyncPlan?.states ?? []) collectBuffer(state.body);
   }
-  if (uses.length === 0 && asyncPlans.size === 0) return undefined;
+  if (uses.length === 0 && asyncPlans.size === 0 && !input.generatorNumberBoxDemand && !input.stringCompareDemand) {
+    return undefined;
+  }
 
   const builder = new RuntimeManifestBuilder(input.policy);
   for (const plan of asyncPlans.values()) {
     for (const intent of plan.runtimeIntents) builder.requestFeature(intent);
   }
+  if (input.generatorNumberBoxDemand) builder.requestFeature(GENERATOR_NUMBER_BOX_RUNTIME_FEATURE);
+  if (input.stringCompareDemand) builder.requestFeature(STRING_COMPARE_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

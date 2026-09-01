@@ -32,12 +32,17 @@ import {
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
 import {
+  EXTERN_BOUNDARY_RUNTIME_FEATURES,
   EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
+  EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
   F64_BINARY_INTRINSIC_SIGNATURE,
   F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
+  EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
+  BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   NUMBER_BOUNDARY_RUNTIME_FEATURES,
   NUMERIC_COERCION_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
@@ -47,6 +52,8 @@ import {
   type IntrinsicSignature,
   type IntrinsicUse,
   type IntrinsicVerificationCode,
+  type BooleanBoundaryRuntimeFeature,
+  type ExternBoundaryRuntimeFeature,
   type NumberBoundaryRuntimeFeature,
   type PureMathRuntimeFeature,
   type RuntimeFeature as IntrinsicRuntimeFeature,
@@ -55,7 +62,11 @@ import {
 
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
-export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature;
+export type RuntimeFeature =
+  | IntrinsicRuntimeFeature
+  | AsyncRuntimeFeature
+  | GeneratorNumberBoxRuntimeFeature
+  | StringCompareRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -87,6 +98,101 @@ export const NUMBER_BOUNDARY_POLICY_DISABLED: NumberBoundaryPolicy = Object.free
   unbox: "unsupported",
 });
 
+/**
+ * (#3526 F1-S2) The exact, already-resolved BOOLEAN-boundary provider policy of
+ * one preparation caller — a sibling of {@link NumberBoundaryPolicy}, not a
+ * widening of it. The family is one-armed: the box arm resolves through the
+ * host `env.__box_boolean` import, and there is no native boolean boxer to
+ * select, so the union has no `"native"` member.
+ */
+export interface BooleanBoundaryPolicy {
+  /** `host` selects `env.__box_boolean`. There is no native box arm. */
+  readonly box: "host" | "unsupported";
+}
+
+/** Adapters that expose no boolean boundary resolve the box arm to this. */
+export const BOOLEAN_BOUNDARY_POLICY_DISABLED: BooleanBoundaryPolicy = Object.freeze({
+  box: "unsupported",
+});
+
+/**
+ * (#3526 F1-S4) The exact, already-resolved policy for the externref UNDEFINED
+ * PROBE — a sibling of {@link NumberBoundaryPolicy}, never a widening of it.
+ *
+ * The seam's truth table is its own: the probe is answered by a real Wasm
+ * function on every host-free lane (`ensureObjectRuntime` registers it, and
+ * `undefined` there is the #2106 non-null singleton, so the predicate is
+ * load-bearing rather than an alias for `ref.is_null`), and by the
+ * `env.__extern_is_undefined` import otherwise. That is the exact truth table
+ * the deleted `externIsUndefinedIsNative` resolver predicate carried:
+ * `ctx.standalone || ctx.wasi || ctx.nativeStrings`.
+ */
+export interface ExternIsUndefinedPolicy {
+  /**
+   * `host` selects the `env.__extern_is_undefined` import through the central
+   * `extern.is_undefined` capability; `native` selects the host-free Wasm
+   * function of the same name.
+   */
+  readonly probe: "host" | "native" | "unsupported";
+}
+
+/** Adapters on which the externref undefined probe cannot be answered. */
+export const EXTERN_IS_UNDEFINED_POLICY_DISABLED: ExternIsUndefinedPolicy = Object.freeze({
+  probe: "unsupported",
+});
+
+/**
+ * (#3526 F1-S3) The exact, already-resolved policy for the GENERATOR return
+ * seam's numeric boxing — a sibling of {@link NumberBoundaryPolicy}, never a
+ * widening of it.
+ *
+ * The seam's truth table is deliberately WIDER than `numberBoundary`: this
+ * boxing is performed natively on the GC native-strings lane, whereas
+ * `numberBoundary.box` has no `"native"` member by design (F1-S1 excluded one
+ * so that native `__box_number` presence could not widen the from-ast arm's
+ * host-only policy). The two must therefore stay separate policies even though
+ * both name the same physical symbol.
+ */
+export interface GeneratorNumberBoxPolicy {
+  /**
+   * `host` selects the `env.__box_number` union import through the central
+   * `number.box` capability; `native` selects the union-native `__box_number`
+   * runtime function.
+   */
+  readonly box: "host" | "native" | "unsupported";
+}
+
+/** Adapters on which a generator `return <number>` cannot be boxed at all. */
+export const GENERATOR_NUMBER_BOX_POLICY_DISABLED: GeneratorNumberBoxPolicy = Object.freeze({
+  box: "unsupported",
+});
+
+/**
+ * (#3526 F2-S1) The exact, already-resolved policy for the STRING RELATIONAL
+ * COMPARE seam — family 2's first policy, and a sibling of
+ * {@link ExternIsUndefinedPolicy}, never a widening of it.
+ *
+ * The seam's truth table is `nativeStrings ? native : host`, which is the exact
+ * decision the resolve-time provider table made by reading `ctx.nativeStrings`
+ * directly. It differs from every family-1 table: `numberBoundary` calls the
+ * native-strings lane unsupported, `booleanBoundary` has no native arm at all,
+ * and `externIsUndefined` also goes native on standalone/WASI — which for this
+ * seam are subsumed, because `standalone` and `wasi` both imply `nativeStrings`.
+ */
+export interface StringComparePolicy {
+  /**
+   * `host` selects the `env.string_compare` base import through the central
+   * `string.compare` capability; `native` selects the `__str_compare` Wasm
+   * helper `ensureNativeStringHelpers` registers.
+   */
+  readonly compare: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string relational compare resolve the arm to this. */
+export const STRING_COMPARE_POLICY_DISABLED: StringComparePolicy = Object.freeze({
+  compare: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -95,11 +201,35 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly numberBoundary?: NumberBoundaryPolicy;
+  /**
+   * Omission resolves to {@link BOOLEAN_BOUNDARY_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly booleanBoundary?: BooleanBoundaryPolicy;
+  /**
+   * Omission resolves to {@link EXTERN_IS_UNDEFINED_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly externIsUndefined?: ExternIsUndefinedPolicy;
+  /**
+   * Omission resolves to {@link GENERATOR_NUMBER_BOX_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly generatorNumberBox?: GeneratorNumberBoxPolicy;
+  /**
+   * Omission resolves to {@link STRING_COMPARE_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringCompare?: StringComparePolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
 export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly numberBoundary: NumberBoundaryPolicy;
+  readonly booleanBoundary: BooleanBoundaryPolicy;
+  readonly externIsUndefined: ExternIsUndefinedPolicy;
+  readonly generatorNumberBox: GeneratorNumberBoxPolicy;
+  readonly stringCompare: StringComparePolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -151,10 +281,64 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
 
+/** (#3526 F1-S2) The one admitted boolean-boundary policy arm. */
+export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.boolean.box"] as const);
+export type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
+
+/** (#3526 F1-S4) One provider per admitted externref undefined-probe arm. */
+export const EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.extern.is_undefined",
+  "native.js.extern.is_undefined",
+] as const);
+export type ExternBoundaryRuntimeProviderId = (typeof EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
+
+/**
+ * (#3526 F1-S3) The generator return seam's boxing requirement.
+ *
+ * This family has NO intrinsic instruction: the demand is carried by a
+ * `gen.setReturn` whose stashed value is numeric, and it is requested at
+ * manifest freeze the way an async plan requests its runtime intents. The
+ * feature exists so the frozen manifest — not a hardcoded runtime symbol at
+ * the attachment site — is the authority for which boxer answers the seam.
+ */
+export const GENERATOR_NUMBER_BOX_RUNTIME_FEATURES = Object.freeze(["js.generator.number-box"] as const);
+export type GeneratorNumberBoxRuntimeFeature = (typeof GENERATOR_NUMBER_BOX_RUNTIME_FEATURES)[number];
+
+/** (#3526 F1-S3) One provider per admitted generator-number-box policy arm. */
+export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.generator.number-box",
+  "native.js.generator.number-box",
+] as const);
+export type GeneratorNumberBoxRuntimeProviderId = (typeof GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS)[number];
+
+/**
+ * (#3526 F2-S1) The string relational compare seam's requirement.
+ *
+ * Like the generator boxing feature this family has NO intrinsic instruction:
+ * from-ast emits a plain `call` through the `__ir_str_compare` sentinel func-ref
+ * (`IR_STRING_COMPARE_FN`), so the demand is requested at manifest freeze rather
+ * than collected from an `intrinsic` use. The feature exists so the frozen
+ * manifest — not a `ctx.nativeStrings` read inside the resolve-time provider
+ * table — is the authority for which helper answers the seam.
+ */
+export const STRING_COMPARE_RUNTIME_FEATURES = Object.freeze(["js.string.compare"] as const);
+export type StringCompareRuntimeFeature = (typeof STRING_COMPARE_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S1) One provider per admitted string-compare policy arm. */
+export const STRING_COMPARE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.string.compare",
+  "native.js.string.compare",
+] as const);
+export type StringCompareRuntimeProviderId = (typeof STRING_COMPARE_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
   | NumberBoundaryRuntimeProviderId
+  | BooleanBoundaryRuntimeProviderId
+  | ExternBoundaryRuntimeProviderId
+  | GeneratorNumberBoxRuntimeProviderId
+  | StringCompareRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -345,6 +529,7 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "js.number.unbox": EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
+  "js.generator.number-box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -408,8 +593,18 @@ export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
 ]);
 
 function numberBoundaryProvider(
-  id: NumberBoundaryRuntimeProviderId,
-  feature: NumberBoundaryRuntimeFeature,
+  id:
+    | NumberBoundaryRuntimeProviderId
+    | BooleanBoundaryRuntimeProviderId
+    | ExternBoundaryRuntimeProviderId
+    | GeneratorNumberBoxRuntimeProviderId
+    | StringCompareRuntimeProviderId,
+  feature:
+    | NumberBoundaryRuntimeFeature
+    | BooleanBoundaryRuntimeFeature
+    | ExternBoundaryRuntimeFeature
+    | GeneratorNumberBoxRuntimeFeature
+    | StringCompareRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -459,6 +654,150 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
     [],
   ),
 ]);
+
+/**
+ * (#3526 F1-S2) The synchronous boolean boundary. Host-only by policy: no
+ * native boolean boxer exists, so there is no `runtime-callable` sibling to
+ * select. The physical target stays the exact `env.__box_boolean` union import
+ * the direct call used, so raw consumers and import order are untouched.
+ */
+export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.boolean.box",
+    "js.boolean.box",
+    I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "boolean.box" },
+    ["boolean.box"],
+  ),
+]);
+
+/**
+ * (#3526 F1-S4) The externref undefined probe's two arms. Both name the SAME
+ * physical spelling `__extern_is_undefined` — on the host lane through the
+ * central `extern.is_undefined` capability record (`env.__extern_is_undefined`,
+ * registered by `ensureLateImport`), on the host-free lanes through the real
+ * Wasm function `ensureObjectRuntime` registers. As with the number boundary,
+ * the manifest decides WHICH authority answers; it introduces no new spelling
+ * and no second registration path.
+ */
+export const EXTERN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.extern.is_undefined",
+    "js.extern.is_undefined",
+    EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "extern.is_undefined" },
+    ["extern.is_undefined"],
+  ),
+  numberBoundaryProvider(
+    "native.js.extern.is_undefined",
+    "js.extern.is_undefined",
+    EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__extern_is_undefined" },
+    [],
+  ),
+]);
+
+/**
+ * (#3526 F1-S3) The generator return seam's two boxing arms. Both name the
+ * SAME physical symbol `__box_number` — on the host lane through the central
+ * `number.box` capability record (`env.__box_number`), on the native-strings
+ * lane through the union-native runtime function. The manifest's job here is
+ * to decide WHICH authority answers and whether the seam is permitted at all,
+ * not to introduce a second spelling.
+ */
+export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.generator.number-box",
+    "js.generator.number-box",
+    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "number.box" },
+    ["number.box"],
+  ),
+  numberBoundaryProvider(
+    "native.js.generator.number-box",
+    "js.generator.number-box",
+    F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__box_number" },
+    [],
+  ),
+]);
+
+/**
+ * (#3526 F2-S1) The string relational compare seam's two arms. Both answer the
+ * same -1/0/1 lexicographic sign: on the host lane through the central
+ * `string.compare` capability record (`env.string_compare`, a BASE import the
+ * legacy import collector mints before any IR preparation runs), on the
+ * native-strings lanes through the `__str_compare` Wasm helper. The manifest
+ * decides WHICH authority answers; it introduces no new spelling and no second
+ * registration path, which is why the migration is byte-neutral.
+ */
+export const STRING_COMPARE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.compare",
+    "js.string.compare",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.compare" },
+    ["string.compare"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.compare",
+    "js.string.compare",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_compare" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted string-compare arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function stringCompareProviderId(policy: StringComparePolicy): StringCompareRuntimeProviderId | null {
+  if (policy.compare === "host") return "host.js.string.compare";
+  return policy.compare === "native" ? "native.js.string.compare" : null;
+}
+
+const STRING_COMPARE_FEATURE_SET: ReadonlySet<string> = new Set(STRING_COMPARE_RUNTIME_FEATURES);
+
+function isStringCompareFeature(feature: RuntimeFeature): feature is StringCompareRuntimeFeature {
+  return STRING_COMPARE_FEATURE_SET.has(feature);
+}
+
+/** The exact provider the admitted generator-box arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function generatorNumberBoxProviderId(policy: GeneratorNumberBoxPolicy): GeneratorNumberBoxRuntimeProviderId | null {
+  if (policy.box === "host") return "host.js.generator.number-box";
+  return policy.box === "native" ? "native.js.generator.number-box" : null;
+}
+
+const GENERATOR_NUMBER_BOX_FEATURE_SET: ReadonlySet<string> = new Set(GENERATOR_NUMBER_BOX_RUNTIME_FEATURES);
+
+function isGeneratorNumberBoxFeature(feature: RuntimeFeature): feature is GeneratorNumberBoxRuntimeFeature {
+  return GENERATOR_NUMBER_BOX_FEATURE_SET.has(feature);
+}
+
+/** The exact provider the admitted boolean arm selects, or `null` when the
+ * caller resolved it to unsupported. */
+function booleanBoundaryProviderId(policy: BooleanBoundaryPolicy): BooleanBoundaryRuntimeProviderId | null {
+  return policy.box === "host" ? "host.js.boolean.box" : null;
+}
+
+const BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);
+
+function isBooleanBoundaryFeature(feature: RuntimeFeature): feature is BooleanBoundaryRuntimeFeature {
+  return BOOLEAN_BOUNDARY_FEATURE_SET.has(feature);
+}
+
+/** The exact provider the admitted probe arm selects, or `null` when the
+ * caller resolved it to unsupported. */
+function externIsUndefinedProviderId(policy: ExternIsUndefinedPolicy): ExternBoundaryRuntimeProviderId | null {
+  if (policy.probe === "host") return "host.js.extern.is_undefined";
+  return policy.probe === "native" ? "native.js.extern.is_undefined" : null;
+}
+
+const EXTERN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(EXTERN_BOUNDARY_RUNTIME_FEATURES);
+
+function isExternBoundaryFeature(feature: RuntimeFeature): feature is ExternBoundaryRuntimeFeature {
+  return EXTERN_BOUNDARY_FEATURE_SET.has(feature);
+}
 
 /** The exact provider each admitted policy arm selects, or `null` when the
  * caller resolved the arm to unsupported. */
@@ -677,6 +1016,10 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...PURE_MATH_RUNTIME_PROVIDERS,
     ...NUMERIC_COERCION_RUNTIME_PROVIDERS,
     ...NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
+    ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
+    ...EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
+    ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS,
+    ...STRING_COMPARE_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -684,6 +1027,10 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
 const FEATURE_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
+  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
+  ...GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
+  ...STRING_COMPARE_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -691,6 +1038,10 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
 const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_PROVIDER_IDS,
   ...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS,
+  ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS,
+  ...EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS,
+  ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS,
+  ...STRING_COMPARE_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -893,9 +1244,17 @@ export class RuntimeManifestBuilder {
       );
     }
     const numberBoundary = policy.numberBoundary ?? NUMBER_BOUNDARY_POLICY_DISABLED;
+    const booleanBoundary = policy.booleanBoundary ?? BOOLEAN_BOUNDARY_POLICY_DISABLED;
+    const externIsUndefined = policy.externIsUndefined ?? EXTERN_IS_UNDEFINED_POLICY_DISABLED;
+    const generatorNumberBox = policy.generatorNumberBox ?? GENERATOR_NUMBER_BOX_POLICY_DISABLED;
+    const stringCompare = policy.stringCompare ?? STRING_COMPARE_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
+      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
+      externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
+      generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
+      stringCompare: Object.freeze({ compare: stringCompare.compare }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -989,6 +1348,7 @@ export class RuntimeManifestBuilder {
 
   resolveProvider(feature: IntrinsicRuntimeFeature): RuntimeProviderPlan;
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: GeneratorNumberBoxRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();
     const provider = this.#providerPlans.get(feature);
@@ -1191,7 +1551,70 @@ export class RuntimeManifestBuilder {
           }
           return candidates.filter((candidate) => candidate.id === selectedId);
         })()
-      : candidates;
+      : // (#3526 F1-S2) The boolean boundary answers to its OWN resolved
+        // policy, on the same argument: `!nativeStrings` is a lane fact that
+        // `target` cannot express.
+        isBooleanBoundaryFeature(feature)
+        ? ((): readonly RuntimeProviderDefinition[] => {
+            const selectedId = booleanBoundaryProviderId(this.#policy.booleanBoundary);
+            if (selectedId === null) {
+              throw new RuntimeManifestInvariantError(
+                "provider-target-unavailable",
+                `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +
+                  `box=${this.#policy.booleanBoundary.box}`,
+              );
+            }
+            return candidates.filter((candidate) => candidate.id === selectedId);
+          })()
+        : // (#3526 F1-S4) The externref undefined probe answers to its own
+          // resolved policy on the same argument, and its truth table is a
+          // THIRD one again: it is answered natively on every host-free lane,
+          // including GC native-strings, where `numberBoundary` is unsupported
+          // and `booleanBoundary` has no native arm at all.
+          isExternBoundaryFeature(feature)
+          ? ((): readonly RuntimeProviderDefinition[] => {
+              const selectedId = externIsUndefinedProviderId(this.#policy.externIsUndefined);
+              if (selectedId === null) {
+                throw new RuntimeManifestInvariantError(
+                  "provider-target-unavailable",
+                  `semantic intrinsic ${feature} is unavailable under extern-is-undefined policy ` +
+                    `probe=${this.#policy.externIsUndefined.probe}`,
+                );
+              }
+              return candidates.filter((candidate) => candidate.id === selectedId);
+            })()
+          : // (#3526 F1-S3) The generator return seam answers to its own policy
+            // too, and its truth table is wider than the number boundary's: this
+            // one boxes natively on the GC native-strings lane.
+            isGeneratorNumberBoxFeature(feature)
+            ? ((): readonly RuntimeProviderDefinition[] => {
+                const selectedId = generatorNumberBoxProviderId(this.#policy.generatorNumberBox);
+                if (selectedId === null) {
+                  throw new RuntimeManifestInvariantError(
+                    "provider-target-unavailable",
+                    `runtime feature ${feature} is unavailable under generator-number-box policy ` +
+                      `box=${this.#policy.generatorNumberBox.box}`,
+                  );
+                }
+                return candidates.filter((candidate) => candidate.id === selectedId);
+              })()
+            : // (#3526 F2-S1) Family 2's first policy. Like the generator seam it
+              // carries no intrinsic instruction, so the demand arrives through
+              // `requestFeature`; unlike every family-1 table, its native arm is
+              // selected by `nativeStrings` alone (standalone and WASI imply it).
+              isStringCompareFeature(feature)
+              ? ((): readonly RuntimeProviderDefinition[] => {
+                  const selectedId = stringCompareProviderId(this.#policy.stringCompare);
+                  if (selectedId === null) {
+                    throw new RuntimeManifestInvariantError(
+                      "provider-target-unavailable",
+                      `runtime feature ${feature} is unavailable under string-compare policy ` +
+                        `compare=${this.#policy.stringCompare.compare}`,
+                    );
+                  }
+                  return candidates.filter((candidate) => candidate.id === selectedId);
+                })()
+              : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",
