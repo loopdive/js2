@@ -512,6 +512,25 @@ function flattenSlots<Slot>(values: readonly (readonly Slot[])[]): Slot[] {
  * does all the work; this only assembles the `WasmFunction` shape from the
  * `Instr[]` sink.
  */
+/**
+ * (#3526 F1-S4) The one authority for a `gen.*` instruction's callable.
+ *
+ * `attachIrGeneratorSupport` attaches `provider` UNCONDITIONALLY for all four
+ * `gen.*` kinds on every generator function, before Phase 3, on the single
+ * production lowering path — so a missing attachment is a preparation defect,
+ * not a lowering case. The retired `?? irRuntimeFuncRef(<spelling>)` fallbacks
+ * re-decided the symbol locally, which is the second authority this family of
+ * slices exists to remove (F1-S3 made exactly this argument for `boxProvider`
+ * and its totality proof covers all four `provider` fields). Failing closed
+ * demotes one owner; the fallback silently produced a body instead.
+ */
+function requirePreparedGeneratorProvider(provider: IrFuncRef | undefined, kind: string, funcName: string): IrFuncRef {
+  if (!provider) {
+    throw new Error(`ir/lower: ${kind} has no prepared runtime provider (${funcName})`);
+  }
+  return provider;
+}
+
 export function lowerIrFunctionToWasm(
   func: IrFunction,
   resolver: IrLowerResolver,
@@ -2711,24 +2730,20 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.push requires func.generatorBufferSlot (${func.name})`);
         }
-        const valueT = asVal(typeOf(instr.value));
-        let importName: string;
-        if (valueT?.kind === "f64") {
-          importName = "__gen_push_f64";
-        } else if (valueT?.kind === "i32") {
-          importName = "__gen_push_i32";
-        } else {
-          // ref / ref_null / externref / IrType.string / object / class
-          // / closure all land here. The from-ast lowerer must have
-          // coerced to externref upstream — `coerce.to_externref`
-          // emits an `extern.convert_any` so the value flowing in
-          // has the right Wasm type for the import signature
-          // `(externref, externref) → void`.
-          importName = "__gen_push_ref";
-        }
+        // (#3526 F1-S4) The typed `__gen_push_f64` / `_i32` / `_ref` symbol is
+        // no longer re-derived here: `attachIrGeneratorSupport` derived it from
+        // the SAME value type before freeze, and that attachment is now the
+        // only authority (the local derivation existed solely to feed the
+        // retired `?? irRuntimeFuncRef(importName)` fallback).
+        //
+        // The type READ stays, and is load-bearing: `typeOf` throws for a value
+        // this map cannot type, which demotes the owner. Dropping the read
+        // would silently admit a population lowering previously refused, so it
+        // is kept exactly where it was rather than deleted with its consumer.
+        void typeOf(instr.value);
         // #2951 — prefer the sealed provider so lowering consumes exactly the
         // callable prepared-component dependency discovery proved.
-        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef(importName));
+        const fnIdx = resolver.resolveFunc(requirePreparedGeneratorProvider(instr.provider, "gen.push", func.name));
         // Stack: buffer, value → (void); call __gen_push_*.
         emitter.pushRaw(out, {
           op: "local.get",
@@ -2746,7 +2761,7 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.epilogue requires func.generatorBufferSlot (${func.name})`);
         }
-        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__create_generator"));
+        const fnIdx = resolver.resolveFunc(requirePreparedGeneratorProvider(instr.provider, "gen.epilogue", func.name));
         emitter.pushRaw(out, {
           op: "local.get",
           index: slotWasmIdx(func.generatorBufferSlot),
@@ -2766,7 +2781,9 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.yieldStar requires func.generatorBufferSlot (${func.name})`);
         }
-        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_yield_star"));
+        const fnIdx = resolver.resolveFunc(
+          requirePreparedGeneratorProvider(instr.provider, "gen.yieldStar", func.name),
+        );
         emitter.pushRaw(out, {
           op: "local.get",
           index: slotWasmIdx(func.generatorBufferSlot),
@@ -2793,7 +2810,9 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.setReturn requires func.generatorBufferSlot (${func.name})`);
         }
-        const setReturnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_set_return"));
+        const setReturnIdx = resolver.resolveFunc(
+          requirePreparedGeneratorProvider(instr.provider, "gen.setReturn", func.name),
+        );
         const valueT = asVal(typeOf(instr.value));
         // (#3526 F1-S3) The boxing callable has ONE authority — the frozen
         // runtime manifest, attached by `attachIrGeneratorSupport`. There is no

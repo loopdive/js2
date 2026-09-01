@@ -311,8 +311,23 @@ describe("#3526 F1-S3 lowering has no second authority", () => {
       resolveGlobal: () => 0,
       resolveType: () => 0,
     } as unknown as IrLowerResolver;
+    // (#3526 F1-S4) The `gen.setReturn` PROVIDER is attached here so this test
+    // keeps isolating the BOXING authority. F1-S4 retired the `?? __gen_set_return`
+    // fallback this arm used to fall through, so an entirely unattached instr now
+    // fails on the seam provider first — a different assertion, pinned separately
+    // in the F1-S4 suite.
+    const base = generatorFunction("unattached", F64);
+    const block = base.blocks[0]!;
     const fn = {
-      ...generatorFunction("unattached", F64),
+      ...base,
+      blocks: [
+        {
+          ...block,
+          instrs: block.instrs.map((instr) =>
+            instr.kind === "gen.setReturn" ? { ...instr, provider: irRuntimeFuncRef("__gen_set_return") } : instr,
+          ),
+        },
+      ],
       generatorBufferSlot: 0,
       slots: [{ name: "$__gen_buffer", type: EXTERNREF }],
     } as unknown as IrFunction;
