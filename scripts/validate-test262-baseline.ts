@@ -53,6 +53,18 @@ import {
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
+// (#5248) LANE PARITY. This validator re-runs rows the COMMITTED baseline says
+// pass, and that baseline is produced exclusively by `scripts/test262-worker.mjs`
+// — the sharded lane, which is NOT wired to the compiled `Temporal` provider.
+// The in-process lane this file imports IS wired, so a Temporal row that passes
+// in the baseline for want of a `Temporal` binding (measured: ~12 % of the
+// Temporal bucket's baseline passes are of that shape) would fail here and
+// report a baseline drift that does not exist. Sampling a lane the baseline was
+// not measured on is a false positive, not a finding, so the validator runs the
+// provider OFF until the worker is wired too. `JS2WASM_TEST262_TEMPORAL=1`
+// overrides, for the run that checks the two lanes have converged.
+process.env.JS2WASM_TEST262_TEMPORAL ??= "0";
+
 /** Prepare the default standalone eval engine before sampling its baseline. */
 function prepareStandaloneEvalProvider(): void {
   const engine = process.env.JS2WASM_EVAL_ENGINE ?? "quickjs";

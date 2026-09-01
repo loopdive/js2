@@ -18,7 +18,10 @@ created: 2026-08-30
 # one-line option declaration / pass-through / two installer calls each.
 # THIS PR'S OWN growth: registry/imports.ts (the fix), compiler.ts + index.ts
 # (one line each), package-linker.ts (+11: the two `installSharedExceptionTag`
-# calls and their comments).
+# calls and their comments), and context/types.ts (+12: the two documented
+# exception-tag state fields used by that wiring). The create-context function
+# grows by five lines to initialize the same shared-tag state with its target
+# guard.
 #
 # RESTATED grants, NOT this PR's work — src/runtime.ts (+191) and
 # src/codegen/index.ts (+12) belong to the predecessor stack this branch is
@@ -30,6 +33,7 @@ created: 2026-08-30
 # per CLAUDE.md so the gate can see them from a file this PR touches; they carry
 # no claim of authorship and should disappear when main's baseline refreshes.
 loc-budget-allow:
+  - src/codegen/context/types.ts
   - src/codegen/registry/imports.ts
   - src/compiler.ts
   - src/index.ts
@@ -45,6 +49,7 @@ loc-budget-allow:
   # the files THIS PR touches (same mechanism as the src/runtime.ts note above).
   - src/codegen/context/types.ts
 func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
   - src/package-linker.ts::compileLinkedProject
   - src/codegen/index.ts::generateMultiModule
   # restated, same reason as above — #5241's growth, not this PR's
