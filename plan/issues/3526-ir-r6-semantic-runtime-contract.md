@@ -2485,3 +2485,34 @@ branch compiles marginally FASTER (median 792 ms vs 824 ms over 5 runs).
 Resolution: one sanctioned re-admission (hold removed) on a confirmed
 not-this-PR determination, with no code change — there is nothing in the diff to
 fix. Recorded on the PR as the standing-down comment the park rules require.
+
+**Outcome:** the re-validation passed on re-admission and PR #5412 merged
+(`2e74deee` is an ancestor of main), which is the confirmation the diagnosis
+predicted — the same head, unchanged, went green on the second `merge_group`
+run. This note could not ride that PR because a queued branch is locked against
+pushes, so it lands separately.
+
+### Two follow-ups this slice surfaced but does not own
+
+Both were measured here and neither has an issue id yet:
+`node scripts/claim-issue.mjs --allocate` refuses in this container (exit 6 —
+`gh` is unauthenticated, so the open-PR id scan degrades and the reservation
+would not be verified against in-flight PRs). Reserving under
+`--allow-unscanned` to file them would risk exactly the permanent hole in the
+sequence that #3890/#3891 burned, so they are recorded here for whoever can
+allocate cleanly:
+
+1. **The test262 baseline carries no `wasm_sha`, which disables the #1222
+   byte-identity noise filter.** `scripts/diff-test262.ts:1747` requires the
+   field on BOTH sides; the baseline has it on 0 of 48,735 entries. Every
+   pass→fail transition is therefore reported "with wasm-hash change" and
+   `Wasm-identical noise: 0` is structurally guaranteed. The filter exists to
+   absorb runner-variance failures and currently cannot. Fix is on the
+   baseline-producing side (record `wasm_sha` per row), not in the gate.
+2. **A generator returning a boolean yields `1`, not `true`.** `return n > 2`
+   in a generator stashes a boolean-branded i32, which `gen.setReturn` boxes
+   through `__box_number`. Measured identical on the IR and legacy paths
+   (`IR_FIRST=1` and `=0` both answer `1`), so it is a whole-compiler
+   conformance gap, not an IR-path defect. Out of scope for a byte-neutral
+   slice; the `BOOL_RETURN_GEN` fixture added here pins the current behavior
+   and would need updating alongside the fix.
