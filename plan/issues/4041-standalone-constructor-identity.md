@@ -1,7 +1,7 @@
 ---
 id: 4041
 title: "standalone RegExp constructor write/species leaks env::Object_set_constructor (7 ES2015 rows)"
-status: ready
+status: blocked
 sprint: current
 created: 2026-08-02
 updated: 2026-09-01
@@ -15,7 +15,7 @@ language_feature: regexp, constructor, species
 es_edition: ES2015
 goal: standalone-mode
 related: [1781, 3006, 3051, 4040, 4444]
-checkpoint: f841-regexp-write-plan
+checkpoint: 2026-09-01-original-harness-reachability-handoff
 test262_fail: 7
 origin: "2026-09-01 immutable f841 standalone census; exact env::Object_set_constructor ES2015 residual."
 ---
@@ -50,6 +50,71 @@ standalone target emitted host imports: env::Object_set_constructor (#2961)
 5. `test/built-ins/RegExp/call_with_regexp_not_same_constructor.js`
 6. `test/built-ins/RegExp/prototype/Symbol.split/species-ctor-species-non-ctor.js`
 7. `test/built-ins/RegExp/prototype/Symbol.split/species-ctor.js`
+
+## 2026-09-01 research checkpoint — no production implementation shipped
+
+The exact isolated runner was repeated from this issue worktree against the
+then-current upstream-base `2c3c27a54f` with the maintained command:
+
+~~~sh
+node --import tsx scripts/run-test262-paths.mts \
+  .tmp/4041-regexp-constructor-paths.txt --isolate --standalone
+~~~
+
+Its result remains **3 pass / 4 fail**:
+
+| Partition | Exact rows | Verdict |
+| --- | --- | --- |
+| Existing controls | `species-ctor-ctor-undef`, `species-ctor-species-undef`, `call_with_regexp_not_same_constructor` | pass |
+| Local provider infrastructure | `splitter-proto-from-ctor-realm` | fail: QuickJS provider is not built in this worktree; not a semantic verdict |
+| Reachable semantics | `species-ctor-err`, `species-ctor-species-non-ctor`, `species-ctor` | fail: no expected abrupt completion / wrong split result |
+
+The candidate implementation was deliberately removed before this checkpoint:
+
+- [`src/codegen/expressions/assignment.ts`](../../src/codegen/expressions/assignment.ts)
+  briefly routed proven native-RegExp `.constructor` writes through the
+  ordinary sidecar MOP.
+- [`src/codegen/regexp-standalone.ts`](../../src/codegen/regexp-standalone.ts)
+  briefly added a dirty-only SpeciesConstructor path and a first-class
+  `RegExp.prototype[Symbol.split]` bridge.
+
+Small direct compiler probes showed that the candidate write/read path could
+avoid `env::Object_set_constructor` and preserve an own closure value, but the
+authoritative original-harness run gained **zero** rows. The native-prototype
+bridge also made no difference to the three reachable semantic failures.
+That is insufficient evidence that the original-harness wrappers reach either
+candidate seam, so the code was removed rather than shipping an inert
+host-free-looking route. TS7 type checking passed while the candidate was
+present; it is recorded only as a structural check, not semantic validation.
+
+### Precise handoff
+
+1. Instrument the canonical `runOriginalHarnessVariant` compilation shape (not
+   `wrapTest` or a hand-written repro) to record which assignment lowering and
+   first-class `RegExp.prototype[Symbol.split]` reification route each of the
+   three reachable rows uses.
+2. Trace that route through the existing #3006 constructor carrier and #3051
+   raw-closure write representation. Establish the real `[[Set]]` and
+   `SpeciesConstructor` boundary before adding another fast path.
+3. Implement only at the proven route; retain Proxy/exotic refusal boundaries,
+   accessor/deletion/reassignment/order/abrupt behavior, and the seven-row
+   runner as the acceptance gate. A direct-probe zero-import result alone is
+   not sufficient.
+
+No GitHub issue was created. This checkpoint is documentation/handoff only;
+the semantic fix remains blocked on original-harness reachability evidence.
+
+### Publication environment note
+
+An initial normal pre-commit attempt, without `--no-verify`, exposed a
+transient cached-runtime problem: its `node` overlay lacked `npx`, and the
+cached `pnpm` fallback began reinitializing the shared repository
+`node_modules` while attempting an unavailable package download. That owned
+process was terminated with `TERM`; no install was retried from this
+checkpoint. The prescribed canonical-workspace recovery subsequently restored
+the module metadata and relevant links (including TS7 7.0.2, Vitest 3.2.4, and
+Prettier 3.8.1). The observation is now resolved local tooling context, not a
+validation failure or a reason to claim the semantic fix.
 
 ## Ownership boundary
 
