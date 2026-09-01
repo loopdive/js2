@@ -278,6 +278,18 @@ export const EXTERNREF_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
   result: I32_TYPE,
 });
 
+/**
+ * `(externref, externref) -> i32` — the exact ABI of the string relational
+ * compare helper, shared by the `env.string_compare` host import and the
+ * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
+ * sign; #3526 F2-S1 made the manifest the authority over which one answers.
+ */
+export const EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
+  result: I32_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),

@@ -322,6 +322,7 @@ import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-gl
 import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
+  preparedStringCompareProvider,
   type PreparedIrRuntimeManifest,
 } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
@@ -345,6 +346,7 @@ import type {
   GeneratorNumberBoxPolicy,
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
+  StringComparePolicy,
 } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
@@ -874,6 +876,48 @@ function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumb
   return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("native" as const) });
 }
 
+/**
+ * (#3526 F2-S1) This caller's already-resolved STRING-COMPARE policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (integration.ts, the `IR_STRING_COMPARE_FN` arm),
+ * consulted once, here, before freeze. `standalone` and `wasi` both imply
+ * `nativeStrings`, so this one flag is the whole truth table — which is why the
+ * arm is stated as `nativeStrings ? native : host` rather than repeating
+ * `integrationExternIsUndefinedPolicy`'s three-way disjunction.
+ */
+function integrationStringComparePolicy(ctx: CodegenContext): StringComparePolicy {
+  return Object.freeze({ compare: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S1) True when any of `fns` performs a string relational compare.
+ *
+ * The seam carries no `intrinsic` instruction — from-ast emits a plain `call`
+ * through the `IR_STRING_COMPARE_FN` sentinel func-ref — so the demand is read
+ * off the call population directly, the way `irGeneratorNumberBoxDemand` reads
+ * the `gen.setReturn` one. The same predicate answers the freeze request and
+ * the owner-local partition below, so the two can never disagree.
+ */
+function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (found || instr.kind !== "call") return;
+          const { binding } = instr.target;
+          if (binding.kind === "intrinsic" && binding.symbol === IR_STRING_COMPARE_FN) found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -929,10 +973,14 @@ function prepareBuiltFnRuntimeManifest(
       booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
       externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
       generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
+      stringCompare: integrationStringComparePolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
     generatorNumberBoxDemand: irGeneratorNumberBoxDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S1) Same predicate the partition scan above runs, so a demand
+    // the freeze requests can never be one the partition failed to classify.
+    stringCompareDemand: irStringCompareDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3587,6 +3635,7 @@ export function compileIrPathFunctions(
   const booleanBoundaryPolicy = integrationBooleanBoundaryPolicy(ctx);
   const externIsUndefinedPolicy = integrationExternIsUndefinedPolicy(ctx);
   const generatorNumberBoxPolicy = integrationGeneratorNumberBoxPolicy(ctx);
+  const stringComparePolicy = integrationStringComparePolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -3636,6 +3685,24 @@ export function compileIrPathFunctions(
           "resolve",
           `ir/integration: semantic intrinsic ${unsupportedProbe} has no provider under extern-is-undefined policy ` +
             `probe=${externIsUndefinedPolicy.probe}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S1) The string relational compare seam partitions on the same
+    // rule, in the same pass. Like the generator seam it carries no intrinsic
+    // instruction, so the demand is read off the call population directly.
+    if (stringComparePolicy.compare === "unsupported" && irStringCompareDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string relational compare has no provider under string-compare policy " +
+            `compare=${stringComparePolicy.compare}`,
         ),
         "resolve",
       );
@@ -3781,12 +3848,7 @@ export function compileIrPathFunctions(
   recordOwnerPreparationFailures(
     failures,
     failedOwners,
-    preregisterCallableProviders(
-      ctx,
-      healthyForLower,
-      preparedRuntimeManifest?.providers,
-      fuseNativeNumberFormatCarriers,
-    ),
+    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest, fuseNativeNumberFormatCarriers),
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
@@ -4134,7 +4196,7 @@ export function compileIrPathFunctions(
       deferredClass,
       unitCallableSlots,
       importedCallableCatalog,
-      preparedRuntimeManifest?.providers,
+      preparedRuntimeManifest,
       fuseNativeNumberFormatCarriers,
       loweringPlans?.fnctorParameterPreselection,
       loweringPlans?.fnctorParameterPreselectionIsCurrent,
@@ -6059,9 +6121,14 @@ function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void
 function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  // (#3526 F2-S1) The whole prepared manifest, not just its intrinsic-provider
+  // map: the string-compare arm reads a FEATURE row (`js.string.compare`) that
+  // no intrinsic use ever puts in that map, plus the frozen host-capability
+  // records the host arm's field name comes from.
+  prepared?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
 ): number {
+  const runtimeProviders = prepared?.providers;
   if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
     throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
   }
@@ -6187,11 +6254,28 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_TRUSTED_FN) {
     index = ensureHostCharCodeAtTrusted(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_COMPARE_FN) {
-    if (ctx.nativeStrings) {
+    // (#3526 F2-S1) The arm no longer reads `ctx.nativeStrings`: the frozen
+    // manifest's `stringCompare` policy already resolved which authority
+    // answers, and this only materializes it through the SAME two routines as
+    // before. Fail-closed: an owner whose policy cannot provide the seam is
+    // partitioned out before freeze, so a missing row here is an invariant, not
+    // a lane fact to re-decide locally.
+    const arm = preparedStringCompareProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string relational compare has no frozen provider under the string-compare policy",
+      );
+    }
+    if (arm.arm === "native") {
       ensureNativeStringHelpers(ctx);
-      index = nativeStrHelperHandle(ctx, "__str_compare");
+      index = nativeStrHelperHandle(ctx, arm.symbol);
     } else {
-      index = ctx.funcMap.get("string_compare");
+      // The host arm names the capability record's field — the `env` BASE
+      // import the legacy collector already minted. Never `ensureLateImport`:
+      // a late registration here would shift every defined funcidx.
+      index = ctx.funcMap.get(arm.field);
     }
   } else if (
     ref.binding.kind === "intrinsic" &&
@@ -6375,7 +6459,7 @@ function makeResolver(
   classResolver: DeferredClassResolver,
   unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  preparedRuntimeManifest?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
@@ -6407,7 +6491,7 @@ function makeResolver(
         return resolvePreparedImportCallable(ctx, ref, importedCallableCatalog, preparedScopeLookup);
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
+        return resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
       }
       const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
@@ -6792,7 +6876,7 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
 function preregisterCallableProviders(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  preparedRuntimeManifest?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
 ): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
   const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
@@ -6825,7 +6909,7 @@ function preregisterCallableProviders(
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
           try {
-            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
+            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
           } catch (error) {
             if (!failures.has(owner.unitId)) {
               failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
