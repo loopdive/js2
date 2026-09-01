@@ -1463,3 +1463,36 @@ pre-push hook against that actual final documentation SHA with
 `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` and the repository runtime PATH.
 Fresh-fetch upstream immediately before publication; if main advances, merge
 normally and replay affected validation rather than pushing a stale base.
+
+### e59 synthetic pre-push — prior-only evidence (2026-09-01)
+
+The full synthetic pre-push hook was run against the tracker-only documentation
+head `192188a5ed87c51c7db7a3b30dcbba2b14213e2e` with
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` and the repository runtime PATH. It
+exited **0** in **108 s**: parallel TypeScript 7 typecheck and lint, Prettier
+format check, oracle and coercion-site ratchets, #3765 numeric-local parity
+(**18 / 18**), and committed/working issue integrity all passed.
+
+This result is deliberately **prior-only**: live upstream advanced to
+`c372457da1` while the hook was in flight. It must not be cited as final
+publication validation. Integrate that live tip normally, then replay every
+affected exact-head gate and the final synthetic pre-push proof before push.
+
+### Current-main replay plan — c372457da1 (2026-09-01)
+
+Fresh fetch verified live `loopdive/js2:main` at
+`c372457da1ffd39b87bebf235aac115a27657abf`, one commit beyond e59. That
+incoming commit is `chore(ci): refresh landing benchmark artifacts [skip ci]`.
+Its actual `e59..c372` path set is benchmark artifacts only; it has **no**
+three-way overlap with any #680-owned tracker/source/test path. The apparent
+five-path overlap in a two-tip `HEAD..upstream/main` listing is the existing
+#680 branch delta and must not be treated as an upstream deletion or source
+conflict.
+
+Perform a normal no-commit non-fast-forward merge of c372, preserve its
+incoming benchmark artifacts unchanged, and retain the existing #680 five-path
+contribution. After the merge commit, replay the exact source validation
+(focused 27 / 27, direct TS7, targeted static/budget/ratchet/path audit) and
+the full synthetic pre-push hook against the new actual SHA. A final fetch must
+still prove main has not advanced; otherwise repeat this same normal integration
+discipline before publication.
