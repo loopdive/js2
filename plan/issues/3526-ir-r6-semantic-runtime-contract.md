@@ -2423,3 +2423,24 @@ generator codegen and the native state machine,
 native member). `scripts/*-baseline.json` is untouched apart from the
 sanctioned two-line `check:ir-kind-neutrality` citation refresh;
 `scripts/loc-budget-baseline.json` remains main's alone.
+
+### Post-merge re-validation (origin/main `2dfb8396`)
+
+`main` advanced under this branch while the slice was in flight, and one of the
+landed changes is generator-adjacent (#3591, `src/codegen/generators-native-consumer.ts`),
+so every neutrality claim was re-measured against the merged base rather than
+carried over: the 35 byte cells are again identical on bytes, sha256, imports
+and WAT against `origin/main` `2dfb8396`; the fallback census is byte-identical
+to the pre-merge run; `check:ir-kind-neutrality` needs no further citation
+change; TypeScript 7 and 5, the full ratchet chain bare and under
+`LOC_GATE_BASE=$(git rev-parse origin/main)`, `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy` and `check:standalone-ir-cutover-corpus` are green.
+Focused suites: 134/135 pass across 14 files, the single failure being the
+pre-existing `tests/issue-2951.test.ts` standalone compile-twice case, which
+was re-confirmed to fail identically with this change-set reverted to
+`origin/main` `2dfb8396`.
+
+The merge resolved the issue file as a chronological union — main's F1-S3 plan
+section (PR #5409, merged while this branch was in flight) followed by this
+branch's verifications and checkpoint. No other file conflicted.
