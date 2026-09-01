@@ -2,10 +2,11 @@
   "id": "3523",
   "slice": "gap2b",
   "assignee": "ttraenkler/fable-ir-takeover",
-  "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/docs-r4-gap2b-plan",
   "claimed_at": "2026-09-01T19:24:34Z",
-  "updated_at": "2026-09-01T19:24:34Z",
-  "write_id": "31321-9ho4rz7i"
+  "updated_at": "2026-09-01T22:04:49Z",
+  "write_id": "23984-i3hhxuwj",
+  "released_at": "2026-09-01T22:04:49Z"
 }
