@@ -1,7 +1,7 @@
 ---
 id: 4119
 title: "standalone: `Array.prototype.<m>` refuses in value position (265) and `Object.prototype.toString` is unimplemented (76) — 341 files behind two adjacent refusal sites in array-object-proto.ts"
-status: in-progress
+status: blocked
 sprint: current
 created: 2026-08-03
 updated: 2026-09-01
@@ -18,7 +18,8 @@ umbrella: 2860
 related: [3571, 1888, 3180, 3170, 3169, 2860, 2501]
 test262_fail: 341
 es2015_residual: 33
-checkpoint: f841-residual-reopened
+checkpoint: 2c3c27a-nativeproto-identity-tag-chain-blocked-20260901
+blocked_by: [4449, 4490, 2375, 2175]
 origin: "2026-08-03 harvest of loopdive/js2wasm-baselines test262-standalone-current.jsonl, commit 8dac2d70 (2026-08-02T23:08:27Z) = js2 main c480fb66, 30759/43489 host"
 ---
 
@@ -497,3 +498,115 @@ the historical Array-method-as-value arm remains separate.
    distinguish the carrier without broader object-model work, stop with this
    issue updated to name the exact dependency and publish only a genuinely
    nonmergeable draft checkpoint.
+
+### 2026-09-01 current-main reproduction and blocked carrier result
+
+This branch is based on current `upstream/main` `2c3c27a54f`.  The authentic
+assembled-harness standalone probe of the exact 33 paths completed with its
+structural controls (`must-pass → pass`, `must-fail → fail`) and produced
+**33 fail / 33 total**.  It is therefore a current-main reproduction, not an
+inference from the frozen `f841` JSONL.
+
+#### Carrier partition
+
+The candidate receiver family is the native `$NativeProto` representation,
+not a TypedArray algorithm change:
+
+- TypedArray concrete-prototype / `%TypedArray%.prototype` identity paths:
+  `Uint8Array/prototype.js`, `Uint8ClampedArray/prototype/proto.js`,
+  `Uint8Array/prototype/proto.js`, `Uint16Array/prototype.js`,
+  `Int16Array/prototype/proto.js`, `Uint32Array/prototype.js`,
+  `Int32Array/prototype/proto.js`, `Float64Array/prototype.js`,
+  `Int16Array/prototype.js`, `Uint8ClampedArray/prototype.js`,
+  `Float32Array/prototype.js`, `Int8Array/prototype/proto.js`,
+  `Int32Array/prototype.js`, `Float32Array/prototype/proto.js`,
+  `Float64Array/prototype/proto.js`, `Int8Array/prototype.js`,
+  `Uint32Array/prototype/proto.js`, `Uint16Array/prototype/proto.js`,
+  `ctors/object-arg/as-generator-iterable-returns.js`, and
+  `ctors/length-arg/toindex-length.js`.
+- ArrayBuffer-prototype identity paths:
+  `ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js`,
+  `ArrayBuffer/prototype/slice/species-constructor-is-undefined.js`,
+  `ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js`,
+  `ArrayBuffer/prototype/slice/species-is-undefined.js`,
+  `ctors/no-species.js`, `ArrayBuffer/prototype/slice/species-is-null.js`, and
+  `ArrayBuffer/newtarget-prototype-is-not-object.js`.
+- The remaining native-prototype identity row is
+  `Symbol/prototype/intrinsic.js`.
+
+That is an explicit 28-path *candidate* set, never an ownership claim: the
+five excluded paths are cross-realm `Function/call-bind-this-realm-undef.js`
+(the local runner presently reports its missing QuickJS artifact), the null
+class-prototype path, the two Proxy `IsArray` paths, and RegExp construction.
+They remain outside this branch's permitted surfaces.
+
+Three representative paths prove that a `toString` classifier-only change
+would be a CE-to-fail demotion rather than a conformance improvement:
+
+```text
+Uint8Array/prototype.js                       -> toString refusal at its prototype identity assertion
+ArrayBuffer/prototype/slice/species-is-null.js -> toString refusal at its prototype identity assertion
+Symbol/prototype/intrinsic.js                 -> toString refusal at its prototype identity assertion
+```
+
+The same standalone module, with only the three underlying comparisons and no
+assertion formatter, compiled successfully and returned `identity-mask 0`:
+
+```ts
+Object.getPrototypeOf(new Uint8Array(0)) === Uint8Array.prototype
+Object.getPrototypeOf(new ArrayBuffer(8).slice()) === ArrayBuffer.prototype
+Object.getPrototypeOf(Symbol("x")) === Symbol.prototype
+```
+
+So none of those three checks is already true behind the formatter's refusal.
+Changing `Object.prototype.toString` alone would expose ordinary Test262
+assertion failures.  The prerequisite identity work belongs to the existing
+TypedArray/ArrayBuffer/Symbol prototype construction tracks, which this issue
+is explicitly forbidden to change.
+
+#### `@@toStringTag` soundness blocker
+
+The apparent small patch (add native-prototype brands to the classifier's
+constant-tag table) is rejected.  §20.1.3.6 requires `Get(O,
+@@toStringTag)` before accepting the builtin fallback, including abrupt
+getters and mutation.  The existing direct-call helper does use
+`__extern_get`, but the reflective `$NativeProto` classifier returns constants
+directly.  More importantly, concrete TypedArray prototype objects inherit
+the `%TypedArray%.prototype` `@@toStringTag` accessor.  `$NativeProto` is
+materialized with a null `$parent`, while the current companion lookup covers
+the receiver's own brand and the Object fallback, not that native-prototype
+parent chain.  A mutation or throwing accessor on `%TypedArray%.prototype`
+therefore cannot be faithfully observed by a new classifier arm.
+
+`ArrayBuffer.prototype` and `Symbol.prototype` have own configurable tag data
+properties, but their exact rows still fail the independently measured
+prototype-identity controls above.  They do not form a separately useful
+pass-producing family.
+
+#### Blocked prerequisites and handoff
+
+No production source or tests were edited.  This documentation-only checkpoint
+is mergeable; the implementation is blocked rather than suitable for a
+constant-tag shortcut.
+
+The exact reopen conditions are:
+
+1. **#4449** must land the permitted TypedArray/ArrayBuffer construction and
+   species work so that the typed-array and ArrayBuffer rows' underlying
+   prototype-identity assertions can become true.  #4119 must not alter those
+   algorithms.
+2. **#4490** must provide coherent real constructor/prototype carriers for the
+   TypedArray constructor-identity side of those rows.
+3. **#2375** and **#2175** must provide an actual `$NativeProto` own-plus-parent
+   `Get` path: it must traverse the native prototype chain and preserve a
+   mutable or throwing inherited `@@toStringTag` accessor's value, receiver,
+   and abrupt completion.  The present null `$parent` materialization and
+   own-brand/Object fallback do not meet that condition.
+
+`#5129`'s existing ArrayBuffer/DataView own-tag substrate is a retained
+control, not a pass-producing substitute: ArrayBuffer and Symbol still fail
+the independently measured prototype-identity checks.  After all three
+conditions hold, rerun the same identity-mask control and the exact 28-path
+candidate subset before widening the classifier; accept only actual pass
+transitions.  Proxy, class, RegExp, and cross-realm Function remain separate
+owners.
