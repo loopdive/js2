@@ -287,8 +287,10 @@ on `codex/5198-regexp-exec-r2-f841-20260901`. Planning began at source
 `f841cddc0f0ea665b63700d9944a4372a34a8b57`; before publication the branch was
 fast-forwarded to upstream `b590669a7b0dd9537d9b9e703218d9cd6eec3106`.
 That intervening PR changes only #3521's prepared-free-function routing and is
-disjoint from this issue and focused test. The standalone values below remain
-the immutable forced-f841 census supplied at
+disjoint from this issue and focused test. The draft delivery branch was then
+normally merged with release head `7fffec534b44e344f9c2b2b310b346084eaa66b6`;
+that version-only delta is also disjoint. The standalone values below remain the
+immutable forced-f841 census supplied at
 `/private/tmp/js2-baseline-census-f841cddc-r1/.test262-cache/test262-standalone-current.jsonl`
 (oracle v13, honest lane; records timestamped 2026-09-01).
 
