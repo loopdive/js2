@@ -1,11 +1,10 @@
 ---
 id: 5255
 title: "ES2015 standalone: preserve generator method receiver context"
-status: done
+status: in-progress
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
-completed: 2026-09-01
 priority: high
 horizon: m
 feasibility: hard
@@ -20,6 +19,9 @@ origin: "Post-#3591 exact Test262 validation: obj.g() drops both the native gene
 loc-budget-allow:
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/generators-native.ts
+  - src/codegen/object-literal-method-receiver.ts
+  - src/codegen/function-body.ts
+  - src/codegen/helpers/body-references-own-this.ts
 func-budget-allow:
   - src/codegen/generators-native.ts::registerNativeGenerator
   - src/codegen/generators-native.ts::ensureNativeGeneratorResumeFunction
@@ -170,14 +172,91 @@ process tree. The normal pre-push hook passed TS7 typecheck, lint, format,
 oracle/coercion ratchets, 18/18 numeric-local parity, and issue integrity;
 `5890005e858772ae0b11999f964b83e063b81427` was then published to the fork.
 
-## Completion and handoff
+## Initial checkpoint and corrective-review handoff
 
-The completed implementation is commit
+The initial implementation is commit
 `5890005e858772ae0b11999f964b83e063b81427`
 (`fix(generators): preserve property receiver across native resumes ✓`) on
-draft PR #5407. It is intentionally stacked on #5402's #3591 late-dispatch
-substrate: keep the PR draft until that dependency is merged and the stack is
-dependency-clean. Luna owns the ready-for-review transition after that handoff.
+draft PR #5407. It remains intentionally stacked on #5402's #3591 late-dispatch
+substrate, but independent Terra review and exact-head CI found blockers before
+readiness. The issue is reopened; do not mark the PR ready until every item in
+the corrective plan below is implemented and revalidated.
+
+### Locked review and CI blockers
+
+1. **Dynamic computed-key admission is unsafe and must be withdrawn in this
+   slice.** The new generator arm in `planDynamicElementReceiverBind` installs
+   the eventual method receiver before the key/callee is evaluated. A strict
+   `key()` helper that reads its own `this` therefore sees `obj`, and a throwing
+   key can leave `__current_this` stale after the exception is caught. The
+   pre-existing function-expression path documents the same unwind limitation,
+   but #5255 newly exposed generator declarations to it. Static `obj.g()` and a
+   statically resolved element key remain in scope; arbitrary dynamic element
+   keys do not become receiver-aware in this fix.
+2. **Parameter-initializer `this` is a distinct call-time use.** The current
+   predicates scan only `decl.body`. In
+   `function* g(x = this === obj ? 7 : 9) { yield x; }`, the default runs during
+   factory invocation, before the deferred frame exists. Receiver installation
+   and `readsCurrentThis` must include own-`this` parameter initializers, while
+   the persistent `dynamic_this` frame field remains required only when the
+   deferred body itself reads `this`.
+3. **The implementation introduced an initialization cycle.** Exact head
+   `3cbf88f117af09f7e17a11559080dfb33a7c595c` fails `CI / quality` in run
+   `33489746460`, job `99798164647`: both IR allocation suites abort before any
+   test with `TypeError: Cannot read properties of undefined (reading 'MAP')`
+   at `src/codegen/collections-brand.ts:100`, reached from the eager import at
+   `src/codegen/expressions/calls.ts:36`. The new
+   `generators-native.ts -> expressions/this-keyword.ts` edge closes a cycle
+   through identifier/index/expression modules. Receiver snapshotting must move
+   to a dependency-light seam or otherwise remove that eager edge; no CI suite
+   may rely on import order.
+
+### Corrective implementation plan (required before ready)
+
+1. Add red focused controls for: strict dynamic `key()` reading `this`, a
+   throwing dynamic key followed by a receiver-sensitive call, a generator
+   parameter default reading `this`, and a body+default combination with
+   `arguments`, user params, and spills. Record pre-fix outcomes in this issue.
+2. Remove generator-declaration admission from
+   `planDynamicElementReceiverBind`; keep the proven static property and
+   statically resolved element-access paths. Replace the current dynamic-key
+   positive regression with negative/no-new-admission controls so #5255 does
+   not widen the documented exception-unwind hazard.
+3. Split receiver demand into call-time parameter-initializer use and deferred
+   body use. The object-literal planner installs a receiver when either applies;
+   the generator frame stores `dynamic_this` only for deferred body use. Ensure
+   parameter-default evaluation sees the installed receiver without shifting
+   frame offsets unnecessarily.
+4. Remove the eager `compileThisKeyword` import from `generators-native.ts`.
+   Reuse or extract the minimum receiver-snapshot ladder in a dependency-light
+   module, preserving strict/sloppy direct and detached calls, null markers,
+   typed/synthesized method `this`, and host/standalone parity. Add a cold
+   module-import/IR allocation test that reproduces the exact CI failure.
+5. Re-run the exact Test262 row, the expanded #5255 matrix, #3591, native
+   generator declarations/expressions, #4025 controls on both clean parent and
+   candidate, the two previously failing IR allocation suites, typecheck,
+   lint/format, ratchets, issue integrity, normal hooks, and exact-head CI.
+6. Only after those gates pass, restore `status: done`, record final SHAs and
+   evidence, sync the exact #5402 parent if needed, update the PR body, and let
+   Luna re-evaluate readiness.
+
+## Wrap-up handoff (2026-09-01)
+
+Work is intentionally stopped at draft PR #5407 on branch
+`codex/es2015-generator-method-this-terra-20260901`. The published code head is
+`3cbf88f117af09f7e17a11559080dfb33a7c595c`; it contains the initial fix,
+completion-evidence checkpoint, and an exact merge of #5402 head
+`7380a1694b3fba806232f571ea3356b899d7a8e6`. Do not mark the PR ready: the
+dynamic-key review findings and the `collections-brand.ts:100` module-cycle CI
+failure above make this head non-mergeable despite the focused Test262 row and
+local pre-push gates passing.
+
+The next owner should start from this branch, implement the corrective plan in
+order, and keep the dynamic computed-key generator path withdrawn unless it can
+prove key evaluation and exception-safe receiver restoration. The last known
+good focused evidence remains exact Test262 1/1 and #5255 4/4, but that evidence
+does not supersede the cold-import CI failure or the static P1/P2 review. No
+GitHub issue was created; this file is the canonical tracker and handoff.
 
 ## Implementation plan
 
