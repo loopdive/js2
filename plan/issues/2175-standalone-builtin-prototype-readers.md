@@ -47,6 +47,11 @@ func-budget-allow:
   # +2 net lines: singleton class-expression materialization owns its runtime
   # computed-name effect when it bypasses compileClassExpression.
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/statements/variables.ts::emitHandledClassExpressionBindingEffects
+  # +13 lines: the e59 centralized class-value helper emits before the caller
+  # can know it handled the binding; this local owner keeps unresolved accessor
+  # names once-only and reorders only the emitted suffix after late-import
+  # remapping has seen both instruction groups.
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/context/create-context.ts::createCodegenContext
   # +12 lines — same arm; see the loc-budget note above.
@@ -4394,3 +4399,24 @@ the effect suffix followed by the handled materialization suffix. An
 unchanged, so it emits the effect exactly once itself. This covers both
 singleton and Promise fast paths without an unconditional pre-emission,
 fallback duplication, or a ninth PR path.
+
+### e59 durable merge evidence / current-main handoff — 2026-09-01
+
+The normal e59 merge committed in a durable session at
+`b14b4a67804e04b987c1a5b1153981df93237753`, with parents
+`36ddfd42847491f64c3c3f483362fc08e12fe341` and
+`e59af10496753d38352fdac74059872cd6033c7e`. Its full, unskipped hook passed
+formatting, lint, LOC/function budgets, and the oracle ratchet. The
+changed-root control was correctly not run because the e59 merge contained 24
+incoming root files, exceeding its 20-file applicability limit; that is a
+skipped-inapplicable control, not final-head evidence.
+
+At this handoff, `upstream/main` is
+`c372457da1ffd39b87bebf235aac115a27657abf`. Its true incoming delta from the
+e59 merge base contains only nine `benchmarks/results/` refresh artifacts and
+has no overlap with any of the eight #2175-owned paths. Next owner must stage
+this tracker handoff, make a normal no-commit merge of c372 (or a freshly
+fetched successor), and only then run the required exact-final-head controls,
+complete synthetic-ref pre-push gate, no-leak audit, fork push, and ready
+non-draft upstream PR. User publication authorization remains recorded above;
+no GitHub issue was created.
