@@ -62,6 +62,7 @@ files:
   - tests/issue-4103-ir-async-runtime-providers.test.ts
   - tests/issue-4104-ir-async-plan-runtime-consumer.test.ts
   - tests/issue-3526-string-boundary-compare.test.ts
+  - tests/issue-3526-string-boundary-schema.test.ts
 loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/builder.ts
@@ -138,6 +139,26 @@ loc-budget-allow:
   # policies in the linear and self-hosted-stdlib adapters. Every cited path
   # already carries an F1-S1..F1-S4 grant; this line records the F2-S1
   # rationale against them and adds no new path.
+  #
+  # 2026-09-01 F2-S2 (capability-record schema widening, +278 net src LOC
+  # measured against origin/main dc29e1f1): the kind-discriminated record
+  # union — two closed id halves, per-kind module unions, the global field
+  # scheme, the `ref_extern` value type, the `funcRecord`/`globalRecord`
+  # factories, the six new `wasm:js-string` / `string_constants*` rows, the
+  # per-kind validator arms and the shared `asCallableRuntimeHostCapabilityRecord`
+  # guard (runtime-host-capabilities.ts, +239 net — the whole slice); the
+  # `host-callable` capability narrowed to the func id half plus its
+  # `#indexProviders` runtime twin (runtime-manifest.ts, which is over the
+  # 1500-line god-file threshold and carries an F1-S1 grant); the three
+  # func-assuming derivations routed through the func resolver
+  # (intrinsic-support.ts); `AsyncHostAdapter` retargeted to the func arm and
+  # the kind guard placed before the value-type walk
+  # (async-runtime-providers.ts); the one adapter-parity guard
+  # (async-plan.ts, the single new path, 1285 lines and far under the
+  # threshold). This slice moves NO boundary: no provider references a new
+  # row, so every frozen manifest, import and emitted body is byte-identical
+  # (35/35 measured cells).
+  - src/ir/async-plan.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -3706,3 +3727,263 @@ Out of scope here: every resolve-table arm (`integration.ts:6186-6347`),
 `stringMethodPlan`, `String()` coercion, `src/ir/from-ast.ts`, the
 `host-import-policy.ts:283-286` classifier (retire once records are typed),
 and `import-manifest.ts:337`'s `env`-only walk.
+
+---
+
+## 2026-09-01 F2-S2 checkpoint note — Opus lane
+
+**Branch** `claude/issue-3526-f2s2-schema-widening`, grounded on `origin/main`
+`dc29e1f1` (the merged F2-S1, PR #5433), slice claim `3526:f2s2`. Implemented
+from the 2026-09-01 F2-S2 plan. **The slice moves no boundary**: not one
+resolve arm, provider row, policy field or emitted import changed, and the
+35-cell byte matrix below is 100 % identical.
+
+### Probe answers
+
+**P1 — un-requested ids: NO such gate exists, in `scripts/` OR `src/`. Nothing
+was weakened, and nothing had to be sequenced forward.** Measured, not assumed:
+the full reference set of the capability catalogue is eleven files
+(`grep -rn "RUNTIME_HOST_CAPABILITY_IDS\|RUNTIME_HOST_CAPABILITY_RECORDS\|isRuntimeHostCapabilityId\|hostCapabilityRecords" src/ scripts/ tests/`),
+and **`scripts/` contributes zero** — no gate reads the catalogue at all. The
+one completeness demand in the codebase is
+`canonicalizeRuntimeHostCapabilityCatalog` (`runtime-host-capabilities.ts`),
+and it is **ids ↔ rows, not ids ↔ providers**: it fails when a catalogue omits
+a declared id, never when a declared id goes un-requested. The frozen
+manifest's `hostCapabilityRecords` is built the other way round — from the
+capabilities that SELECTED providers request (`runtime-manifest.ts`
+`#buildManifest`) — so an un-requested row is structurally invisible to
+`freeze()`. That is exactly why this slice is byte-neutral by construction and
+not by luck, and it is now pinned rather than argued: the new suite asserts
+that no provider row names any of the six ids, and that Math-only, async-only
+and compare-only manifests carry none of them.
+
+**P2 — `ref_extern` cannot reach `lowerAdapterType`, on two independent
+barriers.** `lowerAdapterType` (`src/codegen/ir-async-runtime-adapters.ts:19`)
+is typed on `AsyncHostAdapterValueType`, which stays the narrowed
+`"externref" | "i32"` — the F1-S1 note about `f64` applies verbatim to
+`ref_extern`. The only route into an `AsyncHostAdapter` is
+`asAsyncHostAdapter`, whose value-type loop rejects anything outside that pair
+by name. Separately, `assertValueTypes` admits a value type only when it BOTH
+equals the expected entry positionally and is a member of
+`RUNTIME_HOST_CAPABILITY_VALUE_TYPES`, so `ref_extern` is accepted only where
+a row declares it — today that is `string.concat`'s result and nothing else,
+which the suite pins as an exhaustive scan of the catalogue rather than a
+spot-check.
+
+**P3 — key-order canonicalization holds; the sort is by id and the new rows
+land in a stable position.** `compareCapabilityRecords` sorts on the capability
+string, so the six ids interleave deterministically:
+`number.unbox` < `string.char_code_at` < `string.compare` < `string.concat` <
+`string.const` < `string.const.utf16` < `string.eq` < `string.len`. Pinned two
+ways: `canonicalizeRuntimeHostCapabilityCatalog` of the **reversed** catalogue
+is `JSON.stringify`-equal to the forward one AND element-identical by object
+reference; and the sorted id list is asserted verbatim at 18 entries. The
+`semanticView` helper (`tests/issue-3526-ir-runtime-manifest.test.ts`) is
+unaffected for a different and stronger reason than ordering — it serializes
+`manifest.hostCapabilityRecords`, which contains only requested capabilities,
+and no new row is ever requested. That suite passes unchanged.
+
+**P4 — F2-S3 handoff, recorded exactly.** The eq arm is **not** a standalone
+arm today: `integration.ts:6279-6296` is a THREE-symbol branch
+(`IR_STRING_CONCAT_FN || IR_STRING_CONCAT_OWNED_FN || IR_STRING_EQUALS_FN`)
+whose single `if (ctx.nativeStrings)` picks between
+`nativeStrHelperHandle(ctx, "__str_concat" | "__str_concat_owned" | "__str_equals")`
+and `exactCallableImportIndex(ctx, "wasm:js-string", "concat" | "equals")`.
+F2-S3's first move is therefore a SPLIT, not a rewrite: lift
+`symbol === IR_STRING_EQUALS_FN` into its own `else if` above the concat pair,
+leaving the two concat symbols on the untouched lane read, then migrate only
+the lifted arm. The policy shape is F2-S1's verbatim:
+`StringEqPolicy = { eq: "host" | "native" | "unsupported" }`, projected
+`ctx.nativeStrings ? "native" : "host"` (the exact former truth table), two
+provider rows (`host.js.string.eq` → `host-callable` on capability
+`string.eq`, whose record this slice already provides; `native.js.string.eq` →
+`runtime-callable` on `__str_equals`), demand from a `string.eq` instruction
+scan, and `STRING_EQ_POLICY_DISABLED` passed explicitly by the linear and
+self-hosted-stdlib adapters. No code for any of that is in this PR.
+
+### What landed
+
+- **`src/ir/runtime-host-capabilities.ts`** (+239 net, the whole slice) — the
+  id union split into `RUNTIME_HOST_CAPABILITY_FUNC_IDS` (16) and
+  `RUNTIME_HOST_CAPABILITY_GLOBAL_IDS` (2) with `RUNTIME_HOST_CAPABILITY_IDS`
+  as their sorted merge; closed per-kind module unions
+  (`env | wasm:js-string` for func, `string_constants | string_constants16`
+  for global), a closed kind tuple and a closed field-scheme tuple, each with
+  its runtime `Set` twin; `RuntimeHostCapabilityValueType` grown by
+  `ref_extern`; `RuntimeHostCapabilityFuncRecord` /
+  `RuntimeHostCapabilityGlobalRecord` and their union;
+  `funcRecord` / `globalRecord` factories with `record()` retained as the
+  `env`-defaulting alias so the twelve existing rows are literally unchanged;
+  the six new rows; a per-kind validator (`assertGlobalCapabilityRecord` for
+  the global arm) with kind/module/field-scheme membership checks; and the
+  shared `asCallableRuntimeHostCapabilityRecord` guard plus
+  `resolveRuntimeHostCapabilityFuncRecord`.
+- **`src/ir/runtime-manifest.ts`** (+20) — `host-callable`'s `capability`
+  narrowed from `RuntimeHostCapabilityId` to `RuntimeHostCapabilityFuncId`
+  (the type-level `Extract` the plan asked for, spelled as the id half so it
+  actually narrows), and its runtime twin in `#indexProviders`.
+- **`src/ir/intrinsic-support.ts`** (+3) — `ADMITTED_CALLABLE_TARGETS`,
+  `providerAttachment`, `preparedGeneratorNumberBoxProvider` and
+  `preparedStringCompareProvider` all routed through
+  `resolveRuntimeHostCapabilityFuncRecord`. The file now contains no
+  unguarded `resolveRuntimeHostCapabilityRecord(` call, which the suite
+  ratchets.
+- **`src/ir/async-runtime-providers.ts`** (+13) — `AsyncHostAdapter`
+  retargeted to `RuntimeHostCapabilityFuncRecord<AsyncHostCapabilityId, …>`;
+  `asAsyncHostAdapter` takes the kind guard immediately after the id filter
+  and before the value-type walk.
+- **`src/ir/async-plan.ts`** (+3) — see the divergence below.
+- **`tests/issue-3526-string-boundary-schema.test.ts`** (new, 33 tests).
+
+Nothing else was touched: no policy field, no provider row, no
+`IrIntrinsicProvider` global arm, no resolve/attach/from-ast edit.
+
+### One divergence from the plan (recorded, not widened)
+
+**A sixth guard site the plan's enumeration missed: `async-plan.ts`'s
+adapter-parity loop.** `assertPreparedIrAsyncRuntimeCurrent` filters
+`manifest.hostCapabilityRecords` by the requested capability set and then
+builds `irImportFuncRef(record.module, record.field, record.field)` from the
+result — a func-assuming read on a value typed as the union. It is not in the
+plan's list (which named `intrinsic-support.ts`, `async-runtime-providers.ts`
+and `runtime-manifest.ts`), and leaving it out would have been a type error,
+not a silent gap, so the omission was caught the moment the union landed. Fixed
+in the plan's own idiom — `asCallableRuntimeHostCapabilityRecord(records[index]!)`,
+identity-preserving so the `adapter.record !== record` comparison two lines
+down is unaffected. `src/ir/async-plan.ts` is the one path added to
+`loc-budget-allow`; at 1285 lines it is far under the god-file threshold.
+
+Two things the plan allowed that were **not** needed: no `Extract<>` gymnastics
+on the record type (declaring the id union in two halves narrows
+`host-callable` directly and reads better), and no separate `AsyncHostAdapter`
+compatibility shim (retargeting the alias to the func arm was a one-line
+change that every downstream consumer already satisfied — `pnpm run typecheck`
+is green with **zero** edits outside the five files above).
+
+### V-A — measured neutrality: 35 of 35 cells identical
+
+Seven fixtures (the F2-S1 six plus the plan's literal-heavy `CONST`) × five
+lanes, compiled before and after **on the same tree** (the five source files
+were snapshotted, reverted from `HEAD`, re-measured, and restored; the restored
+files were `diff`-verified byte-equal to the snapshots). Each cell compares
+byte length, binary sha256, the ORDERED import list, the **full emitted WAT
+text**, the error list, the `irOutcomes` records and the string pool — deep
+JSON equality, not a spot-check.
+
+| fixture | gc-host | gc-native-strings | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| `STRCMP` (`a < b`) | 157 ✓ | 22652 ✓ | 22816 ✓ | 22843 ✓ | 4876 ✓ |
+| `STRCMP4` (all four operators) | 270 ✓ | 22540 ✓ | 22704 ✓ | 22731 ✓ | 4988 ✓ |
+| `STRMIX` (compare beside concat/eq/len) | 338 ✓ | 22961 ✓ | 23125 ✓ | 23152 ✓ | 4982 ✓ |
+| `FOROFSTR` | 1351 ✓ | 22669 ✓ | 49119 ✓ | 49146 ✓ | 4960 ✓ |
+| `BOTH` | 1440 ✓ | 22924 ✓ | 49374 ✓ | 49401 ✓ | 4983 ✓ |
+| `CLEAN` (control, no strings) | 113 ✓ | 21973 ✓ | 22588 ✓ | 22615 ✓ | 4874 ✓ |
+| `CONST` (literals + `charCodeAt`) | 619 ✓ | 22855 ✓ | 23019 ✓ | 23046 ✓ | 6007 ✓ |
+
+(The fixture SOURCES are this lane's reconstructions from the F2-S1
+checkpoint's descriptions, not that slice's byte-identical files — three of the
+gc-host numbers differ slightly from its table for that reason. It does not
+weaken the measurement: parity is before/after on the same tree, and the six
+descriptions are reproduced exactly.)
+
+**The `CONST` fixture earns its place — it is the only cell that reaches the
+global path at all.** Its gc-host module imports
+`string_constants."" / "f" / "ab" / "abc" / "de" / "abcde" / …`,
+`string_constants16."d800"` (the lone-surrogate route, #2880), and
+`wasm:js-string.{length,charCodeAt}`; `STRMIX::gc-host` supplies
+`wasm:js-string.{concat,equals}`. So every one of the six new rows has its
+registration site inside the matrix. Note also that `result.imports` covers
+only `env` FUNC descriptors — the `wasm:js-string` and `string_constants*`
+imports appear **only** in the WAT — which is why the WAT text is compared in
+full rather than the import array alone; an import-array-only matrix would
+have been blind to exactly this slice's subject matter.
+
+### V-B / V-C — the pins, and where exhaustiveness actually lives
+
+33 tests in `tests/issue-3526-string-boundary-schema.test.ts`, in eight
+sections: the kind-discriminated schema (disjoint/total id halves, closed
+per-kind module namespaces, the `ref_extern` widening scanned exhaustively);
+the six rows whole-shape plus canonical object identity; the ABI **measured**
+against the registration site; the no-provider-selects-them argument; the
+async projection; the validator's cross-kind rejections; the fail-closed
+guards; and the boundary-did-not-move pins.
+
+**The ABI section is a measurement, not a restatement.** Rather than
+re-typing `addStringImports`'s literals, it compiles a host-lane module through
+`generateModule(analyzeSource(...))` and compares each record against the type
+the compiler actually registers — `module.types[import.desc.typeIdx].params /
+.results` for the four `wasm:js-string` rows, and the full
+`{kind:"global", type:{kind:"externref"}, mutable:false}` descriptor for both
+global namespaces — including that `hexCodeUnits("\uD800") === "d800"` is the
+field the `literal-utf16-hex` scheme actually produces and that a
+surrogate-free literal never lands in `string_constants16`.
+
+**V-C — exhaustiveness is enforced in `src/`, and that was verified by a
+negative probe rather than asserted.** `tsconfig` excludes `tests/`, so a
+`@ts-expect-error` in the suite would prove nothing. A temporary
+`src/zz-f2s2-probe.ts` (deleted; it is not in the diff) asked
+`pnpm run typecheck` for five illegal constructions and got five errors:
+`.params` on the union (TS2339, naming the global arm),
+`{kind:"host-callable", capability:"string.const"}` (TS2820),
+`RuntimeHostCapabilityFuncModule = "string_constants"` and
+`RuntimeHostCapabilityGlobalModule = "env"` (TS2322 each), and
+`RuntimeHostCapabilityValueType = "i64"` (TS2322). The runtime membership
+checks in the validator are the vitest-pinnable twins of those five.
+
+### V-D — non-vacuity: 24 of 33, and 0 elsewhere
+
+Reverting **only** the widening (all five source files back to `HEAD`, the new
+suite kept) fails **24** of the new file's 33 tests and **0 tests anywhere
+else** — the 17 control suites are 233/233 green on the reverted tree, and
+266/266 (233 + 33) with the widening restored.
+
+The **9** that still pass on the reverted tree are named rather than hidden,
+because they are the honest ones:
+
+- three **boundary-did-not-move** pins (`integration.ts` still reads
+  `ctx.nativeStrings` at the concat/eq arm, at the `string.len` provider and in
+  `storageForConst`). These are *supposed* to hold on both trees — they assert
+  what this slice deliberately did NOT do, and they are the pins that will fire
+  in F2-S3/S4 when the arms move. A pin that passes before and after is vacuous
+  only if it was meant to detect the change; this one is meant to detect its
+  absence.
+- `hexCodeUnits`/emission derivation, "the twelve pre-existing rows are `env`
+  func rows", the seven-row async projection, the reversed-catalogue
+  canonicalization, "no provider names the six ids", and "Math/async/compare
+  manifests are free of them" — all true of the 12-row catalogue too, by
+  construction. They are the regression fence for the NEXT slice, which is the
+  one that will add the first provider row.
+
+### V-E — validation run
+
+Green: `pnpm run typecheck` (TS7, the `quality` gate) — and the two
+pre-existing `WebAssembly.Tag` TS5-lib errors in `src/linked-provider-runtime.ts`
+are on `origin/main` too, untouched by this slice. The five ratchet gates, run
+**bare** and again under `LOC_GATE_BASE` pinned to `origin/main`
+(`dc29e1f1`): loc (+278 net src LOC; every grown path granted by this file's
+frontmatter — `runtime-host-capabilities.ts` 264→503, `runtime-manifest.ts`
+1670→1690 over the god-file threshold, `intrinsic-support.ts` 544→547), func,
+coercion-sites, oracle-ratchet, dead-exports. Also green: `lint`,
+`format:check`, `check:ir-dialect`, `check:ir-layering`, `check:ir-only`
+(verdict READY), `check:linear-ir`, `check:host-import-policy`,
+`check:test-vacuity-shapes`, `check:ir-kind-neutrality` (no evidence-line
+drift this time — no cited line moved), and `check:ir-fallbacks` (bare;
+unintended, module-level and post-claim buckets all still empty,
+`string-builder-candidate` still 2).
+
+Focused suites: **266 passing across 18 files** — all eight #3526 suites
+including the new one, both async suites (#4103/#4104), #3520
+callable-provider-abi, #2955, #3502, #3518 string-repeat-ir, #3167, #1183 and
+#4550 linear-ir census. `scripts/*-baseline.json` is untouched.
+
+### Not touched (per the plan's scope discipline)
+
+Every resolve-table arm (`integration.ts:6186-6347`) including the eq/concat
+one this slice's rows describe; `stringMethodPlan`; `String()` coercion;
+`src/ir/from-ast.ts`; the `host-import-policy.ts` classifier;
+`import-manifest.ts`'s `env`-only walk; the `IrIntrinsicProvider` global arm
+(`nodes.ts:856-860`); and every existing policy — `numberBoundary`,
+`booleanBoundary`, `externIsUndefined`, `generatorNumberBox`, `stringCompare`
+— all unchanged. The whole-shape frozen-policy pin at
+`tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-445` did **not**
+move, which is the mechanical signature of a slice that adds no policy field.

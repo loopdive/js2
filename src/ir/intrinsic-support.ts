@@ -4,7 +4,7 @@ import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBi
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import {
-  resolveRuntimeHostCapabilityRecord,
+  resolveRuntimeHostCapabilityFuncRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
@@ -83,8 +83,11 @@ const ADMITTED_CALLABLE_TARGETS: ReadonlyMap<IrInstrIntrinsic["id"], ReadonlySet
         implementation.kind === "host-callable"
           ? callableBindingKey(
               irImportFuncRef(
+                // (#3526 F2-S2) `resolveRuntimeHostCapabilityFuncRecord` is the
+                // fail-closed kind guard: a global capability has no callable
+                // spelling, so admitting one here would mint a nonsense target.
                 ...((record) => [record.module, record.field] as const)(
-                  resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
+                  resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
                 ),
               ).binding,
             )
@@ -226,7 +229,7 @@ function providerAttachment(
     // The canonical record IS the manifest authority for this ABI; the emitted
     // target stays the exact physical union import so raw consumers and import
     // order are untouched.
-    const record = resolveRuntimeHostCapabilityRecord(capabilityRecords, provider.implementation.capability);
+    const record = resolveRuntimeHostCapabilityFuncRecord(capabilityRecords, provider.implementation.capability);
     return Object.freeze({ kind: "callable", target: irImportFuncRef(record.module, record.field, record.field) });
   }
   if (provider.implementation.kind === "runtime-callable") {
@@ -271,7 +274,7 @@ export function preparedGeneratorNumberBoxProvider(
     return irRuntimeFuncRef(provider.implementation.symbol);
   }
   if (provider.implementation.kind === "host-callable") {
-    const record = resolveRuntimeHostCapabilityRecord(
+    const record = resolveRuntimeHostCapabilityFuncRecord(
       prepared!.manifest.hostCapabilityRecords,
       provider.implementation.capability,
     );
@@ -306,7 +309,7 @@ export function preparedStringCompareProvider(
     return { arm: "native", symbol: provider.implementation.symbol };
   }
   if (provider.implementation.kind === "host-callable") {
-    const record = resolveRuntimeHostCapabilityRecord(
+    const record = resolveRuntimeHostCapabilityFuncRecord(
       prepared!.manifest.hostCapabilityRecords,
       provider.implementation.capability,
     );

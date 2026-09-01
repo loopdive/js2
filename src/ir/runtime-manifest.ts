@@ -25,9 +25,11 @@ import {
 } from "./async-runtime-providers.js";
 import {
   canonicalizeRuntimeHostCapabilityCatalog,
+  isRuntimeHostCapabilityFuncId,
   resolveRuntimeHostCapabilityRecord,
   RUNTIME_HOST_CAPABILITY_IDS,
   RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityFuncId,
   type RuntimeHostCapabilityId,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
@@ -370,9 +372,14 @@ export type RuntimeProviderImplementation =
        * `irImportFuncRef` from that record — the semantic identity stays the
        * versioned `IntrinsicId`, the physical target stays the existing import
        * so legacy consumers and import order do not drift.
+       *
+       * (#3526 F2-S2) Typed on the FUNC half of the capability id union: a
+       * global capability (`string.const`) has no callable spelling, so
+       * naming one here is a compile error, not a lowering-time surprise.
+       * `#indexProviders` carries the runtime twin of this narrowing.
        */
       readonly kind: "host-callable";
-      readonly capability: RuntimeHostCapabilityId;
+      readonly capability: RuntimeHostCapabilityFuncId;
     }
   | {
       /**
@@ -1505,6 +1512,19 @@ export class RuntimeManifestBuilder {
         throw new RuntimeManifestInvariantError(
           "unknown-host-capability",
           `host-capability provider ${provider.id} must request at least one host capability`,
+        );
+      }
+      // (#3526 F2-S2) Runtime twin of the `host-callable` capability type
+      // narrowing. The static type already rejects a global id; this catches a
+      // provider table that arrived through an `unknown`/`as` boundary, where
+      // lowering would otherwise build a callable target out of a global.
+      if (
+        provider.implementation.kind === "host-callable" &&
+        !isRuntimeHostCapabilityFuncId(provider.implementation.capability)
+      ) {
+        throw new RuntimeManifestInvariantError(
+          "unknown-host-capability",
+          `host-callable provider ${provider.id} names non-callable host capability ${String(provider.implementation.capability)}`,
         );
       }
       if (!provider.supportedTargets.every((target) => TARGET_SET.has(target))) {
