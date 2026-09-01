@@ -1,10 +1,11 @@
 {
   "id": "3526",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3526-f1-s1-number-boundary",
   "claimed_at": "2026-08-29T23:10:13Z",
-  "updated_at": "2026-08-29T23:10:13Z",
-  "write_id": "72638-92c5d2j2"
+  "updated_at": "2026-09-01T09:12:17Z",
+  "write_id": "7242-jix0gfuj",
+  "released_at": "2026-09-01T09:12:17Z"
 }
