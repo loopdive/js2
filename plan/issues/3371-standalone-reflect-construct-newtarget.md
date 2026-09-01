@@ -325,6 +325,15 @@ for this draft publication. They document the architectural fault rather than
 waive it: the successor must remove them while moving the state and dispatcher
 seam into a dedicated module.
 
+Post-sync validation after merging live `loopdive/js2` main
+`ca4b31eb12d4bae3275d02a17ca6b42f745932a6` into this checkpoint:
+
+- `pnpm run typecheck:ts7` — pass (exit 0).
+- Rows 10--13 — each retains the same explicit #3371 `compile_error` quoted
+  above; zero rows became pass and no row changed to a runtime failure.
+- `test/built-ins/Reflect/construct/return-without-newtarget-argument.js` —
+  pass.
+
 ## Future acceptance and regression gate
 
 Run these only in the later implementation worktree, after acquiring ownership;
