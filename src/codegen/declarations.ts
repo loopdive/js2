@@ -4992,6 +4992,27 @@ export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: t
     ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
     ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
   }
+
+  // (#3523 R4 gap 3) Reserve the WASI `__init_done` idempotence global HERE,
+  // before any body is emitted, so the prepared body can be constructed around
+  // it rather than spliced afterwards. `applyModuleInitGuard` minted this
+  // global at splice time; a Prepared body has no splice window, so the
+  // reservation moves to the one point that provably precedes body emission.
+  // Only WASI selects the `wasi-start-export` invocation policy, and this
+  // function is reached only on the prepared route, so the reservation is
+  // exactly scoped to the units that can consume it. Preparation may still
+  // fall back — `applyModuleInitGuard` then adopts this same reserved global
+  // for the legacy splice rather than minting a second one.
+  if (ctx.wasi && ctx.preparedWasiModuleInitGuard === undefined) {
+    const doneGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: "__init_done",
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+    ctx.preparedWasiModuleInitGuard = { doneGlobalIdx };
+  }
 }
 
 /** Compile all function bodies (including class constructors and methods) */
@@ -6317,11 +6338,26 @@ export function compileDeclarations(
     // wiring against the planned policy here and fail closed. Only the Prepared
     // route is asserted: the direct route keeps its established behavior until
     // the typed Unsupported policy is retired.
-    if (skipModuleInitBody && !ctx.wasi) {
+    //
+    // (#3523 R4 gap 3) THIRD ARM — `wasi-start-export`. The `!ctx.wasi` gate
+    // that used to sit here meant a WASI admission would ship with ZERO adapter
+    // reconciliation. Under WASI neither non-WASI adapter is legal: the module
+    // must have no `start` section and no compiler `__module_init` alias, and be
+    // reached only by the `_start` export `addWasiStartExport` builds LATER in
+    // the pipeline. So the count this arm expects is zero, and the positive
+    // half of the WASI contract — exactly one authenticated `_start` adapter
+    // whose first call reaches the init exactly once — is asserted where that
+    // adapter exists, by `assertGraphGlobalInvocationPolicy`'s
+    // `wasi-start-export` case.
+    if (skipModuleInitBody) {
+      const plannedAdapter = ctx.wasi ? "wasi-start-export" : exportModuleInit ? "deferred-export" : "wasm-start";
       if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
-        // Anti-vacuity seam: install the adapter the planned policy did NOT
+        // Anti-vacuity seam: install an adapter the planned policy did NOT
         // choose, so the reconciliation below has a real violation to catch.
+        // Under WASI the start section is exactly the adapter that would make
+        // init run twice (once on instantiation, once from `_start`).
         if (exportModuleInit) ctx.mod.startFuncIdx = initFuncIdx;
+        else if (ctx.wasi) ctx.mod.startFuncIdx = initFuncIdx;
         else ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
       }
       const startsOnInstantiation = ctx.mod.startFuncIdx === initFuncIdx;
@@ -6329,9 +6365,13 @@ export function compileDeclarations(
         (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initFuncIdx,
       ).length;
       const adapters = (startsOnInstantiation ? 1 : 0) + exportedAliases;
-      if (adapters !== 1 || exportedAliases !== (exportModuleInit ? 1 : 0)) {
+      const expectedAdapters = ctx.wasi ? 0 : 1;
+      const expectedAliases = exportModuleInit ? 1 : 0;
+      if (adapters !== expectedAdapters || exportedAliases !== expectedAliases) {
         throw new Error(
-          `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${exportModuleInit ? "deferred-export" : "wasm-start"})`,
+          ctx.wasi
+            ? `prepared WASI module initializer must have no declaration-time startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${plannedAdapter})`
+            : `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${plannedAdapter})`,
         );
       }
     }

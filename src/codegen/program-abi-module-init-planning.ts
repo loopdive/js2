@@ -514,8 +514,47 @@ export class ProgramAbiModuleInitCallableRegistry {
    * are resolved through `func-space`; names and function-array positions are
    * diagnostic labels only, never ownership evidence.
    */
+  /**
+   * (#3523 R4 gap 3) The same authenticated pass, for a Prepared WASI unit.
+   *
+   * `graphGlobalPass` is only ever set for the unitless legacy multi-source
+   * pass, so a Prepared exact unit short-circuits the whole authentication —
+   * which is correct for `wasm-start`/`deferred-export`, where the declaration
+   * emitter's invariant 7 owns the adapter count and the adapter exists by the
+   * time it runs. It is NOT correct for `wasi-start-export`: the one `_start`
+   * adapter is built after declarations, so nothing would check it. Project the
+   * prepared unit into the same pass shape and let the existing case run.
+   *
+   * Deliberately WASI-only: the other two policies keep their exact current
+   * behavior, so this adds no check to any lane it does not own.
+   */
+  private preparedInvocationPass():
+    | {
+        readonly bindingId: IrBindingId;
+        readonly handle: FuncHandle;
+        readonly func: WasmFunction;
+        readonly entrySourceId: IrSourceId;
+        readonly invocation: ModuleInitInvocationPolicy;
+      }
+    | undefined {
+    const unitId = this.preparedExactUnitId;
+    const func = this.preparedExactFunction;
+    const handle = this.preparedExactHandle;
+    if (unitId === undefined || !func || handle === undefined) return undefined;
+    if (moduleInitInvocationPolicy(this.ctx) !== "wasi-start-export") return undefined;
+    const entrySourceId = this.identityContext?.terminalByUnitId.get(unitId)?.sourceId;
+    if (entrySourceId === undefined) return undefined;
+    return Object.freeze({
+      bindingId: irUnitCallableBindingId(unitId),
+      handle,
+      func,
+      entrySourceId,
+      invocation: "wasi-start-export" as const,
+    });
+  }
+
   assertGraphGlobalInvocationPolicy(): void {
-    const pass = this.graphGlobalPass;
+    const pass = this.graphGlobalPass ?? this.preparedInvocationPass();
     const session = this.session;
     if (!pass || !session) return;
     if (definedFuncAt(this.ctx, pass.handle) !== pass.func) {

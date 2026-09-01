@@ -4457,6 +4457,33 @@ export function compileIrPathFunctions(
           );
           continue;
         }
+        // (#3523 R4 gap 3) WASI idempotence, as CONSTRUCTION rather than splice.
+        //
+        // `applyModuleInitGuard` makes `__module_init` re-entrant-safe by
+        // prepending `global.get $done / if(return) / $done = 1` to an already
+        // emitted body. A Prepared body cannot take that: the early `return` is
+        // precisely the return-class op the scan above withdraws the patch over,
+        // and the body identity is sealed at the preparation snapshot.
+        //
+        // The wrapping-`if` form is equivalent and composes: it introduces no
+        // return-class op, so the scan passes and every later epilogue
+        // (`finalizeInModuleInitFlag`'s `__in_module_init = 0` above all) still
+        // executes on the already-initialized path — which the early-`return`
+        // form would skip. `plantPreparedWasiModuleInitGuard` is set only by the
+        // prepared preparation call, so the post-direct overlay never plants a
+        // second guard on the legacy WASI lane.
+        const wasiGuard = options?.plantPreparedWasiModuleInitGuard ? ctx.preparedWasiModuleInitGuard : undefined;
+        if (wasiGuard && wasiGuard.planted === undefined) {
+          const doneGet: Instr = { op: "global.get", index: wasiGuard.doneGlobalIdx };
+          const eqz: Instr = { op: "i32.eqz" };
+          const guardIf: Instr = {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 1 }, { op: "global.set", index: wasiGuard.doneGlobalIdx }, ...finalBody],
+          };
+          finalBody = [doneGet, eqz, guardIf];
+          wasiGuard.planted = { doneGet, eqz, guard: guardIf };
+        }
       } else {
         finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
       }

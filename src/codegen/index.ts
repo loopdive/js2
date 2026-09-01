@@ -6868,23 +6868,57 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
   if (!initFn || initFuncIdx === undefined) return; // no module init — nothing to guard
 
   // 1. __init_done global + self-guard prologue on __module_init.
-  const doneGlobalIdx = nextModuleGlobalIdx(ctx);
-  ctx.mod.globals.push({
-    name: "__init_done",
-    type: { kind: "i32" },
-    mutable: true,
-    init: [{ op: "i32.const", value: 0 }],
-  });
-  initFn.body = [
-    { op: "global.get", index: doneGlobalIdx },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-    { op: "i32.const", value: 1 },
-    { op: "global.set", index: doneGlobalIdx },
-    ...initFn.body,
-  ];
+  //
+  // (#3523 R4 gap 3) A PREPARED init already carries the guard: it was
+  // constructed around the reserved `__init_done` global as a wrapping `if`,
+  // inside the body the preparation snapshot sealed. Re-splicing here would
+  // both double-guard the body and reassign a sealed body, so this route only
+  // AUTHENTICATES — and fails closed. The three planted instruction objects
+  // must still be the body's leading triple, by object identity: index values
+  // are shifted in place by `fixupModuleGlobalIndices`, so identity survives
+  // every legitimate late mutation while a body replacement does not.
+  const reservation = ctx.preparedWasiModuleInitGuard;
+  const planted = reservation?.planted;
+  if (planted) {
+    if (process.env.JS2WASM_TEST_STRIP_PREPARED_WASI_MODULE_INIT_GUARD === "1") {
+      // Anti-vacuity seam: hand the authentication below a genuinely unguarded
+      // prepared body, so "fails closed" is a measured property.
+      initFn.body = initFn.body.filter((instr) => instr !== planted.guard);
+    }
+    const at = initFn.body.indexOf(planted.doneGet);
+    if (at < 0 || initFn.body[at + 1] !== planted.eqz || initFn.body[at + 2] !== planted.guard) {
+      throw new IrInvariantError(
+        "body-emission-evidence",
+        "patch",
+        "prepared WASI module initializer lost its exact planted idempotence guard",
+      );
+    }
+  } else {
+    // Legacy splice. When a reservation exists but preparation fell back to the
+    // direct body, adopt the reserved global rather than minting a second one.
+    const doneGlobalIdx = reservation?.doneGlobalIdx ?? nextModuleGlobalIdx(ctx);
+    if (reservation === undefined) {
+      ctx.mod.globals.push({
+        name: "__init_done",
+        type: { kind: "i32" },
+        mutable: true,
+        init: [{ op: "i32.const", value: 0 }],
+      });
+    }
+    initFn.body = [
+      { op: "global.get", index: doneGlobalIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index: doneGlobalIdx },
+      ...initFn.body,
+    ];
+  }
 
   // 2. Prepend `call __module_init` to every exported function (except
   //    __module_init itself). Idempotency makes repeated entry calls safe.
+  //    Unchanged on both routes: only the module-init body's identity is
+  //    asserted anywhere, and this placement still precedes dead-import
+  //    elimination and late-import renumbering (`const-box-hoist.ts` contract).
   for (const fn of ctx.mod.functions) {
     if (!fn.exported) continue;
     if (fn === initFn) continue;

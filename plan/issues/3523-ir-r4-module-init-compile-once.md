@@ -46,6 +46,19 @@ files:
   - tests/issue-4110-ir-fetch-all-parallel.test.ts
   - tests/ir/passes.test.ts
 loc-budget-allow:
+  # 2026-09-01 (gap 3, WASI prepared module-init adapter): the guard stops being
+  # a post-emission splice and becomes invocation-policy-driven, which grows two
+  # more prepared-route owners. `multi-prepared-program.ts` gains invariant 7's
+  # third arm (`wasi-start-export`) in `finalizePreparedModuleInitStartup` so an
+  # M2 WASI admission cannot land the zero-reconciliation hole this slice closed
+  # on the single-module route; `ir-prepared-free-functions.ts` gains the one
+  # option that tells the prepared preparation call — and only it, never the
+  # post-direct overlay — to construct the body around the reserved
+  # `__init_done` guard. Both are reconciliation/routing at the site that owns
+  # the prepared module-init transaction; there is no subsystem module to move
+  # them to without splitting that ownership.
+  - src/codegen/multi-prepared-program.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/index.ts
   - src/codegen/declarations.ts
   - src/codegen/closure-exports.ts
