@@ -423,7 +423,9 @@ export function get(): string { return greeting + "!"; }
         // Fatal, not a demotion: no direct replacement body is emitted and no
         // publishable artifact survives the reconciliation failure.
         expect(violated.success).toBe(false);
-        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(/exactly one startup adapter/);
+        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(
+          /exactly one startup adapter|no declaration-time startup adapter/,
+        );
         expect(violated.binary.length).toBe(0);
       }
       // Control: the seam only arms the Prepared route. An Unsupported module
@@ -447,6 +449,12 @@ export function read(): number { return total; }
     { name: "host-deferred", target: "gc" as const, deferTopLevelInit: true },
     { name: "standalone-start", target: "standalone" as const, deferTopLevelInit: false },
     { name: "standalone-deferred", target: "standalone" as const, deferTopLevelInit: true },
+    // (#3523 R4 gap 3) WASI is the fifth admitted lane. Its startup adapter is
+    // neither the `start` section nor a `__module_init` export: it is the one
+    // `_start` export, and the body carries the `__init_done` idempotence guard
+    // planted at preparation. `deferTopLevelInit` is not a WASI axis —
+    // `exportModuleInit` is `deferTopLevelInit && !wasi` — so one row covers it.
+    { name: "wasi-start-export", target: "wasi" as const, deferTopLevelInit: false },
   ];
 
   function compileLane(
@@ -478,7 +486,7 @@ export function read(): number { return total; }
     result: CompileResult,
     lane: (typeof lanes)[number],
   ): Promise<Record<string, unknown>> {
-    if (lane.target === "standalone") {
+    if (lane.target === "standalone" || lane.target === "wasi") {
       const { instance } = await WebAssembly.instantiate(result.binary, {});
       return instance.exports as Record<string, unknown>;
     }
@@ -506,7 +514,7 @@ export function read(): number { return total; }
     }
   }
 
-  it("routes all four host/standalone adapters through one genuine IR component", async () => {
+  it("routes every host/standalone/WASI adapter through one genuine IR component", async () => {
     for (const lane of lanes) {
       const result = await compileLane(SOURCE, lane);
       expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
@@ -638,7 +646,15 @@ export function read(): number { return value; }`,
       for (const [name, source] of controls) {
         expect(await directPoisonEvidence(source), name).toContain("injected direct module-init body poison");
       }
-      expect(await directPoisonEvidence(SOURCE, "wasi"), "WASI").toContain("injected direct module-init body poison");
+      // (#3523 R4 gap 3) WASI used to sit here as a near-miss control: the
+      // selector refused it, so the admitted grammar still reached the direct
+      // emitter and tripped the poison. It is now an ADMITTED lane, and its
+      // green-under-poison proof lives in "never reaches the direct emitter in
+      // any admitted lane" above. The near-miss GRAMMAR controls still run on
+      // the gc lane, so this test keeps every assertion it was written for.
+      expect(await directPoisonEvidence(`let total: number = 0; total += 1;`, "wasi"), "WASI compound").toContain(
+        "injected direct module-init body poison",
+      );
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, poison);
       else process.env[poison] = previous;
@@ -653,7 +669,9 @@ export function read(): number { return value; }`,
       for (const lane of lanes) {
         const violated = await compileLane(SOURCE, lane);
         expect(violated.success, lane.name).toBe(false);
-        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(/exactly one startup adapter/);
+        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(
+          /exactly one startup adapter|no declaration-time startup adapter/,
+        );
         expect(violated.binary.length).toBe(0);
       }
       const control = await compileLane(`let total = 0; total += 1;`, lanes[1]!);
