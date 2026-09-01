@@ -80,6 +80,17 @@ loc-budget-allow:
   - src/ir/async-prepare.ts
   - src/codegen/stdlib-selfhost.ts
   - src/ir/math-runtime-providers.ts
+  # 2026-09-01 F1-S2 (boolean boundary, +176 net LOC measured against
+  # origin/main dcb6eba6): the `js.boolean.box` intrinsic + feature rows
+  # (intrinsics.ts); the `boolean.box` capability record (the central
+  # catalogue, new in F1-S1 and named here so the grant is not implicit);
+  # the `booleanBoundary` policy, its provider and policy-driven selection
+  # (runtime-manifest.ts); the caller policy projection, the owner-local
+  # boolean partition and the widened materialization trigger
+  # (integration.ts); the explicit disabled policies in the linear and
+  # self-hosted-stdlib adapters. All four cited files already carry an
+  # F1-S1 grant; this line records the F1-S2 rationale against it.
+  - src/ir/runtime-host-capabilities.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -1626,3 +1637,321 @@ producer today), and the #2108 coercion-sites baseline. One owner for the
 same file family as F1-S1 minus the async files; check the claim ledger before
 touching `integration.ts` (#3525 codex lane overlaps it — coordinate, never
 parallel-write).
+
+## 2026-09-01 F1-S2 pre-implementation verifications — Opus lane
+
+**Branch** `claude/issue-3526-f1s2-boolean-boundary`, grounded on `origin/main`
+`dcb6eba626eea623c91156b7b8fc44a2d6b3fc00`. Implemented from the 2026-09-01
+F1-S2 plan (boolean-boundary intrinsic), whose template is the landed F1-S1
+machinery, not a re-derivation.
+
+The plan requires these four answers BEFORE any source edit. All four were
+measured on the grounded tree with the migration NOT yet applied.
+
+### 1. Full-repo trace of `hasHostBooleanBox` — the one-arm premise HOLDS
+
+`grep -rn hasHostBooleanBox` over the whole tree (excluding `node_modules` and
+`.git`) returns exactly nine hits, and the executable split is precisely what
+the plan predicted:
+
+| kind | site |
+| --- | --- |
+| from-ast READ (1) | `src/ir/from-ast.ts:7233` — the branded-i32→externref box arm |
+| contract entry (1) | `src/ir/from-ast.ts:421` |
+| implementation (3) | `src/ir/integration.ts:5666`, `src/ir/backend/linear-integration.ts:1537`, `src/codegen/stdlib-selfhost.ts:190` |
+| prose (4) | `src/ir/from-ast.ts:365`, `plan/issues/2955-…:399`, `plan/issues/3526-…:918`, `plan/issues/3526-…:1292` |
+
+**No additional executable read exists**, so the STOP-and-report condition did
+not trigger. There is no `hasNativeBooleanUnbox` and no unbox arm: F1-S2 mints
+ONE intrinsic, not a pair.
+
+### 2. Async non-involvement — proven twice over
+
+- **No `__box_boolean` join.** `grep -rn "__box_boolean" src/ir/` returns seven
+  hits: the one from-ast emission arm, its error message, four prose comments,
+  and the `UNION_IMPORT_FUNC_NAMES` membership row in `integration.ts:7244`.
+  **`src/ir/async-prepare.ts` contains no `box`/`unbox` reference other than
+  its own `js.number.unbox` numeric-tail roundtrip** (`:812-851`), which keys
+  on `js.number.unbox` / `env.__unbox_number` by exact ID and binding. A
+  boolean row cannot reach it. The F1-S1 standalone-cutover failure came from
+  the number side's hidden host-lane fact riding on a raw-import match; the
+  boolean side has no such consumer, so no policy hand-off is needed and none
+  is added.
+- **The async-only capability projection filters by ID, not by value type.**
+  `ASYNC_HOST_CAPABILITY_RECORDS` (`async-runtime-providers.ts`) is
+  `RUNTIME_HOST_CAPABILITY_RECORDS.filter((entry) =>
+  isAsyncHostCapabilityId(entry.capability))`, and
+  `ASYNC_HOST_CAPABILITY_ID_SET` is exactly the seven `async.*` IDs. An
+  `i32`-typed `boolean.box` row IS admissible under
+  `AsyncHostAdapterValueType` (`"externref" | "i32"`) — which is precisely why
+  a value-type filter would have been the wrong guard — but the seven-ID filter
+  excludes it, and `asAsyncHostAdapter` additionally throws on a non-async
+  capability, so the narrowing is checked rather than assumed. No async
+  manifest can acquire the boolean record.
+
+### 3. `box-boolean-fuse.ts` interaction — measured, and it is NIL
+
+The pass is env-gated **default OFF** (`fuseEnabled()` returns `false` unless
+`JS2WASM_UNBOXED_BOOL_FUSE` is set) and matches the direct-codegen
+`logical-ops.ts` if-merge SINK shape, not this coercion boundary. Measured on
+the grounded tree with the pass forced ON and its debug counters enabled, over
+the IR-path boolean fixture plus a logical-value control:
+
+| fixture | fuse counters | bytes fuse OFF | bytes fuse ON |
+| --- | --- | --- | --- |
+| `BOOLSTORE` (`a[0] = n > 2`, IR-emitted) | `fused-sink=0 fused-adjacent=0 leaf-box-call=0 sites=0` | 1754 | 1754 (sha identical) |
+| `LOGICAL` (`if ((a>1)||(b>2))`) | pass declined — no `__is_truthy` in module | 160 | 160 (sha identical) |
+| `BOOLSTORE_LOGICAL` | `sites=0` | 1654 | 1654 (sha identical) |
+
+**The pass never fires on an IR-path body today**, so there is no matched call
+shape to preserve. The obligation is therefore discharged as a *maintained
+zero*: the same measurement is repeated after the migration and must stay at
+`sites=0` with identical shas. (The lowered intrinsic emits through
+`emitPreparedIntrinsic` → `emitter.emitCall(resolveFunc(target))`, i.e. the
+same `call $__box_boolean` leaf, so even a future firing would match.)
+
+### 4. Brand producers — all pure type facts
+
+Every producer of a `boolean: true` i32 `IrType`, enumerated:
+
+| site | what it is |
+| --- | --- |
+| `src/ir/boolean-brand.ts:38` (`irBool()`) | the canonical brand factory; its `IR_BOOL` singleton (`from-ast.ts:2992`) feeds 25 comparison / truthiness / `i32.eqz` / bool-const sites |
+| `from-ast.ts:3825` | `typeNodeToIr` — the `boolean` **type annotation** |
+| `from-ast.ts:7106` | `new Boolean(x)` argument's expected type |
+| `from-ast.ts:7644` | standalone `RegExp.test` result type |
+| `from-ast.ts:7795` | pristine-ES5 `Object.isFrozen` constant-fold result |
+| `backend/linear-integration.ts:1242` | `latticeEvidenceToIr` — a certified `bool` lattice fact |
+
+**None consults `hasHostBooleanBox`, or any other capability predicate, to
+decide whether to produce the branded carrier.** (`:7795` reads
+`cx.resolver?.isAmbientBinding`, an unrelated *binding-provenance* question:
+"is `Object` the pristine ambient global?" — not a lane/capability question.)
+Emission population is therefore a pure type fact both before and after the
+migration, which is what obligation 6's before/after claim-census comparison
+asserts.
+
+### Reachability of the arm — measured, and it is narrow
+
+Worth recording because it bounds every neutrality claim below. With a
+temporary stderr trace at the arm, `pnpm run check:ir-fallbacks` (the fixed
+`playground/examples` corpus) fires the arm **zero** times, and eight
+hand-written candidate shapes (`Map<number, boolean>.set`, `Set<boolean>.add`,
+`any[]` push, `JSON.stringify`, template/string concat, an extern class method,
+a DOM property write) all demote at IR **selection** before reaching it. The
+one shape found that both IR-selects and reaches the arm is the **element
+store into an `any[]` parameter**:
+
+```ts
+export function put(a: any[], n: number): number { a[0] = n > 2; return n; }
+```
+
+That is the `BOOLSTORE` fixture used for every byte cell and for the
+non-vacuity test; `MIXED` combines it with the F1-S1 `Map` memo shape so one
+module carries both boundaries.
+
+## 2026-09-01 F1-S2 implementation checkpoint — Opus lane
+
+Implemented from the 2026-09-01 F1-S2 plan, mirroring the landed F1-S1
+machinery rather than re-deriving it. The four required pre-implementation
+verifications are in the section above; none triggered a STOP.
+
+### What landed
+
+- **`src/ir/intrinsics.ts`** — `js.boolean.box` `(i32) -> externref`,
+  versioned, with a 1:1 feature row, added as a `BOOLEAN_BOUNDARY_*` SIBLING
+  of the number constants (which are unchanged). One ID, not a pair: there is
+  no `js.boolean.unbox` because `__unbox_boolean` has no IR producer. The new
+  `I32_TYPE` param carries no `signed` field, so it matches the branded
+  carrier the arm passes (`signed ?? true` on both sides) while
+  `valTypeEquals` erases the brand itself.
+- **`src/ir/runtime-host-capabilities.ts`** — one record `boolean.box` →
+  `env.__box_boolean` `(i32) -> externref`, inserted in capability-ID sort
+  order between the async prefix and the number rows, so the async prefix
+  keeps its historical position.
+- **`src/ir/runtime-manifest.ts`** — `BooleanBoundaryPolicy`
+  (`box: "host" | "unsupported"` — no `"native"` member, because no native
+  boolean boxer exists), a frozen `BOOLEAN_BOUNDARY_POLICY_DISABLED`, the
+  optional `booleanBoundary` field on `RuntimeManifestPolicy` canonicalized at
+  builder construction and published resolved on the frozen manifest, the one
+  `host.js.boolean.box` provider (`host-callable` → capability `boolean.box`),
+  and its policy branch in `#selectProvider` whose unavailable arm is a typed
+  `provider-target-unavailable` naming the intrinsic and the resolved policy.
+- **`src/ir/from-ast.ts`** — the arm emits the provider-free
+  `js.boolean.box` intrinsic and reads no lane fact; the `hasHostBooleanBox`
+  contract entry, all three implementations and the prose reference are
+  deleted. The branded-i32 gate STAYS, and is load-bearing.
+- **`src/ir/integration.ts`** — `integrationBooleanBoundaryPolicy`
+  (`{ box: !ctx.nativeStrings ? "host" : "unsupported" }`, the exact former
+  truth table), the owner-local `unsupportedBooleanBoundaryIntrinsic`
+  partition run in the same pass as the number one, and the one-line trigger
+  widening.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `BOOLEAN_BOUNDARY_POLICY_DISABLED` explicitly.
+- **`tests/issue-3526-boolean-boundary-intrinsic.test.ts`** (new, 16 tests).
+
+`src/ir/intrinsic-support.ts` needed **no edit**: its attachment and
+admitted-target tables are driven by `RUNTIME_PROVIDERS` ×
+`INTRINSIC_DEFINITIONS`, so the new `host-callable` row is picked up by
+construction. Neither did `src/ir/backend/legality.ts` — its linear
+`intrinsic` arm is an allowlist, so `js.boolean.box` falls to the default
+reject. Neither did `src/ir/async-prepare.ts`, per verification 2: unlike the
+number side, this family has no async consumer, so no policy hand-off exists
+to thread.
+
+### Measured neutrality
+
+**Byte parity — 25/25 cells identical, WAT included.** Five fixtures
+(`BOOLSTORE` = the element store; `BOOLSTORE2` = two arms in one owner;
+`MIXED` = the boolean store PLUS the F1-S1 `Map` memo in one module; `CLEAN` =
+a Math-only control; `MEMO` = F1-S1's own fixture) × five lanes (gc-host,
+gc-native-strings, standalone, WASI, linear), compiled before and after on the
+same tree. Every cell matches on byte length, binary sha256, and import set
+AND order; a file-by-file diff of all 25 emitted WAT texts is empty.
+
+**This slice produced NO purity-class WAT diff at all** — the one divergence
+F1-S1 had to record. The reason is specific and worth keeping: F1-S1's boxed
+value was anchored into an `(local $$irN externref)` spill that the pure
+intrinsic no longer needed, whereas the boolean box's result is consumed
+immediately by its element store and was never spilled. The plan permitted
+that diff class; none appeared.
+
+| fixture | gc-host | gc-native-strings | standalone | WASI | linear |
+| --- | --- | --- | --- | --- | --- |
+| `BOOLSTORE` | 1754 ✓ | 23758 ✓ | 50462 ✓ | 50489 ✓ | 4918 ✓ |
+| `BOOLSTORE2` | 1643 ✓ | 24001 ✓ | 50688 ✓ | 50715 ✓ | 4958 ✓ |
+| `MIXED` | 2188 ✓ | 26289 ✓ | 124929 ✓ | 103377 ✓ | 5140 ✓ |
+| `CLEAN` | 117 ✓ | 21976 ✓ | 22591 ✓ | 22618 ✓ | 4883 ✓ |
+| `MEMO` | 584 ✓ | 24596 ✓ | 124959 ✓ | 103399 ✓ | 5118 ✓ |
+
+(✓ = bytes, sha256, imports and WAT all identical before/after.)
+
+**Imports and order.** Identical in every cell. The host-lane `BOOLSTORE`
+import list is `__box_boolean, __get_undefined, __unbox_number, __box_number`;
+`MIXED` is `Map_new, Map_get, Map_set, __unbox_number, __box_number,
+__box_boolean, __extern_is_undefined, __get_undefined`.
+
+**Census.** `pnpm run check:ir-fallbacks` is output-identical (diffed, not
+eyeballed); unintended, module-level and post-claim buckets all still empty.
+
+**Outcome-code shift (obligation 4).** Exactly the F1-S1 divergence-4 class,
+and nothing else — the only non-byte delta anywhere in the 25 cells:
+
+| lane | before | after |
+| --- | --- | --- |
+| gc-native-strings, standalone, WASI | `operand-coercion-unsupported` / `build` | `late-preparation-unsupported` / `resolve` |
+
+Both demote to legacy, and the emitted bytes on those lanes are measured
+identical. `MIXED` on gc-native-strings shows the two boundaries demoting
+side by side, each naming its own policy.
+
+**The trigger widening is NOT decorative — measured.** With the
+`js.boolean.box` arm removed from `preregisterDynamicSupport`'s recognizer and
+everything else left in place, `BOOLSTORE` and `BOOLSTORE2` on gc-host change
+sha (same byte length, different content): the union family materializes later,
+moving `__unbox_number` from type 11 to type 15 and `__box_number` from 12 to
+16. That is import-order/index drift of exactly the kind obligation 2 forbids,
+so the one-line widening is load-bearing and its removal is caught.
+
+**`box-boolean-fuse` (verification 3) — the zero is maintained.** Re-measured
+after the migration with the pass forced on and its debug counters enabled:
+still `fused-sink=0 fused-adjacent=0 leaf-box-call=0 sites=0` on every fixture,
+and every sha identical both before/after the migration and fuse-on/fuse-off.
+
+**Emission population unchanged (obligation 6).** Asserted directly rather
+than argued: `lowerFill` lowers the same source under a resolver that answers
+the deleted predicate `true` and one that answers it `false`, and the two IR
+bodies are shape-identical (same intrinsics, same call targets) — because the
+front-end no longer asks. Nothing that was not emitted before is emitted now.
+
+### Non-vacuity — verified by the specified revert-only-the-arm check
+
+Reverting ONLY the from-ast arm to its direct `emitCall(env.__box_boolean)`
+form while keeping the entire schema, then re-running the suite:
+
+- **4 tests fail**, and they are exactly the two named classes — the
+  intrinsic-emission assertion ("lowers the branded carrier to the
+  provider-free intrinsic", plus its lane-freedom twin) and the owner-local
+  demote code ("demotes only the requesting owner …" and its
+  standalone/WASI sibling);
+- **all 9 schema / policy / freeze-discipline tests stay green**, as the plan
+  requires.
+
+Worth stating plainly: the host-lane byte-parity test does NOT distinguish the
+two implementations (the bytes are identical by construction — that is the
+point of the slice), so it is deliberately not relied on for non-vacuity. The
+IR-level assertion is.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **One test outside the #3526 suites needed a one-field update.**
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` asserts the frozen
+   manifest policy by exact object equality, and the policy now publishes
+   `booleanBoundary` alongside `numberBoundary`. This is the same mechanical
+   consequence F1-S1 had when it introduced `numberBoundary` into that
+   assertion. Every #3526 F1-S1 test and both async suites are otherwise
+   green and untouched.
+2. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned
+   exception, handled exactly as the F1-S1 checkpoint prescribes. No verdict,
+   kind, placement, ratchet count or `settledBy` rationale changed — only
+   citation line numbers moved.
+
+   Pre-merge this branch carried three drifted citations plus the `generated`
+   date (`forof.string` `integration.ts` 6058→6112; `string.len`
+   `linear-integration.ts` 1614→1617; `vec.new_fixed` `from-ast.ts`
+   4542→4534). Main's own refresh has since absorbed two of them, so **the
+   shipped diff is ONE line**: `forof.string`'s `src/ir/integration.ts`
+   citation, 6051 (main's value) → **6105**.
+
+   That final number is neither side's, which is the trap this note exists to
+   flag: main moved the line one way and this branch's +56 LOC in the same
+   file moves it the other, so the merge resolution had to RE-DERIVE it from
+   the gate rather than pick a side or do arithmetic. Patched surgically in
+   both rounds rather than by committing the regenerator's output, which
+   reflows every array (measured: a 354-line diff for a 1-line change). The
+   semantic delta was established each time by normalising both JSON
+   documents and diffing those, so "only this line" is measured, not assumed.
+
+### Reachability, stated as a limit rather than a claim
+
+The migrated arm is narrow: it fires **zero** times on the fixed
+`playground/examples` corpus, and eight of nine candidate source shapes demote
+at IR *selection* before reaching it. Everything above is therefore measured on
+the one shape that does reach it (an element store of a comparison result into
+an `any[]`), plus hand-built owners for the manifest-level obligations. The
+neutrality result is strong for that population and says nothing about shapes
+that cannot reach the arm today — which is also why the census is unchanged.
+
+### Validation run
+
+Green: TypeScript 7 and TypeScript 5 typecheck; `check:ir-fallbacks` (bare,
+output-identical); the ratchet chain bare AND under
+`LOC_GATE_BASE=$(git rev-parse origin/main)` (`dcb6eba6`) — loc, func,
+coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (after the refresh
+above), `check:test-vacuity-shapes`; `lint`; `prettier --check` over
+`src`/`tests`/`scripts`; and — F1-S1's one CI failure —
+`check:standalone-ir-cutover-corpus`, which passes with `derived=19/19`,
+`units=47/47`, `terminal=38/38`. The new 16-test suite, the F1-S1
+number-boundary suite, both #3526 manifest/math suites and both async suites
+(#4103/#4104) are green.
+
+**Pre-existing failures, measured on a clean `origin/main` worktree at
+`dcb6eba6` and NOT caused by this change-set** — identical failures on base
+and branch: `tests/equivalence/arguments-nested-and-loops.test.ts` (1) and
+`tests/equivalence/logical-conditional-identity.test.ts` (3);
+`tests/ir-backend-emitter.test.ts` (1), `tests/ir-bytecode-proof.test.ts` (1),
+`tests/ir-scaffold.test.ts` (1) and `tests/issue-1058-ir-inline-dag.test.ts`
+(1). The last of those was worth checking rather than assuming, since a pure
+intrinsic can in principle change an inlining decision; it fails identically
+on base.
+
+### Not touched (per the plan's scope discipline)
+
+Generator `setReturn`'s `boxProvider`, `compiler-timer-shim-preparation.ts`,
+every direct codegen `__box_boolean` handler and the `box-boolean-fuse`
+peephole itself, `__box_symbol` / `$AnyValue`, `__unbox_boolean`, the timer
+shims, and the #2108 coercion-sites baseline. `scripts/*-baseline.json` is
+untouched apart from the sanctioned `check:ir-kind-neutrality` evidence
+refresh above; `scripts/loc-budget-baseline.json` remains main's alone.

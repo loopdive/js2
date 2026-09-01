@@ -362,7 +362,7 @@ export interface IrExternClassMeta {
  * (#2955) The raw `nativeStrings()` mode discriminator is deliberately NOT
  * on this interface anymore: every former from-ast mode read is now a
  * narrow resolver-owned capability/rep/strategy query (`stringIsExternref`,
- * `hasHostBooleanBox`, `hasHostNumberToString`, `stringMethodPlan`,
+ * `hasHostNumberToString`, `stringMethodPlan`,
  * `stringForOfPlan`). Keeping the raw discriminator off the front-end
  * surface makes a new representation-polymorphic IR-build branch a compile
  * error instead of a drift channel. (`IrLowerResolver` still carries it —
@@ -411,14 +411,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * the function parameter that seeds it have the same Wasm representation.
    */
   resolveDynamic?(): ValType;
-  /**
-   * Does this compile's lane own the host `__box_boolean` import? Boolean
-   * values use the same i32 carrier as integer-shaped numbers, so this
-   * capability is deliberately separate from the number boundary (#3526 F1-S1
-   * `js.number.box`): callers must prove the boolean brand before selecting
-   * the boolean boxer.
-   */
-  hasHostBooleanBox?(): boolean;
   /**
    * (#2955 slice 3) Rep predicate: is `IrType.string`'s carrier ValType
    * externref (the host-strings backend), so a string SSA value can flow
@@ -7221,23 +7213,18 @@ function coerceToExpectedExtern(
   if (expected.kind === "externref" && got !== null && got.kind === "f64" && t.kind === "val" && (t.signed ?? true)) {
     return cx.builder.emitIntrinsic("js.number.box", [value]);
   }
-  // Boolean-branded i32 -> externref: preserve JS identity by using the
-  // boolean boxer. An unbranded i32 is intentionally not accepted here: that
-  // carrier may represent an integer-shaped number or a symbol handle, whose
-  // boxing semantics differ.
-  if (
-    expected.kind === "externref" &&
-    got !== null &&
-    got.kind === "i32" &&
-    got.boolean === true &&
-    cx.resolver?.hasHostBooleanBox?.() === true
-  ) {
-    const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_boolean"), [value], irVal({ kind: "externref" }));
-    if (boxed === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __box_boolean produced no result in ${cx.funcName}`);
-    }
-    return boxed;
+  // (#4503 / #3526 F1-S2) Boolean-branded i32 -> externref: the semantic
+  // boolean boundary. The BRAND GATE stays — it is a TYPE fact, and it is
+  // load-bearing: an unbranded i32 may carry an integer-shaped number or a
+  // symbol handle, whose boxing semantics differ, so this arm must never widen
+  // to bare i32. What is deleted is the `hasHostBooleanBox()` read, a LANE
+  // fact. Whether this lane has a provider at all (host-only — there is no
+  // native boolean boxer) is decided once, at manifest freeze, from the
+  // caller-resolved boolean-boundary policy. A lane without one classifies the
+  // OWNER as `late-preparation-unsupported` in preparation — exactly the
+  // population that used to fall through to the demote throw below.
+  if (expected.kind === "externref" && got !== null && got.kind === "i32" && got.boolean === true) {
+    return cx.builder.emitIntrinsic("js.boolean.box", [value]);
   }
   // (#3553) A leftover mismatch here is DESIGNED non-claimability, not a
   // compiler invariant: the doc block above explicitly rejects e.g. a native-

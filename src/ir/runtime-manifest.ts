@@ -38,6 +38,8 @@ import {
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
+  BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   NUMBER_BOUNDARY_RUNTIME_FEATURES,
   NUMERIC_COERCION_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
@@ -47,6 +49,7 @@ import {
   type IntrinsicSignature,
   type IntrinsicUse,
   type IntrinsicVerificationCode,
+  type BooleanBoundaryRuntimeFeature,
   type NumberBoundaryRuntimeFeature,
   type PureMathRuntimeFeature,
   type RuntimeFeature as IntrinsicRuntimeFeature,
@@ -87,6 +90,23 @@ export const NUMBER_BOUNDARY_POLICY_DISABLED: NumberBoundaryPolicy = Object.free
   unbox: "unsupported",
 });
 
+/**
+ * (#3526 F1-S2) The exact, already-resolved BOOLEAN-boundary provider policy of
+ * one preparation caller — a sibling of {@link NumberBoundaryPolicy}, not a
+ * widening of it. The family is one-armed: the box arm resolves through the
+ * host `env.__box_boolean` import, and there is no native boolean boxer to
+ * select, so the union has no `"native"` member.
+ */
+export interface BooleanBoundaryPolicy {
+  /** `host` selects `env.__box_boolean`. There is no native box arm. */
+  readonly box: "host" | "unsupported";
+}
+
+/** Adapters that expose no boolean boundary resolve the box arm to this. */
+export const BOOLEAN_BOUNDARY_POLICY_DISABLED: BooleanBoundaryPolicy = Object.freeze({
+  box: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -95,11 +115,17 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly numberBoundary?: NumberBoundaryPolicy;
+  /**
+   * Omission resolves to {@link BOOLEAN_BOUNDARY_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly booleanBoundary?: BooleanBoundaryPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
 export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly numberBoundary: NumberBoundaryPolicy;
+  readonly booleanBoundary: BooleanBoundaryPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -151,10 +177,15 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type NumberBoundaryRuntimeProviderId = (typeof NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
 
+/** (#3526 F1-S2) The one admitted boolean-boundary policy arm. */
+export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.boolean.box"] as const);
+export type BooleanBoundaryRuntimeProviderId = (typeof BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
   | NumberBoundaryRuntimeProviderId
+  | BooleanBoundaryRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -408,8 +439,8 @@ export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinit
 ]);
 
 function numberBoundaryProvider(
-  id: NumberBoundaryRuntimeProviderId,
-  feature: NumberBoundaryRuntimeFeature,
+  id: NumberBoundaryRuntimeProviderId | BooleanBoundaryRuntimeProviderId,
+  feature: NumberBoundaryRuntimeFeature | BooleanBoundaryRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -459,6 +490,34 @@ export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
     [],
   ),
 ]);
+
+/**
+ * (#3526 F1-S2) The synchronous boolean boundary. Host-only by policy: no
+ * native boolean boxer exists, so there is no `runtime-callable` sibling to
+ * select. The physical target stays the exact `env.__box_boolean` union import
+ * the direct call used, so raw consumers and import order are untouched.
+ */
+export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.boolean.box",
+    "js.boolean.box",
+    I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "boolean.box" },
+    ["boolean.box"],
+  ),
+]);
+
+/** The exact provider the admitted boolean arm selects, or `null` when the
+ * caller resolved it to unsupported. */
+function booleanBoundaryProviderId(policy: BooleanBoundaryPolicy): BooleanBoundaryRuntimeProviderId | null {
+  return policy.box === "host" ? "host.js.boolean.box" : null;
+}
+
+const BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);
+
+function isBooleanBoundaryFeature(feature: RuntimeFeature): feature is BooleanBoundaryRuntimeFeature {
+  return BOOLEAN_BOUNDARY_FEATURE_SET.has(feature);
+}
 
 /** The exact provider each admitted policy arm selects, or `null` when the
  * caller resolved the arm to unsupported. */
@@ -677,6 +736,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...PURE_MATH_RUNTIME_PROVIDERS,
     ...NUMERIC_COERCION_RUNTIME_PROVIDERS,
     ...NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
+    ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -684,6 +744,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
 const FEATURE_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
+  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -691,6 +752,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
 const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...NUMERIC_COERCION_RUNTIME_PROVIDER_IDS,
   ...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS,
+  ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -893,9 +955,11 @@ export class RuntimeManifestBuilder {
       );
     }
     const numberBoundary = policy.numberBoundary ?? NUMBER_BOUNDARY_POLICY_DISABLED;
+    const booleanBoundary = policy.booleanBoundary ?? BOOLEAN_BOUNDARY_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
+      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -1191,7 +1255,22 @@ export class RuntimeManifestBuilder {
           }
           return candidates.filter((candidate) => candidate.id === selectedId);
         })()
-      : candidates;
+      : // (#3526 F1-S2) The boolean boundary answers to its OWN resolved
+        // policy, on the same argument: `!nativeStrings` is a lane fact that
+        // `target` cannot express.
+        isBooleanBoundaryFeature(feature)
+        ? ((): readonly RuntimeProviderDefinition[] => {
+            const selectedId = booleanBoundaryProviderId(this.#policy.booleanBoundary);
+            if (selectedId === null) {
+              throw new RuntimeManifestInvariantError(
+                "provider-target-unavailable",
+                `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +
+                  `box=${this.#policy.booleanBoundary.box}`,
+              );
+            }
+            return candidates.filter((candidate) => candidate.id === selectedId);
+          })()
+        : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",

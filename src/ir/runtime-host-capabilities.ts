@@ -15,6 +15,13 @@
  * (`externref | i32`). The async adapter materializer treats every non-`i32`
  * row as externref, so widening the async-facing union to include `f64` would
  * silently mislower a number record. The narrowing is load-bearing.
+ *
+ * (#3526 F1-S2) The boolean row is why that narrowing is not, on its own,
+ * sufficient: `boolean.box` is `(i32) -> externref`, so every one of its value
+ * types IS admissible under `AsyncHostAdapterValueType`. What keeps it out of
+ * the async projection is the ID filter — `ASYNC_HOST_CAPABILITY_ID_SET`, the
+ * seven `async.*` names — not the value union. Never replace that filter with
+ * a value-type test.
  */
 
 export const RUNTIME_HOST_CAPABILITY_IDS = Object.freeze([
@@ -25,6 +32,7 @@ export const RUNTIME_HOST_CAPABILITY_IDS = Object.freeze([
   "async.promise.settle.fulfill",
   "async.promise.settle.reject",
   "async.value.undefined",
+  "boolean.box",
   "number.box",
   "number.unbox",
 ] as const);
@@ -104,6 +112,11 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   record("async.promise.settle.fulfill", "Promise_settle_resolve", ["externref", "externref"], ["externref"]),
   record("async.promise.settle.reject", "Promise_settle_reject", ["externref", "externref"], ["externref"]),
   record("async.value.undefined", "__get_undefined", [], ["externref"]),
+  // (#3526 F1-S2) The boolean boundary. `__box_boolean` is a member of the
+  // same physical `addUnionImports` family; this record is manifest AUTHORITY
+  // over its ABI, not a second registration path. The one-armed family has no
+  // unbox row: `__unbox_boolean` has no IR producer.
+  record("boolean.box", "__box_boolean", ["i32"], ["externref"]),
   // (#3526 F1-S1) The number boundary. Both names are members of the physical
   // `addUnionImports` family; the records are manifest AUTHORITY over their
   // ABI, not a second registration path.
