@@ -3561,3 +3561,95 @@ TypeScript can be unloaded, that body construction/type semantics are
 frontend-neutral, that the prepared body is serialized, that Acorn or
 TypeScript 7 is supported, that every frontend fact is neutral, or that direct
 codegen can be deleted. Those remain Phase E and later checkpoints.
+
+## 2026-09-01 D1a amendment — split physical lifecycle from current authority
+
+The first D1a implementation review made one ownership detail non-optional.
+The one-shot physical lifecycle and the independent Program-ABI currentness
+authority cannot remain both auditable in the single
+`certified-function-value-materialization.ts` file under the repository's
+1,500-line hard ceiling. Compressing the full draft below that ceiling would
+hide phase transitions and repeat currentness joins instead of simplifying
+them. D1a therefore owns one additional dependency leaf:
+
+- `src/codegen/certified-function-value-authority.ts` owns only the exact
+  Program-ABI draft, structural-order, reverse-reference, locator,
+  current-index, canonical-callable-signature, and stable-handle joins, plus
+  private `WeakMap`/`WeakSet` brands for allocation, support, owner-transition,
+  trampoline-finalization, and final-layout authority;
+- `src/codegen/certified-function-value-materialization.ts` owns the exact
+  non-empty receipt census, pending→taken→emitted→settled/aborted lifecycle,
+  atomic publication of one freshly built initializer into the exact live
+  owner body, recursive exact-one body census, and the sole
+  revision-0→revision-1 layout-cell transition. It retains canonical and body-
+  census evidence, never a detached initializer as authority; and
+- `src/codegen/closures/method-trampolines.ts` remains the sole legacy/frontend
+  boundary. It authenticates declaration→UnitId→stable-handle→function and
+  the in-progress `FunctionContext` body before asking the two neutral leaves
+  to bind the current owner transition. Neither neutral leaf may inspect
+  `sourceFunction`, a TypeScript declaration, checker/oracle state, source-file
+  maps, or a `FunctionContext`.
+
+The dependency direction is strict: method trampolines may import the lifecycle
+leaf; the lifecycle leaf may import the authority leaf; neither leaf may import
+method trampolines, `src/codegen/index.ts`, `func-space.ts`,
+`program-abi-planning.ts`, `registry/imports.ts`, a multi-prepared owner, a
+frontend, or an IR backend. Runtime imports from apparently neutral IR binding
+helpers are also forbidden when their transitive graph reaches `ts-api`.
+Stable function joins use `absoluteFuncIndex` from
+`src/emit/resolve-layout.ts`. Callable-signature comparisons use canonical
+semantic equality because `currentCallableSignature()` returns a fresh frozen
+object. `resolveCurrentIndex` receives the current module, never a locator;
+exact locator identity is checked independently.
+
+Authority is phase-specific and cannot be synthesized from caller-supplied
+opaque objects or caller-supplied canonical strings:
+
+1. allocation authenticates the exact target UnitId/binding/key, source
+   callable object and stable handle, current callable signature,
+   candidate-scoped absence of the exact trampoline/cache IDs, locators, and
+   registry rows, and allocation-era type/global objects before the first
+   write. Unrelated support artifacts remain valid;
+2. the post-allocation support result independently rejoins the exact target,
+   one `function-value-trampoline` support callable, and one
+   `function-value-cache` support global against their Program-ABI drafts,
+   structural roles, locators, current positions, and retained objects before
+   the singleton receipt is minted;
+3. early registration records the exact expected legacy owner
+   UnitId/handle/function and issues one one-shot branded owner-transition
+   request. A generally callable leaf API may not mint authority from a plain
+   owner tuple. At take, the method-owned boundary consumes that exact request,
+   proves the same owner plus `ctx.currentFunc === fctx` and the exact compiling
+   body, and returns it to the authority leaf, which rejoins the submitted
+   neutral tuple to the stored early owner. Final settlement requires that
+   exact function to own that exact body after normal body installation;
+4. prepared-target installation and trampoline finalization are authenticated
+   one-shot transitions over retained array identities and lifecycle-derived
+   canonical bytes, never callbacks that canonicalize their own values; and
+5. post-DCE settlement derives the current metadata type index from the final
+   module, proves the remapped `$fnmeta` field points to that index, rejoins all
+   current locators/signatures/handles/globals/types and the exact-one owner
+   initializer, then performs the sole layout-cell mutation.
+
+The bounded authority leaf may document the existing
+`function-value-cache` global-role ordinal `2` locally and must validate it
+through a fresh `structuralOrder.forUnit` result. It must not import the general
+Program-ABI planner merely to read that constant. Extracting all global-role
+constants into another shared module is follow-up refactoring, not D1a scope.
+
+Add non-vacuous mutations for an unbranded/cross-context allocation proof, a
+no-op or foreign support observation, a real nonidentity metadata-type DCE
+remap, nested instruction and initializer drift between prepare and publish, a
+foreign/duplicate/shared-body owner, a self-certifying phase/final proof, and
+two parent edges aliasing the same initializer array. Every pre-publication
+mutation must leave the owner body and lifecycle state unchanged; every
+post-certification mutation must fail invariantly. The recursive census counts
+parent-edge occurrences and uses only an active recursion stack for cycle
+protection, never a global visited set that collapses aliases.
+
+This amendment adds no route, backend instruction, optimization exception,
+kill switch, LOC allowance, or physical artifact change. Both new neutral
+files and `method-trampolines.ts` remain at or below the 1,500-line ceiling;
+existing giant-file and total-LOC ratchets remain non-growing. All original
+D1a/D1b ordering, exact #4590 parity, strict load gate, normal hooks, protected
+merge queue, and fresh Sol exact-byte review requirements remain unchanged.
