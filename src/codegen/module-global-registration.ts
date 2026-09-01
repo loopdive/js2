@@ -140,7 +140,7 @@ export function registerModuleGlobal(
   ctx: CodegenContext,
   name: string,
   wasmType: ValType,
-  declaration?: ts.VariableDeclaration,
+  declaration?: ts.VariableDeclaration | ts.BindingElement,
 ): void {
   // Only a genuine user-defined function (a defined function whose index is
   // past the import prefix) shadows a module-level var. Imported host globals,
@@ -208,7 +208,7 @@ export function registerModuleTdzGlobal(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   name: string,
-  exactDeclaration?: ts.VariableDeclaration,
+  exactDeclaration?: ts.VariableDeclaration | ts.BindingElement,
 ): void {
   if (!ctx.moduleGlobals.has(name)) return;
   const existingGlobalIdx = ctx.tdzGlobals.get(name);
