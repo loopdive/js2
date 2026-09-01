@@ -142,6 +142,76 @@ destructuring compile errors. The remaining three stale-brand routes are still
 being isolated; do not claim completion or modify the #5063 result reader from
 this checkpoint.
 
+## 2026-09-01 draft checkpoint — partial repair and precise handoff
+
+The opaque resume dispatcher is now reserve-then-fill, using the final native
+generator state set after module-init pass 2. Its fixed ABI returns `externref`
+so an opaque result can still be destructured as an IteratorResult. For opaque
+`.next()` only, the finalized no-generator-match arm recognizes native
+`__IterRec` / `$LazyIterHelper` carriers and delegates through the existing
+`__any_iter_next` adapter. The statically typed native-generator path is
+unchanged; `.return()` / `.throw()` keep their existing abrupt and
+evaluate-once behavior.
+
+`tests/issue-3591.test.ts` now has two host-free focused regressions: the
+forced real module-init-pass-2 `.next()` / `.return()` / `.throw()` case, and
+opaque `chunks()` / `windows()` `.next()` dispatch. Both assert zero `env`
+imports. The final focused lane on the synchronized tree was **67/67 pass**:
+
+- `tests/issue-3591.test.ts`: **2/2**
+- `tests/issue-3164.test.ts`: **13/13**
+- `tests/issue-3386.test.ts`: **18/18**
+- `tests/issue-2864-standalone-generator-carrier.test.ts`: **34/34**
+
+The authoritative isolated standalone cohort improved from **0/7** to
+**4/7 pass**:
+
+```text
+node --import tsx scripts/run-test262-paths.mts .tmp/issue-3591-test262-seven.txt --isolate --standalone
+{ pass: 4, fail: 3 }
+```
+
+The remaining exact rows are deliberately left as a draft handoff, not folded
+into this bounded stale-dispatch repair:
+
+1. `chunks` / `windows` `exhaustion-does-not-call-return`: the throw is in the
+   getter-returned closure's inner captured `n.next()`, not the outer lazy
+   helper. Generated WAT has the final `$GenState_g` arm, but the captured
+   native state crossing its `externref` closure field still reaches the brand
+   miss. This needs a dedicated closure-carrier trace before changing another
+   boundary.
+2. `GeneratorPrototype/next/context-method-invocation`: `obj.g()` drops a
+   known native state `ref` through the standalone callable-property result
+   bridge, whose declared `Generator` result is `externref`. A narrow native
+   state transport bridge would repair that brand miss, but the row also needs
+   deferred dynamic-`this` stored in and rehydrated from the native state;
+   object-literal receiver recognition currently excludes this generator
+   declaration. That semantic feature is outside #3591's late-dispatch scope.
+
+The two requested official controls were measured and match the authoritative
+cached standalone baseline rows in workspace
+`.test262-cache/test262-standalone-current.jsonl`:
+
+- `language/statements/generators/no-yield.js`: fail — `NaN` versus
+  `undefined` assertion.
+- `language/statements/generators/yield-star-before-newline.js`: compile error
+  in `__gen_resume_g` (`local.tee` ref type mismatch).
+
+They are baseline residuals, not this checkpoint's regressions. Typecheck,
+focused Biome lint, and Prettier passed; LOC/function and oracle ratchets
+passed. `scripts/diff-test-gate.ts` could not evaluate because the provisioned
+worktree lacks ignored `benchmarks/results/diff-test.json` (the script reports
+that missing artifact).
+
+Validation ran after synchronizing upstream/main `77303d58018bcf6d675dbfd2382063033e5714a9`.
+The exact source/test checkpoint is
+`135ecee93e9fa1f0578cbfa9cd4602e34f890410`; commands executed against its
+identical precommit worktree state over sync HEAD
+`2c6b737aacbe3259534aaab45e68886a5cf3896a`. Both commits have the required
+Thomas and Codex/Terra trailers. Git signing is unavailable in this environment:
+there is no configured signing format/key/program and no `gpg` executable;
+`git log --show-signature` therefore reports no signature block.
+
 ## Reproduction / affected shapes
 
 Measured on `origin/main` @ `7652f033774194`, `target: "standalone"`:
