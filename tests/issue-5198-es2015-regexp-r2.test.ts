@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 // #5198 Slice A — observable RegExpBuiltinExec lastIndex behavior.
+// #5198 Slice B — observable RegExpExec custom-exec substrate census.
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ type Lane = "host" | "standalone";
 
 const TEST262_ROOT = fileURLToPath(new URL("../test262/", import.meta.url));
 
-const EXACT_ROWS = [
+const SLICE_A_ROWS = [
   "built-ins/RegExp/prototype/exec/failure-lastindex-access.js",
   "built-ins/RegExp/prototype/exec/success-lastindex-access.js",
   "built-ins/RegExp/prototype/exec/u-lastindex-adv.js",
@@ -24,6 +25,25 @@ const EXACT_ROWS = [
   "built-ins/RegExp/prototype/test/y-fail-lastindex.js",
   "built-ins/RegExp/prototype/test/y-fail-return.js",
 ] as const;
+
+// Pre-loop RegExpExec contract only: custom `exec` Get/call/return validation.
+// Keep method-specific result consumers, global loops, and species out of this
+// slice; they belong to C1-C4.
+const SLICE_B_ROWS = [
+  "built-ins/RegExp/prototype/Symbol.match/exec-err.js",
+  "built-ins/RegExp/prototype/Symbol.match/exec-invocation.js",
+  "built-ins/RegExp/prototype/Symbol.match/exec-return-type-invalid.js",
+  "built-ins/RegExp/prototype/Symbol.match/exec-return-type-valid.js",
+  "built-ins/RegExp/prototype/Symbol.match/g-get-exec-err.js",
+  "built-ins/RegExp/prototype/Symbol.match/get-exec-err.js",
+  "built-ins/RegExp/prototype/Symbol.replace/exec-err.js",
+  "built-ins/RegExp/prototype/Symbol.replace/exec-invocation.js",
+  "built-ins/RegExp/prototype/Symbol.replace/get-exec-err.js",
+  "built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-index.js",
+  "built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-invalid.js",
+] as const;
+
+const EXACT_ROWS = [...SLICE_A_ROWS, ...SLICE_B_ROWS] as const;
 
 const TEST262_AVAILABLE =
   process.env.JS2_TEST262_AVAILABLE !== "0" &&
@@ -57,7 +77,7 @@ async function runStandaloneIdentityScopeControl(source: string): Promise<number
 
 describe("#5198 RegExpBuiltinExec lastIndex Slice A", () => {
   for (const lane of ["host", "standalone"] as const) {
-    for (const relativePath of EXACT_ROWS) {
+    for (const relativePath of SLICE_A_ROWS) {
       itWithTest262(`${lane}: ${relativePath}`, { timeout: 200_000 }, async () => {
         const result = await runExactRow(relativePath, lane);
         expect(`${result.status}: ${result.error ?? ""}`, `${lane} ${relativePath}`).toBe("pass: ");
@@ -102,4 +122,15 @@ describe("#5198 RegExpBuiltinExec lastIndex Slice A", () => {
       `),
     ).toBe(8);
   });
+});
+
+describe("#5198 observable RegExpExec Slice B pre-loop contract", () => {
+  for (const lane of ["host", "standalone"] as const) {
+    for (const relativePath of SLICE_B_ROWS) {
+      itWithTest262(`${lane}: ${relativePath}`, { timeout: 200_000 }, async () => {
+        const result = await runExactRow(relativePath, lane);
+        expect(`${result.status}: ${result.error ?? ""}`, `${lane} ${relativePath}`).toBe("pass: ");
+      });
+    }
+  }
 });

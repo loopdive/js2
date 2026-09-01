@@ -4,7 +4,7 @@ title: "ES2015 standalone regexp — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-08-30
+updated: 2026-09-01
 priority: high
 horizon: m
 feasibility: hard
@@ -276,6 +276,78 @@ checkpoints to `ttraenkler/js2` without force, and open a completed fix as a
 non-draft PR on `loopdive/js2`. A semantically incomplete/non-mergeable
 checkpoint may remain draft with explicit blockers. No GitHub issue is to be
 created.
+
+## Slice B ownership audit and f841 baseline census (2026-09-01)
+
+### Provenance and ownership boundary
+
+This residual-slice worktree is
+`/Users/thomas/Code/js2/.codex-worktrees/issue-5198-regexp-exec-r2-20260901`,
+on `codex/5198-regexp-exec-r2-f841-20260901`. Planning began at source
+`f841cddc0f0ea665b63700d9944a4372a34a8b57`; before publication the branch was
+fast-forwarded to upstream `b590669a7b0dd9537d9b9e703218d9cd6eec3106`.
+That intervening PR changes only #3521's prepared-free-function routing and is
+disjoint from this issue and focused test. The standalone values below remain
+the immutable forced-f841 census supplied at
+`/private/tmp/js2-baseline-census-f841cddc-r1/.test262-cache/test262-standalone-current.jsonl`
+(oracle v13, honest lane; records timestamped 2026-09-01).
+
+Before source work, the historical local carrier
+`codex/latest-regexp-carrier-review` was compared read-only against f841. Its
+unmerged commit `b85e2e51b05d75d5fbb40c4b3ab2623f2bdadea7`
+(`fix(regexp): preserve standalone match result semantics`) changes
+`src/codegen/regexp-standalone.ts` by 19 additions and 19 deletions, including
+the result/`groups`/`indices` construction inside `emitRegexExecArrayCall`.
+That function is the builtin non-global `@@match` RegExpExec path and the
+reflective `RegExp.prototype.exec` closure path; a Slice-B builtin fallback
+must reuse it to inherit Slice A lastIndex handling. This is an unmerged common
+RegExpExec overlap, so this worktree will make **no production-source edit**
+until that carrier is reconciled. The owned scope is therefore this issue and
+the focused test only; the historical carrier retains ownership of the shared
+result constructor.
+
+### Exact standalone baseline rows
+
+The narrow pre-loop matrix is 11 rows: seven invocation/getter/call-error rows,
+two valid-result controls, and the primitive-result validation pair. The
+denominator is **1 pass / 10 fail / 0 compile_error / 0 timeout / 0 skip**.
+The existing pass is deliberately retained as a control, not credited: its
+expected TypeError can currently be produced by the incompatible-RegExp
+receiver path rather than a verified custom-exec result check.
+
+| Path | Status | Recorded error |
+| --- | --- | --- |
+| `built-ins/RegExp/prototype/Symbol.match/exec-err.js` | fail | `Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all` |
+| `built-ins/RegExp/prototype/Symbol.match/exec-invocation.js` | fail | `Test262Error: Expected SameValue(«0», «1») to be true` |
+| `built-ins/RegExp/prototype/Symbol.match/exec-return-type-invalid.js` | fail | `Test262Error: Expected a TypeError to be thrown but no exception was thrown at all` |
+| `built-ins/RegExp/prototype/Symbol.match/exec-return-type-valid.js` | fail | `Test262Error: Expected SameValue(«null», «[object Object]») to be true` |
+| `built-ins/RegExp/prototype/Symbol.match/g-get-exec-err.js` | fail | `Test262Error: Expected a Test262Error but got a TypeError` |
+| `built-ins/RegExp/prototype/Symbol.match/get-exec-err.js` | fail | `Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all` |
+| `built-ins/RegExp/prototype/Symbol.replace/exec-err.js` | fail | `Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all` |
+| `built-ins/RegExp/prototype/Symbol.replace/exec-invocation.js` | fail | `Test262Error: Expected SameValue(«0», «1») to be true` |
+| `built-ins/RegExp/prototype/Symbol.replace/get-exec-err.js` | fail | `Test262Error: Expected a Test262Error but got a TypeError` |
+| `built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-index.js` | fail | `TypeError: Method called on incompatible receiver (RegExp brand check failed)` |
+| `built-ins/RegExp/prototype/Symbol.search/cstm-exec-return-invalid.js` | pass | none |
+
+### Conditional narrow implementation plan
+
+Once the carrier's result-construction work is reconciled, Slice B remains
+bounded to a single common helper at the entry to the existing symbol-method
+cores: evaluate `rx` and the string once; perform ordinary `Get(rx, "exec")`;
+call a callable value with `rx` as `this` and the coerced string argument;
+propagate getter and call abrupt completions; and reject only non-object,
+non-null results with the required TypeError. A non-callable `exec` takes the
+existing `emitRegexExecArrayCall` fallback, retaining the landed Slice-A
+observable `lastIndex` Get/Set substrate. The helper must return the raw
+object-or-null result without reading `index`, `length`, captures, flags, or
+replacement data. Consequently this slice must not add the `@@search`,
+`@@match`, `@@replace`, or `@@split` loops, dynamic flag handling,
+SpeciesConstructor, or result-property coercion; those remain C1-C4.
+
+The focused test will pin the 11 paths above in isolated host and standalone
+lanes before any reconciled source change. A fresh runner measurement and the
+host result matrix will be appended below before a source owner is asked to
+resume implementation.
 
 ## Acceptance criteria
 
