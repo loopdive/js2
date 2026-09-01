@@ -172,4 +172,58 @@ describe("#1058 reserved sibling capture ABI", () => {
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     expect((instance.exports.reproOptionalLocalInterface as (value: number) => number)(3)).toBe(5);
   });
+
+  it("threads a capturing sibling used only by a nested declaration parameter default", async () => {
+    const result = await compile(
+      `
+        export function reproDefaultSibling(seed: number): number {
+          let calls = 0;
+
+          function target(delta: number): number {
+            calls += 1;
+            return seed + delta + calls;
+          }
+
+          function invoke(delta: number, fn: (value: number) => number = target): number {
+            return fn(delta) + calls * 100;
+          }
+
+          return invoke(2);
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-default-sibling-capture.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproDefaultSibling as (seed: number) => number)(3)).toBe(106);
+  });
+
+  it("keeps body declarations out of a nested parameter environment", async () => {
+    const result = await compile(
+      `
+        export function reproBodyShadow(seed: number): number {
+          function helper(value: number = seed): number {
+            let seed = 99;
+            return value + seed * 0;
+          }
+
+          function sibling(): number {
+            return 1;
+          }
+
+          return helper() + sibling() - 1;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-nested-default-body-shadow.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproBodyShadow as (seed: number) => number)(5)).toBe(5);
+  });
 });

@@ -9,6 +9,7 @@ import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-glo
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
+  collectParamDefaultReferences,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
   emitCachedFuncClosureAccess,
@@ -850,7 +851,10 @@ function canonicalReservedCapturePlan(
 const nestedFnMutatedNamesCache = new WeakMap<ts.Node, Set<string>>();
 
 interface SiblingFunctionSyntaxFacts {
-  ownLocals: ReadonlySet<string>;
+  /** Names shadowing references evaluated in the function body. */
+  bodyOwnLocals: ReadonlySet<string>;
+  /** Names shadowing the combined body + parameter-default capture scan. */
+  captureOwnLocals: ReadonlySet<string>;
   referencedNames: ReadonlySet<string>;
 }
 
@@ -917,13 +921,24 @@ const siblingFunctionSyntaxFactsCache = new WeakMap<ts.FunctionDeclaration, Sibl
 function siblingFunctionSyntaxFacts(decl: ts.FunctionDeclaration): SiblingFunctionSyntaxFacts {
   const cached = siblingFunctionSyntaxFactsCache.get(decl);
   if (cached) return cached;
-  const ownLocals = new Set<string>();
-  addNestedDeclarationOwnLocals(decl, ownLocals);
+  const bodyOwnLocals = new Set<string>();
+  addNestedDeclarationOwnLocals(decl, bodyOwnLocals);
   const referencedNames = new Set<string>();
   for (const bodyStmt of decl.body!.statements) {
-    collectReferencedIdentifiers(bodyStmt, referencedNames, ownLocals);
+    collectReferencedIdentifiers(bodyStmt, referencedNames, bodyOwnLocals);
   }
-  const facts = { ownLocals, referencedNames } satisfies SiblingFunctionSyntaxFacts;
+  const parameterDefaultReferences = new Set<string>();
+  collectParamDefaultReferences(decl.parameters, parameterDefaultReferences, nestedDeclarationParameterNames(decl));
+  for (const name of parameterDefaultReferences) referencedNames.add(name);
+
+  // A non-simple parameter list executes in its own environment. Body
+  // var/function/class/lexical declarations therefore cannot shadow a free
+  // name used by a default initializer. Remove exactly those default
+  // references from the body shadow set while retaining parameter bindings.
+  const captureOwnLocals = new Set(bodyOwnLocals);
+  for (const name of parameterDefaultReferences) captureOwnLocals.delete(name);
+
+  const facts = { bodyOwnLocals, captureOwnLocals, referencedNames } satisfies SiblingFunctionSyntaxFacts;
   siblingFunctionSyntaxFactsCache.set(decl, facts);
   return facts;
 }
@@ -1041,7 +1056,7 @@ export function transitiveSiblingCaptures(
     const directCapturesByDecl = new Map<ts.FunctionDeclaration, Set<string>>();
     const propagationEdges = new Map<ts.FunctionDeclaration, Set<ts.FunctionDeclaration>>();
     for (const decl of decls.values()) {
-      const { ownLocals, referencedNames } = siblingFunctionSyntaxFacts(decl);
+      const { captureOwnLocals: ownLocals, referencedNames } = siblingFunctionSyntaxFacts(decl);
       const captures = new Set<string>();
       const edges = new Set<ts.FunctionDeclaration>();
       for (const referencedName of referencedNames) {
@@ -1424,17 +1439,25 @@ function compileNestedFunctionDeclarationInScope(
   // collection so nested `var` declarations and parameter bindings inside the
   // function body shadow outer references — otherwise a function with its own
   // `var i;` would be treated as capturing the outer `i` (#995).
-  const ownLocals = new Set<string>();
-  addNestedDeclarationOwnLocals(stmt, ownLocals);
-
-  const referencedNames = new Set<string>();
-  for (const s of stmt.body.statements) {
-    collectReferencedIdentifiers(s, referencedNames, ownLocals);
-  }
+  const syntaxFacts = siblingFunctionSyntaxFacts(stmt);
+  const ownLocals = new Set(syntaxFacts.bodyOwnLocals);
+  const captureOwnLocals = syntaxFacts.captureOwnLocals;
+  const referencedNames = new Set(syntaxFacts.referencedNames);
+  // A parameter initializer executes in the lifted declaration's frame just
+  // like its body.  Include its free references before Phase-0 / real capture
+  // planning so a defaulted capturing sibling (for example `fn = bind`) is
+  // carried into that frame instead of materializing the sibling with stale
+  // declaring-frame local indexes.  The shared helper also covers defaults
+  // and computed keys nested inside binding patterns without treating type
+  // annotations or the parameter's own bindings as captures. Body declarations
+  // are deliberately absent from this shadow set: the parameter environment
+  // cannot see them, so `function f(x = outer) { let outer }` captures the
+  // enclosing `outer`. The shared syntax facts apply that split identically
+  // to sibling propagation, Phase 0, and this real compile.
   const { directlyReferencedNames, transitivelyRequiredNames } = collectNestedCaptureReferences(
     referencedNames,
-    ownLocals,
-    transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referencedNames, ownLocals),
+    captureOwnLocals,
+    transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referencedNames, captureOwnLocals),
     transitiveSiblingCaptures(ctx, fctx, stmt),
   );
   const reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle);
@@ -1515,7 +1538,7 @@ function compileNestedFunctionDeclarationInScope(
 
   let captures: NestedFunctionCapturePlanEntry[] = [];
   for (const name of referencedNames) {
-    if (ownLocals.has(name) && !transitivelyRequiredNames.has(name)) continue;
+    if (captureOwnLocals.has(name) && !transitivelyRequiredNames.has(name)) continue;
     if (skipUnobservedHoistedCapture(fctx, stmt, name, directlyReferencedNames, transitivelyRequiredNames)) continue;
     // (#1702) A nested `FunctionDeclaration` establishes its OWN `this`
     // binding per ECMA-262 §10.2.1.1 (OrdinaryCallBindThis) — `this` is
@@ -2866,10 +2889,7 @@ function preRegisterCapturingSibling(
   stmt: ts.FunctionDeclaration,
   siblingFuncNames: ReadonlySet<string>,
 ): boolean {
-  const ownLocals = new Set<string>();
-  addFunctionOwnLocals(stmt, ownLocals);
-  const referenced = new Set<string>();
-  for (const bodyStmt of stmt.body!.statements) collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+  const { captureOwnLocals: ownLocals, referencedNames: referenced } = siblingFunctionSyntaxFacts(stmt);
 
   let capturesOuter = transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referenced, ownLocals).size > 0;
   for (const name of referenced) {
