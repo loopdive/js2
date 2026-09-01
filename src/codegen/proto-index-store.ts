@@ -269,12 +269,15 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // (#4176) receiver-aware consults for the non-$Object miss chokepoints.
   reserve(PROTOIDX_HAS_R, [ext, ext], [i32], zero);
   reserve(PROTOIDX_GET_R, [ext, ext], [ext], nullExt);
-  // (#4504) `(origRecv, key, value) -> decision` over the receiver-aware
-  // native-prototype companions.  It never creates a companion while deciding.
+  // (#4504) `(lookupRecv, callRecv, key, value) -> decision` over native-
+  // prototype companions. `lookupRecv` selects the descriptor chain and
+  // `callRecv` is the accessor `this`; ordinary [[Set]] uses the same value
+  // for both, while Reflect.set(target, key, value, receiver) must not.
+  // It never creates a companion while deciding.
   // This helper is deliberately absent from descriptor-free modules so the
   // existing proto-store function space remains byte-identical.
   if (inheritedSetAnyDirty(ctx)) {
-    reserve(PROTOIDX_SET_R, [ext, ext, ext], [i32], zero);
+    reserve(PROTOIDX_SET_R, [ext, ext, ext, ext], [i32], zero);
   }
   // (#2175 P2) `recv -> recv'` for the OWN-property views: a `$NativeProto`
   // receiver becomes its brand companion, everything else passes through.
@@ -336,23 +339,27 @@ export function protoIndexRecvGetMissInstrs(
 }
 
 /**
- * (#4504) Receiver-aware native-companion [[Set]] decision.
+ * (#4504) Native-companion [[Set]] decision with separate descriptor lookup
+ * and accessor receiver values.
  *
- * The caller reaches this only after its explicit `$Object` / fnctor chain
- * exhausted.  A live descriptor returns one of the non-MISS states immediately,
- * so a nearer writable data descriptor cannot fall through to a farther Object
- * companion accessor.
+ * The caller reaches this only after `lookupLocal`'s explicit `$Object` /
+ * fnctor chain exhausted. A live descriptor returns one of the non-MISS states
+ * immediately, so a nearer writable data descriptor cannot fall through to a
+ * farther Object companion accessor. `callReceiverLocal` is used only as the
+ * accessor `this` value.
  */
 export function protoIndexSetDecisionInstrs(
   ctx: CodegenContext,
-  recvLocal: number,
+  lookupLocal: number,
+  callReceiverLocal: number,
   keyLocal: number,
   valueLocal: number,
 ): Instr[] | undefined {
   const setRIdx = ctx.funcMap.get(PROTOIDX_SET_R);
   if (setRIdx === undefined) return undefined;
   return [
-    { op: "local.get", index: recvLocal },
+    { op: "local.get", index: lookupLocal },
+    { op: "local.get", index: callReceiverLocal },
     { op: "local.get", index: keyLocal },
     { op: "local.get", index: valueLocal },
     { op: "call", funcIdx: setRIdx },
@@ -1196,19 +1203,21 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
 }
 
 /**
- * `__protoidx_set_r(origRecv, key, value) -> decision`.
+ * `__protoidx_set_r(lookupRecv, callRecv, key, value) -> decision`.
  *
  * This is the native-companion tail of #4504's ordinary descriptor walk.  The
  * explicit `$Object` / fnctor links are owned by `__extern_set_decide`; only
- * after they exhaust does it arrive here.  Probe the receiver brand companion
- * first and Object's companion second, returning on the first live entry.
+ * after they exhaust does it arrive here. Probe `lookupRecv`'s brand companion
+ * first and Object's companion second, returning on the first live entry; a
+ * matching accessor receives `callRecv` as its `this` value.
  */
 function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_SET_R);
   const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
   if (!fn || brandOffIdx === undefined) return;
   const entryRefNull: ValType = { kind: "ref_null", typeIdx: deps.propEntryTypeIdx };
-  // params: 0=origRecv 1=key 2=value ; locals: 3=firstOff 4=c 5=e 6=setter
+  // params: 0=lookupRecv 1=callRecv 2=key 3=value
+  // locals: 4=firstOff 5=c 6=e 7=setter
   fn.locals = [
     { name: "firstOff", type: { kind: "i32" } },
     { name: "c", type: { kind: "externref" } },
@@ -1219,26 +1228,26 @@ function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
     ...which,
     { op: "i32.const", value: 0 }, // lookup only: deciding must not allocate
     { op: "call", funcIdx: deps.companionIdx },
-    { op: "local.tee", index: 4 },
+    { op: "local.tee", index: 5 },
     { op: "ref.is_null" },
     { op: "i32.eqz" },
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: 4 },
+        { op: "local.get", index: 5 },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: deps.objectTypeIdx },
-        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
         { op: "call", funcIdx: deps.objFindIdx },
-        { op: "local.tee", index: 5 },
+        { op: "local.tee", index: 6 },
         { op: "ref.is_null" },
         { op: "i32.eqz" },
         {
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "local.get", index: 5 },
+            { op: "local.get", index: 6 },
             { op: "ref.as_non_null" },
             { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
             { op: "i32.const", value: FLAG_ACCESSOR },
@@ -1247,20 +1256,20 @@ function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
               op: "if",
               blockType: { kind: "empty" },
               then: [
-                { op: "local.get", index: 5 },
+                { op: "local.get", index: 6 },
                 { op: "ref.as_non_null" },
                 { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_SET },
                 { op: "extern.convert_any" },
-                { op: "local.tee", index: 6 },
+                { op: "local.tee", index: 7 },
                 { op: "ref.is_null" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [{ op: "i32.const", value: SET_DECISION_REFUSED }, { op: "return" }],
                 },
-                { op: "local.get", index: 0 }, // ORIGINAL receiver
-                { op: "local.get", index: 6 },
-                { op: "local.get", index: 2 },
+                { op: "local.get", index: 1 }, // accessor receiver
+                { op: "local.get", index: 7 },
+                { op: "local.get", index: 3 },
                 { op: "call", funcIdx: deps.callAccessorSetIdx },
                 { op: "i32.const", value: SET_DECISION_HANDLED },
                 { op: "return" },
@@ -1270,7 +1279,7 @@ function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
             // runtime rather than eagerly clearing every data entry's
             // writable flag. It changes only data descriptors: an accessor
             // setter above remains callable on a frozen prototype.
-            { op: "local.get", index: 4 },
+            { op: "local.get", index: 5 },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: deps.objectTypeIdx },
             { op: "struct.get", typeIdx: deps.objectTypeIdx, fieldIdx: 4 },
@@ -1284,7 +1293,7 @@ function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
             // A data descriptor is also terminal.  In particular, a writable
             // one authorizes an own create and must not expose a farther
             // companion accessor/non-writable data descriptor.
-            { op: "local.get", index: 5 },
+            { op: "local.get", index: 6 },
             { op: "ref.as_non_null" },
             { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: ENTRY_FLAGS },
             { op: "i32.const", value: FLAG_WRITABLE },
@@ -1303,9 +1312,9 @@ function fillSetRBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   fn.body = [
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: brandOffIdx },
-    { op: "local.set", index: 3 },
-    ...probe([{ op: "local.get", index: 3 }]),
-    { op: "local.get", index: 3 },
+    { op: "local.set", index: 4 },
+    ...probe([{ op: "local.get", index: 4 }]),
+    { op: "local.get", index: 4 },
     { op: "i32.const", value: OBJ_OFF },
     { op: "i32.ne" },
     {

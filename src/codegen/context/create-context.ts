@@ -166,6 +166,7 @@ export function createCodegenContext(
     usesDynamicProto: false, // (#802) set by the scanForDynamicProto pre-scan
     dynamicProtoClasses: new Set(), // (#802) hierarchy-ROOT class names receiving proto mutation (Slice B)
     dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)
+    reflectSetReceiverLiteralNodes: new WeakSet(), // (#2046) source-proven ordinary Reflect.set target/receiver literals
     dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
     holeyArrayDeclarations: new Set(), // (#4222) exact bounded sized-Array bindings

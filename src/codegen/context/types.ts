@@ -1624,6 +1624,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   usesDynamicProto: boolean;
   dynamicProtoClasses: Set<string>;
   dynamicProtoLiteralNodes: WeakSet<ts.Node>;
+  /**
+   * (#2046) Object literals participating in the source-proven ordinary
+   * explicit-receiver Reflect.set subset. The pre-scan marks target/receiver
+   * literals before declaration allocation so the native helper receives
+   * `$Object` carriers rather than closed structs.
+   */
+  reflectSetReceiverLiteralNodes: WeakSet<ts.Node>;
   dynProtoSentinelGlobalIdx: number | undefined;
   /**
    * (#2001 S1) Sparse-array hole support. Set by the `scanForArrayHoles`

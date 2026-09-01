@@ -2207,6 +2207,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         ...ownLayer(),
         { op: "local.get", index: keyLocal },
         { op: "local.get", index: 2 },
+        { op: "local.get", index: 0 },
         { op: "call", funcIdx: setDecideIdx! },
         { op: "local.tee", index: decisionLocal },
         { op: "i32.const", value: SET_DECISION_HANDLED },

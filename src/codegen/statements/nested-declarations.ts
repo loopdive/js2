@@ -84,6 +84,7 @@ import {
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
 import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
+import { isOpenObjectLiteralPromotion } from "../reflect-set-receiver.js";
 import { genericCallbackResultDeclaration } from "../generic-callback-result.js";
 import {
   collectDirectEvalActivationBindingNames,
@@ -1176,7 +1177,7 @@ function compileNestedFunctionDeclarationInScope(
       if (
         capturedInit !== undefined &&
         ts.isObjectLiteralExpression(capturedInit) &&
-        (ctx.dynamicProtoLiteralNodes.has(capturedInit) ||
+        (isOpenObjectLiteralPromotion(ctx, capturedInit) ||
           objectLiteralForcesHostPath(ctx, capturedInit) ||
           objectLiteralSpreadTakesHostPath(ctx, capturedInit))
       ) {

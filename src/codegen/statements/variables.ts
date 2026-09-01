@@ -19,6 +19,7 @@ import {
 } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
+import { isOpenObjectLiteralPromotion } from "../reflect-set-receiver.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
 import { emitShapeInferredVecInit } from "../shape-vec-literal-seed.js"; // (#4491) module-global array-carrier seed
@@ -919,7 +920,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       // (#802 Slice A) A proto-receiver literal is promoted to an open `$Object`
       // (externref, standalone-only) in compileObjectLiteral — the spill slot
       // must match.
-      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(init)) return { kind: "externref" };
+      if (ctx.standalone && isOpenObjectLiteralPromotion(ctx, init)) return { kind: "externref" };
       const forcesHostObject = init.properties.some(
         (p) =>
           ts.isGetAccessorDeclaration(p) ||
@@ -1810,7 +1811,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       ctx.standalone &&
       decl.initializer !== undefined &&
       ts.isObjectLiteralExpression(decl.initializer) &&
-      ctx.dynamicProtoLiteralNodes.has(decl.initializer);
+      isOpenObjectLiteralPromotion(ctx, decl.initializer);
     if (
       initIsAccessorLiteral ||
       initIsHostSpreadLiteral ||

@@ -4,8 +4,9 @@
 //
 // PR-A (restore fail-loud):
 //   - Reflect.get with an explicit receiver now threads that receiver through
-//     the native accessor path. Reflect.set remains fail-loud until its
-//     separate receiver/write semantics are implemented.
+//     the native accessor path. The ES2015 ordinary-object Reflect.set receiver
+//     path below follows the same rule while preserving the explicit gate for
+//     typed-array/proxy exotica owned by their separate slices.
 //   - Reflect.deleteProperty(primitive, k) returned true; §28.1.4 requires a
 //     TypeError. Guarded at the call site (ref.test $Object) so the SHARED
 //     __delete_property (also backing sloppy `delete`, a no-op success on
@@ -29,8 +30,12 @@ async function runStandalone(source: string): Promise<number> {
   return (instance.exports as Record<string, () => number>).test();
 }
 
-async function expectCompileRefusal(source: string, needle: string): Promise<void> {
-  const r = await compile(source, { target: "standalone", skipSemanticDiagnostics: true });
+async function expectCompileRefusal(source: string, needle: string, sloppy = false): Promise<void> {
+  const r = await compile(source, {
+    target: "standalone",
+    skipSemanticDiagnostics: true,
+    ...(sloppy ? { inferModuleStrictArguments: false } : {}),
+  });
   expect(r.success, "expected a compile refusal but the module compiled").toBe(false);
   const joined = r.errors.map((e) => e.message).join("\n");
   expect(joined).toContain(needle);
@@ -59,21 +64,285 @@ describe("#2046 standalone Reflect spec gaps", () => {
     ).toBe(42);
   });
 
-  it("Reflect.set with an explicit receiver is refused at compile time", async () => {
-    await expectCompileRefusal(
-      `export function test(): boolean {
-        const o: any = { x: 1 };
-        const recv: any = {};
-        return Reflect.set(o, "x", 2, recv);
-      }`,
-      "Reflect.set with an explicit receiver",
-    );
+  describe("Reflect.set with an explicit receiver (§28.1.12 / OrdinarySetWithOwnDescriptor)", () => {
+    it("writes a writable data descriptor to the receiver, not the target", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          const target = { x: 1 };
+          const receiver: any = {};
+          const ok = Reflect.set(target, "x", 42, receiver);
+          return (ok ? 1 : 0) + (target.x === 1 ? 2 : 0) + (receiver.x === 42 ? 4 : 0);
+        }`),
+      ).toBe(7);
+    });
+
+    it("creates a default data descriptor on the receiver when the target has no key", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          const target = {};
+          const receiver: any = {};
+          const ok = Reflect.set(target, "x", 42, receiver);
+          const d: any = Reflect.getOwnPropertyDescriptor(receiver, "x");
+          return (ok ? 1 : 0) + (d.value === 42 ? 2 : 0)
+            + (d.writable && d.enumerable && d.configurable ? 4 : 0);
+        }`),
+      ).toBe(7);
+    });
+
+    it("binds a target accessor setter to the explicit receiver exactly once", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          let calls = 0;
+          const target = {};
+          const receiver: any = {};
+          Object.defineProperty(target, "x", {
+            set: function (value: number): void {
+              calls++;
+              (this as any).seen = value;
+            },
+          });
+          const ok = Reflect.set(target, "x", 42, receiver);
+          return (ok ? 1 : 0) + (calls === 1 ? 2 : 0) + (receiver.seen === 42 ? 4 : 0);
+        }`),
+      ).toBe(7);
+    });
+
+    it("uses an inherited target setter with the explicit receiver", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          const proto: any = {};
+          const target = {};
+          const receiver: any = {};
+          Object.defineProperty(proto, "x", {
+            set: function (value: number): void { (this as any).seen = value; },
+          });
+          Object.setPrototypeOf(target, proto);
+          return Reflect.set(target, "x", 42, receiver) && receiver.seen === 42 ? 1 : 0;
+        }`),
+      ).toBe(1);
+    });
+
+    it("uses an Object.prototype setter with the explicit receiver and preserves abrupt completion", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          let calls = 0;
+          const target = {};
+          const receiver: any = {};
+          Object.defineProperty(Object.prototype, "x", {
+            set: function (value: number): void {
+              calls++;
+              (this as any).seen = value;
+              (this as any).wasReceiver = this === receiver;
+            },
+          });
+          const ok = Reflect.set(target, "x", 42, receiver);
+          return (ok ? 1 : 0) + (calls === 1 ? 2 : 0)
+            + (receiver.seen === 42 ? 4 : 0) + (receiver.wasReceiver ? 8 : 0);
+        }`),
+      ).toBe(15);
+      await expectThrows(`export function test(): boolean {
+        Object.defineProperty(Object.prototype, "boom", {
+          set: function (_value: number): void { throw new Error("boom"); },
+        });
+        return Reflect.set({}, "boom", 42, {});
+      }`);
+    });
+
+    it("keeps a target own data descriptor terminal before Object.prototype", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          let calls = 0;
+          // Materialize the target's own data descriptor before installing the
+          // inherited setter; it is the nearest descriptor this control pins.
+          const target = { x: 1 };
+          const receiver: any = {};
+          Object.defineProperty(Object.prototype, "x", {
+            set: function (_value: number): void { calls++; },
+          });
+          const ok = Reflect.set(target, "x", 42, receiver);
+          return (ok ? 1 : 0) + (calls === 0 ? 2 : 0)
+            + (target.x === 1 ? 4 : 0) + (receiver.x === 42 ? 8 : 0);
+        }`),
+      ).toBe(15);
+    });
+
+    it("returns false for a primitive receiver, accessor own receiver, and non-writable own receiver", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          const target = { x: 1 };
+          const accessorReceiver: any = {};
+          const fixedReceiver: any = {};
+          Object.defineProperty(accessorReceiver, "x", { set: function (_v: number): void {} });
+          Object.defineProperty(fixedReceiver, "x", { value: 1, writable: false });
+          const primitive = Reflect.set(target, "x", 2, "receiver");
+          const accessor = Reflect.set(target, "x", 2, accessorReceiver);
+          const fixed = Reflect.set(target, "x", 2, fixedReceiver);
+          return (!primitive ? 1 : 0) + (!accessor ? 2 : 0) + (!fixed ? 4 : 0);
+        }`),
+      ).toBe(7);
+    });
+
+    it("preserves symbol keys and evaluates every supplied argument left-to-right", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          let order = 0;
+          const target = {};
+          const receiver: any = {};
+          const key = Symbol("x");
+          const getTarget = (): void => { order = order * 10 + 1; };
+          const getKey = (): symbol => { order = order * 10 + 2; return key; };
+          const getValue = (): number => { order = order * 10 + 3; return 42; };
+          const getReceiver = (): void => { order = order * 10 + 4; };
+          const getIgnored = (): void => { order = order * 10 + 5; };
+          const ok = Reflect.set(
+            (getTarget(), target), getKey(), getValue(), (getReceiver(), receiver), (getIgnored(), 0),
+          );
+          return (ok ? 1 : 0) + (order === 12345 ? 2 : 0) + (receiver[key] === 42 ? 4 : 0);
+        }`),
+      ).toBe(7);
+    });
+
+    it("coerces an explicit-receiver property key once across an explicit target prototype", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          let calls = 0;
+          const key: any = {
+            toString: function (): string {
+              calls++;
+              return calls === 1 ? "x" : "y";
+            },
+          };
+          const proto: any = {};
+          const target = {};
+          const receiver: any = {};
+          Object.setPrototypeOf(target, proto);
+          const ok = Reflect.set(target, key, 42, receiver);
+          return (ok ? 1 : 0) + (calls === 1 ? 2 : 0)
+            + (receiver.x === 42 ? 4 : 0) + (receiver.y === undefined ? 8 : 0);
+        }`),
+      ).toBe(15);
+    });
+
+    it("keeps the explicit refusal for TypedArray indexed-exotic targets", async () => {
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          return Reflect.set(new Int32Array(1), 0, 1, {});
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+    });
+
+    it("keeps dynamically mutated and __proto__-initialized target chains behind the explicit refusal", async () => {
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          const target = {};
+          const receiver = {};
+          const proxy: any = new Proxy({}, { set: function (): boolean { return true; } });
+          Object.setPrototypeOf(target, proxy);
+          return Reflect.set(target, "x", 1, receiver);
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          const proxy: any = new Proxy({}, { set: function (): boolean { return true; } });
+          const target = { __proto__: proxy };
+          return Reflect.set(target, "x", 1, {});
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+    });
+
+    it("does not treat a locally shadowed Reflect.set as the native intrinsic", async () => {
+      expect(
+        await runStandalone(`export function test(): number {
+          const Reflect = {
+            set: function (_target: any, _key: any, _value: any, _receiver: any): number { return 7; },
+          };
+          return Reflect.set({}, "x", 1, {});
+        }`),
+      ).toBe(7);
+    });
+
+    it("keeps reassigned, deferred, repeated, and destructuring bindings on the explicit refusal path", async () => {
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          let target: any = {};
+          target = new Int32Array(1);
+          return Reflect.set(target, 0, 1, {});
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          const target = {};
+          let receiver: any = {};
+          receiver = new Int32Array(1);
+          return Reflect.set(target, 0, 1, receiver);
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `let target: any = {};
+        function invoke(): boolean { return Reflect.set(target, "x", 1, {}); }
+        target = new Int32Array(1);
+        export function test(): boolean { return invoke(); }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          let target: any = {};
+          for (let i = 0; i < 2; i++) {
+            Reflect.set(target, "x", 1, {});
+            target = new Int32Array(1);
+          }
+          return true;
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          let target: any = {};
+          ([target = new Int32Array(1)] = [undefined]);
+          return Reflect.set(target, "x", 1, {});
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          let target: any = {};
+          let receiver: any = {};
+          eval("target = new Int32Array(1); receiver = new Int32Array(1)");
+          return Reflect.set(target, 0, 1, receiver);
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          var target: any = {};
+          var { target } = { target: new Int32Array(1) } as any;
+          return Reflect.set(target, 0, 1, {});
+        }`,
+        "Reflect.set with an explicit receiver",
+      );
+      await expectCompileRefusal(
+        `export function test(): boolean {
+          var target: any = {};
+          var receiver: any = {};
+          with ({ target: new Int32Array(1) }) {
+            return Reflect.set(target, 0, 1, receiver);
+          }
+        }`,
+        "Reflect.set with an explicit receiver",
+        true,
+      );
+    });
   });
 
   it("Reflect.get/set WITHOUT a receiver still compile and work", async () => {
     expect(
       await runStandalone(`export function test(): number {
-        const o: any = {};
+        const o = { x: 0 };
         Reflect.set(o, "x", 41);
         return (Reflect.get(o, "x") as number) + 1;
       }`),
