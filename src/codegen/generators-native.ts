@@ -56,7 +56,9 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
 import { addUnionImports, ensureI32Condition, resolveWasmType } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
+import { compileThisKeyword } from "./expressions/this-keyword.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
@@ -3267,6 +3269,14 @@ export function registerNativeGenerator(
   // builder already returned null for any spill whose type it could not resolve.
 
   const resultTypeIdx = ensureNativeGeneratorResultType(ctx, elemValType);
+  // (#5255) A free declaration can be invoked through a callable object field
+  // (`{ g: g }.g()`), whose receiver is installed only while its factory call
+  // runs. Native execution resumes later, so persist that dynamic receiver in
+  // the state frame. Methods already have their exact receiver as the leading
+  // synthetic wasm param; generator function expressions remain separately
+  // gated because their closure ABI supplies a different capture carrier.
+  const capturesDynamicThis =
+    !synthesizedThis && ts.isFunctionDeclaration(decl) && decl.body !== undefined && bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   // (#2920) A binding-pattern param has no source identifier; mint a unique
@@ -3311,6 +3321,12 @@ export function registerNativeGenerator(
       mutable: true,
     });
   }
+  // Keep the dynamic receiver outside the parameter layout. A source-level
+  // `this` parameter has no runtime receiver semantics, and leading closure /
+  // TDZ captures occupy the same param arrays for nested generators.
+  if (capturesDynamicThis) {
+    stateFields.push({ name: "dynamic_this", type: { kind: "externref" }, mutable: false });
+  }
   // (#3620) A BINDING-PATTERN parameter's state field must be typed at the
   // value's actual wasm-boundary representation (`externref`), NOT at the TS
   // type the checker infers for the pattern.
@@ -3346,7 +3362,8 @@ export function registerNativeGenerator(
       mutable: false,
     });
   }
-  const paramFieldOffset = PARAM_FIELD_OFFSET + (argumentsFieldIdx === undefined ? 0 : 1);
+  const paramFieldOffset =
+    PARAM_FIELD_OFFSET + (argumentsFieldIdx === undefined ? 0 : 1) + (capturesDynamicThis ? 1 : 0);
   const spillFieldOffset = paramFieldOffset + paramTypes.length;
   // Params that are also reassigned in the body need a mutable spill slot too;
   // but params already live in the struct. Spills cover body-declared locals.
@@ -3488,6 +3505,7 @@ export function registerNativeGenerator(
     functionName: internalName,
     decl,
     synthesizedThis,
+    capturesDynamicThis: capturesDynamicThis || undefined,
     stateTypeIdx,
     resultTypeIdx,
     paramNames,
@@ -4940,6 +4958,23 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     resumeFctx.body.push({ op: "local.set", index: localIdx });
   }
 
+  // (#5255) The object-property caller restores `__current_this` immediately
+  // after constructing the iterator. Its generator body starts only on a later
+  // `.next()`, so restore the factory-time receiver from the dedicated frame
+  // field before compiling any body expression. The field sits immediately
+  // before `paramFieldOffset`; it is intentionally not a synthetic parameter
+  // (see NativeGeneratorInfo.capturesDynamicThis).
+  if (info.capturesDynamicThis) {
+    const thisLocal = allocLocal(resumeFctx, "this", { kind: "externref" });
+    resumeFctx.body.push({ op: "local.get", index: 0 });
+    resumeFctx.body.push({
+      op: "struct.get",
+      typeIdx: info.stateTypeIdx,
+      fieldIdx: info.paramFieldOffset - 1,
+    });
+    resumeFctx.body.push({ op: "local.set", index: thisLocal });
+  }
+
   // (#3050) Capturing nested generator: register each cell-riding capture in
   // `boxedCaptures` so identifier reads/writes inside resume states deref the
   // shared cell (the exact mechanism a lifted capturing function body uses) —
@@ -5204,7 +5239,7 @@ export function compileNativeGeneratorFunction(
     if (!factoryBodyWasLive) ctx.liveBodies.delete(fctx.body);
   }
   // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, error=⊥,
-  // optional frame-carried arguments, params…, spills(NaN)…
+  // optional frame-carried arguments/dynamic receiver, params…, spills(NaN)…
   // (#2864 F1) `sent`/`abrupt` init to the carrier default — `f64 NaN` for the
   // numeric/string carriers (unchanged) or a null externref for the boxed-any
   // carrier so the struct.new typechecks before the first `.next(v)`.
@@ -5228,6 +5263,20 @@ export function compileNativeGeneratorFunction(
       return;
     }
     fctx.body.push({ op: "local.get", index: argumentsLocal });
+  }
+  // (#5255) Snapshot the receiver while the callable-property dispatch still
+  // has it installed. `findOwnThisReference` keeps the original source node for
+  // strict/sloppy and lexical-arrow classification; a direct-eval-only body has
+  // no literal `this` node, so its declaration still selects the same receiver
+  // ladder. The resume function reads the resulting frame field as a local.
+  if (info.capturesDynamicThis) {
+    const thisExpr = decl.body ? findOwnThisReference(decl.body) : undefined;
+    const thisType = compileThisKeyword(ctx, fctx, thisExpr ?? decl);
+    if (thisType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (!valTypesMatch(thisType, { kind: "externref" })) {
+      coerceType(ctx, fctx, thisType, { kind: "externref" });
+    }
   }
   // (#2571) Read every wasm param into its `param_*` state slot. For an instance
   // method generator the synthetic `this` is wasm param 0 and user params are

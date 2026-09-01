@@ -436,6 +436,15 @@ export interface NativeGeneratorInfo {
    * leave this `false` (no synthetic param) — byte-identical to pre-#2571.
    */
   synthesizedThis?: boolean;
+  /**
+   * (#5255) A free generator declaration that reads its own dynamic `this`
+   * carries the call-time receiver in a dedicated native-frame field, then
+   * rehydrates it as the resume body's local `this`. This is deliberately NOT
+   * inferred from `paramNames`: a TypeScript-only `this` parameter and leading
+   * closure/TDZ capture params can both occupy that layout without representing
+   * a property-call receiver.
+   */
+  capturesDynamicThis?: boolean;
   /** Per-generator state struct type index. */
   stateTypeIdx: number;
   /** Shared IteratorResult-like struct type index. */

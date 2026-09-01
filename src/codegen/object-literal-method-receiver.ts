@@ -71,11 +71,16 @@
  *
  * `planObjectLiteralMethodReceiverBind` fires only when EVERY declaration of the
  * member symbol is an object-literal `PropertyAssignment` whose initializer is a
- * plain `FunctionExpression` that references its own `this`:
+ * plain `FunctionExpression`, or a named native-generator declaration reference,
+ * that references its own `this`:
  *
  *  - **`FunctionExpression`, never an arrow.** An arrow's `this` is lexical;
  *    installing a dynamic receiver would replace a correct answer with a wrong
  *    one. `{ m: () => … }` is deliberately untouched.
+ *  - **A referenced generator declaration is admitted only for this exact
+ *    property-assignment shape.** Its native frame snapshots the receiver while
+ *    this call installs it; a plain declaration or any other receiver remains
+ *    on its established path.
  *  - **The body must reference its own `this`** — the SAME predicate
  *    (`bodyReferencesOwnThis`) the body used to decide it would read the global,
  *    so the writer and the reader can never disagree. A method that ignores its
@@ -187,14 +192,18 @@ export function objectLiteralMethodNeedsCallReceiver(ctx: CodegenContext, expr: 
  * so the same receiver install used for object-literal function properties can
  * preserve the method-call Reference semantics.
  */
-function isThisReadingFunctionDeclarationReference(ctx: CodegenContext, initializer: ts.Expression): boolean {
+function isThisReadingFunctionDeclarationReference(
+  ctx: CodegenContext,
+  initializer: ts.Expression,
+  generator = false,
+): boolean {
   if (!ts.isIdentifier(initializer)) return false;
   let declaration = ctx.oracle.valueDeclarationOf(initializer);
   if (declaration && (ts.isImportClause(declaration) || ts.isImportSpecifier(declaration))) {
     declaration = ctx.importBindingTargets?.get(declaration);
   }
   if (!declaration || !ts.isFunctionDeclaration(declaration) || declaration.body === undefined) return false;
-  if (declaration.asteriskToken !== undefined) return false;
+  if ((declaration.asteriskToken !== undefined) !== generator) return false;
   if (declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true) return false;
   const first = declaration.parameters[0];
   if (first && ts.isIdentifier(first.name) && first.name.text === "this") return false;
@@ -212,7 +221,12 @@ export function objectLiteralMethodNeedsReceiver(ctx: CodegenContext, nameNode: 
   if (decls.length === 0) return false;
   for (const d of decls) {
     if (ts.isPropertyAssignment(d)) {
-      if (!isThisReadingFunctionExpression(d.initializer)) return false;
+      if (
+        !isThisReadingFunctionExpression(d.initializer) &&
+        !isThisReadingFunctionDeclarationReference(ctx, d.initializer, /* generator */ true)
+      ) {
+        return false;
+      }
       continue;
     }
     // A shorthand method carrying `super`, or own `this` in an open dynamic-
@@ -293,8 +307,9 @@ export function planElementAccessMethodReceiverBind(
  *  - **no property of that literal is arrow-valued.** With a runtime key any
  *    property could be the callee, so one arrow anywhere in the literal is
  *    enough to refuse the whole thing;
- *  - at least one property IS a `this`-reading function expression — otherwise
- *    there is nothing to fix and the module must stay byte-identical;
+ *  - at least one property IS a `this`-reading function expression or native
+ *    generator-declaration reference — otherwise there is nothing to fix and
+ *    the module must stay byte-identical;
  *  - **neither the KEY nor any ARGUMENT references `this`.** This is the
  *    ordering gate, and unlike the static arms it cannot be satisfied by moving
  *    the install: the dynamic dispatch evaluates the whole callee AND its own
@@ -320,7 +335,12 @@ export function planDynamicElementReceiverBind(
   for (const p of literal.properties) {
     if (!ts.isPropertyAssignment(p)) continue;
     if (ts.isArrowFunction(p.initializer)) return undefined;
-    if (isThisReadingFunctionExpression(p.initializer)) demanded = true;
+    if (
+      isThisReadingFunctionExpression(p.initializer) ||
+      isThisReadingFunctionDeclarationReference(ctx, p.initializer, /* generator */ true)
+    ) {
+      demanded = true;
+    }
   }
   if (!demanded) return undefined;
   ensureCurrentThisGlobal(ctx);
