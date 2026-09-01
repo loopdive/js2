@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-01T18:31:11.367Z",
+  "generatedAt": "2026-09-01T18:50:02.971Z",
   "measuredRange": {
     "oldest": "2026-08-31T18:04:01.384Z",
-    "newest": "2026-09-01T18:30:13.165Z"
+    "newest": "2026-09-01T18:32:59.869Z"
   },
   "correctness": {
     "definition": {
@@ -70,10 +70,30 @@
     "status": "partial",
     "stalePackages": [
       "acorn",
-      "lit",
-      "react-dom"
+      "axios",
+      "clsx",
+      "cookie",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "lodash-es",
+      "marked",
+      "moment",
+      "prettier",
+      "react",
+      "react-dom",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
     ],
-    "freshCount": 21,
+    "freshCount": 1,
     "totalCount": 24
   },
   "packages": [
@@ -671,7 +691,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:07:32.003Z",
-      "weeklyDownloads": 275892096
+      "weeklyDownloads": 275892096,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:07:32.003Z"
+      }
     },
     {
       "name": "typescript",
@@ -2126,7 +2151,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:17:35.167Z",
-      "weeklyDownloads": 250686863
+      "weeklyDownloads": 250686863,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:17:35.167Z"
+      }
     },
     {
       "name": "acorn",
@@ -3119,7 +3149,12 @@
         }
       ],
       "measuredAt": "2026-09-01T18:07:41.378Z",
-      "weeklyDownloads": 173435452
+      "weeklyDownloads": 173435452,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:07:41.378Z"
+      }
     },
     {
       "name": "lodash",
@@ -3903,7 +3938,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:08:09.823Z",
-      "weeklyDownloads": 164859858
+      "weeklyDownloads": 164859858,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:08:09.823Z"
+      }
     },
     {
       "name": "react",
@@ -5083,7 +5123,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:30:13.165Z",
-      "weeklyDownloads": 162687688
+      "weeklyDownloads": 162687688,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:30:13.165Z"
+      }
     },
     {
       "name": "eslint",
@@ -5220,7 +5265,12 @@
         }
       ],
       "measuredAt": "2026-09-01T18:09:53.243Z",
-      "weeklyDownloads": 152308132
+      "weeklyDownloads": 152308132,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:09:53.243Z"
+      }
     },
     {
       "name": "react-dom",
@@ -11592,7 +11642,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:10:41.036Z",
-      "weeklyDownloads": 117242232
+      "weeklyDownloads": 117242232,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:10:41.036Z"
+      }
     },
     {
       "name": "tailwindcss",
@@ -11965,7 +12020,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:09:02.692Z",
-      "weeklyDownloads": 117155768
+      "weeklyDownloads": 117155768,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:09:02.692Z"
+      }
     },
     {
       "name": "axios",
@@ -13391,7 +13451,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:12:50.518Z",
-      "weeklyDownloads": 112353408
+      "weeklyDownloads": 112353408,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:12:50.518Z"
+      }
     },
     {
       "name": "clsx",
@@ -13829,7 +13894,12 @@
         }
       ],
       "measuredAt": "2026-09-01T18:07:20.555Z",
-      "weeklyDownloads": 104930549
+      "weeklyDownloads": 104930549,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:07:20.555Z"
+      }
     },
     {
       "name": "jsdom",
@@ -14045,7 +14115,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:10:02.060Z",
-      "weeklyDownloads": 89317829
+      "weeklyDownloads": 89317829,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:10:02.060Z"
+      }
     },
     {
       "name": "marked",
@@ -14215,7 +14290,12 @@
         }
       ],
       "measuredAt": "2026-09-01T18:07:53.330Z",
-      "weeklyDownloads": 60496071
+      "weeklyDownloads": 60496071,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:07:53.330Z"
+      }
     },
     {
       "name": "webpack",
@@ -14886,7 +14966,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:09:11.189Z",
-      "weeklyDownloads": 55617769
+      "weeklyDownloads": 55617769,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:09:11.189Z"
+      }
     },
     {
       "name": "hono",
@@ -17076,7 +17161,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:09:48.722Z",
-      "weeklyDownloads": 53123258
+      "weeklyDownloads": 53123258,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:09:48.722Z"
+      }
     },
     {
       "name": "jest",
@@ -19958,7 +20048,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:10:45.767Z",
-      "weeklyDownloads": 46631732
+      "weeklyDownloads": 46631732,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:10:45.767Z"
+      }
     },
     {
       "name": "lodash-es",
@@ -20320,7 +20415,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:09:10.049Z",
-      "weeklyDownloads": 42294984
+      "weeklyDownloads": 42294984,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:09:10.049Z"
+      }
     },
     {
       "name": "redux",
@@ -20947,7 +21047,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:08:35.478Z",
-      "weeklyDownloads": 40344956
+      "weeklyDownloads": 40344956,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:08:35.478Z"
+      }
     },
     {
       "name": "moment",
@@ -22101,7 +22206,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:08:54.200Z",
-      "weeklyDownloads": 34294671
+      "weeklyDownloads": 34294671,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:08:54.200Z"
+      }
     },
     {
       "name": "three",
@@ -23442,7 +23552,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:10:09.076Z",
-      "weeklyDownloads": 12487515
+      "weeklyDownloads": 12487515,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:10:09.076Z"
+      }
     },
     {
       "name": "styled-components",
@@ -23811,7 +23926,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:07:19.846Z",
-      "weeklyDownloads": 11029759
+      "weeklyDownloads": 11029759,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:07:19.846Z"
+      }
     },
     {
       "name": "stylelint",
@@ -25871,7 +25991,12 @@
       },
       "knownBugs": [],
       "measuredAt": "2026-09-01T18:12:21.718Z",
-      "weeklyDownloads": 10427988
+      "weeklyDownloads": 10427988,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-09-01T18:12:21.718Z"
+      }
     },
     {
       "name": "lit",
@@ -25881,7 +26006,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 8498,
+        "durationMs": 9074,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -28135,51 +28260,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.5766067455060697,
-            "nodeUs": 0.00397533694357066,
-            "wasmStdUs": 0.0034746665710475738,
-            "nodeStdUs": 0.00015096191580215375,
-            "ratio": 0.006814594564411591,
-            "ratioStd": 0.00023317653438751566,
+            "wasmUs": 0.4799731027298428,
+            "nodeUs": 0.005626241056590003,
+            "wasmStdUs": 0.0007750549451782917,
+            "nodeStdUs": 0.00002306756272482723,
+            "ratio": 0.011724404637995971,
+            "ratioStd": 0.00005125659365227705,
             "ratioSamples": [
-              0.007305466555182084,
-              0.006521100146929566,
-              0.006685334876290031,
-              0.006689227579617166,
-              0.0069065215704126265,
-              0.006940411652890001,
-              0.006499966057492524,
-              0.0068988195290127004,
-              0.006814594564411591
+              0.011795390291046001,
+              0.011744830759635876,
+              0.011841181563661748,
+              0.011721992387887585,
+              0.01174639282616734,
+              0.01166297688637858,
+              0.01171128830243714,
+              0.011724404637995971,
+              0.011684961452077817
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 437091,
+            "iters": 480941,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.58471473217246,
-              0.5749902972149706,
-              0.5821132647435145,
-              0.5757381918181858,
-              0.5766067455060697,
-              0.579490026104409,
-              0.5763026463596769,
-              0.5762426634270631,
-              0.583356339984096
+              0.4808932550978267,
+              0.4788855743220095,
+              0.47995686373172136,
+              0.4799731027298428,
+              0.4794162984648746,
+              0.48134193591313346,
+              0.4810987106526589,
+              0.47980039755395315,
+              0.4806553672903634
             ],
             "nodeSamplesUs": [
-              0.004271613920208156,
-              0.0037495693116516198,
-              0.00389162211074087,
-              0.0038512437913491263,
-              0.003982346925483094,
-              0.004021899329908572,
-              0.003745947640181017,
-              0.003975394139900916,
-              0.00397533694357066
+              0.005672323632210413,
+              0.00562443002364303,
+              0.005683256366172973,
+              0.005626241056590003,
+              0.005631412169035504,
+              0.005613879872999595,
+              0.005634285702384075,
+              0.005625374006393879,
+              0.005616439438522201
             ],
-            "compileDurationMs": 750.0514129999938,
+            "compileDurationMs": 718.6034079999954,
             "binaryBytes": 1513,
             "moduleImportCount": 6,
             "functionImportCount": 6,
@@ -28204,59 +28329,54 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.5766067455060697,
-        "nodeUs": 0.00397533694357066,
-        "wasmStdUs": 0.0034746665710475738,
-        "nodeStdUs": 0.00015096191580215375,
-        "ratio": 0.006814594564411591,
-        "ratioStd": 0.00023317653438751566,
+        "wasmUs": 0.4799731027298428,
+        "nodeUs": 0.005626241056590003,
+        "wasmStdUs": 0.0007750549451782917,
+        "nodeStdUs": 0.00002306756272482723,
+        "ratio": 0.011724404637995971,
+        "ratioStd": 0.00005125659365227705,
         "ratioSamples": [
-          0.007305466555182084,
-          0.006521100146929566,
-          0.006685334876290031,
-          0.006689227579617166,
-          0.0069065215704126265,
-          0.006940411652890001,
-          0.006499966057492524,
-          0.0068988195290127004,
-          0.006814594564411591
+          0.011795390291046001,
+          0.011744830759635876,
+          0.011841181563661748,
+          0.011721992387887585,
+          0.01174639282616734,
+          0.01166297688637858,
+          0.01171128830243714,
+          0.011724404637995971,
+          0.011684961452077817
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 437091,
+        "iters": 480941,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.58471473217246,
-          0.5749902972149706,
-          0.5821132647435145,
-          0.5757381918181858,
-          0.5766067455060697,
-          0.579490026104409,
-          0.5763026463596769,
-          0.5762426634270631,
-          0.583356339984096
+          0.4808932550978267,
+          0.4788855743220095,
+          0.47995686373172136,
+          0.4799731027298428,
+          0.4794162984648746,
+          0.48134193591313346,
+          0.4810987106526589,
+          0.47980039755395315,
+          0.4806553672903634
         ],
         "nodeSamplesUs": [
-          0.004271613920208156,
-          0.0037495693116516198,
-          0.00389162211074087,
-          0.0038512437913491263,
-          0.003982346925483094,
-          0.004021899329908572,
-          0.003745947640181017,
-          0.003975394139900916,
-          0.00397533694357066
+          0.005672323632210413,
+          0.00562443002364303,
+          0.005683256366172973,
+          0.005626241056590003,
+          0.005631412169035504,
+          0.005613879872999595,
+          0.005634285702384075,
+          0.005625374006393879,
+          0.005616439438522201
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-01T14:41:24.320Z",
-      "weeklyDownloads": 6829692,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-09-01T14:41:24.320Z"
-      }
+      "measuredAt": "2026-09-01T18:32:59.869Z",
+      "weeklyDownloads": 6829692
     }
   ]
 }
