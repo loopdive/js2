@@ -72,6 +72,7 @@ import {
   BOOLEAN_BOUNDARY_POLICY_DISABLED,
   EXTERN_IS_UNDEFINED_POLICY_DISABLED,
   GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+  STRING_COMPARE_POLICY_DISABLED,
   NUMBER_BOUNDARY_POLICY_DISABLED,
 } from "../ir/runtime-manifest.js";
 import { isIntrinsicId } from "../ir/intrinsics.js";
@@ -503,6 +504,7 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
       booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
       externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
       generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+      stringCompare: STRING_COMPARE_POLICY_DISABLED,
     },
   });
   const funcIdx = lowerAndRegister(ctx, def.name, prepared?.functions[0] ?? ir);

@@ -531,6 +531,18 @@ function requirePreparedGeneratorProvider(provider: IrFuncRef | undefined, kind:
   return provider;
 }
 
+/**
+ * (#3526 F2-S1) The string family's twin of the guard above — same argument,
+ * same failure mode. `forof.string` was the LAST string-op `??` lane fallback
+ * in this file; the `extern.*` quartet below belongs to family 6.
+ */
+function requirePreparedStringProvider(provider: IrFuncRef | undefined, kind: string, funcName: string): IrFuncRef {
+  if (!provider) {
+    throw new Error(`ir/lower: ${kind} has no prepared runtime provider (${funcName})`);
+  }
+  return provider;
+}
+
 export function lowerIrFunctionToWasm(
   func: IrFunction,
   resolver: IrLowerResolver,
@@ -3372,7 +3384,19 @@ export function lowerIrFunctionBody<S, Slot>(
         // iteration yields code points: a well-formed surrogate pair is ONE
         // 2-code-unit element. The cursor advances by the element's `len`
         // (1, or 2 for a pair) below instead of a fixed +1.
-        const charAtIdx = resolver.resolveFunc(instr.provider ?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN));
+        // (#3526 F2-S1) Fail closed rather than re-deciding the symbol here.
+        // `attachIrStringSupport` attaches this provider UNCONDITIONALLY for
+        // every `forof.string` (`string-support.ts` — the kind is in the
+        // provider-attaching branch and `irStringCallableProviderRef` never
+        // returns `undefined` for it), and `prepareStrings` runs that pass over
+        // every healthy owner. The linear adapter cannot reach this case at all:
+        // `forof.string` is absent from its instruction allowlist
+        // (`backend/legality.ts`), so it demotes at the lowering boundary. The
+        // retired `?? irIntrinsicFuncRef(...)` fallback was therefore dead, and
+        // a missing attachment must demote ONE owner, not silently mint a body.
+        const charAtIdx = resolver.resolveFunc(
+          requirePreparedStringProvider(instr.provider, "forof.string", func.name),
+        );
         // The AnyString struct's `len` field is at index 0 (matches
         // `nativeStringType` in src/codegen/native-strings.ts).
         // We recover the typeIdx from the SSA value's IrType — must be
