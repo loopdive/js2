@@ -37,6 +37,7 @@ import { ensureExnTag } from "./registry/imports.js";
 import { ensureGetUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
 import { buildStandardTryTable } from "../ir/try-table.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { reserveAnyIterNext } from "./iterator-native.js";
 import {
   STATE_FIELD,
   ERROR_FIELD,
@@ -238,6 +239,20 @@ interface HostGenMixDeps {
 }
 
 /**
+ * (#3591) The opaque `.next()` dispatcher must defer to native iterator
+ * carriers after its generator-state ladder misses.  `$IterRec` and
+ * `$LazyIterHelper` are both internal anyrefs, so this is a runtime arm rather
+ * than a static checker classification: an `any` receiver can contain either a
+ * generator produced during module-init pass 2 or a lazy iterator helper.
+ */
+interface NativeIteratorNextMixDeps {
+  /** Reserved `__any_iter_next(externref) -> externref` adapter. */
+  callIdx: number;
+  /** Finalized iterator carrier types recognized by the adapter. */
+  typeIdxs: readonly number[];
+}
+
+/**
  * (#3164) Abstract heap-type codes for the host-external `ref.test`
  * classification (same trick as iterator-native.ts's HOSTGEN arm): an
  * internalized host external is neither struct nor array nor i31. Negative
@@ -288,6 +303,8 @@ interface OpaqueNativeGeneratorDispatch {
   funcIdx: number;
   /** Scratch externref local used only when the final module mixes host generators. */
   hostResultLocal: number;
+  /** Reserved only for opaque `.next()`, which may actually receive an iterator carrier. */
+  anyIterNextIdx?: number;
 }
 
 const opaqueNativeGeneratorDispatches = new WeakMap<
@@ -346,11 +363,15 @@ function reserveOpaqueNativeGeneratorDispatch(
   const typeIdx = addFuncType(
     ctx,
     params,
-    [{ kind: "eqref" }],
+    [{ kind: "externref" }],
     `$${opaqueNativeGeneratorDispatchName(methodName)}_type`,
   );
   const funcIdx = mintDefinedFunc(ctx);
   const hostResultLocal = params.length;
+  // An opaque `.next()` can be a native iterator-helper call. Reserve its
+  // adapter while body compilation can still register the iterator runtime;
+  // final type classification remains in the late-filled dispatch below.
+  const anyIterNextIdx = methodName === "next" ? reserveAnyIterNext(ctx) : undefined;
   const name = opaqueNativeGeneratorDispatchName(methodName);
   pushDefinedFunc(ctx, funcIdx, {
     name,
@@ -361,7 +382,12 @@ function reserveOpaqueNativeGeneratorDispatch(
   });
   ctx.funcMap.set(name, funcIdx);
 
-  const dispatch = { methodName, funcIdx, hostResultLocal };
+  const dispatch = {
+    methodName,
+    funcIdx,
+    hostResultLocal,
+    anyIterNextIdx,
+  };
   dispatches.set(methodName, dispatch);
   return dispatch;
 }
@@ -382,6 +408,8 @@ function buildNativeGeneratorDispatch(
   errorLocal?: number,
   // (#3164) Host-generator mix fallback deps — see tryCompileNativeGeneratorMethodCall.
   hostMix?: HostGenMixDeps,
+  // (#3591) Native iterator helper fallback for opaque `.next()` receivers.
+  iteratorMix?: NativeIteratorNextMixDeps,
 ): { instrs: Instr[]; resultType: ValType } {
   const infos = Array.from(ctx.nativeGenerators.values());
   // (#2864 F1 / #2892) The enclosing dispatch block must accept every branch's
@@ -416,6 +444,10 @@ function buildNativeGeneratorDispatch(
   if (hostMix && !(distinctResultIdxs.size === 1 && infos[0]!.resultTypeIdx === hostMix.extResultTypeIdx)) {
     resultType = { kind: "eqref" };
   }
+  // `__any_iter_next` crosses its own ABI as externref. Its result and every
+  // native-generator result struct share `anyref`; use that common supertype
+  // only for the opaque `.next()` helper that installs this fallback.
+  if (iteratorMix) resultType = { kind: "anyref" };
   // The per-branch `.next(v)`/`.return(v)` value local: an any-carrier branch
   // consumes the externref `valueAnyLocal`; numeric / string branches consume the
   // f64 `valueLocal` (unchanged). `valueLocal` is always present when valueAnyLocal
@@ -481,6 +513,29 @@ function buildNativeGeneratorDispatch(
         blockType: { kind: "val", type: resultType },
         then: hostCall,
         else: typeErrArm,
+      },
+    ];
+  }
+
+  if (iteratorMix) {
+    const recognized: Instr[] = [];
+    for (const typeIdx of iteratorMix.typeIdxs) {
+      recognized.push({ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx });
+      if (recognized.length > 2) recognized.push({ op: "i32.or" });
+    }
+    const iteratorCall: Instr[] = [
+      { op: "local.get", index: anyLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: iteratorMix.callIdx },
+      { op: "any.convert_extern" },
+    ];
+    fallback = [
+      ...recognized,
+      {
+        op: "if",
+        blockType: { kind: "val", type: resultType },
+        then: iteratorCall,
+        else: fallback,
       },
     ];
   }
@@ -646,11 +701,25 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
       }
     }
 
+    const iteratorMix =
+      dispatch.anyIterNextIdx === undefined
+        ? undefined
+        : (() => {
+            const typeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
+              (typeIdx): typeIdx is number => typeIdx !== undefined,
+            );
+            return typeIdxs.length === 0 ? undefined : { callIdx: dispatch.anyIterNextIdx, typeIdxs };
+          })();
+
     const { instrs } =
       dispatch.methodName === "throw"
         ? buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, undefined, undefined, 1, hostMix)
-        : buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, 1, 2, undefined, hostMix);
-    fn.body = instrs;
+        : buildNativeGeneratorDispatch(ctx, 0, dispatch.methodName, 1, 2, undefined, hostMix, iteratorMix);
+    // Every native result struct (including the host-mix wrapper) is an
+    // internal anyref. Cross the opaque helper ABI as externref so callers
+    // compiled before their producer exists retain the ordinary dynamic
+    // IteratorResult representation rather than an unusable eqref.
+    fn.body = [...instrs, { op: "extern.convert_any" }];
   }
 }
 
@@ -662,7 +731,6 @@ export function tryCompileNativeGeneratorMethodCall(
   args: readonly ts.Expression[],
 ): ValType | null | undefined {
   if (methodName !== "next" && methodName !== "return" && methodName !== "throw") return undefined;
-  if (ctx.nativeGenerators.size === 0) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, receiverExpr);
   if (receiverType && (receiverType.kind === "ref" || receiverType.kind === "ref_null")) {
@@ -730,7 +798,7 @@ export function tryCompileNativeGeneratorMethodCall(
     fctx.body.push({ op: "local.get", index: valueLocal! }, { op: "local.get", index: valueAnyLocal! });
   }
   fctx.body.push({ op: "call", funcIdx: dispatch.funcIdx });
-  return { kind: "eqref" };
+  return { kind: "externref" };
 }
 
 export function tryCompileNativeGeneratorResultProperty(

@@ -40,7 +40,7 @@ describe("#3591 — opaque generator resume dispatch late fill (standalone)", ()
 
         export function test(): number {
           const nextIt: any = nextGen();
-          const nextValue = nextIt.next().value as number;
+          const { value: nextValue, done: nextDone } = nextIt.next();
 
           const returnIt: any = returnGen();
           returnIt.next();
@@ -51,9 +51,32 @@ describe("#3591 — opaque generator resume dispatch late fill (standalone)", ()
           let caught = 0;
           try { throwIt.throw(new Error("forced opaque dispatch")); } catch (_) { caught = 1; }
 
-          return unrelatedTopLevelCall + nextValue + (returned.done ? 10 : 0) + caught;
+          return unrelatedTopLevelCall + nextValue + (nextDone ? 100 : 0) + (returned.done ? 10 : 0) + caught;
         }
       `),
     ).toBe(14);
+  });
+
+  it("routes opaque chunks and windows .next() calls to the native iterator helper", async () => {
+    expect(
+      await runHostFree(`
+        export function test(): number {
+          const chunkSource: any = (function* () { yield 1; yield 2; yield 3; })();
+          const windowSource: any = (function* () { yield 1; yield 2; yield 3; })();
+          const chunks: any = chunkSource.chunks(2);
+          const windows: any = windowSource.windows(2);
+
+          const c1 = chunks.next();
+          const c2 = chunks.next();
+          const c3 = chunks.next();
+          const w1 = windows.next();
+          const w2 = windows.next();
+          const w3 = windows.next();
+
+          return (c1.done ? 1 : 0) + (c2.done ? 1 : 0) + (c3.done ? 1 : 0) +
+            (w1.done ? 1 : 0) + (w2.done ? 1 : 0) + (w3.done ? 1 : 0);
+        }
+      `),
+    ).toBe(2);
   });
 });
