@@ -111,7 +111,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
+import { inferTaViewType, proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -3456,6 +3456,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // predicate the lowering's dispatcher asks, so slot and value cannot
     // disagree — see array-concat-carrier.ts.
     if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
+    // (#5150) `var ta = new Uint8Array(buffer[, byteOffset[, length]])` at
+    // MODULE scope. The constructor lowers to a shared-backing `$__ta_view`
+    // struct (#3054 B1/B2), but the checker-inferred slot is the plain
+    // TypedArray vec, so the value failed the slot's type and the global stayed
+    // null — every later `ta[i]` / `ta.length` threw "Cannot access property on
+    // null or undefined". Function-local `let`/`const` slots already consult
+    // this (#4376, `inferLetConstInitializerWasmType`); module globals did not,
+    // and test262 writes its bindings at top level.
+    {
+      const taViewGlobalType = inferTaViewType(ctx, decl.initializer);
+      if (taViewGlobalType !== null) return taViewGlobalType;
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
