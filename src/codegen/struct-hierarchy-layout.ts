@@ -60,6 +60,39 @@ export function isDeclaredStructRefSubtypeAssignable(mod: WasmModule, actual: Va
   return false;
 }
 
+/** Nearest nominal struct ancestor shared by two GC references, including either input itself. */
+export function nearestDeclaredStructCommonAncestor(
+  mod: WasmModule,
+  left: ValType,
+  right: ValType,
+): number | undefined {
+  if ((left.kind !== "ref" && left.kind !== "ref_null") || (right.kind !== "ref" && right.kind !== "ref_null")) {
+    return undefined;
+  }
+
+  const leftAncestors = new Set<number>();
+  let current: number | undefined = left.typeIdx;
+  for (let depth = 0; current !== undefined && depth <= mod.types.length; depth++) {
+    leftAncestors.add(current);
+    const definition: TypeDef | undefined = mod.types[current];
+    if (!definition || definition.kind !== "struct") break;
+    const parent: number | undefined = definition.superTypeIdx;
+    if (parent === undefined || parent < 0) break;
+    current = parent;
+  }
+
+  current = right.typeIdx;
+  for (let depth = 0; current !== undefined && depth <= mod.types.length; depth++) {
+    if (leftAncestors.has(current)) return current;
+    const definition: TypeDef | undefined = mod.types[current];
+    if (!definition || definition.kind !== "struct") break;
+    const parent: number | undefined = definition.superTypeIdx;
+    if (parent === undefined || parent < 0) break;
+    current = parent;
+  }
+  return undefined;
+}
+
 /** True when `typeIdx` is already the physical prefix of a declared struct subtype. */
 export function isNominalStructParent(mod: WasmModule, typeIdx: number): boolean {
   return mod.types.some(

@@ -23,6 +23,8 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import type { IrIntegrationOptions } from "./integration-options.js";
+export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
@@ -317,13 +319,35 @@ import {
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
 import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
-import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import {
+  prepareIrRuntimeManifest,
+  preparedGeneratorNumberBoxProvider,
+  preparedStringCompareProvider,
+  type PreparedIrRuntimeManifest,
+} from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
-import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
-import { isIntrinsicId, type IntrinsicId, type NumberBoundaryIntrinsicId } from "./intrinsics.js";
+import {
+  attachIrGeneratorSupport,
+  collectAttachedGeneratorProviders,
+  irGeneratorNumberBoxDemand,
+} from "./generator-support.js";
+import {
+  isIntrinsicId,
+  type BooleanBoundaryIntrinsicId,
+  type ExternBoundaryIntrinsicId,
+  type IntrinsicId,
+  type NumberBoundaryIntrinsicId,
+} from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
-import type { NumberBoundaryPolicy, RuntimeProviderPlan } from "./runtime-manifest.js";
+import type {
+  BooleanBoundaryPolicy,
+  ExternIsUndefinedPolicy,
+  GeneratorNumberBoxPolicy,
+  NumberBoundaryPolicy,
+  RuntimeProviderPlan,
+  StringComparePolicy,
+} from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -529,15 +553,6 @@ export interface IrTypeOverrideMap {
   // void-returning function (zero Wasm result types). Plumbs through to
   // `from-ast.ts` so the IR builder can be constructed with `[]` results.
   get(name: string): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
-}
-
-export interface IrIntegrationOptions {
-  /**
-   * Derive post-pass R2 components and seal every dependency-complete ABI
-   * component before lowering. Components with still-implicit runtime/layout
-   * support retain the established transitional route.
-   */
-  readonly sealPreparedComponents?: boolean;
 }
 
 interface BuiltFn {
@@ -795,6 +810,114 @@ function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPol
   });
 }
 
+/**
+ * (#3526 F1-S2) This caller's already-resolved BOOLEAN-boundary policy.
+ *
+ * The EXACT fact the from-ast boolean arm used to read through the
+ * `hasHostBooleanBox` resolver predicate (`!ctx.nativeStrings`), consulted
+ * once, here, before freeze. Boolean values share the host union-import family
+ * with numbers but retain their own boxer, so `true` never crosses an externref
+ * boundary as the number `1`; the family is one-armed because no native
+ * boolean boxer exists to select.
+ */
+function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryPolicy {
+  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("unsupported" as const) });
+}
+
+/**
+ * (#3526 F1-S4) This caller's already-resolved externref UNDEFINED-PROBE policy.
+ *
+ * The EXACT fact the from-ast strict-undefined arm used to read through the
+ * `externIsUndefinedIsNative` resolver predicate (#4461,
+ * `ctx.standalone || ctx.wasi || ctx.nativeStrings`), consulted once, here,
+ * before freeze. Every host-free lane registers `__extern_is_undefined` as a
+ * real Wasm function through `ensureObjectRuntime`, so this truth table is a
+ * THIRD one again: wider than `numberBoundary` (unsupported on native-strings
+ * GC) and wider than `booleanBoundary` (no native arm at all). The three name
+ * different symbols and must not be merged.
+ */
+function integrationExternIsUndefinedPolicy(ctx: CodegenContext): ExternIsUndefinedPolicy {
+  return Object.freeze({
+    probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? ("native" as const) : ("host" as const),
+  });
+}
+
+/** The first extern-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedExternBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: ExternIsUndefinedPolicy,
+): ExternBoundaryIntrinsicId | undefined {
+  if (policy.probe !== "unsupported") return undefined;
+  let found: ExternBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.extern.is_undefined") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
+/**
+ * (#3526 F1-S3) This caller's already-resolved GENERATOR number-box policy.
+ *
+ * The EXACT truth table the `gen.setReturn` seam has always had, consulted
+ * once, here, before freeze: `__box_number` resolves to the `env` union import
+ * on the host lane and to the union-native helper when native strings are on.
+ * That is deliberately WIDER than `integrationNumberBoundaryPolicy`, whose box
+ * arm is host-only by design — the two policies name the same symbol and must
+ * not be merged.
+ */
+function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumberBoxPolicy {
+  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("native" as const) });
+}
+
+/**
+ * (#3526 F2-S1) This caller's already-resolved STRING-COMPARE policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (integration.ts, the `IR_STRING_COMPARE_FN` arm),
+ * consulted once, here, before freeze. `standalone` and `wasi` both imply
+ * `nativeStrings`, so this one flag is the whole truth table — which is why the
+ * arm is stated as `nativeStrings ? native : host` rather than repeating
+ * `integrationExternIsUndefinedPolicy`'s three-way disjunction.
+ */
+function integrationStringComparePolicy(ctx: CodegenContext): StringComparePolicy {
+  return Object.freeze({ compare: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S1) True when any of `fns` performs a string relational compare.
+ *
+ * The seam carries no `intrinsic` instruction — from-ast emits a plain `call`
+ * through the `IR_STRING_COMPARE_FN` sentinel func-ref — so the demand is read
+ * off the call population directly, the way `irGeneratorNumberBoxDemand` reads
+ * the `gen.setReturn` one. The same predicate answers the freeze request and
+ * the owner-local partition below, so the two can never disagree.
+ */
+function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (found || instr.kind !== "call") return;
+          const { binding } = instr.target;
+          if (binding.kind === "intrinsic" && binding.symbol === IR_STRING_COMPARE_FN) found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -815,6 +938,26 @@ function unsupportedNumberBoundaryIntrinsic(
   return found;
 }
 
+/** The first boolean-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedBooleanBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: BooleanBoundaryPolicy,
+): BooleanBoundaryIntrinsicId | undefined {
+  if (policy.box !== "unsupported") return undefined;
+  let found: BooleanBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.boolean.box") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
 function prepareBuiltFnRuntimeManifest(
   ctx: CodegenContext,
   sourceFile: string,
@@ -827,7 +970,17 @@ function prepareBuiltFnRuntimeManifest(
       target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
       backend: "wasmgc",
       numberBoundary: integrationNumberBoundaryPolicy(ctx),
+      booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+      externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
+      generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
+      stringCompare: integrationStringComparePolicy(ctx),
     },
+    // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
+    // later — see `forEachIrGeneratorSetReturn`.
+    generatorNumberBoxDemand: irGeneratorNumberBoxDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S1) Same predicate the partition scan above runs, so a demand
+    // the freeze requests can never be one the partition failed to classify.
+    stringCompareDemand: irStringCompareDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3479,9 +3632,87 @@ export function compileIrPathFunctions(
   // manifest deterministic; structural manifest corruption and late mutation
   // stay fatal for the whole transaction.
   const numberBoundaryPolicy = integrationNumberBoundaryPolicy(ctx);
+  const booleanBoundaryPolicy = integrationBooleanBoundaryPolicy(ctx);
+  const externIsUndefinedPolicy = integrationExternIsUndefinedPolicy(ctx);
+  const generatorNumberBoxPolicy = integrationGeneratorNumberBoxPolicy(ctx);
+  const stringComparePolicy = integrationStringComparePolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
-    if (unsupported === undefined) continue;
+    if (unsupported !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
+            `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S3) The generator return seam partitions on the same rule. It
+    // carries no intrinsic instruction, so the demand is read off the
+    // `gen.setReturn` population directly — the same enumeration the freeze
+    // scan and the attachment pass use.
+    if (generatorNumberBoxPolicy.box === "unsupported" && irGeneratorNumberBoxDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: generator return boxing has no provider under generator-number-box policy " +
+            `box=${generatorNumberBoxPolicy.box}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S4) The externref undefined probe partitions on the same rule,
+    // in the same pass, for the same reason.
+    const unsupportedProbe = unsupportedExternBoundaryIntrinsic(entry.fn, externIsUndefinedPolicy);
+    if (unsupportedProbe !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: semantic intrinsic ${unsupportedProbe} has no provider under extern-is-undefined policy ` +
+            `probe=${externIsUndefinedPolicy.probe}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S1) The string relational compare seam partitions on the same
+    // rule, in the same pass. Like the generator seam it carries no intrinsic
+    // instruction, so the demand is read off the call population directly.
+    if (stringComparePolicy.compare === "unsupported" && irStringCompareDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string relational compare has no provider under string-compare policy " +
+            `compare=${stringComparePolicy.compare}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S2) The boolean boundary partitions on the SAME rule and in the
+    // same pass, so one demoting owner still cannot fail an unrelated one
+    // through the aggregate manifest below.
+    const unsupportedBoolean = unsupportedBooleanBoundaryIntrinsic(entry.fn, booleanBoundaryPolicy);
+    if (unsupportedBoolean === undefined) continue;
     markOwnerFailure(
       terminalOwnerOf(entry),
       entry.artifactUnitId,
@@ -3489,8 +3720,8 @@ export function compileIrPathFunctions(
       new IrUnsupportedError(
         "late-preparation-unsupported",
         "resolve",
-        `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
-          `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        `ir/integration: semantic intrinsic ${unsupportedBoolean} has no provider under boolean-boundary policy ` +
+          `box=${booleanBoundaryPolicy.box}`,
       ),
       "resolve",
     );
@@ -3539,8 +3770,11 @@ export function compileIrPathFunctions(
       // imports exist, then OBSERVE them: prepared-component sealing runs
       // before lowering, so an unobserved provider reads as an unplanned ABI
       // binding and peels the generator back to the compile-twice route.
+      // (#3526 F1-S3) The boxing callable is the frozen manifest's decision,
+      // not a symbol spelled at this seam.
+      const generatorNumberBoxProvider = preparedGeneratorNumberBoxProvider(preparedRuntimeManifest);
       healthyForLower = healthyForLower.map((entry) => {
-        const fn = attachIrGeneratorSupport(entry.fn);
+        const fn = attachIrGeneratorSupport(entry.fn, generatorNumberBoxProvider);
         return fn === entry.fn ? entry : { ...entry, fn };
       });
       if (ctx.programAbiCallableProviders) {
@@ -3614,12 +3848,7 @@ export function compileIrPathFunctions(
   recordOwnerPreparationFailures(
     failures,
     failedOwners,
-    preregisterCallableProviders(
-      ctx,
-      healthyForLower,
-      preparedRuntimeManifest?.providers,
-      fuseNativeNumberFormatCarriers,
-    ),
+    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest, fuseNativeNumberFormatCarriers),
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
@@ -3967,7 +4196,7 @@ export function compileIrPathFunctions(
       deferredClass,
       unitCallableSlots,
       importedCallableCatalog,
-      preparedRuntimeManifest?.providers,
+      preparedRuntimeManifest,
       fuseNativeNumberFormatCarriers,
       loweringPlans?.fnctorParameterPreselection,
       loweringPlans?.fnctorParameterPreselectionIsCurrent,
@@ -4289,6 +4518,33 @@ export function compileIrPathFunctions(
             "module-init body contains a non-trailing return-class op — appended init epilogues would be skipped; keeping legacy body",
           );
           continue;
+        }
+        // (#3523 R4 gap 3) WASI idempotence, as CONSTRUCTION rather than splice.
+        //
+        // `applyModuleInitGuard` makes `__module_init` re-entrant-safe by
+        // prepending `global.get $done / if(return) / $done = 1` to an already
+        // emitted body. A Prepared body cannot take that: the early `return` is
+        // precisely the return-class op the scan above withdraws the patch over,
+        // and the body identity is sealed at the preparation snapshot.
+        //
+        // The wrapping-`if` form is equivalent and composes: it introduces no
+        // return-class op, so the scan passes and every later epilogue
+        // (`finalizeInModuleInitFlag`'s `__in_module_init = 0` above all) still
+        // executes on the already-initialized path — which the early-`return`
+        // form would skip. `plantPreparedWasiModuleInitGuard` is set only by the
+        // prepared preparation call, so the post-direct overlay never plants a
+        // second guard on the legacy WASI lane.
+        const wasiGuard = options?.plantPreparedWasiModuleInitGuard ? ctx.preparedWasiModuleInitGuard : undefined;
+        if (wasiGuard && wasiGuard.planted === undefined) {
+          const doneGet: Instr = { op: "global.get", index: wasiGuard.doneGlobalIdx };
+          const eqz: Instr = { op: "i32.eqz" };
+          const guardIf: Instr = {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 1 }, { op: "global.set", index: wasiGuard.doneGlobalIdx }, ...finalBody],
+          };
+          finalBody = [doneGet, eqz, guardIf];
+          wasiGuard.planted = { doneGet, eqz, guard: guardIf };
         }
       } else {
         finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
@@ -5657,15 +5913,6 @@ function makeFromAstResolver(
       if (ctx.mapTypeIdx < 0) return undefined;
       return { kind: "val", val: { kind: "ref_null", typeIdx: ctx.mapTypeIdx } };
     },
-    externIsUndefinedIsNative(): boolean {
-      return ctx.standalone || ctx.wasi || ctx.nativeStrings;
-    },
-    // Boolean values share the host union-import family with numbers, but
-    // retain their own boxer so `true` never crosses an externref boundary as
-    // the number `1`.
-    hasHostBooleanBox(): boolean {
-      return !ctx.nativeStrings;
-    },
     // (#2955 slice 3) Rep predicate: the string carrier is externref (host
     // strings), so string SSA values flow unchanged into externref-expected
     // positions (`coerceToExpectedExtern` host-call args) and take the
@@ -5874,9 +6121,14 @@ function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void
 function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  // (#3526 F2-S1) The whole prepared manifest, not just its intrinsic-provider
+  // map: the string-compare arm reads a FEATURE row (`js.string.compare`) that
+  // no intrinsic use ever puts in that map, plus the frozen host-capability
+  // records the host arm's field name comes from.
+  prepared?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
 ): number {
+  const runtimeProviders = prepared?.providers;
   if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
     throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
   }
@@ -6002,11 +6254,28 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_TRUSTED_FN) {
     index = ensureHostCharCodeAtTrusted(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_COMPARE_FN) {
-    if (ctx.nativeStrings) {
+    // (#3526 F2-S1) The arm no longer reads `ctx.nativeStrings`: the frozen
+    // manifest's `stringCompare` policy already resolved which authority
+    // answers, and this only materializes it through the SAME two routines as
+    // before. Fail-closed: an owner whose policy cannot provide the seam is
+    // partitioned out before freeze, so a missing row here is an invariant, not
+    // a lane fact to re-decide locally.
+    const arm = preparedStringCompareProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string relational compare has no frozen provider under the string-compare policy",
+      );
+    }
+    if (arm.arm === "native") {
       ensureNativeStringHelpers(ctx);
-      index = nativeStrHelperHandle(ctx, "__str_compare");
+      index = nativeStrHelperHandle(ctx, arm.symbol);
     } else {
-      index = ctx.funcMap.get("string_compare");
+      // The host arm names the capability record's field — the `env` BASE
+      // import the legacy collector already minted. Never `ensureLateImport`:
+      // a late registration here would shift every defined funcidx.
+      index = ctx.funcMap.get(arm.field);
     }
   } else if (
     ref.binding.kind === "intrinsic" &&
@@ -6190,7 +6459,7 @@ function makeResolver(
   classResolver: DeferredClassResolver,
   unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  preparedRuntimeManifest?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
@@ -6222,7 +6491,7 @@ function makeResolver(
         return resolvePreparedImportCallable(ctx, ref, importedCallableCatalog, preparedScopeLookup);
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
+        return resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
       }
       const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
@@ -6607,7 +6876,7 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
 function preregisterCallableProviders(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  preparedRuntimeManifest?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
 ): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
   const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
@@ -6640,7 +6909,7 @@ function preregisterCallableProviders(
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
           try {
-            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
+            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
           } catch (error) {
             if (!failures.has(owner.unitId)) {
               failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
@@ -7352,6 +7621,28 @@ function jsTagToStaticType(
  *     like `preregisterStringSupport`.
  * Both are idempotent, so overlapping legacy registration is a no-op.
  */
+/**
+ * (#3526 F1-S4) Which arm of the externref undefined probe an instruction's
+ * ATTACHED provider names, if any.
+ *
+ * `__extern_is_undefined` is NOT a member of the `addUnionImports` family: on
+ * the host lane it is its own `ensureLateImport` registration, and on the
+ * host-free lanes a real Wasm function `ensureObjectRuntime` owns. Its two
+ * preregistration detectors therefore stay separate from the union ones, and
+ * each must recognise the attached provider target now that the raw `call` they
+ * used to key on is gone (the F1-S1/F1-S2 precedent). This returns only the
+ * classification — the detector FLAGS still decide when each materializer runs,
+ * so the registration order in `preregisterDynamicSupport` is untouched.
+ */
+function attachedExternIsUndefinedArm(instr: IrInstr): "host" | "native" | undefined {
+  if (instr.kind !== "intrinsic" || instr.id !== "js.extern.is_undefined") return undefined;
+  if (instr.provider?.kind !== "callable") return undefined;
+  const { binding } = instr.provider.target;
+  if (binding.kind === "import" && binding.module === "env" && binding.field === "__extern_is_undefined") return "host";
+  if (binding.kind === "runtime" && binding.symbol === "__extern_is_undefined") return "native";
+  return undefined;
+}
+
 function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
@@ -7400,32 +7691,42 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
           if (usesDynMemberSet(i)) usesMemberSet = true;
-          // (#3526 F1-S1) The number boundary now reaches Phase 3 as a semantic
-          // `intrinsic` whose frozen provider carries the SAME physical target
-          // the old direct call used. Provider attachment already ran (the
-          // manifest is prepared before this preregistration), so recognizing
-          // the exact attached targets here keeps `addUnionImports` the whole
-          // union family's single materializer — and keeps import membership,
-          // order and indices identical to the legacy control.
-          const numberBoundaryTarget =
+          // (#3526 F1-S1, widened by F1-S2) The number and boolean boundaries
+          // reach Phase 3 as semantic `intrinsic`s whose frozen providers carry
+          // the SAME physical targets the old direct calls used. Provider
+          // attachment already ran (the manifest is prepared at the top of the
+          // preparation sequence, this preregistration later in the same one),
+          // so recognizing the exact attached targets here keeps
+          // `addUnionImports` the whole union family's single materializer —
+          // and keeps import membership, order and indices identical to the
+          // legacy control. No name scanning, no second allocator.
+          const boundaryIntrinsicTarget =
             i.kind === "intrinsic" &&
-            (i.id === "js.number.box" || i.id === "js.number.unbox") &&
+            (i.id === "js.number.box" ||
+              i.id === "js.number.unbox" ||
+              i.id === "js.boolean.box" ||
+              i.id === "js.extern.is_undefined") &&
             i.provider?.kind === "callable"
               ? i.provider.target
               : undefined;
           if (
-            numberBoundaryTarget?.binding.kind === "import" &&
-            numberBoundaryTarget.binding.module === "env" &&
-            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.field)
+            boundaryIntrinsicTarget?.binding.kind === "import" &&
+            boundaryIntrinsicTarget.binding.module === "env" &&
+            UNION_IMPORT_FUNC_NAMES.has(boundaryIntrinsicTarget.binding.field)
           ) {
             usesNamedUnionImport = true;
           }
           if (
-            numberBoundaryTarget?.binding.kind === "runtime" &&
-            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.symbol)
+            boundaryIntrinsicTarget?.binding.kind === "runtime" &&
+            UNION_IMPORT_FUNC_NAMES.has(boundaryIntrinsicTarget.binding.symbol)
           ) {
             usesRuntimeUnboxNumber = true;
           }
+          // (#3526 F1-S4) The undefined probe's own arm — see
+          // `attachedExternIsUndefinedArm`.
+          const probeArm = attachedExternIsUndefinedArm(i);
+          if (probeArm === "host") usesExternIsUndefined = true;
+          else if (probeArm === "native") usesNativeExternIsUndefined = true;
           if (i.kind === "call" && i.target.binding.kind === "import" && i.target.binding.module === "env") {
             if (UNION_IMPORT_FUNC_NAMES.has(i.target.binding.field)) usesNamedUnionImport = true;
             else if (i.target.binding.field === "__extern_is_undefined") usesExternIsUndefined = true;

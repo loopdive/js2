@@ -4,7 +4,7 @@ title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out →
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-30
+updated: 2026-09-01
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -18,7 +18,146 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
-## Measurement (2026-08-15, this session)
+## 2026-09-01 evening dispatch census at d39779cb — cluster ownership + Fable/Opus fan-out
+
+Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` (baselines
+repo, compiler sha `d39779cbfdd5a9b5fdb54569923fd9810637d495`, generated
+2026-09-01T18:33Z — an ancestor of the session branch
+`claude/es6-test262-standalone-g10c7u`, which is `origin/main` @ `0d9bfede`),
+edition map `website/public/benchmarks/results/test262-file-editions.json`
+(`ES2015` label; 11,778 labelled, 11,704 in the official runner scope).
+
+**ES2015 standalone: 9,673 pass / 11,704 (82.6%) — 2,031 non-pass**
+(1,644 fail · 386 compile_error · 1 compile_timeout). Status/error class:
+1,122 `assertion_fail`, 367 `type_error`, 248 `host_import_leak` CE,
+151 other CE, 34 runtime_error CE, 21 promise_error, 15 illegal_cast,
+10 null_deref, 10 range_error.
+
+Cluster split (path-disjoint; lists under `.tmp/es2015/<cluster>-{paths.txt,errors.tsv}`,
+regenerable from the JSONL + edition map):
+
+| Cluster | Rows | Owner / tracker | Dispatch (this session) |
+| --- | ---: | --- | --- |
+| generators (`language/*/generators`, `yield`, GeneratorFunction/Prototype, `__create_generator` leaks, "sequential numeric yields" refusal) | 318 | #680 / #2864 codex lane (PR #5383 merged; #5406/#5407 drafts) | **not re-dispatched** |
+| typedarray (`built-ins/TypedArray*`, excl. buffers) | 300 | #5194 (Slice A merged #5300; #5385 species merged) | Fable planner → r2 plan in #5194 → Opus |
+| class (`language/*/class`, `computed-property-names/class`, `super`, `new.target`) | 209 | #5195 (stub) | Fable planner → plan → Opus |
+| array + object built-ins | 159 | new **#5268** | Fable planner → plan → Opus |
+| proxy + Reflect | 157 | #5196 (2-row revoker slice merged #5389); #3371 (33 CE, blocked design PR #5400); #2046 (15 CE, design PR #5397) | Fable planner on the unowned trap-invariant residual → Opus |
+| for-of + Iterator/*IteratorPrototype + Map/Set/Weak* | 155 | new **#5267** (wave-1 #5144/#5147/#5151; draft PR #5225 mined, not merged) | Fable planner → plan → Opus |
+| function/error/symbol/string/JSON/number built-ins | 150 | new **#5269** (wave-1 #5156/#5152) | Fable planner → plan → Opus |
+| regexp (`built-ins/RegExp`, annexB RegExp, `Symbol.{match,replace,search,split}`) | 148 | #5198 codex lane (Slice A merged #5296; Slice B draft #5393) | **not re-dispatched** |
+| promise | 140 | #5197 (Slice A merged #5292; slices B–H planned) | Opus implementer on Slices B–D directly |
+| expressions (object literal, assignment, arrow, call, template, instanceof, …) | 117 | new **#5270** (wave-1 #5149/#5146) | Fable planner → plan → Opus |
+| statements + lang semantics (for-in/for/let/const/with/try, global/eval code, arguments, rest, dstr) | 84 | new **#5271** (wave-1 #5154/#5158/#5157) | Fable planner → plan → Opus |
+| buffers (ArrayBuffer/DataView) | 53 | #5150 (full plan; WIP draft PR #5224 unvalidated) | Opus implementer directly (mines the WIP) |
+| module-code | 23 | #4759 codex closeout lane | not re-dispatched |
+| rest (misc singletons) | 18 | — | folded into the nearest cluster plan |
+
+Ids #5267–#5271 were reserved via `claim-issue.mjs --allocate`
+(`--no-pr-scan --allow-unscanned`: no `gh` in this container, so the open-PR
+scan could not run; the `check:issue-ids:against-main` gate backstops).
+
+Method (unchanged from the 08-28/29 session): Fable planners re-verify each
+list on HEAD with `scripts/run-test262-paths.mts --standalone`, cluster by
+root cause with file:function sites, and write the `## Implementation Plan`
+into the issue; Opus implementers work each plan in an isolated worktree and
+commit validated slices; this lane integrates them into the session branch,
+runs the ratchet + equivalence gates, and lands batches through PRs.
+
+## Latest forced census (2026-09-01; replaces the stale dispatch headline below)
+
+This is the latest immutable dispatch baseline for this umbrella. It replaces
+the older 2026-08-15/27/30 planning headline below, but it is not final
+acceptance evidence: upstream `main` advanced after the fetch from the measured
+`f841cddc` source to release head `7fffec53`. A complete maintained-runner census on the
+final integrated head is still required before any current pass-rate or
+completion claim.
+
+- **Compiler source:** detached `upstream/main`
+  `f841cddc0f0ea665b63700d9944a4372a34a8b57`.
+- **Baseline provenance:** a forced official fetch with
+  `node scripts/fetch-baseline-jsonl.mjs --standalone --force` retrieved
+  `test262-standalone-current.jsonl` from immutable
+  `loopdive/js2wasm-baselines` commit
+  `8a39bd1d4ddf200f8db3751c878ece02aa8688fe` (GitHub Actions commit time
+  `2026-09-01T00:28:18Z`).  The 22,858,445-byte cache has SHA-256
+  `4426cbf6f305ab4a092468b201cc5854d4470b5fe87edf2fe47ba0195a6e8cbf`.
+  Its row timestamps span `2026-09-01T02:02:14Z` through
+  `2026-09-01T02:24:30Z`. The baselines repository's `main` moved after this
+  fetch; cite the immutable commit above, not the moving branch tip.
+- **Schema/completeness check:** all 48,735 JSONL rows parse; every row has
+  the required string/number/boolean baseline fields, one of
+  `pass|fail|compile_error|compile_timeout|skip`, and a unique `(file,strict)`
+  identity.  Optional timing/error fields are absent only where the maintained
+  runner schema permits them.
+- **Edition authority:**
+  `website/public/benchmarks/results/test262-file-editions.json` maps every
+  fetched row.  Selecting entries whose exact label is `ES2015` produces
+  11,704 rows, all `scope_official: true` (11,536 standard and 168 Annex B).
+- **Measured result at `f841cddc`:** **9,616 pass / 11,704 total** (82.16%);
+  **1,644 fail, 444 compile_error, 0 compile_timeout, 0 skip** — **2,088
+  non-pass**. This
+  is progress, not completion; the umbrella remains `in-progress` until the
+  complete exact population is 11,704 pass with all other status counts zero.
+
+### Acceptance runner and positive control
+
+Do not infer acceptance from this fetched baseline.  A subsequent implementation
+must use the maintained runner, an exact 11,704-path filter derived from the
+authoritative edition map, and the runner's completion-manifest validator.  The
+shape is:
+
+```bash
+COMPILER_POOL_SIZE=1 VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 \
+TEST262_TARGET=standalone JS2WASM_EVAL_ENGINE=quickjs \
+JS2WASM_QUICKJS_ARTIFACT_DIR=/absolute/prebuilt-quickjs-artifact-dir \
+TEST262_PATH_FILTER_FILE=/absolute/path/to/exact-es2015-paths.txt \
+TEST262_PUBLISH_HISTORY=0 TEST262_REPORTER=dot \
+pnpm run test:262 -- --official-scope-only
+```
+
+As a focused positive control for the free #2046 slice, the fetched baseline
+records `test/built-ins/Reflect/set/set-value-on-accessor-descriptor.js` as a
+standalone **pass** (the supported three-argument native `Reflect.set` path).
+Before and after any receiver implementation, it can be exercised without a
+full suite via:
+
+```bash
+printf '%s\n' \
+  'test/built-ins/Reflect/set/set-value-on-accessor-descriptor.js' \
+  > /absolute/path/to/reflect-set-positive-control.txt
+COMPILER_POOL_SIZE=1 TEST262_TARGET=standalone \
+JS2WASM_EVAL_ENGINE=quickjs \
+JS2WASM_QUICKJS_ARTIFACT_DIR=/absolute/prebuilt-quickjs-artifact-dir \
+TEST262_PATH_FILTER_FILE=/absolute/path/to/reflect-set-positive-control.txt \
+TEST262_PUBLISH_HISTORY=0 TEST262_REPORTER=dot \
+pnpm run test:262 -- --official-scope-only
+```
+
+### Current handoff: owned work versus free exact slices
+
+- **Do not duplicate:** the three ES2015 dynamic-`RegExp` `Symbol.match`
+  flag-refusal paths are isolated, but a live sibling worktree owns #5198
+  (`codex/5198-regexp-exec-r2-f841-20260901`).  Generator continuations are
+  covered by open PR #5383; TypedArray species work by #5385; and builtin
+  prototype/null-prototype work by #5384.
+- **Free, bounded implementation candidate:** #2046's explicit
+  `Reflect.set(target,key,value,receiver)` refusal has **15 exact
+  compile-error paths**, all with the same fail-loud diagnostic.  The single
+  gate is `src/codegen/expressions/call-namespace-static.ts:903-920`; #2046 is
+  in progress, no current GitHub PR matches it, and its visible remote branches
+  are June-era checkpoints.  The implementation must preserve the positive
+  control above and add receiver plumbing rather than drop the fourth argument.
+- **Unowned but not yet a safe parallel coding slice:** #3371's arbitrary
+  distinct-`Reflect.construct` NewTarget refusal remains on **33 exact
+  compile-error paths** at
+  `src/codegen/expressions/call-namespace-static.ts:1620-1627`, despite its
+  tracker being marked done.  It needs a reopened/new bounded owner before
+  implementation; it is not a substitute for the #2046 slice.  The apparent
+  three-row `Array.prototype.flat` refusal is already a tail of #5145's
+  in-review ArraySpecies/target-property wave, so do not duplicate it.
+
+## Historical measurement (2026-08-15, superseded as a headline)
 
 Source: fresh `test262-standalone-current.jsonl` (baselines repo, fetched
 `--force`, 48,735 entries, baseline_sha `734fab88`), classified per-test with

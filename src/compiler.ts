@@ -899,6 +899,7 @@ function buildCodegenOptions(
     importMemory: options.importMemory,
     runtimeProvider: options.runtimeProvider === true,
     canonicalRuntimeTypes: options.canonicalRuntimeTypes === true,
+    sharedExceptionTag: options.sharedExceptionTag === true,
     jsxRuntime: prep?.jsxRuntime,
     dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };

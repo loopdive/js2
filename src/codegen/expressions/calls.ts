@@ -24,6 +24,7 @@ import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } f
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
@@ -88,6 +89,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
   getFuncSignature,
   getOrCreateFuncRefWrapperTypes,
+  runtimeParameters,
 } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -519,6 +521,7 @@ import {
 } from "../dataview-native.js";
 import {
   getLinearU8Buffer,
+  getLinearU8ParamIndicesForDeclaration,
   getLinearU8ParamIndicesForCall,
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
@@ -3273,6 +3276,61 @@ export function emitClosureCallArgcExtras(
     emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], paramCount);
   }
   emitSetArgc(ctx, fctx, args.length, paramCount);
+  appendForwardedOptionalArgcOverride(ctx, fctx, fctx.body, args, paramCount);
+}
+
+/**
+ * Override a call's already-emitted argc when its final syntactic argument is
+ * the caller's own tracked optional scalar and that argument was omitted from
+ * the caller activation. This is deliberately limited to an in-range trailing
+ * formal: changing overflow/extras would also require rebuilding argv.
+ *
+ * An explicitly supplied `undefined` cannot be recovered from an i32 local;
+ * this preserves the omission path while keeping contextual closure ABIs
+ * scalar-compatible. Explicit false remains supplied because cached argc is
+ * greater than the source parameter index.
+ */
+export function appendForwardedOptionalArgcOverride(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  body: Instr[],
+  args: readonly ts.Expression[],
+  paramCount: number,
+): void {
+  if (
+    fctx.argcCachedLocal === undefined ||
+    !fctx.omissionTrackedScalarParams ||
+    args.length === 0 ||
+    args.length > paramCount
+  ) {
+    return;
+  }
+  let trailingArgument: ts.Expression = args[args.length - 1]!;
+  while (ts.isParenthesizedExpression(trailingArgument)) trailingArgument = trailingArgument.expression;
+  if (!ts.isIdentifier(trailingArgument)) return;
+  const symbol = ctx.checker.getSymbolAtLocation(trailingArgument);
+  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+  if (!declaration || !ts.isParameter(declaration)) return;
+  const sourceIndex = fctx.omissionTrackedScalarParams.get(declaration);
+  if (sourceIndex === undefined) return;
+
+  body.push(
+    { op: "local.get", index: fctx.argcCachedLocal },
+    { op: "i32.const", value: -1 },
+    { op: "i32.ne" },
+    { op: "local.get", index: fctx.argcCachedLocal },
+    { op: "i32.const", value: sourceIndex },
+    { op: "i32.le_s" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: Math.min(args.length - 1, paramCount) },
+        { op: "global.set", index: ensureArgcGlobal(ctx) },
+      ],
+    },
+  );
 }
 
 /**
@@ -3704,13 +3762,19 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     __funcValueWrapperSourcesRegistered?: Set<string>;
     __funcValueWrapperDiscoverySources?: Set<string>;
     __funcValueWrapperNamedDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperPendingExactDeclarations?: Set<ts.FunctionDeclaration>;
     __funcValueWrapperFunctionExpressions?: Set<ts.FunctionExpression | ts.ArrowFunction>;
+    __funcValueWrapperReferencePredicateFuncTypes?: Set<number>;
+    __funcValueWrapperGenericReferenceCallbackDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperGenericReferenceCallbackFuncTypes?: Set<number>;
+    __funcValueWrapperVecFactoryDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperVecFactoryFuncTypes?: Set<number>;
   };
   const registeredSources =
     registrationState.__funcValueWrapperSourcesRegistered ??
     (registrationState.__funcValueWrapperSourcesRegistered = new Set<string>());
-  if (registeredSources.has(sf.fileName)) return;
-  registeredSources.add(sf.fileName);
+  const firstRegistrationForSource = !registeredSources.has(sf.fileName);
+  if (firstRegistrationForSource) registeredSources.add(sf.fileName);
 
   // Cross-source discovery is graph-global and purely syntactic. Cache its
   // result instead of walking the complete TypeScript compiler graph once per
@@ -3723,15 +3787,116 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   const usedAsValue =
     registrationState.__funcValueWrapperNamedDeclarations ??
     (registrationState.__funcValueWrapperNamedDeclarations = new Set<ts.FunctionDeclaration>());
+  const pendingExactDeclarations =
+    registrationState.__funcValueWrapperPendingExactDeclarations ??
+    (registrationState.__funcValueWrapperPendingExactDeclarations = new Set<ts.FunctionDeclaration>());
   const usedAsValueFunctions =
     registrationState.__funcValueWrapperFunctionExpressions ??
     (registrationState.__funcValueWrapperFunctionExpressions = new Set<ts.FunctionExpression | ts.ArrowFunction>());
+  const referencePredicateFuncTypes =
+    registrationState.__funcValueWrapperReferencePredicateFuncTypes ??
+    (registrationState.__funcValueWrapperReferencePredicateFuncTypes = new Set<number>());
+  const genericReferenceCallbackDeclarations =
+    registrationState.__funcValueWrapperGenericReferenceCallbackDeclarations ??
+    (registrationState.__funcValueWrapperGenericReferenceCallbackDeclarations = new Set<ts.FunctionDeclaration>());
+  const genericReferenceCallbackFuncTypes =
+    registrationState.__funcValueWrapperGenericReferenceCallbackFuncTypes ??
+    (registrationState.__funcValueWrapperGenericReferenceCallbackFuncTypes = new Set<number>());
+  const vecFactoryDeclarations =
+    registrationState.__funcValueWrapperVecFactoryDeclarations ??
+    (registrationState.__funcValueWrapperVecFactoryDeclarations = new Set<ts.FunctionDeclaration>());
+  const vecFactoryFuncTypes =
+    registrationState.__funcValueWrapperVecFactoryFuncTypes ??
+    (registrationState.__funcValueWrapperVecFactoryFuncTypes = new Set<number>());
+  const isSafeVecFactoryCallback = (
+    declaration: ts.FunctionDeclaration,
+    params: readonly ValType[],
+    returnType: ValType | null,
+  ): boolean =>
+    vecFactoryDeclarations.has(declaration) &&
+    params.length === 1 &&
+    (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+    getVecInfo(ctx, params[0]!.typeIdx) !== null &&
+    returnType !== null &&
+    (returnType.kind === "ref" || returnType.kind === "ref_null");
+  let liveClosureInfosByFuncTypeIdx: Map<number, Set<ClosureInfo>> | undefined;
+  const indexLiveClosureInfo = (info: ClosureInfo): void => {
+    const index = (liveClosureInfosByFuncTypeIdx ??= new Map());
+    const records = index.get(info.funcTypeIdx) ?? new Set<ClosureInfo>();
+    records.add(info);
+    index.set(info.funcTypeIdx, records);
+  };
+  const ensureLiveClosureInfoIndex = (): void => {
+    if (liveClosureInfosByFuncTypeIdx !== undefined) return;
+    liveClosureInfosByFuncTypeIdx = new Map();
+    for (const records of [
+      ctx.funcRefWrapperCache.values(),
+      ctx.constructibleFuncRefWrapperCache.values(),
+      ctx.closureInfoByTypeIdx.values(),
+      ctx.closureMap.values(),
+    ]) {
+      for (const info of records) indexLiveClosureInfo(info);
+    }
+  };
   const observeMinimumArgumentCount = (
     wrapper: NonNullable<ReturnType<typeof getOrCreateFuncRefWrapperTypes>>,
     minimumArgumentCount: number,
   ): void => {
-    const current = wrapper.closureInfo.minimumArgumentCount ?? wrapper.closureInfo.paramTypes.length;
-    wrapper.closureInfo.minimumArgumentCount = Math.min(current, minimumArgumentCount);
+    // A captureless arrow/function-expression can allocate the shared base
+    // wrapper and then replace `closureInfoByTypeIdx[base]` with its own
+    // ClosureInfo object.  The signature cache deliberately keeps the original
+    // object, so updating only `wrapper.closureInfo` leaves the dispatcher with
+    // a stale minimum and it rejects an optional-parameter declaration invoked
+    // through a narrower public callback type.  Minimum arity is ABI metadata:
+    // persist the minimum by exact lifted func type and synchronize every live
+    // record, including allocation subtypes and both wrapper caches. The
+    // persistent index is authoritative for dispatchers compiled after a later
+    // record replacement; no other signature is widened.
+    const funcTypeIdx = wrapper.closureInfo.funcTypeIdx;
+    const recordedMinimum = ctx.closureMinimumArgumentCountByFuncTypeIdx.get(funcTypeIdx);
+    const effectiveMinimum = Math.min(recordedMinimum ?? wrapper.closureInfo.paramTypes.length, minimumArgumentCount);
+    ctx.closureMinimumArgumentCountByFuncTypeIdx.set(funcTypeIdx, effectiveMinimum);
+
+    ensureLiveClosureInfoIndex();
+    // A wrapper may have been created by an earlier declaration in this same
+    // registration pass, after the lazy index snapshot above.
+    indexLiveClosureInfo(wrapper.closureInfo);
+    const mapped = ctx.closureInfoByTypeIdx.get(wrapper.closureInfo.structTypeIdx);
+    if (mapped) indexLiveClosureInfo(mapped);
+    for (const info of liveClosureInfosByFuncTypeIdx!.get(funcTypeIdx) ?? []) {
+      const current = info.minimumArgumentCount ?? info.paramTypes.length;
+      info.minimumArgumentCount = Math.min(current, effectiveMinimum);
+    }
+  };
+
+  const isDirectSourceGenericCallbackArgument = (identifier: ts.Identifier): boolean => {
+    const call = identifier.parent;
+    if (!call || !ts.isCallExpression(call)) return false;
+    const argumentIndex = call.arguments.findIndex((argument) => argument === identifier);
+    if (argumentIndex < 0) return false;
+
+    const calleeDeclaration = ctx.checker.getResolvedSignature(call)?.declaration;
+    if (
+      calleeDeclaration === undefined ||
+      calleeDeclaration.getSourceFile().isDeclarationFile ||
+      calleeDeclaration.typeParameters === undefined ||
+      calleeDeclaration.typeParameters.length === 0 ||
+      argumentIndex >= calleeDeclaration.parameters.length
+    ) {
+      return false;
+    }
+
+    const callbackParameter = calleeDeclaration.parameters[argumentIndex]!;
+    if (!ts.isParameter(callbackParameter)) return false;
+    if (callbackParameter.dotDotDotToken !== undefined) return false;
+    const callbackType = ctx.checker.getTypeAtLocation(callbackParameter);
+    return callbackType
+      .getCallSignatures()
+      .some((callbackSignature) =>
+        runtimeSignatureParameters(callbackSignature).some(
+          (parameter) => (ctx.checker.getTypeOfSymbol(parameter).flags & ts.TypeFlags.TypeParameter) !== 0,
+        ),
+      );
   };
 
   const visit = (node: ts.Node): void => {
@@ -3744,10 +3909,60 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
         (ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) &&
         (p as ts.FunctionLikeDeclaration).name === node;
       if (!isCallee && !isNewCallee && !isOwnName) {
-        const sym = ctx.checker.getSymbolAtLocation(node);
+        // A shorthand property's symbol describes the property itself on some
+        // TypeScript versions. Ask for its value symbol so `{ createNode }`
+        // resolves to the nested function declaration that supplies the
+        // factory method, not to the shorthand AST node.
+        let sym =
+          p && ts.isShorthandPropertyAssignment(p) && p.name === node
+            ? ((
+                ctx.checker as typeof ctx.checker & {
+                  getShorthandAssignmentValueSymbol?: (
+                    property: ts.ShorthandPropertyAssignment,
+                  ) => ts.Symbol | undefined;
+                }
+              ).getShorthandAssignmentValueSymbol?.(p) ?? ctx.checker.getSymbolAtLocation(node))
+            : ctx.checker.getSymbolAtLocation(node);
+        // Cross-file callback values are normally referenced through an
+        // ImportSpecifier alias.  Looking only at the alias's declaration
+        // records the import node rather than the function declaration, so a
+        // generic helper compiled before the imported callback never sees its
+        // wrapper type.  Resolve the alias to the exact exported declaration
+        // before populating the order-independent candidate set.
+        if (sym && (sym.flags & ts.SymbolFlags.Alias) !== 0) {
+          try {
+            sym = ctx.checker.getAliasedSymbol(sym);
+          } catch {
+            // Keep the unresolved symbol; it cannot name a source function
+            // declaration and is therefore safely ignored below.
+          }
+        }
         const decl = sym?.valueDeclaration;
         if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
           usedAsValue.add(decl);
+          if (p && ts.isShorthandPropertyAssignment(p) && !ts.isSourceFile(decl.parent)) {
+            vecFactoryDeclarations.add(decl);
+          }
+          // A source-authored generic HOF can erase a callback's `T` argument
+          // to externref while a directly supplied, later-compiled callback
+          // retains a nominal WasmGC parameter. Record only the capture-free,
+          // one-formal declaration shape used at that exact source call. The
+          // func-type registration below lets the earlier generic body build
+          // a runtime arm without admitting every nominal callback module-wide.
+          const directSourceGenericCallback =
+            ts.isSourceFile(decl.parent) &&
+            runtimeParameters(decl).length === 1 &&
+            decl.parameters.every((parameter) => parameter.dotDotDotToken === undefined) &&
+            isDirectSourceGenericCallbackArgument(node);
+          if (directSourceGenericCallback) {
+            const callbackParameterType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl.parameters[0]!));
+            if (callbackParameterType.kind === "ref") {
+              genericReferenceCallbackDeclarations.add(decl);
+            }
+          }
+          if (expectedArgumentCountOfParams(decl.parameters) < runtimeParameters(decl).length) {
+            pendingExactDeclarations.add(decl);
+          }
         }
       }
     }
@@ -3785,37 +4000,127 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     visitFns(sourceFile);
   }
 
-  for (const declaration of usedAsValue) {
-    const name = declaration.name!.text;
-    const ownsMappedFunction =
-      ctx.funcMapOwnerDecl.get(name) === declaration || ctx.topLevelFunctionDeclarations.get(name) === declaration;
-    const captures = ownsMappedFunction ? ctx.nestedFuncCaptures.get(name) : undefined;
-    const funcIdx = ownsMappedFunction ? ctx.funcMap.get(name) : undefined;
+  const registerExactDeclarationWrapper = (declaration: ts.FunctionDeclaration): boolean => {
+    const funcIdx = sourceFunctionHandleForDeclaration(ctx, declaration);
+    if (funcIdx === undefined) return false;
+    const sig = getFuncSignature(ctx, funcIdx);
+    if (!sig) return false;
 
-    // Preserve the value site's exact lowered ABI whenever this declaration
-    // already owns a no-capture funcMap entry. In particular, rest/arguments
-    // and generator lowering can add parameters that are not visible in the
-    // source-level signature.
-    if ((captures?.length ?? 0) === 0 && funcIdx !== undefined) {
-      const sig = getFuncSignature(ctx, funcIdx);
-      if (sig) {
-        const wrapper = getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
-        if (wrapper && expectedArgumentCountOfParams(declaration.parameters) < sig.params.length) {
-          observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
-        }
-        continue;
+    // A lifted nested declaration's physical signature is
+    // [capture values..., TDZ flag boxes..., lowered source-param slots...].
+    // A linear Uint8Array source param contributes two trailing slots
+    // (pointer + length), so count that declared expansion before slicing.
+    // The exact declaration handle survives bare-name scope restoration, unlike
+    // funcMap/nestedFuncCaptures, so recover the value-call ABI from the
+    // trailing runtime source parameters. This is the same slice
+    // emitFuncRefAsClosure performs before selecting the shared wrapper.
+    const sourceParams = runtimeParameters(declaration);
+    const firstRuntimeSourceIndex = declaration.parameters.length - sourceParams.length;
+    const linearParams = getLinearU8ParamIndicesForDeclaration(ctx, declaration);
+    const expandedLinearParamCount = linearParams
+      ? [...linearParams].filter((sourceIndex) => sourceIndex >= firstRuntimeSourceIndex).length
+      : 0;
+    const sourceParamSlotCount = sourceParams.length + expandedLinearParamCount;
+    if (sig.params.length < sourceParamSlotCount) return false;
+    const params = sourceParamSlotCount === 0 ? [] : sig.params.slice(sig.params.length - sourceParamSlotCount);
+    const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, sig.results);
+    const safeGenericReferenceCallback =
+      genericReferenceCallbackDeclarations.has(declaration) &&
+      params.length === 1 &&
+      params[0]!.kind === "ref" &&
+      sig.results.length === 1 &&
+      (sig.results[0]!.kind === "externref" ||
+        sig.results[0]!.kind === "ref_extern" ||
+        sig.results[0]!.kind === "ref" ||
+        sig.results[0]!.kind === "ref_null");
+    const safeVecFactoryCallback = isSafeVecFactoryCallback(
+      declaration,
+      params,
+      sig.results.length === 1 ? sig.results[0]! : null,
+    );
+    if (
+      wrapper &&
+      declaration.type !== undefined &&
+      ts.isTypePredicateNode(declaration.type) &&
+      declaration.type.assertsModifier === undefined &&
+      params.length === 1 &&
+      (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+      sig.results.length === 1 &&
+      sig.results[0]!.kind === "i32" &&
+      sig.results[0]!.boolean === true
+    ) {
+      referencePredicateFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeGenericReferenceCallback) {
+      genericReferenceCallbackFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeVecFactoryCallback) {
+      vecFactoryFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper) {
+      const minimumArgumentCount = expectedArgumentCountOfParams(declaration.parameters);
+      if (minimumArgumentCount < params.length) {
+        observeMinimumArgumentCount(wrapper, minimumArgumentCount);
       }
     }
+    return true;
+  };
+
+  // The first dynamic call in a source can precede allocation of a later
+  // nested callback's source handle. TypeScript's parser does exactly that:
+  // visitNode latches parser.ts before createSourceFile reserves
+  // parseIdentifierName. Conservative discovery remains one-shot, but every
+  // later call cheaply revisits only unresolved optional declarations and
+  // upgrades them once their exact lifted ABI exists.
+  for (const declaration of pendingExactDeclarations) {
+    if (!registerExactDeclarationWrapper(declaration)) continue;
+    pendingExactDeclarations.delete(declaration);
+  }
+
+  if (!firstRegistrationForSource) return;
+
+  for (const declaration of usedAsValue) {
+    // Prefer the declaration-identity sidecar over the collision-prone bare
+    // funcMap namespace. This also admits captured declarations: their exact
+    // user-call ABI is the suffix of the lifted function signature above.
+    if (registerExactDeclarationWrapper(declaration)) continue;
 
     // Captured or not-yet-registered nested declarations have no safe funcMap
     // signature to consult. Their lifted funcref still shares the root wrapper
-    // signature computed from the declaration, but only pre-register the same
-    // conservative all-externref shape used for function expressions below.
-    // Numeric/mixed speculative candidates can make an over-arity dispatch arm
-    // invalid even when that arm never matches at runtime.
+    // signature computed from the declaration. Pre-register the same
+    // conservative all-externref shape used for function expressions below,
+    // plus the exact one-ref -> boolean ABI of a syntactically declared type
+    // predicate. Numeric/mixed speculative candidates can make an over-arity
+    // dispatch arm invalid even when that arm never matches at runtime.
     const { params, returnType } = computeClosureWrapperSig(ctx, declaration);
     const allExternref = params.every((p) => p.kind === "externref");
     const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
+    const safeReferencePredicate =
+      declaration.type !== undefined &&
+      ts.isTypePredicateNode(declaration.type) &&
+      declaration.type.assertsModifier === undefined &&
+      params.length === 1 &&
+      (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+      returnType?.kind === "i32" &&
+      returnType.boolean === true;
+    const safeGenericReferenceCallback =
+      genericReferenceCallbackDeclarations.has(declaration) &&
+      params.length === 1 &&
+      params[0]!.kind === "ref" &&
+      returnType !== null &&
+      (returnType.kind === "externref" ||
+        returnType.kind === "ref_extern" ||
+        returnType.kind === "ref" ||
+        returnType.kind === "ref_null");
+    // Factory objects commonly expose captured nested functions through
+    // shorthand properties. Their allocation can live in a later source file
+    // than a typed callback invocation (TypeScript's NodeFactory is the large
+    // production witness), so the exact closure signature is not available to
+    // that earlier dispatcher yet. A one-vec -> reference signature is safe to
+    // pre-register: dispatch still discriminates by the exact funcref type and
+    // the candidate bridge proves the vec element projection before emitting
+    // the call_ref arm.
+    const safeVecFactoryCallback = isSafeVecFactoryCallback(declaration, params, returnType);
     const hasOmittableTrailingParams = expectedArgumentCountOfParams(declaration.parameters) < params.length;
     // A callback whose entire parameter ABI is externref can safely be
     // registered before its value site: omitted trailing parameters are
@@ -3837,8 +4142,24 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
           (returnType.kind === "i32" && returnType.boolean === true) ||
           (returnType.kind === "f64" && returnType.undefSentinel !== true)
         : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
-    if (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) continue;
+    if (
+      (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) &&
+      !safeReferencePredicate &&
+      !safeGenericReferenceCallback &&
+      !safeVecFactoryCallback
+    ) {
+      continue;
+    }
     const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+    if (wrapper && safeReferencePredicate) {
+      referencePredicateFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeGenericReferenceCallback) {
+      genericReferenceCallbackFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeVecFactoryCallback) {
+      vecFactoryFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
     if (wrapper && hasOmittableTrailingParams) {
       observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
     }

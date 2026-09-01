@@ -193,6 +193,13 @@ function constrainedCurrentNode<T extends TypeNode | undefined>(
   if (current) return current as T;
   return callback();
 }
+function nestedBlockResult<T>(callback: () => T, useNestedBlock: boolean): T {
+  if (useNestedBlock) {
+    const result = callback();
+    return result;
+  }
+  return callback();
+}
 function reassignedCallback<T>(callback: () => T, value: T): T {
   callback = () => value;
   return callback();
@@ -278,6 +285,13 @@ const scannerReferenceCall = parserTryParse(parseKeywordAndNoDot);
     expect(genericCallbackResultDeclaration({ checker }, declaration)?.callbackParameterIndex).toBe(0);
   });
 
+  it("admits a stable callback-derived const inside a nested block", () => {
+    const { checker, sourceFile } = typedSource(source);
+    const declaration = namedFunctions(sourceFile).get("nestedBlockResult")!;
+
+    expect(genericCallbackResultDeclaration({ checker }, declaration)?.callbackParameterIndex).toBe(0);
+  });
+
   it("follows a stable factory receiver to its shorthand scanner methods", () => {
     const { checker, sourceFile } = typedSource(source);
     const functions = namedFunctions(sourceFile);
@@ -288,6 +302,19 @@ const scannerReferenceCall = parserTryParse(parseKeywordAndNoDot);
     expect(genericCallbackResultDeclaration(ctx, functions.get("tryScan")!)).not.toBeNull();
     expect(genericCallbackResultDeclaration(ctx, functions.get("parserSpeculationHelper")!)).not.toBeNull();
     expect(genericCallbackResultDeclaration(ctx, functions.get("parserTryParse")!)).not.toBeNull();
+  });
+
+  it.each([
+    ["logical-not", "!scanner.lookAhead"],
+    ["typeof", 'typeof scanner.lookAhead === "function"'],
+    ["void", "void scanner.lookAhead"],
+  ])("keeps scanner provenance across a non-mutating %s read", (_name, read) => {
+    const { checker, sourceFile } = scannerPropertyFixture({
+      receiverMutation: `const observation = ${read};`,
+    });
+    const declaration = namedFunctions(sourceFile).get("parserSpeculationHelper")!;
+
+    expect(genericCallbackResultDeclaration({ checker }, declaration)).not.toBeNull();
   });
 
   it("resolves scalar and reference callback results at direct calls", () => {
@@ -384,6 +411,8 @@ const scannerReferenceCall = parserTryParse(parseKeywordAndNoDot);
       },
     ],
     ["receiver target write", { receiverMutation: "(scanner as any).lookAhead = scanner.lookAhead;" }],
+    ["receiver prefix increment", { receiverMutation: "++(scanner as any).lookAhead;" }],
+    ["receiver postfix decrement", { receiverMutation: "(scanner as any).lookAhead--;" }],
     [
       "receiver object-pattern write",
       {
@@ -751,7 +780,7 @@ export function referenceCase(): number {
     expect(exports.referenceCase()).toBe(1192);
   });
 
-  it("keeps a lifted parser speculation helper result across scalar and struct callbacks", async () => {
+  it("keeps a lifted two-layer parser helper result after a void call and unary scanner read", async () => {
     const exports = await compileAndInstantiate(`
 interface TypeNode {
   kind: number;
@@ -761,6 +790,7 @@ interface TypeNode {
 interface Scanner {
   lookAhead<T>(callback: () => T): T;
   tryScan<T>(callback: () => T): T;
+  hasPrecedingLineBreak(): boolean;
 }
 
 function createScanner(): Scanner {
@@ -774,7 +804,10 @@ function createScanner(): Scanner {
   function scannerTryScan<T>(callback: () => T): T {
     return scannerSpeculationHelper(callback, false);
   }
-  const scanner = { lookAhead: scannerLookAhead, tryScan: scannerTryScan };
+  function hasPrecedingLineBreak(): boolean {
+    return false;
+  }
+  const scanner = { lookAhead: scannerLookAhead, tryScan: scannerTryScan, hasPrecedingLineBreak };
   return scanner;
 }
 
@@ -807,7 +840,7 @@ function runNestedParserCase(reference: boolean): number {
   }
 
   function isStartOfType(): boolean {
-    return currentToken === 150;
+    return !scanner.hasPrecedingLineBreak() && currentToken === 150;
   }
 
   function parseKeywordAndNoDot(): TypeNode | undefined {
@@ -933,6 +966,191 @@ export function optionalParameterResultKind(): number {
     expect(exports.optionalParameterResultKind()).toBe(42);
   });
 
+  it("dispatches a cached optional-parameter declaration through a zero-argument callback", async () => {
+    const exports = await compileAndInstantiate(`
+interface Identifier {
+  kind: number;
+}
+
+type DiagnosticMessage = object;
+
+const requiredSameAbi = (_diagnosticMessage: DiagnosticMessage): Identifier => ({ kind: 7 });
+
+namespace Parser {
+  let optionalParameterWasUndefined = false;
+
+  function parseIdentifierName(diagnosticMessage?: DiagnosticMessage): Identifier {
+    optionalParameterWasUndefined = diagnosticMessage === undefined;
+    return { kind: 42 };
+  }
+
+  function parseModuleExportName(parseName: () => Identifier): Identifier {
+    return parseName();
+  }
+
+  function invokeRequiredAsZero(callback: () => number): number {
+    return callback();
+  }
+
+  function requiredDiagnosticMessage(_diagnosticMessage: DiagnosticMessage): number {
+    return 99;
+  }
+
+  export function runModuleExportNameCase(): number {
+    return parseModuleExportName(parseIdentifierName).kind;
+  }
+
+  export function observedModuleExportNameOptionalParameter(): boolean {
+    return optionalParameterWasUndefined;
+  }
+
+  export function runRequiredParameterCase(): number {
+    return invokeRequiredAsZero(requiredDiagnosticMessage as unknown as () => number);
+  }
+}
+
+export function runModuleExportNameCase(): number {
+  return Parser.runModuleExportNameCase();
+}
+
+export function observedModuleExportNameOptionalParameter(): boolean {
+  return Parser.observedModuleExportNameOptionalParameter();
+}
+
+export function runRequiredParameterCase(): number {
+  return Parser.runRequiredParameterCase();
+}
+
+export function callRequiredSameAbi(message: DiagnosticMessage): number {
+  return requiredSameAbi(message).kind;
+}
+`);
+
+    expect(exports.callRequiredSameAbi({})).toBe(7);
+    expect(exports.runModuleExportNameCase()).toBe(42);
+    expect(exports.observedModuleExportNameOptionalParameter()).toBeTruthy();
+    expect(() => exports.runRequiredParameterCase()).toThrow();
+  });
+
+  it("retains optional arity after a later same-ABI closure replaces the live registry entry", async () => {
+    const exports = await compileAndInstantiate(`
+interface Identifier {
+  kind: number;
+}
+
+type DiagnosticMessage = object;
+
+let optionalParameterWasUndefined = false;
+
+function parseIdentifierName(diagnosticMessage?: DiagnosticMessage): Identifier {
+  optionalParameterWasUndefined = diagnosticMessage === undefined;
+  return { kind: 42 };
+}
+
+// Compiled first: its callback call pre-registers parseIdentifierName and
+// observes that the single externref parameter is optional.
+function warmOptionalRegistration(callback: () => Identifier): Identifier {
+  return callback();
+}
+
+// Compiled next: this required-parameter arrow has the exact same lowered
+// funcref ABI and replaces the base wrapper's live ClosureInfo record.
+function overwriteLiveRegistryEntry(message: DiagnosticMessage): number {
+  const requiredSameAbi = (requiredMessage: DiagnosticMessage): Identifier => ({
+    kind: requiredMessage === undefined ? -1 : 7,
+  });
+  return requiredSameAbi(message).kind;
+}
+
+// Compiled after the overwrite. Its zero-argument callback dispatcher must
+// still retain the optional one-parameter parseIdentifierName candidate.
+function parseModuleExportName(parseName: () => Identifier): Identifier {
+  return parseName();
+}
+
+function invokeRequiredAsZero(callback: () => number): number {
+  return callback();
+}
+
+function requiredDiagnosticMessage(_diagnosticMessage: DiagnosticMessage): number {
+  return 99;
+}
+
+export function runOptionalCase(): number {
+  if (overwriteLiveRegistryEntry({}) !== 7) return -1;
+  // Keep the early dispatcher live as well as compile-order-relevant.
+  if (warmOptionalRegistration(() => ({ kind: 1 })).kind !== 1) return -2;
+  return parseModuleExportName(parseIdentifierName).kind;
+}
+
+export function observedUndefinedOptionalParameter(): boolean {
+  return optionalParameterWasUndefined;
+}
+
+export function runRequiredParameterCase(): number {
+  return invokeRequiredAsZero(requiredDiagnosticMessage as unknown as () => number);
+}
+`);
+
+    expect(exports.runOptionalCase()).toBe(42);
+    expect(exports.observedUndefinedOptionalParameter()).toBeTruthy();
+    expect(() => exports.runRequiredParameterCase()).toThrow();
+  });
+
+  it("upgrades an early source latch to a later nested declaration's exact callback ABI", async () => {
+    const exports = await compileAndInstantiate(`
+let optionalParameterWasUndefined = false;
+
+// This top-level body compiles before runParserCase. Its dynamic callback call
+// performs the source-wide conservative scan while the nested Identifier class
+// below has no physical struct ABI yet.
+export function latchParserSource(callback: () => number): number {
+  return callback();
+}
+
+function invokeRequiredAsZero(callback: () => number): number {
+  return callback();
+}
+
+function requiredParameter(_value: object): number {
+  return 99;
+}
+
+export function runParserCase(): number {
+  class Identifier {
+    kind: number;
+
+    constructor(kind: number) {
+      this.kind = kind;
+    }
+  }
+
+  function parseIdentifierName(diagnosticMessage?: object): Identifier {
+    optionalParameterWasUndefined = diagnosticMessage === undefined;
+    return new Identifier(42);
+  }
+
+  function parseModuleExportName(parseName: () => Identifier): Identifier {
+    return parseName();
+  }
+
+  return parseModuleExportName(parseIdentifierName).kind;
+}
+
+export function observedUndefinedOptionalParameter(): boolean {
+  return optionalParameterWasUndefined;
+}
+
+export function runRequiredParameterCase(): number {
+  return invokeRequiredAsZero(requiredParameter as unknown as () => number);
+}
+`);
+
+    expect(exports.runParserCase()).toBe(42);
+    expect(exports.observedUndefinedOptionalParameter()).toBeTruthy();
+    expect(() => exports.runRequiredParameterCase()).toThrow();
+  });
+
   it("keeps sibling node layouts across a constraint-backed current-node fallback", async () => {
     const exports = await compileAndInstantiate(`
 interface Node {
@@ -968,5 +1186,51 @@ export function runConstraintBackedCallbackCase(): number {
 `);
 
     expect(exports.runConstraintBackedCallbackCase()).toBe(42);
+  });
+
+  it("keeps a later AST node after the parser context helper first returns an array", async () => {
+    const exports = await compileAndInstantiate(`
+interface Node {
+  kind: number;
+}
+
+interface Expression extends Node {
+  value: number;
+}
+
+namespace Parser {
+  function doOutsideOfContext<T>(context: number, callback: () => T): T {
+    if (context) {
+      const result = callback();
+      return result;
+    }
+    return callback();
+  }
+
+  function doOutsideOfAwaitContext<T>(callback: () => T): T {
+    return doOutsideOfContext(1, callback);
+  }
+
+  function parseModifiers(): Node[] {
+    return [{ kind: 7 }];
+  }
+
+  function parseExpression(): Expression {
+    return { kind: 11, value: 23 };
+  }
+
+  export function runArrayThenExpressionCase(): number {
+    const modifiers = doOutsideOfAwaitContext(parseModifiers);
+    const expression = doOutsideOfAwaitContext(parseExpression);
+    return modifiers[0]!.kind + expression.kind + expression.value;
+  }
+}
+
+export function runArrayThenExpressionCase(): number {
+  return Parser.runArrayThenExpressionCase();
+}
+`);
+
+    expect(exports.runArrayThenExpressionCase()).toBe(41);
   });
 });

@@ -90,6 +90,63 @@ function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
   return primitiveKinds.size >= 2;
 }
 
+function sourceDeclarationOfIdentifier(ctx: CodegenContext, expression: ts.Expression): ts.Declaration | undefined {
+  if (!ts.isIdentifier(expression)) return undefined;
+  const symbol = ctx.checker.getSymbolAtLocation(expression);
+  return symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+}
+
+function isRealmUndefinedIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== "undefined") return false;
+  const declaration = sourceDeclarationOfIdentifier(ctx, expression);
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
+/**
+ * An optional boolean has an i32 ABI, so its local alone cannot distinguish an
+ * omitted argument from explicit `false`. Nested declaration lowering records
+ * only formals that observably need that distinction and caches the caller's
+ * actual argc at function entry. Consume that proof before the generic
+ * nullish-comparison path compiles the scalar local as an ordinary zero.
+ */
+function compileTrackedScalarOmissionComparison(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+): ValType | null {
+  const op = expr.operatorToken.kind;
+  const equality =
+    op === ts.SyntaxKind.EqualsEqualsToken ||
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  if (!equality || fctx.argcCachedLocal === undefined || !fctx.omissionTrackedScalarParams) return null;
+
+  const parameterExpression = isRealmUndefinedIdentifier(ctx, expr.right)
+    ? expr.left
+    : isRealmUndefinedIdentifier(ctx, expr.left)
+      ? expr.right
+      : undefined;
+  if (!parameterExpression) return null;
+  const declaration = sourceDeclarationOfIdentifier(ctx, parameterExpression);
+  if (!declaration || !ts.isParameter(declaration)) return null;
+  const parameterIndex = fctx.omissionTrackedScalarParams.get(declaration);
+  if (parameterIndex === undefined) return null;
+
+  // missing = argc != -1 && argc <= sourceParameterIndex
+  fctx.body.push({ op: "local.get", index: fctx.argcCachedLocal });
+  fctx.body.push({ op: "i32.const", value: -1 });
+  fctx.body.push({ op: "i32.ne" });
+  fctx.body.push({ op: "local.get", index: fctx.argcCachedLocal });
+  fctx.body.push({ op: "i32.const", value: parameterIndex });
+  fctx.body.push({ op: "i32.le_s" });
+  fctx.body.push({ op: "i32.and" });
+  if (op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
+    fctx.body.push({ op: "i32.eqz" });
+  }
+  return { kind: "i32" };
+}
+
 function isDeclaredOracleHeterogeneousPrimitiveUnion(ctx: CodegenContext, expr: ts.Expression): boolean {
   let current = expr;
   while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isNonNullExpression(current)) {
@@ -795,6 +852,8 @@ export function compileBinaryExpression(
   const isLooseEqOp = op === ts.SyntaxKind.EqualsEqualsToken;
   const isLooseNeqOp = op === ts.SyntaxKind.ExclamationEqualsToken;
   if (isEqOp || isNeqOp) {
+    const trackedScalarOmission = compileTrackedScalarOmissionComparison(ctx, fctx, expr);
+    if (trackedScalarOmission) return trackedScalarOmission;
     const rightIsNullKeyword = expr.right.kind === ts.SyntaxKind.NullKeyword;
     const rightIsUndefinedId = ts.isIdentifier(expr.right) && expr.right.text === "undefined";
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;

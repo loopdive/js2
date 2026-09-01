@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-31
+updated: 2026-09-01
 priority: critical
 horizon: xl
 complexity: XL
@@ -46,6 +46,29 @@ files:
   - tests/issue-4110-ir-fetch-all-parallel.test.ts
   - tests/ir/passes.test.ts
 loc-budget-allow:
+  # 2026-09-01 (gap 2b, scalar-statement overlay remainder): +80 lines in
+  # `src/codegen/index.ts`. The slice's whole contract is that both edits stay
+  # inside that file — the widened admission predicate
+  # (`preparedScalarModuleStatementShape` plus the two operator allowlists) and
+  # the retirement of the `sawAssignment` ordering refusal. The predicate is the
+  # gate of the prepared module-init transaction; moving it to a subsystem
+  # module would split the ownership the transaction exists to hold, and the
+  # measured payoff is byte-neutrality on every already-admitted shape (V-A,
+  # 15/15 `cmp`-identical) with no IR-fallback bucket movement (V-D).
+  - src/codegen/index.ts
+  # 2026-09-01 (gap 3, WASI prepared module-init adapter): the guard stops being
+  # a post-emission splice and becomes invocation-policy-driven, which grows two
+  # more prepared-route owners. `multi-prepared-program.ts` gains invariant 7's
+  # third arm (`wasi-start-export`) in `finalizePreparedModuleInitStartup` so an
+  # M2 WASI admission cannot land the zero-reconciliation hole this slice closed
+  # on the single-module route; `ir-prepared-free-functions.ts` gains the one
+  # option that tells the prepared preparation call — and only it, never the
+  # post-direct overlay — to construct the body around the reserved
+  # `__init_done` guard. Both are reconciliation/routing at the site that owns
+  # the prepared module-init transaction; there is no subsystem module to move
+  # them to without splitting that ownership.
+  - src/codegen/multi-prepared-program.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/index.ts
   - src/codegen/declarations.ts
   - src/codegen/closure-exports.ts
@@ -1665,3 +1688,709 @@ own projection, exactly the untruth this slice removes from the ledger.
 `issue-3520` and `issue-3525` gained the row in their exact projections and an
 explicit terminal/non-executable partition respectively — in both cases keeping
 the assertion exact rather than loosening a count.
+
+## 2026-09-01 gap-3 implementation plan — WASI prepared module-init adapter
+
+Grounded on `origin/main` `c62b9bc41d`. Slice claim: `#3523:gap3`
+(`ttraenkler/fable-ir-takeover`, branch `claude/docs-r4-gap3-plan` for this
+plan; the implementation branch claims separately). Three probe lanes
+(structural / measured census / test surface) ran against that commit; every
+line-number below is from them.
+
+Gap 3 is now the **only remaining direct-body/legacy-body producer in the
+12-cell census**: since gap 1a and the scalar-assignment slice landed, every
+non-WASI cell measures `direct 0 · legacy 0 · IR 1`, while WASI measures
+`direct 2 · legacy 1 · IR 1` for the call-bearing shape and
+`direct 1 · legacy 1 · IR 1` for call-free shapes (gap 1a applies to WASI).
+The WASI terminal row is `emitted@patch` — the success signature of this slice
+is `legacyBodyEmitted` dropping to `false` and pass1 hitting 0, **not** a kind
+change.
+
+### Measured facts (census probe, reproducible)
+
+Harness: `JS2WASM_COMPILE_PROFILE=1` + `refreshCompileProfileConfig()` /
+`resetCompileProfile()` (`src/compile-profile.ts:12-17`), pass counters summed
+from profile rows `module-init-pass1` (`src/codegen/declarations.ts:5988`) /
+`module-init-pass2` (`declarations.ts:6186`, gate `:6176-6181`); outcome rows
+via `compile(..., { trackIrOutcomes: true })`. Script + raw output preserved in
+the planning session's scratchpad (`census-3523.mts`, `census-out.json`,
+`wat-b-wasi.wat`).
+
+| Shape | host-start | host-deferred | standalone | wasi |
+| --- | --- | --- | --- | --- |
+| (a) `const memo = new Map()` + export | 0·0·1 | 0·0·1 | 0·0·1 | **2·1·1** (p1=1,p2=1) |
+| (b) `let v = 7` + export | 0·0·1 | 0·0·1 | 0·0·1 | **1·1·1** (p1=1,p2=0) |
+| (c) `let total = 0; total = total + 1;` + export | 0·0·1 | 0·0·1 | 0·0·1 | **1·1·1** |
+
+(cells are `direct·legacy·IR`; sizes and full WAT recorded in the probe
+artifacts. WASI raw/gzip: a 52,010/31,377 · b 49,230/29,551 · c 49,256/29,563.)
+
+The two corrections vs the 2026-08 table: gap 1a **does** apply to WASI
+(call-free shapes skip pass 2), and shape (c) is IR-owned on all non-WASI lanes
+(the selector admits a trailing run of exact scalar assignments,
+`src/codegen/index.ts:4260-4299`).
+
+### Why WASI is rejected today, and what the guard actually is
+
+- **Rejection sites**: `preparedExactLexicalModuleInit`
+  (`src/codegen/index.ts:4182-4310`) — `ctx.wasi ||` at `:4201` in the refusal
+  disjunction `:4199-4213`; `exactInvocationLane` (`:4189-4198`) has exactly
+  two lanes (host `wasm-start|deferred-export`; standalone native-first) and no
+  wasi lane; the bottom re-check `:4307-4309` and the evidence type at `:4014`
+  both restrict `invocationKind` to `"wasm-start" | "deferred-export"`. The
+  multi-source (M2) route independently rejects at
+  `src/codegen/multi-prepared-module-init.ts:135` (`rejectBeforeReservation`).
+- **The guard** (`applyModuleInitGuard`, `index.ts:6861-6895`; sole caller
+  `:6921-6923` inside `addWasiStartExport` under `if (ctx.wasi)`, post-emission
+  in both pipelines — single `:6479-6481`, multi `:11084-11087`): (1) mints a
+  fresh `(mut i32)` `__init_done` global via `nextModuleGlobalIdx` **at
+  guard-application time** and prepends
+  `global.get $done / if(return) / i32.const 1 / global.set $done` to
+  `__module_init`; (2) prepends `call __module_init` to **every exported
+  function** except the init itself (the "any exported entry runs init first"
+  semantics the test262 standalone harness relies on, #1789 comment
+  `:6904-6914`). `_start` target selection (`:6944-6992`: exported no-arg
+  no-result `main`, else the init handle) happens **after** the guard so a user
+  `main` carries the call prefix; `observeWasiStartAdapter` records the adapter
+  by object identity (`:7064`), authenticated later by
+  `assertGraphGlobalInvocationPolicy` case `"wasi-start-export"`
+  (`src/codegen/program-abi-module-init-planning.ts:646-708`) from
+  `program-abi-finalization.ts:44`.
+- **Why a sealed Prepared body can't take that splice**: the multi pipeline
+  seals body identity at preparation-snapshot time and
+  `assertPreparedModuleInitCurrent` (`multi-prepared-program.ts:1137-1156`)
+  fails on any body reassignment; `add-wasi-start-export` (`index.ts:11084`)
+  runs **before** `finalize-multi-prepared-module-init-startup`
+  (`index.ts:11115`), so an unmodified guard splice breaks the seal check by
+  construction. On the single-file route the invariant-7 reconciliation
+  (`declarations.ts:6310-6337`) is gated `skipModuleInitBody && !ctx.wasi`, so
+  a wasi admission with no third arm ships with **zero** adapter
+  reconciliation.
+- **The IR-patch constraint**: `src/ir/integration.ts:4444-4459` withdraws the
+  IR module-init patch if `bodyContainsReturnClassOp` (`:4776-4789`) finds any
+  non-trailing return — later passes append epilogues (#3168). The guard's
+  early-`return` form therefore **cannot be planted at IR-emission time**
+  as-is.
+- **Existing precedent for mode-conditional prologues on a Prepared body** —
+  all inside the sanctioned mutation window `finalizeMultiPreparedModuleInitStartup`
+  (`index.ts:6848-6859`), all host-only today: `finalizeInModuleInitFlag`
+  (`:6803-6846`, wraps `flag=1 … body … flag=0`),
+  `emitInitMarshalHelperRegistration` (`init-marshal-helpers.ts:100-135`),
+  `emitInitClassDispatchRegistration` (`init-class-dispatch-helpers.ts:209+`).
+- **Invocation policy already speaks wasi**: `IrModuleInitInvocationKind`
+  includes `"wasi-start-export"` (`src/ir/module-init-plan.ts:10`), chosen by
+  `invocationPolicy()` for `target === "wasi"` (`:188-201`), planned into
+  `plan.invocation` for every WASI compile today (pinned by
+  `tests/issue-3523-ir-module-init-compile-once.test.ts:146`). The ctx-derived
+  twin is `moduleInitInvocationPolicy` (`program-abi-module-init-planning.ts:23-28`).
+  The `wasi-start-export` authentication case never runs against a Prepared
+  unit today because `graphGlobalPass` is unset when a prepared exact unit owns
+  the init (`:439-456`).
+
+### Contract
+
+1. **The guard becomes invocation-policy-driven, not a post-hoc splice.** For
+   a Prepared module-init whose `plan.invocation.kind === "wasi-start-export"`:
+   the `__init_done` global is reserved at preallocation time (alongside
+   `preallocateModuleInitCallable`, `declarations.ts:4990-4994` region) so it
+   exists before body emission, and the guard prologue is planted **before the
+   seal**, by one of exactly two sanctioned forms — probe P1 decides which:
+   - (i) *wrapping-if form* at prepared-body construction:
+     `global.get $done / i32.eqz / if (then: done=1 … body …)` — no
+     return-class op, passes the `:4776` scan, inside the body at snapshot
+     time; or
+   - (ii) *early-return form* applied inside the sanctioned mutation window
+     (multi: a new step in `finalizeMultiPreparedModuleInitStartup` before
+     `finalizePreparedModuleInitStartup`, exactly like `finalizeInModuleInitFlag`;
+     single: the `skipModuleInitBody` wiring block), which requires resolving
+     the `:11084` vs `:11115` ordering hazard explicitly.
+2. **`applyModuleInitGuard` becomes prepared-aware and fails closed.** When
+   the init is prepared-owned it must NOT reassign the init body; it
+   authenticates that the guard is already present (a recorded receipt or a
+   structural check, not trust) and still performs the exported-function
+   `call __module_init` prepends and `_start` construction, whose ordering
+   contract (`guard before _start target selection`, `:6917-6923`; placement
+   before dead-import elimination, `const-box-hoist.ts:150-154`) is unchanged.
+   A prepared wasi init with no guard is an `IrInvariantError`, never a silent
+   unguarded binary.
+3. **Invariant 7 grows its third arm.** The single-file reconciliation drops
+   its `!ctx.wasi` gate and gains a `wasi-start-export` arm (expects: no start
+   section, no compiler `__module_init` export alias, exactly one
+   authenticated `_start` adapter); the multi twin
+   (`finalizePreparedModuleInitStartup`, `multi-prepared-program.ts:1159-1209`,
+   `exportModuleInit = defer && !wasi` at `:1179`) gains the same arm. The
+   `JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER` seam extends to the wasi arm
+   (install a start-section adapter the policy did not choose) — without this
+   the new reconciliation is vacuous by the project's own standard.
+4. **Prepared authentication runs.** The `wasi-start-export` authentication
+   shape (`program-abi-module-init-planning.ts:646-708`) — no start section, no
+   alias, one `_start` adapter whose first call reaches the target exactly
+   once, user-`main` first-call rule — must execute against the Prepared unit
+   (either by pointing the existing assert at the prepared callable when
+   `graphGlobalPass` is unset, or a prepared twin with identical checks).
+5. **Selector admission is the LAST edit.** Third lane in
+   `exactInvocationLane` (wasi: `nativeStrings && ctx.wasi` with
+   `plan.invocation.target === "wasi"` and `kind === "wasi-start-export"`),
+   drop `ctx.wasi` from `:4201`, widen the evidence type at `:4014` and the
+   bottom check `:4307-4309`. **Do not add a field to `plan.invocation`** —
+   the whole-shape `toEqual` pin at `compile-once.test.ts:104` stays intact;
+   the adapter discriminator is derivable from `kind`.
+6. **Multi-source WASI stays rejected** (`multi-prepared-module-init.ts:135`
+   unchanged) — M2 wasi admission is a follow-up slice, out of scope here.
+
+### Ordered work (behavior pin FIRST)
+
+1. **Commit 1 — the missing behavior pin, on today's overlay route.** The test
+   probe found NO idempotency/direct-export behavior pin for any shape this
+   slice admits (existing pins — `issue-1789:41-60`, `issue-1411:92-109`,
+   `issue-4376:906` — all use shapes the selector keeps rejecting). Add one
+   (new `tests/issue-3523-wasi-prepared-module-init.test.ts`): shape (b)/(c)
+   under `target: "wasi"`, instantiated with empty imports — (α) calling an
+   export without `_start` sees initialized state; (β) `_start()` then export
+   → init exactly once; (γ) two distinct exports → once (observable counter,
+   the `issue-1789` pattern). Must be green BEFORE the mechanism moves, so the
+   relocation is measured against a pin rather than self-certifying.
+2. **Commit 2 — guard machinery + reconciliation third arm + seam extension +
+   prepared authentication** (contract items 1-4). Unreachable until the
+   selector flips; the same PR carries both.
+3. **Commit 3 — selector admission + test flips**:
+   - `compile-once.test.ts:641` (WASI direct-body-poison arm) moves from the
+     near-miss control list to the positive green-under-poison side;
+   - wasi lanes join the positive suites at `:509` ("routes all four"), `:592`
+     ("never reaches the direct emitter"), `:648` (double-adapter fail);
+   - `issue-4376` (Unsupported shape, legacy guard) and `issue-1411`
+     (plain-literal assignment, not admitted grammar) must stay green
+     UNTOUCHED — they pin the legacy lane this slice does not remove;
+   - `issue-3520:483-487` (wasi publishes zero `__module_init` exports) must
+     hold for the prepared adapter too.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — guard form.** Decide (i) vs (ii) by measurement: for (i), verify the
+  wrapping-if body passes the `:4776` scan and the seal snapshot, and that
+  `finalizeInModuleInitFlag`-style later wraps compose with it; for (ii),
+  demonstrate the resolved ordering between `add-wasi-start-export` (`:11084`)
+  and the finalize window (`:11115`) — moving a pipeline phase needs its own
+  justification. Note: the multi window is currently unreachable for wasi
+  (item 6), so for THIS slice the decision only has to be sound on the
+  single-file route — state where the single-file seal boundary actually is
+  (no `assertPreparedModuleInitCurrent` twin exists there; if nothing asserts,
+  say so and keep the guard application inside the same block invariant 7
+  runs in).
+- **P2 — `tests/issue-3517-map-module-init.test.ts` is already red on main**
+  (5/14: every "keeps the Map module initializer legacy-owned in <lane>" pin,
+  `:146-157`, asserts `<module-init>` ∉ `irCompiledFuncs` while the overlay
+  IR-patches it). Establish why main CI is green with this file red (excluded
+  from the gate? stale baseline?), then either adopt the rewrite in commit 3
+  (the wasi row becomes prepared, the others overlay) or file it as its own
+  issue — do not silently inherit.
+- **P3 — export-prepend interactions.** The exported-function prepends mutate
+  functions that may themselves be IR-prepared free functions; today's legacy
+  route already does this without tripping any seal (only the module-init body
+  is identity-asserted). Confirm that stays true on the new route, and that
+  prepend placement still precedes dead-import elimination / late-import
+  renumbering (`const-box-hoist.ts:150-154` contract).
+- **P4 — outcome-row truthfulness.** After admission the WASI row must be
+  `emitted` with `legacyBodyEmitted: false`, `irBodyEmitted: true` via the
+  prepared constructor, not the overlay constructor
+  (`ir-overlay-outcomes.ts:928-935` / `:297-298`); name the constructor the
+  new path actually uses.
+
+### Verification matrix
+
+- **V-A — non-WASI byte neutrality (file-copy A/B, not the test net).** For
+  shapes (a)(b)(c) × {host-start, host-deferred, standalone}: compile at base,
+  compile with the change, `cmp` binaries — 9/9 byte-identical required. Any
+  delta is a defect (this slice touches nothing non-wasi).
+- **V-B — WASI census flip.** Shapes (a)(b)(c) under wasi:
+  `direct 0 · legacy 0 · IR 1`, pass1=pass2=0, poison seam green
+  (`JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1` compiles clean where today
+  it fails with "injected direct module-init body poison" — measured on all 3
+  wasi cells at base). WASI byte sizes will change (guard is now planted
+  differently); record before/after raw+gzip in the checkpoint, no neutrality
+  requirement.
+- **V-C — behavior.** Commit-1 pin green on both routes; the `issue-1789`,
+  `issue-1411`, `issue-4376` legacy-lane pins untouched and green;
+  `wasmUnchanged`-class runtime checks: `_start` exported, `__module_init`
+  NOT exported, `__exn_tag`/`memory` unchanged.
+- **V-D — fail-closed reachability.** Double-adapter seam armed under wasi →
+  exactly-one-adapter error with empty binary, plus the Unsupported-control
+  compile (the seam only arms the Prepared route); guard-absent prepared init
+  (test seam or structural mutation) → `IrInvariantError`, per contract 2;
+  the four adapter-mutation authentications
+  (`issue-3520:657-688` — strip `_start`, retarget first call, duplicate
+  `_start`, inject alias) get prepared-route equivalents.
+- **V-E — suites.** Full vitest on the touched files + `pnpm run
+  check:ir-fallbacks` (module-init buckets must not grow) + equivalence gate
+  via CI.
+
+### Out of scope
+
+Multi-source WASI prepared admission (M2; `rejectBeforeReservation` keeps
+`ctx.wasi`), gap 1's call-bearing pass-1 retirement for Unsupported shapes,
+the rest of gap 2 (statement grammar past exact scalar assignments), gap 5
+(class population, R3), and any change to `plan.invocation`'s shape.
+
+## 2026-09-01 gap-3 checkpoint note — probes P1–P4 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap3-wasi-prepared`, based on `origin/main` `7bee941d6`
+with the plan branch `claude/docs-r4-gap3-plan` merged in. Three commits:
+the behavior pin, the guard machinery, the selector admission.
+
+The base census reproduced the plan's measured facts exactly — WASI
+`p1=1,p2=1 / 1,0 / 1,0` for shapes (a)(b)(c), every non-WASI cell `0,0` and
+prepared-owned. The two byte figures differ from the plan's by 2–6 bytes
+(a 52,012 vs 52,010; b 49,236 vs 49,230; c 49,262 vs 49,256), which is the
+one commit main advanced by between the two groundings.
+
+### P1 — guard form: (i), the wrapping `if`, planted at prepared-body construction
+
+**Decision: form (i).** Not a close call, and the deciding evidence is a
+composition property the plan flagged but did not resolve.
+
+`finalizeInModuleInitFlag` (#2800) wraps the initializer as
+`__in_module_init = 1 … body … __in_module_init = 0`. In the single-module
+pipeline it runs at `index.ts:6524`, AFTER `add-wasi-start-export` at `:6479`.
+An early-`return` guard at the head of the body therefore skips the trailing
+`__in_module_init = 0` on every already-initialized entry — the flag stays 1
+forever and every delete-aware read misroutes. That is precisely the #3168
+merge-group regression class the `bodyContainsReturnClassOp` withdrawal at
+`integration.ts:4444-4459` exists to prevent, and it is a latent defect of the
+CURRENT legacy WASI splice, not something this slice introduces (it is
+unreachable today only because the flag is a no-op unless a gc/host
+delete-aware read recorded it). The wrapping `if` composes correctly in both
+directions: it adds no return-class op, so the withdrawal scan passes, and
+every appended epilogue still executes on the already-initialized path.
+
+Planting site: `compileIrPathFunctions`' `entry.moduleInit` branch, immediately
+after the return-class scan — the body the preparation snapshot seals already
+contains the guard, so nothing is spliced later. The `__init_done` global is
+reserved in `preallocateModuleInitCallable`, which provably precedes body
+emission. Gated on the new `plantPreparedWasiModuleInitGuard` option, set only
+by the prepared preparation call in `ir-prepared-free-functions.ts`, so the
+post-direct overlay — which patches the same unit on the legacy WASI lane —
+cannot plant a second guard.
+
+**Where the single-file seal boundary actually is: nowhere.** As the plan
+suspected, there is no `assertPreparedModuleInitCurrent` twin on the
+single-module route. `sealPreparedComponents` seals ABI components, not body
+identity; body identity is asserted only by `MultiPreparedProgramOwner`, and
+`finalizeInModuleInitFlag(ctx)` already mutates a prepared module-init body
+there today on the host lanes. So "before the seal" is vacuous on this route,
+and the guard is authenticated rather than assumed:
+`applyModuleInitGuard` checks the three planted instruction objects are the
+body's leading triple **by object identity**. `fixupModuleGlobalIndices`
+mutates `.index` in place, so identity survives every legitimate late
+import-global shift while a body REPLACEMENT does not — which is the property
+an index comparison would not have given. Guard application stays in
+`addWasiStartExport`, unmoved; no pipeline phase was reordered, so the
+`:11084` vs `:11115` hazard the plan raised for form (ii) never arises.
+
+### P2 — `tests/issue-3517-map-module-init.test.ts`: filed, not inherited
+
+Reproduced on this branch: **5 of 14 red**, exactly the pins the plan named
+(`keeps the Map module initializer legacy-owned in {native strings, fast,
+standalone, WASI, strict no-host}`, all asserting `<module-init>` ∉
+`irCompiledFuncs`).
+
+**Why main CI is green with this file red — measured, not inferred.** The only
+job that runs `tests/issue-*.test.ts` is `issue-tests` in `ci.yml:713-759`,
+and it is (a) **not a required check** — the required six are `cheap gate`,
+`quality`, `merge shard reports`, `check for test262 regressions`,
+`equivalence-gate`, `cla-check` — and (b) split into a FATAL pinned step and an
+ADVISORY `continue-on-error` changed-files step. `node
+scripts/select-changed-issue-tests.mjs --pinned` prints exactly ONE file,
+`tests/issue-3529-selector-preclaim.test.ts`. So this file runs in no gate at
+all unless a PR touches it, and then only advisorily. The job's own header
+documents this hole ("a file can be BORN red … with every gate green").
+
+**Not adopted here, and the reason is scope, not convenience.** Four of the
+five red lanes (native strings, fast, standalone, strict no-host) have nothing
+to do with WASI and are red because the overlay IR-patches the Map initializer
+in lanes this slice does not touch. This slice changes exactly one of the five
+— WASI, from overlay-patched to prepared — so adopting the rewrite would mean
+re-authoring four assertions whose correct new shape is decided by a different
+question (whether the `#3517` pins should track ownership at all, now that
+`<module-init>` ∈ `irCompiledFuncs` is the norm rather than the exception).
+That belongs in its own issue with its own evidence. **Left to file:** the
+implementation lane holds only the `3523:gap3` slice claim and does not
+allocate issue ids, so this is handed back to the planning lane as a named
+follow-up rather than silently inherited.
+
+### P3 — export prepends: unchanged, and confirmed on the new route
+
+The exported-function `call __module_init` prepends and `_start` target
+selection are byte-for-byte the same code on both routes; only the
+init-body half of `applyModuleInitGuard` branched.
+
+- **They still land on IR-prepared exports.** For shape (c) under WASI the
+  exported `read` is itself prepared (`irCompiledFuncs = ['read',
+  '<module-init>']`, row `read` = `emitted / legacy=false / ir=true /
+  directBodyEmissions=0 / irBodyEmissions=1 / preparedComponentId` present),
+  and the α pin — a direct export call with no `_start` returning the
+  initialized value — is only satisfiable through that prepend. No seal
+  objects: only the module-init body is identity-asserted anywhere.
+- **Placement still precedes dead-import elimination.** `addWasiStartExport`
+  remains at `index.ts:6479`, `eliminateDeadLayoutAndPlanProgramAbi` at
+  `:6592`; nothing moved, so the `const-box-hoist.ts:150-154` contract holds
+  unchanged.
+
+### P4 — outcome-row truthfulness: prepared, with the component id
+
+After admission the WASI module-init row is
+`kind: "emitted" · stage: "patch" · legacyBodyEmitted: false ·
+irBodyEmitted: true`, carrying
+
+```
+prepared-component:ir-unit:v1:ir-source%3Av1%3A…%3Aentry%3At.ts:root:module-init:…
+  +ir-unit:v1:ir-source%3Av1%3A…%3Aentry%3At.ts:root:top-level-function:…
+```
+
+**The constructor.** Prepared and overlay rows are built by the same arm —
+`evidence?.kind === "patched"` in `buildIrOverlayOutcomes`
+(`src/codegen/ir-overlay-outcomes.ts:928-935`). What separates them is
+`evidence.preparedComponentId`, which is minted only by the
+`sealPreparedComponents` closure and is therefore ABSENT on the overlay route.
+Before this slice the WASI row had no `preparedComponentId` and
+`legacyBodyEmitted: true`; it now has one and `false`. `legacyBodyEmitted`
+comes from `:866-867` and is false because the module-init unit is in
+`skippedBodyUnitIds`. So the row is prepared-constructed in the only sense the
+ledger can express, and the census denominator moves for a real reason.
+
+### Divergence from the plan: `strictNoHostImports` also refuses
+
+Contract 5 said to drop `ctx.wasi` at `index.ts:4201`. Doing only that admits
+**nothing**: `strictEnvImportGate` is `input.strictNoHostImports ?? target ===
+"wasi"` (`src/target-profile.ts:80`), so `ctx.strictNoHostImports` is
+unconditionally true under WASI and refuses the lane by itself. Measured
+directly — with `ctx.wasi` dropped, the selector still reached the refusal with
+`strict=true, lane=true, target=wasi, kind=wasi-start-export`.
+
+Narrowed to `(ctx.strictNoHostImports && !ctx.wasi)`, which keeps refusing the
+case the clause was written for: an **explicit** `--no-host-imports` gc/host
+build, a distinct regime this slice's invocation policies do not describe.
+`issue-3517`'s "strict no-host" lane still observes the legacy route.
+
+### Verification results
+
+| Check | Result |
+| --- | --- |
+| **V-A** non-WASI byte neutrality, file-copy A/B + `cmp` | **9/9 IDENTICAL** — (a)(b)(c) × {host-start, host-deferred, standalone}. Re-run after the last production edit, still 9/9. |
+| **V-B** WASI census flip | all three cells `direct 0 · legacy 0 · IR 1`, `pass1 = pass2 = 0`. Poison seam `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1`: **RED at base on all 3** ("injected direct module-init body poison"), **GREEN after on all 3**. |
+| **V-B** WASI sizes (raw / gzip -9) | a 52,012→**51,365** / 30,963→**30,623** · b 49,236→**49,162** / 29,545→**29,512** · c 49,262→**49,176** / 29,555→**29,516**. Smaller: one reserved global replaces a late-minted one and the wrapping `if` replaces the four-instruction early-return prologue. |
+| **V-C** behavior | Commit-1 pin green on both routes (7 tests, unchanged across the relocation). `issue-1789`, `issue-1411`, `issue-4376` legacy-lane pins untouched and green. `_start` exported, `__module_init` never exported, no wasm `start` section. |
+| **V-D** fail-closed | Double-adapter seam under WASI → compile fails, empty binary, Unsupported control still compiles. Four adapter mutations get single-source **prepared** equivalents (strip `_start` → "found 0"; duplicate → "found 2"; retarget the adapter's real first `call` → "does not retain its exact selected entry call path"; inject a compiler alias → "must not publish a compiler `__module_init` alias"), each with a positive control. Guard-strip seam → `IrInvariantError` "lost its exact planted idempotence guard", empty binary. |
+| **V-E** suites | `check:ir-fallbacks` OK, no module-init bucket growth. All five ratchet gates green. |
+
+**One honest negative.** `tests/issue-4376-module-init-chunking.test.ts >
+preserves TDZ ordering for const writes and updates` timed out (35 s ceiling)
+in a parallel run on this container. A/B'd in isolation, three runs each: base
+30.1 / 27.7 / 30.0 s, after 31.1 / 29.2 / 28.7 s — overlapping ranges. The test
+simply sits at ~29 s against a 35 s ceiling on a 4-core box; it is
+pre-existing marginal fragility, not a regression from this slice, and the
+9/9 byte identity independently rules out a codegen change on that lane.
+
+### Growth allowance
+
+`multi-prepared-program.ts` (+14) and `ir-prepared-free-functions.ts` (+9) are
+added to `loc-budget-allow` with the dated rationale in the frontmatter: the
+first carries invariant 7's third arm for M2, the second the one option that
+scopes guard planting to the prepared preparation call. Both are
+reconciliation/routing at the site that owns the prepared module-init
+transaction. `scripts/*-baseline.json` untouched.
+
+## 2026-09-01 gap-2b implementation plan — retire the scalar-statement overlay remainder
+
+Grounded on `origin/main` `0d9bfedeea`. Slice claim: `#3523:gap2b`
+(`ttraenkler/fable-ir-takeover`). Three probe lanes (selector grammar /
+measured shape matrix + corpus frequency / IR-side expressiveness) ran
+against that commit, including a file-copy A/B of the candidate edit. Every
+line number below is theirs.
+
+### What gap 2 still is, measured
+
+A 15-shape × 4-lane matrix (host-start, host-deferred, standalone, wasi; each
+shape with an `export function f()` reader; harness = the
+`issue-3523-module-init-single-pass` pass-counter method) shows the gap-2
+remainder is **exactly three overlay cells**, identical on all four lanes:
+
+| shape | cell today | why |
+| --- | --- | --- |
+| s8 `let n = 0; n++;` | `1·1·1` overlay (p1=1,p2=0) | `isPreparedExactScalarModuleAssignment` requires `BinaryExpression` (`index.ts:4129`) |
+| s9 `let n = 0; n += 2;` | `1·1·1` overlay | requires `EqualsToken` (`:4132`) |
+| s12 `let s = 0; for (…) { s = s + i }` | `1·1·1` overlay | no statement-subtree arm |
+
+For s8/s9 the selector already claims the unit (`reason: null`, arms
+`select.ts:5125-5135` / `:5100-5118`), the semantic plan is byte-for-byte the
+landed `total = total + 1` shape (1 binding `let:mut:tdz`, evaluations
+`variable-initializer[1]`, `statement[0]`, gaps 0, liveSeeds 0), and the IR
+body is what already runs under the overlay. **The refusal is entirely inside
+`isPreparedExactScalarModuleAssignment` (`src/codegen/index.ts:4120-4184`).**
+
+Everything else in the matrix is NOT a prepared-route question: s1–s5
+(string/object/array/template/arrow initializers) are refused by the storage
+resolver at `select.ts:5658-5665` (`vardecl-module-storage-unrepresentable`,
+a value-representation gap); s6 `var` at `:5584-5586`; s7 `export const` at
+`:5587`; s11 `if (a)` at `:6802-6803` (numeric ToBoolean); s10/s13/s14 are
+call-bearing (gap 1, `2·1·x`). Every call-free non-admitted shape is already
+single-pass (gap 1a holds on all lanes).
+
+**Corpus weight is ~zero**: no module-level `++`/`+=`/`for`/`if` anywhere in
+playground/fixtures; in test262 (43,934 runnable files) 98.5 % of module-inits
+are call-bearing and the `++`-style shapes appear in <10 files. Gap 2b is an
+ownership-cleanliness slice that closes the scalar family; the
+conformance-visible R4 item after it is **gap 1** (call-bearing pass-1
+retirement), then the selector's `var` gate and storage representability
+(#2949-shaped, not prepared-route work).
+
+### The A/B that already ran (probe, throwaway edit, base restored + cmp-verified)
+
+Widening only the head of `isPreparedExactScalarModuleAssignment`
+(`:4129-4171`) so `targetIdent`/`readIdent` also come from postfix/prefix
+`++`/`--` on an identifier, `id (+=|-=|*=) NumericLiteral`, and
+`id = id (+|-|*) NumericLiteral` — leaving the evaluation match
+(`:4021-4047`), the oracle same-declaration check (`:4156-4171`) and the
+admitted-`let` check (`:4173-4183`) untouched:
+
+| shape | base (4 lanes) | candidate (4 lanes) | runtime |
+| --- | --- | --- | --- |
+| s8 `n++` | overlay | **`0·0·1` prepared** | 1 ✓ |
+| s9 `n += 2` | overlay | **`0·0·1` prepared** | 2 ✓ |
+| `let n = 5; n -= 2; n *= 3;` | overlay | **prepared** | 9 ✓ |
+| `let n = 5; n = n - 2; n = n * 3;` | overlay | **prepared** | 9 ✓ |
+| `let n = 0; n++; let k = 4; k--;` | overlay | overlay (unchanged) | 13 ✓ |
+| s12 `for` loop | overlay | overlay (unchanged) | 3 ✓ |
+| s15 / landed control | prepared | prepared | ✓ |
+
+The interleaved case stays overlay only because of `sawAssignment`
+(`:4280`, `:4286`, `:4307`) — an order-only rule: bindings are consumed by
+`declarationOrdinal`, evaluations by population ordinal (`:4265-4275`), so
+nothing in the plan requires declarations-first.
+
+### Contract
+
+1. **Sub-A — operator family.** `isPreparedExactScalarModuleAssignment`
+   admits, on an earlier-admitted mutable `let` target with numeric (`f64`)
+   storage: `id++`, `++id`, `id--`, `--id`; `id (+= | -= | *= | /=)
+   NumericLiteral`; `id = id (+ | - | * | /) NumericLiteral` (target and read
+   identifier must resolve to the SAME declaration via
+   `ctx.oracle.declarationsOf`, as today at `:4156-4171`); `id = NumericLiteral`.
+   The evaluation stays `kind:"statement"` at the exact ordinal with
+   `bindingIds: []`. NOT admitted (they are the new near-misses): `**=`,
+   `%=`, bitwise/shift ops, `id = 1 + id` (operand order), parenthesized RHS,
+   string RHS, `const` target, boolean `!flag` (i32 storage — `++` on a
+   boolean-branded binding must stay refused, from-ast.ts:11819-11823), any
+   RHS identifier other than the target.
+2. **Sub-B — drop `sawAssignment`.** Remove the declaration-after-assignment
+   refusal (`:4280`, `:4286`, `:4307`); zip stays by `declarationOrdinal`
+   (declarations) and population ordinal (evaluations); F1 at `:4322-4328`
+   still requires every planned binding consumed.
+3. Both edits are confined to `src/codegen/index.ts`. No change to the plan
+   builder, the overlay, `applyModuleInitGuard`, invocation wiring, the
+   `:4100-4117` reachability scan (it must still run on every admitted
+   initializer), TDZ-elision gating (`wasm-start` only, `:4668`), or
+   `plan.invocation`'s shape (`toEqual` pin at compile-once.test.ts:104).
+4. Every rejection stays a silent `return undefined` before any mutation.
+
+### Pins that move (all in `tests/issue-3523-ir-module-init-compile-once.test.ts`)
+
+- Near-miss controls at `:620-662` that become **positives**: `total += 1`,
+  `total++`, `total = total - 1`, the WASI compound (`:655-657`), and the two
+  `sawAssignment` controls (`total = total + 1; let total = 0` stays a
+  near-miss for the OTHER reason it pins — target not admitted — but
+  `let total=0; total=total+1; let later=2` at `:640` becomes a positive).
+- The host-deferred **overlay control** `let total = 0; total += 1;` at
+  `:677-679` (the `legacyBodyEmitted:true` control for the double-adapter
+  seam) flips to prepared — replace it with a shape that stays overlay
+  (s12's `for` loop, or `total **= 2`) so the seam test keeps a real control.
+- New near-misses added per contract item 1, each proven RED under the poison
+  seam (`JSW…POISON_DIRECT_MODULE_INIT_BODY=1`) while the admitted shapes go
+  GREEN — the existing "fails closed for every near-miss grammar" anatomy.
+- The "is structural rather than allowlisted" positives (`:546-584`) gain the
+  interleaved-declaration case.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — `/` and `id = NumericLiteral`**: the probe A/B covered `+ - *` and
+  `++/--/+=/-=/*=`; before admitting `/=`, `= id / num` and `= num`, A/B each
+  on all four lanes with a runtime value only that statement can produce
+  (e.g. `let n = 8; n /= 2;` → 4). Refuse any operator whose A/B is not
+  `0·0·1` with the right value.
+- **P2 — storage kind guard**: confirm the admitted target's storage is `f64`
+  (or dynamic) for `++/--` and the arithmetic ops — cite the resolver arm
+  (`from-ast.ts:11819-11823` / `select.ts:5125-5135`) and add the boolean-`let`
+  near-miss.
+- **P3 — `for`-loop non-admission**: confirm s12 stays overlay under the final
+  predicate (it must — statement-subtree admission is a later slice) and use
+  it as the replacement overlay control.
+- **P4 — ledger defect, adjacent**: the census found
+  `tests/fixtures/extern-demo.ts` (`declare namespace` = `ModuleDeclaration`)
+  counted in `collectModuleInitPopulation` (`src/ir/module-init.ts:11-24`) and
+  selector-rejected with `legacyBodyEmitted:true` while NO direct pass ran —
+  a truthfulness defect adjacent to gap 4. Do NOT fix here; confirm it with
+  one compile and file it as its own issue (`claim-issue.mjs --allocate`).
+
+### Verification matrix
+
+- **V-A byte neutrality of already-admitted shapes** (file-copy A/B, `cmp`):
+  census shapes (a) `const memo = new Map()`, (b) `let v = 7`, (c)
+  `let total = 0; total = total + 1;` × 4 lanes — 12/12 byte-identical
+  (predicate-only change). Any delta is a defect.
+- **V-B newly admitted shapes**: s8, s9, the four A/B multi-statement
+  variants, plus the P1 shapes — `0·0·1` on all four lanes, pass1=pass2=0,
+  `preparedComponentId` present, poison seam GREEN, double-adapter seam FATAL,
+  runtime values correct, and on the deferred lanes: throw before
+  `__module_init`, correct read after.
+- **V-C non-vacuity by revert**: restore only sub-A → exactly the operator
+  positives fail; restore only sub-B → exactly the interleaved positive fails;
+  the near-miss suite stays green in both.
+- **V-D census diff**: `pnpm run check:ir-fallbacks` output diffed (no bucket
+  moves — the corpus has none of these shapes); `check:ir-only` baseline
+  ceilings unchanged.
+- **V-E** the five ratchet gates chained before commit; affected suites
+  (`issue-3523-*`, `issue-4376`, `issue-1411`, `issue-1789`) green.
+
+### Out of scope (each has its own next step)
+
+Statement-subtree admission (`for`/`while`/`if`/`block`/`try` bodies — a
+recursive predicate, after this lands); multi-declarator statements;
+`export const/let` (`vardecl-modifier`, selector-side); string/object/array
+storage kinds (`IrModuleBindingValueKind` — a value-representation slice, NOT
+byte-neutral across the free-function population, needs the 25-file corpus
+A/B); arrow/function initializers (gap 1's pass-1 purpose); `var`
+(`initialization:"undefined-at-instantiation"` policy); call statements and
+call initializers (**gap 1 — the next R4 slice after this one**, with the
+13th census cell `function h(){…} h(); export function read()` the IR probe
+asked for); gap 5 (R3).
+
+## 2026-09-01 gap-2b checkpoint note — probes P1–P4 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap2b-scalar-statements`, based on `origin/main`
+`d153a08826` with the plan branch `claude/docs-r4-gap2b-plan` merged in.
+Two edits, both confined to `src/codegen/index.ts` as the contract requires.
+
+The base census reproduced the plan's measured facts exactly on a five-lane
+grid (the plan's four plus `standalone-deferred`): the landed
+`total = total + 1` control is `0·0·1` prepared everywhere, and **every**
+shape this slice targets — s8/s9, all four `++`/`--` forms, `-= *= /=`,
+`= id - num`, `= id * num`, `= id / num`, `= num`, both multi-statement
+variants and both interleaved-declaration cases — read `1·0·0` overlay with a
+correct runtime value. Byte figures below are from this grounding, not
+inherited.
+
+### P1 — `/=`, `= id / num` and `= num`: all three admitted, A/B'd on five lanes
+
+The plan's A/B covered `+ - *` and `++/--/+=/-=/*=` only, so these three ran
+their own base/candidate pair before being admitted. All three clear the bar:
+
+| shape | base (5 lanes) | candidate (5 lanes) | runtime |
+| --- | --- | --- | --- |
+| `let n = 8; n /= 2;` | `1·0·0` overlay | **`0·0·1` prepared** | 4 ✓ |
+| `let n = 8; n = n / 2;` | `1·0·0` overlay | **`0·0·1` prepared** | 4 ✓ |
+| `let n = 0; n = 7;` | `1·0·0` overlay | **`0·0·1` prepared** | 7 ✓ |
+
+Each value is one only the statement can produce — initializer-only execution
+returns 8, 8 and 0 — so a silently dropped statement fails on the number. No
+operator was refused: nothing in the contract's admit list failed its A/B.
+
+### P2 — storage kind: guarded positively on `number`, and the guard narrows nothing
+
+The plan asked for confirmation that the target's storage is `f64` or dynamic.
+The measurement changed the shape of the answer: **the dynamic case is already
+refused upstream.** `let x: any = 0; x = x + 1;` reads `1·0·0` overlay on all
+five lanes on BASE — the selector's storage resolver never offers it — so a
+guard admitting only `number` narrows nothing that is admitted today. That is
+what V-A's 15/15 byte-identity then confirms independently.
+
+So the predicate carries a positive guard, `ctx.oracle.staticJsTypeOf(target)
+=== "number"`, rather than a boolean-shaped denial. It is routed through the
+oracle, not the raw checker, so the oracle-ratchet gate stays green. The arm it
+anticipates is `from-ast.ts`'s `!slotValType || slotValType.kind !== "f64"`
+demotion (`compound-assign-unsupported`): deciding it in the predicate keeps
+the refusal a silent non-admission instead of a late demotion.
+
+The boolean near-miss is measured, not assumed: `let flag = true; flag++;` is
+`1·0·0` overlay on base AND candidate, and is now a poison-proven control.
+
+### P3 — the `for` loop stays overlay, and is now the seam's control
+
+`let s = 0; for (let i = 0; i < 3; i++) { s = s + i; }` is `1·0·0` overlay on
+all five lanes under the final predicate, as required — statement-subtree
+admission is a later slice. It therefore replaces `let total = 0; total += 1;`
+as the `legacyBodyEmitted: true` control in the double-adapter seam test. That
+substitution is load-bearing: `total += 1` is admitted by this slice, so
+leaving it in place would have left the seam test asserting `true` against a
+shape that is now prepared, and the control would have silently stopped
+controlling.
+
+### P4 — the `declare namespace` ledger defect: confirmed, filed as #5273
+
+Confirmed with one compile of `tests/fixtures/extern-demo.ts`:
+
+```
+population size: 1
+  kind: ModuleDeclaration "declare namespace Host {\n  class Box {\n "
+direct passes: pass1 = 0  pass2 = 0
+module-init outcome: {"kind":"unsupported","legacyBodyEmitted":true,"irBodyEmitted":false}
+```
+
+`collectModuleInitPopulation` (`src/ir/module-init.ts:9-27`) skips every
+type-only statement kind except `ts.ModuleDeclaration`, so a `declare
+namespace` is counted as runtime work; the row then claims a legacy body while
+`pass1 = pass2 = 0` proves none was emitted. Not fixed here (different file,
+different mechanism, and it moves a module out of the claimable bucket, so it
+needs its own census diff). Filed as
+**[#5273](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5273-module-init-ledger-type-only-declarations)**.
+
+**Reservation caveat, stated because it affects the id's trustworthiness:**
+`gh` is not installed in this implementation container, so
+`claim-issue.mjs --allocate` refused (exit 6, open-PR scan degraded) and the id
+was reserved with the sanctioned `--allow-unscanned`. #5273 is verified on
+`origin/issue-assignments` but **not** against in-flight PRs
+(`pr_scan=degraded`); re-check for a collision before that file merges.
+
+### Verification
+
+- **V-A byte neutrality — 15/15 `cmp`-identical.** Census shapes (a)
+  `const memo = new Map()`, (b) `let v = 7`, (c) `let total = 0; total = total
+  + 1;` × five lanes, base-vs-candidate by file copy captured at the FIRST
+  edit. Zero differing bytes: host-start 255/168/182, host-deferred
+  268/268/282, standalone-start 51287/22642/22656, standalone-deferred
+  51300/49097/49111, wasi 51365/49162/49176.
+- **V-B — every newly admitted shape is `0·0·1` on all five lanes**, pass1 =
+  pass2 = 0, `preparedComponentId` present, correct runtime value, and on the
+  deferred lanes it throws before `__module_init` and reads correctly after.
+  Pinned by "owns the whole scalar-statement operator family on every lane";
+  the poison seam is green for the whole family (the poison test now iterates
+  the family, not just `SOURCE`) and the double-adapter seam stays fatal.
+- **V-C non-vacuity by revert — both sub-edits are independently
+  load-bearing.** Reverting only sub-A: the three operator/family tests fail,
+  the near-miss suite and the double-adapter seam stay green. Reverting only
+  sub-B: `n++` is still `0·0·1` prepared while
+  `let total = 0; total = total + 1; let later = 2;` falls back to `1·0·0`
+  overlay on all five lanes — exactly the interleaved positive, nothing else.
+- **V-D census diff — no movement.** `pnpm run check:ir-fallbacks` output is
+  byte-identical base vs candidate (diff empty; unintended buckets still
+  `(none)`), and `check:ir-only` is identical too (`READY`, 41 terminal units,
+  38 emitted, 0 legacy body emitted). The corpus contains none of these shapes,
+  as the plan measured.
+- **V-E** — the five ratchet gates chained green before the commit, and the
+  affected suites pass: `issue-3523-*` (4 files, 69 tests), `issue-4376`,
+  `issue-1411`, `issue-1789` and the three IR-retirement files (104 tests, 13
+  skipped). One note on honesty: `issue-4376-module-init-chunking` timed out
+  once at 35 s in a heavily parallel combined run; it passes in isolation and
+  on re-run of the same combined command, and the shape it pins
+  (`const locked += (effects = 1)`) is refused twice over by the new predicate
+  (const target, parenthesized non-literal RHS).
+
+### Two deliberate deviations from the plan's letter
+
+- **The new near-misses and the two heavy family tests needed explicit
+  timeouts** (300 s). 16 shapes × 5 lanes is ~80 real compiles per test and the
+  file inherits vitest's 35 s default. The alternative — trimming lanes — would
+  have weakened exactly the V-B claim the plan asks for.
+- **`src/codegen/index.ts` grows 80 lines past its god-file ceiling**, so this
+  change-set restates the `loc-budget-allow` grant with its own dated
+  rationale below. The contract confines both edits to that file; there is no
+  subsystem module to move a prepared-route admission predicate into without
+  splitting the ownership the transaction exists to hold.

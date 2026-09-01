@@ -1288,7 +1288,8 @@ export function registerClosureBindingInfo(
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: closureReturnType,
     paramTypes: arrowParams,
-    minimumArgumentCount: inheritedInfo?.minimumArgumentCount,
+    minimumArgumentCount:
+      ctx.closureMinimumArgumentCountByFuncTypeIdx.get(liftedFuncTypeIdx) ?? inheritedInfo?.minimumArgumentCount,
     hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
     hasRestParam: params.some((p) => p.dotDotDotToken !== undefined),
     needsCallSiteArity:

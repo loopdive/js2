@@ -60,6 +60,44 @@ export function irGeneratorSetReturnNeedsBoxing(valueType: IrType | undefined): 
   return val?.kind === "f64" || val?.kind === "i32";
 }
 
+/**
+ * (#3526 F1-S3) Visit every `gen.setReturn` in `fn` with the value type the
+ * attachment pass and lowering will both see.
+ *
+ * This is the SHARED input enumeration behind the freeze-time demand scan and
+ * the attachment pass: same `funcKind` gate, same `valueTypesOf` map, same
+ * deep instruction walk, same {@link irGeneratorSetReturnNeedsBoxing}
+ * predicate. The two classify one population by construction rather than by
+ * agreeing separately — which is what makes a manifest row that was frozen
+ * before attachment a sound authority for it.
+ */
+export function forEachIrGeneratorSetReturn(fn: IrFunction, visit: (valueType: IrType | undefined) => void): void {
+  if (fn.funcKind !== "generator") return;
+  const valueTypes = valueTypesOf(fn);
+  for (const block of fn.blocks) {
+    for (const root of block.instrs) {
+      forEachInstrDeep(root, (instr) => {
+        if (instr.kind === "gen.setReturn") visit(valueTypes.get(instr.value));
+      });
+    }
+  }
+}
+
+/**
+ * True when any function in `fns` stashes a NUMERIC generator return value, so
+ * the frozen runtime manifest must carry a boxing provider for the seam.
+ */
+export function irGeneratorNumberBoxDemand(fns: readonly IrFunction[]): boolean {
+  let demanded = false;
+  for (const fn of fns) {
+    forEachIrGeneratorSetReturn(fn, (valueType) => {
+      demanded ||= irGeneratorSetReturnNeedsBoxing(valueType);
+    });
+    if (demanded) return true;
+  }
+  return demanded;
+}
+
 function requireSameProvider(kind: string, existing: IrFuncRef, next: IrFuncRef): void {
   if (!sameIrCallableBinding(existing.binding, next.binding)) {
     throw new Error(`IR ${kind} already carries a different prepared provider binding`);
@@ -77,8 +115,15 @@ function requireSameProvider(kind: string, existing: IrFuncRef, next: IrFuncRef)
  * settled the value types) lets sealing prove the same Program ABI callable
  * lowering will consume. Repeated preparation is idempotent and rejects a
  * stale or conflicting attachment, mirroring `attachIrExternSupport`.
+ *
+ * (#3526 F1-S3) `numberBoxProvider` is the callable the FROZEN runtime
+ * manifest selected for the numeric `gen.setReturn` arm; the caller derives it
+ * from the manifest and must pass it whenever any owner in the same
+ * preparation demands boxing. Passing `undefined` while a numeric stash is
+ * present is a hard error rather than a silent reversion to a hardcoded
+ * symbol — the point of the slice is that the symbol has one authority.
  */
-export function attachIrGeneratorSupport(fn: IrFunction): IrFunction {
+export function attachIrGeneratorSupport(fn: IrFunction, numberBoxProvider: IrFuncRef | undefined): IrFunction {
   if (fn.funcKind !== "generator") return fn;
   const valueTypes = valueTypesOf(fn);
   const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
@@ -111,9 +156,13 @@ export function attachIrGeneratorSupport(fn: IrFunction): IrFunction {
       }
       case "gen.setReturn": {
         const provider = irRuntimeFuncRef("__gen_set_return");
-        const boxProvider = irGeneratorSetReturnNeedsBoxing(valueTypes.get(nested.value))
-          ? irRuntimeFuncRef("__box_number")
-          : undefined;
+        let boxProvider: IrFuncRef | undefined;
+        if (irGeneratorSetReturnNeedsBoxing(valueTypes.get(nested.value))) {
+          if (!numberBoxProvider) {
+            throw new Error("IR gen.setReturn needs numeric boxing but no manifest-selected provider was supplied");
+          }
+          boxProvider = numberBoxProvider;
+        }
         if (nested.provider) {
           requireSameProvider(nested.kind, nested.provider, provider);
           if ((nested.boxProvider === undefined) !== (boxProvider === undefined)) {

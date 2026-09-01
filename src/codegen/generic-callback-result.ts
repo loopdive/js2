@@ -689,7 +689,11 @@ function propertyIsStable(
       written = true;
       return;
     }
-    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && writeHits(node.operand)) {
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      writeHits(node.operand)
+    ) {
       written = true;
       return;
     }
@@ -802,6 +806,7 @@ function receiverUseIsClosed(
     }
     if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
       receiverPropertyWriteHitsSymbol(ctx.checker, node.operand, symbol)
     ) {
       closed = false;
@@ -1221,7 +1226,7 @@ function callbackDerivedExpression(
     !ts.isVariableDeclarationList(declarationList) ||
     (declarationList.flags & ts.NodeFlags.Const) === 0 ||
     !ts.isVariableStatement(declarationList.parent) ||
-    declarationList.parent.parent !== owner.body ||
+    enclosingFunction(declaration) !== owner ||
     !bindingIsStable(ctx, localSymbol, owner.getSourceFile(), new Set([declaration])) ||
     !localBindingSyntaxIsStatic(owner, declaration)
   ) {

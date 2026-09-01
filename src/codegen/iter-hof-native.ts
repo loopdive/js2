@@ -63,7 +63,9 @@ import { RESULT_DONE_FIELD, RESULT_VALUE_FIELD } from "./frame-core.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { sentinelAwareF64BoxInstrs } from "./generators-native.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 
@@ -81,6 +83,53 @@ export function isIterHofForm(methodName: string, arity: number): boolean {
   if (methodName === "toArray") return arity === 0;
   if (methodName === "reduce") return arity >= 1; // (cb) or (cb, initialValue)
   return ITER_HOF_CB.has(methodName) && arity >= 1;
+}
+
+const NEXT_CALLABLE_HANDLE = "$IteratorNextCallable";
+const NEXT_CALLABLE_STEP = "__iterator_next_callable_step";
+
+/**
+ * Register the private GetIteratorDirect carrier used when a compiled class
+ * exposes `next` through an observable getter. The call site evaluates that
+ * getter exactly once and stores both the returned callable and its receiver;
+ * the iterator steppers invoke the cached callable for every subsequent step.
+ */
+export function ensureIteratorNextCallableHandle(ctx: CodegenContext): number | undefined {
+  if (!ctx.standalone) return undefined;
+  const existing = ctx.structMap.get(NEXT_CALLABLE_HANDLE);
+  if (existing !== undefined) return existing;
+
+  ensureObjectRuntime(ctx);
+  reserveApplyClosure(ctx);
+  addStringConstantGlobal(ctx, "done");
+  addStringConstantGlobal(ctx, "value");
+
+  const fields = [
+    { name: "next", type: { kind: "externref" as const }, mutable: false },
+    { name: "receiver", type: { kind: "externref" as const }, mutable: false },
+  ];
+  const typeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({ kind: "struct", name: NEXT_CALLABLE_HANDLE, fields });
+  ctx.structMap.set(NEXT_CALLABLE_HANDLE, typeIdx);
+  ctx.typeIdxToStructName.set(typeIdx, NEXT_CALLABLE_HANDLE);
+  ctx.structFields.set(NEXT_CALLABLE_HANDLE, fields);
+
+  const stepTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }, { kind: "externref" }]);
+  const stepIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(NEXT_CALLABLE_STEP, stepIdx);
+  pushDefinedFunc(ctx, stepIdx, {
+    name: NEXT_CALLABLE_STEP,
+    typeIdx: stepTypeIdx,
+    locals: [
+      { name: "result", type: { kind: "externref" } },
+      { name: "resultAny", type: { kind: "anyref" } },
+      { name: "done", type: { kind: "i32" } },
+    ],
+    body: [{ op: "i32.const", value: 1 }, { op: "ref.null.extern" }],
+    exported: false,
+  });
+  reserveIterHofSteppers(ctx);
+  return typeIdx;
 }
 
 /**
@@ -563,6 +612,90 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
     lazyHelperTypeIdx !== undefined && lazyStepIdx !== undefined && lazyCloseIdx !== undefined
       ? { typeIdx: lazyHelperTypeIdx, stepIdx: lazyStepIdx, closeIdx: lazyCloseIdx }
       : undefined;
+  const nextCallableTypeIdx = ctx.structMap.get(NEXT_CALLABLE_HANDLE);
+  const nextCallableStepIdx = ctx.funcMap.get(NEXT_CALLABLE_STEP);
+
+  if (nextCallableTypeIdx !== undefined && nextCallableStepIdx !== undefined) {
+    const stepFn = definedFuncAt(ctx, nextCallableStepIdx);
+    const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+    const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+    const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+    const externGetIdx = ctx.funcMap.get("__extern_get");
+    const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+    const sgetDoneIdx = ctx.funcMap.get("__sget_done");
+    const sgetValueIdx = ctx.funcMap.get("__sget_value");
+    if (
+      stepFn !== undefined &&
+      applyClosureIdx !== undefined &&
+      objVecNewIdx !== undefined &&
+      isTruthyIdx !== undefined &&
+      externGetIdx !== undefined &&
+      objectTypeIdx !== undefined
+    ) {
+      const readResultProperty = (name: "done" | "value", structGetterIdx: number | undefined): Instr[] => [
+        { op: "local.get", index: 2 },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "local.get", index: 1 },
+            ...stringConstantExternrefInstrs(ctx, name),
+            { op: "call", funcIdx: externGetIdx },
+          ],
+          else:
+            structGetterIdx !== undefined
+              ? [
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: structGetterIdx },
+                ]
+              : [{ op: "ref.null.extern" }],
+        },
+      ];
+      stepFn.body = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: nextCallableTypeIdx },
+        { op: "struct.get", typeIdx: nextCallableTypeIdx, fieldIdx: 0 },
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: nextCallableTypeIdx },
+        { op: "struct.get", typeIdx: nextCallableTypeIdx, fieldIdx: 1 },
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "call", funcIdx: applyClosureIdx },
+        { op: "local.set", index: 1 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: isTruthyIdx },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: 3 },
+          ],
+          else: [
+            { op: "local.get", index: 1 },
+            { op: "any.convert_extern" },
+            { op: "local.set", index: 2 },
+            ...readResultProperty("done", sgetDoneIdx),
+            { op: "call", funcIdx: isTruthyIdx },
+            { op: "local.set", index: 3 },
+          ],
+        },
+        { op: "local.get", index: 3 },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [{ op: "ref.null.extern" }],
+          else: readResultProperty("value", sgetValueIdx),
+        },
+        { op: "local.set", index: 1 },
+        { op: "local.get", index: 3 },
+        { op: "local.get", index: 1 },
+      ];
+    }
+  }
 
   // The `__iterator` GetIterator ladder is only SAFE for receivers one of its
   // arms admits — everything else hits the legacy vec hard-cast. Admissible
@@ -615,6 +748,17 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
   const openFn = definedFuncAt(ctx, openIdx);
   if (openFn) {
     const arms: Instr[] = [];
+    if (nextCallableTypeIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: ANY },
+        { op: "ref.test", typeIdx: nextCallableTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: 0 }, { op: "return" }],
+        },
+      );
+    }
     // Lazy Iterator-helper wrapper → the wrapper IS the handle (pass-through).
     if (lazyArm) {
       arms.push(
@@ -664,6 +808,17 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
   const nextFn = definedFuncAt(ctx, nextIdx);
   if (nextFn) {
     const arms: Instr[] = [];
+    if (nextCallableTypeIdx !== undefined && nextCallableStepIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: ANY },
+        { op: "ref.test", typeIdx: nextCallableTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: nextCallableStepIdx }, { op: "return" }],
+        },
+      );
+    }
     // Lazy Iterator-helper wrapper → delegate the step to `__lazy_iter_step`
     // (which itself drives the wrapper's source via `__iter_hof_next`).
     if (lazyArm) {
@@ -706,6 +861,13 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
   const closeFn = definedFuncAt(ctx, closeIdx);
   if (closeFn) {
     const arms: Instr[] = [];
+    if (nextCallableTypeIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: ANY },
+        { op: "ref.test", typeIdx: nextCallableTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+      );
+    }
     // Lazy Iterator-helper wrapper → close its source via `__lazy_iter_close`.
     if (lazyArm) {
       arms.push(

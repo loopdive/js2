@@ -174,6 +174,42 @@ function emitGlobalSyncWriteback(
 }
 
 /**
+ * Re-read a module global's ABSOLUTE index at the moment the `global.set` is
+ * emitted (#4447 twin; the regression that forced it landed with #5243).
+ *
+ * Same hazard #4447 fixed for `emitGlobalSyncWritebackByName`, in the call
+ * sites that stash the index in a local instead of the name. A module global's
+ * absolute index shifts every time a string-constant IMPORT global is added
+ * (`addStringConstantGlobal` → `fixupModuleGlobalIndices`, which re-maps
+ * `ctx.moduleGlobals` and every already-emitted `global.get`/`global.set` — but
+ * cannot reach an index a caller copied into a `let`). Between resolving the
+ * target and emitting its writeback these paths compile the element read, a
+ * default initializer and/or a TDZ guard, any of which imports string
+ * constants. The stale index then lands in the IMPORT range, which is
+ * immutable: "immutable global #N cannot be assigned" at instantiate time —
+ * the 18-file `for-await-of/async-{func,gen}-decl-dstr-*` merge-group cluster.
+ * #5243's `buildRecordFromExternref` interns one string constant per record
+ * field name, which moved enough imports into that window to expose it; the
+ * staleness itself predates that commit.
+ *
+ * The fix is the #4447 one applied to the rest of the file: carry the target's
+ * NAME (stable) instead of its index (not stable), and resolve at emit time.
+ */
+function liveSyncGlobalIdx(ctx: CodegenContext, name: string | undefined): number | undefined {
+  return name === undefined ? undefined : ctx.moduleGlobals.get(name);
+}
+
+/** `emitGlobalSyncWriteback` against a live-resolved target name (#4447). */
+function emitGlobalSyncWritebackFor(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetLocal: number,
+  syncGlobalName: string | undefined,
+): void {
+  emitGlobalSyncWriteback(ctx, fctx, targetLocal, liveSyncGlobalIdx(ctx, syncGlobalName));
+}
+
+/**
  * (#4447) Re-resolve a module global's ABSOLUTE index at write time, then emit
  * the sync writeback. A late string-constant import can shift the absolute
  * index after target resolution, so the name map—not a captured index—must be
@@ -1237,14 +1273,14 @@ export function compileForOfAssignDestructuring(
       if (ts.isIdentifier(targetExpr) && emitForOfAssignmentTargetGuard(ctx, fctx, targetExpr)) continue;
 
       let targetLocal = fctx.localMap.get(targetName);
-      let targetSyncGlobalIdx: number | undefined;
+      let targetSyncGlobalName: string | undefined;
       if (targetLocal === undefined) {
         const globalIdx = ctx.moduleGlobals.get(targetName);
         if (globalIdx === undefined) continue;
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
         const globalType = globalDef?.type ?? { kind: "externref" as const };
         targetLocal = allocLocal(fctx, targetName, globalType);
-        targetSyncGlobalIdx = globalIdx;
+        targetSyncGlobalName = targetName;
       }
 
       const fieldEntry2 = fields[fieldIdx];
@@ -1269,7 +1305,7 @@ export function compileForOfAssignDestructuring(
         fctx.body.push({ op: "local.get", index: elemLocal });
         fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
         emitDefaultValueCheck(ctx, fctx, fieldType, targetLocal, defaultInit, targetTypeD ?? undefined, true);
-        emitGlobalSyncWritebackByName(ctx, fctx, targetLocal, targetName, targetSyncGlobalIdx !== undefined);
+        emitGlobalSyncWritebackByName(ctx, fctx, targetLocal, targetName, targetSyncGlobalName !== undefined);
         continue;
       }
       // (#2692) Box-aware write: when `targetName` is a closure-captured-mutable
@@ -1299,7 +1335,7 @@ export function compileForOfAssignDestructuring(
         coerceType(ctx, fctx, fieldType, targetType);
       }
       emitCoercedLocalSet(ctx, fctx, targetLocal, effectiveStackType);
-      emitGlobalSyncWriteback(ctx, fctx, targetLocal, targetSyncGlobalIdx);
+      emitGlobalSyncWritebackFor(ctx, fctx, targetLocal, targetSyncGlobalName);
     }
   } else if (ts.isArrayLiteralExpression(expr)) {
     // for ([x, y] of arr) — elem is a vec struct or tuple struct, extract by index
@@ -1370,7 +1406,7 @@ export function compileForOfAssignDestructuring(
         }
         if (oobInit && ts.isIdentifier(oobTarget)) {
           let oobLocal = fctx.localMap.get(oobTarget.text);
-          let oobSyncGlobalIdx: number | undefined;
+          let oobSyncGlobalName: string | undefined;
           if (oobLocal === undefined) {
             const globalIdx = ctx.moduleGlobals.get(oobTarget.text);
             if (globalIdx !== undefined) {
@@ -1379,7 +1415,7 @@ export function compileForOfAssignDestructuring(
                 kind: "externref" as const,
               };
               oobLocal = allocLocal(fctx, oobTarget.text, globalType);
-              oobSyncGlobalIdx = globalIdx;
+              oobSyncGlobalName = oobTarget.text;
             }
           }
           if (oobLocal !== undefined) {
@@ -1389,7 +1425,7 @@ export function compileForOfAssignDestructuring(
               fctx.body.push({ op: "local.set", index: oobLocal! });
             });
             fctx.body.push(...instrs);
-            emitGlobalSyncWriteback(ctx, fctx, oobLocal, oobSyncGlobalIdx);
+            emitGlobalSyncWritebackFor(ctx, fctx, oobLocal, oobSyncGlobalName);
           }
         }
       }
@@ -1439,7 +1475,7 @@ export function compileForOfAssignDestructuring(
           }
           if (oobInit && ts.isIdentifier(oobTarget)) {
             let oobLocal = fctx.localMap.get(oobTarget.text);
-            let oobSyncGlobalIdx: number | undefined;
+            let oobSyncGlobalName: string | undefined;
             if (oobLocal === undefined) {
               const globalIdx = ctx.moduleGlobals.get(oobTarget.text);
               if (globalIdx !== undefined) {
@@ -1448,7 +1484,7 @@ export function compileForOfAssignDestructuring(
                   kind: "externref" as const,
                 };
                 oobLocal = allocLocal(fctx, oobTarget.text, globalType);
-                oobSyncGlobalIdx = globalIdx;
+                oobSyncGlobalName = oobTarget.text;
               }
             }
             if (oobLocal !== undefined) {
@@ -1458,7 +1494,7 @@ export function compileForOfAssignDestructuring(
                 fctx.body.push({ op: "local.set", index: oobLocal! });
               });
               fctx.body.push(...instrs);
-              emitGlobalSyncWriteback(ctx, fctx, oobLocal, oobSyncGlobalIdx);
+              emitGlobalSyncWritebackFor(ctx, fctx, oobLocal, oobSyncGlobalName);
             }
           }
           continue;
@@ -1521,14 +1557,14 @@ export function compileForOfAssignDestructuring(
         }
 
         let targetLocal = fctx.localMap.get(targetEl.text);
-        let tupleSyncGlobalIdx: number | undefined;
+        let tupleSyncGlobalName: string | undefined;
         if (targetLocal === undefined) {
           const globalIdx = ctx.moduleGlobals.get(targetEl.text);
           if (globalIdx === undefined) continue;
           const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
           const globalType = globalDef?.type ?? { kind: "externref" as const };
           targetLocal = allocLocal(fctx, targetEl.text, globalType);
-          tupleSyncGlobalIdx = globalIdx;
+          tupleSyncGlobalName = targetEl.text;
         }
 
         // (#2692) Box-aware write when the target is a captured-mutable var
@@ -1572,7 +1608,7 @@ export function compileForOfAssignDestructuring(
           fctx.body.push({ op: "local.set", index: targetLocal });
         }
 
-        emitGlobalSyncWriteback(ctx, fctx, targetLocal, tupleSyncGlobalIdx);
+        emitGlobalSyncWritebackFor(ctx, fctx, targetLocal, tupleSyncGlobalName);
       }
     } else {
       // Vec array assignment destructuring
@@ -1687,14 +1723,14 @@ export function compileForOfAssignDestructuring(
         }
 
         let targetLocal = fctx.localMap.get(targetEl.text);
-        let vecSyncGlobalIdx: number | undefined;
+        let vecSyncGlobalName: string | undefined;
         if (targetLocal === undefined) {
           const globalIdx = ctx.moduleGlobals.get(targetEl.text);
           if (globalIdx === undefined) continue;
           const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
           const globalType = globalDef?.type ?? { kind: "externref" as const };
           targetLocal = allocLocal(fctx, targetEl.text, globalType);
-          vecSyncGlobalIdx = globalIdx;
+          vecSyncGlobalName = targetEl.text;
         }
 
         const targetType = getLocalType(fctx, targetLocal);
@@ -1770,14 +1806,15 @@ export function compileForOfAssignDestructuring(
             typeIdx: boxedCapVec.refCellTypeIdx,
             fieldIdx: 0,
           });
-          if (vecSyncGlobalIdx !== undefined) {
+          const vecSyncIdx = liveSyncGlobalIdx(ctx, vecSyncGlobalName);
+          if (vecSyncIdx !== undefined) {
             fctx.body.push({ op: "local.get", index: targetLocal });
             fctx.body.push({
               op: "struct.get",
               typeIdx: boxedCapVec.refCellTypeIdx,
               fieldIdx: 0,
             });
-            fctx.body.push({ op: "global.set", index: vecSyncGlobalIdx });
+            fctx.body.push({ op: "global.set", index: vecSyncIdx });
           }
           continue;
         }
@@ -1857,7 +1894,7 @@ export function compileForOfAssignDestructuring(
           }
         }
 
-        emitGlobalSyncWriteback(ctx, fctx, targetLocal, vecSyncGlobalIdx);
+        emitGlobalSyncWritebackFor(ctx, fctx, targetLocal, vecSyncGlobalName);
       }
     }
   }
@@ -1966,7 +2003,7 @@ function emitForOfRestAssignment(
   const restName = restTarget.text;
   const unresolvableTarget = isUnresolvableIdent(ctx, fctx, restTarget);
   let targetLocal = fctx.localMap.get(restName);
-  let restSyncGlobalIdx: number | undefined;
+  let restSyncGlobalName: string | undefined;
   if (!unresolvableTarget && targetLocal === undefined) {
     const globalIdx = syncGlobalForName(restName);
     if (globalIdx === undefined) {
@@ -1977,7 +2014,7 @@ function emitForOfRestAssignment(
     const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
     const globalType = globalDef?.type ?? { kind: "externref" as const };
     targetLocal = allocLocal(fctx, restName, globalType);
-    restSyncGlobalIdx = globalIdx;
+    restSyncGlobalName = restName;
   }
 
   // Source externref is on the stack. Compute the rest slice:
@@ -2015,7 +2052,7 @@ function emitForOfRestAssignment(
   }
   fctx.body.push({ op: "local.set", index: targetLocal! });
 
-  emitGlobalSyncWriteback(ctx, fctx, targetLocal!, restSyncGlobalIdx);
+  emitGlobalSyncWritebackFor(ctx, fctx, targetLocal!, restSyncGlobalName);
   return true;
 }
 
@@ -2060,7 +2097,7 @@ function emitVecRestAssignment(
   const unresolvableTarget =
     !isNestedPattern && !isMemberTarget && ts.isIdentifier(restTarget) && isUnresolvableIdent(ctx, fctx, restTarget);
   let targetLocal: number | undefined;
-  let restSyncGlobalIdx: number | undefined;
+  let restSyncGlobalName: string | undefined;
   if (isNestedPattern) {
     targetLocal = allocLocal(fctx, `__forof_rest_${fctx.locals.length}`, restVecType);
   } else {
@@ -2075,7 +2112,7 @@ function emitVecRestAssignment(
           if (!unresolvableTarget) return;
         } else {
           targetLocal = allocLocal(fctx, restTarget.text, restVecType);
-          restSyncGlobalIdx = globalIdx;
+          restSyncGlobalName = restTarget.text;
         }
       }
     }
@@ -2179,7 +2216,7 @@ function emitVecRestAssignment(
   }
   fctx.body.push({ op: "local.set", index: targetLocal! });
 
-  emitGlobalSyncWriteback(ctx, fctx, targetLocal!, restSyncGlobalIdx);
+  emitGlobalSyncWritebackFor(ctx, fctx, targetLocal!, restSyncGlobalName);
 }
 
 /**
@@ -2396,14 +2433,14 @@ function compileForOfAssignDestructuringExternref(
     }
 
     let targetLocal = fctx.localMap.get(targetEl.text);
-    let extSyncGlobalIdx: number | undefined;
+    let extSyncGlobalName: string | undefined;
     if (targetLocal === undefined) {
       const globalIdx = ctx.moduleGlobals.get(targetEl.text);
       if (globalIdx === undefined) continue;
       const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
       const globalType = globalDef?.type ?? { kind: "externref" as const };
       targetLocal = allocLocal(fctx, targetEl.text, globalType);
-      extSyncGlobalIdx = globalIdx;
+      extSyncGlobalName = targetEl.text;
     }
 
     // #1258 — if the target identifier is a boxed capture (mutable closure
@@ -2426,7 +2463,8 @@ function compileForOfAssignDestructuringExternref(
         typeIdx: boxedCap.refCellTypeIdx,
         fieldIdx: 0,
       });
-      if (extSyncGlobalIdx !== undefined) {
+      const extSyncIdx = liveSyncGlobalIdx(ctx, extSyncGlobalName);
+      if (extSyncIdx !== undefined) {
         // Re-load through the cell for global sync
         fctx.body.push({ op: "local.get", index: targetLocal });
         fctx.body.push({
@@ -2434,7 +2472,7 @@ function compileForOfAssignDestructuringExternref(
           typeIdx: boxedCap.refCellTypeIdx,
           fieldIdx: 0,
         });
-        fctx.body.push({ op: "global.set", index: extSyncGlobalIdx });
+        fctx.body.push({ op: "global.set", index: extSyncIdx });
       }
       continue;
     }
@@ -2493,7 +2531,8 @@ function compileForOfAssignDestructuringExternref(
         typeIdx: boxedCap.refCellTypeIdx,
         fieldIdx: 0,
       });
-      if (extSyncGlobalIdx !== undefined) {
+      const extSyncIdx = liveSyncGlobalIdx(ctx, extSyncGlobalName);
+      if (extSyncIdx !== undefined) {
         // Re-load through the cell for global sync
         fctx.body.push({ op: "local.get", index: targetLocal });
         fctx.body.push({
@@ -2501,7 +2540,7 @@ function compileForOfAssignDestructuringExternref(
           typeIdx: boxedCap.refCellTypeIdx,
           fieldIdx: 0,
         });
-        fctx.body.push({ op: "global.set", index: extSyncGlobalIdx });
+        fctx.body.push({ op: "global.set", index: extSyncIdx });
       }
       continue;
     }
@@ -2517,7 +2556,7 @@ function compileForOfAssignDestructuringExternref(
       emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
     }
 
-    emitGlobalSyncWriteback(ctx, fctx, targetLocal, extSyncGlobalIdx);
+    emitGlobalSyncWritebackFor(ctx, fctx, targetLocal, extSyncGlobalName);
   }
 }
 
@@ -2801,14 +2840,14 @@ export function compileForOfIteratorAssignDestructuring(
       if (!ts.isIdentifier(targetElIter)) continue;
 
       let targetLocal = fctx.localMap.get(targetElIter.text);
-      let iterArrSyncGlobalIdx: number | undefined;
+      let iterArrSyncGlobalName: string | undefined;
       if (targetLocal === undefined) {
         const globalIdx = ctx.moduleGlobals.get(targetElIter.text);
         if (globalIdx === undefined) continue;
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
         const globalType = globalDef?.type ?? { kind: "externref" as const };
         targetLocal = allocLocal(fctx, targetElIter.text, globalType);
-        iterArrSyncGlobalIdx = globalIdx;
+        iterArrSyncGlobalName = targetElIter.text;
       }
 
       // #1258 — boxed-capture identifier path: same logic as the typed-array
@@ -2828,14 +2867,15 @@ export function compileForOfIteratorAssignDestructuring(
           typeIdx: boxedCap.refCellTypeIdx,
           fieldIdx: 0,
         });
-        if (iterArrSyncGlobalIdx !== undefined) {
+        const iterArrSyncIdx = liveSyncGlobalIdx(ctx, iterArrSyncGlobalName);
+        if (iterArrSyncIdx !== undefined) {
           fctx.body.push({ op: "local.get", index: targetLocal });
           fctx.body.push({
             op: "struct.get",
             typeIdx: boxedCap.refCellTypeIdx,
             fieldIdx: 0,
           });
-          fctx.body.push({ op: "global.set", index: iterArrSyncGlobalIdx });
+          fctx.body.push({ op: "global.set", index: iterArrSyncIdx });
         }
         continue;
       }
@@ -2881,14 +2921,15 @@ export function compileForOfIteratorAssignDestructuring(
           typeIdx: boxedCap.refCellTypeIdx,
           fieldIdx: 0,
         });
-        if (iterArrSyncGlobalIdx !== undefined) {
+        const iterArrSyncIdx = liveSyncGlobalIdx(ctx, iterArrSyncGlobalName);
+        if (iterArrSyncIdx !== undefined) {
           fctx.body.push({ op: "local.get", index: targetLocal });
           fctx.body.push({
             op: "struct.get",
             typeIdx: boxedCap.refCellTypeIdx,
             fieldIdx: 0,
           });
-          fctx.body.push({ op: "global.set", index: iterArrSyncGlobalIdx });
+          fctx.body.push({ op: "global.set", index: iterArrSyncIdx });
         }
         continue;
       }
@@ -2907,7 +2948,7 @@ export function compileForOfIteratorAssignDestructuring(
         emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
       }
 
-      emitGlobalSyncWriteback(ctx, fctx, targetLocal, iterArrSyncGlobalIdx);
+      emitGlobalSyncWritebackFor(ctx, fctx, targetLocal, iterArrSyncGlobalName);
     }
   }
 }
