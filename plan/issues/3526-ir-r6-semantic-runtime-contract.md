@@ -1,7 +1,7 @@
 ---
 id: 3526
 title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
-status: blocked
+status: in-progress
 sprint: Backlog
 created: 2026-07-21
 updated: 2026-08-30
@@ -2516,3 +2516,143 @@ allocate cleanly:
    conformance gap, not an IR-path defect. Out of scope for a byte-neutral
    slice; the `BOOL_RETURN_GEN` fixture added here pins the current behavior
    and would need updating alongside the fix.
+
+## 2026-09-01 F1-S4 implementation plan — boundary residuals (family 1, slice 4)
+
+**Fable lane.** Grounded on `origin/main` at `41265d89f5` by a four-probe
+census workflow (symbol boundary, remaining predicates, R4 gaps,
+overlap/freshness). Opus implements against this plan. Slice claim
+`3526:f1s4`, branch `claude/issue-3526-f1s4-boundary-residuals`.
+
+Three sub-migrations, one PR: they share every piece of landed F1 machinery
+and reviewer context, and each is independently revertible for non-vacuity.
+The census's other candidates are dispositioned: the symbol boundary is
+blocked on brand production (filed as #5258, deferred), R4 gap 5 is R3's by
+design, R4 gap 3 is a separate R4 slice.
+
+### Sub-slice A — the two remaining `__unbox_number` from-ast arms
+
+**Measured.** `src/ir/from-ast.ts:12273` and `:12303` (ToPrimitive-adjacent
+arms) still emit direct `__unbox_number` calls by runtime symbol; the
+sibling coercion arm at `:9524` already emits the provider-free
+`js.number.unbox` intrinsic (F1-S1). Every piece exists and is exercised:
+intrinsic id (`intrinsics.ts:60`), capability row
+(`runtime-host-capabilities.ts:124`), `NumberBoundaryPolicy.unbox` with
+host/native arms, freeze-time attachment, owner-local unsupported partition,
+and the union-import trigger's attached-target recognition (which already
+names `js.number.unbox`).
+
+**Contract.** Both arms emit `emitIntrinsic("js.number.unbox", [...])`;
+population unchanged (the arms' guards stay). NOT in scope:
+`lower.ts:1440`'s defensive `__unbox_number` in `coerceToF64ForBitwise` —
+it is a lower-time consumer (post-freeze, cannot carry a provider-free
+intrinsic) and its retirement belongs to #1305; record it untouched.
+
+**Byte expectation.** The F1-S1 purity class MAY appear on host lanes (a
+pure intrinsic result no longer spilled); measure the cells and record the
+WAT diff class exactly as F1-S1 did. Native/standalone/WASI/linear cells
+byte-identical.
+
+### Sub-slice B — `__extern_is_undefined` under manifest authority
+
+**Measured.** `src/ir/from-ast.ts:13769-13770` is the last surviving
+pre-F1 two-armed shape in from-ast: runtime symbol vs `env` import chosen
+in the front-end by the resolver predicate `externIsUndefinedIsNative?()`
+(contract `:626`; integration implementation is
+`ctx.standalone || ctx.wasi || ctx.nativeStrings`, #4461). No capability
+row exists. The preregistration trigger (`integration.ts`,
+`preregisterDynamicSupport`) has raw-call detectors for BOTH forms
+(`usesExternIsUndefined` on the env call, `usesNativeExternIsUndefined` on
+the runtime symbol) — the F1-S1/S2 precedent says the migration removes the
+raw calls those detectors key on, so attached-target recognition must be
+widened for the new intrinsic id.
+
+**Contract.** `js.extern.is_undefined` `(externref) -> i32` intrinsic with
+a 1:1 feature row; capability record `extern.is_undefined` →
+`env.__extern_is_undefined` `(externref) -> i32`; policy
+`externIsUndefined: { probe: "host" | "native" | "unsupported" }` on
+`RuntimeManifestPolicy` (sibling constants; optional; frozen disabled
+default; canonicalized; published resolved). Callers: integration projects
+`{ probe: (ctx.standalone || ctx.wasi || ctx.nativeStrings) ? "native" :
+"host" }` — the exact former truth table; linear and selfhost project their
+measured current behavior (verify what linear-integration's resolver
+answers today and mirror it — do not guess). Host arm resolves via the
+capability record (`host-callable`); native arm via `runtime-callable` on
+the runtime symbol. Delete the resolver contract entry and every
+implementation of `externIsUndefinedIsNative`; the from-ast site emits the
+provider-free intrinsic with no lane read. Owner-local
+`late-preparation-unsupported` partition for a demanding owner on a
+disabled policy (mirror the F1 partitions). Widen the trigger's
+attached-target recognition to the new id and prove import set/order parity
+(the F1-S2 measured-trigger precedent — that proof was non-decorative
+there).
+
+**Byte expectation.** Byte-identical everywhere; the F1-S1 purity class MAY
+appear if the probe result was previously spilled — measure and record; any
+other WAT delta is a defect.
+
+### Sub-slice C — retire the four `gen.*` lowering fallbacks
+
+**Measured.** `src/ir/lower.ts:2731/2749/2769/2796` still carry
+`instr.provider ?? irRuntimeFuncRef("__gen_push_*" | "__create_generator" |
+"__gen_yield_star" | "__gen_set_return")`. F1-S3 deleted only the
+`boxProvider` fallback with a totality proof (`lower.ts:2798-2808`); the
+same argument covers all four `provider` fields — `attachIrGeneratorSupport`
+attaches them unconditionally for every `gen.*` kind before Phase 3.
+
+**Contract.** Replace each `??` fallback with the F1-S3 fail-closed throw
+(a missing attachment demotes one owner, never re-decides the symbol
+locally), AFTER pre-implementation verification V3 re-proves totality for
+all four kinds. No new rows, no behavior change, bytes identical.
+
+### Required pre-implementation verifications (record in the checkpoint)
+
+1. **V-A population.** Which shapes reach `from-ast.ts:12273/:12303`, and
+   does the current resolution of the raw runtime symbol on each reachable
+   lane match `NumberBoundaryPolicy.unbox`'s truth table exactly? If any
+   lane diverges (a population the policy calls unsupported but the raw
+   symbol resolves today), STOP on sub-A and record — do not absorb a
+   behavior change.
+2. **V-B readers.** Enumerate every reader of `externIsUndefinedIsNative`
+   and both trigger detectors; after migration, prove import membership,
+   order and indices identical on every lane (the binding-kind switch
+   hazard from F1-S3's V2 applies — if order moves, keep the native arm
+   runtime-bound and record the route).
+3. **V-C totality.** Extend F1-S3's attachment-totality evidence to all
+   four `gen.*` provider kinds (same producer/lowering-site enumeration).
+4. **V-D fixture reach.** For sub-A, name the fixture(s) that actually
+   reach each migrated arm (WAT-inspect once) so the parity cells are not
+   vacuous; add one if none exists.
+
+### Behavior-neutrality obligations
+
+`check:ir-fallbacks` census output-identical; import set AND order
+identical per lane; byte cells per sub-slice expectation above (record the
+matrix); the outcome-code divergence-4 class is NOT expected here (no
+demote-site moves) — its absence is itself an assertion; non-vacuity by
+reverting each sub-slice's arm independently against the kept schema
+(named failing tests per sub-slice, including a first-ever pin of the
+`gen.*` provider attachments if none survives C's throw conversion);
+`tests/issue-4104-...` whole-shape policy pin gains the new field (the
+recorded precedented edit).
+
+### Validation
+
+Typecheck; `check:ir-fallbacks` bare; ratchet chain bare + the
+`LOC_GATE_BASE=$(git rev-parse origin/main)` simulation; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:ir-kind-neutrality` (evidence-line
+refresh via its own flow if tripped), `check:standalone-ir-cutover` locally
+before pushing; the five issue-3526 suites, the F1-S3 generator suite, the
+#4461 extern-is-undefined tests, #4103/#4104; hooks without bypass. Growth
+allowances in this file's frontmatter, dated.
+
+### Explicitly out of scope
+
+`lower.ts:1440` (#1305), `__to_primitive` itself and the `__ir_dyn_*`
+family, the string-plan/stringMethodPlan predicate family (family-2
+territory), `env.__get_undefined`/`env.__make_callback` non-async reach
+plumbing (runner-up, own slice), the symbol boundary (#5258), R4 gaps
+(#3523), and everything owned by #3525/#3522. `integration.ts` diff stays
+minimal (policy projection, partition sibling, trigger widening); check the
+#3525 claim before touching it.
