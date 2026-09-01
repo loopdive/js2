@@ -1,11 +1,11 @@
 ---
 id: 4063
-title: "`check:godfiles` is RED on main (2 regressions in src/codegen/index.ts) but gates nothing — wire it in or retire it"
+title: "`check:godfiles` is RED on main with 39 regressions but gates nothing — wire it in or retire it"
 status: ready
 sprint: current
 created: 2026-08-02
-updated: 2026-08-02
-priority: low
+updated: 2026-08-31
+priority: medium
 horizon: s
 feasibility: medium
 reasoning_effort: high
@@ -14,7 +14,7 @@ area: ci
 language_feature: n/a
 goal: dogfood
 ---
-# `check:godfiles` is RED on main (2 regressions in src/codegen/index.ts) but gates nothing — wire it in or retire it
+# `check:godfiles` is RED on main with 39 regressions but gates nothing — wire it in or retire it
 
 > Filed 2026-08-02 from a TaskList entry that had been carrying the full
 > analysis but no issue file. The body below is the original measurement
@@ -56,3 +56,40 @@ banked that improvement automatically.
 
 LOW PRIORITY — nothing is blocked on it. Do not let it displace ES5/standalone lever
 work.
+
+## 2026-08-31 — current measurement: 2 regressions became 39
+
+The original evidence remains valid but its scale and priority are stale.
+`node scripts/profile-godfiles.mjs --check` now exits 1 with **39**
+regressions across five files, while no workflow under `.github/` invokes the
+profiler.
+
+Largest measured growth:
+
+- `ensureObjectRuntime`: **4,234 → 5,669 LOC** (+1,435);
+- `compileCallExpression`: **1,811 → 2,307** (+496);
+- `emitIteratorMethodExport`: **169 → 595** (+426);
+- `generateModule`: **1,269 → 1,718** (+449);
+- `generateMultiModule`: **768 → 1,155** (+387);
+- `ensureAnyToStringHelper`: **467 → 660** (+193).
+
+The result includes numerous new 150+ LOC mega-functions in `calls.ts`,
+`index.ts`, `object-runtime.ts`, `array-methods.ts`, and `native-strings.ts`.
+Thirty-seven additional violations accumulated while the red check remained
+decorative. Raising this issue to medium reflects that demonstrated ratchet
+failure; it still should not displace correctness work.
+
+PR preflight against `upstream/main` at
+`c39de6dac8c376482b4f2cd628e445c6d8441728` re-ran the gate after 22 upstream
+commits beyond the audit base. It remains at **39** regressions; intervening
+codegen work increased `generateModule` from the audit's measured 1,684 LOC to
+1,718 LOC, which is reflected above.
+
+### Updated acceptance criteria
+
+- [ ] Pristine main is green because violations were reduced/reconciled, not
+      because the current 39 were blindly banked.
+- [ ] An intentional function growth above the configured margin is a red
+      positive control.
+- [ ] A required workflow invokes the meaningful ratchet, or the profiler and
+      package scripts are explicitly retired.

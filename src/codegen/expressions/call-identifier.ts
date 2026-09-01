@@ -68,7 +68,7 @@ import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
-import { genericStructFactoryCall } from "../generic-struct-factory.js";
+import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../generic-struct-factory.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import {
   canEmitAssertedStructExtension,
@@ -111,10 +111,12 @@ import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
   calleeMayBeHostCallable,
+  appendForwardedOptionalArgcOverride,
   compileCallExpression,
   emitBareCallReceiverReset,
   ensureFuncValueWrappersRegistered,
@@ -145,18 +147,19 @@ function tryEmitGenericStructFactoryResult(
 
   const source = resolveWasmType(ctx, factory.sourceConstraint);
   const target = resolveWasmType(ctx, factory.target);
-  if ((source.kind !== "ref" && source.kind !== "ref_null") || (target.kind !== "ref" && target.kind !== "ref_null")) {
-    return null;
-  }
+  if (source.kind !== "ref" && source.kind !== "ref_null") return null;
+  const opaqueTarget = target.kind === "externref" || target.kind === "ref_extern";
+  // Recognizing a generic `new` assertion is enough for established concrete
+  // refinement, but not for preserving its source carrier through an opaque
+  // ABI: JavaScript constructors may explicitly return another object.
+  if (opaqueTarget && factory.sourceResultAbi !== true) return null;
 
   const sourceCarrier: ValType = { kind: "ref_null", typeIdx: source.typeIdx };
-  const sameStruct = source.typeIdx === target.typeIdx;
-  if (!sameStruct && !canEmitAssertedStructExtension(ctx, sourceCarrier, target)) return null;
-
   let carried: ValType;
   if (actualReturn.kind === "externref" || actualReturn.kind === "ref_extern") {
-    // Nested generic functions retain an externref ABI, but this detector has
-    // proved that the value was freshly allocated as the constraint struct.
+    // Only a declaration with the stronger source-result proof may recover an
+    // opaque implementation ABI as the constraint struct.
+    if (factory.sourceResultAbi !== true) return null;
     coerceType(ctx, fctx, { kind: "externref" }, sourceCarrier);
     carried = sourceCarrier;
   } else if (
@@ -168,12 +171,61 @@ function tryEmitGenericStructFactoryResult(
     return null;
   }
 
+  // Some large structural instantiations are deliberately not materialized as
+  // Wasm structs and therefore map to externref. The declaration proof still
+  // establishes that the returned value is physically the fresh source
+  // constraint. Keep that carrier so binding lowering can access the source's
+  // real fields instead of immediately round-tripping through the host.
+  if (opaqueTarget) return carried;
+  if (target.kind !== "ref" && target.kind !== "ref_null") return null;
+
+  const sameStruct = source.typeIdx === target.typeIdx;
+  if (!sameStruct && !canEmitAssertedStructExtension(ctx, sourceCarrier, target)) return null;
+
   if (sameStruct) {
     if (!valTypesMatch(carried, target)) coerceType(ctx, fctx, carried, target);
     return target;
   }
 
   return emitAssertedStructExtension(ctx, fctx, carried, target) ? target : null;
+}
+
+/**
+ * Recover the concrete carrier hidden by an externref `T -> T` implementation
+ * ABI before applying the instantiated result type.
+ *
+ * TypeScript's `finishNode<T>(node: T): T` intentionally accepts every AST
+ * node layout through externref. In `parseTokenNode<TypeNode>()`, its argument
+ * is still statically a `Token`, while the surrounding assertion asks for the
+ * sibling `TypeNode` interface. Casting the opaque externref straight to
+ * TypeNode loses the valid Token and produces null. Decode the value through
+ * the proven identity parameter first; the ordinary typed-ref coercion can
+ * then perform its field-preserving structural projection (including erased
+ * `_...Brand` defaults).
+ */
+function tryEmitGenericIdentityResult(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  call: ts.CallExpression,
+  actualReturn: ValType,
+  instantiatedReturn: ts.Type,
+): ValType | null {
+  const parameterIndex = genericIdentityReturnParamIndex(ctx, call);
+  const argument = parameterIndex === undefined ? undefined : call.arguments[parameterIndex];
+  if (!argument || (actualReturn.kind !== "externref" && actualReturn.kind !== "ref_extern")) return null;
+
+  const source = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(argument));
+  const target = resolveWasmType(ctx, instantiatedReturn);
+  if ((source.kind !== "ref" && source.kind !== "ref_null") || (target.kind !== "ref" && target.kind !== "ref_null")) {
+    return null;
+  }
+
+  const sourceCarrier: ValType = { kind: "ref_null", typeIdx: source.typeIdx };
+  if (source.typeIdx !== target.typeIdx && !canStructurallyProjectRef(ctx, sourceCarrier, target)) return null;
+
+  coerceType(ctx, fctx, { kind: "externref" }, sourceCarrier);
+  if (!valTypesMatch(sourceCarrier, target)) coerceType(ctx, fctx, sourceCarrier, target);
+  return target;
 }
 
 /**
@@ -1244,15 +1296,7 @@ export function compileIdentifierCall(
         // explicit hint also keeps the dispatch table in
         // `__extern_method_call` honest for wasmGC structs that V8
         // can't introspect natively.
-        const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
-        if (toStrIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: toStrIdx });
-          // (#4174) `__extern_toString`'s string arm is identity — a rope comes
-          // back unchanged; flatten it here (acorn's `this.input = String(input)`).
-          emitStringExternResultFlatten(ctx, fctx);
-        }
-        return { kind: "externref" };
+        return emitToString(ctx, fctx, argType, argTsType, "string");
       }
 
       if (argType?.kind === "ref" || argType?.kind === "ref_null") {
@@ -1905,6 +1949,45 @@ export function compileIdentifierCall(
           // `async-function/returns-async-function-returns-arguments-*`.
           const calleeIsAsync = isPromiseType(sigRetType);
           const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType; // null for void
+          const callableTypePredicate = ctx.checker.getTypePredicateOfSignature(sig);
+          const referencePredicateFuncTypes = (
+            ctx as unknown as { __funcValueWrapperReferencePredicateFuncTypes?: Set<number> }
+          ).__funcValueWrapperReferencePredicateFuncTypes;
+
+          // A generic predicate parameter erases `T` to externref in the
+          // higher-order body, while the concrete predicate retains its exact
+          // source ABI (`Node -> boolean`).  The wrapper is selected by its
+          // exact funcref type, so after that runtime proof it is safe to
+          // recover the one reference argument for the predicate call.  Keep
+          // this exception tied to source-declared type predicates registered
+          // by the whole-program callback pre-scan; ordinary externref ->
+          // nominal-ref callback candidates remain excluded.
+          const referencePredicateArgumentBridge = (
+            candidate: { funcTypeIdx: number; returnType: ValType | null; paramTypes: ValType[] },
+            paramIndex: number,
+            from: ValType,
+            to: ValType,
+          ): Instr[] | null => {
+            if (
+              callableTypePredicate === undefined ||
+              paramIndex !== 0 ||
+              sigParamWasmTypes.length !== 1 ||
+              candidate.paramTypes.length !== 1 ||
+              referencePredicateFuncTypes?.has(candidate.funcTypeIdx) !== true ||
+              expectedReturn?.kind !== "i32" ||
+              expectedReturn.boolean !== true ||
+              candidate.returnType?.kind !== "i32" ||
+              candidate.returnType.boolean !== true ||
+              !isHostExtern(from) ||
+              (to.kind !== "ref" && to.kind !== "ref_null")
+            ) {
+              return null;
+            }
+            return [
+              { op: "any.convert_extern" },
+              { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },
+            ];
+          };
 
           const declaredRefSubtypeOf = (from: ValType, to: ValType): boolean => {
             if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
@@ -1985,6 +2068,41 @@ export function compileIdentifierCall(
           // physical ValType rows cannot recover the Boolean/Symbol/BigInt
           // brands carried on i32/i64.
           const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
+          const genericReferenceCallbackFuncTypes = (
+            ctx as unknown as { __funcValueWrapperGenericReferenceCallbackFuncTypes?: Set<number> }
+          ).__funcValueWrapperGenericReferenceCallbackFuncTypes;
+          const vecFactoryCallbackFuncTypes = (
+            ctx as unknown as { __funcValueWrapperVecFactoryFuncTypes?: Set<number> }
+          ).__funcValueWrapperVecFactoryFuncTypes;
+          const canExportCandidateReferenceResult = (funcTypeIdx: number): boolean =>
+            genericReferenceCallbackFuncTypes?.has(funcTypeIdx) === true ||
+            vecFactoryCallbackFuncTypes?.has(funcTypeIdx) === true;
+          const genericReferenceCallbackArgumentBridge = (
+            candidate: { funcTypeIdx: number; returnType: ValType | null; paramTypes: ValType[] },
+            paramIndex: number,
+            from: ValType,
+            to: ValType,
+          ): Instr[] | null => {
+            const signatureParameter = runtimeSigParams[paramIndex];
+            if (
+              paramIndex !== 0 ||
+              candidate.paramTypes.length !== 1 ||
+              genericReferenceCallbackFuncTypes?.has(candidate.funcTypeIdx) !== true ||
+              signatureParameter === undefined ||
+              (ctx.checker.getTypeOfSymbol(signatureParameter).flags & ts.TypeFlags.TypeParameter) === 0 ||
+              expectedReturn === null ||
+              !isHostExtern(expectedReturn) ||
+              candidate.returnType === null ||
+              (!isHostExtern(candidate.returnType) &&
+                candidate.returnType.kind !== "ref" &&
+                candidate.returnType.kind !== "ref_null") ||
+              !isHostExtern(from) ||
+              to.kind !== "ref"
+            ) {
+              return null;
+            }
+            return [{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: to.typeIdx }];
+          };
           const scalarAbiTypesMatch = (from: ValType, to: ValType): boolean => {
             // `externref` and `ref_extern` are two internal spellings of the
             // same physical Wasm ABI. The retired generic coercion planner
@@ -2003,6 +2121,23 @@ export function compileIdentifierCall(
             }
             return true;
           };
+          const canProjectVecArgument = (from: ValType, to: ValType): boolean => {
+            if ((from.kind !== "ref" && from.kind !== "ref_null") || (to.kind !== "ref" && to.kind !== "ref_null")) {
+              return false;
+            }
+            const source = getVecInfo(ctx, from.typeIdx);
+            const target = getVecInfo(ctx, to.typeIdx);
+            if (source === null || target === null) return false;
+            if (scalarAbiTypesMatch(source.elemType, target.elemType)) return true;
+            return (
+              (source.elemType.kind === "ref" || source.elemType.kind === "ref_null") &&
+              (target.elemType.kind === "ref" || target.elemType.kind === "ref_null") &&
+              (declaredRefSubtypeOf(source.elemType, target.elemType) ||
+                canStructurallyProjectRef(ctx, source.elemType, target.elemType))
+            );
+          };
+          const vecArgumentBridge = (from: ValType, to: ValType): Instr[] | null =>
+            canProjectVecArgument(from, to) ? coercionInstrs(ctx, from, to, fctx) : null;
           const tupleTypeIdxs = new Set(ctx.tupleTypeMap.values());
           const isErasedGenericRefCarrier = (typeIdx: number): boolean =>
             tupleTypeIdxs.has(typeIdx) || getVecInfo(ctx, typeIdx) !== null;
@@ -2015,6 +2150,7 @@ export function compileIdentifierCall(
               unboxNumberIdx: number | null;
             },
             allowProvenNumberUnbox: boolean,
+            allowGeneralRefExport: boolean,
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
             if (ctx.standalone || ctx.wasi) return null;
@@ -2053,9 +2189,23 @@ export function compileIdentifierCall(
             }
             if (
               (from.kind === "ref" || from.kind === "ref_null") &&
-              (isErasedGenericRefCarrier(from.typeIdx) || sigParamWasmTypes.length === 0) &&
+              ((allowGeneralRefExport && from.typeIdx !== ctx.anyValueTypeIdx) ||
+                isErasedGenericRefCarrier(from.typeIdx) ||
+                sigParamWasmTypes.length === 0) &&
               isHostExtern(to)
             ) {
+              // `$AnyValue` is deliberately excluded from the new general
+              // argument widening: its tagged GC struct needs semantic
+              // projection rather than raw reference export.
+              // Widening a concrete WasmGC reference to externref is always
+              // lossless.  Keep the tuple/vec restriction on the reverse
+              // direction above, where an erased value would need a guarded
+              // downcast, but do not apply it here.  TypeScript's parent-fixup
+              // traversal is the production witness: visitNode supplies a
+              // concrete Node while its captured addWorkItem callback accepts
+              // Node | NodeArray<Node>.  The latter lowers to externref, and
+              // excluding that wrapper type made the callable dispatch end in
+              // its TypeError arm even though the callback was present.
               return [{ op: "extern.convert_any" }];
             }
 
@@ -2086,7 +2236,11 @@ export function compileIdentifierCall(
           };
           const argumentHasNumberBridgeProof = (index: number): boolean =>
             index >= expr.arguments.length || ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "number";
-          const theoreticalHelpers = { boxNumberIdx: 0, boxBooleanIdx: 0, unboxNumberIdx: 0 };
+          const theoreticalHelpers = {
+            boxNumberIdx: 0,
+            boxBooleanIdx: 0,
+            unboxNumberIdx: 0,
+          };
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
             const hasRest = info.hasRestParam === true;
@@ -2101,7 +2255,7 @@ export function compileIdentifierCall(
               const to = info.paramTypes[pi]!;
               if (scalarAbiTypesMatch(from, to)) continue;
               differs = true;
-              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi)) === null) {
+              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi), true) === null) {
                 compatible = false;
                 break;
               }
@@ -2111,7 +2265,7 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false) !== null;
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false) !== null;
             if (differs || returnDiffers) {
               needsScalarBridge = true;
               break;
@@ -2121,7 +2275,12 @@ export function compileIdentifierCall(
             addUnionImports(ctx);
             flushLateImportShifts(ctx, fctx);
           }
-          const dispatchBridgePlan = (from: ValType, to: ValType, allowProvenNumberUnbox: boolean): Instr[] | null =>
+          const dispatchBridgePlan = (
+            from: ValType,
+            to: ValType,
+            allowProvenNumberUnbox: boolean,
+            allowGeneralRefExport: boolean,
+          ): Instr[] | null =>
             scalarBridgePlan(
               from,
               to,
@@ -2131,6 +2290,7 @@ export function compileIdentifierCall(
                 unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
               },
               allowProvenNumberUnbox,
+              allowGeneralRefExport,
             );
 
           const funcCandidates: FuncCandidate[] = [
@@ -2175,18 +2335,57 @@ export function compileIdentifierCall(
             // formal prefix in the dispatch arm below.
             const hasRestParam = info.hasRestParam === true || restFuncTypeIdxs?.has(info.funcTypeIdx) === true;
             const fixedParamCount = hasRestParam ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
-            if (!hasRestParam && info.paramTypes.length > sigParamCount) continue;
+            // A runtime function may declare optional parameters that are not
+            // present in the callable's public signature. JavaScript still
+            // invokes that function and supplies `undefined` for each omitted
+            // argument. Admit only the representation-safe erased suffix here;
+            // numeric/reference pads need declaration-specific default rules.
+            if (
+              !hasRestParam &&
+              info.paramTypes.length > sigParamCount &&
+              ((ctx.closureMinimumArgumentCountByFuncTypeIdx.get(info.funcTypeIdx) ??
+                info.minimumArgumentCount ??
+                info.paramTypes.length) > sigParamCount ||
+                info.paramTypes.slice(sigParamCount).some((type) => type.kind !== "externref"))
+            ) {
+              continue;
+            }
             if (hasRestParam && fixedParamCount > sigParamCount) continue;
-            const candidateParamTypes = hasRestParam ? info.paramTypes.slice(0, fixedParamCount) : info.paramTypes;
+            const candidateParamTypes = (
+              hasRestParam ? info.paramTypes.slice(0, fixedParamCount) : info.paramTypes
+            ).slice(0, sigParamCount);
             if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
             let paramsMatch = true;
             for (let pi = 0; pi < candidateParamTypes.length; pi++) {
               if (!scalarAbiTypesMatch(candidateParamTypes[pi]!, sigParamWasmTypes[pi]!)) {
-                const bridge = dispatchBridgePlan(
-                  sigParamWasmTypes[pi]!,
-                  candidateParamTypes[pi]!,
-                  argumentHasNumberBridgeProof(pi),
-                );
+                const bridge =
+                  dispatchBridgePlan(
+                    sigParamWasmTypes[pi]!,
+                    candidateParamTypes[pi]!,
+                    argumentHasNumberBridgeProof(pi),
+                    true,
+                  ) ??
+                  referencePredicateArgumentBridge(
+                    {
+                      funcTypeIdx: info.funcTypeIdx,
+                      returnType: info.returnType,
+                      paramTypes: info.paramTypes,
+                    },
+                    pi,
+                    sigParamWasmTypes[pi]!,
+                    candidateParamTypes[pi]!,
+                  ) ??
+                  genericReferenceCallbackArgumentBridge(
+                    {
+                      funcTypeIdx: info.funcTypeIdx,
+                      returnType: info.returnType,
+                      paramTypes: info.paramTypes,
+                    },
+                    pi,
+                    sigParamWasmTypes[pi]!,
+                    candidateParamTypes[pi]!,
+                  ) ??
+                  (canProjectVecArgument(sigParamWasmTypes[pi]!, candidateParamTypes[pi]!) ? [] : null);
                 if (bridge === null) {
                   paramsMatch = false;
                   break;
@@ -2203,7 +2402,12 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              dispatchBridgePlan(info.returnType, expectedReturn, false) === null &&
+              dispatchBridgePlan(
+                info.returnType,
+                expectedReturn,
+                false,
+                canExportCandidateReferenceResult(info.funcTypeIdx),
+              ) === null &&
               !declaredRefSubtypeOf(info.returnType, expectedReturn) &&
               !canProjectImplementationReturn(info.returnType, expectedReturn)
             ) {
@@ -2245,6 +2449,22 @@ export function compileIdentifierCall(
                 });
               }
             }
+          }
+
+          // Preserve the JavaScript distinction between an omitted argument
+          // and null. A preregistered callback with optional externref formals
+          // can be wider than the public callable signature, so keep one
+          // canonical `undefined` value for those trailing call_ref operands.
+          let missingExternrefLocal: number | undefined;
+          if (
+            funcCandidates.some(
+              (candidate) =>
+                candidate.hasRestParam !== true && candidate.paramTypes.length > matchedClosureInfo.paramTypes.length,
+            )
+          ) {
+            pushDefaultValue(fctx, { kind: "externref" }, ctx);
+            missingExternrefLocal = allocLocal(fctx, `__missing_carg_${fctx.locals.length}`, { kind: "externref" });
+            fctx.body.push({ op: "local.set", index: missingExternrefLocal });
           }
 
           // Compile the callee to get the value on the stack
@@ -2576,6 +2796,7 @@ export function compileIdentifierCall(
             }
             // (#1511) Set __extras_argv from saved overflow locals + __argc
             appendArgcSetupFromExtras(ctx, fctx, fctx.body, cpParamCnt, cpExtrasLocals, expr.arguments.length);
+            appendForwardedOptionalArgcOverride(ctx, fctx, fctx.body, expr.arguments, cpParamCnt);
             // Push funcref back, guarded cast, call
             fctx.body.push({ op: "local.get", index: funcrefLocal });
             emitGuardedFuncRefCast(fctx, matchedClosureInfo.funcTypeIdx);
@@ -2735,6 +2956,7 @@ export function compileIdentifierCall(
               const fcHasRest = fc.hasRestParam === true;
               const fcFixedParamCount = fcHasRest ? Math.max(0, fc.paramTypes.length - 1) : fc.paramTypes.length;
               setCandidateArgc(ctx, fctx, fcCallBody, fcFixedParamCount, actualArgExternLocals, expr.arguments.length);
+              appendForwardedOptionalArgcOverride(ctx, fctx, fcCallBody, expr.arguments, fcFixedParamCount);
               // Shared func types use canonical-root self. A private/named
               // closure func type still names its concrete self, so its arm
               // needs a concrete cast to remain statically call_ref-valid.
@@ -2748,8 +2970,20 @@ export function compileIdentifierCall(
               // Push args
               let candidateArgsCoercible = true;
               for (let ai = 0; ai < fcFixedParamCount; ai++) {
-                const fromType = matchedClosureInfo.paramTypes[ai]!;
                 const toType = fc.paramTypes[ai]!;
+                if (ai >= matchedClosureInfo.paramTypes.length) {
+                  // The candidate scan only admits an externref suffix. Use a
+                  // real surplus call-site argument when one exists; otherwise
+                  // pass the canonical JavaScript `undefined` captured above.
+                  const argLocal = ai < expr.arguments.length ? actualArgExternLocals[ai] : missingExternrefLocal;
+                  if (toType.kind !== "externref" || argLocal === undefined) {
+                    candidateArgsCoercible = false;
+                    break;
+                  }
+                  fcCallBody.push({ op: "local.get", index: argLocal });
+                  continue;
+                }
+                const fromType = matchedClosureInfo.paramTypes[ai]!;
                 // A missing dynamic argument is materialized as host
                 // `undefined`. Unboxing that value produces an ordinary NaN,
                 // but a compiled f64 parameter uses the signalling-NaN payload
@@ -2762,7 +2996,11 @@ export function compileIdentifierCall(
                 }
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
                 if (!scalarAbiTypesMatch(fromType, toType)) {
-                  const bridge = dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai));
+                  const bridge =
+                    dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai), true) ??
+                    referencePredicateArgumentBridge(fc, ai, fromType, toType) ??
+                    genericReferenceCallbackArgumentBridge(fc, ai, fromType, toType) ??
+                    vecArgumentBridge(fromType, toType);
                   if (bridge === null) {
                     candidateArgsCoercible = false;
                     break;
@@ -2828,7 +3066,12 @@ export function compileIdentifierCall(
                 } else if (canProjectImplementationReturn(fc.returnType!, expectedReturn!)) {
                   fcCallBody.push(...coercionInstrs(ctx, fc.returnType!, expectedReturn!, fctx));
                 } else {
-                  const bridge = dispatchBridgePlan(fc.returnType!, expectedReturn!, false);
+                  const bridge = dispatchBridgePlan(
+                    fc.returnType!,
+                    expectedReturn!,
+                    false,
+                    canExportCandidateReferenceResult(fc.funcTypeIdx),
+                  );
                   if (bridge !== null) {
                     fcCallBody.push(...bridge);
                   } else {
@@ -3045,7 +3288,11 @@ export function compileIdentifierCall(
 
     // Check if this function is eligible for call-site inlining
     const inlineInfo = ctx.inlinableFunctions.get(funcName);
-    if (inlineInfo && !expr.arguments.some((a: any) => ts.isSpreadElement(a))) {
+    if (
+      inlineInfo &&
+      !isModuleInitChunkFunctionContext(fctx) &&
+      !expr.arguments.some((a: any) => ts.isSpreadElement(a))
+    ) {
       // Inline the function body: compile arguments into temp locals, then emit body
       const inlineOptInfo = ctx.funcOptionalParams.get(funcName);
       const argLocals: number[] = [];
@@ -3154,7 +3401,7 @@ export function compileIdentifierCall(
         // live cell still contains null until the lazy materializer fills it.
         // Publish the value before passing the cell to the callee, matching
         // emitClosureConstruction's capture path.
-        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
         // #1177: TDZ check for captured let/const/using variables — fires
         // BEFORE the cap-prepend so we throw ReferenceError before the callee
         // observes an uninitialized value. Apply to BOTH the mutable and
@@ -3735,6 +3982,8 @@ export function compileIdentifierCall(
       const actualReturn = getWasmFuncReturnType(ctx, finalFuncIdx) ?? resolveWasmType(ctx, retType);
       const factoryResult = tryEmitGenericStructFactoryResult(ctx, fctx, expr, actualReturn);
       if (factoryResult !== null) return factoryResult;
+      const identityResult = tryEmitGenericIdentityResult(ctx, fctx, expr, actualReturn, retType);
+      if (identityResult !== null) return identityResult;
       return brandExternMethodResult(ctx, retType, actualReturn);
     }
     return getWasmFuncReturnType(ctx, finalFuncIdx) ?? { kind: "f64" };

@@ -1306,9 +1306,9 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         [{ kind: "externref" }],
       );
       if (gopdIdx === undefined) return null;
-      closureFctx.body.push({ op: "local.get", index: 1 });
-      closureFctx.body.push({ op: "local.get", index: 2 });
-      closureFctx.body.push({ op: "call", funcIdx: gopdIdx });
+      flushLateImportShifts(ctx, closureFctx);
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertyDescriptor") ?? gopdIdx });
     } else if (key === "Object.hasOwn") {
       const hasOwnIdx = ensureLateImport(
         ctx,
@@ -1663,6 +1663,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // (unreachable tail).
       emitThrowTypeError(ctx, closureFctx, `${key} is not yet implemented in --target standalone`);
     }
+
+    // Several first-class builtin bodies register late runtime imports after
+    // emitting their target guards (notably extracted Reflect methods). Shift
+    // every already-emitted call before publishing the closure; otherwise the
+    // guard calls the pre-import function index and rejects every target.
+    flushLateImportShifts(ctx, closureFctx);
 
     funcIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, funcIdx, {

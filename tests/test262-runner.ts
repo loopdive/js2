@@ -11,9 +11,14 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { createHash } from "crypto";
+import { tmpdir } from "node:os";
 import { createContext, runInContext } from "node:vm";
-import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { compile, compileMulti } from "../src/index.js";
+// (#5248) The compile-once `Temporal` provider (#4628). Source ACQUISITION is
+// not imported here — `tests/dogfood/setup-temporal-polyfill.mjs` owns the
+// pinned-tarball contract and is loaded lazily, only when a Temporal row runs.
+import { buildTemporalProvider, compileWithTemporalGlobal, type TemporalProvider } from "../src/temporal-provider.js";
+import { buildImports, markCoherentBuiltinRealm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
 // (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
@@ -25,6 +30,7 @@ import {
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-shared.ts. This lane used to instantiate the binary
 // directly, so a standalone module linking `js2wasm:runtime-eval` died at
@@ -146,6 +152,24 @@ function declaresTopLevelDone(body: string): boolean {
 /** A fresh realm for literal-harness execution; never reused across variants. */
 export function createTestSandbox(consoleProxy?: Console, exposeDone = true): Record<string, any> {
   return _buildFreshSandbox(consoleProxy, exposeDone);
+}
+
+/**
+ * Test262 property-descriptor rows are allowed to install a new intrinsic
+ * property without specifying `configurable: true`. Such a property cannot be
+ * removed by the in-process host snapshot, so the sloppy variant would poison
+ * the strict rerun before it starts. Run those rows with one coherent fresh
+ * VM realm for both the built-in globals and their constructed values.
+ *
+ * Keep this source classifier deliberately narrow: ordinary product/runtime
+ * builds retain the host-realm design, and descriptor checks on user objects
+ * do not need a separate intrinsic realm.
+ */
+const HOST_INTRINSIC_DEFINE_RE =
+  /\b(?:Object|Reflect)\.(?:defineProperty|defineProperties)\s*\(\s*(?:Object|Array|String|Number|Boolean|Function|RegExp|Map|Set|WeakMap|WeakSet|Promise|Date|ArrayBuffer|DataView|Int8Array|Uint8Array|Uint8ClampedArray|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)(?:\.prototype)?\b/;
+
+function requiresCoherentBuiltinRealm(source: string): boolean {
+  return HOST_INTRINSIC_DEFINE_RE.test(source);
 }
 
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
@@ -4194,6 +4218,89 @@ function appendOriginalHarnessFailureContext(detail: string, source: string): st
   return `${detail} | at L${selected.line}: ${text}`;
 }
 
+// ── (#5248) the compiled `Temporal` global ───────────────────────────────────
+//
+// #4628 built a compile-once `Temporal` provider (`src/temporal-provider.ts`)
+// but left this lane unwired, so every Temporal row still reported
+// `Temporal is not defined` — 1,589 of them in the 2026-08-29 baseline. This is
+// the wiring.
+//
+// THREE constraints shape it, and each one is a measurement, not a preference:
+//
+//  1. COMPILE-ONCE. The polyfill costs ~32–47 s to compile. Prepending it to
+//     each test body would cost ~41 h across the Temporal bucket. So the
+//     provider is built at most once per process, lazily, and every Temporal
+//     test links the same artifact for ~0.4 s.
+//  2. SCOPED. Only tests that could reference `Temporal` opt in. The gate is
+//     the test's PATH or its `features:` list — not `referencesTemporal()`,
+//     whose deliberately loose "any occurrence, even in a string" rule is right
+//     for a user-facing API and wrong here, where a stray mention in a comment
+//     would put a non-Temporal test on the linked path and pay the extra
+//     instantiation for nothing.
+//  3. FAIL SOFT. A provider that cannot be built (missing pinned tarball,
+//     compile regression) must degrade to today's behaviour — the row reports
+//     its own failure — never take the whole lane down. The build is attempted
+//     once; the null is memoised with it.
+let temporalProviderPromise: Promise<TemporalProvider | null> | undefined;
+
+/**
+ * `JS2WASM_TEST262_TEMPORAL=0` opts a consumer of this lane OUT of the provider.
+ *
+ * Read LAZILY, not into a module-scope const: a consumer that sets the variable
+ * in its own module body — `scripts/validate-test262-baseline.ts` does, for the
+ * lane-parity reason documented there — runs AFTER this module is evaluated,
+ * because ESM imports are hoisted. A hoisted `const` would capture the unset
+ * value and silently ignore the opt-out.
+ */
+function temporalProviderDisabled(): boolean {
+  return process.env.JS2WASM_TEST262_TEMPORAL === "0";
+}
+
+/**
+ * Does this test need the real `Temporal` global?
+ *
+ * Path OR `features:`, because neither alone is complete: `intl402/Temporal/**`
+ * and `built-ins/Temporal/**` are the bulk, while a handful of files elsewhere
+ * (e.g. `built-ins/Date/**` interop rows) declare `features: [Temporal]`
+ * without living under such a directory.
+ */
+export function test262NeedsTemporalGlobal(filePath: string, meta: Test262Meta): boolean {
+  if (temporalProviderDisabled()) return false;
+  if (/[\\/]Temporal[\\/]/.test(filePath)) return true;
+  return meta.features?.includes("Temporal") === true;
+}
+
+/**
+ * Build (or reuse) the process-wide provider.
+ *
+ * The provider binary is content-addressed on the POLYFILL source under
+ * `JS2WASM_TEMPORAL_CACHE`, so a cache hit serves a binary built by whatever
+ * COMPILER ran last in this container (#5227). That is the intended fast path
+ * for a measurement run, but it means any conformance delta claimed from this
+ * lane must state whether the provider was a cache hit or a cold build — the
+ * one line below is what makes that recoverable from a run log.
+ */
+async function getTest262TemporalProvider(): Promise<TemporalProvider | null> {
+  if (temporalProviderPromise) return temporalProviderPromise;
+  temporalProviderPromise = (async () => {
+    const { setupTemporalPolyfill, linkPolyfillSource } = await import("./dogfood/setup-temporal-polyfill.mjs");
+    const linked = linkPolyfillSource(setupTemporalPolyfill());
+    const cacheDir = process.env.JS2WASM_TEMPORAL_CACHE ?? join(tmpdir(), "js2wasm-temporal-cache");
+    const provider = await buildTemporalProvider({ polyfillSource: linked.source, cacheDir });
+    console.error(
+      `[test262] Temporal provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +
+        `built in ${provider.buildMs}ms cacheHit=${provider.cacheHit} from ${cacheDir}`,
+    );
+    return provider;
+  })().catch((error: unknown) => {
+    // Fail soft, but LOUDLY — a silent null would look like "the wiring did
+    // nothing" and be indistinguishable from a conformance result.
+    console.error(`[test262] Temporal provider unavailable, rows keep the ambient lane: ${String(error)}`);
+    return null;
+  });
+  return temporalProviderPromise;
+}
+
 async function runOriginalHarnessVariant(
   variant: OriginalHarnessVariant,
   originalSource: string,
@@ -4201,6 +4308,7 @@ async function runOriginalHarnessVariant(
   fileName: string,
   timeoutMs: number,
   target?: "standalone",
+  temporal?: TemporalProvider | null,
 ): Promise<OriginalVariantResult> {
   restoreHostBuiltins();
   const started = performance.now();
@@ -4220,9 +4328,14 @@ async function runOriginalHarnessVariant(
   try {
     const compileStarted = performance.now();
     try {
-      result = await compile(variant.source, {
+      // (#5248) With a provider, the SAME options go through
+      // `compileWithTemporalGlobal`, which adds a one-line prelude binding bare
+      // `Temporal` to the provider's export and a `linkedPackageBindings` entry.
+      // `variant.source` is left untouched here on purpose: every reporting path
+      // below (`appendOriginalHarnessFailureContext`, the negative matchers)
+      // reads the ORIGINAL assembly, so its line numbers never shift.
+      const compileOptions = {
         allowJs: true,
-        fileName,
         sourceMap: true,
         emitWat: false,
         skipSemanticDiagnostics: true,
@@ -4246,7 +4359,26 @@ async function runOriginalHarnessVariant(
         // collapse onto opaque labels. This is the harness opt-in the flag was
         // designed around; do not drop it to "shrink the test binaries".
         hostBridge: "always",
-      });
+      } as const;
+      // Test262's module-namespace cases intentionally self-import the entry
+      // (`import * as ns from './<own-file>.js'`) to obtain that module's
+      // namespace object. The ordinary single-source compiler has no module
+      // record for the edge, so the literal harness compile leaves `ns`
+      // unresolved and the row fails as `ns is not defined`. Keep the source
+      // byte-for-byte intact, but give this narrowly recognized graph shape
+      // its pinned virtual entry through compileMulti. This mirrors the
+      // sharded fixture path without changing any non-namespace test.
+      const relTestPath = relative(join(TEST262_ROOT, "test"), fileName).replaceAll("\\", "/");
+      const isModuleNamespaceTest = relTestPath.startsWith("language/module-code/namespace/");
+      const selfModuleImport = isModuleNamespaceTest && hasSelfModuleImport(relTestPath, originalSource);
+      if (temporal) {
+        result = await compileWithTemporalGlobal(variant.source, temporal, { ...compileOptions, fileName });
+      } else if (selfModuleImport) {
+        const entryFile = `./${relTestPath}`;
+        result = await compileMulti({ [entryFile]: variant.source }, entryFile, compileOptions);
+      } else {
+        result = await compile(variant.source, { ...compileOptions, fileName });
+      }
     } catch (error) {
       compileMs = performance.now() - compileStarted;
       const detail = originalHarnessThrownText(error);
@@ -4321,6 +4453,8 @@ async function runOriginalHarnessVariant(
         consoleProxy,
         meta.flags?.includes("async") === true || declaresTopLevelDone(originalSource),
       );
+      const coherentBuiltinRealm = requiresCoherentBuiltinRealm(originalSource);
+      if (coherentBuiltinRealm) markCoherentBuiltinRealm(sandbox);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
       }) as any;
@@ -4328,6 +4462,9 @@ async function runOriginalHarnessVariant(
       instance = await instantiateTest262Module(result.binary, imports, {
         target,
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+        // (#5248) Empty on every non-Temporal row, so the shared finaliser takes
+        // its existing path byte-for-byte.
+        linkedModules: result.linkedModules ?? [],
       });
       instantiateMs = performance.now() - instantiateStarted;
       imports.setInstance?.(instance);
@@ -4465,7 +4602,19 @@ export async function runTest262File(
   }
 
   const assembly = assembleOriginalHarness(source, meta);
-  const primary = await runOriginalHarnessVariant(assembly.primary, source, meta, filePath, timeoutMs, target);
+  // (#5248) Resolved BEFORE the primary variant so the strict rerun links the
+  // identical artifact — two provider instances for one test would give the
+  // rerun a different `Temporal` object identity than the sloppy run saw.
+  const temporal = test262NeedsTemporalGlobal(filePath, meta) ? await getTest262TemporalProvider() : null;
+  const primary = await runOriginalHarnessVariant(
+    assembly.primary,
+    source,
+    meta,
+    filePath,
+    timeoutMs,
+    target,
+    temporal,
+  );
   if (!primary.pass) {
     return {
       file: relPath,
@@ -4478,7 +4627,15 @@ export async function runTest262File(
   }
 
   if (assembly.strictRerun) {
-    const strict = await runOriginalHarnessVariant(assembly.strictRerun, source, meta, filePath, timeoutMs, target);
+    const strict = await runOriginalHarnessVariant(
+      assembly.strictRerun,
+      source,
+      meta,
+      filePath,
+      timeoutMs,
+      target,
+      temporal,
+    );
     if (!strict.pass) {
       return {
         file: relPath,

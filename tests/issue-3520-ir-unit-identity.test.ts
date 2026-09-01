@@ -75,7 +75,7 @@ function taggedSyntheticInventory(entries: readonly { text: string; role: string
 }
 
 type LegacyProjectionKind = "function" | "class-member" | "module-init";
-type LegacyProjectionStatus = "emitted" | "unsupported" | "invariant";
+type LegacyProjectionStatus = "emitted" | "unsupported" | "invariant" | "non-executable";
 
 function expectedLegacyProjection(
   file: string,
@@ -413,6 +413,10 @@ describe("#3520 structural IR identity", () => {
         ["User_m", "class-member", "unsupported"],
         ["helper", "function", "emitted"],
         ["main", "function", "emitted"],
+        // (#3523 R4 gap 4) The source has no top-level statements, so its
+        // module init has nothing to do and now says so instead of going
+        // unrecorded.
+        ["<module-init>", "module-init", "non-executable"],
       ]),
     );
   });
@@ -1207,15 +1211,24 @@ export function user() { return 1; }
     expect(gc.success).toBe(true);
     expect(standalone.success).toBe(true);
     expect(wasi.success).toBe(true);
-    expect(gcOutcomes).toHaveLength(1);
-    expect(standaloneOutcomes).toHaveLength(11);
-    expect(wasiOutcomes).toHaveLength(11);
+    // (#3523 R4 gap 4) Each lane gains the one non-executable module-init row
+    // for this statement-free source; the terminal-unit populations are
+    // unchanged at 1/11/11.
+    expect(gcOutcomes.filter((outcome) => outcome.kind === "non-executable")).toHaveLength(1);
+    expect(standaloneOutcomes.filter((outcome) => outcome.kind === "non-executable")).toHaveLength(1);
+    expect(wasiOutcomes.filter((outcome) => outcome.kind === "non-executable")).toHaveLength(1);
+    const gcTerminals = gcOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+    const standaloneTerminals = standaloneOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+    const wasiTerminals = wasiOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+    expect(gcTerminals).toHaveLength(1);
+    expect(standaloneTerminals).toHaveLength(11);
+    expect(wasiTerminals).toHaveLength(11);
     expect(standaloneMain.unitId).toBe(gcMain.unitId);
     expect(wasiMain.unitId).toBe(gcMain.unitId);
     expect(standaloneMain.key).toBe(gcMain.key);
     expect(wasiMain.key).toBe(gcMain.key);
-    expect(new Set(standaloneOutcomes.map((outcome) => outcome.unitId)).size).toBe(standaloneOutcomes.length);
-    expect(new Set(wasiOutcomes.map((outcome) => outcome.unitId)).size).toBe(wasiOutcomes.length);
+    expect(new Set(standaloneTerminals.map((outcome) => outcome.unitId)).size).toBe(standaloneTerminals.length);
+    expect(new Set(wasiTerminals.map((outcome) => outcome.unitId)).size).toBe(wasiTerminals.length);
     expect(standalone.binary).toEqual(standaloneUntracked.binary);
     expect(wasi.binary).toEqual(wasiUntracked.binary);
   });
@@ -1242,6 +1255,7 @@ export function user() { return 1; }
     await assertProjection("timer-projection.ts", `export function main() { setTimeout(() => {}, 1); return 1; }`, {}, [
       ["setTimeout", "function", "emitted"],
       ["main", "function", "unsupported"],
+      ["<module-init>", "module-init", "non-executable"],
     ]);
     await assertProjection(
       "path-projection.ts",
@@ -1259,6 +1273,7 @@ export function user() { return 1; }
         ["__js2wasm_path_relative", "function", "unsupported"],
         ["join", "function", "unsupported"],
         ["main", "function", "unsupported"],
+        ["<module-init>", "module-init", "non-executable"],
       ],
     );
     await assertProjection(
@@ -1305,6 +1320,7 @@ export function user() { return 1; }
           "__js2wasm_Iterator_from",
           "main",
         ].map((label) => [label, "function", "unsupported"] as const),
+        ["<module-init>", "module-init", "non-executable"] as const,
       ],
     );
   });

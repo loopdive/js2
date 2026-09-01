@@ -24,10 +24,12 @@ function sha256(value: string) {
 
 function passingSuiteReport() {
   return {
-    upstreamSuite: { selectedFiles: ["base64.ts", "convertToBase64.ts", "parsePseudoBigInt.ts"] },
-    extraction: { testsRegistered: 11, nativePassed: 11, nativeFailed: 0 },
-    compile: { modules: 3, succeeded: 3, validated: 3 },
-    results: { scored: 11, passed: 11, failed: 0, runtimeFailed: 0 },
+    upstreamSuite: {
+      selectedFiles: ["base64.ts", "comments.ts", "convertToBase64.ts", "parsePseudoBigInt.ts"],
+    },
+    extraction: { testsRegistered: 14, nativePassed: 14, nativeFailed: 0 },
+    compile: { modules: 4, succeeded: 4, validated: 4 },
+    results: { scored: 14, passed: 14, failed: 0, runtimeFailed: 0 },
   };
 }
 
@@ -102,20 +104,20 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     expect(typescriptUpstreamReportSucceeded(passingSuiteReport())).toBe(true);
 
     const admittedFailure = passingSuiteReport();
-    admittedFailure.results.passed = 10;
+    admittedFailure.results.passed = 13;
     admittedFailure.results.failed = 1;
     expect(typescriptUpstreamReportSucceeded(admittedFailure)).toBe(false);
 
     const runtimeFailure = passingSuiteReport();
-    runtimeFailure.results.passed = 10;
+    runtimeFailure.results.passed = 13;
     runtimeFailure.results.runtimeFailed = 1;
     expect(typescriptUpstreamReportSucceeded(runtimeFailure)).toBe(false);
 
     const silentlyReduced = passingSuiteReport();
-    silentlyReduced.extraction.testsRegistered = 10;
-    silentlyReduced.extraction.nativePassed = 10;
-    silentlyReduced.results.scored = 10;
-    silentlyReduced.results.passed = 10;
+    silentlyReduced.extraction.testsRegistered = 13;
+    silentlyReduced.extraction.nativePassed = 13;
+    silentlyReduced.results.scored = 13;
+    silentlyReduced.results.passed = 13;
     expect(typescriptUpstreamReportSucceeded(silentlyReduced)).toBe(false);
 
     const empty = passingSuiteReport();
@@ -126,7 +128,7 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     expect(typescriptUpstreamReportSucceeded(empty)).toBe(false);
 
     const invalidModule = passingSuiteReport();
-    invalidModule.compile.validated = 2;
+    invalidModule.compile.validated = 3;
     expect(typescriptUpstreamReportSucceeded(invalidModule)).toBe(false);
   });
 

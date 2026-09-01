@@ -10,7 +10,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { shiftLateImportIndices } from "./expressions/late-imports.js";
+import { emitUndefined, shiftLateImportIndices } from "./expressions/late-imports.js";
 import {
   addUnionImports,
   ensureLetConstBindingPatternTdzFlags,
@@ -62,10 +62,11 @@ import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-// (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
-// `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
-// already imports `destructureParamArray` from here — a module cycle. ESM
-// resolves it because these references are used at call time (inside
+import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
+import { coerceTupleBindingElement, emitExhaustedTupleRest } from "./tuple-rest.js";
+// (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
+// imports `destructureParamArray` from here. ESM resolves the cycle because the
+// references are used only at call time (inside
 // `destructureParamArray`), never at module-init.
 import {
   arrayDstrNeedsIdentity,
@@ -869,7 +870,7 @@ export function destructureParamObjectExternref(
 
     addStringConstantGlobal(ctx, propNameText);
     const strGlobalIdx = ctx.stringGlobalMap.get(propNameText);
-    if (strGlobalIdx === undefined) continue;
+    if (strGlobalIdx === undefined && !ctx.nativeStrings) continue;
 
     getIdx = ctx.funcMap.get("__extern_get");
     if (getIdx === undefined) continue;
@@ -1228,6 +1229,70 @@ export function structHintForBindingPattern(
 }
 
 /**
+ * (#5221) Bind ONE object-pattern element whose property is provably ABSENT
+ * from the source struct.
+ *
+ * The struct fast path below maps each pattern property to a `struct.get`. When
+ * `fields.findIndex(...)` misses, the property does not exist on the source
+ * object, so §13.15.5.6 KeyedBindingInitialization's `GetV(value, name)` yields
+ * **`undefined`** — and, when the element carries an initializer, that
+ * `undefined` is exactly what fires the default (§13.15.5.6 step 3).
+ *
+ * Before this the miss was a bare `continue`, leaving the binding local at its
+ * WASM zero value. For the common `any`/externref local that zero is
+ * `ref.null.extern`, which surfaces to JS as **`null`**, not `undefined` — so
+ * `void 0 === t` answered false, `t ?? d` and `{ t = d }` never defaulted, and
+ * `typeof t` said `"object"`. That is the root cause of #5221: the Temporal
+ * polyfill's `Nn(e)` reads `const { calendar: t } = e; return void 0 === t ?
+ * "iso8601" : kn(t)`, got `null` instead of `undefined` for a plain
+ * `{year,month,day}` argument, and handed `null` to the `%calendarImpl%`
+ * intrinsic — whose lookup then returned nothing and the next field read
+ * dereferenced a null pointer.
+ *
+ * Deliberately narrow: only the `externref`/`anyref` locals (where `undefined`
+ * is representable and the wrong value is observable as `null`) and the
+ * initializer case are corrected. `f64`/`i32`/`ref` locals keep their existing
+ * zero-init — changing a numeric slot's absent value from `0` to a NaN
+ * sentinel is a separate, wider behavioural change with its own blast radius.
+ */
+function emitAbsentStructPropertyBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  element: ts.BindingElement,
+  localName: string,
+  isDecl: boolean,
+): void {
+  const localIdx = fctx.localMap.get(localName);
+  if (localIdx === undefined) return;
+  const localType = getLocalType(fctx, localIdx);
+  if (!localType) return;
+
+  // An absent property is `undefined`, so a binding default ALWAYS fires.
+  if (element.initializer) {
+    const initType = compileExpression(ctx, fctx, element.initializer);
+    if (!initType) return;
+    if (!valTypesMatch(initType, localType)) coerceType(ctx, fctx, initType, localType);
+    fctx.body.push({ op: "local.set", index: localIdx });
+    if (isDecl) emitLocalTdzInit(fctx, localName);
+    return;
+  }
+
+  if (localType.kind === "externref") {
+    emitUndefined(ctx, fctx);
+  } else if (localType.kind === "anyref") {
+    emitUndefined(ctx, fctx);
+    fctx.body.push({ op: "any.convert_extern" });
+  } else {
+    // Numeric / typed-ref slots: leave the zero-init in place (see the note
+    // above). Still emit the TDZ release so `let`/`const` reads don't throw.
+    if (isDecl) emitLocalTdzInit(fctx, localName);
+    return;
+  }
+  fctx.body.push({ op: "local.set", index: localIdx });
+  if (isDecl) emitLocalTdzInit(fctx, localName);
+}
+
+/**
  * Destructure a function parameter that is an ObjectBindingPattern.
  * The parameter value (a struct ref) is at param index `paramIdx`.
  * We extract each bound field into a new local.
@@ -1257,8 +1322,8 @@ export function destructureParamObject(
       if (pattern.elements.length === 0) return;
 
       const tsType = ctx.checker.getTypeAtLocation(pattern);
-      let structTypeIdx: number | undefined;
-      if (tsType) {
+      let structTypeIdx: number | undefined = nestedObjectPatternCarrier(ctx, pattern);
+      if (structTypeIdx === undefined && tsType) {
         ensureStructForType(ctx, tsType);
         const typeName = ctx.anonTypeMap.get(tsType) ?? tsType.getSymbol()?.name ?? tsType.aliasSymbol?.name;
         structTypeIdx = typeName ? ctx.structMap.get(typeName) : undefined;
@@ -1522,7 +1587,11 @@ export function destructureParamObject(
     const localName = element.name.text;
     const fieldIdx = fields.findIndex((f) => f.name === propKey);
     if (fieldIdx === -1) {
-      // Field not in struct — already pre-allocated by ensureBindingLocals
+      // (#5221) Field not on the struct ⇒ the property is ABSENT, so
+      // `GetV(value, name)` is `undefined` (and any default fires). The local
+      // was pre-allocated by `ensureBindingLocals`; its zero value would read
+      // back as `null`, which is a different JS value.
+      emitAbsentStructPropertyBinding(ctx, fctx, element, localName, isDecl);
       continue;
     }
     const fieldType = fields[fieldIdx]!.type;
@@ -2219,7 +2288,7 @@ export function destructureParamArray(
       for (let i = 0; i < pattern.elements.length; i++) {
         const element = pattern.elements[i]!;
         if (ts.isOmittedExpression(element)) continue;
-        if (i >= tupleDef.fields.length) break; // more bindings than tuple fields
+        if (emitExhaustedTupleRest(ctx, fctx, element, i >= tupleDef.fields.length)) break;
 
         const fieldType = tupleDef.fields[i]!.type;
 
@@ -2330,10 +2399,7 @@ export function destructureParamArray(
           if (isDecl) emitLocalTdzInit(fctx, localName);
           continue;
         }
-        // Coerce struct field type to local's declared type if they differ (#658)
-        if (localType && !valTypesMatch(fieldType, localType)) {
-          coerceType(ctx, fctx, fieldType, localType);
-        }
+        coerceTupleBindingElement(ctx, fctx, element, fieldType, localType);
         fctx.body.push({ op: "local.set", index: localIdx });
 
         // Handle element-level default initializer (e.g. [x = 23] in destructuring)

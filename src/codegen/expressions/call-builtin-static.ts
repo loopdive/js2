@@ -3387,14 +3387,10 @@ export function compileBuiltinStaticCall(
     const onlyArg = expr.arguments[0]!;
     const argType = compileExpression(ctx, fctx, onlyArg);
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-    // In the #2106 undefined-singleton regime (standalone / native strings)
-    // `undefined` is a DISTINCT non-null sentinel externref, so the native
-    // `__extern_is_undefined` predicate is the authoritative test. Outside that
-    // regime `undefined` lowers to `ref.null.extern` (indistinguishable from
-    // `null` at the boundary — the same conflation the arity-2 host path has),
-    // so a bare `ref.is_null` is the matching answer.
-    if (undefinedSingletonActive(ctx)) {
-      ensureObjectRuntime(ctx);
+    // Use the predicate for the host undefined value or the standalone
+    // singleton; legacy null externrefs retain the ref.is_null fallback.
+    if (undefinedSingletonActive(ctx) || (!ctx.standalone && !ctx.wasi && !ctx.nativeStrings)) {
+      if (undefinedSingletonActive(ctx)) ensureObjectRuntime(ctx);
       const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       flushLateImportShifts(ctx, fctx);
       const resolved = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;
@@ -3644,6 +3640,12 @@ export function compileBuiltinStaticCall(
     }
     const argType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    // (#5205) The host handler must decode the compiled entries vec (and each
+    // compiled pair) through the module's exported `__vec_len` / `__vec_get`.
+    // At module top level those exports do not exist yet — the `start` section
+    // runs inside `WebAssembly.instantiate` — so ask for #5193's funcref
+    // self-registration prologue on `__module_init`.
+    ctx.needsInitMarshalHelpers = true;
     const funcIdx = ensureLateImport(ctx, "__object_fromEntries", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {

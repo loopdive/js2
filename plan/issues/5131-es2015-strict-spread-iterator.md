@@ -1,7 +1,7 @@
 ---
 id: 5131
 title: "ES2015 strict native spread iterator materializer"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-28
 updated: 2026-08-31
@@ -1440,3 +1440,22 @@ Root classifies the normal no-signal exit as **authoritative pre-integration
 TS7 command evidence**, but explicitly not as a clean/uncontended lane. It
 does not discharge the mandatory uninterrupted TS7 replay on the eventual
 exact current-main integration head.
+
+## Completion evidence (2026-09-01)
+
+The draft head's focused strict-spread matrix was already green 3/3; its stale
+PR description and unresolved `src/runtime.ts` merge conflict were the visible
+blockers. The branch is now integrated with current `upstream/main`. The sole
+textual conflict was the runtime import list and was resolved by retaining both
+the strict-iterator host extraction and main's class-primitive bridge.
+
+The integration also closes the prior P1 marshal-authority review finding.
+Strict iterator protocol dispatch still reads the post-instantiation export
+view, while vec/carrier/empty-tuple marshalling uses `marshalExports`, including
+the init-registered helper fallback available during a Wasm start section. A
+focused init-window control proves a strict spread materializes a Wasm vec when
+`getExports()` is unavailable and only `getStartExports()` is populated.
+
+On the integrated tree the focused suite passes 4/4 and TypeScript 7 typecheck
+passes without diagnostics. Final policy gates, normal hooks, and pushed-head
+CI evidence are recorded by the finishing commit and PR checks.

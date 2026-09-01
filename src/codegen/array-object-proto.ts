@@ -51,6 +51,7 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { DENO_PRIMORDIAL_GLOBAL_NAMES } from "./deno-platform.js";
 import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
@@ -107,6 +108,7 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "./builtin-static-globals.js";
+import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
@@ -3187,50 +3189,7 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   // because the same bootstrap discovers them through the computed path.
   // Keep the detached body live while later seed construction can still add
   // imports and shift defined-function indices.
-  const primordialGlobalNames = [
-    "JSON",
-    "Math",
-    "Proxy",
-    "Reflect",
-    "AggregateError",
-    "Array",
-    "ArrayBuffer",
-    "BigInt",
-    "BigInt64Array",
-    "BigUint64Array",
-    "Boolean",
-    "DataView",
-    "Date",
-    "Error",
-    "EvalError",
-    "FinalizationRegistry",
-    "Float32Array",
-    "Float64Array",
-    "Function",
-    "Int16Array",
-    "Int32Array",
-    "Int8Array",
-    "Map",
-    "Number",
-    "Object",
-    "Promise",
-    "RangeError",
-    "ReferenceError",
-    "RegExp",
-    "Set",
-    "String",
-    "Symbol",
-    "SyntaxError",
-    "TypeError",
-    "URIError",
-    "Uint16Array",
-    "Uint32Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "WeakMap",
-    "WeakRef",
-    "WeakSet",
-  ] as const;
+  const primordialGlobalNames = ctx.targetProfile.ambientPlatform === "deno" ? DENO_PRIMORDIAL_GLOBAL_NAMES : [];
   const savedBody = fctx.body;
   fctx.body = [];
   ctx.liveBodies.add(savedBody);
@@ -3254,24 +3213,32 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     "URIError",
   ]);
   const constructorHelpersActive = (ctx.runtimeEvalBoundaryPlan?.sites.length ?? 0) === 0;
+  // A runtime-eval boundary for `eval` or an unrelated intrinsic does not make
+  // `%Function%` provider-owned.  Only a bare Function VALUE read needs the
+  // provider identity; Function.prototype.* is deliberately excluded by the
+  // boundary plan and Deno's primordials needs the ordinary native singleton
+  // while copying those descriptors.
+  const providerOwnsFunction = moduleReadsBareFunctionValue(ctx);
   for (const name of primordialGlobalNames) {
     // The upstream realm helpers own these bindings (including Function's
     // specialized intrinsic carrier). Fill only the Deno primordials they do
     // not cover. Runtime-eval modules deliberately skip the constructor helper,
     // so seed their constructor names through the non-recursive carrier path.
     if (namespaceHelperNames.has(name) || (constructorHelpersActive && constructorHelperNames.has(name))) continue;
-    // (#5148 checkpoint) `Function` is NEVER seeded from this loop. When the
+    // (#5148 checkpoint) `Function` is skipped only when a bare Function
+    // value read selects the provider-owned intrinsic. When the
     // constructor helpers are active (no runtime-eval sites) they own the
-    // binding and the generic skip above already fired. When the module LINKS
-    // the runtime-eval provider, `%Function%` must be the provider's intrinsic
+    // binding and the generic skip above already fired. When the module reads
+    // bare Function through the runtime-eval provider, `%Function%` must be
+    // that provider's intrinsic
     // (the one-emitter rule in function-intrinsic-carrier.ts): seeding the
     // self-contained `__builtin_ctor_Function` carrier here split that
     // identity — measured on the QuickJS provider canary, `made.constructor
     // === Function` read false and `made.apply(...)` threw, which failed the
     // adapter build (functionParityProbe -11) and with it every
     // provider-linked lane (#4442, #2928). The provider's global-environment
-    // seeding owns the realm `Function` binding in that mode.
-    if (name === "Function" && !constructorHelpersActive) continue;
+    // seeding owns the realm `Function` binding only in that bare-read mode.
+    if (name === "Function" && providerOwnsFunction) continue;
     fctx.body.push({ op: "local.get", index: objLocal });
     addStringConstantGlobal(ctx, name);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, name));

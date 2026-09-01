@@ -8,7 +8,7 @@ import { ts } from "../ts-api.js";
 import { findConstructorImplementation, hasStaticModifier } from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
-import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 // (#3522) nested implicit-ctor family
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
@@ -22,7 +22,7 @@ import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
-import { exactClassExpressionTypeName } from "./class-expression-identity.js";
+import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
@@ -920,14 +920,15 @@ export function collectClassDeclaration(
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = clause.types[0]!.expression;
-        if (!ts.isIdentifier(baseExpr) && !ctx.standalone && !ctx.wasi) hasDynamicHostParent = true;
+        if (!ctx.standalone && !ctx.wasi)
+          hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
         if (ts.isIdentifier(baseExpr)) {
           // (#4291) The local import spelling is not the class identity. Hono's
           // published base is declared as `var Hono = class _Hono {}`, exported
           // as `HonoBase`, and imported through that alias. Resolve the exact
           // class-expression declaration so the derived struct is registered
           // as a subtype of the synthetic base struct whose bodies actually run.
-          parentClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(baseExpr)) ?? baseExpr.text;
+          parentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl) ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;
@@ -1034,19 +1035,18 @@ export function collectClassDeclaration(
             ctx.classBuiltinParentMap.set(className, builtinAncestor);
             ctx.classExternrefBackedSet.add(className);
           }
-          // Mark parent struct as non-final so it can be extended
-          if (parentStructTypeIdx !== undefined) {
-            const parentTypeDef = ctx.mod.types[parentStructTypeIdx] as StructTypeDef;
-            if (parentTypeDef && parentTypeDef.superTypeIdx === undefined) {
-              // Mark parent as extensible (superTypeIdx = -1 means "sub with no super")
-              parentTypeDef.superTypeIdx = -1;
-            }
+        } else if (ts.isClassExpression(baseExpr)) {
+          parentClassName = ctx.anonClassExprNames.get(baseExpr);
+          if (parentClassName && parentClassName !== className) {
+            parentStructTypeIdx = ctx.structMap.get(parentClassName);
+            parentFields = ctx.structFields.get(parentClassName) ?? [];
+            ctx.classParentMap.set(className, parentClassName);
           }
         }
       }
     }
   }
-
+  if (parentStructTypeIdx !== undefined) (ctx.mod.types[parentStructTypeIdx] as StructTypeDef).superTypeIdx ??= -1;
   // Pre-register the struct type index BEFORE resolving field types.
   // This allows self-referencing fields (e.g. `next: ListNode | null` in class ListNode)
   // to resolve to `ref null $structTypeIdx` instead of falling back to externref.
@@ -1529,6 +1529,12 @@ export function collectClassDeclaration(
         }
         // (#3673) explicit native annotation pins the parameter type
         let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
+        // (#5221) `m(item, options = void 0)` — an undefined-only parameter type
+        // is an absence of information, not a scalar contract. Must match the
+        // fctx-build phase below exactly. See `isUndefinedDefaultOnlyParam`.
+        if (isUndefinedDefaultOnlyParam(param, paramType)) {
+          wasmType = { kind: "externref" };
+        }
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -2909,6 +2915,12 @@ function compileClassBodiesInner(
           wasmType = { kind: "ref_null", typeIdx: vecTypeIdx };
         } else {
           wasmType = bindingPatternNeedsWiden ? ({ kind: "externref" } as ValType) : resolveWasmType(ctx, paramType);
+          // (#5221) Mirror of the collection phase's undefined-default widening.
+          // These two lists MUST agree — a mismatch is invalid Wasm, not a wrong
+          // value. See `isUndefinedDefaultOnlyParam`.
+          if (isUndefinedDefaultOnlyParam(param, paramType)) {
+            wasmType = { kind: "externref" };
+          }
         }
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
@@ -3302,8 +3314,15 @@ function compileClassBodiesInner(
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
+      // (#5204) Mirror the METHOD rule three hundred lines above: a host-backed
+      // subclass's instance is a real JS object, not a WasmGC `$Class` value,
+      // so its accessor ABI must take the receiver as externref. This site
+      // hardcoded the struct ref, which is why the getter of a
+      // `class D extends Array` could not be bridged at all — the emitted
+      // signature was uncallable with the actual receiver, so `a.g` read NaN
+      // at init AND after init.
       const params: { name: string; type: ValType }[] = [
-        { name: "this", type: { kind: "ref", typeIdx: structTypeIdx } },
+        { name: "this", type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx } },
       ];
 
       // (#1681) Static accessor bodies reach `this` as the class-constructor
@@ -3408,9 +3427,10 @@ function compileClassBodiesInner(
       }
       assertDirectClassBodyAllowed(ctx, setterName, member);
 
-      // First param is self, remaining are the setter parameters
+      // First param is self, remaining are the setter parameters.
+      // (#5204) Same externref-backed receiver rule as the getter above.
       const params: { name: string; type: ValType }[] = [
-        { name: "this", type: { kind: "ref", typeIdx: structTypeIdx } },
+        { name: "this", type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx } },
       ];
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;

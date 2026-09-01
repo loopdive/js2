@@ -1176,8 +1176,21 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         "Prepared module-init lost its exact retained function before startup wiring",
       );
     }
-    const exportModuleInit = this.#ctx.deferTopLevelInit && !this.#ctx.wasi;
-    if (exportModuleInit) {
+    // (#3523 R4 gap 3) Same three-arm policy as the single-module twin
+    // (`compileDeclarations` invariant 7). WASI installs NEITHER adapter here:
+    // `addWasiStartExport` builds the one `_start` adapter later, and
+    // `assertGraphGlobalInvocationPolicy` authenticates it. M2 WASI admission
+    // is still rejected at `multi-prepared-module-init.ts` reservation time, so
+    // this arm is unreachable today — it exists so that admitting M2 WASI later
+    // cannot land the "zero adapter reconciliation" hole this slice closed on
+    // the single-module route.
+    const wasiStartExport = this.#ctx.wasi === true;
+    const exportModuleInit = this.#ctx.deferTopLevelInit && !wasiStartExport;
+    if (wasiStartExport) {
+      if (this.#ctx.mod.startFuncIdx !== undefined) {
+        this.#fail("module-init-startup-mismatch", "Prepared WASI module-init must not install a start adapter");
+      }
+    } else if (exportModuleInit) {
       if (this.#ctx.mod.startFuncIdx !== undefined) {
         this.#fail("module-init-startup-mismatch", "Prepared deferred module-init already has a start adapter");
       }
@@ -1188,7 +1201,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       this.#ctx.mod.startFuncIdx = initHandle;
     }
     if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
-      if (exportModuleInit) this.#ctx.mod.startFuncIdx = initHandle;
+      if (exportModuleInit || wasiStartExport) this.#ctx.mod.startFuncIdx = initHandle;
       else this.#ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initHandle! } });
     }
     const exportedAliases = this.#ctx.mod.exports.filter(
@@ -1196,12 +1209,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     ).length;
     const startsOnInstantiation = this.#ctx.mod.startFuncIdx === initHandle;
     if (
-      (exportModuleInit && (exportedAliases !== 1 || startsOnInstantiation)) ||
-      (!exportModuleInit && (exportedAliases !== 0 || !startsOnInstantiation))
+      (wasiStartExport && (exportedAliases !== 0 || startsOnInstantiation)) ||
+      (!wasiStartExport && exportModuleInit && (exportedAliases !== 1 || startsOnInstantiation)) ||
+      (!wasiStartExport && !exportModuleInit && (exportedAliases !== 0 || !startsOnInstantiation))
     ) {
       this.#fail(
         "module-init-startup-mismatch",
-        `Prepared module-init must have exactly one ${exportModuleInit ? "deferred export" : "wasm start"} adapter`,
+        `Prepared module-init must have exactly one ${wasiStartExport ? "WASI _start" : exportModuleInit ? "deferred export" : "wasm start"} adapter`,
       );
     }
     this.#ctx.mod.hasTopLevelStatements = true;

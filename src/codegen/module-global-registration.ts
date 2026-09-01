@@ -140,7 +140,7 @@ export function registerModuleGlobal(
   ctx: CodegenContext,
   name: string,
   wasmType: ValType,
-  declaration?: ts.VariableDeclaration,
+  declaration?: ts.VariableDeclaration | ts.BindingElement,
 ): void {
   // Only a genuine user-defined function (a defined function whose index is
   // past the import prefix) shadows a module-level var. Imported host globals,
@@ -208,7 +208,7 @@ export function registerModuleTdzGlobal(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   name: string,
-  exactDeclaration?: ts.VariableDeclaration,
+  exactDeclaration?: ts.VariableDeclaration | ts.BindingElement,
 ): void {
   if (!ctx.moduleGlobals.has(name)) return;
   const existingGlobalIdx = ctx.tdzGlobals.get(name);
@@ -237,6 +237,32 @@ export function registerModuleTdzGlobal(
   if (declaration && ctx.programAbiGlobals?.hasModuleValue(declaration)) {
     ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
   }
+}
+
+/** Allocate an exact TDZ sidecar for one top-level destructuring leaf. */
+export function registerModulePatternTdzGlobal(ctx: CodegenContext, binding: ts.BindingElement): void {
+  if (!ctx.modulePatternTdzGlobals.has(binding)) {
+    let suffix = ctx.modulePatternTdzGlobals.size;
+    let name = `__tdz_pattern_${suffix}`;
+    while (ctx.mod.globals.some((global) => global.name === name)) name = `__tdz_pattern_${++suffix}`;
+    const flagGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name,
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+    ctx.modulePatternTdzGlobals.set(binding, flagGlobalIdx);
+  }
+  if (!ts.isIdentifier(binding.name)) return;
+  const sourceFile = binding.getSourceFile();
+  let bindings = ctx.modulePatternTdzBindings.get(sourceFile);
+  if (!bindings) {
+    bindings = new Map();
+    ctx.modulePatternTdzBindings.set(sourceFile, bindings);
+  }
+  const previous = bindings.get(binding.name.text);
+  bindings.set(binding.name.text, previous === undefined || previous === binding ? binding : null);
 }
 
 /**

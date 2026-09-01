@@ -9,6 +9,8 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { marshalExports } from "../src/runtime/init-marshal-registry.js";
+import { createStrictIteratorHostRuntime } from "../src/runtime/strict-iterator-host.js";
 
 type Lane = "host" | "standalone";
 
@@ -392,6 +394,37 @@ export function optionalIteratorParameter(): number {
 `;
 
 describe("#5131 strict spread iterator provider", () => {
+  it("uses init-registered marshal helpers before the instance export view exists", () => {
+    const carrier = {};
+    const values = ["target", "handler"];
+    const startExports = {
+      __vec_len: () => values.length,
+      __vec_get: (_value: unknown, index: number) => values[index],
+    };
+    let observedMarshalExports: Record<string, Function> | undefined;
+    const runtime = createStrictIteratorHostRuntime({
+      nativeIsArray: Array.isArray,
+      isWasmStruct: (value) => value === carrier,
+      isWasmVec: (_value, exports) => {
+        observedMarshalExports = exports;
+        return true;
+      },
+      isEmptyTupleCarrier: () => false,
+      safeGet: (value, key) => Reflect.get(value, key),
+      stepClosureIterator: () => [],
+      wrapForHost: (value) => value,
+      nativePrimitiveToHost: () => undefined,
+      missingValue: Symbol("missing"),
+      maybeWrapCallable: (value) => value,
+      marshalExports,
+    });
+    const state = { getExports: () => undefined, getStartExports: () => startExports };
+    const materialize = runtime.resolveArrayIterationImport("__array_from_iter_strict", state);
+
+    expect(materialize?.(carrier)).toEqual(values);
+    expect(observedMarshalExports).toBe(startExports);
+  });
+
   it("native-first: keeps Map values iteration off the compatibility iterator bridge", async () => {
     const compiled = await compile(
       `

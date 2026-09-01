@@ -14,6 +14,7 @@ import {
   isNumberWrapperType,
   isPromiseType,
   isStringType,
+  isUndefinedDefaultOnlyParam,
   isVoidType,
   mapTsTypeToWasm,
   resolveBindingElementType,
@@ -43,14 +44,25 @@ import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#449
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
-import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
+import {
+  ASYNC_CPS_ENABLED,
+  asyncFnNeedsCps,
+  isEmitOperand,
+  planAsyncCfg,
+  type AsyncCfgPlan,
+  type AsyncCfgState,
+} from "./async-cps.js";
+import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
   asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
+  buildAsyncFrameInfo,
   emitAsyncFrameStateMachine,
+  emitPreparedAsyncFrameStateMachine,
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
+import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -70,6 +82,8 @@ import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
+import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
+import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
 import { noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
@@ -97,7 +111,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { transferredArrayLikeResultNeedsExternref } from "./statements/variables.js";
+import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -155,11 +169,19 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
+import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
+import {
+  MODULE_INIT_CHUNK_MAX_ENTRIES,
+  moduleInitChunksRequired,
+  planModuleInitChunks,
+  reserveModuleInitChunkHelperName,
+} from "./module-init-chunks.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import {
   prepareModuleTdzGlobals,
   registerModuleGlobal,
+  registerModulePatternTdzGlobal,
   registerModuleTdzGlobal,
 } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -167,7 +189,7 @@ import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
 import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
-import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "./analysis/proxy-binding-escape.js";
+import * as proxy from "./analysis/proxy-binding-escape.js";
 import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
@@ -194,6 +216,7 @@ import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declar
 import {
   collectInterface,
   collectObjectType,
+  isTypeScriptZeroCostSyntaxTypesSource,
   publishDeclaredShapesForDedup,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
@@ -608,6 +631,19 @@ function directIdentityReturnParamIndex(stmt: ts.FunctionDeclaration): number | 
 
 interface AssertedMutableStructuralParamCarrier {
   open: true;
+  compoundStructDispatch?: true;
+}
+
+function typeScriptNodeCompoundDispatchConstraint(ctx: CodegenContext, paramType: ts.Type): boolean {
+  const constraint = ctx.checker.getBaseConstraintOfType(paramType);
+  const symbol = constraint?.getSymbol();
+  return (
+    symbol?.name === "Node" &&
+    symbol.declarations?.some(
+      (declaration) =>
+        ts.isInterfaceDeclaration(declaration) && isTypeScriptZeroCostSyntaxTypesSource(declaration.getSourceFile()),
+    ) === true
+  );
 }
 
 function assertedMutableStructuralParamCarrier(
@@ -626,7 +662,13 @@ function assertedMutableStructuralParamCarrier(
     assertedStructuralParamsByContext.get(ctx)?.get(stmt)?.has(index);
   const hasGenericAssertedWrite =
     isDirectObjectTypeParameter(ctx, param, stmt, paramType) && parameterHasAssertedPropertyWrite(ctx, param, stmt);
-  return hasDoublyAssertedCall || hasGenericAssertedWrite ? { open: true } : undefined;
+  if (!hasDoublyAssertedCall && !hasGenericAssertedWrite) return undefined;
+  return {
+    open: true,
+    ...(hasGenericAssertedWrite && typeScriptNodeCompoundDispatchConstraint(ctx, paramType)
+      ? { compoundStructDispatch: true as const }
+      : {}),
+  };
 }
 
 function preserveIdentityForStructuralParam(
@@ -639,7 +681,7 @@ function preserveIdentityForStructuralParam(
 ): ValType {
   const carrier = assertedMutableStructuralParamCarrier(ctx, param, index, stmt, wasmType, paramType);
   if (!carrier) return wasmType;
-  markIdentityPreservingStructuralParam(ctx, param);
+  markIdentityPreservingStructuralParam(ctx, param, carrier);
   return { kind: "externref" };
 }
 
@@ -1337,6 +1379,12 @@ function lowerParamType(
   if (nativeParam === null && parameterMayBeOmitted(param)) {
     wasmType = { kind: "externref" };
   }
+  // (#5221) A parameter whose only type evidence is an `undefined` default —
+  // see `isUndefinedDefaultOnlyParam` for the full rationale and the measured
+  // Temporal witness.
+  if (isUndefinedDefaultOnlyParam(param, paramType)) {
+    wasmType = { kind: "externref" };
+  }
   if (nativeParam === null) {
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
@@ -1391,9 +1439,25 @@ function lowerParamType(
       // numeric, string, vec, and declared nominal inference remain unchanged.
       // A computed-access parameter likewise stays dynamic unless inference
       // proved the indexed vec/array family rather than one incidental object.
+      //
+      // (#5221) The `__anon_*` withdrawal above was gated on `ctx.standalone`
+      // until now. The gate was wrong: the unsoundness is the SAME on the host
+      // lane, only the symptom differs. Host-lane, the mismatched value is
+      // coerced at the CALL with `ref.test` + `else ref.null`, so a caller
+      // holding a different shape silently passes **null** — no trap, no
+      // diagnostic, a wrong answer several frames later. Measured on
+      // `@js-temporal/polyfill`: `CreateTemporalDate(isoDate, calendar)` forwards
+      // its untyped `isoDate` to `setSlots`, whose parameter this inference had
+      // pinned to ONE call site's object literal; every other `CreateTemporalDate`
+      // caller's record went null and `Temporal.PlainDate.from({…})` failed with
+      // "Cannot destructure 'null' or 'undefined'" three frames down, inside a
+      // nested-pattern parameter that never saw the real record. Forwarding
+      // chains like that are exactly the case the standalone note already
+      // describes; the lane it runs in does not change whether one observed
+      // literal proves the parameter's whole runtime domain.
       if (
         !(needsDynamicObjectCarrier && !inferredIndexedCarrier && !inferredPrimitiveCarrier) &&
-        !(ctx.standalone && inferredStructName?.startsWith("__anon_")) &&
+        !inferredStructName?.startsWith("__anon_") &&
         !inferredEscapingAnonymousObject
       ) {
         wasmType = inferred;
@@ -1556,6 +1620,20 @@ function resolveGenericDeclarationCallSiteTypes(
   if (!resolved) return null;
   const params = resolved.params.map((wasmType, index) => {
     const param = stmt.parameters[index];
+    // The checker-resolved signature of a generic call includes every formal,
+    // even when the call omitted an optional one. Do not let that specialization
+    // bypass lowerParamType's undefined-capable ABI: a scalar slot would receive
+    // the numeric missing-argument sentinel and `value ?? fallback` would observe
+    // it as a present value. TypeScript's parser helpers (`finishNode<T>` and
+    // `createNodeArray<T>`) exercise this exact generic + optional-number shape.
+    if (
+      param &&
+      wasmType.kind === "f64" &&
+      nativeTypeOfDeclaration(ctx.checker, param) === null &&
+      parameterMayBeOmitted(param)
+    ) {
+      return { kind: "externref" } as const;
+    }
     if (
       !param ||
       !stmt.body ||
@@ -1572,18 +1650,34 @@ function resolveGenericDeclarationCallSiteTypes(
   });
   const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
+  const callbackResultCarrier = genericCallbackResultDeclaration(ctx, stmt)
+    ? ({ kind: "externref" } as const)
+    : undefined;
+  const freshFactorySource = genericStructFactorySourceResultAbi(ctx, stmt);
+  const freshFactoryCarrier = freshFactorySource ? resolveWasmType(ctx, freshFactorySource) : undefined;
   // (#1058) `finishNode<T extends Node>(node: T): T` is called with many
   // concrete TypeScript AST node layouts. Its parameter is already widened to
   // externref to preserve those identities, but the result used to retain the
   // first call site's nominal Node struct. Returning a later Identifier then
   // failed that stale cast and became null. The exact `T -> T` contract must
   // carry the same representation back out.
+  //
+  // A proven `<T>(callback: () => T): T` contract likewise owns one physical
+  // result even when call-site inference observed `void` first and returned an
+  // empty result vector. TypeScript's runtime Parser namespace has exactly that
+  // order: its reset callback precedes scalar and AST-producing callbacks.
   const results =
     resolved.results.length === 1 &&
-    identityCarrier !== undefined &&
-    (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
-      ? [identityCarrier]
-      : resolved.results;
+    freshFactoryCarrier !== undefined &&
+    (freshFactoryCarrier.kind === "ref" || freshFactoryCarrier.kind === "ref_null")
+      ? [freshFactoryCarrier]
+      : callbackResultCarrier !== undefined
+        ? [callbackResultCarrier]
+        : resolved.results.length === 1 &&
+            identityCarrier !== undefined &&
+            (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
+          ? [identityCarrier]
+          : resolved.results;
   return {
     params,
     results,
@@ -2196,11 +2290,15 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
- * Prepared top-level class declarations are byte-inert unless a computed
- * accessor name has source-ordered effects that module initialization must
- * preserve. The statement emitter consults the final IR skip set.
+ * Top-level class declarations are byte-inert unless computed-accessor or
+ * runtime-heritage effects require source-ordered module initialization. The
+ * statement emitter consults the final IR skip set.
  */
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
+  if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
+    ctx.moduleInitStatements.push(statement);
+    return true;
+  }
   if (
     !ts.isClassDeclaration(statement) ||
     !isBoundedPreparedAccessorClass(statement) ||
@@ -2316,7 +2414,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       } else if (ts.isTypeAliasDeclaration(stmt)) {
         const aliasType = ctx.checker.getTypeAtLocation(stmt);
         if (aliasType.flags & ts.TypeFlags.Object) {
-          collectObjectType(ctx, stmt.name.text, aliasType);
+          collectObjectType(ctx, stmt.name.text, aliasType, stmt);
         }
       }
     }
@@ -2389,7 +2487,6 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
     forEachChild(node, collectAnonymousClassesInNewExpr);
   }
-
   function collectClassesFromStatements(stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[]): void {
     for (const stmt of stmts) {
       // `class X` in a `.d.ts` file is implicitly ambient — only the type
@@ -2402,6 +2499,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // registration for these shapes. (#1287)
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
+        collectAnonymousClassesInNewExpr(stmt);
         // (#4618) A NESTED class declaration whose name is already taken by a
         // class in ANOTHER scope must get its own identity — collection is
         // name-keyed and collectClassDeclaration's structMap guard silently
@@ -3052,7 +3150,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
   // Fourth: collect module-level variable declarations as wasm globals
   /** Register binding names from destructuring patterns as module globals. */
-  function registerBindingNames(pattern: ts.BindingPattern): void {
+  function registerBindingNames(pattern: ts.BindingPattern, lexical = false): void {
     for (const element of pattern.elements) {
       if (ts.isOmittedExpression(element)) continue;
       if (ts.isIdentifier(element.name)) {
@@ -3066,8 +3164,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // mismatched global.set.
         const wasmType = resolveBindingElementType(element, elemType, (t) => resolveWasmType(ctx, t));
         registerModuleGlobal(ctx, element.name.text, wasmType);
+        if (lexical && ctx.moduleGlobals.has(element.name.text)) registerModulePatternTdzGlobal(ctx, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-        registerBindingNames(element.name);
+        registerBindingNames(element.name, lexical);
       }
     }
   }
@@ -3111,8 +3210,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (isDirectProxyConstruction(decl.initializer)) {
-      return !proxyModuleEscapeGateEnabled || !proxyBindingEscapesToCall(ctx, decl);
+    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+      return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
     // describes it as the enormous structural `typeof globalThis` type, but
@@ -3215,7 +3314,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
-    if (transferredArrayLikeResultNeedsExternref(ctx, decl.initializer)) return { kind: "externref" };
+    if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
     // initializers can select either that externref or a compiled closure, so
@@ -3382,7 +3481,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     block: ts.ModuleBlock,
     name: string,
     wasmType: ValType,
-    declaration: ts.VariableDeclaration | undefined,
+    declaration: ts.VariableDeclaration | ts.BindingElement | undefined,
     lexical: boolean,
   ): void {
     const bindings = runtimeModuleGlobals(ctx, block);
@@ -3425,7 +3524,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (ts.isIdentifier(element.name)) {
         const elementType = ctx.checker.getTypeAtLocation(element);
         const wasmType = resolveBindingElementType(element, elementType, (type) => resolveWasmType(ctx, type));
-        registerRuntimeModuleGlobalBinding(block, element.name.text, wasmType, undefined, lexical);
+        registerRuntimeModuleGlobalBinding(block, element.name.text, wasmType, element, lexical);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerRuntimeModuleBindingPattern(block, element.name, lexical);
       }
@@ -3587,13 +3686,19 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 
   // A bare identifier expression is normally inert at module-init collection
-  // time, but a reference to a direct CaseBlock lexical name is observable:
-  // outside the switch it must perform the ordinary unresolved-binding lookup
-  // and throw ReferenceError. Keep this narrow to top-level switches with no
-  // same-named top-level binding; an outer `let x` legitimately shadows a
-  // switch-local `let x` after the switch.
+  // time, but two source-local lexical cases are observable:
+  //
+  // - a reference to a direct CaseBlock lexical name outside its switch must
+  //   perform the ordinary unresolved-binding lookup and throw ReferenceError;
+  // - a direct script-level `x; let/const x` read is a statically guaranteed
+  //   TDZ violation once exact binding ownership is proven.
+  //
+  // Keep both exceptions narrow. In particular, an outer `let x` legitimately
+  // shadows a switch-local `let x` after the switch, and ordinary atom
+  // collection remains owned by #3623/#4433.
   const topLevelBoundNames = new Set<string>();
   const topLevelSwitchLexicalNames = new Set<string>();
+  const directTopLevelLexicalDeclarations = new Map<string, ts.VariableDeclaration | null>();
   const addBindingNames = (name: ts.BindingName): void => {
     if (ts.isIdentifier(name)) {
       topLevelBoundNames.add(name.text);
@@ -3606,6 +3711,24 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   for (const stmt of sourceFile.statements) {
     if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) addBindingNames(decl.name);
+      // #5253 — record only unambiguous direct runtime `let` / `const`
+      // declarations. The later predicate also requires the checker/oracle to
+      // resolve the read to this exact AST node, so same-spelled bindings from
+      // another source, `var`, patterns, ambient declarations, and duplicate
+      // syntax cannot enter the narrow TDZ-read route.
+      if (
+        !sourceFile.isDeclarationFile &&
+        !hasDeclareModifier(stmt) &&
+        (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0
+      ) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          directTopLevelLexicalDeclarations.set(
+            decl.name.text,
+            directTopLevelLexicalDeclarations.has(decl.name.text) ? null : decl,
+          );
+        }
+      }
     } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
       topLevelBoundNames.add(stmt.name.text);
     } else if (ts.isClassDeclaration(stmt) && stmt.name) {
@@ -3649,6 +3772,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
     }
   }
+  const isDirectTopLevelLexicalForwardRead = (identifier: ts.Identifier): boolean => {
+    const declaration = directTopLevelLexicalDeclarations.get(identifier.text);
+    // The expression statement is itself a direct SourceFile child, so this
+    // positional proof is the static TDZ analyser's guaranteed-throw case:
+    // no closure or loop can defer/re-enter the read before initialization.
+    return (
+      declaration !== undefined &&
+      declaration !== null &&
+      identifier.getSourceFile() === sourceFile &&
+      ctx.oracle.valueDeclarationOf(identifier) === declaration &&
+      identifier.getStart(sourceFile) < declaration.getEnd()
+    );
+  };
+  let directTopLevelLexicalForwardReadStatements = 0;
 
   // Var declarations are function-scoped, so a declaration nested in a later
   // top-level `try`/loop/branch is already in scope for earlier statements.
@@ -3727,7 +3864,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.tdzLetConstNames.add(decl.name.text);
           }
         } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
-          registerBindingNames(decl.name);
+          registerBindingNames(decl.name, isLetOrConst);
         }
       }
       // Collect the statement for init compilation. A class-expression binding
@@ -3744,7 +3881,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ts.isClassExpression(declaration.initializer) &&
           (ctx.classExpressionStaticInitExprs.get(declaration.initializer)?.length ?? 0) > 0,
       );
-      if (hasNonClassDecl || hasClassExpressionStatics) {
+      if (hasNonClassDecl || hasClassExpressionStatics || proxy.variableStatementContainsPromiseSubclass(ctx, stmt)) {
         ctx.moduleInitStatements.push(stmt);
       }
       continue;
@@ -3816,6 +3953,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
       if (ts.isIdentifier(expr) && topLevelSwitchLexicalNames.has(expr.text) && !topLevelBoundNames.has(expr.text)) {
         ctx.moduleInitStatements.push(stmt);
+        continue;
+      }
+      // #5253 — retain only the exact source-owned direct lexical shape whose
+      // forward source position proves a TDZ throw. Do not generalize the
+      // `expressionRunsUserCode` atom route: unbound/var/post-init/block-local
+      // reads remain outside this collector exception.
+      if (ts.isIdentifier(stmt.expression) && isDirectTopLevelLexicalForwardRead(stmt.expression)) {
+        ctx.moduleInitStatements.push(stmt);
+        directTopLevelLexicalForwardReadStatements += 1;
         continue;
       }
       if (
@@ -4216,6 +4362,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     }
   }
 
+  // #5253 — every source statement retained by the narrow TDZ proof is
+  // reported independently from the aggregate module-init count below.
+  profileCount("module-init-direct-top-level-tdz-forward-read-statements", directTopLevelLexicalForwardReadStatements);
+
   // Export default for module globals (#1108): `export default <variable>` where
   // the variable is a module-level global (e.g. `var add = createMathOperation(fn, 0)`)
   // This runs AFTER module globals are registered (Fourth pass above).
@@ -4299,16 +4449,257 @@ export function moduleInitHasTopLevelAwait(statements: readonly ts.Statement[]):
   return found;
 }
 
-function graphAsyncSynthetic(statements: readonly ts.Statement[]): ts.FunctionDeclaration {
-  return ts.factory.createFunctionDeclaration(
-    [ts.factory.createModifier(ts.SyntaxKind.AsyncKeyword)],
-    undefined,
-    "__v8x_graph_eval_body",
-    undefined,
-    [],
-    undefined,
-    ts.factory.createBlock([...statements], true),
-  );
+type ModuleStaticInitEntry = CodegenContext["staticInitExprs"][number];
+
+/** One complete source-order unit of synchronous module evaluation. */
+type OrderedModuleInitEntry =
+  | { readonly kind: "static"; readonly node: ts.Node; readonly entry: ModuleStaticInitEntry }
+  | { readonly kind: "statement"; readonly node: ts.Statement; readonly statement: ts.Statement };
+
+function moduleStaticInitNode(entry: ModuleStaticInitEntry): ts.Node | undefined {
+  return entry.staticBlock ?? entry.initializer;
+}
+
+/**
+ * `staticInitExprs` is a collector-wide list and includes class declarations
+ * nested in an `if`/loop/try. Those entries do not carry their enclosing
+ * control-flow owner, so only source-file-direct declarations can be threaded
+ * through this module-level timeline. Nested declarations emit their statics
+ * from their owning statement lowering, preserving branch and catch ownership.
+ */
+function isGraphTimelineStaticEntry(entry: ModuleStaticInitEntry): boolean {
+  const node = moduleStaticInitNode(entry);
+  if (!node) return false;
+  let owner: ts.Node | undefined = node.parent;
+  while (owner !== undefined && !ts.isClassDeclaration(owner) && !ts.isClassExpression(owner)) {
+    owner = owner.parent;
+  }
+  return owner !== undefined && ts.isClassDeclaration(owner) && ts.isSourceFile(owner.parent);
+}
+
+/**
+ * Emit one declaration-class field or static-block evaluation at its exact
+ * module timeline position. The caller owns the timeline; this helper owns
+ * only the class-static receiver and backing-global mechanics.
+ */
+function emitModuleStaticInitialization(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  entry: ModuleStaticInitEntry,
+): void {
+  const { initializer, staticBlock, className } = entry;
+  // (#1395) Static field/block `this` is the class-object singleton. Keep the
+  // context scoped to this one entry: the shared async resume frame also emits
+  // ordinary module statements whose top-level `this` has different semantics.
+  const savedEnclosing = fctx.enclosingClassName;
+  const savedIsStatic = fctx.isStaticContext;
+  if (className !== undefined) {
+    fctx.enclosingClassName = className;
+    fctx.isStaticContext = true;
+  }
+  try {
+    if (staticBlock) {
+      for (const statement of staticBlock.body.statements) {
+        compileStatement(ctx, fctx, statement);
+      }
+    } else if (initializer && entry.globalIdx !== undefined) {
+      const globalDef = ctx.mod.globals[localGlobalIdx(ctx, entry.globalIdx)];
+      compileExpression(ctx, fctx, initializer, globalDef?.type);
+      // A static initializer can register late imports. Read the mutable entry
+      // again after expression lowering so its shifted global index is the one
+      // emitted into this newly-created instruction.
+      if (entry.globalIdx !== undefined) {
+        fctx.body.push({ op: "global.set", index: entry.globalIdx });
+      }
+    }
+  } finally {
+    fctx.enclosingClassName = savedEnclosing;
+    fctx.isStaticContext = savedIsStatic;
+  }
+}
+
+interface GraphStaticTimelineEntry {
+  readonly entry: ModuleStaticInitEntry;
+  readonly sourceOrdinal: number;
+  readonly position: number;
+}
+
+interface GraphSourceAnchor {
+  readonly sourceOrdinal: number;
+  readonly position: number;
+  readonly stateIndex: number;
+  /** Static entries inserted at this slot run before `lead[slot]`; `lead.length` is before the terminator. */
+  readonly slot: number;
+}
+
+function graphNodeTimelinePosition(ctx: CodegenContext, node: ts.Node): { sourceOrdinal: number; position: number } {
+  return {
+    sourceOrdinal: moduleInitSourceOrdinal(ctx, node.getSourceFile()),
+    position: node.pos,
+  };
+}
+
+function compareGraphTimelinePosition(
+  left: Pick<GraphStaticTimelineEntry, "sourceOrdinal" | "position">,
+  right: Pick<GraphStaticTimelineEntry, "sourceOrdinal" | "position">,
+): number {
+  return left.sourceOrdinal - right.sourceOrdinal || left.position - right.position;
+}
+
+type AsyncGraphStateUnit =
+  | { readonly kind: "lead"; readonly lead: AsyncCfgState["lead"][number] }
+  | { readonly kind: "static"; readonly entry: ModuleStaticInitEntry }
+  | { readonly kind: "emit"; readonly emit: NonNullable<AsyncCfgState["emit"]> };
+
+/**
+ * Thread declaration-class static evaluation through an already-planned async
+ * module graph. `staticInitExprs` is intentionally separate from
+ * `moduleInitStatements`, so a top-level-await frame would otherwise have no
+ * state in which to run it. Split only the affected straight-line states and
+ * preserve every original branch/suspension edge through a dense-id remap.
+ */
+function scheduleGraphStaticInitializers(
+  ctx: CodegenContext,
+  cfg: AsyncCfgPlan,
+  staticEntries: readonly ModuleStaticInitEntry[],
+): AsyncCfgPlan {
+  const timeline = staticEntries.flatMap((entry): GraphStaticTimelineEntry[] => {
+    const node = moduleStaticInitNode(entry);
+    return node === undefined ? [] : [{ entry, ...graphNodeTimelinePosition(ctx, node) }];
+  });
+  if (timeline.length === 0) return cfg;
+  timeline.sort(compareGraphTimelinePosition);
+
+  const anchors: GraphSourceAnchor[] = [];
+  const addAnchor = (node: ts.Node, stateIndex: number, slot: number): void => {
+    anchors.push({ ...graphNodeTimelinePosition(ctx, node), stateIndex, slot });
+  };
+  for (let stateIndex = 0; stateIndex < cfg.states.length; stateIndex++) {
+    const state = cfg.states[stateIndex]!;
+    for (let leadIndex = 0; leadIndex < state.lead.length; leadIndex++) {
+      addAnchor(state.lead[leadIndex]!.stmt, stateIndex, leadIndex);
+    }
+    const terminator = state.terminator;
+    if (terminator.kind === "suspend" && !isEmitOperand(terminator.awaited)) {
+      addAnchor(terminator.awaited, stateIndex, state.lead.length);
+    } else if (terminator.kind === "condGoto" && !isEmitOperand(terminator.cond)) {
+      addAnchor(terminator.cond, stateIndex, state.lead.length);
+    }
+  }
+  anchors.sort(compareGraphTimelinePosition);
+
+  const staticAtStateSlot = new Map<number, Map<number, ModuleStaticInitEntry[]>>();
+  const addStaticAt = (stateIndex: number, slot: number, entry: ModuleStaticInitEntry): void => {
+    let slots = staticAtStateSlot.get(stateIndex);
+    if (!slots) {
+      slots = new Map();
+      staticAtStateSlot.set(stateIndex, slots);
+    }
+    const entries = slots.get(slot) ?? [];
+    entries.push(entry);
+    slots.set(slot, entries);
+  };
+  for (const staticEntry of timeline) {
+    const nextAnchor = anchors.find((anchor) => compareGraphTimelinePosition(staticEntry, anchor) < 0);
+    if (nextAnchor) {
+      addStaticAt(nextAnchor.stateIndex, nextAnchor.slot, staticEntry.entry);
+      continue;
+    }
+    // A declaration class after the last ordinary module statement belongs to
+    // the terminal state, after its leads and before graph settlement.
+    const terminalStateIndex = cfg.states.length - 1;
+    addStaticAt(terminalStateIndex, cfg.states[terminalStateIndex]!.lead.length, staticEntry.entry);
+  }
+
+  const unitsByState = cfg.states.map((state, stateIndex): AsyncGraphStateUnit[] => {
+    const slots = staticAtStateSlot.get(stateIndex);
+    const units: AsyncGraphStateUnit[] = [];
+    for (let leadIndex = 0; leadIndex < state.lead.length; leadIndex++) {
+      for (const entry of slots?.get(leadIndex) ?? []) units.push({ kind: "static", entry });
+      units.push({ kind: "lead", lead: state.lead[leadIndex]! });
+    }
+    for (const entry of slots?.get(state.lead.length) ?? []) units.push({ kind: "static", entry });
+    if (state.emit) units.push({ kind: "emit", emit: state.emit });
+    return units;
+  });
+
+  // Every original state retains at least one carrier state, even when it had
+  // no leads or static work. The first carrier receives all incoming edges;
+  // later units are internal goto states with no resume prelude.
+  const firstStateId = new Map<number, number>();
+  let nextStateId = 0;
+  for (let index = 0; index < cfg.states.length; index++) {
+    firstStateId.set(index, nextStateId);
+    nextStateId += Math.max(1, unitsByState[index]!.length);
+  }
+  const remapTarget = (target: number): number => firstStateId.get(target) ?? target;
+  const remapTerminator = (terminator: AsyncCfgState["terminator"]): AsyncCfgState["terminator"] => {
+    switch (terminator.kind) {
+      case "suspend":
+        return { ...terminator, resumeState: remapTarget(terminator.resumeState) };
+      case "goto":
+        return { ...terminator, target: remapTarget(terminator.target) };
+      case "condGoto":
+        return {
+          ...terminator,
+          whenTrue: remapTarget(terminator.whenTrue),
+          whenFalse: remapTarget(terminator.whenFalse),
+        };
+      case "settleYield":
+        return { ...terminator, resumeState: remapTarget(terminator.resumeState) };
+      case "settleReturn":
+        return { ...terminator, resumeState: remapTarget(terminator.resumeState) };
+      default:
+        return terminator;
+    }
+  };
+
+  const states: AsyncCfgState[] = [];
+  for (let stateIndex = 0; stateIndex < cfg.states.length; stateIndex++) {
+    const original = cfg.states[stateIndex]!;
+    const units = unitsByState[stateIndex]!;
+    const unitCount = Math.max(1, units.length);
+    for (let unitIndex = 0; unitIndex < unitCount; unitIndex++) {
+      const unit = units[unitIndex];
+      const isFirst = unitIndex === 0;
+      const isLast = unitIndex === unitCount - 1;
+      const stateId = states.length;
+      const internalNext = stateId + 1;
+      states.push({
+        id: stateId,
+        resumeFrom: isFirst ? original.resumeFrom : null,
+        ...(isFirst && original.restoreSpillNames !== undefined
+          ? { restoreSpillNames: original.restoreSpillNames }
+          : {}),
+        // Aliases are compile-time scope bindings, so every split carrier that
+        // emits a piece of this source state needs the same view. In contrast,
+        // restore/delivery belongs only to the incoming carrier above.
+        ...(original.lexicalAliases !== undefined ? { lexicalAliases: original.lexicalAliases } : {}),
+        lead: unit?.kind === "lead" ? [unit.lead] : [],
+        ...(isFirst && original.postDeliverEmit !== undefined ? { postDeliverEmit: original.postDeliverEmit } : {}),
+        ...(unit?.kind === "static"
+          ? {
+              emit: (emitCtx: CodegenContext, fctx: FunctionContext) =>
+                emitModuleStaticInitialization(emitCtx, fctx, unit.entry),
+            }
+          : unit?.kind === "emit"
+            ? { emit: unit.emit }
+            : {}),
+        terminator: isLast ? remapTerminator(original.terminator) : { kind: "goto", target: internalNext },
+      });
+    }
+  }
+  return {
+    states,
+    handlers: cfg.handlers.map((handler) =>
+      handler.catchState === undefined
+        ? handler
+        : {
+            ...handler,
+            catchState: remapTarget(handler.catchState),
+          },
+    ),
+  };
 }
 
 function addGraphExport(ctx: CodegenContext, name: string, results: ValType[], body: Instr[]): FuncHandle {
@@ -4341,8 +4732,13 @@ interface AsyncGraphModuleInit {
 function compileAsyncGraphModuleInit(
   ctx: CodegenContext,
   statements: readonly ts.Statement[],
+  staticEntries: readonly ModuleStaticInitEntry[],
   emitPrelude: (fctx: FunctionContext) => void,
-): AsyncGraphModuleInit {
+): AsyncGraphModuleInit | null {
+  const graphPlan = supportedAsyncGraphModulePlan(ctx, statements);
+  if (graphPlan === null) return null;
+  const { decl, plan } = graphPlan;
+
   const runtime = ensureAsyncDriveRuntime(ctx);
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
 
@@ -4358,8 +4754,7 @@ function compileAsyncGraphModuleInit(
     init: [{ op: "i32.const", value: 0 }],
   });
 
-  const decl = graphAsyncSynthetic(statements);
-  const plan = analyzeAsyncBody(ctx, decl);
+  const graphStaticEntries = staticEntries.filter(isGraphTimelineStaticEntry);
   const startFuncIdx = mintDefinedFunc(ctx);
   const startFunc: WasmFunction = {
     name: "__v8x_graph_eval_start",
@@ -4384,37 +4779,63 @@ function compileAsyncGraphModuleInit(
     labelMap: new Map(),
     savedBodies: [],
   };
-  emitAsyncFrameStateMachine(ctx, startFctx, decl, plan, false, {
-    // ES module evaluation always resumes an await on a later microtask, even
-    // when its operand is already fulfilled or is a plain value.
-    alwaysAsyncAwait: true,
-    moduleInit: true,
-    entryPrelude: (resumeFctx) => {
-      const savedBody = resumeFctx.body;
-      const preludeBody: Instr[] = [
-        { op: "i32.const", value: 1 },
-        { op: "global.set", index: preludeDoneGlobalIdx },
-      ];
-      ctx.liveBodies.add(preludeBody);
-      resumeFctx.body = preludeBody;
-      try {
-        emitPrelude(resumeFctx);
-      } finally {
-        resumeFctx.body = savedBody;
-        ctx.liveBodies.delete(preludeBody);
-      }
-      const currentPreludeDoneGlobalIdx = ctx.numImportGlobals + preludeDoneLocalGlobalIdx;
-      savedBody.push(
-        { op: "global.get", index: currentPreludeDoneGlobalIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [],
-          else: preludeBody,
-        },
-      );
-    },
-  });
+  const entryPrelude = (resumeFctx: FunctionContext): void => {
+    const savedBody = resumeFctx.body;
+    const preludeBody: Instr[] = [
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index: preludeDoneGlobalIdx },
+    ];
+    ctx.liveBodies.add(preludeBody);
+    resumeFctx.body = preludeBody;
+    try {
+      emitPrelude(resumeFctx);
+    } finally {
+      resumeFctx.body = savedBody;
+      ctx.liveBodies.delete(preludeBody);
+    }
+    const currentPreludeDoneGlobalIdx = ctx.numImportGlobals + preludeDoneLocalGlobalIdx;
+    savedBody.push(
+      { op: "global.get", index: currentPreludeDoneGlobalIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [],
+        else: preludeBody,
+      },
+    );
+  };
+
+  const cfg = graphStaticEntries.length
+    ? planAsyncCfg(ctx, decl, plan, {
+        allowLoops: true,
+        allowTryCatch: true,
+        allowReturnInTry: true,
+      })
+    : null;
+  if (cfg !== null) {
+    // Declaration-class statics are not ordinary source statements, so pass a
+    // source-order-expanded CFG to the same frame engine. This keeps fields and
+    // blocks on the correct side of each top-level await without making the
+    // declaration-instantiation prelude evaluate a later module early.
+    const info = buildAsyncFrameInfo(ctx, decl, plan, [], [], promiseTypeIdx, undefined, undefined, startFctx, true);
+    info.alwaysAsyncAwait = true;
+    info.entryPrelude = entryPrelude;
+    info.moduleInit = true;
+    emitPreparedAsyncFrameStateMachine(
+      ctx,
+      startFctx,
+      info,
+      scheduleGraphStaticInitializers(ctx, cfg, graphStaticEntries),
+    );
+  } else {
+    emitAsyncFrameStateMachine(ctx, startFctx, decl, plan, false, {
+      // ES module evaluation always resumes an await on a later microtask, even
+      // when its operand is already fulfilled or is a plain value.
+      alwaysAsyncAwait: true,
+      moduleInit: true,
+      entryPrelude,
+    });
+  }
   startFunc.locals = startFctx.locals;
   startFunc.body = startFctx.body;
 
@@ -4570,6 +4991,27 @@ export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: t
     initFunc.exported = true;
     ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
     ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+  }
+
+  // (#3523 R4 gap 3) Reserve the WASI `__init_done` idempotence global HERE,
+  // before any body is emitted, so the prepared body can be constructed around
+  // it rather than spliced afterwards. `applyModuleInitGuard` minted this
+  // global at splice time; a Prepared body has no splice window, so the
+  // reservation moves to the one point that provably precedes body emission.
+  // Only WASI selects the `wasi-start-export` invocation policy, and this
+  // function is reached only on the prepared route, so the reservation is
+  // exactly scoped to the units that can consume it. Preparation may still
+  // fall back — `applyModuleInitGuard` then adopts this same reserved global
+  // for the legacy splice rather than minting a second one.
+  if (ctx.wasi && ctx.preparedWasiModuleInitGuard === undefined) {
+    const doneGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: "__init_done",
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+    ctx.preparedWasiModuleInitGuard = { doneGlobalIdx };
   }
 }
 
@@ -5152,7 +5594,7 @@ export function compileDeclarations(
   //   - no `__tdz_<name>` flag global is allocated below,
   //   - `emitTdzInit` becomes a no-op (no `i32.const 1; global.set` writes
   //     in `__module_init`),
-  //   - `emitTdzCheck` becomes a no-op (no runtime check at reads).
+  //   - identifier reads find no flag and emit no runtime check.
   // Genuinely dynamic / ambiguous cases (e.g. function declarations that
   // could be called before the variable's initializer runs) are preserved
   // because `analyzeTdzAccess` conservatively returns "check" for them.
@@ -5267,7 +5709,138 @@ export function compileDeclarations(
     return groups.find((group) => group.block === stmt.parent);
   }
 
-  function compileModuleInitBody(targetFctx?: FunctionContext, includeModuleStatements = true): FunctionContext {
+  /**
+   * Class evaluation and ordinary module statements share one source-order
+   * timeline. The two collectors retain separate payloads, so merge them by
+   * linked-source ordinal and AST position before emitting `__module_init`.
+   * This is observable whenever a static field reads an earlier module binding
+   * (or a later statement reads the static field), and across files because
+   * dependencies must finish evaluation before their importers.
+   */
+  function orderedModuleInitEntries(): OrderedModuleInitEntry[] {
+    const orderedInitEntries: OrderedModuleInitEntry[] = [];
+    for (const entry of ctx.staticInitExprs) {
+      if (!isGraphTimelineStaticEntry(entry)) continue;
+      const node = moduleStaticInitNode(entry);
+      if (node) orderedInitEntries.push({ kind: "static", node, entry });
+    }
+    for (const statement of ctx.moduleInitStatements) {
+      orderedInitEntries.push({ kind: "statement", node: statement, statement });
+    }
+    orderedInitEntries.sort((left, right) => {
+      const sourceDelta =
+        moduleInitSourceOrdinal(ctx, left.node.getSourceFile()) -
+        moduleInitSourceOrdinal(ctx, right.node.getSourceFile());
+      if (sourceDelta !== 0) return sourceDelta;
+      const positionDelta = left.node.pos - right.node.pos;
+      if (positionDelta !== 0) return positionDelta;
+      if (left.kind === right.kind) return 0;
+      return left.kind === "statement" ? -1 : 1;
+    });
+    return orderedInitEntries;
+  }
+
+  /**
+   * Explicit-resource-management disposal is scoped to the complete module
+   * evaluation, not merely to the source statement which creates the resource.
+   * Its lowering is allowed to use FunctionContext-local bookkeeping, so do
+   * not split a module-scope `using`/`await using` declaration until it has an
+   * explicit cross-helper disposal protocol. Nested uses remain inside their
+   * enclosing complete entry and therefore do not cross this boundary.
+   */
+  function hasModuleScopeUsingEntry(entries: readonly OrderedModuleInitEntry[]): boolean {
+    return entries.some(
+      (entry) =>
+        entry.kind === "statement" &&
+        ts.isVariableStatement(entry.statement) &&
+        // `AwaitUsing` includes the `Const` bit in TypeScript's NodeFlags;
+        // `Using` is the shared resource-management bit for both forms.
+        (entry.statement.declarationList.flags & ts.NodeFlags.Using) !== 0 &&
+        (ts.isSourceFile(entry.statement.parent) || ts.isModuleBlock(entry.statement.parent)),
+    );
+  }
+
+  /** Compile one complete top-level entry without changing its source order. */
+  function compileOrderedModuleInitEntry(fctx: FunctionContext, initEntry: OrderedModuleInitEntry): void {
+    if (initEntry.kind === "static") {
+      emitModuleStaticInitialization(ctx, fctx, initEntry.entry);
+      return;
+    }
+
+    const group = runtimeModuleGroupForStatement(initEntry.statement);
+    if (group) {
+      withRuntimeModuleBindings(ctx, group, exactRuntimeModuleFunctionEntries(ctx, group), () => {
+        compileStatement(ctx, fctx, initEntry.statement);
+      });
+    } else {
+      compileStatement(ctx, fctx, initEntry.statement);
+    }
+  }
+
+  /**
+   * Deliberately retain the compile-time `__module_init` identity for every
+   * chunk. Several lowering paths use that name to select top-level/global
+   * semantics; only the materialized Wasm helper receives a private name.
+   */
+  function createModuleInitFunctionContext(moduleInitChunk = false): FunctionContext {
+    return {
+      name: "__module_init",
+      ...(moduleInitChunk ? { moduleInitChunk: true } : {}),
+      params: [],
+      locals: [],
+      localMap: new Map(),
+      returnType: null,
+      body: [],
+      blockDepth: 0,
+      breakStack: [],
+      continueStack: [],
+      labelMap: new Map(),
+      savedBodies: [],
+    };
+  }
+
+  /**
+   * Keep the public initializer a compact dispatcher even for a graph with so
+   * many chunks that one direct call per chunk would itself become a large
+   * Cranelift body. Every intermediate node stays private and `[] -> []`.
+   */
+  function appendModuleInitChunkDispatch(
+    initFctx: FunctionContext,
+    initialHandles: readonly FuncHandle[],
+    helperTypeIdx: number,
+  ): void {
+    let handles = [...initialHandles];
+    let level = 0;
+    let ordinal = 0;
+    while (handles.length > MODULE_INIT_CHUNK_MAX_ENTRIES) {
+      const nextLevel: FuncHandle[] = [];
+      for (let start = 0; start < handles.length; start += MODULE_INIT_CHUNK_MAX_ENTRIES) {
+        const body: Instr[] = handles
+          .slice(start, start + MODULE_INIT_CHUNK_MAX_ENTRIES)
+          .map((funcIdx) => ({ op: "call", funcIdx }));
+        // Build the full body before minting the handle. This keeps the helper
+        // safe even if a future dispatch-body extension emits dependencies.
+        const funcIdx = mintDefinedFunc(ctx);
+        pushDefinedFunc(ctx, funcIdx, {
+          name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_dispatch_${level}_${ordinal++}`),
+          typeIdx: helperTypeIdx,
+          locals: [],
+          body,
+          exported: false,
+        });
+        nextLevel.push(funcIdx);
+      }
+      handles = nextLevel;
+      level++;
+    }
+    for (const funcIdx of handles) initFctx.body.push({ op: "call", funcIdx });
+  }
+
+  function compileModuleInitBody(
+    targetFctx?: FunctionContext,
+    includeModuleStatements = true,
+    chunkModuleInitEntries = false,
+  ): FunctionContext {
     ctx.irBodyRouteAuditSession?.recordRoot("compileModuleInitBody", "__module_init", sourceFile);
     if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
       throw new Error("injected direct module-init body poison");
@@ -5284,19 +5857,7 @@ export function compileDeclarations(
     ctx.capturedGlobalsWidened.clear();
     ctx.capturedBoxGlobals?.clear();
     ctx.capturedGlobalsOwner?.clear();
-    const initFctx: FunctionContext = targetFctx ?? {
-      name: "__module_init",
-      params: [],
-      locals: [],
-      localMap: new Map(),
-      returnType: null,
-      body: [],
-      blockDepth: 0,
-      breakStack: [],
-      continueStack: [],
-      labelMap: new Map(),
-      savedBodies: [],
-    };
+    const initFctx: FunctionContext = targetFctx ?? createModuleInitFunctionContext();
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
 
@@ -5369,77 +5930,70 @@ export function compileDeclarations(
       }
     }
 
-    // Class evaluation and ordinary module statements share one source-order
-    // timeline. The two collectors retain separate payloads, so merge them by
-    // linked-source ordinal and AST position before emitting `__module_init`.
-    // This is observable whenever a static field reads an earlier module
-    // binding (or a later statement reads the static field), and across files
-    // because dependencies must finish evaluation before their importers.
-    type StaticInitEntry = (typeof ctx.staticInitExprs)[number];
-    type OrderedInitEntry =
-      | { readonly kind: "static"; readonly node: ts.Node; readonly entry: StaticInitEntry }
-      | { readonly kind: "statement"; readonly node: ts.Statement; readonly statement: ts.Statement };
-    const orderedInitEntries: OrderedInitEntry[] = [];
-    for (const entry of ctx.staticInitExprs) {
-      const node = entry.staticBlock ?? entry.initializer;
-      if (node) orderedInitEntries.push({ kind: "static", node, entry });
+    // The async graph frame enters this helper once for declaration
+    // instantiation and then again through its state-machine segments for
+    // evaluation.  The prelude must seed hoisted bindings, but must not run a
+    // later module's lexical initializer before an earlier dependency's
+    // top-level await settles: that would make the later binding escape its
+    // temporal dead zone while its module is still waiting to evaluate.
+    if (!includeModuleStatements) {
+      ctx.currentFunc = previousFunc;
+      return initFctx;
     }
-    for (const statement of ctx.moduleInitStatements) {
-      orderedInitEntries.push({ kind: "statement", node: statement, statement });
-    }
-    orderedInitEntries.sort((left, right) => {
-      const sourceDelta =
-        moduleInitSourceOrdinal(ctx, left.node.getSourceFile()) -
-        moduleInitSourceOrdinal(ctx, right.node.getSourceFile());
-      if (sourceDelta !== 0) return sourceDelta;
-      const positionDelta = left.node.pos - right.node.pos;
-      if (positionDelta !== 0) return positionDelta;
-      if (left.kind === right.kind) return 0;
-      return left.kind === "statement" ? -1 : 1;
-    });
 
-    for (const initEntry of orderedInitEntries) {
-      if (initEntry.kind === "static") {
-        const { globalIdx, initializer, staticBlock, className } = initEntry.entry;
-        // (#1395) Scope each static initializer to its owning class so `this`
-        // resolves to the class-object singleton. Toggle the shared init frame
-        // per entry because every initializer contributes to one function.
-        const savedEnclosing = initFctx.enclosingClassName;
-        const savedIsStatic = initFctx.isStaticContext;
-        if (className !== undefined) {
-          initFctx.enclosingClassName = className;
-          initFctx.isStaticContext = true;
-        }
-        try {
-          if (staticBlock) {
-            for (const statement of staticBlock.body.statements) {
-              compileStatement(ctx, initFctx, statement);
-            }
-          } else if (initializer && globalIdx !== undefined) {
-            const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-            compileExpression(ctx, initFctx, initializer, globalDef?.type);
-            initFctx.body.push({ op: "global.set", index: globalIdx });
-          }
-        } finally {
-          initFctx.enclosingClassName = savedEnclosing;
-          initFctx.isStaticContext = savedIsStatic;
-        }
-        continue;
-      }
+    const orderedInitEntries = orderedModuleInitEntries();
+    const chunks = chunkModuleInitEntries ? planModuleInitChunks(orderedInitEntries) : [];
+    if (chunks.length > 1) {
+      // While a chunk is the current compilation frame, the outer prelude and
+      // dispatcher are detached from `ctx.currentFunc`. Keep them live so late
+      // global/function index repairs still visit their already-emitted refs.
+      const outerBodyWasLive = ctx.liveBodies.has(initFctx.body);
+      if (!outerBodyWasLive) ctx.liveBodies.add(initFctx.body);
+      try {
+        const chunkHandles: FuncHandle[] = [];
+        let chunkTypeIdx: number | undefined;
+        let chunkOrdinal = 0;
+        for (const chunk of chunks) {
+          const chunkFctx = createModuleInitFunctionContext(true);
+          ctx.currentFunc = chunkFctx;
+          for (const initEntry of chunk) compileOrderedModuleInitEntry(chunkFctx, initEntry);
+          if (chunkFctx.body.length === 0) continue;
 
-      const group = runtimeModuleGroupForStatement(initEntry.statement);
-      if (group) {
-        withRuntimeModuleBindings(ctx, group, exactRuntimeModuleFunctionEntries(ctx, group), () => {
-          compileStatement(ctx, initFctx, initEntry.statement);
-        });
-      } else {
-        compileStatement(ctx, initFctx, initEntry.statement);
+          // Dependencies are emitted while compiling the complete source
+          // entries above. Only then mint and push this helper's stable handle,
+          // so no late helper registration can steal its function slot.
+          chunkTypeIdx ??= addFuncType(ctx, [], [], "__module_init_chunk_type");
+          const funcIdx = mintDefinedFunc(ctx);
+          pushDefinedFunc(ctx, funcIdx, {
+            name: reserveModuleInitChunkHelperName(ctx, `__module_init_chunk_${chunkOrdinal++}`),
+            typeIdx: chunkTypeIdx,
+            locals: chunkFctx.locals,
+            body: chunkFctx.body,
+            exported: false,
+          });
+          chunkHandles.push(funcIdx);
+        }
+        ctx.currentFunc = initFctx;
+        if (chunkTypeIdx !== undefined) appendModuleInitChunkDispatch(initFctx, chunkHandles, chunkTypeIdx);
+      } finally {
+        if (!outerBodyWasLive) ctx.liveBodies.delete(initFctx.body);
       }
+    } else {
+      for (const initEntry of orderedInitEntries) compileOrderedModuleInitEntry(initFctx, initEntry);
     }
 
     ctx.currentFunc = previousFunc;
     return initFctx;
   }
+
+  // Pass 1 remains one body for closure/setup discovery. A large synchronous
+  // population needs an emitting pass 2 even when it happens to be call-free,
+  // because only that final pass materializes the private chunk helpers.
+  const orderedInitEntriesForChunking = orderedModuleInitEntries();
+  const moduleInitChunkingRequired =
+    !hasAsyncGraphInit &&
+    !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
+    moduleInitChunksRequired(orderedInitEntriesForChunking);
 
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
   // skipped only in `"skip"` mode, where an earlier source already ran it over
@@ -5630,18 +6184,35 @@ export function compileDeclarations(
   // Only the emitting call needs the final-registry recompile; in the other
   // multi-source modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#2965) Reset the program-order-sensitive property state to its
-    // pre-pass-1 value so this recompile does not treat pass 1's own
-    // defineProperty/freeze effects as pre-existing (see snapshot above).
-    restorePropOrderState();
-    compiledInitFctx = profilePhase("module-init-pass2", () => {
-      if (!hasAsyncGraphInit) return compileModuleInitBody();
-      return compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, (resumeFctx) => {
-        compileModuleInitBody(resumeFctx, false);
-      }).fctx;
-    });
-    ctx.pendingInitBody = compiledInitFctx.body;
-    dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
+    // call, so a population with no call anywhere recompiles to the body pass 1
+    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
+    // the end. Skipping then also skips `restorePropOrderState` (nothing
+    // recompiles; pass 1's end state is where pass 2 converged anyway) and
+    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
+    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // takes pass 2 (its lowering exists only there), stated explicitly rather
+    // than via the scan's AwaitExpression refusal. The env seam restores the
+    // unconditional recompile so tests can A/B against the two-pass body.
+    if (
+      process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
+      hasAsyncGraphInit ||
+      moduleInitChunkingRequired ||
+      !moduleInitPopulationIsCallFree(ctx)
+    ) {
+      // (#2965) Reset the program-order-sensitive property state to its
+      // pre-pass-1 value so this recompile does not treat pass 1's own
+      // defineProperty/freeze effects as pre-existing (see snapshot above).
+      restorePropOrderState();
+      compiledInitFctx = profilePhase("module-init-pass2", () => {
+        if (!hasAsyncGraphInit) return compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
+        const compileResume = (resumeFctx: FunctionContext) => compileModuleInitBody(resumeFctx, false);
+        const graph = compileAsyncGraphModuleInit(ctx, ctx.moduleInitStatements, ctx.staticInitExprs, compileResume);
+        return graph?.fctx ?? compileModuleInitBody(undefined, true, moduleInitChunkingRequired);
+      });
+      ctx.pendingInitBody = compiledInitFctx.body;
+      dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+    }
   }
 
   // Clear pendingInitBody before injection (it lands in mod.functions after this)
@@ -5767,11 +6338,26 @@ export function compileDeclarations(
     // wiring against the planned policy here and fail closed. Only the Prepared
     // route is asserted: the direct route keeps its established behavior until
     // the typed Unsupported policy is retired.
-    if (skipModuleInitBody && !ctx.wasi) {
+    //
+    // (#3523 R4 gap 3) THIRD ARM — `wasi-start-export`. The `!ctx.wasi` gate
+    // that used to sit here meant a WASI admission would ship with ZERO adapter
+    // reconciliation. Under WASI neither non-WASI adapter is legal: the module
+    // must have no `start` section and no compiler `__module_init` alias, and be
+    // reached only by the `_start` export `addWasiStartExport` builds LATER in
+    // the pipeline. So the count this arm expects is zero, and the positive
+    // half of the WASI contract — exactly one authenticated `_start` adapter
+    // whose first call reaches the init exactly once — is asserted where that
+    // adapter exists, by `assertGraphGlobalInvocationPolicy`'s
+    // `wasi-start-export` case.
+    if (skipModuleInitBody) {
+      const plannedAdapter = ctx.wasi ? "wasi-start-export" : exportModuleInit ? "deferred-export" : "wasm-start";
       if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
-        // Anti-vacuity seam: install the adapter the planned policy did NOT
+        // Anti-vacuity seam: install an adapter the planned policy did NOT
         // choose, so the reconciliation below has a real violation to catch.
+        // Under WASI the start section is exactly the adapter that would make
+        // init run twice (once on instantiation, once from `_start`).
         if (exportModuleInit) ctx.mod.startFuncIdx = initFuncIdx;
+        else if (ctx.wasi) ctx.mod.startFuncIdx = initFuncIdx;
         else ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
       }
       const startsOnInstantiation = ctx.mod.startFuncIdx === initFuncIdx;
@@ -5779,9 +6365,13 @@ export function compileDeclarations(
         (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initFuncIdx,
       ).length;
       const adapters = (startsOnInstantiation ? 1 : 0) + exportedAliases;
-      if (adapters !== 1 || exportedAliases !== (exportModuleInit ? 1 : 0)) {
+      const expectedAdapters = ctx.wasi ? 0 : 1;
+      const expectedAliases = exportModuleInit ? 1 : 0;
+      if (adapters !== expectedAdapters || exportedAliases !== expectedAliases) {
         throw new Error(
-          `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${exportModuleInit ? "deferred-export" : "wasm-start"})`,
+          ctx.wasi
+            ? `prepared WASI module initializer must have no declaration-time startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${plannedAdapter})`
+            : `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${plannedAdapter})`,
         );
       }
     }

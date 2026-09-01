@@ -24,8 +24,10 @@ import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } f
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
+import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
 import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
@@ -87,6 +89,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
   getFuncSignature,
   getOrCreateFuncRefWrapperTypes,
+  runtimeParameters,
 } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -108,6 +111,13 @@ import { emitVirtualMethodDispatchByTag } from "./virtual-dispatch.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 import { installableReceiverInstrs } from "../helpers/undefined-receiver.js"; // (#4555) runtime-eval receiver seam
+import {
+  consumeNativeIteratorResultBuffer,
+  enterNativeIteratorResultCallback,
+  markNativeIteratorResultBuffer,
+  nativeIteratorResultThenReceiver,
+} from "../promise-native-iterator-result.js";
+export { tryEmitAsyncGenNextDispatch } from "../promise-native-iterator-result.js";
 
 // (#1299) Lives in its own subsystem module since 2026-08-23; re-exported here
 // because call sites import it from `calls.ts`.
@@ -356,7 +366,8 @@ import {
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
 import { tryCompileRawWasiCall } from "../raw-wasi-api.js";
-import { resolvePromiseSubclassName, tryEmitPromiseSubclassReceiver } from "./promise-subclass.js";
+import { tryEmitPromiseSubclassReceiver } from "./promise-subclass.js";
+import { tryEmitStandalonePromiseStaticCallTypeError } from "./promise-static-call-typeerror.js";
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCombinatorRuntime,
@@ -510,6 +521,7 @@ import {
 } from "../dataview-native.js";
 import {
   getLinearU8Buffer,
+  getLinearU8ParamIndicesForDeclaration,
   getLinearU8ParamIndicesForCall,
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
@@ -1464,9 +1476,9 @@ export function emitReflectiveNativeProtoClosureCall(
     if (nativeProtoVariadic && i === 1) {
       // `userArgs[0]` is the receiver/thisValue.  Every remaining expression
       // is a real JavaScript argument and must be packed without padding.
-      // `array.new_fixed` accepts zero elements, so an omitted argument list
-      // still reaches the body as an empty vector.
+      // `$vec_externref` carries its length before the backing array.
       const variadicArgs = userArgs.slice(1);
+      fctx.body.push({ op: "i32.const", value: variadicArgs.length });
       for (const arg of variadicArgs) {
         const aType = compileExpression(ctx, fctx, arg, { kind: "externref" });
         if (aType === null) fctx.body.push({ op: "ref.null.extern" });
@@ -2764,113 +2776,6 @@ export function calleeIsCapabilityCtorParam(ctx: CodegenContext, expr: ts.Expres
 }
 
 /**
- * (#3390 slice 1) Known non-constructor global function identifiers. Called via
- * `Promise.<combinator>.call(<global>, …)` these are callable but have no
- * `[[Construct]]`, so NewPromiseCapability throws TypeError. Matched by NAME
- * (syntactic — no checker, so no oracle-ratchet cost); a user shadowing one of
- * these with a real constructor is not in the corpus and only affects the
- * standalone lane, so this stays correct-or-legacy.
- */
-const NON_CONSTRUCTOR_GLOBALS = new Set([
-  "eval",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "decodeURI",
-  "decodeURIComponent",
-  "encodeURI",
-  "encodeURIComponent",
-]);
-
-/**
- * (#3390 slice 1) Is `recv` STATICALLY, side-effect-freely a non-constructor —
- * so `Promise.<combinator>.call(recv, …)` must throw a synchronous TypeError
- * per §27.2.4.1 step 2 (IsConstructor) BEFORE the iterable is touched? Returns
- * true ONLY for provably non-constructor, side-effect-free receivers; anything
- * else (a real constructor, `Promise`, a subclass, or a receiver we cannot
- * classify without evaluating it) returns false → the caller falls through to
- * the existing host path (correct-or-legacy). `undefined` (no arg) ⇒ true.
- */
-function isStaticNonConstructorReceiver(ctx: CodegenContext, recv: ts.Expression | undefined): boolean {
-  if (recv === undefined) return true; // no receiver → undefined → non-object
-  let e: ts.Expression = recv;
-  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
-  // Non-object / primitive literals.
-  if (ts.isNumericLiteral(e) || ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
-  if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return true;
-  if (e.kind === ts.SyntaxKind.NullKeyword) return true;
-  if (ts.isVoidExpression(e)) {
-    // `void <literal>` only (a side-effecting operand must be evaluated first).
-    const op = e.expression;
-    return ts.isNumericLiteral(op) || ts.isStringLiteral(op) || op.kind === ts.SyntaxKind.NullKeyword;
-  }
-  // Arrow function — callable, no `[[Construct]]`.
-  if (ts.isArrowFunction(e)) return true;
-  // Empty object literal — a non-callable object; side-effect-free (no computed
-  // keys / getters). Non-empty literals may run key/value side effects → skip.
-  if (ts.isObjectLiteralExpression(e) && e.properties.length === 0) return true;
-  // `Symbol()` / `Symbol(<literal>)` — a bare `Symbol` call returns a symbol
-  // primitive (not a constructor), and is side-effect-free.
-  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Symbol") {
-    return e.arguments.length === 0 || (e.arguments.length === 1 && isSideEffectFreeLiteralArg(e.arguments[0]!));
-  }
-  // Identifier: `undefined`, or a known non-constructor global (eval, …).
-  if (ts.isIdentifier(e)) {
-    if (e.text === "undefined") return true;
-    if (e.text === "Promise") return false; // the constructor — direct-form semantics (slice 2)
-    if (resolvePromiseSubclassName(ctx, e.text) !== undefined) return false; // class extends Promise
-    return NON_CONSTRUCTOR_GLOBALS.has(e.text);
-  }
-  return false; // member access / new / arbitrary call / unknown → fall through
-}
-
-/** (#3390) A `Symbol(<arg>)` argument that runs no user code. */
-function isSideEffectFreeLiteralArg(a: ts.Expression): boolean {
-  return ts.isNumericLiteral(a) || ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a);
-}
-
-/**
- * (#3390 slice 1) `Promise.<combinator>.call(recv, …)` where `recv` is a static
- * non-constructor: emit a synchronous native TypeError (§27.2.4.1 step 2,
- * before any iteration) on the standalone/wasi lane, replacing the leaky
- * `Promise_<method>` host fallback. Returns the `never`-typed result (an
- * unreachable `ref.null.extern` after the throw) on a match, or `undefined` to
- * fall through to the existing dispatch (host lane, real constructors, dynamic
- * receivers — correct-or-legacy). The iterable argument is intentionally NOT
- * compiled (it must not be iterated).
- */
-function tryEmitStandaloneCombinatorCallTypeError(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.CallExpression,
-  propAccess: ts.PropertyAccessExpression,
-): InnerResult | undefined {
-  if (!isStandalonePromiseActive(ctx)) return undefined;
-  // callee shape: `(Promise.<combinator>).call`
-  const inner = propAccess.expression;
-  if (!ts.isPropertyAccessExpression(inner)) return undefined;
-  if (!ts.isIdentifier(inner.expression) || inner.expression.text !== "Promise") return undefined;
-  const method = inner.name.text;
-  if (method !== "all" && method !== "allSettled" && method !== "race" && method !== "any") return undefined;
-  if (!isStaticNonConstructorReceiver(ctx, expr.arguments[0])) return undefined;
-
-  const msg = `Promise.${method} called on a non-constructor`;
-  emitWasiErrorConstructor(ctx, "TypeError", 1);
-  const exnTagIdx = ensureExnTag(ctx);
-  addStringConstantGlobal(ctx, msg);
-  const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
-  if (typeErrorCtorIdx === undefined) return undefined; // ctor unavailable → fall through
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
-  fctx.body.push({ op: "call", funcIdx: typeErrorCtorIdx });
-  fctx.body.push({ op: "throw", tagIdx: exnTagIdx });
-  // The throw is control-terminal; push an unreachable value so the surrounding
-  // expression contract (an externref on the stack) still type-checks.
-  fctx.body.push({ op: "ref.null.extern" });
-  return { kind: "externref" };
-}
-
-/**
  * (#1337) Emit a call to a host bound-function externref via the
  * `__call_function(fn, thisArg, argsArray)` host helper. The bound function
  * already carries [[BoundThis]] and [[BoundArguments]], so `thisArg` is passed
@@ -3371,6 +3276,61 @@ export function emitClosureCallArgcExtras(
     emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], paramCount);
   }
   emitSetArgc(ctx, fctx, args.length, paramCount);
+  appendForwardedOptionalArgcOverride(ctx, fctx, fctx.body, args, paramCount);
+}
+
+/**
+ * Override a call's already-emitted argc when its final syntactic argument is
+ * the caller's own tracked optional scalar and that argument was omitted from
+ * the caller activation. This is deliberately limited to an in-range trailing
+ * formal: changing overflow/extras would also require rebuilding argv.
+ *
+ * An explicitly supplied `undefined` cannot be recovered from an i32 local;
+ * this preserves the omission path while keeping contextual closure ABIs
+ * scalar-compatible. Explicit false remains supplied because cached argc is
+ * greater than the source parameter index.
+ */
+export function appendForwardedOptionalArgcOverride(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  body: Instr[],
+  args: readonly ts.Expression[],
+  paramCount: number,
+): void {
+  if (
+    fctx.argcCachedLocal === undefined ||
+    !fctx.omissionTrackedScalarParams ||
+    args.length === 0 ||
+    args.length > paramCount
+  ) {
+    return;
+  }
+  let trailingArgument: ts.Expression = args[args.length - 1]!;
+  while (ts.isParenthesizedExpression(trailingArgument)) trailingArgument = trailingArgument.expression;
+  if (!ts.isIdentifier(trailingArgument)) return;
+  const symbol = ctx.checker.getSymbolAtLocation(trailingArgument);
+  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+  if (!declaration || !ts.isParameter(declaration)) return;
+  const sourceIndex = fctx.omissionTrackedScalarParams.get(declaration);
+  if (sourceIndex === undefined) return;
+
+  body.push(
+    { op: "local.get", index: fctx.argcCachedLocal },
+    { op: "i32.const", value: -1 },
+    { op: "i32.ne" },
+    { op: "local.get", index: fctx.argcCachedLocal },
+    { op: "i32.const", value: sourceIndex },
+    { op: "i32.le_s" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: Math.min(args.length - 1, paramCount) },
+        { op: "global.set", index: ensureArgcGlobal(ctx) },
+      ],
+    },
+  );
 }
 
 /**
@@ -3798,14 +3758,147 @@ export function isGlobalBuiltinIdentifier(ctx: CodegenContext, fctx: FunctionCon
  * function-valued declarations.
  */
 export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.SourceFile): void {
-  const registrationState = ctx as unknown as { __funcValueWrapperSourcesRegistered?: Set<string> };
+  const registrationState = ctx as unknown as {
+    __funcValueWrapperSourcesRegistered?: Set<string>;
+    __funcValueWrapperDiscoverySources?: Set<string>;
+    __funcValueWrapperNamedDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperPendingExactDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperFunctionExpressions?: Set<ts.FunctionExpression | ts.ArrowFunction>;
+    __funcValueWrapperReferencePredicateFuncTypes?: Set<number>;
+    __funcValueWrapperGenericReferenceCallbackDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperGenericReferenceCallbackFuncTypes?: Set<number>;
+    __funcValueWrapperVecFactoryDeclarations?: Set<ts.FunctionDeclaration>;
+    __funcValueWrapperVecFactoryFuncTypes?: Set<number>;
+  };
   const registeredSources =
     registrationState.__funcValueWrapperSourcesRegistered ??
     (registrationState.__funcValueWrapperSourcesRegistered = new Set<string>());
-  if (registeredSources.has(sf.fileName)) return;
-  registeredSources.add(sf.fileName);
+  const firstRegistrationForSource = !registeredSources.has(sf.fileName);
+  if (firstRegistrationForSource) registeredSources.add(sf.fileName);
 
-  const usedAsValue = new Set<ts.FunctionDeclaration>();
+  // Cross-source discovery is graph-global and purely syntactic. Cache its
+  // result instead of walking the complete TypeScript compiler graph once per
+  // source file. Registration below intentionally still runs per source: a
+  // declaration can acquire its exact funcMap/capture ABI after an earlier
+  // source's conservative registration, and getOrCreate is idempotent.
+  const discoverySources =
+    registrationState.__funcValueWrapperDiscoverySources ??
+    (registrationState.__funcValueWrapperDiscoverySources = new Set<string>());
+  const usedAsValue =
+    registrationState.__funcValueWrapperNamedDeclarations ??
+    (registrationState.__funcValueWrapperNamedDeclarations = new Set<ts.FunctionDeclaration>());
+  const pendingExactDeclarations =
+    registrationState.__funcValueWrapperPendingExactDeclarations ??
+    (registrationState.__funcValueWrapperPendingExactDeclarations = new Set<ts.FunctionDeclaration>());
+  const usedAsValueFunctions =
+    registrationState.__funcValueWrapperFunctionExpressions ??
+    (registrationState.__funcValueWrapperFunctionExpressions = new Set<ts.FunctionExpression | ts.ArrowFunction>());
+  const referencePredicateFuncTypes =
+    registrationState.__funcValueWrapperReferencePredicateFuncTypes ??
+    (registrationState.__funcValueWrapperReferencePredicateFuncTypes = new Set<number>());
+  const genericReferenceCallbackDeclarations =
+    registrationState.__funcValueWrapperGenericReferenceCallbackDeclarations ??
+    (registrationState.__funcValueWrapperGenericReferenceCallbackDeclarations = new Set<ts.FunctionDeclaration>());
+  const genericReferenceCallbackFuncTypes =
+    registrationState.__funcValueWrapperGenericReferenceCallbackFuncTypes ??
+    (registrationState.__funcValueWrapperGenericReferenceCallbackFuncTypes = new Set<number>());
+  const vecFactoryDeclarations =
+    registrationState.__funcValueWrapperVecFactoryDeclarations ??
+    (registrationState.__funcValueWrapperVecFactoryDeclarations = new Set<ts.FunctionDeclaration>());
+  const vecFactoryFuncTypes =
+    registrationState.__funcValueWrapperVecFactoryFuncTypes ??
+    (registrationState.__funcValueWrapperVecFactoryFuncTypes = new Set<number>());
+  const isSafeVecFactoryCallback = (
+    declaration: ts.FunctionDeclaration,
+    params: readonly ValType[],
+    returnType: ValType | null,
+  ): boolean =>
+    vecFactoryDeclarations.has(declaration) &&
+    params.length === 1 &&
+    (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+    getVecInfo(ctx, params[0]!.typeIdx) !== null &&
+    returnType !== null &&
+    (returnType.kind === "ref" || returnType.kind === "ref_null");
+  let liveClosureInfosByFuncTypeIdx: Map<number, Set<ClosureInfo>> | undefined;
+  const indexLiveClosureInfo = (info: ClosureInfo): void => {
+    const index = (liveClosureInfosByFuncTypeIdx ??= new Map());
+    const records = index.get(info.funcTypeIdx) ?? new Set<ClosureInfo>();
+    records.add(info);
+    index.set(info.funcTypeIdx, records);
+  };
+  const ensureLiveClosureInfoIndex = (): void => {
+    if (liveClosureInfosByFuncTypeIdx !== undefined) return;
+    liveClosureInfosByFuncTypeIdx = new Map();
+    for (const records of [
+      ctx.funcRefWrapperCache.values(),
+      ctx.constructibleFuncRefWrapperCache.values(),
+      ctx.closureInfoByTypeIdx.values(),
+      ctx.closureMap.values(),
+    ]) {
+      for (const info of records) indexLiveClosureInfo(info);
+    }
+  };
+  const observeMinimumArgumentCount = (
+    wrapper: NonNullable<ReturnType<typeof getOrCreateFuncRefWrapperTypes>>,
+    minimumArgumentCount: number,
+  ): void => {
+    // A captureless arrow/function-expression can allocate the shared base
+    // wrapper and then replace `closureInfoByTypeIdx[base]` with its own
+    // ClosureInfo object.  The signature cache deliberately keeps the original
+    // object, so updating only `wrapper.closureInfo` leaves the dispatcher with
+    // a stale minimum and it rejects an optional-parameter declaration invoked
+    // through a narrower public callback type.  Minimum arity is ABI metadata:
+    // persist the minimum by exact lifted func type and synchronize every live
+    // record, including allocation subtypes and both wrapper caches. The
+    // persistent index is authoritative for dispatchers compiled after a later
+    // record replacement; no other signature is widened.
+    const funcTypeIdx = wrapper.closureInfo.funcTypeIdx;
+    const recordedMinimum = ctx.closureMinimumArgumentCountByFuncTypeIdx.get(funcTypeIdx);
+    const effectiveMinimum = Math.min(recordedMinimum ?? wrapper.closureInfo.paramTypes.length, minimumArgumentCount);
+    ctx.closureMinimumArgumentCountByFuncTypeIdx.set(funcTypeIdx, effectiveMinimum);
+
+    ensureLiveClosureInfoIndex();
+    // A wrapper may have been created by an earlier declaration in this same
+    // registration pass, after the lazy index snapshot above.
+    indexLiveClosureInfo(wrapper.closureInfo);
+    const mapped = ctx.closureInfoByTypeIdx.get(wrapper.closureInfo.structTypeIdx);
+    if (mapped) indexLiveClosureInfo(mapped);
+    for (const info of liveClosureInfosByFuncTypeIdx!.get(funcTypeIdx) ?? []) {
+      const current = info.minimumArgumentCount ?? info.paramTypes.length;
+      info.minimumArgumentCount = Math.min(current, effectiveMinimum);
+    }
+  };
+
+  const isDirectSourceGenericCallbackArgument = (identifier: ts.Identifier): boolean => {
+    const call = identifier.parent;
+    if (!call || !ts.isCallExpression(call)) return false;
+    const argumentIndex = call.arguments.findIndex((argument) => argument === identifier);
+    if (argumentIndex < 0) return false;
+
+    const calleeDeclaration = ctx.checker.getResolvedSignature(call)?.declaration;
+    if (
+      calleeDeclaration === undefined ||
+      calleeDeclaration.getSourceFile().isDeclarationFile ||
+      calleeDeclaration.typeParameters === undefined ||
+      calleeDeclaration.typeParameters.length === 0 ||
+      argumentIndex >= calleeDeclaration.parameters.length
+    ) {
+      return false;
+    }
+
+    const callbackParameter = calleeDeclaration.parameters[argumentIndex]!;
+    if (!ts.isParameter(callbackParameter)) return false;
+    if (callbackParameter.dotDotDotToken !== undefined) return false;
+    const callbackType = ctx.checker.getTypeAtLocation(callbackParameter);
+    return callbackType
+      .getCallSignatures()
+      .some((callbackSignature) =>
+        runtimeSignatureParameters(callbackSignature).some(
+          (parameter) => (ctx.checker.getTypeOfSymbol(parameter).flags & ts.TypeFlags.TypeParameter) !== 0,
+        ),
+      );
+  };
+
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
       const p = node.parent;
@@ -3816,60 +3909,260 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
         (ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) &&
         (p as ts.FunctionLikeDeclaration).name === node;
       if (!isCallee && !isNewCallee && !isOwnName) {
-        const sym = ctx.checker.getSymbolAtLocation(node);
+        // A shorthand property's symbol describes the property itself on some
+        // TypeScript versions. Ask for its value symbol so `{ createNode }`
+        // resolves to the nested function declaration that supplies the
+        // factory method, not to the shorthand AST node.
+        let sym =
+          p && ts.isShorthandPropertyAssignment(p) && p.name === node
+            ? ((
+                ctx.checker as typeof ctx.checker & {
+                  getShorthandAssignmentValueSymbol?: (
+                    property: ts.ShorthandPropertyAssignment,
+                  ) => ts.Symbol | undefined;
+                }
+              ).getShorthandAssignmentValueSymbol?.(p) ?? ctx.checker.getSymbolAtLocation(node))
+            : ctx.checker.getSymbolAtLocation(node);
+        // Cross-file callback values are normally referenced through an
+        // ImportSpecifier alias.  Looking only at the alias's declaration
+        // records the import node rather than the function declaration, so a
+        // generic helper compiled before the imported callback never sees its
+        // wrapper type.  Resolve the alias to the exact exported declaration
+        // before populating the order-independent candidate set.
+        if (sym && (sym.flags & ts.SymbolFlags.Alias) !== 0) {
+          try {
+            sym = ctx.checker.getAliasedSymbol(sym);
+          } catch {
+            // Keep the unresolved symbol; it cannot name a source function
+            // declaration and is therefore safely ignored below.
+          }
+        }
         const decl = sym?.valueDeclaration;
         if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
           usedAsValue.add(decl);
+          if (p && ts.isShorthandPropertyAssignment(p) && !ts.isSourceFile(decl.parent)) {
+            vecFactoryDeclarations.add(decl);
+          }
+          // A source-authored generic HOF can erase a callback's `T` argument
+          // to externref while a directly supplied, later-compiled callback
+          // retains a nominal WasmGC parameter. Record only the capture-free,
+          // one-formal declaration shape used at that exact source call. The
+          // func-type registration below lets the earlier generic body build
+          // a runtime arm without admitting every nominal callback module-wide.
+          const directSourceGenericCallback =
+            ts.isSourceFile(decl.parent) &&
+            runtimeParameters(decl).length === 1 &&
+            decl.parameters.every((parameter) => parameter.dotDotDotToken === undefined) &&
+            isDirectSourceGenericCallbackArgument(node);
+          if (directSourceGenericCallback) {
+            const callbackParameterType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl.parameters[0]!));
+            if (callbackParameterType.kind === "ref") {
+              genericReferenceCallbackDeclarations.add(decl);
+            }
+          }
+          if (expectedArgumentCountOfParams(decl.parameters) < runtimeParameters(decl).length) {
+            pendingExactDeclarations.add(decl);
+          }
         }
       }
     }
     ts.forEachChild(node, visit);
   };
-  visit(sf);
+  const visitFns = (node: ts.Node): void => {
+    if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+      const p = node.parent;
+      const isCallArg = p && ts.isCallExpression(p) && p.arguments.some((a) => a === node);
+      const isVarInit = p && ts.isVariableDeclaration(p) && p.initializer === node;
+      // A reassigned mutable callable is another dynamic-dispatch value
+      // producer. Its call site may compile before the assignment RHS's
+      // wrapper is materialized, so pre-register the same conservative
+      // all-reference wrapper shape used for callback values.
+      const isAssignmentValue =
+        p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.right === node;
+      // A generator function-expression's value is a Generator object, not a
+      // plain closure the inline dispatcher marshals; skip (its wrapper type
+      // is externref-returning and harmless, but leave it to the value site).
+      const isGen = ts.isFunctionExpression(node) && node.asteriskToken !== undefined;
+      if ((isCallArg || isVarInit || isAssignmentValue) && !isGen) usedAsValueFunctions.add(node);
+    }
+    ts.forEachChild(node, visitFns);
+  };
+  // The generic dispatcher can be compiled in an EARLIER source file than the
+  // named callback values passed to it. TypeScript's scanner is the production
+  // witness: scanner.ts emits `speculationHelper<T>(callback: () => T)` before
+  // parser.ts passes nested `nextToken*`/`parse*` declarations through it.
+  // Arrow pre-registration below already scans the complete callable program;
+  // named declarations need the same order-independent visibility.
+  for (const sourceFile of ctx.callableSourceFiles ?? [sf]) {
+    if (discoverySources.has(sourceFile.fileName)) continue;
+    discoverySources.add(sourceFile.fileName);
+    visit(sourceFile);
+    visitFns(sourceFile);
+  }
 
-  for (const declaration of usedAsValue) {
-    const name = declaration.name!.text;
-    const ownsMappedFunction =
-      ctx.funcMapOwnerDecl.get(name) === declaration || ctx.topLevelFunctionDeclarations.get(name) === declaration;
-    const captures = ownsMappedFunction ? ctx.nestedFuncCaptures.get(name) : undefined;
-    const funcIdx = ownsMappedFunction ? ctx.funcMap.get(name) : undefined;
+  const registerExactDeclarationWrapper = (declaration: ts.FunctionDeclaration): boolean => {
+    const funcIdx = sourceFunctionHandleForDeclaration(ctx, declaration);
+    if (funcIdx === undefined) return false;
+    const sig = getFuncSignature(ctx, funcIdx);
+    if (!sig) return false;
 
-    // Preserve the value site's exact lowered ABI whenever this declaration
-    // already owns a no-capture funcMap entry. In particular, rest/arguments
-    // and generator lowering can add parameters that are not visible in the
-    // source-level signature.
-    if ((captures?.length ?? 0) === 0 && funcIdx !== undefined) {
-      const sig = getFuncSignature(ctx, funcIdx);
-      if (sig) {
-        getOrCreateFuncRefWrapperTypes(ctx, sig.params, sig.results);
-        continue;
+    // A lifted nested declaration's physical signature is
+    // [capture values..., TDZ flag boxes..., lowered source-param slots...].
+    // A linear Uint8Array source param contributes two trailing slots
+    // (pointer + length), so count that declared expansion before slicing.
+    // The exact declaration handle survives bare-name scope restoration, unlike
+    // funcMap/nestedFuncCaptures, so recover the value-call ABI from the
+    // trailing runtime source parameters. This is the same slice
+    // emitFuncRefAsClosure performs before selecting the shared wrapper.
+    const sourceParams = runtimeParameters(declaration);
+    const firstRuntimeSourceIndex = declaration.parameters.length - sourceParams.length;
+    const linearParams = getLinearU8ParamIndicesForDeclaration(ctx, declaration);
+    const expandedLinearParamCount = linearParams
+      ? [...linearParams].filter((sourceIndex) => sourceIndex >= firstRuntimeSourceIndex).length
+      : 0;
+    const sourceParamSlotCount = sourceParams.length + expandedLinearParamCount;
+    if (sig.params.length < sourceParamSlotCount) return false;
+    const params = sourceParamSlotCount === 0 ? [] : sig.params.slice(sig.params.length - sourceParamSlotCount);
+    const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, sig.results);
+    const safeGenericReferenceCallback =
+      genericReferenceCallbackDeclarations.has(declaration) &&
+      params.length === 1 &&
+      params[0]!.kind === "ref" &&
+      sig.results.length === 1 &&
+      (sig.results[0]!.kind === "externref" ||
+        sig.results[0]!.kind === "ref_extern" ||
+        sig.results[0]!.kind === "ref" ||
+        sig.results[0]!.kind === "ref_null");
+    const safeVecFactoryCallback = isSafeVecFactoryCallback(
+      declaration,
+      params,
+      sig.results.length === 1 ? sig.results[0]! : null,
+    );
+    if (
+      wrapper &&
+      declaration.type !== undefined &&
+      ts.isTypePredicateNode(declaration.type) &&
+      declaration.type.assertsModifier === undefined &&
+      params.length === 1 &&
+      (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+      sig.results.length === 1 &&
+      sig.results[0]!.kind === "i32" &&
+      sig.results[0]!.boolean === true
+    ) {
+      referencePredicateFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeGenericReferenceCallback) {
+      genericReferenceCallbackFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeVecFactoryCallback) {
+      vecFactoryFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper) {
+      const minimumArgumentCount = expectedArgumentCountOfParams(declaration.parameters);
+      if (minimumArgumentCount < params.length) {
+        observeMinimumArgumentCount(wrapper, minimumArgumentCount);
       }
     }
+    return true;
+  };
+
+  // The first dynamic call in a source can precede allocation of a later
+  // nested callback's source handle. TypeScript's parser does exactly that:
+  // visitNode latches parser.ts before createSourceFile reserves
+  // parseIdentifierName. Conservative discovery remains one-shot, but every
+  // later call cheaply revisits only unresolved optional declarations and
+  // upgrades them once their exact lifted ABI exists.
+  for (const declaration of pendingExactDeclarations) {
+    if (!registerExactDeclarationWrapper(declaration)) continue;
+    pendingExactDeclarations.delete(declaration);
+  }
+
+  if (!firstRegistrationForSource) return;
+
+  for (const declaration of usedAsValue) {
+    // Prefer the declaration-identity sidecar over the collision-prone bare
+    // funcMap namespace. This also admits captured declarations: their exact
+    // user-call ABI is the suffix of the lifted function signature above.
+    if (registerExactDeclarationWrapper(declaration)) continue;
 
     // Captured or not-yet-registered nested declarations have no safe funcMap
     // signature to consult. Their lifted funcref still shares the root wrapper
-    // signature computed from the declaration, but only pre-register the same
-    // conservative all-externref shape used for function expressions below.
-    // Numeric/mixed speculative candidates can make an over-arity dispatch arm
-    // invalid even when that arm never matches at runtime.
+    // signature computed from the declaration. Pre-register the same
+    // conservative all-externref shape used for function expressions below,
+    // plus the exact one-ref -> boolean ABI of a syntactically declared type
+    // predicate. Numeric/mixed speculative candidates can make an over-arity
+    // dispatch arm invalid even when that arm never matches at runtime.
     const { params, returnType } = computeClosureWrapperSig(ctx, declaration);
     const allExternref = params.every((p) => p.kind === "externref");
     const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-    // A zero-argument callback cannot trigger the speculative
-    // over-arity numeric-parameter hazard described below.  Register it early
+    const safeReferencePredicate =
+      declaration.type !== undefined &&
+      ts.isTypePredicateNode(declaration.type) &&
+      declaration.type.assertsModifier === undefined &&
+      params.length === 1 &&
+      (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+      returnType?.kind === "i32" &&
+      returnType.boolean === true;
+    const safeGenericReferenceCallback =
+      genericReferenceCallbackDeclarations.has(declaration) &&
+      params.length === 1 &&
+      params[0]!.kind === "ref" &&
+      returnType !== null &&
+      (returnType.kind === "externref" ||
+        returnType.kind === "ref_extern" ||
+        returnType.kind === "ref" ||
+        returnType.kind === "ref_null");
+    // Factory objects commonly expose captured nested functions through
+    // shorthand properties. Their allocation can live in a later source file
+    // than a typed callback invocation (TypeScript's NodeFactory is the large
+    // production witness), so the exact closure signature is not available to
+    // that earlier dispatcher yet. A one-vec -> reference signature is safe to
+    // pre-register: dispatch still discriminates by the exact funcref type and
+    // the candidate bridge proves the vec element projection before emitting
+    // the call_ref arm.
+    const safeVecFactoryCallback = isSafeVecFactoryCallback(declaration, params, returnType);
+    const hasOmittableTrailingParams = expectedArgumentCountOfParams(declaration.parameters) < params.length;
+    // A callback whose entire parameter ABI is externref can safely be
+    // registered before its value site: omitted trailing parameters are
+    // materialized as JavaScript `undefined` by the dynamic dispatcher below.
+    // Register it early
     // so generic helpers such as TypeScript's `speculationHelper<T>(() => T)`
     // and `parseListElement<T>(() => T)` can discover later-compiled boolean
     // predicates and GC-reference parsers. The dynamic-call bridge preserves
     // the boolean brand or losslessly exports the GC ref when the generic
     // result carrier is externref.
-    const safeZeroArgErasedReturn =
-      params.length === 0 &&
+    // Scalar erased returns remain zero-argument-only: widening that older
+    // exception would admit speculative numeric signatures whose argument
+    // bridges are not proven here.
+    const safeErasedReturn =
       returnType !== null &&
-      ((returnType.kind === "i32" && returnType.boolean === true) ||
-        returnType.kind === "ref" ||
-        returnType.kind === "ref_null");
-    if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) continue;
-    getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+      (params.length === 0
+        ? returnType.kind === "ref" ||
+          returnType.kind === "ref_null" ||
+          (returnType.kind === "i32" && returnType.boolean === true) ||
+          (returnType.kind === "f64" && returnType.undefSentinel !== true)
+        : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
+    if (
+      (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) &&
+      !safeReferencePredicate &&
+      !safeGenericReferenceCallback &&
+      !safeVecFactoryCallback
+    ) {
+      continue;
+    }
+    const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+    if (wrapper && safeReferencePredicate) {
+      referencePredicateFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeGenericReferenceCallback) {
+      genericReferenceCallbackFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && safeVecFactoryCallback) {
+      vecFactoryFuncTypes.add(wrapper.closureInfo.funcTypeIdx);
+    }
+    if (wrapper && hasOmittableTrailingParams) {
+      observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(declaration.parameters));
+    }
   }
 
   // (#2939) Nested-scope function-expression / arrow callbacks. A callback like
@@ -3916,10 +4209,7 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
   //     is signature-cached, so the value site reuses the same funcTypeIdx —
   //     no index inconsistency (the declaration loop already relies on this).
   {
-    const seenFnNodes = new Set<ts.Node>();
     const usedAsValueFn = (node: ts.FunctionExpression | ts.ArrowFunction): void => {
-      if (seenFnNodes.has(node)) return;
-      seenFnNodes.add(node);
       const { params, returnType } = computeClosureWrapperSig(ctx, node);
       // (#2939) Restrict pre-registration to the ALL-EXTERNREF callback shape
       // (externref params + externref/void return). This is exactly the harness
@@ -3936,35 +4226,22 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
       // via the array-method path, never this inline dispatcher.)
       const allExternref = params.every((p) => p.kind === "externref");
       const externrefOrVoidReturn = returnType === null || returnType.kind === "externref";
-      const safeZeroArgErasedReturn =
-        params.length === 0 &&
+      const hasOmittableTrailingParams = expectedArgumentCountOfParams(node.parameters) < params.length;
+      const safeErasedReturn =
         returnType !== null &&
-        ((returnType.kind === "i32" && returnType.boolean === true) ||
-          returnType.kind === "ref" ||
-          returnType.kind === "ref_null");
-      if (!allExternref || (!externrefOrVoidReturn && !safeZeroArgErasedReturn)) return;
-      getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
-    };
-    const visitFns = (node: ts.Node): void => {
-      if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
-        const p = node.parent;
-        const isCallArg = p && ts.isCallExpression(p) && p.arguments.some((a) => a === node);
-        const isVarInit = p && ts.isVariableDeclaration(p) && p.initializer === node;
-        // A reassigned mutable callable is another dynamic-dispatch value
-        // producer. Its call site may compile before the assignment RHS's
-        // wrapper is materialized, so pre-register the same conservative
-        // all-reference wrapper shape used for callback values.
-        const isAssignmentValue =
-          p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.right === node;
-        // A generator function-expression's value is a Generator object, not a
-        // plain closure the inline dispatcher marshals; skip (its wrapper type
-        // is externref-returning and harmless, but leave it to the value site).
-        const isGen = ts.isFunctionExpression(node) && node.asteriskToken !== undefined;
-        if ((isCallArg || isVarInit || isAssignmentValue) && !isGen) usedAsValueFn(node);
+        (params.length === 0
+          ? returnType.kind === "ref" ||
+            returnType.kind === "ref_null" ||
+            (returnType.kind === "i32" && returnType.boolean === true) ||
+            (returnType.kind === "f64" && returnType.undefSentinel !== true)
+          : hasOmittableTrailingParams && (returnType.kind === "ref" || returnType.kind === "ref_null"));
+      if (!allExternref || (!externrefOrVoidReturn && !safeErasedReturn)) return;
+      const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, returnType ? [returnType] : []);
+      if (wrapper && hasOmittableTrailingParams) {
+        observeMinimumArgumentCount(wrapper, expectedArgumentCountOfParams(node.parameters));
       }
-      ts.forEachChild(node, visitFns);
     };
-    for (const sourceFile of ctx.callableSourceFiles ?? [sf]) visitFns(sourceFile);
+    for (const node of usedAsValueFunctions) usedAsValueFn(node);
   }
 }
 
@@ -5124,6 +5401,7 @@ export function compilePromiseThenReceiverBuffer(
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
+  markNativeIteratorResultBuffer(liveBuffers, nativeIteratorResultThenReceiver(ctx, expr));
   return instrs;
 }
 
@@ -5140,6 +5418,7 @@ export function compileStandalonePromiseThenCallback(
   // handler with zero arguments and preserves the original settlement.
   opts?: { allowDynamic?: boolean },
 ): StandalonePromiseThenCallback | null {
+  const nativeIteratorResult = consumeNativeIteratorResultBuffer(liveBuffers);
   if (arg === undefined || isNullishPromiseThenCallbackArg(arg)) return null;
 
   const instrs: Instr[] = [];
@@ -5157,6 +5436,7 @@ export function compileStandalonePromiseThenCallback(
   // contextually-inferred tuple struct (combinator over a tuple input) can
   // never match the runtime results vec (see computeClosureWrapperSig).
   const savedWidenTuple = ctx.widenTupleCallbackParams;
+  const restoreNativeIteratorResult = enterNativeIteratorResultCallback(ctx, nativeIteratorResult);
   ctx.widenTupleCallbackParams = true;
   try {
     const type =
@@ -5190,6 +5470,7 @@ export function compileStandalonePromiseThenCallback(
     return { instrs, closureInfo };
   } finally {
     ctx.widenTupleCallbackParams = savedWidenTuple;
+    restoreNativeIteratorResult();
     fctx.savedBodies.pop();
     fctx.body = savedBody;
   }
@@ -5284,83 +5565,6 @@ function emitHostPromiseThenFallback(
  * BEFORE reaching here and keep the original unconditional-cast lowering
  * for wasi untouched.
  */
-
-/**
- * (#2865) Zero-arg `.next()` on a possibly-DRIVEN async-generator receiver.
- * `g()` on a driven producer returns the `$AsyncFrame` carrier (a bare
- * externref); source-level `g().next()` / `it.next()` must route to the
- * per-gen re-entrant driver `__async_gen_next_<stem>(frame) ->
- * Promise<IteratorResult>`. The receiver is dispatched at RUNTIME by
- * `ref.test`ing each registered producer's frame struct (the chain shape
- * `buildNativeGeneratorDispatch` uses for sync gens).
- *
- * Miss arm (a receiver that is none of the driven frames): under BOTH
- * `--target standalone` and `--target wasi`, the legacy host `__gen_next` is
- * kept ONLY when a legacy buffer async gen was actually emitted in this module
- * (`asyncGenLegacyBufferEmitted`); otherwise a plain null result, so an
- * ALL-DRIVEN module stays host-free. (#3132) This dispatch is TYPE-gated to
- * `AsyncGenerator`/`AsyncIterableIterator`/`AsyncIterator` receivers (see the
- * call sites), never user objects or sync gens — so in a module with no legacy
- * buffer async gen, every reachable receiver IS one of the driven frames and
- * the `__gen_next` miss arm is provably DEAD. Dropping it (previously kept
- * unconditionally on standalone) removes the `env::__gen_next` import that
- * blocked these otherwise-driven async gens — consumed via `.next()` — from
- * counting toward the host-free standalone floor, the CONSUMER half of the
- * dstr-param slice. Mixed modules (a driven gen AND a legacy buffer async gen)
- * keep the fallback, exactly as before. Mirrors #2903's `.then` host-arm
- * de-leak; matches the well-tested wasi semantics byte-for-byte.
- *
- * Returns null (no emission) when the module has no driven producers or the
- * target is the JS-host lane — the caller falls through to its original
- * lowering, byte-identical.
- */
-export function tryEmitAsyncGenNextDispatch(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  receiverExpr: ts.Expression,
-): ValType | null {
-  const producers = ctx.asyncGenProducers;
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
-  if (producers === undefined || producers.size === 0) return null;
-  // Evaluate the receiver ONCE into an externref local (it may be a call).
-  const recvLocal = allocLocal(fctx, `__agen_recv_${fctx.locals.length}`, { kind: "externref" });
-  const rt = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
-  if (rt !== null && rt !== undefined && (rt as ValType).kind !== "externref") {
-    coerceType(ctx, fctx, rt as ValType, { kind: "externref" });
-  }
-  fctx.body.push({ op: "local.set", index: recvLocal });
-  // funcMap lookups happen AFTER the receiver compile (which may register late
-  // imports and shift defined indices).
-  const wantHostFallback = ctx.asyncGenLegacyBufferEmitted === true;
-  const hostGenNext = wantHostFallback ? ctx.funcMap.get("__gen_next") : undefined;
-  let chain: Instr[] =
-    hostGenNext !== undefined
-      ? [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: hostGenNext },
-        ]
-      : [{ op: "ref.null.extern" }];
-  for (const p of [...producers.values()].reverse()) {
-    const nextIdx = ctx.funcMap.get(p.nextHelperName);
-    if (nextIdx === undefined) continue;
-    chain = [
-      { op: "local.get", index: recvLocal },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: p.stateTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: nextIdx },
-        ],
-        else: chain,
-      },
-    ];
-  }
-  fctx.body.push(...chain);
-  return { kind: "externref" };
-}
 
 /**
  * (#3389 slice 2a) `.return(v)` / `.throw(e)` on a DRIVEN async-generator
@@ -5541,6 +5745,7 @@ export function emitStandaloneThenWithNativeFallback(
     }
     fctx.body.push({ op: "local.set", index: recvLocal });
 
+    compilePromiseThenReceiverBuffer(ctx, fctx, receiverExpr, liveBuffers);
     const onFulfilled =
       method === "then"
         ? compileStandalonePromiseThenCallback(ctx, fctx, onFulfilledArg, liveBuffers, { allowDynamic: true })
@@ -6656,6 +6861,28 @@ function emitRuntimeEvalResultBoundaryWrap(ctx: CodegenContext, fctx: FunctionCo
   return externref;
 }
 
+/** Marshal an i32 boolean without first materializing the provider module's
+ * private boolean box. Mirrored object fields live past the call boundary, so
+ * their primitive payload must enter the canonical value carrier directly. */
+function emitRuntimeEvalBooleanBoundaryWrap(ctx: CodegenContext, fctx: FunctionContext): ValType {
+  const externref: ValType = { kind: "externref" };
+  const booleanLocal = allocLocal(fctx, `__runtime_eval_boolean_${fctx.locals.length}`, {
+    kind: "i32",
+    boolean: true,
+  });
+  fctx.body.push(
+    { op: "local.set", index: booleanLocal },
+    { op: "i32.const", value: RUNTIME_EVAL_VALUE_KIND_BOOLEAN },
+    { op: "local.get", index: booleanLocal },
+    { op: "f64.const", value: 0 },
+    { op: "i64.const", value: 0n },
+    { op: "ref.null.extern" },
+    { op: "struct.new", typeIdx: ensureRuntimeEvalValueType(ctx) },
+    { op: "extern.convert_any" },
+  );
+  return externref;
+}
+
 /** Provider-local inverse of the canonical result carrier. This is used by
  * canaries that exercise an exported envelope from inside the provider; user
  * modules decode the same shape in emitRuntimeEvalResultUnwrap. */
@@ -6757,18 +6984,31 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const unwraps = calleeName === "__runtime_eval_unwrap_interpreted_callback";
   const testsIntrinsic = calleeName === "__runtime_eval_is_intrinsic_callback";
   const wrapsResult = calleeName === "__runtime_eval_wrap_result";
+  const wrapsBooleanResult = calleeName === "__runtime_eval_wrap_boolean_result";
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
   const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
-    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult && !testsAotCallable) ||
+    (!wraps &&
+      !unwraps &&
+      !testsIntrinsic &&
+      !wrapsResult &&
+      !wrapsBooleanResult &&
+      !unwrapsResult &&
+      !testsAotCallable) ||
     (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
   ) {
     return undefined;
   }
 
   const externref: ValType = { kind: "externref" };
+  if (wrapsBooleanResult) {
+    const booleanType: ValType = { kind: "i32", boolean: true };
+    const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, booleanType);
+    if (valueType && valueType.kind !== "i32") coerceType(ctx, fctx, valueType, booleanType);
+    return emitRuntimeEvalBooleanBoundaryWrap(ctx, fctx);
+  }
   const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
   if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
   if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);
@@ -7933,7 +8173,7 @@ function compileCallExpression(
         }
       }
 
-      // (#3390 slice 1) `Promise.<combinator>.call(recv, …)` with a STATICALLY
+      // (#3390) `Promise.<static>.call(recv, …)` with a STATICALLY
       // non-constructor receiver throws a TypeError synchronously (§27.2.4.1
       // step 2 IsConstructor, BEFORE touching the iterable). On the standalone
       // lane the host fallback (`Promise_all` etc.) leaks; emit the native
@@ -7941,8 +8181,8 @@ function compileCallExpression(
       // (correct-or-legacy — slice 2/3). `.apply` is not intercepted (rare;
       // the corpus uses `.call`).
       if (isCall) {
-        const combErr = tryEmitStandaloneCombinatorCallTypeError(ctx, fctx, expr, propAccess);
-        if (combErr !== undefined) return combErr;
+        const promiseStaticErr = tryEmitStandalonePromiseStaticCallTypeError(ctx, fctx, expr, propAccess);
+        if (promiseStaticErr !== undefined) return promiseStaticErr;
       }
 
       // (#2604/#3171) Reflective `X.prototype.METHOD.call(recv, …)` /

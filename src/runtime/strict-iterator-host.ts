@@ -9,6 +9,7 @@
 
 export interface StrictIteratorCallbackState {
   getExports: () => Record<string, Function> | undefined;
+  getStartExports?: () => Record<string, Function> | undefined;
 }
 
 export interface StrictIteratorHostOperations {
@@ -30,6 +31,10 @@ export interface StrictIteratorHostOperations {
   nativePrimitiveToHost: (value: any, exports: Record<string, Function> | undefined) => any;
   missingValue: unknown;
   maybeWrapCallable: (value: any, arity: number, state?: StrictIteratorCallbackState) => any;
+  marshalExports: (
+    state?: StrictIteratorCallbackState,
+    exports?: Record<string, Function>,
+  ) => Record<string, Function> | undefined;
 }
 
 export interface StrictIteratorHostRuntime {
@@ -50,6 +55,7 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
     nativePrimitiveToHost,
     missingValue,
     maybeWrapCallable,
+    marshalExports,
   } = ops;
 
   function isCallable(value: any, exports: Record<string, Function> | undefined): boolean {
@@ -92,40 +98,42 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
   function getIterator(value: any, state?: StrictIteratorCallbackState): any {
     if (value === null || value === undefined) throw new TypeError(`${value} is not iterable`);
     const exports = state?.getExports();
+    const marshalView = marshalExports(state, exports);
     let method = safeGet(value, Symbol.iterator, state);
     if (method === undefined) method = safeGet(value, "@@iterator", state);
     if (method === undefined && isWasmStruct(value)) {
-      const hostView = wrapForHost(value, exports);
+      const hostView = wrapForHost(value, marshalView);
       method = safeGet(hostView, Symbol.iterator, state) ?? safeGet(hostView, "@@iterator", state);
     }
     const strictDispatch = exports?.["__call_@@iterator_strict"];
     if (isWasmStruct(value) && typeof strictDispatch === "function" && !isCallable(method, exports)) {
       const iterator = strictDispatch(value);
-      if (!isObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+      if (!isObjectValue(iterator, marshalView)) throw new TypeError("iterator is not an object");
       return iterator;
     }
     if (method === undefined || method === null) {
       if (isWasmStruct(value) && typeof strictDispatch === "function") {
         const iterator = strictDispatch(value);
-        if (!isObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+        if (!isObjectValue(iterator, marshalView)) throw new TypeError("iterator is not an object");
         return iterator;
       }
       const dispatch = exports?.["__call_@@iterator"];
       if (isWasmStruct(value) && typeof dispatch === "function") {
         const iterator = dispatch(value);
-        if (!isObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+        if (!isObjectValue(iterator, marshalView)) throw new TypeError("iterator is not an object");
         return iterator;
       }
       throw new TypeError("value is not iterable");
     }
     if (!isCallable(method, exports)) throw new TypeError("@@iterator is not callable");
     const iterator = invokeCallable(value, method, [], state);
-    if (!isObjectValue(iterator, exports)) throw new TypeError("iterator is not an object");
+    if (!isObjectValue(iterator, marshalView)) throw new TypeError("iterator is not an object");
     return iterator;
   }
 
   function iteratorNext(iterator: any, state?: StrictIteratorCallbackState): [number, any] {
     const exports = state?.getExports();
+    const marshalView = marshalExports(state, exports);
     const next = safeGet(iterator, "next", state);
     const strictDispatch = exports?.["__call_next_strict"];
     let result: any;
@@ -142,9 +150,9 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
         throw new TypeError("iterator.next is not a function");
       result = dispatch(iterator);
     }
-    if (!isObjectValue(result, exports)) throw new TypeError("iterator result is not an object");
+    if (!isObjectValue(result, marshalView)) throw new TypeError("iterator result is not an object");
     const doneValue = safeGet(result, "done", state);
-    const donePrimitive = nativePrimitiveToHost(doneValue, exports);
+    const donePrimitive = nativePrimitiveToHost(doneValue, marshalView);
     const done = donePrimitive === missingValue ? !!doneValue : !!donePrimitive;
     return [done ? 1 : 0, done ? undefined : safeGet(result, "value", state)];
   }
@@ -173,7 +181,7 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
     }
     const originalArrayIterator: any = (Array.prototype as any)[Symbol.iterator];
     const walkWasmIterator = (iterator: any, limit: number): any[] =>
-      stepClosureIterator(iterator, state?.getExports(), { limit, closeOnStop: true }) as any[];
+      stepClosureIterator(iterator, marshalExports(state), { limit, closeOnStop: true }) as any[];
     const drainIterable = (obj: any, limit: number, strict = false, knownIterator?: any): any[] => {
       const iteratorMethod = knownIterator ?? safeGet(obj, Symbol.iterator, state) ?? safeGet(obj, "@@iterator", state);
       if (typeof iteratorMethod !== "function") {
@@ -198,7 +206,7 @@ export function createStrictIteratorHostRuntime(ops: StrictIteratorHostOperation
         return [];
       }
       if (typeof obj === "object" && isWasmStruct(obj)) {
-        const exports = state?.getExports();
+        const exports = marshalExports(state);
         const vecLen = exports?.__vec_len;
         const vecGet = exports?.__vec_get;
         if (typeof vecLen === "function" && typeof vecGet === "function" && isWasmVec(obj, exports)) {

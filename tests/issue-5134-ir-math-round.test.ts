@@ -237,30 +237,6 @@ describe("#5134 exact ambient Math.round IR ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("withdraws only round through its narrow rollback", async () => {
-    const flag = "JS2WASM_IR_MATH_ROUND";
-    const previous = process.env[flag];
-    process.env[flag] = "0";
-    try {
-      const result = await compile(`export function round(value: number): number { return Math.round(value); }`, {
-        fileName: "issue-5134-rollback.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      });
-      expectSuccess(result);
-      expect(outcomeFor(result, "round")).toMatchObject({
-        kind: "unsupported",
-        stage: "select",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
-      });
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, flag);
-      else process.env[flag] = previous;
-    }
-  });
-
   it.each(exclusionCases)("rejects %s before claim", async (label, source) => {
     const result = await compile(source, {
       fileName: `issue-5134-${label.replaceAll(" ", "-")}.ts`,

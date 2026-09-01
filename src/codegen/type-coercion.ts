@@ -1288,16 +1288,49 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
     savedBodies: [],
   };
 
+  // Register the undefined predicate before the materializer flushes late
+  // imports. Read its funcIdx only after that flush: any import registered by
+  // buildVecFromExternref can shift defined helper indices.
+  ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
+    // A cross-representation source may still be a compiled vec carrying
+    // ordinary Array properties in its runtime sidecar (notably TypeScript's
+    // NodeArray pos/end/hasTrailingComma metadata). The materializer creates a
+    // fresh target vec, so reserve the same sidecar bridge used by the typed
+    // vec-to-vec projector before buildVecFromExternref freezes import indices.
+    ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+  }
+
   // The cross-rep / host-array conversion (registers its late imports + flushes
   // against fctx; produces ref_null $vec). Built first so its locals are
   // allocated before the short-circuit temp below.
   const matInstrs = buildVecFromExternref(ctx, fctx, 0, vecTypeIdx, vecInfo);
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const copySidecarIdx =
+    !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
+      ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
+      : undefined;
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const crossRepInstrs: Instr[] = matInstrs;
+  if (copySidecarIdx !== undefined) {
+    const resultLocal = allocLocal(fctx, `__vfe_result_${fctx.locals.length}`, resultType);
+    crossRepInstrs.push(
+      { op: "local.set", index: resultLocal },
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: resultLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: copySidecarIdx },
+      { op: "local.get", index: resultLocal },
+    );
+  }
 
   const body: Instr[] = [
     // (1) null/undefined guard.
     { op: "local.get", index: 0 },
     { op: "ref.is_null" },
+    ...(isUndefinedIdx !== undefined
+      ? ([{ op: "local.get", index: 0 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" }] satisfies Instr[])
+      : []),
     {
       op: "if",
       blockType: { kind: "val", type: resultType },
@@ -1318,7 +1351,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
             { op: "ref.cast", typeIdx: vecTypeIdx },
           ],
           // (3) host externref / cross-rep → materialize a fresh exact-type vec.
-          else: matInstrs,
+          else: crossRepInstrs,
         },
       ],
     },
@@ -1676,6 +1709,151 @@ function getTupleFields(ctx: CodegenContext, typeIdx: number): ValType[] | null 
 }
 
 /**
+ * (#5243) Named-property fields of a compiler-synthesized ANONYMOUS record
+ * shape (`__anon_*`) — the struct type an object literal's inferred type
+ * lowers to. Returns `null` for anything that is not such a shape, so the
+ * record materializer below stays off every class instance, vec, tuple and
+ * branded shape.
+ *
+ * The gate is deliberately narrow. A `__anon_*` type is a bag of data
+ * properties the compiler minted from a literal's own keys, so reading those
+ * keys back off a host object by NAME reconstructs the same value. A class
+ * instance type, a subtype (whose `struct.new` would also need the
+ * supertype's fields), or a shape carrying an erased type BRAND all carry
+ * meaning that a property-by-property copy would fabricate rather than
+ * recover — those keep the historical null.
+ */
+function getAnonRecordFields(ctx: CodegenContext, typeIdx: number): { name: string; type: ValType }[] | null {
+  const typeDef = ctx.mod.types[typeIdx];
+  if (!typeDef || typeDef.kind !== "struct") return null;
+  const sd = typeDef as StructTypeDef;
+  if (!sd.name?.startsWith("__anon_")) return null;
+  if (sd.superTypeIdx !== undefined) return null;
+  if (sd.fields.length === 0 || sd.fields.length > 32) return null;
+  for (const field of sd.fields) {
+    // Ordinary source property names only: no internal slots, no erased brands.
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(field.name)) return null;
+    if (field.name.startsWith("__")) return null;
+    if (/^_{1,2}[A-Za-z0-9_$]+Brand$/.test(field.name)) return null;
+    switch (field.type.kind) {
+      case "f64":
+      case "i32":
+      case "externref":
+      case "anyref":
+      // A NON-nullable `ref` field is deliberately absent: the recovery below
+      // can only offer a nullable value for a reference slot, and `struct.new`
+      // would reject it. Such a shape keeps the historical null.
+      case "ref_null":
+        break;
+      default:
+        return null;
+    }
+  }
+  return sd.fields.map((f) => ({ name: f.name, type: f.type }));
+}
+
+/**
+ * (#5243) Build a `__anon_*` record struct from a HOST object by reading each
+ * of its declared properties by name.
+ *
+ * WHY this exists. `coerceType`'s `externref → ref/ref_null` arm tests the
+ * incoming value against the target struct and, when the test fails, used to
+ * push `ref.null` — a silently wrong value that only surfaces much later, and
+ * usually as somebody else's error. The path that reaches it in practice is an
+ * object literal with a SPREAD (`{ ...date, days: n }`): a spread's shape is
+ * not statically closed, so `objectLiteralSpreadTakesHostPath` builds it on the
+ * host and hands back an `externref`, while the enclosing function's INFERRED
+ * return/param type is the concrete `__anon_*` record. The two meet here, the
+ * `ref.test` fails because a host object is not a WasmGC struct, and the
+ * function returns null. In `@js-temporal/polyfill` that is exactly
+ * `Wr(e) → { ...t.date, days: n }`, whose null then travels as the second
+ * argument of `calendar.dateAdd(date, duration, options)` and detonates inside
+ * the ISO calendar's destructuring parameter as
+ * `Cannot destructure 'null' or 'undefined'` — every Temporal `add`/`subtract`.
+ *
+ * This is the SINGLE terminal of that `else` chain: when the shape or the host
+ * imports do not qualify it returns the historical `ref.null` itself, rather
+ * than making its one call site branch (which would grow `coerceType`).
+ *
+ * Semantics, stated because they are not free:
+ *   * null / undefined / a non-object stay `ref.null` — `RequireObjectCoercible`
+ *     must still throw in the callee's destructure guard, and fabricating a
+ *     zero-filled record out of `undefined` would hide a real spec error.
+ *   * the result is a COPY. Writes through the materialized struct do not
+ *     reach the host object. That is a real difference from a same-rep value,
+ *     and it is the same trade the vec (#2831) and tuple (#1161)
+ *     materializers next door already make — against a null, which supports no
+ *     read at all.
+ */
+function buildRecordFromExternref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  externLocal: number,
+  recordTypeIdx: number,
+): Instr[] {
+  const nullFallback: Instr[] = [{ op: "ref.null", typeIdx: recordTypeIdx }];
+  const fields = getAnonRecordFields(ctx, recordTypeIdx);
+  if (!fields) return nullFallback;
+  // A host-free target has no `__extern_get` to read the properties with.
+  if (ctx.standalone || ctx.wasi) return nullFallback;
+
+  const externref: ValType = { kind: "externref" };
+  ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
+  ensureLateImport(ctx, "__extern_is_object", [externref], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__unbox_number", [externref], [{ kind: "f64" }]);
+  for (const field of fields) addStringConstantGlobal(ctx, field.name);
+  flushLateImportShifts(ctx, fctx);
+
+  const getIdx = ctx.funcMap.get("__extern_get");
+  const isObjectIdx = ctx.funcMap.get("__extern_is_object");
+  const unboxIdx = ctx.funcMap.get("__unbox_number");
+  if (getIdx === undefined || isObjectIdx === undefined || unboxIdx === undefined) return nullFallback;
+
+  const build: Instr[] = [];
+  for (const field of fields) {
+    build.push({ op: "local.get", index: externLocal }, ...stringConstantExternrefInstrs(ctx, field.name), {
+      op: "call",
+      funcIdx: getIdx,
+    });
+    switch (field.type.kind) {
+      case "f64":
+        build.push({ op: "call", funcIdx: unboxIdx });
+        break;
+      case "i32":
+        build.push({ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" });
+        break;
+      case "externref":
+        break;
+      case "anyref":
+        build.push({ op: "any.convert_extern" });
+        break;
+      default: {
+        // `ref` / `ref_null` — the same guarded recovery the tuple
+        // materializer uses: a nested WasmGC struct that crossed the boundary
+        // casts back, anything else lands as null on that ONE field rather
+        // than nulling the whole record.
+        const fieldTypeIdx = (field.type as { typeIdx: number }).typeIdx;
+        build.push({ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: fieldTypeIdx });
+        break;
+      }
+    }
+  }
+  build.push({ op: "struct.new", typeIdx: recordTypeIdx });
+
+  const resultType: ValType = { kind: "ref_null", typeIdx: recordTypeIdx };
+  return [
+    { op: "local.get", index: externLocal },
+    { op: "call", funcIdx: isObjectIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: resultType },
+      then: build,
+      else: nullFallback,
+    },
+  ];
+}
+
+/**
  * Emit instructions to convert a vec struct on the stack to a tuple struct,
  * or between two different vec types (e.g. vec_externref -> vec_f64).
  * Returns true if conversion was emitted, false if the types don't match.
@@ -1763,13 +1941,17 @@ function emitSafeStructConversion(
   if (srcVec) {
     const tupleFields = getTupleFields(ctx, toTypeIdx);
     if (tupleFields) {
-      return emitVecToTupleBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, tupleFields);
+      return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+        emitVecToTupleBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, tupleFields);
+      });
     }
 
     // Case 2: vec -> vec (different element types)
     const dstVec = getVecInfo(ctx, toTypeIdx);
     if (dstVec && srcVec.elemType.kind !== dstVec.elemType.kind) {
-      return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+      return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+        emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+      });
     }
     // Also handle vec -> vec where both are ref but different typeIdx
     if (
@@ -1780,7 +1962,9 @@ function emitSafeStructConversion(
       const srcRefIdx = (srcVec.elemType as { typeIdx: number }).typeIdx;
       const dstRefIdx = (dstVec.elemType as { typeIdx: number }).typeIdx;
       if (srcRefIdx !== dstRefIdx) {
-        return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+        return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+          emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, srcVec, dstVec);
+        });
       }
     }
   }
@@ -1824,7 +2008,9 @@ function emitSafeStructConversion(
             ? (dstVec.elemType as { typeIdx: number }).typeIdx
             : undefined;
         if (vecShaped.elemType.kind !== dstVec.elemType.kind || srcRefIdx !== dstRefIdx) {
-          return emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, vecShaped, dstVec);
+          return emitNullableVecProjection(fctx, fromTypeIdx, toTypeIdx, fromNullable, toNullable, () => {
+            emitVecToVecBody(ctx, fctx, fromTypeIdx, toTypeIdx, vecShaped, dstVec);
+          });
         }
       }
     }
@@ -1837,6 +2023,51 @@ function emitSafeStructConversion(
   }
 
   return false;
+}
+
+/**
+ * Preserve a nullable source while materializing a structurally different vec
+ * carrier. The non-null vec projectors immediately read the source length and
+ * data fields, so feeding them JavaScript's null-backed `undefined` traps
+ * before the surrounding optional call can observe it. Mirror struct
+ * narrowing's null arm: nullable destinations retain null unchanged, while a
+ * non-null destination performs the ordinary runtime non-null assertion.
+ */
+function emitNullableVecProjection(
+  fctx: FunctionContext,
+  fromTypeIdx: number,
+  toTypeIdx: number,
+  fromNullable: boolean,
+  toNullable: boolean,
+  emitNonNullProjection: () => void,
+): boolean {
+  if (!fromNullable) {
+    emitNonNullProjection();
+    return true;
+  }
+
+  const sourceLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: fromTypeIdx });
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+
+  if (toNullable) {
+    fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.is_null" });
+    const projection = captureBody(fctx, () => {
+      fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+      emitNonNullProjection();
+    });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toTypeIdx } },
+      then: [{ op: "ref.null", typeIdx: toTypeIdx }],
+      else: projection,
+    });
+  } else {
+    fctx.body.push({ op: "local.get", index: sourceLocal }, { op: "ref.as_non_null" });
+    emitNonNullProjection();
+  }
+
+  releaseTempLocal(fctx, sourceLocal);
+  return true;
 }
 
 /** Returns true if `fromTypeIdx` is a declared Wasm subtype of `toTypeIdx`
@@ -1948,6 +2179,19 @@ function emitVecToVecBody(
   srcVec: { arrTypeIdx: number; elemType: ValType },
   dstVec: { arrTypeIdx: number; elemType: ValType },
 ): boolean {
+  // A vec projection changes only the compiler's element heap type; at the
+  // JavaScript level it is still the same Array object. In host-backed GC mode
+  // its non-index properties live in a WeakMap keyed by the raw vec. Reserve a
+  // bridge before emitting the copy so the fresh destination can inherit that
+  // sidecar after its indexed elements are projected. Resolve the funcIdx only
+  // after the late-import flush to avoid retaining a shifted defined index.
+  let copySidecarIdx: number | undefined;
+  if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
+    ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+    flushLateImportShifts(ctx, fctx);
+    copySidecarIdx = ctx.funcMap.get("__copy_wasm_struct_sidecar");
+  }
+
   // Save the source vec ref to a temp local
   const srcRefType: ValType = { kind: "ref_null", typeIdx: fromTypeIdx };
   const srcLocal = allocTempLocal(fctx, srcRefType);
@@ -2068,6 +2312,18 @@ function emitVecToVecBody(
   fctx.body.push({ op: "local.get", index: dstArrLocal });
   fctx.body.push({ op: "struct.new", typeIdx: toTypeIdx });
 
+  if (copySidecarIdx !== undefined) {
+    const dstVecLocal = allocTempLocal(fctx, { kind: "ref_null", typeIdx: toTypeIdx });
+    fctx.body.push({ op: "local.set", index: dstVecLocal });
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "local.get", index: dstVecLocal });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "call", funcIdx: copySidecarIdx });
+    fctx.body.push({ op: "local.get", index: dstVecLocal });
+    releaseTempLocal(fctx, dstVecLocal);
+  }
+
   releaseTempLocal(fctx, iLocal);
   releaseTempLocal(fctx, dstArrLocal);
   releaseTempLocal(fctx, lenLocal);
@@ -2184,6 +2440,10 @@ function nullableRefFieldWidening(from: ValType, to: ValType): number | undefine
   return from.kind === "ref_null" && to.kind === "ref" && from.typeIdx === to.typeIdx ? from.typeIdx : undefined;
 }
 
+function isLosslessAssertedFieldExport(from: ValType, to: ValType): boolean {
+  return (from.kind === "ref" || from.kind === "ref_null") && to.kind === "externref";
+}
+
 function assertedStructExtensionInfo(
   ctx: CodegenContext,
   from: ValType,
@@ -2206,7 +2466,8 @@ function assertedStructExtensionInfo(
       !destinationField ||
       destinationField.mutable !== sourceField.mutable ||
       (!samePhysicalValType(destinationField.type, sourceField.type) &&
-        nullableRefFieldWidening(sourceField.type, destinationField.type) === undefined)
+        nullableRefFieldWidening(sourceField.type, destinationField.type) === undefined &&
+        !isLosslessAssertedFieldExport(sourceField.type, destinationField.type))
     ) {
       return undefined;
     }
@@ -2231,6 +2492,13 @@ function assertedStructExtensionInfo(
 
 /** Pure preflight for callers that must choose a stack conversion first. */
 export function canEmitAssertedStructExtension(ctx: CodegenContext, from: ValType, to: ValType): boolean {
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    (to.kind === "ref" || to.kind === "ref_null") &&
+    isDeclaredStructSubtype(ctx, from.typeIdx, to.typeIdx)
+  ) {
+    return true;
+  }
   return assertedStructExtensionInfo(ctx, from, to) !== undefined;
 }
 
@@ -2318,6 +2586,14 @@ export function emitAssertedStructExtension(
   from: ValType,
   to: ValType,
 ): boolean {
+  if (
+    (from.kind === "ref" || from.kind === "ref_null") &&
+    (to.kind === "ref" || to.kind === "ref_null") &&
+    isDeclaredStructSubtype(ctx, from.typeIdx, to.typeIdx)
+  ) {
+    if (from.kind === "ref_null" && to.kind === "ref") fctx.body.push({ op: "ref.as_non_null" });
+    return true;
+  }
   const info = assertedStructExtensionInfo(ctx, from, to);
   if (!info) return false;
 
@@ -2416,6 +2692,7 @@ export function coerceType(
   to: ValType,
   toPrimitiveHint?: "number" | "string" | "default",
   compileStringLiteralFn?: CompileStringLiteralFn,
+  materializeUndefinedVec = false,
 ): void {
   const fromKind = from.kind === "i8" || from.kind === "i16" ? "i32" : from.kind;
   const toKind = to.kind === "i8" || to.kind === "i16" ? "i32" : to.kind;
@@ -2905,20 +3182,60 @@ export function coerceType(
     // Build else-branch: when cast fails, construct from JS object if possible
     let elseBranch: Instr[];
     if (vecInfo) {
-      // (#4614) A NULL input must stay `ref.null $vec` — `ref.test` answers
-      // false for null, so without this guard the materializer built an EMPTY
-      // vec out of nothing (`__extern_length(null)` → 0) and
-      // `flag ? rows() : null` bound to a vec slot read back as a TRUTHY
-      // zero-length array: cookie's `tableRows || cases` then selected the
-      // phantom empty table and every it.each registration vanished.
+      // (#4614 / #1058) A null/undefined input must stay `ref.null $vec` —
+      // `ref.test` answers false for both, so without this guard the
+      // materializer builds an EMPTY vec out of nothing. That turns an absent
+      // optional array into a TRUTHY zero-length array and loses the JS value's
+      // branch identity.
+      if (to.kind === "ref_null" && !materializeUndefinedVec) {
+        ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      }
+      if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
+        // This direct coercion path is separate from the reserved
+        // __vec_from_extern helper used by generated field setters. It also
+        // materializes a fresh vec from a host Array mirror, so preserve the
+        // source vec's ordinary-property sidecar here as well.
+        ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+      }
+      const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
+      // buildVecFromExternref flushes every late-import shift. Resolve the
+      // helpers afterwards so these calls cannot retain stale defined funcIdxs.
+      const isUndefinedIdx =
+        to.kind === "ref_null" && !materializeUndefinedVec ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+      const copySidecarIdx =
+        !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
+          ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
+          : undefined;
+      const materializeWithSidecar: Instr[] = materializeVec;
+      if (copySidecarIdx !== undefined) {
+        const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: toIdx,
+        });
+        materializeWithSidecar.push(
+          { op: "local.set", index: resultLocal },
+          { op: "local.get", index: tmpExternLocal },
+          { op: "local.get", index: resultLocal },
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: copySidecarIdx },
+          { op: "local.get", index: resultLocal },
+        );
+      }
       elseBranch = [
         { op: "local.get", index: tmpExternLocal },
         { op: "ref.is_null" },
+        ...(isUndefinedIdx !== undefined
+          ? ([
+              { op: "local.get", index: tmpExternLocal },
+              { op: "call", funcIdx: isUndefinedIdx },
+              { op: "i32.or" },
+            ] satisfies Instr[])
+          : []),
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
           then: [{ op: "ref.null", typeIdx: toIdx }],
-          else: buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo),
+          else: materializeWithSidecar,
         },
       ];
     } else {
@@ -2954,7 +3271,7 @@ export function coerceType(
           { op: "call", funcIdx: wrapperValIdx },
         ];
       } else {
-        elseBranch = [{ op: "ref.null", typeIdx: toIdx }];
+        elseBranch = buildRecordFromExternref(ctx, fctx, tmpExternLocal, toIdx);
       }
     }
 
@@ -4954,3 +5271,8 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
 
 // Register coerceType so shared.ts callers (closures, statements) can use it
 registerCoerceType(coerceType);
+
+/** Iterator rest always creates an Array, including after exhaustion. */
+export function coerceArrayRestType(ctx: CodegenContext, fctx: FunctionContext, from: ValType, to: ValType): void {
+  coerceType(ctx, fctx, from, to, undefined, undefined, true);
+}

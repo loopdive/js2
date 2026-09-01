@@ -49,10 +49,9 @@ import {
   inferNativeTaViewConstructType,
   nativeBufferBuiltinOf,
 } from "../dataview-native.js";
-import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
-import { compileNestedClassDeclaration, emitPreparedAccessorComputedNameEffects } from "./nested-declarations.js";
+import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -64,7 +63,12 @@ import {
   numericProofOverridesMixedCarrier,
 } from "../analysis/mixed-assignment-carrier.js";
 import { declarationReadsStructuralObjectFromRealmGlobal } from "../analysis/realm-global-structural-carrier.js";
-import { isDirectProxyConstruction, proxyBindingEscapesToCall } from "../analysis/proxy-binding-escape.js";
+import {
+  isDirectProxyConstruction,
+  proxyBindingEscapesToCall,
+  proxyBindingIsTarget,
+  proxyBindingNeedsExternref,
+} from "../analysis/proxy-binding-escape.js";
 import { staticConstStringValues } from "../analysis/static-string-values.js";
 import { staticIntegerRange } from "../../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -73,7 +77,37 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
+import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import {
+  tryCompileClassExpressionBindingValue,
+  tryEmitPromiseSubclassClassExpressionValue,
+} from "../expressions/promise-subclass.js";
+import {
+  hostRegExpMatchResultNeedsExternref,
+  isStaticRegExpExpression,
+  stripInferenceWrapper,
+} from "../regexp-host-match.js";
+
+/**
+ * A class-expression binding fast path emits its value before this caller can
+ * know that it handled the expression. Keep that emitted suffix in the live
+ * body while compiling the unresolved accessor names, so late-import shifts
+ * still reach both instruction groups, then restore ClassDefinitionEvaluation
+ * order: computed names before the handled value materialization.
+ */
+function emitHandledClassExpressionBindingEffects(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initializer: ts.Expression,
+  materializationStart: number,
+): void {
+  if (!ts.isClassExpression(initializer)) return;
+  const materializationEnd = fctx.body.length;
+  emitUnresolvedComputedAccessorNameEffects(ctx, fctx, initializer);
+  const materialization = fctx.body.splice(materializationStart, materializationEnd - materializationStart);
+  const effects = fctx.body.splice(materializationStart);
+  fctx.body.push(...effects, ...materialization);
+}
 
 /**
  * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
@@ -119,6 +153,7 @@ export function transferredArrayLikeResultNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
+  if (hostRegExpMatchResultNeedsExternref(ctx, initializer)) return true;
   if (!(ctx.standalone || ctx.wasi) || !initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || ts.isPrivateIdentifier(callee.name)) return false;
@@ -194,6 +229,10 @@ export function transferredArrayLikeResultNeedsExternref(
   };
   visit(receiver.getSourceFile());
   return !bailed && matchingWrite !== undefined;
+}
+
+export function proxyOrTransferredResultNeedsExternref(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  return proxyBindingNeedsExternref(ctx, decl) || transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
 }
 
 function symbolIsReadOnlyThroughLength(
@@ -319,6 +358,7 @@ function tryCompileUniformSplitLengthBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
@@ -413,6 +453,7 @@ function tryCompileDerivedSubstringBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) {
     return false;
   }
@@ -614,6 +655,7 @@ function tryCompileUniformIndexPresenceBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
+  if (isModuleInitChunkFunctionContext(fctx)) return false;
   if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
@@ -962,41 +1004,6 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   }
 }
 
-function stripInferenceWrapper(expr: ts.Expression): ts.Expression {
-  while (
-    ts.isParenthesizedExpression(expr) ||
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    expr = (
-      expr as
-        | ts.ParenthesizedExpression
-        | ts.AsExpression
-        | ts.TypeAssertion
-        | ts.SatisfiesExpression
-        | ts.NonNullExpression
-    ).expression;
-  }
-  return expr;
-}
-
-function isStaticRegExpExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const unwrapped = stripInferenceWrapper(expr);
-  if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
-  if (ts.isNewExpression(unwrapped) || (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken)) {
-    const callee = stripInferenceWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && callee.text === "RegExp";
-  }
-  if (ts.isIdentifier(unwrapped)) {
-    const sym = ctx.checker.getSymbolAtLocation(unwrapped);
-    const decl = sym?.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    return decl?.initializer !== undefined && isStaticRegExpExpression(ctx, decl.initializer);
-  }
-  return false;
-}
-
 function nativeStringVecType(ctx: CodegenContext): ValType | null {
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
   const elemKey = `ref_${ctx.anyStrTypeIdx}`;
@@ -1249,81 +1256,6 @@ function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
  * both host and standalone emit a Proxy externref, so both need the override.
  */
 /**
- * Does this binding become the target of a native Proxy in its lexical scope?
- * A Proxy can mutate that target through a trap or an absent-trap forward, so
- * later reads through any source alias must not be frozen into a direct
- * closed-struct field load. Keep the binding on the dynamic object carrier
- * from construction time; the Proxy and the alias then share one object rather
- * than copying into a shadow representation.
- */
-function bindingIsProxyTarget(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name)) return false;
-  const scope = findEnclosingFunctionOrSource(decl);
-  if (!scope) return false;
-
-  const unwrap = (expr: ts.Expression): ts.Expression => {
-    let current = expr;
-    while (
-      ts.isParenthesizedExpression(current) ||
-      ts.isAsExpression(current) ||
-      ts.isTypeAssertionExpression(current) ||
-      ts.isNonNullExpression(current) ||
-      ts.isSatisfiesExpression(current)
-    ) {
-      current = current.expression;
-    }
-    return current;
-  };
-
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    let target: ts.Expression | undefined;
-    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
-      target = node.arguments?.[0];
-    } else if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Proxy" &&
-      node.expression.name.text === "revocable"
-    ) {
-      target = node.arguments[0];
-    }
-    if (target) {
-      const candidate = unwrap(target);
-      if (ts.isIdentifier(candidate) && ctx.oracle.valueDeclarationOf(candidate) === decl) {
-        found = true;
-        return;
-      }
-    }
-    node.forEachChild(visit);
-  };
-  visit(scope);
-  return found;
-}
-
-function findEnclosingFunctionOrSource(node: ts.Node): ts.Node | undefined {
-  let n: ts.Node | undefined = node.parent;
-  while (n) {
-    if (
-      ts.isFunctionDeclaration(n) ||
-      ts.isFunctionExpression(n) ||
-      ts.isArrowFunction(n) ||
-      ts.isMethodDeclaration(n) ||
-      ts.isConstructorDeclaration(n) ||
-      ts.isGetAccessorDeclaration(n) ||
-      ts.isSetAccessorDeclaration(n) ||
-      ts.isSourceFile(n)
-    ) {
-      return n;
-    }
-    n = n.parent;
-  }
-  return undefined;
-}
-
-/**
  * (#1337/#4397) Check if an initializer is a `Function.prototype.bind` call.
  * Its result is an externref carrier rather than the target's closure struct:
  * a real JS bound-function exotic under the compatibility provider, or the
@@ -1359,6 +1291,11 @@ function isBindCarrierCall(expr: ts.Expression): boolean {
 }
 
 export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.VariableStatement): void {
+  // A chunk helper may not retain a source binding solely in `fctx` locals:
+  // the following complete entry starts in a different Wasm function. The
+  // normal module-global branch below remains correct; only local-only scalar
+  // substitutions and buffer representations are withdrawn.
+  const chunkedModuleInit = isModuleInitChunkFunctionContext(fctx);
   for (const decl of stmt.declarationList.declarations) {
     if (ts.isObjectBindingPattern(decl.name)) {
       compileObjectDestructuring(ctx, fctx, decl);
@@ -1396,7 +1333,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // otherwise the inner declaration aliases and corrupts the module binding.
     // (The module-init body compiles with an empty `localMap`, so this stays
     // false there and the module-global store path is preserved.)
-    const hasLocalShadow = fctx.localMap.has(name);
+    // A physical module-init chunk owns only temporary lowering locals. They
+    // cannot shadow a module binding in a later source entry: for example, a
+    // completed top-level block may have used the same local name before the
+    // following source-level `let` must initialize its module global.
+    const hasLocalShadow = !chunkedModuleInit && fctx.localMap.has(name);
     // A lexical declaration nested in a top-level block is still local to that
     // block. `moduleGlobals` is keyed only by name, so an outer Script-level
     // binding with the same name must not make this declaration take the
@@ -1425,10 +1366,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
       }
     }
-    if (tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryAsciiCase(ctx, fctx, stmt, decl) || tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl)) continue;
-    if (tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
+    if (!chunkedModuleInit && tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (!chunkedModuleInit && tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (
+      !chunkedModuleInit &&
+      (tryAsciiCase(ctx, fctx, stmt, decl) || tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl))
+    ) {
+      continue;
+    }
+    if (!chunkedModuleInit && tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
 
     // #1210: string-builder rewrite for `let s = "";` followed by an
     // accumulating loop. Detected pre-pass populates `pendingStringBuilders`;
@@ -1438,7 +1384,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // route through `fctx.stringBuilders` instead). The TDZ flag is also
     // not allocated, since the variable is always logically initialised
     // immediately after the buffer is created.
-    if (fctx.pendingStringBuilders?.has(decl)) {
+    if (!chunkedModuleInit && fctx.pendingStringBuilders?.has(decl)) {
       // Native string helpers (incl. __str_buf_next_cap and __str_flatten)
       // must be available before any append site emits a call to them. The
       // detector only fires under nativeStrings; ensure here too in case the
@@ -1467,6 +1413,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     if (
       decl.initializer &&
       ts.isNewExpression(decl.initializer) &&
+      !chunkedModuleInit &&
       tryEmitLinearU8New(ctx, fctx, decl.name, decl.initializer)
     ) {
       emitTdzInit(ctx, fctx, name);
@@ -1515,12 +1462,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const deferredSynth = ctx.anonClassExprNames.get(decl.initializer);
         if (deferredSynth !== undefined && ctx.deferredClassBodies.has(deferredSynth)) {
           compileNestedClassDeclaration(ctx, fctx, decl.initializer, deferredSynth);
-        } else {
-          // Module-init class expressions were compiled eagerly, but their
-          // computed names still execute here, at runtime, immediately before
-          // the binding value is materialized. Deferred expressions already
-          // emit through compileNestedClassDeclaration above.
-          emitPreparedAccessorComputedNameEffects(ctx, fctx, decl.initializer);
         }
       }
       // (#3045 identity) Materialize a class-expression BINDING as the class's
@@ -1537,18 +1478,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // callable → `proxy-class` broke when this was applied globally). Falls
       // back to `compileExpression` for a class with no singleton (externref-
       // backed builtin subclass) or an unresolved synthetic name.
+      const materializationStart = fctx.body.length;
+      const handledType = tryCompileClassExpressionBindingValue(ctx, fctx, decl.initializer, { kind: "externref" });
       let actualType: ValType | null;
-      const classInitializer = ts.isClassExpression(decl.initializer) ? decl.initializer : undefined;
-      const clsSynth = classInitializer ? ctx.anonClassExprNames.get(classInitializer) : undefined;
-      if (
-        classInitializer !== undefined &&
-        clsSynth !== undefined &&
-        ctx.classObjectGlobals?.has(clsSynth) &&
-        emitLazyClassObjectGet(ctx, fctx, clsSynth)
-      ) {
-        actualType = emitClassExpressionStaticsBeforeValue(ctx, fctx, classInitializer, { kind: "externref" });
-      } else {
+      if (handledType === undefined) {
         actualType = compileExpression(ctx, fctx, decl.initializer);
+      } else {
+        emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
+        actualType = handledType;
       }
       const closureType = actualType ?? { kind: "externref" as const };
 
@@ -1769,7 +1706,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       if (decl.initializer) {
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
-        compileExpression(ctx, fctx, decl.initializer, wasmType);
+        const materializationStart = fctx.body.length;
+        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
+          compileExpression(ctx, fctx, decl.initializer, wasmType);
+        } else {
+          emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
+        }
         const initLocal = allocLocal(fctx, `__module_global_init_${fctx.locals.length}`, wasmType);
         fctx.body.push({ op: "local.set", index: initLocal });
         emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, initLocal, wasmType);
@@ -1937,7 +1879,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const genericFactoryInitializerType: ValType | null =
       genericFactoryTarget?.kind === "ref" || genericFactoryTarget?.kind === "ref_null"
         ? { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx }
-        : null;
+        : (decl.parent.flags & ts.NodeFlags.Const) !== 0 &&
+            genericFactory?.sourceResultAbi === true &&
+            (genericFactoryTarget?.kind === "externref" || genericFactoryTarget?.kind === "ref_extern") &&
+            (genericFactorySource?.kind === "ref" || genericFactorySource?.kind === "ref_null")
+          ? // Keep this declaration in lockstep with the let/const pre-hoister:
+            // an opaque logical T still carries the proven factory's physical
+            // source fields.
+            { kind: "ref_null", typeIdx: genericFactorySource.typeIdx }
+          : null;
     // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
     // slots so dynamic MOP/result-object reads do not become struct.get on the
     // checker-inferred target/revocable shapes.
@@ -1951,8 +1901,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       isDirectProxyConstruction(decl.initializer) &&
       ts.isIdentifier(decl.name) &&
       !proxyBindingEscapesToCall(ctx, decl);
-    const isProxyTargetBinding = bindingIsProxyTarget(ctx, decl);
-    if (isProxyTargetBinding) ctx.externrefAccessorVars.add(name);
+    const isProxyTargetBinding = proxyBindingIsTarget(ctx, decl);
+    if (isProxyTargetBinding || initIsProxy) ctx.externrefAccessorVars.add(name);
     const initIsPropertyDescriptorResult = isPropertyDescriptorResultExpression(decl.initializer);
     const initIsTransferredArrayLikeResult = transferredArrayLikeResultNeedsExternref(ctx, decl.initializer);
     // (#3037 CS1a) A spread-free, data-only object literal produced into an

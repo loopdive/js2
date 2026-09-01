@@ -4,13 +4,8 @@
  *
  * Extracted from expressions.ts (issue #688, step 7).
  *
- * Functions in this file:
- *   - ensureComputedPropertyFields, compileObjectLiteral
- *   - resolveConstantExpression, resolvePropertyNameText
- *   - resolveWellKnownSymbol, getWellKnownSymbolId, ensureSymbolCounter, compileSymbolCall
- *   - resolveComputedKeyExpression, resolveAccessorPropName
- *   - compileWidenedEmptyObject, compileObjectLiteralForStruct
- *   - compileTupleLiteral, compileArrayLiteral, compileArrayConstructorCall
+ * Owns object/array/tuple/symbol literal registration and emission, including
+ * widened and closed-struct object carriers.
  */
 
 import ts from "typescript";
@@ -34,6 +29,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -107,6 +103,8 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
+import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
+import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -935,15 +933,8 @@ function compileObjectLiteralWithAccessors(
   fctx: FunctionContext,
   expr: ts.ObjectLiteralExpression,
 ): ValType | null {
-  // 1. Tag the receiving variable BEFORE recursing into initializers — so
-  //    nested literals (e.g. spread sources) don't see a stale tag.
-  let parent: ts.Node | undefined = expr.parent;
-  while (parent && (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent))) {
-    parent = parent.parent;
-  }
-  if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
-    ctx.externrefAccessorVars.add(parent.name.text);
-  }
+  // Tag the receiving variable before recursing into initializers.
+  tagAccessorObjectLiteralReceiver(ctx, expr);
 
   // 2. Create the plain JS host object.
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
@@ -3039,7 +3030,7 @@ export function compileObjectLiteralForStruct(
   expr: ts.ObjectLiteralExpression,
   typeName: string,
 ): ValType | null {
-  const structTypeIdx = ctx.structMap.get(typeName);
+  const structTypeIdx = resolveObjectLiteralCarrier(ctx, expr, typeName);
   const fields = ctx.structFields.get(typeName);
   if (structTypeIdx === undefined || !fields) {
     reportError(ctx, expr, `Unknown struct type: ${typeName}`);
@@ -5482,23 +5473,22 @@ export function compileArrayLiteral(
   // the #3244 `boxVecElementToExternref` arm when it later crosses the boundary).
   // NESTED-ARRAY (vec-struct) elements are EXCLUDED — they already read back via
   // the typed `__extern_get_idx` vec arm — so this only re-keys plain objects.
-  const elemIsPlainObjectStructRef =
-    // Standalone/nativeStrings only — the closed-struct-carrier + lossy
-    // `$Object`→struct downcast is the STANDALONE array-build path (the host lane
-    // uses `__js_array_new` + real JS values, already correct at 777). Gating
-    // here keeps the host lane byte-identical (the numeric widenings above stay
-    // ungated because they fix genuine any[]-boxing needed in both lanes).
-    (ctx.standalone || ctx.nativeStrings) &&
-    (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
-    (() => {
-      const ti = (elemWasm as { typeIdx: number }).typeIdx;
-      if (ti < 0) return false;
-      if (ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx) return false; // strings keep their carrier
-      const rt = ctx.mod.types[ti];
-      if (rt?.kind !== "struct") return false;
-      for (const v of ctx.vecTypeMap.values()) if (v === ti) return false; // exclude nested-array vec carriers
-      return true;
-    })();
+  const elemNeedsAnyCarrierWiden =
+    bareAnyArrayLiteralNeedsExternref(ctx, expr, _isUndefinedLike) ||
+    // Standalone/nativeStrings only: the lossy `$Object`→struct downcast belongs to native array building;
+    // the host lane uses `__js_array_new` + real JS values. This keeps host output byte-identical, while
+    // primitive widenings remain ungated because both lanes need correct any[] boxing.
+    ((ctx.standalone || ctx.nativeStrings) &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      (() => {
+        const ti = (elemWasm as { typeIdx: number }).typeIdx;
+        if (ti < 0) return false;
+        if (ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx) return false; // strings keep their carrier
+        const rt = ctx.mod.types[ti];
+        if (rt?.kind !== "struct") return false;
+        for (const v of ctx.vecTypeMap.values()) if (v === ti) return false; // exclude nested-array vec carriers
+        return true;
+      })());
   // (#4531) ESCAPE widening — the diff-sequences shape. A literal of closed
   // object structs (`const callbacks = [{ foundSubsequence, isCommon }]`)
   // whose value ESCAPES into an `any`/`unknown`-typed call argument crosses to
@@ -5526,7 +5516,7 @@ export function compileArrayLiteral(
   if (!hasSpread && elemIsClosedStructRefAnyLane && arrayLiteralEscapeWidensToExternref(ctx, expr)) {
     elemWasm = { kind: "externref" };
   }
-  if (!hasSpread && (elemWasm.kind === "i32" || elemWasm.kind === "f64" || elemIsPlainObjectStructRef)) {
+  if (!hasSpread && (elemWasm.kind === "i32" || elemWasm.kind === "f64" || elemNeedsAnyCarrierWiden)) {
     const ctxArrType = ctx.checker.getContextualType(expr);
     if (ctxArrType) {
       const ctxArrSym = (ctxArrType as ts.TypeReference).symbol ?? ctxArrType.symbol;

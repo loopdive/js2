@@ -39,6 +39,16 @@ export function makeMethod<T extends unknown[]>(bias: number): (...args: T) => n
     return bias + (this as any).offset + args.length;
   };
 }
+
+interface MaybeNode {
+  value: number;
+}
+
+export function makeNullableMethod(bias: number): (value: MaybeNode | undefined) => number {
+  return function (value: MaybeNode | undefined): number {
+    return bias + (value === undefined ? 7 : value.value);
+  };
+}
 `;
 
 describe("#1058 externref-backed closure rest host dispatch", () => {
@@ -67,9 +77,11 @@ describe("#1058 externref-backed closure rest host dispatch", () => {
     const exports = instance.exports as unknown as {
       makeArrow(bias: number): unknown;
       makeMethod(bias: number): unknown;
+      makeNullableMethod(bias: number): unknown;
       __call_fn_0(closure: unknown): number;
       __call_fn_2(closure: unknown, first: unknown, second: unknown): number;
       __call_fn_method_0(receiver: unknown, closure: unknown): number;
+      __call_fn_method_1(receiver: unknown, closure: unknown, value: unknown): number;
       __call_fn_method_2(receiver: unknown, closure: unknown, first: unknown, second: unknown): number;
     };
 
@@ -81,5 +93,9 @@ describe("#1058 externref-backed closure rest host dispatch", () => {
     const receiver = { offset: 5 };
     expect(exports.__call_fn_method_0(receiver, method)).toBe(15);
     expect(exports.__call_fn_method_2(receiver, method, 1, 2)).toBe(17);
+
+    const nullableMethod = exports.makeNullableMethod(10);
+    expect(exports.__call_fn_method_0(undefined, nullableMethod)).toBe(17);
+    expect(exports.__call_fn_method_1(undefined, nullableMethod, undefined)).toBe(17);
   });
 });

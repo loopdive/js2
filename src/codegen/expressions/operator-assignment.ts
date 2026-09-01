@@ -48,6 +48,7 @@ import {
 import { EMIT_COMPOUND_OP_HANDLES, tryEmitTypedThisCompound } from "../typed-this.js"; // (#3683 S2) typed-`this` compound
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js";
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js";
+import { identityPreservingStructuralParamCarrier } from "../identity-preserving-structural-param.js";
 import { isSealedNominalStructParent } from "../struct-hierarchy-layout.js";
 import {
   emitAlternateStructSetDispatch,
@@ -93,6 +94,7 @@ import {
   isNonWritableDataProperty,
   isStrictContext,
 } from "./assignment.js";
+import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
@@ -1856,20 +1858,6 @@ function tryCompileHostBigIntCompoundAssignment(
   return result === VOID_RESULT ? null : result;
 }
 
-function tryCompileConstCompoundAssignment(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  name: string,
-  right: ts.Expression,
-): ValType | undefined {
-  if (!fctx.constBindings?.has(name)) return undefined;
-  const rhsType = compileExpression(ctx, fctx, right);
-  if (rhsType) fctx.body.push({ op: "drop" });
-  emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-  fctx.body.push({ op: "unreachable" });
-  return { kind: "f64" };
-}
-
 export function compileCompoundAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1916,8 +1904,7 @@ export function compileCompoundAssignment(
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  const constCompound = tryCompileConstCompoundAssignment(ctx, fctx, name, expr.right);
-  if (constCompound !== undefined) return constCompound;
+  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
 
   // Reuse ordinary binary and assignment paths for JS-host BigInt identifiers.
   const hostBigIntCompound = tryCompileHostBigIntCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
@@ -3020,10 +3007,12 @@ function compilePropertyCompoundAssignmentExternref(
   fctx.body.push({ op: "local.set", index: keyLocal });
 
   // (#2681/#2686) Is the receiver a PINNED reconstructed-fnctor struct (acorn's
-  // `this.pos`, `this`/flow-mapped)? Only THEN do the compound read+write route
-  // through the `__get_member`/`__set_member` struct dispatchers (slot), staying
-  // symmetric with the pinned simple read/write so `this.pos += 1` advances. For
-  // a GENERAL `any`-receiver (a plain object literal lowered to an anonymous
+  // `this.pos`, `this`/flow-mapped), or a source-certified TypeScript Node
+  // identity parameter? Only THEN do the compound read+write route through the
+  // `__get_member`/`__set_member` struct dispatchers. The latter may carry either
+  // the physical Node constraint or a host object: the struct arm sees real
+  // fields while the terminal extern arm retains host-sidecar semantics.
+  // For a GENERAL `any`-receiver (a plain object literal lowered to an anonymous
   // `$__anon_N` struct), the dispatcher's struct arm would read/write the SLOT and
   // bypass the delete-tombstone/ordering sidecar semantics (#2179/#2731 — the
   // `for-in/order-simple-object` regressor), so a general receiver stays on the
@@ -3031,7 +3020,8 @@ function compilePropertyCompoundAssignmentExternref(
   const pinnedCompound =
     sealedStructReceiver ||
     (target.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
-    resolveReceiverStruct(ctx, fctx, target.expression) !== undefined;
+    resolveReceiverStruct(ctx, fctx, target.expression) !== undefined ||
+    identityPreservingStructuralParamCarrier(ctx, target.expression)?.compoundStructDispatch === true;
 
   // Read current value. When pinned, route through the symmetric
   // `__get_member_<name>` dispatcher (`struct.get` arms + `__extern_get` terminal)

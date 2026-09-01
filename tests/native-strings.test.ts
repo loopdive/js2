@@ -43,6 +43,57 @@ describe("fast mode: native strings", () => {
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 
+  it("returns the real host eval value through a host string constant", async () => {
+    // `fast: true` uses native strings, so the `eval` lookup is recorded as
+    // the native-string `-1` sentinel in stringGlobalMap. The host-global
+    // lookup must use the separate host string-constant import: it cannot
+    // receive either a NativeString struct or a `global.get -1` sentinel.
+    const result = await compile(
+      `export function test(): number {
+        const indirect = eval;
+        return typeof indirect === "function" ? 42 : -1;
+      }`,
+      { fast: true },
+    );
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    expect((instance.exports.test as Function)()).toBe(42);
+  });
+
+  it("uses host strings for TDZ ReferenceErrors in loop assignments", async () => {
+    const result = await compile(
+      `export function test(): number {
+        let result = 0;
+        for (let i = 0; i < 1; i++) {
+          try { result = value; } catch (error) { result = 42; }
+        }
+        let value = 1;
+        return result + value;
+      }`,
+      { fast: true },
+    );
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    expect((instance.exports.test as Function)()).toBe(43);
+  });
+
+  it("keeps host class static-method metadata registered", async () => {
+    const src = `
+      class C { static method(): number { return 42; } }
+      export function test(): number {
+        const descriptor: any = Object.getOwnPropertyDescriptor(C, "method");
+        return descriptor ? 42 : -1;
+      }
+    `;
+    expect(await runFast(src)).toBe(42);
+  });
+
   it("WAT contains NativeString struct type", async () => {
     const result = await compile(`export function test(): string { return "hello"; }`, { fast: true });
     expect(result.success).toBe(true);

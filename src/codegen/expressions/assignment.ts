@@ -111,6 +111,7 @@ import {
   emitThrowTypeError,
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
+  isConstIdentifierAssignmentTarget,
   noJsHost,
   resolvePrivateThisFieldCarrier,
   updateLocalType,
@@ -126,7 +127,12 @@ import {
 import { emitMappedArgParamSync, emitMappedArgReverseSync } from "./logical-ops.js";
 import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
-import { emitPutValueTargetGuard, emitResolvedIdentifierWriteFromStack } from "./identifier-assignment.js";
+import {
+  emitPutValueTargetGuard,
+  emitResolvedIdentifierWriteFromStack,
+  resolveModuleAwareIdentifierWriteTarget,
+  tryConstSet,
+} from "./identifier-assignment.js";
 import { currentSourceModuleGlobalIndex, identifierHasOnlyAmbientDeclarations } from "./identifier-module-storage.js";
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
 import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
@@ -415,15 +421,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
         return rhsType;
       }
     }
-    // const bindings — assignment throws TypeError at runtime
-    if (fctx.constBindings?.has(name)) {
-      // Evaluate RHS for side effects, then throw
-      const rhsType = compileExpression(ctx, fctx, expr.right);
-      if (rhsType) fctx.body.push({ op: "drop" });
-      emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-      fctx.body.push({ op: "unreachable" });
-      return { kind: "f64" }; // unreachable, but satisfy type
-    }
+    if (tryConstSet(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
     // (#4621 B) §19.1.1-19.1.3 — `NaN = 12` / `Infinity = 12` / `undefined = 12`
     // in STRICT code. These are non-writable value properties of the global
     // object, so PutValue's [[Set]] fails and §6.2.5.6 step 6.a throws
@@ -937,7 +935,7 @@ export function emitIdentifierWriteFromLocal(
   const name = id.text;
 
   // const → TypeError; read-only (named-fn-expr) → silent no-op (sloppy).
-  if (fctx.constBindings?.has(name)) {
+  if (isConstIdentifierAssignmentTarget(ctx, fctx, id)) {
     emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
     fctx.body.push({ op: "unreachable" });
     return;
@@ -1185,6 +1183,80 @@ function collectObjectRestExcludedKeys(ctx: CodegenContext, target: ts.ObjectLit
     }
   }
   return excludedKeys;
+}
+
+function emitObjectRestAssignment(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.ObjectLiteralExpression,
+  prop: ts.SpreadAssignment,
+  tmpLocal: number,
+  structTypeIdx: number,
+): void {
+  if (!ts.isIdentifier(prop.expression)) return;
+  const { localIdx: restLocalIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(
+    ctx,
+    fctx,
+    prop.expression,
+    { kind: "externref" },
+  );
+  const restValueIdx = allocLocal(fctx, `__rest_value_${fctx.locals.length}`, { kind: "externref" });
+  // Collect excluded names, including statically-resolvable computed keys (e.g. `{ [a]: b, ...rest }`).
+  const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
+  if (ctx.targetProfile.semanticProviders === "native-first") {
+    const emitted = emitNativeObjectRest(
+      ctx,
+      fctx,
+      () => {
+        fctx.body.push({ op: "local.get", index: tmpLocal });
+        if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+          fctx.body.push({ op: "extern.convert_any" });
+        }
+      },
+      excludedKeys,
+      restValueIdx,
+    );
+    if (emitted) {
+      fctx.body.push({ op: "local.get", index: restValueIdx });
+      emitResolvedIdentifierWriteFromStack(
+        ctx,
+        fctx,
+        prop.expression,
+        { kind: "externref" },
+        restLocalIdx,
+        moduleGlobalIdx,
+      );
+      return;
+    }
+  }
+  // Host-assisted compatibility ABI: comma-joined exclusion keys.
+  let restObjIdx = ctx.funcMap.get("__extern_rest_object");
+  if (restObjIdx === undefined) {
+    const importsBefore = ctx.numImportFuncs;
+    const restObjType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+    addImport(ctx, "env", "__extern_rest_object", { kind: "func", typeIdx: restObjType });
+    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
+    restObjIdx = ctx.funcMap.get("__extern_rest_object");
+  }
+  if (restObjIdx === undefined) return;
+  const excludedStr = excludedKeys.join(",");
+  addStringConstantGlobal(ctx, excludedStr);
+  // Convert struct ref to externref.
+  fctx.body.push({ op: "local.get", index: tmpLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  // `nativeStrings` can use a -1 sentinel global; materialize the CSV inline.
+  for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
+  fctx.body.push({ op: "call", funcIdx: restObjIdx });
+  fctx.body.push({ op: "local.set", index: restValueIdx });
+  fctx.body.push({ op: "local.get", index: restValueIdx });
+  emitResolvedIdentifierWriteFromStack(
+    ctx,
+    fctx,
+    prop.expression,
+    { kind: "externref" },
+    restLocalIdx,
+    moduleGlobalIdx,
+  );
 }
 
 function compileDestructuringAssignment(
@@ -1758,58 +1830,7 @@ function compileDestructuringAssignment(
       }
       // else: unsupported target expression in property assignment — skip
     } else if (ts.isSpreadAssignment(prop)) {
-      // { ...rest } = obj — rest element in object destructuring
-      // Convert struct to externref and use __extern_rest_object to collect remaining props
-      if (ts.isIdentifier(prop.expression)) {
-        const restName = prop.expression.text;
-        let restIdx = fctx.localMap.get(restName);
-        if (restIdx === undefined) {
-          restIdx = allocLocal(fctx, restName, { kind: "externref" });
-        }
-        // Collect excluded property names, including statically-resolvable
-        // computed names (e.g. `{ [a]: b, ...rest }`).
-        const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
-        if (ctx.targetProfile.semanticProviders === "native-first") {
-          const emitted = emitNativeObjectRest(
-            ctx,
-            fctx,
-            () => {
-              fctx.body.push({ op: "local.get", index: tmpLocal });
-              if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
-                fctx.body.push({ op: "extern.convert_any" });
-              }
-            },
-            excludedKeys,
-            restIdx,
-          );
-          if (emitted) continue;
-        }
-
-        // Host-assisted compatibility ABI: comma-joined exclusion keys.
-        let restObjIdx = ctx.funcMap.get("__extern_rest_object");
-        if (restObjIdx === undefined) {
-          const importsBefore = ctx.numImportFuncs;
-          const restObjType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-          addImport(ctx, "env", "__extern_rest_object", { kind: "func", typeIdx: restObjType });
-          shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-          restObjIdx = ctx.funcMap.get("__extern_rest_object");
-        }
-        if (restObjIdx !== undefined) {
-          const excludedStr = excludedKeys.join(",");
-          addStringConstantGlobal(ctx, excludedStr);
-          // Convert struct ref to externref
-          fctx.body.push({ op: "local.get", index: tmpLocal });
-          fctx.body.push({ op: "extern.convert_any" });
-          // (#2515 S0 / #1623) nativeStrings stores a `-1` sentinel global index
-          // for string constants; a raw `global.get <stringGlobalMap.get(excludedStr)>`
-          // would bake `global.get -1` and fail binary emit (the #2043 validator).
-          // Materialize the excluded-keys CSV inline as externref — the twin fix
-          // already applied to the destructuring-params rest path.
-          for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
-          fctx.body.push({ op: "call", funcIdx: restObjIdx });
-          fctx.body.push({ op: "local.set", index: restIdx });
-        }
-      }
+      emitObjectRestAssignment(ctx, fctx, target, prop, tmpLocal, structTypeIdx);
     }
   }
 
@@ -1956,7 +1977,6 @@ function compileArrayDestructuringAssignment(
   // Compile the RHS — should produce a struct ref (either tuple or vec)
   const resultType = compileExpression(ctx, fctx, value);
   if (!resultType) return null;
-
   // (#1719 CPR-2) When the program overrode Array.prototype[@@iterator] and the
   // RHS is a real array, drive the captured override instead of the backing
   // store (§13.15.5.2 ArrayAssignmentPattern → GetIterator). Strictly gated
@@ -2197,12 +2217,13 @@ function compileArrayDestructuringAssignment(
         // Dispatch on the rest target kind (mirrors the non-rest element
         // dispatch below). The collected vec lives in `tmpRestVec`.
         if (ts.isIdentifier(restTarget)) {
-          // (#5146 cluster C) A rest target obeys PutValue like any other target.
-          if (emitPutValueTargetGuard(ctx, fctx, restTarget, false)) continue;
           const restName = restTarget.text;
-          let restLocalIdx = fctx.localMap.get(restName);
+          const durableModuleGlobalIdx = fctx.moduleInitChunk
+            ? currentSourceModuleGlobalIndex(ctx, restTarget)
+            : undefined;
+          let restLocalIdx = durableModuleGlobalIdx === undefined ? fctx.localMap.get(restName) : undefined;
           if (restLocalIdx === undefined) {
-            restLocalIdx = allocLocal(fctx, restName, resultType);
+            if (durableModuleGlobalIdx === undefined) restLocalIdx = allocLocal(fctx, restName, resultType);
           } else {
             // If the rest local was pre-allocated as externref (e.g. var y;),
             // allocate a fresh local with the correct vec type and redirect
@@ -2218,7 +2239,7 @@ function compileArrayDestructuringAssignment(
             }
           }
           fctx.body.push({ op: "local.get", index: tmpRestVec });
-          fctx.body.push({ op: "local.set", index: restLocalIdx });
+          emitResolvedIdentifierWriteFromStack(ctx, fctx, restTarget, resultType, restLocalIdx, durableModuleGlobalIdx);
         } else if (ts.isObjectLiteralExpression(restTarget)) {
           // `[...{ 0: x, length }] = vals` — destructure the collected vec
           // through an object pattern using array-like semantics (#2757).
@@ -2588,13 +2609,12 @@ function compileExternrefArrayDestructuringAssignment(
     if (ts.isSpreadElement(element)) {
       const restTarget = element.expression;
       if (ts.isIdentifier(restTarget)) {
-        // (#5146 cluster C) A rest target obeys PutValue like any other target.
-        if (emitPutValueTargetGuard(ctx, fctx, restTarget, false)) continue;
-        const restName = restTarget.text;
-        let restLocalIdx = fctx.localMap.get(restName);
-        if (restLocalIdx === undefined) {
-          restLocalIdx = allocLocal(fctx, restName, { kind: "externref" });
-        }
+        const { localIdx: restLocalIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(
+          ctx,
+          fctx,
+          restTarget,
+          { kind: "externref" },
+        );
         let sliceIdx = ctx.funcMap.get("__extern_slice");
         if (sliceIdx === undefined) {
           ensureLateImport(ctx, "__extern_slice", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
@@ -2607,7 +2627,14 @@ function compileExternrefArrayDestructuringAssignment(
           fctx.body.push({ op: "local.get", index: matLocal });
           fctx.body.push({ op: "f64.const", value: i });
           fctx.body.push({ op: "call", funcIdx: sliceIdx });
-          fctx.body.push({ op: "local.set", index: restLocalIdx });
+          emitResolvedIdentifierWriteFromStack(
+            ctx,
+            fctx,
+            restTarget,
+            { kind: "externref" },
+            restLocalIdx,
+            moduleGlobalIdx,
+          );
         }
       }
       continue;
@@ -3154,11 +3181,12 @@ function emitObjectDestructureFromLocal(
           reportSilentFallback(ctx, "lookup-miss-skip", "assignment:object-destructure-shorthand-field-miss", prop);
           continue;
         }
-        let missLocalIdx = fctx.localMap.get(propName);
-        const missGlobalIdx = missLocalIdx === undefined ? currentSourceModuleGlobalIndex(ctx, prop.name) : undefined;
-        if (missLocalIdx === undefined && missGlobalIdx === undefined) {
-          missLocalIdx = allocLocal(fctx, propName, { kind: "externref" });
-        }
+        const { localIdx: missLocalIdx, moduleGlobalIdx: missGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(
+          ctx,
+          fctx,
+          prop.name,
+          { kind: "externref" },
+        );
         const missTargetType =
           missLocalIdx !== undefined
             ? (getLocalType(fctx, missLocalIdx) ?? { kind: "externref" as const })
@@ -3170,12 +3198,9 @@ function emitObjectDestructureFromLocal(
         continue;
       }
 
-      let localIdx = fctx.localMap.get(propName);
-      if (localIdx === undefined) {
-        localIdx = allocLocal(fctx, propName, fields[fieldIdx]!.type);
-      }
-
       const fieldType = fields[fieldIdx]!.type;
+      const { localIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(ctx, fctx, prop.name, fieldType);
+
       if (initializer !== undefined && fieldType.kind === "externref") {
         // (#5146) `{ x = d }` with the field present: the default fires only
         // when the read value is `undefined` (never for JS `null`).
@@ -3188,17 +3213,22 @@ function emitObjectDestructureFromLocal(
         fctx.body.push({ op: "local.get", index: tmpField });
         if (undefIdx !== undefined) fctx.body.push({ op: "call", funcIdx: undefIdx });
         else fctx.body.push({ op: "ref.is_null" });
-        const localTypeWithDefault = getLocalType(fctx, localIdx) ?? fieldType;
+        const localTypeWithDefault =
+          localIdx !== undefined
+            ? (getLocalType(fctx, localIdx) ?? fieldType)
+            : (ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type ?? fieldType);
         attachDetachedAssignmentBodies(
           fctx,
           (body) => ({
             then: body(() => {
               const initType = compileExpression(ctx, fctx, initializer, localTypeWithDefault);
-              if (initType) emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, initType, localIdx, undefined);
+              if (initType) {
+                emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, initType, localIdx, moduleGlobalIdx);
+              }
             }),
             else: body(() => {
               fctx.body.push({ op: "local.get", index: tmpField });
-              emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, fieldType, localIdx, undefined);
+              emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, fieldType, localIdx, moduleGlobalIdx);
             }),
           }),
           (branches) => fctx.body.push({ op: "if", blockType: { kind: "empty" }, ...branches }),
@@ -3208,11 +3238,7 @@ function emitObjectDestructureFromLocal(
 
       fctx.body.push({ op: "local.get", index: srcLocal });
       fctx.body.push({ op: "struct.get", typeIdx: srcTypeIdx, fieldIdx });
-      const localType = getLocalType(fctx, localIdx);
-      if (localType && !valTypesMatch(fieldType, localType)) {
-        coerceType(ctx, fctx, fieldType, localType);
-      }
-      fctx.body.push({ op: "local.set", index: localIdx });
+      emitResolvedIdentifierWriteFromStack(ctx, fctx, prop.name, fieldType, localIdx, moduleGlobalIdx);
     } else if (ts.isPropertyAssignment(prop)) {
       let propName = ts.isIdentifier(prop.name)
         ? prop.name.text
@@ -3243,17 +3269,10 @@ function emitObjectDestructureFromLocal(
 
       const targetExpr = prop.initializer;
       if (ts.isIdentifier(targetExpr)) {
-        let localIdx = fctx.localMap.get(targetExpr.text);
-        if (localIdx === undefined) {
-          localIdx = allocLocal(fctx, targetExpr.text, fieldType);
-        }
+        const { localIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(ctx, fctx, targetExpr, fieldType);
         fctx.body.push({ op: "local.get", index: srcLocal });
         fctx.body.push({ op: "struct.get", typeIdx: srcTypeIdx, fieldIdx });
-        const localType = getLocalType(fctx, localIdx);
-        if (localType && !valTypesMatch(fieldType, localType)) {
-          coerceType(ctx, fctx, fieldType, localType);
-        }
-        emitCoercedLocalSet(ctx, fctx, localIdx, fieldType);
+        emitResolvedIdentifierWriteFromStack(ctx, fctx, targetExpr, fieldType, localIdx, moduleGlobalIdx);
       } else if (ts.isObjectLiteralExpression(targetExpr)) {
         // Nested object: { x: { a, b } } = obj
         const tmpNested = allocLocal(fctx, `__nested_${fctx.locals.length}`, fieldType);
@@ -3439,21 +3458,9 @@ function emitArrayDestructureFromLocal(
     const elemType = getElemType(i);
 
     if (ts.isIdentifier(element)) {
-      let localIdx = fctx.localMap.get(element.text);
-      if (localIdx === undefined) {
-        localIdx = allocLocal(fctx, element.text, elemType);
-      }
+      const { localIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(ctx, fctx, element, elemType);
       emitElemGet(i);
-      // (#2757) Do NOT pre-coerce `elemType → localType` here: `emitCoercedLocalSet`
-      // already coerces the stack value (typed `elemType`) to the local's type
-      // internally. A manual pre-coerce left the stack as `localType` but still
-      // told `emitCoercedLocalSet` the value was `elemType`, so it coerced a
-      // SECOND time — emitting invalid Wasm (`f64.convert_i32_s` on an externref /
-      // `extern.convert_any` on an i32) whenever the rest-vec element type differs
-      // from the target local's type (e.g. `[...[x]] = [undefined]` with
-      // `var x = null`). Single-coerce via `emitCoercedLocalSet` is correct for
-      // both the matching and mismatching cases.
-      emitCoercedLocalSet(ctx, fctx, localIdx, elemType);
+      emitResolvedIdentifierWriteFromStack(ctx, fctx, element, elemType, localIdx, moduleGlobalIdx);
     } else if (ts.isObjectLiteralExpression(element)) {
       // Nested object pattern: [{ a, b }] = arr (#1225)
       const tmpElem = allocLocal(fctx, `__arr_nested_${fctx.locals.length}`, elemType);
@@ -3593,16 +3600,9 @@ function emitVecArrayLikeObjectDestructure(
     const tmpVal = allocLocal(fctx, `__rest_obj_val_${fctx.locals.length}`, valueType);
     fctx.body.push({ op: "local.set", index: tmpVal });
     if (ts.isIdentifier(targetExpr)) {
-      let localIdx = fctx.localMap.get(targetExpr.text);
-      if (localIdx === undefined) {
-        localIdx = allocLocal(fctx, targetExpr.text, valueType);
-      }
+      const { localIdx, moduleGlobalIdx } = resolveModuleAwareIdentifierWriteTarget(ctx, fctx, targetExpr, valueType);
       fctx.body.push({ op: "local.get", index: tmpVal });
-      // `emitCoercedLocalSet` coerces from the stack type (`valueType`) to the
-      // local's declared type itself — do NOT pre-coerce here (that would leave
-      // an already-converted value and double-convert, e.g. `f64.convert_i32_s`
-      // applied to a boxed externref).
-      emitCoercedLocalSet(ctx, fctx, localIdx, valueType);
+      emitResolvedIdentifierWriteFromStack(ctx, fctx, targetExpr, valueType, localIdx, moduleGlobalIdx);
     } else if (ts.isObjectLiteralExpression(targetExpr)) {
       emitObjectDestructureFromLocal(ctx, fctx, targetExpr, tmpVal, valueType);
     } else if (ts.isArrayLiteralExpression(targetExpr)) {
@@ -4605,7 +4605,7 @@ function compilePropertyAssignment(
   }
 
   // Handle shape-inferred array-like variables: obj.length = N
-  if (ts.isIdentifier(target.expression)) {
+  if (ts.isIdentifier(target.expression) && !ctx.externrefAccessorVars.has(target.expression.text)) {
     const shapeInfo = ctx.shapeMap.get(target.expression.text);
     if (shapeInfo) {
       const fieldName = target.name.text;

@@ -23,8 +23,10 @@ import type {
 import { compileMultiSource } from "./compiler.js";
 import type { ProjectModuleResolutions } from "./checker/index.js";
 import { getBarePackageName } from "./resolve.js";
+import { LINKED_IMPORT_GETTER_PREFIX, LINKED_IMPORT_REEXPORT_PREFIX } from "./linked-import-getter-names.js";
 import { getDefaultEnvironment } from "./env.js";
 import { buildCompiledImports } from "./runtime.js";
+import { installSharedExceptionTag } from "./linked-provider-runtime.js";
 import { RUNTIME_RECGROUP_ABI_VERSION } from "./emit/canonical-recgroup.js";
 import {
   appendProviderManifest,
@@ -797,12 +799,12 @@ interface LinkedRewriteBinding {
 
 function getterLocalName(binding: Pick<LinkedRewriteBinding, "specifier" | "exportName" | "localName">): string {
   const safe = binding.exportName === "*" ? "namespace" : binding.exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
-  return `__js2wasm_get_${safe}_${hashText([binding.specifier, binding.exportName, binding.localName]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_GETTER_PREFIX}${safe}_${hashText([binding.specifier, binding.exportName, binding.localName]).slice(0, 8)}`;
 }
 
 function reexportLocalName(specifier: string, publishedName: string, sourceName: string, importer: string): string {
   const safe = publishedName.replace(/[^$A-Z_a-z0-9]/g, "_");
-  return `__js2wasm_reexport_${safe}_${hashText([specifier, publishedName, sourceName, importer]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_REEXPORT_PREFIX}${safe}_${hashText([specifier, publishedName, sourceName, importer]).slice(0, 8)}`;
 }
 
 /**
@@ -930,11 +932,11 @@ function declarationSourceFile(node: PackageNode, exported: FunctionExport | Val
 
 function boundaryGetterField(exportName: string, packageName: string): string {
   const safe = exportName === "default" ? "default" : exportName.replace(/[^$A-Z_a-z0-9]/g, "_");
-  return `__js2wasm_get_${safe}_${hashText([packageName, exportName]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_GETTER_PREFIX}${safe}_${hashText([packageName, exportName]).slice(0, 8)}`;
 }
 
 function namespaceGetterField(packageName: string): string {
-  return `__js2wasm_get_namespace_${hashText([packageName]).slice(0, 8)}`;
+  return `${LINKED_IMPORT_GETTER_PREFIX}namespace_${hashText([packageName]).slice(0, 8)}`;
 }
 
 function buildDeclarationStub(node: PackageNode): string {
@@ -1324,9 +1326,14 @@ function validateLinkedSignatures(
       string_constants: built.string_constants,
       string_constants16: built.string_constants16,
     } as unknown as WebAssembly.Imports;
+    // (#5226) Both halves import `env.__exn`; this dry-run instantiation must
+    // supply it exactly as the real one does, or every linked graph falls back
+    // to `bundled` on a missing-tag import error.
+    installSharedExceptionTag(baseImports);
     const providerExports = new Map<string, WebAssembly.Exports>();
     for (const artifact of artifacts) {
       const providerImports = buildProviderValidationImports(artifact);
+      installSharedExceptionTag(providerImports);
       for (const dependency of artifact.dependencies) {
         const dependencyExports = providerExports.get(dependency);
         if (!dependencyExports) return `missing provider dependency ${dependency}`;
@@ -1877,6 +1884,9 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       packageLinking: false,
       packageCacheDir: undefined,
       canonicalRuntimeTypes: true,
+      // (#5226) One exception identity for the whole graph — see the consumer's
+      // twin below. Both sides must agree or a provider throw is uncatchable.
+      sharedExceptionTag: true,
       // Provider module initialization is exported and invoked only after its
       // own host adapter has been wired to its own instance.
       deferTopLevelInit: true,
@@ -2072,17 +2082,13 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     packageLinking: false,
     packageCacheDir: undefined,
     canonicalRuntimeTypes: true,
+    // (#5226) The consumer half of the shared `env.__exn` tag.
+    sharedExceptionTag: true,
     link: [...new Set([...(input.options.link ?? []), ...Array.from(rootBindings.values(), (v) => v.module)])],
     linkedPackageBindings: rootBindings,
   };
   const result = await compileMultiSource(rootFiles, input.entryKey, rootOptions, undefined, rootResolutions);
-  if (!result.success) return makeFallback("linked root compilation failed; using bundled project");
   const artifacts = topo.order.map((node) => artifactByRoot.get(node.root)!).filter(Boolean);
-  if (topo.order.some((node) => node.requiresSignatureValidation) && result.hasTopLevelStatements) {
-    return makeFallback("inferred/any package signatures require side-effect-free engine validation");
-  }
-  const signatureFailure = validateLinkedSignatures(result, artifacts);
-  if (signatureFailure) return makeFallback(`linked signature validation failed: ${signatureFailure}`);
   const plan: PackageLinkPlan = {
     mode: "separate",
     version: 1,
@@ -2090,5 +2096,21 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
     compiledProviders,
     cachedProviders,
   };
+  // Explicit separate-module compilation treats the linked consumer result as
+  // authoritative. Recompiling the same graph monolithically cannot repair an
+  // inherently unsupported consumer shape and can turn a bounded diagnostic
+  // into an expensive provider-source retry. Automatic/default linking keeps
+  // its compatibility fallback for graphs whose generated adapter cannot be
+  // compiled even though the original monolithic graph might still work.
+  if (!result.success) {
+    return input.options.packageLinking === "separate"
+      ? { kind: "separate", result, artifacts, plan }
+      : makeFallback("linked root compilation failed; using bundled project");
+  }
+  if (topo.order.some((node) => node.requiresSignatureValidation) && result.hasTopLevelStatements) {
+    return makeFallback("inferred/any package signatures require side-effect-free engine validation");
+  }
+  const signatureFailure = validateLinkedSignatures(result, artifacts);
+  if (signatureFailure) return makeFallback(`linked signature validation failed: ${signatureFailure}`);
   return { kind: "separate", result, artifacts, plan };
 }

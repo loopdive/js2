@@ -362,7 +362,7 @@ export interface IrExternClassMeta {
  * (#2955) The raw `nativeStrings()` mode discriminator is deliberately NOT
  * on this interface anymore: every former from-ast mode read is now a
  * narrow resolver-owned capability/rep/strategy query (`stringIsExternref`,
- * `hasHostNumberBox`, `hasHostBooleanBox`, `hasHostNumberToString`, `stringMethodPlan`,
+ * `hasHostNumberToString`, `stringMethodPlan`,
  * `stringForOfPlan`). Keeping the raw discriminator off the front-end
  * surface makes a new representation-polymorphic IR-build branch a compile
  * error instead of a drift channel. (`IrLowerResolver` still carries it —
@@ -412,27 +412,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   resolveDynamic?(): ValType;
   /**
-   * (#2955 number-box slice) Capability predicate: does this compile's lane
-   * own the `__box_number` / `__unbox_number` host imports (the f64⇄externref
-   * boxing pair legacy registers via `addUnionImports`)? The two from-ast
-   * boxing arms (`coerceToExpectedExtern` f64→externref, `coerceReturnValue`
-   * externref→f64) previously read `nativeStrings?.() === false` as a PROXY
-   * for this — a mode read the #2955 grep gate wants out of the front-end.
-   * The mode knowledge now lives on the resolver/lower side
-   * (`integration.ts`); from-ast only asks "can I box here?" and demotes when
-   * the answer is no. The implementation is intentionally `!ctx.nativeStrings`
-   * today (byte-inert relocation); widening it (native-strings host compiles,
-   * standalone `$AnyValue` boxing) is a semantic follow-up tracked in #2955.
-   */
-  hasHostNumberBox?(): boolean;
-  /**
-   * Does this compile's lane own the host `__box_boolean` import? Boolean
-   * values use the same i32 carrier as integer-shaped numbers, so this
-   * capability is deliberately separate from `hasHostNumberBox`: callers
-   * must prove the boolean brand before selecting the boolean boxer.
-   */
-  hasHostBooleanBox?(): boolean;
-  /**
    * (#2955 slice 3) Rep predicate: is `IrType.string`'s carrier ValType
    * externref (the host-strings backend), so a string SSA value can flow
    * unchanged into an externref-expected position (host-call args,
@@ -445,8 +424,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * question and demotes (or takes the native fold path) when the answer
    * is no. The answer MUST stay a build-time answer: the native arm of
    * `coerceToExpectedExtern` is a demote throw (claim/demote decisions
-   * have no lower-time channel — same constraint as `stringMethodPlan` /
-   * `hasHostNumberBox`). Implementation is intentionally
+   * have no lower-time channel — same constraint as `stringMethodPlan`).
+   * Implementation is intentionally
    * `!ctx.nativeStrings` today (byte-inert relocation); a native string
    * (`(ref $AnyString)`) can NEVER satisfy an externref host-arg position,
    * so unlike the number-box capability there is no widening follow-up on
@@ -461,8 +440,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * in source)? The from-ast `<number>.toString()` arm previously read
    * `nativeStrings?.() === false` as a PROXY for this — the import is
    * host-lane-only AND its return is host-mode's string carrier
-   * (externref), so the mode read was doing capability duty. Same shape as
-   * `hasHostNumberBox`: the answer MUST stay a build-time answer (the
+   * (externref), so the mode read was doing capability duty. The answer MUST
+   * stay a build-time answer (the
    * native arm is a demote — no lower-time demote channel), the
    * implementation is intentionally `!ctx.nativeStrings` today (byte-inert
    * relocation), and widening (a native number formatter whose return is
@@ -637,21 +616,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * be a `Map`.
    */
   ensureNativeMapStorageType?(): IrType | undefined;
-  /**
-   * (#4461) True when `undefined`-ness of an externref-shaped value is tested
-   * by a NATIVE `__extern_is_undefined` function rather than the `env` host
-   * import. Host-free lanes register the predicate as a real Wasm function
-   * (`ensureObjectRuntime`); asking for the import there would put a host
-   * import into a standalone module.
-   */
-  externIsUndefinedIsNative?(): boolean;
-  /**
-   * (#4461) True when `__unbox_number` exists as a NATIVE function on this
-   * lane. Complementary to `hasHostNumberBox`: standalone registers the same
-   * name/signature through `addUnionImports`'s native-provider arm, so an
-   * externref carrying a boxed number can be unboxed without a host import.
-   */
-  hasNativeNumberUnbox?(): boolean;
   /**
    * (#2856) Console-argument variant selection for `console.<m>(arg)` —
    * returns the import-name suffix (`console_<m>_<variant>`). MUST use the
@@ -7230,42 +7194,29 @@ function coerceToExpectedExtern(
   if (expected.kind === "externref" && t.kind === "extern") {
     return value;
   }
-  // (#2856 C3) f64 → externref: box through the `__box_number` host import —
-  // the exact coercion legacy's `coerceType` emits for the same site (so the
-  // import is registered by legacy's own compile of the function in the
-  // dual-compile model). Gated on the resolver's number-box CAPABILITY
-  // (#2955): standalone has no `__box_number` (its boxing is the `$AnyValue`
-  // family), so the predicate is false there and we fall to the demote throw.
-  if (
-    expected.kind === "externref" &&
-    got !== null &&
-    got.kind === "f64" &&
-    cx.resolver?.hasHostNumberBox?.() === true
-  ) {
-    const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_number"), [value], irVal({ kind: "externref" }));
-    if (boxed === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __box_number produced no result in ${cx.funcName}`);
-    }
-    return boxed;
+  // (#2856 C3 / #3526 F1-S1) f64 → externref: the semantic number boundary.
+  // This used to emit a direct `env.__box_number` call gated on the resolver
+  // predicate `hasHostNumberBox()` — a lane/mode read in the front-end. It now
+  // emits the provider-FREE `js.number.box` intrinsic; whether this lane has a
+  // provider at all (host-only in F1-S1) is decided once, at manifest freeze,
+  // from the caller-resolved number-boundary policy. A lane without one
+  // classifies the OWNER as `late-preparation-unsupported` in preparation —
+  // exactly the population that fell through to the demote throw below.
+  if (expected.kind === "externref" && got !== null && got.kind === "f64" && t.kind === "val" && (t.signed ?? true)) {
+    return cx.builder.emitIntrinsic("js.number.box", [value]);
   }
-  // Boolean-branded i32 -> externref: preserve JS identity by using the
-  // boolean boxer. An unbranded i32 is intentionally not accepted here: that
-  // carrier may represent an integer-shaped number or a symbol handle, whose
-  // boxing semantics differ.
-  if (
-    expected.kind === "externref" &&
-    got !== null &&
-    got.kind === "i32" &&
-    got.boolean === true &&
-    cx.resolver?.hasHostBooleanBox?.() === true
-  ) {
-    const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_boolean"), [value], irVal({ kind: "externref" }));
-    if (boxed === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __box_boolean produced no result in ${cx.funcName}`);
-    }
-    return boxed;
+  // (#4503 / #3526 F1-S2) Boolean-branded i32 -> externref: the semantic
+  // boolean boundary. The BRAND GATE stays — it is a TYPE fact, and it is
+  // load-bearing: an unbranded i32 may carry an integer-shaped number or a
+  // symbol handle, whose boxing semantics differ, so this arm must never widen
+  // to bare i32. What is deleted is the `hasHostBooleanBox()` read, a LANE
+  // fact. Whether this lane has a provider at all (host-only — there is no
+  // native boolean boxer) is decided once, at manifest freeze, from the
+  // caller-resolved boolean-boundary policy. A lane without one classifies the
+  // OWNER as `late-preparation-unsupported` in preparation — exactly the
+  // population that used to fall through to the demote throw below.
+  if (expected.kind === "externref" && got !== null && got.kind === "i32" && got.boolean === true) {
+    return cx.builder.emitIntrinsic("js.boolean.box", [value]);
   }
   // (#3553) A leftover mismatch here is DESIGNED non-claimability, not a
   // compiler invariant: the doc block above explicitly rejects e.g. a native-
@@ -9552,24 +9503,17 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     const actualT = cx.builder.typeOf(value);
     const actualV = asVal(actualT);
     if (actualV && actualV.kind === "externref") {
-      // (#4461) Both lanes own a `__unbox_number` with the same
+      // (#4461 / #3526 F1-S1) Both lanes own a `__unbox_number` with the same
       // `(externref) -> f64` signature; only the PROVIDER differs (host import
       // vs the native function `addUnionImports` registers under
-      // `semanticProviders: "native-first"`). A host-free `Map.get` result
-      // reaches this site with a boxed number inside an externref, so the
-      // native arm is what makes `return hit;` lower instead of demoting.
-      const provider = cx.resolver?.hasHostNumberBox?.()
-        ? irImportFuncRef("env", "__unbox_number")
-        : cx.resolver?.hasNativeNumberUnbox?.()
-          ? irRuntimeFuncRef("__unbox_number")
-          : null;
-      if (provider !== null) {
-        const unboxed = cx.builder.emitCall(provider, [value], irVal({ kind: "f64" }));
-        if (unboxed === null) {
-          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: __unbox_number produced no result in ${cx.funcName}`);
-        }
-        return unboxed;
+      // `semanticProviders: "native-first"`). That choice used to be inlined
+      // here behind two resolver mode predicates. It is now a frozen-manifest
+      // decision: from-ast emits the provider-free `js.number.unbox` intrinsic
+      // and reads no lane fact. A lane that resolves the arm to unsupported
+      // classifies the owner in preparation instead of silently returning the
+      // unconverted externref into an f64 result.
+      if (actualT.kind === "val" && (actualT.signed ?? true)) {
+        return cx.builder.emitIntrinsic("js.number.unbox", [value]);
       }
     }
     return value;
@@ -9644,10 +9588,18 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: for-of init shape unexpected (${cx.funcName})`);
   }
   const decl = init.declarations[0]!;
-  if (!ts.isIdentifier(decl.name)) {
+  // (#4470 via #5166) The selector claims an ARRAY binding-pattern head
+  // (`for (const [a, b] of m)`) alongside the identifier head. Object patterns
+  // and wider array patterns still reject at select, so anything that reaches
+  // here that is neither shape is a selector<->builder desync.
+  const headPattern = ts.isArrayBindingPattern(decl.name) ? decl.name : null;
+  if (!ts.isIdentifier(decl.name) && !headPattern) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: for-of destructuring init not in slice 6 (${cx.funcName})`);
   }
-  const loopVarName = decl.name.text;
+  // The pattern head binds its own leaves; the element slot itself is
+  // anonymous. `__forof_elem` is the slot name either way, so the placeholder
+  // never reaches the emitted module.
+  const loopVarName = headPattern ? "__forof_pattern_elem" : (decl.name as ts.Identifier).text;
 
   // 3. Strategy dispatch.
   //
@@ -9672,12 +9624,22 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   //   - anything else                → throw, fall back to legacy.
   const valTy = asVal(iterableT);
   if (iterableT.kind === "vec") {
-    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName);
+    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName, headPattern);
     return;
   }
   if (valTy && (valTy.kind === "ref" || valTy.kind === "ref_null")) {
-    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName);
+    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName, headPattern);
     return;
+  }
+  // (#4470) Only the vec arm can index an element. A `(ref $AnyString)` char
+  // and an opaque iter-host externref are not indexable, so a pattern head on
+  // either arm demotes rather than binding garbage.
+  if (headPattern) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: for-of array-pattern head needs an indexable vec element, got ` +
+        `${describeIrType(iterableT)} (${cx.funcName})`,
+    );
   }
   if (iterableT.kind === "string") {
     // (#2955 slice 5) The strategy selection is resolver-owned; from-ast
@@ -10724,12 +10686,92 @@ function lowerForOfString(stmt: ts.ForOfStatement, cx: LowerCtx, strV: IrValueId
  * Slice 6 part 2 (#1181) vec fast-path — extracted into a helper so
  * `lowerForOfStatement` can dispatch between vec and iter-host arms.
  */
+/**
+ * (#4470 via #5166) Bind one array-pattern head's leaves from the element
+ * slot, emitted INSIDE the body collector so the reads re-run per iteration.
+ *
+ * Each leaf is a bounds-checked read with the element type's ZERO as the
+ * out-of-bounds value — legacy's observable for a missing leaf, see the
+ * `oobOverride` contract on `emitSafeVecGet`. `lowerArrayPattern` (the
+ * VariableStatement destructuring row) is deliberately NOT reused: its
+ * `vec.get` is unchecked and TRAPS on a short row, which would turn
+ * `for (const [a, b] of rows)` over ragged data from a working legacy program
+ * into a runtime trap.
+ */
+interface ForOfPatternLeaf {
+  readonly name: string;
+  readonly index: number;
+  readonly slotIndex: number;
+}
+
+/**
+ * (#4470 via #5166) Allocate one mutable slot per array-pattern head leaf.
+ *
+ * Slots, not SSA locals, for the same reason the IDENTIFIER head binds a slot:
+ * a `let` head is assignable inside the body (`for (let [a, b] of m) { a = a +
+ * 1; ... }`), and an SSA-local binding makes that a HARD error at the
+ * assignment site ("assignment to non-slot binding"). Slot allocation happens
+ * once, outside the body collector; only the per-iteration WRITE is inside it.
+ */
+function declareForOfPatternLeafSlots(
+  pattern: ts.ArrayBindingPattern,
+  rowElemValType: ValType,
+  cx: LowerCtx,
+): ForOfPatternLeaf[] {
+  const leaves: ForOfPatternLeaf[] = [];
+  let i = 0;
+  for (const elem of pattern.elements) {
+    if (ts.isOmittedExpression(elem)) {
+      i++;
+      continue;
+    }
+    if (elem.dotDotDotToken || elem.initializer || !ts.isIdentifier(elem.name)) {
+      // `isPhase1BindingPattern` already excluded all three at select, so
+      // reaching here is a selector<->builder desync, not a capability gap.
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: for-of array-pattern head leaf shape not in scope (${cx.funcName})`,
+      );
+    }
+    const name = (elem.name as ts.Identifier).text;
+    leaves.push({ name, index: i, slotIndex: cx.builder.declareSlot(name, rowElemValType) });
+    i++;
+  }
+  return leaves;
+}
+
+/**
+ * (#4470 via #5166) Read one array-pattern head's leaves out of the element
+ * slot. Emitted INSIDE the body collector so the reads re-run per iteration.
+ *
+ * Each leaf is a bounds-checked read with the element type's ZERO as the
+ * out-of-bounds value — legacy's observable for a missing leaf, see the
+ * `oobOverride` contract on `emitSafeVecGet`. `lowerArrayPattern` (the
+ * VariableStatement destructuring row) is deliberately NOT reused: its
+ * `vec.get` is unchecked and TRAPS on a short row, which would turn
+ * `for (const [a, b] of rows)` over ragged data from a working legacy program
+ * into a runtime trap.
+ */
+function bindForOfArrayPatternLeaves(
+  leaves: readonly ForOfPatternLeaf[],
+  element: IrValueId,
+  rowElemValType: ValType,
+  cx: LowerCtx,
+): void {
+  const zero: IrConst = rowElemValType.kind === "i32" ? { kind: "i32", value: 0 } : { kind: "f64", value: 0 };
+  for (const leaf of leaves) {
+    const idx = cx.builder.emitConst({ kind: "i32", value: leaf.index }, irVal({ kind: "i32" }));
+    cx.builder.emitSlotWrite(leaf.slotIndex, emitSafeVecGet(element, idx, rowElemValType, cx, zero));
+  }
+}
+
 function lowerForOfVec(
   stmt: ts.ForOfStatement,
   cx: LowerCtx,
   iterableV: IrValueId,
   iterableType: IrType,
   loopVarName: string,
+  headPattern: ts.ArrayBindingPattern | null = null,
 ): void {
   // Slice 6 part 4 refactor (#1185): ask the resolver for the vec
   // shape rather than hard-coding `f64` element / `vecTypeIdx - 1`
@@ -10783,9 +10825,39 @@ function lowerForOfVec(
   const dataSlot = cx.builder.declareSlot("__forof_data", dataValType);
   const elementSlot = cx.builder.declareSlot("__forof_elem", elemValType);
 
+  // (#4470 via #5166) An array-pattern head needs the ELEMENT to be indexable
+  // — the iterable is a `number[][]` / `boolean[][]` whose element is a
+  // concrete ref to the inner vec (the #5166 carrier). Leaves are restricted
+  // to f64/i32: a `string[][]` leaf is carried as an externref whose first op
+  // (`.length`) is a known adjacent HARD error, so those stay on the legacy
+  // body until that is fixed on its own.
+  let rowElemValType: ValType | null = null;
+  if (headPattern) {
+    const row = elemValType.kind === "ref" || elemValType.kind === "ref_null" ? resolveIrVecType(elemIrT, cx) : null;
+    const leaf = row?.lowering.elementValType;
+    if (!leaf || (leaf.kind !== "f64" && leaf.kind !== "i32")) {
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: for-of array-pattern head needs an f64/i32-element row, got ` +
+          `${describeIrType(elemIrT)} (${cx.funcName})`,
+      );
+    }
+    rowElemValType = leaf;
+  }
+
+  const patternLeaves =
+    headPattern && rowElemValType ? declareForOfPatternLeafSlots(headPattern, rowElemValType, cx) : [];
+
   const loopScope = conservativeLoopStringEncodingScope(stmt, cx);
   const bodyScope = new Map(loopScope);
-  bodyScope.set(loopVarName, { kind: "slot", slotIndex: elementSlot, type: elemIrT });
+  if (headPattern) {
+    const leafIr = irVal(rowElemValType!);
+    for (const leaf of patternLeaves) {
+      bodyScope.set(leaf.name, { kind: "slot", slotIndex: leaf.slotIndex, type: leafIr });
+    }
+  } else {
+    bodyScope.set(loopVarName, { kind: "slot", slotIndex: elementSlot, type: elemIrT });
+  }
   // #2952 slice 2 — this loop is the innermost break/continue target.
   // (#2856) …and an early-return BARRIER (iter cleanup / conservative).
   // (slice 3) A labeled for-of adopts the pre-allocated id.
@@ -10800,6 +10872,11 @@ function lowerForOfVec(
   };
 
   const body = cx.builder.collectBodyInstrs(() => {
+    // The leaf reads go INSIDE the collector, ahead of the user statement, so
+    // they re-run on every iteration against that iteration's element slot.
+    if (headPattern) {
+      bindForOfArrayPatternLeaves(patternLeaves, bodyCx.builder.emitSlotRead(elementSlot), rowElemValType!, bodyCx);
+    }
     lowerStmt(stmt.statement, bodyCx);
   });
 
@@ -13680,15 +13757,24 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     // module — the exact failure this arm previously had no way to avoid,
     // because no claimable standalone shape reached it before native `$Map`
     // reads did.
-    const provider = cx.resolver?.externIsUndefinedIsNative?.()
-      ? irRuntimeFuncRef("__extern_is_undefined")
-      : irImportFuncRef("env", "__extern_is_undefined");
-    const flag = cx.builder.emitCall(provider, [v], irVal({ kind: "i32" }));
-    if (flag === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __extern_is_undefined produced no result in ${cx.funcName}`);
-    }
-    return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
+    //
+    // (#3526 F1-S4) WHICH of those two answers the probe used to be decided
+    // HERE, by reading the `externIsUndefinedIsNative` resolver predicate —
+    // the last surviving pre-F1 two-armed shape in from-ast. It is now a
+    // frozen-manifest decision: this arm emits the provider-free
+    // `js.extern.is_undefined` intrinsic and reads no lane fact. A lane that
+    // resolves the probe to unsupported classifies the owner in preparation
+    // instead of binding a symbol the front-end guessed at.
+    //
+    // The `coerce.to_externref` is a TYPE normalisation, not a conversion: the
+    // intrinsic's `(externref) -> i32` ABI admits only a `val` externref,
+    // while `externrefShaped` above also admits `extern` / `callable` /
+    // host-mode `string` carriers. `lower.ts` elides `extern.convert_any` for
+    // exactly that already-externref population (its `alreadyExternref` test is
+    // the same four-way fact as `externrefShaped`), so the added instruction
+    // lowers to zero Wasm instructions on every shape that reaches here.
+    const probe = cx.builder.emitIntrinsic("js.extern.is_undefined", [cx.builder.emitCoerceToExternref(v)]);
+    return isStrictNeq ? cx.builder.emitUnary("i32.eqz", probe, IR_BOOL) : probe;
   }
   // Never-undefined representations: fold — but ONLY when the operand's TS
   // static type proves the VALUE cannot be `undefined`. The Wasm-level rep

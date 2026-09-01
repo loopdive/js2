@@ -15,7 +15,12 @@ import {
   type NullablePrimitiveKind,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
+import {
+  computeClosureWrapperSig,
+  emitCachedFuncClosureAccess,
+  emitFuncRefAsClosure,
+  getFuncSignature,
+} from "../closures.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
@@ -31,6 +36,7 @@ import {
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
+import { addHostStringConstantGlobal } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
 import {
@@ -39,7 +45,7 @@ import {
   isShadowStaticArmFor,
   withShadowReadSuppressed,
 } from "../fn-global-shadow.js"; // (#4630 / #4648)
-import { emitTdzCheck, emitTdzCheckAtGlobal } from "../statements.js";
+import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -53,6 +59,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { reportError } from "../context/errors.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
+import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
@@ -79,6 +86,7 @@ import {
 } from "./promise-subclass.js";
 import {
   emitLiveIdentifierGlobalRead,
+  moduleTdzGlobalIndexForIdentifier,
   tryEmitAmbientRegistryCollisionRead,
   tryEmitExplicitHostAmbientValueRead,
 } from "./identifier-module-storage.js";
@@ -224,9 +232,13 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   fctx.body.push({ op: "i32.eqz" });
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    } else {
+      const tagIdx = ensureExnTag(ctx);
+      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
+    }
   } else {
     const tagIdx = ensureExnTag(ctx);
     then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
@@ -720,12 +732,13 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
   const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
   flushLateImportShifts(ctx, fctx);
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-    fctx.body.push({ op: "unreachable" });
-    return;
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      fctx.body.push({ op: "global.get", index: strIdx });
+      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+      fctx.body.push({ op: "unreachable" });
+      return;
+    }
   }
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "ref.null.extern" });
@@ -824,18 +837,21 @@ function shouldUseRuntimeEvalGlobalLexicalRead(
   );
 }
 
+function emitModuleTdzReadCheck(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): void {
+  const flagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
+  if (flagIdx === undefined) return;
+  const tdzResult = analyzeTdzAccess(ctx, id);
+  if (tdzResult === "check") emitTdzCheckAtGlobal(ctx, fctx, flagIdx, id.text, noJsHost(ctx));
+  else if (tdzResult === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
+}
+
 function compileCapturedGlobalRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   id: ts.Identifier,
   name: string,
 ): ValType {
-  const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-  if (tdzResult === "check") {
-    emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-  } else if (tdzResult === "throw") {
-    emitStaticTdzThrow(ctx, fctx, id.text);
-  }
+  emitModuleTdzReadCheck(ctx, fctx, id);
   const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
   if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
     fctx.body.push({ op: "ref.as_non_null" });
@@ -1133,7 +1149,21 @@ function compileIdentifierCore(
 
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
-    materializeHoistedFunctionValueBinding(ctx, fctx, name);
+    const localDeclaration = ctx.oracle.valueDeclarationOf(id);
+    const stableHoistedFunctionValue =
+      localDeclaration !== undefined &&
+      ts.isFunctionDeclaration(localDeclaration) &&
+      !ctx.reassignedFunctionDeclarations?.has(localDeclaration) &&
+      fctx.directEvalBindingNames?.has(name) !== true;
+    // Compilation visits conditional arms in source order, but execution may
+    // enter only a later arm. A first value read in an earlier arm therefore
+    // does not dominate this read. Stable FunctionDeclaration bindings may
+    // safely publish their memoized closure at every value-read site; a
+    // reassigned declaration must retain its live binding instead. Direct eval
+    // can perform the same replacement without a static assignment target, so
+    // any binding exposed to this activation's eval environment is mutable for
+    // the purpose of re-emission too.
+    materializeHoistedFunctionValueBinding(ctx, fctx, name, stableHoistedFunctionValue);
     const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagIdx !== undefined) {
       const tdzResult = analyzeTdzAccess(ctx, id);
@@ -1378,12 +1408,7 @@ function compileIdentifierCore(
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
   const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     return emitCapturedBoxGlobalRead(ctx, fctx, capturedBox);
   }
 
@@ -1408,12 +1433,7 @@ function compileIdentifierCore(
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name, noJsHost(ctx));
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
@@ -1491,8 +1511,7 @@ function compileIdentifierCore(
       flushLateImportShifts(ctx, fctx);
       if (gtFuncIdx !== undefined && getIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
-        addStringConstantGlobal(ctx, name);
-        const strGlobalIdx = ctx.stringGlobalMap.get(name);
+        const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
         fctx.body.push(
           strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
         );
@@ -1568,8 +1587,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       fctx.body.push(
         strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
       );
@@ -1613,7 +1631,20 @@ function compileIdentifierCore(
       // retain the lib.dom ambient declaration for that dependency, so the
       // read used to fall through to the unresolvable-name path even though
       // the host supplies globalThis.crypto.
-      name === "crypto") &&
+      name === "crypto" ||
+      // (#5206) `Intl` is an ambient NAMESPACE (`declare namespace Intl` in
+      // lib.es5.d.ts), not a `declare var`, so none of the value-shaped arms
+      // above claim it and every read fell to the `ref.null.extern` graceful
+      // default — `Intl.DateTimeFormat` then threw "Cannot access property on
+      // null or undefined". That is the eighth @js-temporal/polyfill
+      // module-init blocker (#4628): the bundle's very first Intl statement is
+      // a top-level `ct = Intl.DateTimeFormat`. The JS host owns a full,
+      // ICU-backed `Intl`, and `__get_globalThis`/`__extern_get` are IMPORTS
+      // (unlike the module's own exports), so this resolves inside the wasm
+      // `start` section as well as after it. Standalone/WASI keep the null
+      // default: there is no host Intl there, and a compiled shim for it is a
+      // separate, much larger gap.
+      name === "Intl") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1628,8 +1659,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       if (strGlobalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: strGlobalIdx });
       } else {
@@ -1680,8 +1710,7 @@ function compileIdentifierCore(
       );
       flushLateImportShifts(ctx, fctx);
       if (getIdx !== undefined) {
-        addStringConstantGlobal(ctx, globalInfo.member);
-        const strGlobalIdx = ctx.stringGlobalMap.get(globalInfo.member);
+        const strGlobalIdx = addHostStringConstantGlobal(ctx, globalInfo.member);
         if (strGlobalIdx !== undefined) {
           fctx.body.push({ op: "global.get", index: strGlobalIdx });
         } else {
@@ -1934,8 +1963,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       if (strGlobalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: strGlobalIdx });
       } else {
@@ -1978,7 +2006,40 @@ function compileIdentifierCore(
   // (#3505) A foreign module's function declaration must not resolve by bare
   // name (funcMap is graph-wide) — skip the funcref-as-value arm so the read
   // reaches the undeclared -> ReferenceError emission below.
-  const funcRefIdx = graphNameRegistryUnavailable ? undefined : ctx.funcMap.get(name);
+  const functionValueFunctionDeclaration =
+    resolvedValueDeclaration !== undefined &&
+    ts.isFunctionDeclaration(resolvedValueDeclaration) &&
+    resolvedValueDeclaration.body !== undefined
+      ? resolvedValueDeclaration
+      : undefined;
+  // A function used as a value must follow the checker's exact declaration,
+  // not the graph-wide bare-name compatibility map. TypeScript's parser and
+  // NodeFactory both declare a nested `createNodeArray`; compiling the
+  // NodeFactory shorthand `{ createNodeArray }` after parser registration made
+  // the later parser wrapper win `funcMap`, so the factory field recursively
+  // called the parser wrapper and, on larger graphs, returned an unrelated
+  // array carrier. Program ABI retains the allocator handle per declaration;
+  // prefer it wherever the source binding is known and keep the legacy map for
+  // synthetic/internal callables that have no source declaration.
+  const declarationOwnedFunctionHandle =
+    functionValueFunctionDeclaration !== undefined
+      ? sourceFunctionHandleForDeclaration(ctx, functionValueFunctionDeclaration)
+      : undefined;
+  // A nested function's direct handle prepends its captured values. The legacy
+  // capture-construction metadata is still lexically name-scoped, so an exact
+  // handle is independently materializable only when its physical signature
+  // proves there is no capture prefix. Top-level declarations are capture-free
+  // by construction. This keeps the identity repair narrow rather than pairing
+  // one declaration's handle with another same-named declaration's captures.
+  const exactFunctionValueIsCaptureFree = (() => {
+    if (declarationOwnedFunctionHandle === undefined || functionValueFunctionDeclaration === undefined) return false;
+    if (ts.isSourceFile(functionValueFunctionDeclaration.parent)) return true;
+    const directSignature = getFuncSignature(ctx, declarationOwnedFunctionHandle);
+    const valueSignature = computeClosureWrapperSig(ctx, functionValueFunctionDeclaration);
+    return directSignature !== null && directSignature.params.length === valueSignature.params.length;
+  })();
+  const exactFunctionValueHandle = exactFunctionValueIsCaptureFree ? declarationOwnedFunctionHandle : undefined;
+  const funcRefIdx = graphNameRegistryUnavailable ? undefined : (exactFunctionValueHandle ?? ctx.funcMap.get(name));
   // (#1809) Only wrap DEFINED functions (index >= numImportFuncs) in a funcref
   // closure. A host import (e.g. the ambient DOM global `resizeTo`/`resizeBy`
   // from lib.dom.d.ts) has no in-module body to forward to via `ref.func`, so
@@ -2077,7 +2138,7 @@ function compileIdentifierCore(
     // misclassified "wasm_compile" errors. Captures must be filled at the
     // construction site (per-instance), so we only take the cached path when
     // no captures are required.
-    const nestedCaptures = ctx.nestedFuncCaptures.get(name);
+    const nestedCaptures = exactFunctionValueIsCaptureFree ? undefined : ctx.nestedFuncCaptures.get(name);
     if (!nestedCaptures || nestedCaptures.length === 0) {
       const cachedRefType = emitCachedFuncClosureAccess(ctx, fctx, name, funcRefIdx, isOrdinaryFunctionDecl);
       if (cachedRefType) {
@@ -2154,12 +2215,15 @@ function compileIdentifierCore(
     const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
     flushLateImportShifts(ctx, fctx);
     if (throwRefErrIdx !== undefined) {
-      addStringConstantGlobal(ctx, msg);
-      const strIdx = ctx.stringGlobalMap.get(msg)!;
-      fctx.body.push({ op: "global.get", index: strIdx });
-      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-      fctx.body.push({ op: "unreachable" });
-    } else {
+      const strIdx = addHostStringConstantGlobal(ctx, msg);
+      if (strIdx !== undefined) {
+        fctx.body.push({ op: "global.get", index: strIdx });
+        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+        fctx.body.push({ op: "unreachable" });
+        return { kind: "externref" };
+      }
+    }
+    {
       // Fallback: raw exception-tag throw (no JS host to construct a ReferenceError).
       const tagIdx = ensureExnTag(ctx);
       fctx.body.push({ op: "ref.null.extern" });

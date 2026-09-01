@@ -63,15 +63,57 @@ function writingOccurrences(sourceFile: ts.SourceFile): Map<string, ts.Identifie
     if (list) list.push(id);
     else byName!.set(id.text, [id]);
   };
+  const recordAssignmentTarget = (target: ts.Node): void => {
+    if (ts.isIdentifier(target)) {
+      record(target);
+      return;
+    }
+    if (ts.isParenthesizedExpression(target)) {
+      recordAssignmentTarget(target.expression);
+      return;
+    }
+    if (ts.isBindingElement(target)) {
+      recordAssignmentTarget(target.name);
+      return;
+    }
+    if (ts.isObjectBindingPattern(target)) {
+      for (const element of target.elements) recordAssignmentTarget(element);
+      return;
+    }
+    if (ts.isArrayBindingPattern(target)) {
+      for (const element of target.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        recordAssignmentTarget(element);
+      }
+      return;
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isPropertyAssignment(property)) {
+          recordAssignmentTarget(property.initializer);
+        } else if (ts.isShorthandPropertyAssignment(property)) {
+          record(property.name);
+        } else if (ts.isSpreadAssignment(property)) {
+          recordAssignmentTarget(property.expression);
+        }
+      }
+      return;
+    }
+    if (ts.isArrayLiteralExpression(target)) {
+      for (const element of target.elements) {
+        if (ts.isSpreadElement(element)) recordAssignmentTarget(element.expression);
+        else recordAssignmentTarget(element);
+      }
+    }
+  };
   const walk = (node: ts.Node): void => {
     // `x = …`, `x += …`, and every other compound assignment.
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      ts.isIdentifier(node.left)
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     ) {
-      record(node.left);
+      recordAssignmentTarget(node.left);
     }
     // `x++` / `--x`.
     if (
@@ -82,8 +124,12 @@ function writingOccurrences(sourceFile: ts.SourceFile): Map<string, ts.Identifie
       record(node.operand);
     }
     // A for-in/for-of loop variable is re-assigned on every iteration.
-    if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && ts.isIdentifier(node.initializer)) {
-      record(node.initializer);
+    if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+      if (ts.isVariableDeclarationList(node.initializer)) {
+        for (const declaration of node.initializer.declarations) recordAssignmentTarget(declaration.name);
+      } else {
+        recordAssignmentTarget(node.initializer);
+      }
     }
     ts.forEachChild(node, walk);
   };
@@ -111,4 +157,59 @@ export function bindingIsSingleAssignment(ctx: CodegenContext, id: ts.Identifier
     if (target === decl) return false;
   }
   return true;
+}
+
+/**
+ * Whether a binding has a write before `before` in the same source file.
+ *
+ * This is deliberately a conservative, source-order proof rather than a
+ * control-flow analysis. A write in a nested function is considered visible
+ * when it appears before the evaluation point; the function may run before
+ * that point, and declining the initializer shortcut is safer than freezing a
+ * value that the runtime can change. Writes after the point are irrelevant to
+ * a class heritage expression evaluated at that point.
+ */
+export function bindingHasWriteBefore(ctx: CodegenContext, id: ts.Identifier, before: ts.Node): boolean {
+  const decls = ctx.oracle.declarationsOf(id);
+  if (decls.length !== 1) return true;
+  const decl = decls[0];
+  if (decl === undefined) return true;
+  const sourceFile = id.getSourceFile();
+  if (before.getSourceFile() !== sourceFile) return true;
+  let beforePos: number;
+  try {
+    beforePos = before.getStart(sourceFile);
+  } catch {
+    beforePos = before.pos;
+  }
+  if (beforePos < 0) return true;
+  const writes = writingOccurrences(sourceFile).get(id.text);
+  if (writes === undefined) return false;
+  for (const write of writes) {
+    let writePos: number;
+    try {
+      writePos = write.getStart(sourceFile);
+    } catch {
+      writePos = write.pos;
+    }
+    // A write in a nested/hoisted function may execute before the class even
+    // when its function body is lexically after it (`f(); class C extends P
+    // {}; function f() { P = Object; }`). Keep direct top-level writes after
+    // the class irrelevant, but conservatively retain nested function writes.
+    const nestedFunctionWrite = write.parent !== undefined && isInsideFunction(write);
+    if ((writePos < 0 || writePos >= beforePos) && !nestedFunctionWrite) continue;
+    const target = ctx.oracle.valueDeclarationOf(write);
+    // An occurrence the checker cannot place could be this binding. Treat it
+    // as an earlier write so the caller keeps the runtime path.
+    if (target === undefined || target === decl) return true;
+  }
+  return false;
+}
+
+function isInsideFunction(node: ts.Node): boolean {
+  for (let parent = node.parent; parent !== undefined; parent = parent.parent) {
+    if (ts.isFunctionLike(parent)) return true;
+    if (ts.isSourceFile(parent)) return false;
+  }
+  return false;
 }

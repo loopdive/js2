@@ -29,7 +29,11 @@ import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
-import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
+import {
+  collectBlockScopedNames,
+  discardBlockScopedShadows,
+  saveBlockScopedShadowsForNames,
+} from "./statements/shared.js";
 import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
@@ -78,7 +82,7 @@ export {
 export { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 export { emitArgumentsObject, hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 export { collectInstrs } from "./statements/shared.js";
-export { emitTdzCheck, emitTdzCheckAtGlobal } from "./statements/tdz.js";
+export { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 
 // ---------------------------------------------------------------------------
 // Dispatcher helpers
@@ -480,11 +484,30 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // Save localMap entries for any block-scoped (let/const) names that shadow
     // existing variables.  Wasm locals are flat (no block scope), so we need to
     // restore the outer mapping after the block ends.
-    const savedLocals = saveBlockScopedShadows(fctx, stmt);
+    //
+    // (#5221) The save/restore pair only ever handled names that ALREADY had a
+    // local — a `let`/`const` the block introduces fresh had nothing to save,
+    // so its local stayed in `localMap` after the block closed and leaked into
+    // the enclosing scope. A later same-named declaration out there then reused
+    // the inner slot, INCLUDING ITS WASM TYPE:
+    //
+    //   if (x === 2) { const n = obj(); … }   // $n : (ref null $Anon)
+    //   const n = str();                      // reuses that slot ⇒
+    //                                         // ref.test fails ⇒ ref.null ⇒ null
+    //
+    // which is exactly the Temporal polyfill's `rn()` (`ToTemporalDate`): its
+    // `if (isZonedDateTime(e)) { const n = … }` arm poisoned the outer
+    // `const n = calendarOf(e)`, so the calendar id read back as `null` and the
+    // `%calendarImpl%` lookup that followed dereferenced a null pointer.
+    // `discardBlockScopedShadows` drops the block's own new names and then
+    // restores any genuine outer shadows — the CaseBlock path has used exactly
+    // this for the same reason.
+    const blockNames = collectBlockScopedNames(stmt);
+    const savedLocals = saveBlockScopedShadowsForNames(fctx, blockNames);
     for (const s of stmt.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedLocals);
+    discardBlockScopedShadows(fctx, blockNames, savedLocals);
     return;
   }
 

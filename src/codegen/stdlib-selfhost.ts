@@ -68,6 +68,12 @@ import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js
 import { irVal, type IrFunction, type IrType } from "../ir/nodes.js";
 import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../ir/vector-runtime.js";
 import { prepareIrRuntimeManifest } from "../ir/intrinsic-support.js";
+import {
+  BOOLEAN_BOUNDARY_POLICY_DISABLED,
+  EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+  GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+  NUMBER_BOUNDARY_POLICY_DISABLED,
+} from "../ir/runtime-manifest.js";
 import { isIntrinsicId } from "../ir/intrinsics.js";
 import { createDerivedIrUnitId, createIrSourceId, type IrSyntheticUnitRole, type IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -182,15 +188,11 @@ const NATIVE_STRINGS_FROMAST_RESOLVER: IrFromAstResolver = {
   stringIsExternref(): boolean {
     return false;
   },
-  // Native-strings builds own no JS-host imports: no f64⇄externref box pair,
-  // no `number_toString`. (The absent-defaults already demote for these —
-  // implemented explicitly so the capability surface is total, not luck.)
-  hasHostNumberBox(): boolean {
-    return false;
-  },
-  hasHostBooleanBox(): boolean {
-    return false;
-  },
+  // Native-strings builds own no JS-host imports: no `number_toString`, no
+  // f64⇄externref number boundary and no i32⇄externref boolean boundary
+  // (#3526 F1-S1/F1-S2 resolve every arm of this adapter's `numberBoundary`
+  // and `booleanBoundary` policies to unsupported at manifest preparation,
+  // even when an ambient host context has `nativeStrings === false`).
   hasHostNumberToString(): boolean {
     return false;
   },
@@ -493,6 +495,14 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
     policy: {
       target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
       backend: "wasmgc",
+      // (#3526 F1-S1, F1-S2) Self-hosted stdlib bodies own no JS-host imports,
+      // so both number-boundary arms AND the boolean box arm resolve to
+      // unsupported HERE — deliberately independent of an ambient host context
+      // whose `nativeStrings === false` would otherwise read as host support.
+      numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
+      booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+      externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+      generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
     },
   });
   const funcIdx = lowerAndRegister(ctx, def.name, prepared?.functions[0] ?? ir);

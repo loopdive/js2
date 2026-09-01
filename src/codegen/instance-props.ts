@@ -382,12 +382,19 @@ export function fillInstanceProps(ctx: CodegenContext): void {
     const gopdFn = gopdIdx === undefined ? undefined : definedFuncAt(ctx, gopdIdx);
     if (gopdFn) {
       gopdFn.body.unshift(
-        // `__hasOwnProperty` is intentionally bag-aware. Ask the bag for its
-        // real descriptor first, otherwise the physical-field arm below would
-        // mistake an expando hit for a declared slot and fabricate W/E/C=all
-        // true. Deno's makeSafe exposes this when it copies non-enumerable Map
-        // methods onto a builtin-subclass prototype.
-        ...buildBagGopdFallback(ctx, 6),
+        // `__hasOwnProperty` is intentionally bag-aware. Ask the INSTANCE
+        // bag for its real descriptor first, otherwise the physical-field arm
+        // below would mistake an expando hit for a declared slot and fabricate
+        // W/E/C=all true. Gate the generic bag helper on the instance carrier:
+        // vectors have their own overlay descriptor path, and allowing this
+        // arm to claim them first loses non-default array expando flags.
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: carrierIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildBagGopdFallback(ctx, 6),
+        },
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: carrierIdx },
         {

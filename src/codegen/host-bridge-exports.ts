@@ -24,8 +24,18 @@
 // spread the policy across the codegen and risk a partially-built bridge.
 
 import type { WasmModule } from "../ir/types.js";
+import {
+  finalizeCtorClosureHostBridgeExports,
+  isCompilerOwnedCtorClosureHostBridgeExport,
+  isCoreCtorClosureHostBridgePublicName,
+} from "./closure-exports.js";
 import type { CodegenContext } from "./context/types.js";
-import { isCompilerOwnedVecHostBridgeExport } from "./vec-access-exports.js";
+import {
+  finalizeDateHostBridgeExports,
+  isCompilerOwnedDateHostBridgeExport,
+  isCoreDateHostBridgePublicName,
+} from "./date-host-bridge.js";
+import { isCompilerOwnedVecHostBridgeExport, isCoreVecHostBridgePublicName } from "./vec-access-exports.js";
 
 /**
  * Export-name prefixes owned by the bridge. Short aliases (`$v0`, `$c0`, `$d0`,
@@ -97,11 +107,39 @@ export function isHostBridgeExportName(name: string): boolean {
  * pure-Wasm host still needs to catch), and every user export.
  */
 export function stripHostBridgeExports(ctx: CodegenContext): number {
+  // The internal policy sink runs before index-space freeze. Validate the
+  // recorded Date and constructor descriptors before either policy outcome;
+  // post-generation copies have no context-bound provenance and remain
+  // noncompiler entries.
+  if (!ctx.indexSpaceFrozen) {
+    finalizeCtorClosureHostBridgeExports(ctx);
+    finalizeDateHostBridgeExports(ctx);
+  }
   if (ctx.emitHostBridge) return 0;
   const mod: WasmModule = ctx.mod;
   const before = mod.exports.length;
-  mod.exports = mod.exports.filter(
-    (ex) => !isCompilerOwnedVecHostBridgeExport(ctx, ex) && !isHostBridgeExportName(ex.name),
-  );
+  mod.exports = mod.exports.filter((ex) => {
+    // Authenticate the recorded, context-bound object identity before every
+    // shared public namespace. A recorded Date descriptor remains authoritative
+    // if a post-freeze mutation renames it into the vec or constructor family;
+    // copies and donors never authenticate.
+    if (isCompilerOwnedDateHostBridgeExport(ctx, ex)) return false;
+    if (isCompilerOwnedCtorClosureHostBridgeExport(ctx, ex)) return false;
+    if (isCompilerOwnedVecHostBridgeExport(ctx, ex)) return false;
+    // The three Date names are a shared public namespace. Only the exact
+    // recorded descriptor identity authorizes removal; a user descriptor with
+    // an exact spelling or a coincident numeric target survives.
+    if (isCoreDateHostBridgePublicName(ex.name)) return true;
+    // Core vec names are a shared public namespace: only exact compiler
+    // provenance authorizes removal. A user export with a matching spelling
+    // must survive standalone/WASI stripping.
+    if (isCoreVecHostBridgePublicName(ex.name)) return true;
+    // Constructor-closure names are a separate shared namespace: only the
+    // recorded bit-17 descriptor authorizes removal. An exact allocator join
+    // is rejected by pre-freeze finalization, not used for removal
+    // authorization; a same-spelled user export survives standalone/WASI.
+    if (isCoreCtorClosureHostBridgePublicName(ex.name)) return true;
+    return !isHostBridgeExportName(ex.name);
+  });
   return before - mod.exports.length;
 }

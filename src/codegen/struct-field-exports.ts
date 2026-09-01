@@ -649,20 +649,24 @@ function buildSetterNestedIfElse(
       { op: "ref.test", typeIdx: entry.typeIdx },
     ];
 
+    // Refinements that run only AFTER `ref.test typeIdx` says yes. Every one of
+    // them dereferences the receiver as `typeIdx`, so they may not be evaluated
+    // unless the test passed — see the short-circuit below.
+    const refinements: Instr[][] = [];
+
     // (#2009) Colliding struct: `ref.test typeIdx` matched, but same-shape
     // canonicalization means the instance might be a DIFFERENT struct that
     // lacks this field. Include the shape identity in the OUTER arm condition
     // so a mismatch falls through to the next structurally-equal candidate;
     // an inner no-op would incorrectly stop before the receiver's real shape.
     if (entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined) {
-      condition.push(
+      refinements.push([
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: entry.typeIdx },
         { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
         { op: "i32.const", value: entry.shapeId },
         { op: "i32.eq" },
-        { op: "i32.and" },
-      );
+      ]);
     }
 
     // (#4618) User classes carry a nominal `__tag`, but WasmGC `ref.test`
@@ -681,7 +685,34 @@ function buildSetterNestedIfElse(
       for (const tag of entry.classTags.slice(1)) {
         tagCondition.push(...readTag, { op: "i32.const", value: tag }, { op: "i32.eq" }, { op: "i32.or" });
       }
-      condition.push(...tagCondition, { op: "i32.and" });
+      refinements.push(tagCondition);
+    }
+
+    // (#5244) The refinements MUST short-circuit on `ref.test`. `i32.and` is a
+    // plain arithmetic operator — Wasm evaluates BOTH operands — so appending
+    // them to the condition made the `ref.cast typeIdx` inside them run for
+    // EVERY receiver, including the ones `ref.test` had just rejected. That is
+    // an unconditional trap, thrown from an exported setter the runtime calls
+    // inside a `try`/`catch` (`_safeSet`'s "not a field of this struct's
+    // runtime type" arm), so the failure was invisible: `__sset_<field>`
+    // aborted at its FIRST guarded arm and never reached the arm that owned
+    // the receiver. The write then landed in the JS sidecar only, while a
+    // compiled `struct.get` kept reading the untouched slot.
+    //
+    // It needs two struct types sharing the field name — one of them
+    // collision-shaped or class-tagged — for a guard to exist at all, which is
+    // why a single-record reduction passes and the polyfill (dozens of records
+    // carrying `days`) does not: `Temporal.Duration.from({days: 1})` read
+    // `PT0S` because `n[k] = o` never reached the record's slot.
+    if (refinements.length > 0) {
+      const refined: Instr[] = [...refinements[0]!];
+      for (const extra of refinements.slice(1)) refined.push(...extra, { op: "i32.and" });
+      condition.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: refined,
+        else: [{ op: "i32.const", value: 0 }],
+      });
     }
 
     const ifInstr: Instr = {
