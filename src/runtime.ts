@@ -51,6 +51,7 @@ import {
   type MarshalExportSource,
 } from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
+import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
@@ -77,6 +78,16 @@ import {
   recordVecMirrorElements,
   vecMirrorElementsChanged,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
+import {
+  arrayIndexForPropertyKey as _asArrayIndex,
+  copyWasmStructSidecar,
+  getOrCreateWasmStructSidecar,
+  readWasmStructSidecar,
+  wasmVecOwnKeys,
+  wasmVecSidecarDescriptor,
+  writeWasmStructSidecar,
+  type WasmStructSidecarState,
+} from "./runtime/wasm-struct-sidecar.js";
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
@@ -392,12 +403,21 @@ const _wasmPropDescs = new WeakMap<object, Map<string | symbol, number>>();
  */
 const _wasmStructAccessors = new WeakMap<object, Map<string | symbol, { get?: Function; set?: Function }>>();
 
-/** Tracks WasmGC struct objects that have been frozen via Object.freeze. */
 const _wasmFrozenObjs = new WeakSet<object>();
-/** Tracks WasmGC struct objects that have been sealed via Object.seal. */
 const _wasmSealedObjs = new WeakSet<object>();
 /** Tracks WasmGC struct objects that are non-extensible (freeze/seal/preventExtensions). */
 const _wasmNonExtensibleObjs = new WeakSet<object>();
+const _wasmSidecars: WasmStructSidecarState = {
+  props: _wasmStructProps,
+  prototypes: _wasmStructProto,
+  deletedKeys: _wasmStructDeletedKeys,
+  shadowedFields: _wasmStructShadowedFields,
+  descriptors: _wasmPropDescs,
+  accessors: _wasmStructAccessors,
+  frozen: _wasmFrozenObjs,
+  sealed: _wasmSealedObjs,
+  nonExtensible: _wasmNonExtensibleObjs,
+};
 
 /**
  * User-class instanceof support for subclasses of builtins (#1455).
@@ -2412,7 +2432,7 @@ export function wrapLinkedProviderValue(value: any, providerExports: Record<stri
   // mirror is minted, so every mirror created underneath — including the nested
   // ones the proxy's get-trap mints lazily — is recognisable as foreign when the
   // CONSUMER module later reads through it.
-  _linkedProviderMirrors.registerProviderExports(providerExports);
+  registerLinkedProviderModule(providerExports);
   if (value == null || (typeof value !== "object" && typeof value !== "function")) return value;
   const callable = _maybeWrapCallableUnknownArity(value, { getExports: () => providerExports });
   return callable !== value ? callable : _wrapForHost(value, providerExports);
@@ -3274,65 +3294,26 @@ function _convertIterableForHost(
 
 function _getSidecar(obj: object): Record<string | symbol, any> {
   if (!_canBeWeakKey(obj)) return Object.create(null) as Record<string | symbol, any>;
-  let sc = _wasmStructProps.get(obj);
-  if (!sc) {
-    sc = Object.create(null) as Record<string | symbol, any>;
-    _wasmStructProps.set(obj, sc);
-  }
-  return sc;
+  return getOrCreateWasmStructSidecar(_wasmSidecars, obj);
 }
 
 function _sidecarGet(obj: any, key: any): any {
-  if (!_canBeWeakKey(obj)) return undefined;
-  const sc = _wasmStructProps.get(obj);
-  return sc?.[key];
+  return _canBeWeakKey(obj) ? readWasmStructSidecar(_wasmSidecars, obj, key) : undefined;
 }
 
 function _sidecarSet(obj: any, key: any, val: any): void {
   if (!_canBeWeakKey(obj)) return;
-  _getSidecar(obj)[key] = val;
-  // (#1334) Re-assigning a previously-deleted property clears its tombstone
-  // so subsequent presence checks (`hasOwnProperty`, etc.) report it own again.
-  const tomb = _wasmStructDeletedKeys.get(obj);
-  if (tomb) {
-    tomb.delete(typeof key === "symbol" ? key : String(key));
-  }
+  writeWasmStructSidecar(_wasmSidecars, obj, key, val);
 }
 
-/**
- * Preserve the ordinary-property state of a Wasm vec when codegen must project
- * it to a vec with a different element heap type.
- *
- * The projection allocates a new physical vec and copies its indexed elements.
- * Augmented arrays such as TypeScript's `NodeArray<T>` also carry `pos`, `end`,
- * `hasTrailingComma`, and `transformFlags` in the opaque struct sidecars above.
- * Alias those sidecar records onto the projected vec so the representation-only
- * conversion does not erase properties or split subsequent metadata writes.
- */
 function _copyWasmStructSidecar(source: any, destination: any): void {
-  // `__make_iterable` exposes a Wasm vec as a real Array mirror. That mirror
-  // has its own indexed/expando properties, but `_unwrapForHost` only reverses
-  // object/closure proxies; vec mirrors use the separate write-back registry.
-  // Resolve that registry first so a host round-trip aliases the authoritative
-  // raw vec sidecar instead of looking for one on the temporary Array facade.
-  const rawSource = vecForMirror(source) ?? _unwrapForHost(source);
-  const rawDestination = vecForMirror(destination) ?? _unwrapForHost(destination);
-  if (rawSource === rawDestination || !_canBeWeakKey(rawSource) || !_canBeWeakKey(rawDestination)) return;
-
-  const props = _wasmStructProps.get(rawSource);
-  if (props) _wasmStructProps.set(rawDestination, props);
-  const descriptors = _wasmPropDescs.get(rawSource);
-  if (descriptors) _wasmPropDescs.set(rawDestination, descriptors);
-  const accessors = _wasmStructAccessors.get(rawSource);
-  if (accessors) _wasmStructAccessors.set(rawDestination, accessors);
-  const deleted = _wasmStructDeletedKeys.get(rawSource);
-  if (deleted) _wasmStructDeletedKeys.set(rawDestination, deleted);
-  const shadowed = _wasmStructShadowedFields.get(rawSource);
-  if (shadowed) _wasmStructShadowedFields.set(rawDestination, shadowed);
-  if (_wasmStructProto.has(rawSource)) _wasmStructProto.set(rawDestination, _wasmStructProto.get(rawSource));
-  if (_wasmFrozenObjs.has(rawSource)) _wasmFrozenObjs.add(rawDestination);
-  if (_wasmSealedObjs.has(rawSource)) _wasmSealedObjs.add(rawDestination);
-  if (_wasmNonExtensibleObjs.has(rawSource)) _wasmNonExtensibleObjs.add(rawDestination);
+  copyWasmStructSidecar(
+    _wasmSidecars,
+    source,
+    destination,
+    (value) => vecForMirror(value) ?? _unwrapForHost(value),
+    _canBeWeakKey,
+  );
 }
 
 // Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
@@ -4343,6 +4324,7 @@ function _hostToPrimitive(
 const _csvSplitCache = new Map<string, readonly string[]>();
 
 function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | undefined): readonly string[] | null {
+  exports = _decoderExportsFor(obj, exports); // (#5225)
   if (!exports) return null;
   const fn = exports.__struct_field_names;
   if (typeof fn !== "function") return null;
@@ -4375,6 +4357,7 @@ function _tupleFieldCount(obj: any, exports: Record<string, Function> | undefine
 }
 
 function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
+  exports = _decoderExportsFor(obj, exports); // (#5225) `__shas_` must match the names
   const names = _structFieldNamesRaw(obj, exports);
   if (!names) return null;
   return names.filter((field) => {
@@ -4396,6 +4379,7 @@ function _structOwnFieldStatus(
   key: string,
   exports: Record<string, Function> | undefined,
 ): boolean | undefined {
+  exports = _decoderExportsFor(obj, exports); // (#5225) `__shas_` must match the names
   const names = _structFieldNamesRaw(obj, exports);
   if (!names) return undefined;
   if (!names.includes(key)) return false;
@@ -4422,6 +4406,7 @@ function _structHasOwnFieldName(obj: any, key: string, exports: Record<string, F
  * symbol identity (a symbol key is never stringified).
  */
 function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function> | undefined): boolean {
+  exports = _decoderExportsFor(obj, exports); // (#5225)
   // (#1334) Property explicitly deleted — treat as absent regardless of the
   // struct shape having the field name.
   const tomb = _wasmStructDeletedKeys.get(obj);
@@ -5352,6 +5337,13 @@ function _safeGet(
   rawCallable = false,
 ): any {
   if (obj == null) return undefined;
+  // (#5225) Every struct probe below resolves helpers from `callbackState`. When
+  // the receiver was minted by ANOTHER module of this linked project those
+  // helpers are the wrong ones, and the failure is silent: a reader whose own
+  // shapes reuse the field name (`day`, `month`, … are everywhere in the
+  // Temporal polyfill) serves its `__sget_` `ref.test`-miss DEFAULT — 0 — which
+  // reads as a real value. Redirect once, here, rather than at each probe.
+  callbackState = _crossModuleCallbackState(obj, callbackState);
   const scAccessor = typeof key === "string" ? _wasmStructProps.get(obj) : undefined;
   if (_argumentsObjects.has(obj) && scAccessor && typeof scAccessor[`__get_${key}`] === "function")
     return (scAccessor[`__get_${key}`] as Function).call(obj);
@@ -6067,6 +6059,47 @@ const _nativePromiseHostCache = new WeakMap<object, Promise<unknown>>();
 const _hostProxyExportSlots = new WeakMap<object, { current: Record<string, Function> | undefined }>();
 
 const _linkedProviderMirrors = createLinkedProviderMirrorOwnership(_canBeWeakKey);
+// (#5225) Inbound twin: which module of a linked project can DECODE a struct.
+const _crossModuleStructs = createCrossModuleStructOwners(_canBeWeakKey);
+
+/** (#5225) Record a linked provider's exports as a decoder for the project. */
+export function registerLinkedProviderModule(exports: Record<string, Function>): void {
+  _linkedProviderMirrors.registerProviderExports(exports);
+  _crossModuleStructs.registerModule(exports);
+}
+
+/** (#5225) Record the consumer's exports as a decoder for the project. */
+export function registerLinkedConsumerModule(exports: Record<string, Function>): void {
+  _crossModuleStructs.registerModule(exports);
+}
+
+/**
+ * (#5225) The exports that can DECODE `obj` — the reader's own, unless another
+ * module of the same linked project minted it.
+ *
+ * Every struct read must resolve its field-name list, its `__shas_` presence
+ * bit and its `__sget_` getter from the SAME module. Mixing them is not a
+ * missed optimisation but a wrong answer: with the owner's names and the
+ * reader's getter, a field name the reader happens to reuse for one of its own
+ * shapes (`month` and `day` are all over the Temporal polyfill) reads as
+ * "present" and returns that getter's `ref.test`-miss default — 0 — instead of
+ * the real value. So this is applied at the top of each read, not as a retry.
+ *
+ * One boolean when no linked project is live; a cached `WeakMap.get` otherwise.
+ */
+function _decoderExportsFor(
+  obj: any,
+  exports: Record<string, Function> | undefined,
+): Record<string, Function> | undefined {
+  return _crossModuleStructs.decoderFor(obj, exports) ?? exports;
+}
+
+/** (#5225) `_decoderExportsFor` for the paths that thread a callback state. */
+function _crossModuleCallbackState<T extends MarshalExportSource | undefined>(obj: any, state: T): T {
+  if (obj == null || typeof obj !== "object") return state;
+  const owner = _crossModuleStructs.decoderFor(obj, state?.getExports());
+  return owner === undefined ? state : (_crossModuleStructs.stateFor(owner) as T);
+}
 
 // (#2671) RegExp.lastIndex value-preserving slot. §22.2.7.2 RegExpBuiltinExec
 // reads lastIndex as `ToLength(? Get(R, "lastIndex"))`; the setter stores the
@@ -6214,6 +6247,20 @@ const _classStaticMethodClosures = new WeakSet<object>();
  * function mirror instead of the plain non-callable object proxy.
  */
 const _classCtorClosures = new WeakMap<object, any>();
+/**
+ * (#5242) The LIVE export source of the module that registered each class
+ * object. The constructible mirror is built once and cached in
+ * `_hostProxyCache` forever, but it captured a SNAPSHOT of `exports` — and for
+ * a class declared at top level that snapshot is taken during the wasm `start`
+ * section, where the only view any caller can have is the partial #5202
+ * start-export registry (measured: 19 entries against the live view's 59), or
+ * nothing at all (#5193). Frozen, that view carries no constructor dispatcher,
+ * so the mirror's own `[[Construct]]` arm threw "compiled class constructor
+ * <Name> bridge unavailable" for the whole life of the module — the polyfill's
+ * `new (ce("%Temporal.Duration%"))(…)`. Registering the live state here lets
+ * the mirror re-ask once instantiation has returned.
+ */
+const _classCtorCallbackStates = new WeakMap<object, MarshalExportSource>();
 const _classProtoStructs = new WeakMap<object, any>();
 const _classFnctorParents = new WeakMap<object, any>();
 // Classes whose source omitted a constructor while extending a runtime parent
@@ -6242,8 +6289,10 @@ function _registerClassCtorHandler(
   parentFnctor: any,
   classNameArg: any,
   implicitDynamicParentCtor: any,
+  liveExportSource?: MarshalExportSource,
 ): void {
   if (classObj == null || typeof classObj !== "object") return;
+  if (liveExportSource !== undefined) _classCtorCallbackStates.set(classObj, liveExportSource);
   if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
   if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
@@ -7383,20 +7432,6 @@ function _setLikeRecordForHost(
   return rec;
 }
 
-// (#2801) Parse a property key into a canonical array index (uint32), or
-// `undefined` if it is not one. Mirrors the spec's CanonicalNumericIndexString
-// + array-index range so only genuine element keys (`"0"`, `"1"`, …) route to
-// `__vec_get`, while `"length"`, `"01"`, `"-1"`, `"1.5"` fall through to the
-// Array.prototype method path.
-function _asArrayIndex(key: string): number | undefined {
-  if (key === "0") return 0;
-  // Reject leading-zero / sign / non-digit forms — canonical indices only.
-  if (key.length === 0 || key.charCodeAt(0) === 48 /* '0' */) return undefined;
-  const n = Number(key);
-  if (Number.isInteger(n) && n >= 0 && n < 4294967295 && String(n) === key) return n;
-  return undefined;
-}
-
 // (#3116) Default attribute flags for a live array element that has never been
 // reconfigured: data property, writable+enumerable+configurable (§10.4.2).
 const _SC_ELEM_DEFAULT = _SC_DEFINED | _SC_WRITABLE | _SC_ENUMERABLE | _SC_CONFIGURABLE;
@@ -7709,25 +7744,6 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
     }
     return { hit: true, value: val };
   };
-  const isVisibleSidecarOwnKey = (key: string | symbol): boolean => {
-    const normalized = typeof key === "symbol" ? key : String(key);
-    if (_wasmStructDeletedKeys.get(vec)?.has(normalized)) return false;
-    if (
-      typeof normalized === "string" &&
-      (normalized === "length" ||
-        _asArrayIndex(normalized) !== undefined ||
-        normalized.startsWith("__get_") ||
-        normalized.startsWith("__set_"))
-    ) {
-      return false;
-    }
-    const sidecar = _wasmStructProps.get(vec);
-    return (
-      (!!sidecar && normalized in sidecar) ||
-      (_wasmPropDescs.get(vec)?.has(normalized) ?? false) ||
-      (_wasmStructAccessors.get(vec)?.has(normalized) ?? false)
-    );
-  };
   const handler: ProxyHandler<any[]> = {
     get(_t, key) {
       if (key === "length") return liveLen();
@@ -7757,45 +7773,7 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
       return key in target;
     },
     ownKeys() {
-      const n = liveLen();
-      const keys: (string | symbol)[] = [];
-      const push = (key: string | symbol): void => {
-        if (!keys.includes(key)) keys.push(key);
-      };
-      for (let i = 0; i < n; i++) {
-        if (!mappedArguments || rawDesc(String(i)) !== undefined) push(String(i));
-      }
-      push("length");
-      // (#1058) A NodeArray's `pos`, `end`, and related metadata live in the
-      // vec sidecar. The live array facade already exposes their values via
-      // `get`/`has`; expose the same own-key set to reflection as well. This
-      // is the path used by `Object.prototype.hasOwnProperty.call` after an
-      // array mirror is unwrapped back to its original vec.
-      const symbols: symbol[] = [];
-      const addSidecarKey = (key: string | symbol): void => {
-        if (!isVisibleSidecarOwnKey(key)) return;
-        if (typeof key === "symbol") {
-          if (!symbols.includes(key)) symbols.push(key);
-        } else {
-          push(key);
-        }
-      };
-      const sidecar = _wasmStructProps.get(vec);
-      if (sidecar) {
-        for (const key of Object.getOwnPropertyNames(sidecar)) addSidecarKey(key);
-        for (const key of Object.getOwnPropertySymbols(sidecar)) addSidecarKey(key);
-      }
-      for (const key of _wasmPropDescs.get(vec)?.keys() ?? []) addSidecarKey(key);
-      for (const key of _wasmStructAccessors.get(vec)?.keys() ?? []) addSidecarKey(key);
-      for (const key of Reflect.ownKeys(target)) {
-        if (typeof key === "symbol") {
-          if (!symbols.includes(key)) symbols.push(key);
-        } else {
-          push(key);
-        }
-      }
-      for (const key of symbols) push(key);
-      return keys;
+      return wasmVecOwnKeys(_wasmSidecars, vec, target, liveLen(), mappedArguments, rawDesc);
     },
     getOwnPropertyDescriptor(_t, key) {
       if (key === "length") {
@@ -7813,19 +7791,10 @@ function _wrapVecForHost(vec: any, exportSlot: { current: Record<string, Functio
           return desc;
         }
       }
-      // (#1058) Named vec expandos are own properties, not merely values
-      // reachable through the proxy's `get` trap. In particular TypeScript's
-      // `isNodeArray` asks `hasOwnProperty` for the `pos` and `end` sidecars.
-      // Returning their stored descriptor keeps [[GetOwnProperty]] consistent
-      // with `get`, `has`, and `ownKeys` while preserving custom attributes.
-      if (isVisibleSidecarOwnKey(key)) {
-        const desc = hostDesc(key);
-        if (desc !== undefined) {
-          materializeNonConfigurable(key, desc);
-          return desc;
-        }
-      }
-      return Reflect.getOwnPropertyDescriptor(_t, key);
+      return (
+        wasmVecSidecarDescriptor(_wasmSidecars, vec, key, hostDesc, materializeNonConfigurable) ??
+        Reflect.getOwnPropertyDescriptor(_t, key)
+      );
     },
     defineProperty(_t, key, descriptor) {
       if (mappedArguments && typeof key === "string" && (key === "length" || _asArrayIndex(key) !== undefined)) {
@@ -7976,6 +7945,12 @@ function _wrapHostArrayElems(arr: any[], exports: Record<string, Function> | und
 function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): any {
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
+
+  // (#5225) A struct minted by another module of this linked project must be
+  // mirrored against the exports that can DECODE it, not against whichever
+  // module happens to be reading. Every trap below (field reads, key
+  // enumeration, callable members) resolves through these exports.
+  exports = _decoderExportsFor(obj, exports);
 
   const primitiveValue = _nativePrimitiveToHost(obj, exports);
   if (primitiveValue !== _MISS) return primitiveValue;
@@ -8570,6 +8545,60 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
 }
 
 /**
+ * (#5242) Per-export-view cache of the resolved `__class_construct_<Class>_<N>`
+ * bridges. The export view is walked with `getOwnPropertyNames` up the
+ * prototype chain (the host-bridge projection puts generated helpers on a
+ * prototype), which is not something to repeat on every `new`.
+ */
+const _classConstructBridgeCache = new WeakMap<object, Map<string, { fn: Function; arity: number } | null>>();
+
+/**
+ * Resolve the compiled constructor bridge for `className`, or `undefined` when
+ * this module published none (a rest-parameter ctor, a formal with no
+ * externref boundary coercion, or a module compiled before #5242).
+ *
+ * There is exactly ONE constructor per class, so the arity-suffixed family has
+ * a single member and the first match is the answer — no arity selection, no
+ * declared-arity probe export.
+ */
+function _resolveClassConstructBridge(
+  className: string,
+  reader: MarshalExportSource,
+): { fn: Function; arity: number } | undefined {
+  if (className === "") return undefined;
+  const exports = marshalExports(reader);
+  if (exports === undefined) return undefined;
+  let byClass = _classConstructBridgeCache.get(exports);
+  if (byClass === undefined) {
+    byClass = new Map();
+    _classConstructBridgeCache.set(exports, byClass);
+  }
+  const cached = byClass.get(className);
+  if (cached !== undefined) return cached ?? undefined;
+
+  const prefix = `__class_construct_${className}_`;
+  let found: { fn: Function; arity: number } | null = null;
+  let view: Record<string, any> | null = exports;
+  const seen = new Set<string>();
+  while (view !== null && found === null) {
+    for (const name of Object.getOwnPropertyNames(view)) {
+      if (seen.has(name) || !name.startsWith(prefix)) continue;
+      seen.add(name);
+      const suffix = name.slice(prefix.length);
+      if (!/^\d+$/.test(suffix)) continue;
+      const fn = exports[name];
+      if (typeof fn === "function") {
+        found = { fn, arity: Number(suffix) };
+        break;
+      }
+    }
+    view = Object.getPrototypeOf(view);
+  }
+  byClass.set(className, found);
+  return found ?? undefined;
+}
+
+/**
  * (#4618) Constructible host mirror for a compiled class object. Modeled on
  * `_wrapCallableForHost`: a Proxy over a real `function` target so
  * `[[Construct]]` is installable and `typeof === "function"` holds.
@@ -8585,7 +8614,23 @@ function _makeClassCtorMirrorForHost(
   propProxy: any,
   exports: Record<string, Function> | undefined,
 ): any {
-  const callbackState = { getExports: () => exports };
+  // (#5242) LIVE, not a snapshot. `exports` is the view the FIRST crossing
+  // happened to have, and this mirror outlives that crossing by the whole run
+  // of the program: for a class declared at top level the first crossing is
+  // inside the wasm `start` section, where the only view available is the
+  // partial #5202 start-export registry (or nothing at all). Frozen, that view
+  // has no `__class_construct_*` / `__call_fn_*` entry for the ctor, so
+  // `[[Construct]]` threw "bridge unavailable" for the module's whole life.
+  //
+  // The live view is preferred, not merely used as a fallback: the snapshot is
+  // non-undefined in exactly the init case that must be re-asked. It resolves
+  // to `undefined` during init, so the snapshot still answers there and the
+  // init-window behaviour is unchanged.
+  const liveSource = _classCtorCallbackStates.get(classObj);
+  const callbackState = {
+    getExports: () => liveSource?.getExports() ?? exports,
+    getStartExports: () => liveSource?.getStartExports?.(),
+  };
   const meta = _wasmStructProps.get(classObj);
   const sidecarName = _sidecarGet(classObj, "name");
   const className =
@@ -8672,16 +8717,41 @@ function _makeClassCtorMirrorForHost(
       return fn.apply(thisArg, args);
     },
     construct(_t, args, _newTarget) {
-      const ctorClosure = _classCtorClosures.get(classObj);
-      // Dispatch the raw closure directly — for a class EXPRESSION the ctor
-      // closure IS the registered class object, so the generic wrap would
-      // return this very mirror (whose `apply` throws the class-without-new
-      // TypeError). `_wrapWasmClosureUnknownArity` is the underlying bridge.
-      const ctorFn = _wrapWasmClosureUnknownArity(ctorClosure, callbackState, true);
-      if (typeof ctorFn !== "function") {
-        throw new TypeError(`compiled class constructor ${className} bridge unavailable`);
+      // (#5242) The class-qualified constructor bridge FIRST. The generic
+      // closure path below can only dispatch arities the module happened to
+      // emit `__call_fn_<N>` for (N ≤ 4, and only when something else in the
+      // module needed generic closure dispatch), so a ten-parameter ctor —
+      // `@js-temporal/polyfill`'s `Duration` — had no route back into Wasm at
+      // all and threw "bridge unavailable". Silently: `__call_fn_4` returns
+      // NULL for an unmatched closure, which the arm below then degrades to an
+      // empty `{}`, so the failure resurfaced later as "Missing internal slot".
+      const ctorBridge = _resolveClassConstructBridge(className, callbackState);
+      let inst: any;
+      if (ctorBridge !== undefined) {
+        // `_applyWithPrefix` + the dense arg array, never a spread: `...` goes
+        // through `Array.prototype[Symbol.iterator]`, which compiled programs
+        // are free to replace (#4758), and the leading `argc` is what lets
+        // `<Class>_new` apply parameter defaults for the arguments the caller
+        // genuinely omitted. Clamped to the declared arity, matching
+        // `maybeSetArgcForKnownCall`'s `min(actual, params)`.
+        inst = _applyWithPrefix(
+          ctorBridge.fn,
+          undefined,
+          [Math.min(args.length, ctorBridge.arity)],
+          _denseOwnWasmArgs(args, ctorBridge.arity),
+        );
+      } else {
+        const ctorClosure = _classCtorClosures.get(classObj);
+        // Dispatch the raw closure directly — for a class EXPRESSION the ctor
+        // closure IS the registered class object, so the generic wrap would
+        // return this very mirror (whose `apply` throws the class-without-new
+        // TypeError). `_wrapWasmClosureUnknownArity` is the underlying bridge.
+        const ctorFn = _wrapWasmClosureUnknownArity(ctorClosure, callbackState, true);
+        if (typeof ctorFn !== "function") {
+          throw new TypeError(`compiled class constructor ${className} bridge unavailable`);
+        }
+        inst = ctorFn(...args);
       }
-      const inst = ctorFn(...args);
       if (inst != null && typeof inst === "object") {
         if (_classImplicitDynamicParentCtor.has(classObj)) {
           const parent = resolveParent();
@@ -11826,7 +11896,7 @@ assert._isSameValue = isSameValue;
             // A delete tombstone outranks the immutable backing field (#2179).
             const tomb = _wasmStructDeletedKeys.get(obj);
             if (tomb && tomb.has(key)) return undefined;
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
             const getter = exports?.[`__sget_${key}`];
             const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
             if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
@@ -11882,8 +11952,7 @@ assert._isSameValue = isSameValue;
           }
         };
       if (name === "__copy_wasm_struct_sidecar") return _copyWasmStructSidecar;
-      // Reverse any host-side facade that originated from a Wasm value before
-      // codegen narrows the externref back to a concrete GC representation.
+      // Reverse a host-side facade before narrowing externref to a concrete GC representation.
       // A vec mirror may have been mutated by a host Array/TypedArray method;
       // replay its current elements before returning the original vec so the
       // concrete call_ref parameter observes both identity and data.
@@ -12795,7 +12864,28 @@ assert._isSameValue = isSameValue;
           _sidecarSet(classObj, methodName, closure);
           _getSidecarDescs(classObj).set(methodName, _SC_DEFINED | _SC_WRITABLE | _SC_CONFIGURABLE);
         };
-      if (name === "__register_class_ctor") return _registerClassCtorHandler;
+      if (name === "__register_class_ctor")
+        return function registerClassCtor(
+          classObj: any,
+          ctorClosure: any,
+          protoObj: any,
+          parentFnctor: any,
+          classNameArg: any,
+          implicitDynamicParentCtor: any,
+        ): void {
+          // (#5242) Hand the LIVE callback state through — the mirror this
+          // registration enables is cached for the module's whole life and
+          // must not freeze the `undefined` init-window export view.
+          _registerClassCtorHandler(
+            classObj,
+            ctorClosure,
+            protoObj,
+            parentFnctor,
+            classNameArg,
+            implicitDynamicParentCtor,
+            callbackState,
+          );
+        };
       if (name === "__register_class_parent") return _registerClassParentHandler;
       if (name === "__register_class_parent_ref")
         return function registerClassParentRef(n: any, o: any, k: any): void {
@@ -17901,7 +17991,7 @@ assert._isSameValue = isSameValue;
           // A delete tombstone outranks the immutable backing field (#2179).
           const tomb = _wasmStructDeletedKeys.get(obj);
           if (tomb && tomb.has(key)) return undefined;
-          const exports = callbackState?.getExports();
+          const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
           const getter = exports?.[`__sget_${key}`];
           const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
           if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);

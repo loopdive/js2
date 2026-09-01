@@ -178,12 +178,24 @@ const CALLBACK_BRIDGE_EXPORT_PREFIXES: readonly string[] = ["__cb_"];
  */
 const OBJECT_CREATE_EXPORT_NAMES: ReadonlySet<string> = new Set(["__object_create_class_instance"]);
 
+/**
+ * (#5242) The CONSTRUCT facet — the twin of the object-create one above. The
+ * same minified library that mints instances with `Object.create` also builds
+ * them with `new (ce("%Temporal.Duration%"))(…)`, at top level, while its
+ * module is still initialising. The host mirror's `[[Construct]]` trap answers
+ * that through `__class_construct_<Class>_<arity>`, so without this the
+ * init-window `new` on a class VALUE throws "bridge unavailable" while the
+ * identical call after init succeeds.
+ */
+const CLASS_CONSTRUCT_EXPORT_PREFIXES: readonly string[] = ["__class_construct_"];
+
 function isClassDispatchExport(name: string | undefined): name is string {
   if (name === undefined) return false;
   if (CLASS_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (CLOSURE_DISPATCH_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (STRUCT_READ_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (CALLBACK_BRIDGE_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (CLASS_CONSTRUCT_EXPORT_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
   if (STRUCT_READ_EXPORT_NAMES.has(name)) return true;
   if (OBJECT_CREATE_EXPORT_NAMES.has(name)) return true;
   return CLOSURE_DISPATCH_EXPORT_NAMES.has(name);

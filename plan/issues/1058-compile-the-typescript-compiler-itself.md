@@ -1228,16 +1228,16 @@ described above.
 The parser-only milestone is now accepted. A fresh build of the pinned
 TypeScript 5.9.3 consumer-driven scanner/parser graph selected **30 source
 files**, **34 program files**, and **310 module-initialization statements**. It
-compiled successfully, validated, and emitted a **68,779,455-byte** WasmGC
+compiled successfully, validated, and emitted a **68,781,935-byte** WasmGC
 module with **4,440 functions** after body generation and the same **16**
-non-fatal IR fallback warnings. The worker completed in 388,008 ms / 389,339 ms
-wall time, used 426,487 ms CPU (1.10 average cores), and peaked at **4,182 MiB
-RSS** with a 4,096 MiB V8 heap limit. The build completed, but that peak is
-**86 MiB above the strict 4 GiB whole-process RSS target**. The artifact
+non-fatal IR fallback warnings. The worker completed in 366,821 ms / 368,018 ms
+wall time, used 400,412 ms CPU (1.09 average cores), and peaked at **4,002.7 MiB
+RSS** with a 4,096 MiB V8 heap limit. That peak is **93.3 MiB below the strict
+4 GiB whole-process RSS target**. The artifact
 SHA-256 is
-`d4cc344b5cd0caa8d6ee05cd80444fef89f7fec93005ac113b154a62c6cd9864`;
+`033de5a467fe492ba8bf531c9daa927c436ee1b43b0c7cc98467f72fd0c63f72`;
 the adjacent 48,038-byte source map SHA-256 is
-`800cf8753c6887cf21318cd6be664a74bde91ed9b27bf57d029d5e9155d55a18`.
+`52fbd62d169554bc5c8d2abbc51da37eb1b077aa52950e5669037d1df27c02d6`.
 
 All three canonical real-source fingerprints are exactly native-equivalent:
 
