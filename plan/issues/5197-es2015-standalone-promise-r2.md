@@ -4,7 +4,27 @@ title: "ES2015 standalone promise — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-08-30
+updated: 2026-09-01
+loc-budget-allow:
+  # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
+  # metadata carrier. Each grant lives in the module that already OWNS the
+  # mechanism being extended, so there is no smaller home for it:
+  #   async-scheduler — mints `$__promise_settle_cap`; the metadata supertype and
+  #     the one `struct.new` factory the three mint sites share belong beside it.
+  #   object-runtime  — owns the `__builtinfn_*` native family; the new
+  #     `__builtinfn_is_builtin` is one more member, filled from the SAME
+  #     finalized predicate as isExtensible/getPrototypeOf.
+  #   new-super       — owns every `new`-site arm; §7.2.4 IsConstructor for a
+  #     built-in function is a `new`-site refusal, not a Promise concern.
+  - src/codegen/async-scheduler.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/expressions/new-super.ts
+func-budget-allow:
+  # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
+  # reservation block, and two three-line guard call sites on the `new` path.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
 priority: high
 horizon: m
 feasibility: hard

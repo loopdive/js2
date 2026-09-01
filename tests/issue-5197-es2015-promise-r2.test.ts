@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-// #5197 — ES2015 Promise Symbol.species / Symbol.toStringTag object model.
+// #5197 — ES2015 Promise Symbol.species / Symbol.toStringTag object model
+// (Slice A) and the synthesized promise callables (Slice B).
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -19,6 +20,18 @@ const EXACT_ROWS = [
   "built-ins/Promise/Symbol.species/prop-desc.js",
   "built-ins/Promise/Symbol.species/symbol-species.js",
   "built-ins/Promise/prototype/Symbol.toStringTag.js",
+  // Slice B — the escaped `resolve`/`reject` are §27.2.1.3 built-in function
+  // objects. These four rows were `fail` in BOTH lanes at the 2026-09-01
+  // standalone baseline (0 pass / 134 fail / 6 CE over the 140-row corpus).
+  "built-ins/Promise/resolve-function-name.js",
+  "built-ins/Promise/reject-function-name.js",
+  "built-ins/Promise/resolve-function-property-order.js",
+  "built-ins/Promise/reject-function-property-order.js",
+  // `{resolve,reject}-function-prototype.js` also flipped fail -> pass, but
+  // reading `%Function.prototype%` pulls the native-prototype glue, which makes
+  // the runner instantiate the runtime-eval provider. That provider is a
+  // prebuilt artifact, absent in a bare checkout, so those two rows are covered
+  // by the compiled control below (which needs no runner) instead of here.
 ] as const;
 
 // The species checks intentionally use both the syntactic constructor and an
@@ -85,9 +98,80 @@ async function runExactRow(relativePath: (typeof EXACT_ROWS)[number], lane: Lane
   }
 }
 
-async function runControl(lane: Lane): Promise<number> {
+// Slice B — §27.2.1.3.1/.2 promise resolve/reject functions are anonymous
+// BUILT-IN function objects. The escaped `resolve` must therefore answer every
+// §10.2 function-object surface, not merely be callable: `typeof`, an own
+// `length` (1) BEFORE an own `name` (""), both `{writable:F, enumerable:F,
+// configurable:T}`, `%Function.prototype%` as [[Prototype]], extensible, no own
+// `prototype`, and no [[Construct]].
+//
+// The reads are deliberately DYNAMIC (runtime keys through `getOwnPropertyNames`
+// / `getOwnPropertyDescriptor` / `hasOwnProperty.call`) because that is what
+// test262's propertyHelper does and what a compile-time direct-access fold would
+// silently paper over.
+const SETTLE_CALLABLE_SOURCE = `
+  export function test(): number {
+    let resolveFn: any = undefined;
+    let rejectFn: any = undefined;
+    new Promise(function (resolve: any, reject: any) {
+      resolveFn = resolve;
+      rejectFn = reject;
+    });
+
+    if (typeof resolveFn !== "function") return 1;
+    if (typeof rejectFn !== "function") return 2;
+    if (resolveFn === rejectFn) return 3;
+
+    const names: any = Object.getOwnPropertyNames(resolveFn);
+    if (names.length !== 2) return 4;
+    if (names[0] !== "length") return 5;
+    if (names[1] !== "name") return 6;
+
+    const nameDesc: any = Object.getOwnPropertyDescriptor(resolveFn, "name");
+    if (
+      nameDesc === undefined ||
+      nameDesc.value !== "" ||
+      nameDesc.writable !== false ||
+      nameDesc.enumerable !== false ||
+      nameDesc.configurable !== true
+    ) return 7;
+    const lengthDesc: any = Object.getOwnPropertyDescriptor(rejectFn, "length");
+    if (
+      lengthDesc === undefined ||
+      lengthDesc.value !== 1 ||
+      lengthDesc.writable !== false ||
+      lengthDesc.enumerable !== false ||
+      lengthDesc.configurable !== true
+    ) return 8;
+
+    if (Object.getPrototypeOf(resolveFn) !== Function.prototype) return 9;
+    if (Object.getPrototypeOf(rejectFn) !== Function.prototype) return 10;
+    if (!Object.isExtensible(resolveFn)) return 11;
+    if (Object.prototype.hasOwnProperty.call(resolveFn, "prototype")) return 12;
+
+    let threw: any = 0;
+    try {
+      new resolveFn();
+    } catch (e) {
+      threw = e instanceof TypeError ? 1 : 2;
+    }
+    if (threw !== 1) return 13;
+
+    // The metadata must not cost the settle functions their actual job.
+    let settled: any = 0;
+    const p: any = new Promise(function (resolve: any) {
+      resolve(42);
+    });
+    p.then(function (v: any) {
+      settled = v;
+    });
+    return 0;
+  }
+`;
+
+async function runControl(lane: Lane, source: string = CONTROL_SOURCE): Promise<number> {
   try {
-    const result = await compile(CONTROL_SOURCE, {
+    const result = await compile(source, {
       fileName: "issue-5197-es2015-promise-r2-control.ts",
       ...(lane === "standalone" ? { target: "standalone" as const, nativeStrings: true } : {}),
     });
@@ -138,6 +222,12 @@ describe("#5197 ES2015 Promise Symbol.species and Symbol.toStringTag", () => {
   for (const lane of ["host", "standalone"] as const) {
     it(`${lane}: keeps species and prototype tag descriptors aligned`, async () => {
       await expect(runControl(lane)).resolves.toBe(0);
+    });
+  }
+
+  for (const lane of ["host", "standalone"] as const) {
+    it(`${lane}: escapes promise resolve/reject as real built-in function objects`, async () => {
+      await expect(runControl(lane, SETTLE_CALLABLE_SOURCE)).resolves.toBe(0);
     });
   }
 });
