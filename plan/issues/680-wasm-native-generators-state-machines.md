@@ -3,16 +3,25 @@ id: 680
 title: "Wasm-native generators (state machines) with optional JS host fallback"
 status: ready
 created: 2026-03-20
-updated: 2026-07-24
+updated: 2026-09-01
 priority: high
 feasibility: hard
 reasoning_effort: max
 goal: standalone-mode
 sprint: current
+active_slice: expression-continuations
+active_branch: codex/680-expr-continuations-d60-20260831
 required_by: [681, 735, 762, 1042]
 loc-budget-allow:
   - src/codegen/index.ts
   - src/ir/from-ast.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions.ts
+  - src/codegen/generators-native.ts
+func-budget-allow:
+  - src/codegen/expressions.ts::compileExpressionInner
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
+  - src/codegen/generators-native.ts::compileState
 files:
   src/codegen/statements.ts:
     breaking:
@@ -352,3 +361,1164 @@ over-strict promotions (#3341 `unknown-function-ref`, #3519
 recognized-throws) that did not exercise the fallback-demotion cases across ALL
 targets. A future tightening must check that valid standalone programs still
 demote.
+
+## Expression-continuation d60 reconstruction and P2 repair (2026-08-31)
+
+This bounded slice is reconstructed in the isolated worktree
+`codex/680-expr-continuations-d60-20260831` from exact upstream main
+`d60aa73f9b3405dcdc1f832a511acb2366c7de00`. The prior recovery worktree at
+`c39de6dac8c376482b4f2cd628e445c6d8441728` and its b91 live port are
+evidence-only source material; the five owned paths were reconciled onto d60
+instead of copied or rebased. No GitHub issue was created.
+
+The current post-review replay target is upstream main
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`. The complete
+`d60aa73f9b3405dcdc1f832a511acb2366c7de00..a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`
+span contains benchmark artifacts plus the unrelated #5247 tracker filing, and
+has no overlap with these five owned paths; the final clean-head integration
+must nevertheless replay the focused gate.
+
+### Bounded implementation plan and admitted grammar
+
+The native planner owns pre-yield capture spills and original-AST replacement
+identities for a state. It evaluates a safe prefix operand exactly once before
+the suspension, then recompiles the original expression after resume under a
+state-local replacement map. The public expression layer retains ordinary
+expected-type coercion and boxing; only common inner dispatch reads a spill.
+Missing capture/local/type metadata is an invariant failure, never an excuse to
+replay source or synthesize a default.
+
+This slice admits only direct-generator-body expression statements with:
+
+- a parenthesized bare `yield`;
+- one bare `yield` in an array or a noncomputed object-data-property literal;
+- comma chains of safe operands and bare yields; or
+- the three-bare-yield conditional, lowered through canonical JavaScript
+  ToBoolean and distinct successor states.
+
+Recursive statement lowering explicitly disables that permission. Blocks, if
+arms, loops, try/catch/finally, `yield*`, async generators, calls/property
+access, spread, computed keys, and destructuring remain fail-closed. A
+state-lowered finally rejects the continuation route even if a future caller
+accidentally grants it. The raw boolean capture preserves its branded `i32`
+representation until ordinary array-element boxing; raw references have only
+compile/validate/resume coverage, not a representation claim.
+
+### Recovery evidence: independently reviewed, not d60 evidence
+
+The recovery-base focused file passed **1 / 1 test file and 26 / 26 tests**
+with direct Node, one Vitest fork, and no file parallelism (20.72 s total;
+10.41 s test time). Root then replayed the same b91 port at **1 / 1 and 26 / 26**
+in 18.92 s total (9.86 s test time). Both are historical exact denominators,
+not acceptance evidence for this d60 reconstruction.
+
+The 26 controls are:
+
+- 10 positive controls: object-literal generator method with a parenthesized
+  yield; standalone prelude-before-capture; consecutive array continuations;
+  object-data-property once-only capture; comma-prefix no-replay; raw boolean
+  boxing; raw-reference compile/validate/resume; three-yield conditional
+  canonical-ToBoolean/state-target evidence; adjacent sequential yields; and
+  the matching default gc/host prelude control.
+- 16 valid-contract refusal controls: bare block, if then, else, while, do,
+  for, try, catch, finally, `yield*`, async generator, call operand, property
+  access, spread, computed object key, and destructuring assignment.
+
+The earlier independent review confirmed state-local capture ownership,
+prelude/suspension order, conditional ToBoolean/targets, map restoration, and
+the fail-closed boundary. It also corrected formerly vacuous observations: the
+prelude-sensitive `let i = 10; [i++, yield]; return i` control distinguishes
+the required `11` from capture-before-prelude's `10`, and the boolean WAT proof
+resolves the two interned boolean globals inside `__gen_resume_g` instead of
+assuming an uninlined helper call.
+
+### Historical independent review BLOCK and initial P2 repair (superseded below)
+
+The review identified a P2 invariant violation in the recovered planner:
+`isSafeContinuationOperand` admits identifier prefixes, while
+`continuationCaptureType` previously took the checker result directly. The
+identifier `undefined` could therefore become an unbranded `i32` capture.
+Resume-time replacement bypasses normal literal handling, and an externref
+array carrier could send that `0` through numeric boxing instead of canonical
+`undefined` emission. Statement-position runtime results discard the value, so
+they could not expose the defect; the WAT-level ordinary-boxing invariant did.
+
+The initial d60 repair was intentionally narrow:
+
+1. Exact checker `Undefined`/`Void` prefixes are admitted only in the
+   standalone/native-string canonical-undefined regime. They get an `externref`
+   spill marked `canonicalUndefined`; ordinary host mode rejects only this
+   prefix form and remains on the existing host fallback. No raw numeric `i32`
+   representation is accepted.
+2. Capture emission requires an `externref` local and emits
+   `canonicalUndefinedExternInstrs(ctx)` directly. It never invokes the normal
+   expression compiler, numerical conversion, or number boxer for that
+   marker.
+3. The focused suite now adds `[undefined, yield, null]`. Its scoped resume-WAT
+   assertion resolves the canonical `__undefined` global, requires exactly one
+   `global.get` → `extern.convert_any` → `local.set` capture sequence and
+   rejects `f64.convert_i32_s`, the mandatory numeric-box route from an i32
+   continuation. The prior 26 controls remain unchanged, so the next focused
+   denominator is 27.
+4. Grammar admission and every existing refusal stay unchanged. This does not
+   broaden a fallback or downgrade an invariant.
+
+### Historical P2 re-review BLOCK and syntax-only repair plan (superseded below)
+
+The preceding checker-only repair is not sufficient. `isSafeContinuationOperand`
+intentionally unwraps TypeScript-only wrappers, but
+`continuationCaptureType` queried the **outer** wrapper's checker type and then
+marked every `Undefined`/`Void`-typed operand canonical. That lets a wrapper
+erase an observable, otherwise admitted operation. The exact standalone
+reproduction is:
+
+```ts
+function* g(): Generator<number | undefined, number, unknown> {
+  let i = 0;
+  [((i = 1) as unknown as undefined), yield, null];
+  return i;
+}
+```
+
+The inner assignment is accepted by the bounded safe-operand grammar, the outer
+assertion has checker type `undefined`, and the old canonical emission skipped
+the original AST entirely. The first suspension therefore lost `i = 1`; the
+required completion value is `1`, whereas the broken path yields `0`. The same
+checker-only rule could collapse other erased undefined/void shapes, so it is
+not a sound value-carrier proof.
+
+The first repaired boundary was deliberately narrower, but is superseded by
+the oracle-and-type admission order recorded below:
+
+1. Mark a capture canonical only for the syntax-only `undefined` literal form
+   (with transparent parentheses/assertion wrappers whose innermost expression
+   is that literal). In standalone/native-string mode it uses the existing
+   canonical externref singleton; in default host mode it declines native
+   planning and uses the existing host fallback.
+2. Any other checker `Undefined`/`Void`-containing prefix, including the cast
+   reproduction above, declines the expression-continuation plan rather than
+   replacing evaluation with a canonical value. Other safe operands continue to
+   compile their original AST exactly once.
+3. Strengthen the `[undefined, yield, null]` WAT control: resolve the exact
+   `__undefined` global in `__gen_resume_g`, recover the canonical capture local,
+   prove that local crosses the suspension through a state spill field, and
+   prove the same field is reloaded and feeds the rebuilt successor expression.
+   Keep the scoped no-`f64.convert_i32_s` assertion. This prevents a match from
+   an unrelated helper or a discarded direct-undefined expression.
+4. Keep the 11 direct controls plus 16 refusal rows (27 Vitest cases). Add the
+   cast-side-effect refusal and default-host canonical-prefix fallback assertions
+   inside their existing focused controls, so the denominator remains stable.
+
+This repair has not used a compiler or runtime lane. After static review and a
+clean integration onto `932341cc7d01547bf6b0065d766a31cdf3478d9f` or newer,
+run the one-fork focused 27-case file exactly once before publication.
+
+### Historical syntax-only P2 static handoff (superseded by admission-order repair)
+
+This superseded snapshot used a syntax proof rather than a checker-only type
+proof. It admitted direct `undefined` through transparent TypeScript-only
+wrappers; the later review found that wrapper treatment and its spelling-only
+binding check insufficient. The side-effecting double-assertion, default
+gc/host fallback, and strengthened WAT spill trace remain useful controls, but
+the active admission rule is the oracle-and-type boundary recorded below.
+
+Completed after this repair, without a compiler/runtime lane:
+
+- targeted Prettier check passed for the tracker, all three source paths, and
+  the focused test;
+- targeted Biome **lint** at error level passed for the four TypeScript files
+  with no diagnostics or fixes; and
+- tracked and untracked owned-path whitespace checks passed.
+
+Current source diff accounting is three allowlisted files at net **+690** lines
+(`context/types` +10, `expressions` +38, `generators-native` +642). The focused
+manifest remains exactly 11 direct controls plus 16 `it.each` refusal rows
+(**27 cases**); its two added assertions are inside existing controls. No
+compiler, Vitest, Test262, TypeScript, hook, commit, push, or PR command has run
+from this worktree. The next action is one clean-head focused replay on
+`932341cc7d01547bf6b0065d766a31cdf3478d9f` or newer.
+
+### Owned-path reconciliation and handoff
+
+Only this tracker, `src/codegen/context/types.ts`,
+`src/codegen/expressions.ts`, `src/codegen/generators-native.ts`, and
+`tests/issue-680-generator-expression-continuations.test.ts` belong to the
+d60 replay. The old b91-to-d2 and d2-to-d60 audits found no exact overlap in
+the three codegen or test paths; the d2-to-d60 delta's #5246 tracker update is
+unrelated. This reconstruction retains current-d60 contents outside the narrow
+insertions rather than replacing whole files.
+
+Static-only checks are required before independent review: owned-path diff
+whitespace, targeted Prettier/Biome, LOC/function-budget accounting, and a
+source inventory proving that canonical undefined is the sole new special
+capture path. No compiler, Vitest, Test262, TypeScript, hooks, commit, push, or
+PR action has been run from this d60 reconstruction. After a future clean
+live-head integration, rerun all scoped static gates and the one-fork focused
+27-case file before any publication decision.
+
+### Pre-re-review d60 static handoff (historical source-only evidence)
+
+The reconstructed snapshot is limited to the five owned paths listed above.
+Its recovery comparison is exact for `context/types.ts` and `expressions.ts`;
+`generators-native.ts` differs from the reviewed recovery only by the P2
+canonical-undefined/fail-closed implementation (51 insertions, 7 deletions),
+and the focused test differs only by its 29-line new WAT control.
+
+Completed static checks on this d60 worktree:
+
+- owned tracked-path `git diff --check` passed; the new untracked focused file
+  was independently parsed by both formatter and linter below;
+- targeted Prettier check passed for the tracker, three source files, and
+  focused test;
+- targeted Biome error-level lint parsed all four TypeScript files with no
+  diagnostics or fixes;
+- LOC budget passed: 3 changed source files, net **+674** allowed by this
+  tracker (`context/types` +10, `expressions` +38, `generators-native` +626);
+- function budget passed with the tracker allowances for
+  `compileExpressionInner` +26, `buildNativeGeneratorPlan` +487, and
+  `compileState` +20; and
+- source inventory found 11 direct positive controls plus 16 refusal cases
+  (**27 total**), with the canonical-undefined fixture and resume-only proof
+  both present.
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, or PR command
+ran in this worktree. The remaining blocker is independent review followed by
+a clean integrated-head replay; this static checkpoint is not a test pass.
+
+### Independent admission-order BLOCK and bounded repair plan
+
+The prior canonical-literal repair still used spelling after transparent-wrapper
+unwrapping. That was not a sufficient binding proof: a parameter or local named
+`undefined` can be a real user value, while the direct identifier compiler arm
+also treats that spelling specially. It must therefore decline this continuation
+route unless the oracle proves the **original** node is the unshadowed ambient
+global `undefined`.
+
+The review also found that the earlier gate ran after raw-boolean branding and
+looked only at the outer checker type. That admits or misclassifies assertion
+forms such as `(true as unknown as void)`, and misses type-wrapper laundering
+where an outer `number | undefined`/`void`/`null` union hides a non-nullish
+unwrapped operand. A union with any `null`, `undefined`, or `void` constituent
+has no proven continuation representation in this bounded slice. Direct `null`
+remains a separately safe literal and must not be swept into that refusal.
+
+The repair plan is deliberately fail-closed and does not widen grammar:
+
+1. Before boolean branding, query both the original expression and its
+   transparent-wrapper-unwrapped node. Canonicalize only a direct identifier
+   whose spelling is `undefined` and whose oracle binding/declaration answers
+   prove the ambient global; default gc/host still declines it to the legacy
+   fallback.
+2. Refuse every shadowed `undefined` spelling, every noncanonical direct
+   `Undefined`/`Void` type, and every outer or inner union containing
+   `Null`/`Undefined`/`Void`. Preserve direct `null` and ordinary non-nullish
+   captures unchanged.
+3. Make the resume-WAT fixture use the balanced function extractor after a
+   unique exact function-name match, and require the state-advance `struct.set`
+   to use the recovered capture spill's exact state type.
+4. Keep the 27-case Vitest denominator by embedding controls for shadowed
+   `undefined`, boolean asserted to `void`, all three nullish union members,
+   wrapper-laundered nullish unions, and a direct-null positive in existing
+   focused cases. No compiler or runtime evidence is claimed until a later
+   released one-fork replay.
+
+### Admission-order repair static handoff (no runtime lane)
+
+The repair now has one coherent capture-admission order in
+`continuationCaptureType`:
+
+1. It queries checker types for both the original node and the
+   transparent-wrapper-unwrapped node before any boolean brand. A direct
+   noncanonical `Undefined`/`Void` type, or either union containing
+   `Null`/`Undefined`/`Void`, declines the native plan; direct `null` remains
+   ordinary.
+2. Canonical emission is restricted to the **original** direct `undefined`
+   identifier when the oracle finds only ambient declaration-file bindings, not
+   a user source declaration. A wrapper never becomes canonical. Shadowed
+   `undefined` declines before it can reach the direct identifier compiler arm.
+   In default gc/host mode that otherwise canonical form still declines to the
+   existing `__create_generator` fallback.
+3. The canonical resume-WAT probe now first chooses one exact
+   `__gen_resume_g` match, slices it with the balanced-expression extractor,
+   and ties state advancement to the exact state type recovered from the
+   canonical capture's `struct.set`. Its former resume-wide no-numeric-box
+   claim is superseded below by the exact successor-arm, same-local dataflow
+   proof; valid f64 sent-value boxing remains outside that negative assertion.
+
+The existing canonical-undefined positive now embeds valid-contract controls
+for the side-effecting erased assertion, shadowed `undefined`, asserted
+boolean-to-`void`, `number | undefined`, `number | void`, `number | null`, and
+wrapper-laundered `number | undefined` refusals. It also has a direct-`null`
+standalone positive. These are inside the existing `it`, preserving exactly
+**11 direct controls + 16 refusal rows = 27 Vitest cases**. The older
+wrapper-admission claims are explicitly historical and superseded. Every
+standalone refusal, including the new embedded controls, must also produce a
+compiler diagnostic, so an unrelated silent failure cannot satisfy the row.
+
+Current source inventory remains the three allowlisted files at net **+716**
+lines (`context/types` +10, `expressions` +38, `generators-native` +668), plus
+this tracker and the 701-line focused test. Completed static-only gates after
+this entry are targeted Prettier (all five paths), error-level Biome lint (the
+four TypeScript paths), and tracked/untracked whitespace checks; all passed
+with no diagnostics or fixes. No compiler, Vitest, Test262, TypeScript, hook,
+commit, push, or PR command has run for this repair. The next runtime action,
+only after clean integration, is one single-fork replay of the 27-case file
+against live `932341cc7d01547bf6b0065d766a31cdf3478d9f` or newer.
+
+### Independent re-review BLOCK: inner-only nullish-union proof
+
+The prior three nullish-union refusal fixtures passed their union-typed
+identifier directly to the continuation capture. They exercise the outer-type
+gate, but cannot prove that `continuationCaptureType` also consults the
+transparent-wrapper-unwrapped node: both checker queries see the same union.
+
+The bounded test-only repair keeps the existing declared
+`number | undefined`, `number | void`, and `number | null` parameters, but
+wraps each operand as `(value as number)`. The outer assertion is safely
+`number`; the unwrapped identifier is still the declared nullish union. Each
+fixture must therefore refuse solely through the inner-type gate. They remain
+valid Generator contracts and stay inside the canonical-undefined `it`, so the
+manifest remains **11 direct controls + 16 refusal rows = 27 Vitest cases**.
+No source semantics or WAT proof changes are authorized. After this test-only
+repair, rerun only the scoped static gates; a compiler/runtime replay remains
+reserved for a released lane.
+
+Scoped static replay completed after this test-only change: targeted Prettier
+passed for all five owned paths; error-level Biome lint passed for the four
+TypeScript paths; tracked and untracked whitespace checks produced no
+diagnostics; and source inventory confirmed 11 direct `it` controls, 16
+`it.each` refusal rows, and exactly three `(value as number)` inner-only union
+fixtures. No compiler, Vitest, Test262, TypeScript, hook, commit, push, or PR
+command ran.
+
+### Hook-stop evidence and bounded successor-state WAT-proof repair
+
+The normal commit hook formatted and staged the five owned paths, but created
+no commit and left no new lint-staged stash. Its focused #680 replay stopped at
+**26/27**: the only failing assertion was the canonical-undefined WAT proof in
+`expectCanonicalUndefinedContinuationSpill`. The source semantics and all 27
+fixture contracts remain unchanged.
+
+The failed proof identifies the canonical capture local and its state-struct
+spill field correctly, then advances past the first successor-state
+`struct.set` and demands a non-store `local.get` before the next matching spill
+store. That interval is not a defensible successor-state boundary: the rebuilt
+expression's actual consumer can occur after an early state write in the same
+successor. The resulting absence is a test-proof false negative, not evidence
+that the capture is lost.
+
+The bounded repair will keep the exact balanced `$__gen_resume_g` body and the
+same recovered state type/field. It will locate the transition to the exact
+successor state, bound analysis to that state arm, and prove that a reload of
+that **same** spill field supplies the reconstructed capture local's real
+consumer there. It will not widen to a module-wide or unbounded regex, change
+codegen semantics, alter the canonical-admission controls, or change the
+**11 direct + 16 refusal = 27** denominator. After targeted static checks, one
+single-fork focused replay is the only authorized runtime command; on a
+failure its output is retained and no second replay is run.
+
+### Single-fork hook replay: 26/27, stopped without retry
+
+The bounded successor-arm proof passed its formerly failing point after scoped
+Prettier, error-level Biome lint, and tracked/untracked whitespace checks all
+passed. The one authorized direct-Node, one-fork/no-file-parallelism Vitest
+replay then produced **26 passed, 1 failed (27 total)**. No second replay ran.
+
+The sole failure is now the older whole-resume negative at
+`issue-680-generator-expression-continuations.test.ts:370`:
+`no numeric continuation box path` rejects any `f64.convert_i32_s` in
+`$__gen_resume_g`. The retained WAT artifact shows the repaired chain is
+present — canonical capture local `1` spills/reloads through state field
+`46/5`, and state `1` reads it before its sole `array.new_fixed 1 3` rebuild.
+The reported conversion instead belongs to the distinct f64 sent local `2`:
+its ordinary numeric-to-externref boxing occurs between `local.get 2` and the
+same rebuilt array. It is not a conversion of the canonical externref capture.
+
+This is therefore a remaining **test-proof scope defect**, not a source
+semantic regression: a module-resume-wide ban on numeric conversion cannot
+distinguish the canonical operand carrier from valid boxing of the yielded sent
+value. Any follow-up must narrow that negative to the canonical spill/local
+dataflow inside the already recovered successor arm, retain the exact
+same-field/reload evidence, and use a newly released runtime lane. This task
+stops here with the complete Vitest output preserved; it did not run TypeScript,
+Test262, hooks, staging, commit, merge, push, or PR commands.
+
+### Bounded follow-up plan: canonical operand numeric-box proof only
+
+The single replay makes the required distinction concrete. In the exact state-1
+arm, the recovered canonical capture local is the first stack operand of the
+same `array.new_fixed … 3` rebuilt expression; the next immediate stack source
+is the distinct f64 sent local, whose subsequent numeric boxing is valid. The
+test will preserve the completed unique global-capture, exact spill-field,
+prologue reload, successor-arm, and three-element-consumer checks. It will
+remove only the whole-resume conversion ban and instead require that the
+canonical local flows directly to the next array operand without a numeric
+conversion before the distinct sent local is read. Thus no valid sent-value
+boxing elsewhere in that state can satisfy or fail the canonical-carrier proof.
+
+This is a static-only follow-up: no source semantics, fixture contracts, WAT
+positive evidence, or **27-case** denominator will change, and no second
+compiler/Vitest replay is authorized until a new lane is explicitly released.
+
+Scoped static handoff after this correction: targeted Prettier passed for all
+five owned paths; error-level Biome lint passed for the four TypeScript files;
+both staged and unstaged owned-path whitespace checks passed; and the focused
+manifest remains 11 direct controls, 16 refusal rows, and three inner-only
+`(value as number)` controls. At that checkpoint, the corrected focused test
+was 769 lines; the
+three codegen paths remain net +716 lines within the recorded budget. The
+previous direct-Node replay remains the only runtime result (**26/27**, with
+its exact WAT retained above); this static correction intentionally did not
+compile, rerun Vitest, invoke TypeScript/Test262/hooks, stage, commit, merge,
+push, or open a PR.
+
+### Independent proof review FAIL: ordered reads were not operand flow
+
+The prior static-only correction was still insufficient. It proved that the
+canonical and sent `local.get`s occur before the unique rebuilt
+`array.new_fixed … 3`, but it did not prove that no intervening stack effect
+consumes or replaces the canonical operand. Its conversion check examined only
+the already-trivial text between two adjacent reads, so it could not establish
+the full first-array-operand flow.
+
+The revised, test-only plan is to parse the bounded instruction sequence from
+the unique canonical successor-state read through that state's unique
+three-element `array.new_fixed`. It will require, by explicit stack provenance,
+exact operands in source order: **canonical capture**, a sent-value expression
+sourced only from the distinct sent local (its numeric box operations are
+allowed), and `ref.null extern`. Every top-level instruction in that bounded
+segment must be known and must preserve the canonical value until the array
+constructor; unknown, drop, store, branch, or early array operations fail the
+proof. The balanced inline sent-box expression must have no external/capture
+source and may read only the sent local or locals derived from it. The existing
+unique-function, spill, reload, state-arm, and consumer checks remain intact.
+
+No compiler or runtime lane is authorized for this revised proof. After the
+minimal test edit, run only scoped Prettier, Biome lint, whitespace/diff, and
+manifest inventory checks; retain the recorded **26/27** replay as the sole
+runtime artifact until a new lane is released.
+
+### Static handoff: bounded canonical operand-flow proof
+
+The test now parses only the segment in the recovered successor-state arm from
+the unique same-field canonical reload consumer through that arm's unique
+`array.new_fixed … 3`. Its explicit stack provenance requires the constructor
+to consume, in order, the canonical capture, a sent-derived externref
+expression, and `ref.null extern`. Unknown top-level instructions fail; a
+numeric transform, `local.tee`, branch condition, early constructor, or any
+other consuming operation fails if applied to the canonical origin. The nested
+sent box is bounded as one balanced expression, admits only the current
+numeric-box instruction vocabulary, rejects external/capture sources plus
+branches, returns, drops, and aggregate operations, and proves every scratch
+write/read derives from the exact successor sent-field reload. The older
+adjacent-read check remains a named diagnostic only; it is no longer the
+operand-flow evidence.
+
+Scoped static gates passed after this repair: direct Prettier checked the
+tracker plus all four owned TypeScript paths; error-level direct Biome lint
+checked those four TypeScript paths; both staged and unstaged
+`git diff --check` checks passed. The inventory is unchanged at **11** direct
+positive/host controls plus **16** named refusal rows (**27** total), including
+the three inner-only `(value as number)` nullish-union refusals. The focused
+test is now 983 lines. No compiler, Vitest, TypeScript, Test262, hook, staging,
+commit, merge, push, or PR command ran for this revision; the prior **26/27**
+single-fork replay remains the sole runtime artifact until a lane is released.
+
+### Independent proof review FAIL: folded sent-box result was not proven
+
+The bounded outer operand proof is sound, but its nested sent-box verifier was
+not. It inspected only the first apparent opcode on each source line and
+treated a folded `if` as sent-derived once either arm mentioned a sent local.
+An adversarial one-line folded `select` can therefore discard a sent scratch
+value and return a constant `ref.i31` carrier while satisfying the shallow
+scan. That makes the second array operand's *result* provenance unproven.
+
+The bounded test-only repair replaces that scan with a balanced recursive WAT
+instruction parser and evaluator for the one inline sent-box expression. It
+will consume every token at every depth, require both `if` arms to return an
+externref box derived from sent data, and model only the exact numeric-box
+operations seen in the retained WAT artifact. `select`, calls, globals,
+aggregate access/mutation, branches, drops, reference constructors other than
+the explicitly modeled sent `ref.i31` and sent-number carrier, and all
+unmodeled opcodes will fail closed. A pure adversarial helper assertion will
+live inside the existing canonical-undefined control, preserving the **11 + 16
+= 27** denominator.
+
+No compiler or runtime lane is authorized. After this tracker/test-only
+repair, run direct Prettier, Biome, whitespace/diff, and manifest inventory
+checks only; retain **26/27** as the sole runtime evidence pending a released
+lane.
+
+### Static handoff: recursive sent-box provenance proof
+
+The shallow line scan is removed. The new helper tokenizes every parenthesis,
+immediate, and flat opcode in the balanced inline box, recursively parses
+`if`/`then`/`else`/`block` structure, and consumes the full token
+stream. Each branch must leave exactly one sent-derived `externref`; nested
+conditions, local scratch values, numeric transforms, `ref.i31`, and
+`extern.convert_any` are stack-provenanced. The one artifact-required
+`struct.new <numeric-type>` fallback is allowed only when it consumes sent
+data and immediately feeds `extern.convert_any`; every other aggregate or
+reference construction is rejected. The embedded pure regression rejects both
+the one-line folded `select` form and the folded constant-`ref.i31` form
+that the previous first-op-per-line check could accept.
+
+Direct Prettier passed for the tracker and focused test; error-level direct
+Biome lint passed for the focused test; staged and unstaged
+`git diff --check` checks passed. The manifest remains **11** direct controls,
+**16** named refusal rows, and **3** inner-only `(value as number)` rows
+(**27** total); the focused test is now 1262 lines. No compiler, Vitest,
+TypeScript, Test262, hook, staging, commit, merge, push, or PR command ran for
+this repair. The recorded **26/27** single-fork replay remains the sole runtime
+artifact until a lane is released.
+
+### Independent proof review BLOCK: taint is not payload equivalence
+
+Two bounded defects remain in the recursive sent-box proof. First, its generic
+binary rule marks an operation sent-derived whenever either input is sent. That
+incorrectly admits a value-collapsing path such as
+`sent → trunc → const 0 → i32.and → ref.i31`, whose final carrier is
+always zero despite a sent dependency. Second, the current
+`struct.new <any-safe-index>` exception is not tied to the numeric
+wrapper actually declared by this module; an unrelated struct followed by
+`extern.convert_any` can satisfy it.
+
+The revised test-only plan is to replace taint propagation with a symbolic
+whitelist for the exact retained number-box expression: every final
+`ref.i31` or float-wrapper input must structurally evaluate to the
+original sent value or to the exact checked integer conversion of it. It will
+admit only the identity/range/integrality decision tree required by the
+artifact and reject masks, selects, constants, and any operation that can
+change the boxed payload. It will resolve the sole numeric wrapper type from
+the same full WAT module, bind the allowed `struct.new` to that type
+definition and its numeric field shape, and reject every unrelated wrapper.
+Embedded helper assertions for the zero-mask and unrelated-struct attacks will
+remain inside the canonical positive, preserving **11 + 16 = 27** controls.
+
+No compiler or runtime lane is authorized. Implement only tracker/test changes,
+then run direct Prettier, Biome, whitespace/diff, and inventory checks; retain
+the recorded **26/27** replay as the only runtime evidence pending independent
+re-review.
+
+### Static handoff: exact native number-box payload and carrier proof
+
+The generic sent-taint evaluator is replaced by a balanced recursive symbolic
+interpreter for the bounded native `__box_number` decision tree. It keeps the
+original f64, saturated i32 conversion, signed-31 round-trip, integrality,
+range, nonzero, and negative-zero predicates distinct. `ref.i31` accepts only
+the exact saturated conversion; the f64 fallback accepts only the untouched
+sent f64. Therefore `sent → trunc → const 0 → i32.and → ref.i31` is rejected
+as a payload-changing mask rather than accepted merely because it depends on
+sent. The parser still rejects every unmodelled nested opcode, including
+folded `select`, calls, aggregates, branches, drops/stores, globals, and
+reference constructors outside the two canonical carriers.
+
+The permitted `struct.new` index is resolved from the same full WAT module's
+unique `$__box_number` body, whose direct fallback must immediately convert to
+externref. The module must also contain exactly the native immutable
+`$__box_number_struct { value: f64 }` definition. A helper assertion rejects a
+real separately declared `struct.new` index even when it directly converts to
+externref. The canonical positive embeds that unrelated-wrapper control plus
+the zero-mask, constant-`ref.i31`, and folded-`select` controls, so it does not
+alter the manifest: **11** direct Vitest controls plus **16** `it.each`
+refusal rows remain **27** total.
+
+Static-only validation passed: direct Prettier `--check` for this tracker and
+the focused test; error-level direct Biome lint for the focused test; and both
+staged and unstaged `git diff --check` checks. The focused test is now **1,406
+lines**. No compiler, Vitest, TypeScript, Test262, hook, staging, commit,
+merge, push, or PR command ran for this revision. The retained one-fork
+runtime artifact is still **26 passed, 1 failed (27 total)** from before this
+test-proof repair; a fresh replay requires a released lane and independent
+review first.
+
+### Independent proof review BLOCK: named wrapper was not index-bound
+
+The previous carrier proof independently found a named
+`$__box_number_struct { value: f64 }` definition and the numeric
+`struct.new N` used by `$__box_number`, but did not establish that the named
+definition occupied index `N`. A module with an unrelated f64 struct at index
+0 and the named number wrapper at index 1 could therefore pass while
+`__box_number` allocated the unrelated type.
+
+The bounded test-only repair will balanced-scan every emitted top-level type
+definition in numeric order, resolve the unique named
+`$__box_number_struct` definition to its exact index, require the unique
+`$__box_number` `struct.new` to name that index, and then validate the same
+resolved definition as an immutable one-field f64 struct. An embedded inverted
+module fixture will prove that the old name/index split is rejected. The
+existing **11 + 16 = 27** manifest, source semantics, and retained **26/27**
+runtime artifact remain unchanged. Only direct Prettier, Biome lint, diff, and
+inventory checks are authorized after this repair.
+
+### Static handoff: exact named wrapper type-table binding
+
+The WAT proof now reads the emitter's leading type table as balanced module
+expressions, including direct definitions nested in a `rec` group. It records
+every emitted definition in order, recognizes the emitter's `$typeN` numeric
+anchors (and Binaryen-style `$N` anchors), and resolves
+`$__box_number_struct` only when the immediately surrounding anchors prove a
+contiguous numeric span. This fails closed if an omitted inlineable type could
+make source order differ from the Wasm type index.
+
+`$__box_number` must now contain exactly one `struct.new`, and that numeric
+operand must equal the resolved named-wrapper index before the same resolved
+definition is checked as the immutable `{ value: f64 }` carrier and as the
+direct `local.get 0 → struct.new → extern.convert_any` fallback. The embedded
+positive fixture puts an unrelated f64 struct at type 0 and the named wrapper
+at type 1, with `$type0`/`$type2` anchors; the inverted fixture keeps that
+table but makes `$__box_number` allocate type 0 and is required to throw. This
+closes the prior independent name/index split false positive without changing
+compiler source or the **11 + 16 = 27** manifest.
+
+Static-only validation passed: direct Prettier `--check` for this tracker and
+the focused test; error-level direct Biome lint for the focused test; and both
+staged and unstaged `git diff --check` checks. The inventory remains **11**
+direct controls, **16** `it.each` refusal rows, and **3** inner-only
+`(value as number)` nullish-union controls (**27** total). The focused test is
+now **1,519 lines**. No compiler, Vitest, TypeScript, Test262, hook, staging,
+commit, merge, push, or PR command ran; the retained single-fork runtime
+artifact remains **26 passed, 1 failed (27 total)** from before these
+test-proof repairs. A fresh replay still requires a released lane and
+independent review.
+
+### Independent re-review BLOCK: unrelated-carrier fixture used the wrapper
+
+The new type-index fixtures correctly resolve the named wrapper as type 1, but
+the separate adversarial consumer still emitted `struct.new 1`. That is the
+valid named wrapper, so the asserted rejection did not exercise an unrelated
+carrier. The bounded correction changes only that adversarial consumer to
+`struct.new 0`, the separately declared f64 struct; it leaves the parser,
+native boxer fixtures, source semantics, and **11 + 16 = 27** manifest intact.
+
+Only targeted Prettier, Biome lint, whitespace/diff, and inventory checks are
+authorized after this test-fixture correction. The retained **26/27** runtime
+artifact remains stale pending a released replay lane.
+
+### Static handoff: unrelated carrier fixture correction
+
+The adversarial array operand now constructs type 0 while the resolved native
+number-wrapper type remains 1, so it is a genuine separately declared carrier
+and the existing direct-conversion/type-index rejection is non-vacuous again.
+No parser, compiler, positive control, refusal row, or runtime expectation
+changed.
+
+Direct Prettier `--check`, error-level direct Biome lint, and staged plus
+unstaged `git diff --check` all passed. The inventory remains **11** direct
+controls, **16** refusal rows, and **3** inner-only nullish-union controls
+(**27** total); the focused test remains **1,519 lines**. No Vitest, compiler,
+TypeScript, Test262, hook, staging, commit, merge, push, or PR command ran.
+
+### Final independent PASS and released focused replay plan
+
+Independent re-review accepted the bounded type-table binding and corrected
+unrelated-carrier fixture: the named wrapper is index-bound, the adversarial
+carrier is genuinely type 0 rather than the valid type-1 wrapper, and the
+existing canonical capture/number-box proof remains non-vacuous. The final
+released validation is one—and only one—direct bundled-Node Vitest invocation
+of `tests/issue-680-generator-expression-continuations.test.ts`, using a
+single fork with file parallelism disabled. The expected result is **27/27**.
+No retry is authorized on failure; record exact output, exit status, and
+duration below, with no source/test change during the replay.
+
+### Final focused replay result — PASS
+
+Executed exactly once (single fork, no file parallelism):
+
+```text
+PATH=/private/tmp:/private/tmp/codex-pnpm10/node_modules/.bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:/Users/thomas/Code/js2/node_modules/.bin:/opt/homebrew/opt/llvm@18/bin:$PATH node node_modules/vitest/dist/cli.js run tests/issue-680-generator-expression-continuations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot
+```
+
+Exit status: **0**. Tool wall duration: **21.764636334s**. Vitest reported:
+
+```text
+ RUN  v3.2.4 /Users/thomas/Code/js2/.codex-worktrees/final-680-expr-continuations-d60-20260831
+
+···························
+
+ Test Files  1 passed (1)
+      Tests  27 passed (27)
+   Start at  23:13:27
+   Duration  21.55s (transform 6.25s, setup 0ms, collect 8.52s, tests 12.82s, environment 0ms, prepare 38ms)
+```
+
+The expected **27/27** result passed. This was the sole released runtime replay;
+no retry was needed or run. No source/test edit, TypeScript, Test262, hook,
+staging, commit, merge, push, or PR command ran after the replay plan.
+
+### Normal commit-hook BLOCK: oracle-ratchet
+
+The normal commit hook ran after the final **27/27** replay but stopped at the
+oracle-ratchet gate; no commit was created. Its reported delta is exactly
+`src/codegen/generators-native.ts`: `getTypeAtLocation +2` and `ctx.checker
++2` (the two new queries are around lines 1330–1331). This is a boundary-policy
+failure, not a replay regression.
+
+The bounded repair will replace only those two direct checker queries with the
+existing `ctx.oracle` facade or already-recorded oracle facts, preserving the
+canonical-unshadowed-`undefined` and outer/inner nullish-union admission
+semantics exactly. Do not add an oracle-ratchet allow unless inspection proves
+the facade cannot express the required facts. Run only targeted Prettier,
+Biome, diff, and `pnpm run check:oracle-ratchet`; no compiler, Vitest, hook,
+staging, commit, merge, push, or PR operation is authorized.
+
+### Static handoff: oracle-fact continuation admission
+
+The two new raw calls are replaced by `ctx.oracle.typeFactOf` for the original
+expression and its transparent-wrapper-unwrapped node. The oracle expresses
+the prior gate exactly: direct `undefined`/`void` facts reject; union facts
+carry `nullable`/`undefinable` flags (and recursively checked parts), so any
+union containing `null`/`undefined`/`void` rejects; direct `null` remains
+ordinary. The pre-existing ambient-binding proof for a direct unshadowed
+`undefined` is unchanged, so only that original spelling takes the canonical
+standalone/native-string externref route and default gc/host still declines to
+its existing fallback.
+
+The bounded fact-to-spill adapter preserves primitive carriers without leaking
+a checker type: number → f64, boolean/symbol → branded i32, native string when
+available (otherwise externref), and target-correct bigint. Complex, unknown,
+and non-nullish-union facts use the existing lossless externref spill boundary;
+no native type registry is queried or mutated during admission. The raw
+boolean literal branch remains after the nullish gate and is unchanged. No
+runtime controls changed.
+
+Targeted direct Prettier and error-level Biome lint passed; staged and unstaged
+`git diff --check` passed. `pnpm run check:oracle-ratchet` exited **0** with:
+
+```text
+[oracle-ratchet] OK — no net checker-usage growth across 3 changed src/codegen file(s) (getTypeAtLocation +0, ctx.checker +0; base: merge-base(upstream-remote(origin-is-a-fork))).
+```
+
+No compiler, Vitest, TypeScript, Test262, hook, staging, commit, merge, push,
+or PR command ran after the hook failure. The prior exact single-fork **27/27**
+replay remains the runtime evidence; this repair is ready for independent
+semantic review before another runtime lane is used.
+
+### Commit retry interrupted before repository gates
+
+The first normal commit retry created no commit and did not reach lint,
+budgets, focused tests, or the oracle ratchet. `npx lint-staged` resolved a
+generated dependency shim back through the now-removed temporary harness
+bisect checkout and Node reported `MODULE_NOT_FOUND` for the otherwise present
+lockfile-pinned `lint-staged` package.
+
+The bounded retry uses an untracked, worktree-local `npx` launcher that invokes
+that exact installed `lint-staged@16.4.0` entry point and delegates every other
+command to the existing `pnpm exec`. No hook is disabled or skipped. The
+launcher will be removed after the normal commit gate, and the full hook chain
+must still pass before this checkpoint can be integrated.
+
+That launcher allowed `lint-staged` to start, but its child `prettier` command
+then hit the same stale generated shim path. Lint-staged restored the index and
+removed its temporary backup; again, no commit or semantic gate ran. With all
+compiler lanes idle, a root `CI=true pnpm install --frozen-lockfile` rebuilt
+only generated `node_modules` content from 819 cached packages. The regenerated
+shims resolve `lint-staged 16.4.0` and `prettier 3.8.1` from the repository;
+`package.json` and `pnpm-lock.yaml` remain unchanged. The temporary launcher is
+removed, so the next retry uses the repository's normal hook environment.
+
+### Integrated checkpoint handoff
+
+The normal implementation commit is
+`2e43d9d93916ea958c33db8dc2ad791558a32dec` (`fix(generators): lower
+suspended expression continuations ✓`). Its unskipped commit hook passed
+Prettier, error-level Biome, the three exact LOC grants, the three exact
+function-budget grants, all **27 / 27** focused controls in one Vitest fork,
+and the oracle ratchet at `getTypeAtLocation +0`, `ctx.checker +0`.
+
+Fresh `git fetch upstream main` resolved loopdive/js2 main to
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`, eleven commits ahead of the d60
+reconstruction base. The upstream delta has no direct overlap with the five
+owned #680 paths; its changed LOC baseline was retained. The attributed normal
+merge commit is `1c9b69faf1` (`merge(upstream): sync #680 with main ✓`). That
+merge hook independently repeated the exact gates and passed all **27 / 27**
+controls (20.15 s total, 11.15 s test time) plus the zero-growth oracle ratchet.
+
+Publication remains pending final exact-head pre-push validation and explicit
+authorization to push this completed branch to the public `ttraenkler/js2`
+fork for a non-draft PR against `loopdive/js2:main`. No push or GitHub mutation
+has occurred.
+
+The first integrated pre-push pass ran against clean handoff head
+`bcd2a159c3769f33e91c51092a21e9a19e2ce98b` with the exact synthetic new-branch
+ref update for `fork`. An initial standalone `pnpm run
+sync:conformance:check` attempted an unnecessary worktree dependency verify and
+stopped before the script; no file changed. The equivalent direct pinned Node
+entry then confirmed all five conformance anchors unchanged, and the pre-push
+environment disabled only that redundant dependency reinstall—not any gate.
+
+The unskipped hook passed TS7 typecheck plus lint, repository-wide Prettier,
+the zero-growth oracle and coercion ratchets, numeric-local IR parity **18 /
+18**, conformance synchronization with no generated commit, and both committed
+and working-tree issue integrity. This final evidence note must now pass the
+normal commit hook and the resulting documentation-only head must repeat the
+same pre-push gate before publication.
+
+### Publication-scope repair plan: generated mirror formatting drift
+
+The checked-out final handoff is
+`ac787c9645c8a023f1ee36492beccaa028d771ee`. A prior synthetic pre-push ref
+record incorrectly used a nonexistent expanded SHA; the hook itself ran against
+this cwd HEAD. Future synthetic refs must use the exact value returned by
+`git rev-parse HEAD`, without expansion or substitution.
+
+The PR-range comparison against upstream/main
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` also carries formatting-only
+drift in four generated mirrors that are outside this slice:
+
+- `public/benchmarks/results/test262-report.json`
+- `public/benchmarks/results/test262-standalone-report.json`
+- `website/public/benchmarks/results/test262-report.json`
+- `website/public/benchmarks/results/test262-standalone-report.json`
+
+1. Restore those four files byte-for-byte to the upstream/main blobs using
+   patch-only edits; do not regenerate a benchmark or alter the #680 source,
+   test, or acceptance evidence.
+2. While the normal unskipped commit hook runs, keep a worktree-only
+   `.prettierignore` entry for precisely those four mirrors so lint-staged does
+   not recreate formatting drift. Stage only the tracker and restored mirrors;
+   remove the temporary ignore entries immediately after the commit, without
+   staging them.
+3. Prove `.prettierignore` again equals upstream/main, the worktree is clean,
+   and `upstream/main...HEAD` contains exactly the five #680 paths and no
+   benchmark or labs artifacts. Record that proof in a final tracker-only
+   commit, using the normal hook again.
+4. Run the full pre-push hook once with the final actual HEAD in the synthetic
+   new-branch ref and `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Report that
+   final hook externally rather than creating another tracker commit. No GitHub
+   issue or GitHub mutation is created by this repair.
+
+### Approved EOF-byte exception: pre-mutation proof
+
+`apply_patch` reconstructs Add/Update files with a terminating LF, while each
+upstream generated mirror below ends in byte `0x7d` (`}`). The branch worktree
+version of each ends in `0x0a`; consequently the normal patch-only formatting
+reversion cannot make the blobs byte-identical. The coordination lead has
+authorized one mechanical exception solely for this already-proven final-byte
+difference:
+
+- `public/benchmarks/results/test262-report.json`
+- `public/benchmarks/results/test262-standalone-report.json`
+- `website/public/benchmarks/results/test262-report.json`
+- `website/public/benchmarks/results/test262-standalone-report.json`
+
+After patch-only restoration of textual formatting, each path is read-only
+validated independently for its exact path, byte size, upstream terminal
+`0x7d`, and working terminal `0x0a`. Only then may a literal
+`truncate -s -1 <exact-path>` remove that one final LF—no variable, glob,
+substitution, checkout, restore, copy, Perl, Python, or broader rewrite. Each
+result is then SHA-256 compared byte-for-byte with
+`git show upstream/main:<path>` before any staging. This exception is not a
+source or benchmark regeneration and creates no GitHub issue.
+
+Read-only preflight after textual restoration recorded the one-byte-only
+relationship before any truncation:
+
+- `public/benchmarks/results/test262-report.json`: upstream `27509` bytes /
+  worktree `27510` bytes; `0x7d` / `0x0a` terminal bytes.
+- `public/benchmarks/results/test262-standalone-report.json`: upstream
+  `109257` bytes / worktree `109258` bytes; `0x7d` / `0x0a` terminal bytes.
+- `website/public/benchmarks/results/test262-report.json`: upstream `27509`
+  bytes / worktree `27510` bytes; `0x7d` / `0x0a` terminal bytes.
+- `website/public/benchmarks/results/test262-standalone-report.json`: upstream
+  `109257` bytes / worktree `109258` bytes; `0x7d` / `0x0a` terminal bytes.
+
+### Publication-scope repair proof
+
+The normal, unskipped cleanup commit restored all four mirrors and completed its
+full hook chain. Lint-staged invoked Prettier for the staged JSON set while the
+temporary unstaged ignore guard was present; the post-hook SHA-256 of every
+working and committed mirror matched its `upstream/main` blob exactly:
+
+- `test262-report.json` mirrors:
+  `15b50b2e0db0d0e70b3d344eac966abdf3edc07c21cfd8b74adb95972e9e1039`.
+- `test262-standalone-report.json` mirrors:
+  `4a8d03ef3900807921212a184e42fb602987c0560933733b180f1a7fb7e376be`.
+
+That hook also passed the LOC/function budget gates, the zero-growth oracle
+ratchet, and the one-fork focused expression-continuation suite at **27 / 27**
+(18.94 s total, 9.71 s tests). The worktree-only `.prettierignore` guard was
+then removed with a patch; it is byte-identical to both `upstream/main` and
+HEAD, and the worktree was clean before this evidence note.
+
+At that clean point, `git diff --name-only upstream/main...HEAD` contained
+exactly these five #680 paths:
+
+- `plan/issues/680-wasm-native-generators-state-machines.md`
+- `src/codegen/context/types.ts`
+- `src/codegen/expressions.ts`
+- `src/codegen/generators-native.ts`
+- `tests/issue-680-generator-expression-continuations.test.ts`
+
+The range had no `benchmarks/`, `public/benchmarks/`,
+`website/public/benchmarks/`, or `labs/` path. This tracker-only proof commit
+must pass the normal hook; after it, one final pre-push replay is planned using
+the actual `git rev-parse HEAD` in the synthetic new-branch ref with
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Its result is reported externally
+to avoid an evidence-commit loop. No GitHub issue was created.
+
+### Current-main integration plan — c1120626 (2026-09-01)
+
+Fresh `git fetch upstream main` resolved the live `loopdive/js2:main` tip to
+`c11206262088a69815d6126787b10942df148b6d`, **55 commits** beyond the prior
+integrated upstream base `a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`.
+The completed #680 branch head is
+`57cfa31558c6e357c3fc3572fffc000c424d3b47`; its intended range remains exactly
+the tracker plus `src/codegen/context/types.ts`, `src/codegen/expressions.ts`,
+`src/codegen/generators-native.ts`, and
+`tests/issue-680-generator-expression-continuations.test.ts`.
+
+Read-only three-way inventory finds one direct owned-path overlap:
+`src/codegen/context/types.ts`. The normal merge must retain upstream's current
+context shape and reapply #680's expression-continuation metadata without
+discarding either side. Upstream's remaining delta is disjoint from the four
+other #680 implementation/test paths. No newly introduced generated
+benchmark/public/website/labs mirror appears in the fresh upstream delta, so
+no report-guard or mirror repair is authorized for this integration.
+
+Integration and exact-head gate plan:
+
+1. A normal `git merge --no-commit --no-ff upstream/main` now has
+   `MERGE_HEAD=c11206262088a69815d6126787b10942df148b6d`. Git merged
+   `context/types.ts` automatically: the indexed result retains upstream's
+   `classCtorHostRegistered` context field and #680's two
+   `nativeGenerator*ValueLocals` fields. The predicted post-commit PR range is
+   exactly the five intended #680 paths and contains no benchmark, public,
+   website, or labs path.
+2. After a host-visible process audit grants one lane, run exactly one focused
+   single-fork replay of
+   `tests/issue-680-generator-expression-continuations.test.ts` with an
+   explicit **27 / 27** floor. Then run direct TypeScript 7, targeted
+   Prettier/Biome/diff and relevant issue-budget/oracle gates against the
+   merged head; stop and record any failure rather than retrying.
+3. Record the integrated evidence and resulting exact head in this tracker
+   before the final documentation-only commit. The normal hook and the final
+   synthetic pre-push ref must use the actual `git rev-parse HEAD`,
+   `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`, and the repository's root Node
+   PATH. Report the final pre-push result externally; do not create a GitHub
+   issue, push, or mutate a PR without separate authorization.
+
+The resolved no-commit merge remains deliberately open while global test
+capacity is occupied. No hook, compiler, TypeScript, Vitest, Test262, commit,
+push, or GitHub operation has occurred for this c112 integration; only the
+normal merge index and this tracker handoff are staged.
+
+### Publication authorization recorded (2026-09-01)
+
+The user explicitly authorized pushing completed branches to
+`https://github.com/ttraenkler/js2` for pull requests against
+`loopdive/js2:main`. For this #680 branch, that authorization clears the
+future publication step only after live-main exact-head validation succeeds:
+the eventual pull request must be a separate **non-draft** PR against upstream
+main, with no GitHub issue creation or mutation. It does not authorize an
+early commit, push, validation bypass, or any action while this integration's
+runtime lanes remain occupied.
+
+### Commit-hook tooling provenance (2026-09-01)
+
+The normal c112 merge commit first reached `.husky/pre-commit` but stopped
+before lint-staged because this Codex host has no ambient `npx`; the repository
+dependency surface itself is present at
+`/Users/thomas/Code/js2/node_modules/.bin/lint-staged`. For the normal,
+unskipped hook replay, this worktree uses ignored `.tmp/bin/npx`, a fail-closed
+local wrapper that accepts only `npx lint-staged` and directly executes that
+installed binary. Any other invocation exits 127. No package download,
+dependency installation, signing/configuration change, `--no-verify`, or hook
+bypass is used. This is infrastructure provenance only; the merge commit and
+all validation results remain to be recorded after their normal completion.
+
+### c112 merge-commit hook attempt — incomplete, no publication evidence (2026-09-01)
+
+The normal hook-running merge commit was attempted with the fail-closed local
+`npx lint-staged` wrapper and active repository signing configuration. The
+hook completed lint-staged (Prettier plus Biome), `check:loc-budget`, and
+`check:func-budget` successfully. It then entered `test:changed-root`, printed
+the six selected files (including
+`tests/issue-680-generator-expression-continuations.test.ts`) and started
+Vitest `v3.2.4`; the captured command ended before a test denominator, exit
+summary, or commit SHA was emitted.
+
+The authoritative state check immediately afterward found
+`HEAD=57cfa31558c6e357c3fc3572fffc000c424d3b47` unchanged and
+`MERGE_HEAD=c11206262088a69815d6126787b10942df148b6d` still present, with no
+remaining git/husky/Vitest child. Therefore this is **not** a successful merge
+commit or validation result, and must not be retried blindly or cited as a
+focused 27/27 pass. The next owner must obtain the exact changed-root failure
+or a fresh explicit validation release, record its real exit/denominator, and
+only then retry the normal signed commit. No push or PR creation is authorized
+from the current open-merge state.
+
+### c112 merge-commit hook retry — blocked by stale unrelated #4628 cache (2026-09-01)
+
+The one authorized observable retry used the same normal `git commit` command,
+the fail-closed local `npx lint-staged` wrapper, and the active repository
+signing configuration. `lint-staged` (Prettier and Biome), `check:loc-budget`,
+and `check:func-budget` completed successfully. `test:changed-root` then
+started its six-file selected set and exited **1** after
+`tests/issue-4628-temporal-global.test.ts` reported **10 passed, 1 failed**
+(32.56 s; the failing heavy provider case itself took 14.78 s).
+
+The failure is not in a #680-owned path or control: #4628 reported its linked
+Temporal provider came from a **25.4-hour-old cache** and explicitly instructed
+that `JS2WASM_TEMPORAL_CACHE` be pointed at a fresh directory before treating
+the `protoMethodCall`/null-pointer failures as a regression. The normal merge
+commit therefore did not land:
+`HEAD=57cfa31558c6e357c3fc3572fffc000c424d3b47` remains unchanged and
+`MERGE_HEAD=c11206262088a69815d6126787b10942df148b6d` remains open. This is the
+real failure required to classify the prior transport-loss attempt; it is not
+#680 validation evidence. Per the one-retry rule, do not rerun the commit or
+publication gates until a fresh owner records/cache-repairs the unrelated
+#4628 blocker and receives a new explicit release. No push or PR is ready.
+
+### Fresh Temporal-cache hook recovery plan (2026-09-01)
+
+The only real c112 hook failure was the #4628 fixture's explicitly identified
+25.4-hour-old linked-provider cache, not a #680 control. The next and only
+root-cause-addressed hook replay will set
+`JS2WASM_TEMPORAL_CACHE=.tmp/temporal-cache-c112`, a new worktree-local ignored
+directory, so the heavy #4628 provider is rebuilt by this worktree rather than
+served from that stale cache. It will use the same normal, unsigned-bypass-free
+`git commit` with the fail-closed local `npx lint-staged` wrapper and full
+repository runtime PATH. A detached local wrapper will retain a log, PID, and
+actual exit-status file through any tool-session loss. The result remains
+authoritative only if the wrapper records a complete process exit; any real
+fresh-cache failure stops publication without another retry.
+
+### c112 merge commit — authoritative fresh-cache hook pass (2026-09-01)
+
+The durable normal hook session completed the c112 merge commit at
+`09ee2f3966` (full SHA to be re-verified before the next merge). It used the
+unique fresh `JS2WASM_TEMPORAL_CACHE` specified above and completed the full
+normal hook successfully: the rebuilt #4628 Temporal provider passed **11 / 11**;
+#5225 passed **2 / 2**; #5242 passed **2 / 2**; #5243 passed **1 / 1**; #5244
+passed **9 / 9**; and the #680 focused continuation suite passed **27 / 27**.
+The normal hook's lint-staged formatting/lint, LOC budget, function budget, and
+oracle-ratchet gates were also green. This replaces neither the later
+exact-live-head replay nor the final synthetic pre-push proof; those must be
+run after integrating the current upstream tip.
+
+### Current-main integration plan — e59af10496 (2026-09-01)
+
+Fresh `git fetch upstream main` resolved the live `loopdive/js2:main` tip to
+`e59af10496753d38352fdac74059872cd6033c7e`, **42 commits** beyond the c112
+integration parent. The actual three-way merge base remains
+`c11206262088a69815d6126787b10942df148b6d`. A two-tip name inventory lists all
+five #680 paths, but the actual incoming `c112..e59` side changes only
+`src/codegen/context/types.ts`; this tracker and the branch-only focused test
+are unchanged/absent on the incoming side, and
+`expressions.ts`/`generators-native.ts` have no incoming post-c112 hunk.
+
+The two-tip diff must not be misread as upstream deleting #680: the tracker is
+unchanged from c112 on upstream (354 lines at both revisions), and the focused
+test is branch-only (absent at both c112 and e59). They remain with the #680
+side. The sole semantic source overlap is `context/types.ts`: incoming main
+replaces `nodeGlobals` with `ambientPlatform`. The normal no-commit merge
+automatically retained that incoming field change together with #680's
+`nativeGeneratorYieldValueLocals` / `nativeGeneratorExpressionValueLocals`,
+their expression consumers, generator-plan save/restore mechanics, and the
+27-control focused regression file. `MERGE_HEAD` is now e59 with no unresolved
+paths; retain this indexed automatic reconciliation rather than overwriting
+either side wholesale.
+
+After the live merge is resolved, validate the exact resulting head in this
+order with host capacity re-audited before each compiler/hook lane: #680
+focused **27 / 27**, direct TypeScript 7, targeted static quality and issue
+budget/oracle gates, then the full synthetic exact-head pre-push hook using
+the actual new SHA and `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Fresh-fetch
+again before publication; if main advances, normally merge it and replay every
+affected gate. The prospective PR against that final live tip must contain
+only the five #680 paths and no benchmark/public/website/labs path.
+
+### e59 merge and exact code-head validation (2026-09-01)
+
+The normal live-main merge committed at
+`e9b475e1a28b93514d8885d2c8b84ebe58fc417f`
+(`merge(upstream): reconcile #680 with live main ✓`). Its automatic
+three-way result had no unresolved paths and retains both the incoming
+`ambientPlatform` option and #680's two native-generator continuation-local
+maps. The normal hook passed lint-staged (Prettier plus Biome), LOC and
+function budgets, and oracle ratchet. Its changed-root detector correctly
+reported 24 incoming root test paths and deferred that mass-edit test set to
+the post-merge issue validation.
+
+Exact code-head evidence:
+
+- `node node_modules/vitest/dist/cli.js run
+  tests/issue-680-generator-expression-continuations.test.ts --pool=forks
+  --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot`
+  (repository runtime PATH) exited 0: **1 file, 27 / 27 tests**, Vitest
+  duration **21.48 s** (**22 s** wall).
+- `node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`
+  (repository runtime PATH) exited 0 with no diagnostics in **14 s** wall.
+- Targeted Prettier and Biome error lint passed; `git diff --check
+  upstream/main...HEAD`, LOC budget, function budget, and oracle ratchet all
+  passed. The prospective range against e59 is exactly this tracker,
+  `src/codegen/context/types.ts`, `src/codegen/expressions.ts`,
+  `src/codegen/generators-native.ts`, and
+  `tests/issue-680-generator-expression-continuations.test.ts` — five paths,
+  with no `benchmarks/`, `public/`, `website/`, or `labs/` path.
+
+Next: commit this tracker-only evidence normally, then run the full synthetic
+pre-push hook against that actual final documentation SHA with
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` and the repository runtime PATH.
+Fresh-fetch upstream immediately before publication; if main advances, merge
+normally and replay affected validation rather than pushing a stale base.
+
+### e59 synthetic pre-push — prior-only evidence (2026-09-01)
+
+The full synthetic pre-push hook was run against the tracker-only documentation
+head `192188a5ed87c51c7db7a3b30dcbba2b14213e2e` with
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` and the repository runtime PATH. It
+exited **0** in **108 s**: parallel TypeScript 7 typecheck and lint, Prettier
+format check, oracle and coercion-site ratchets, #3765 numeric-local parity
+(**18 / 18**), and committed/working issue integrity all passed.
+
+This result is deliberately **prior-only**: live upstream advanced to
+`c372457da1` while the hook was in flight. It must not be cited as final
+publication validation. Integrate that live tip normally, then replay every
+affected exact-head gate and the final synthetic pre-push proof before push.
+
+### Current-main replay plan — c372457da1 (2026-09-01)
+
+Fresh fetch verified live `loopdive/js2:main` at
+`c372457da1ffd39b87bebf235aac115a27657abf`, one commit beyond e59. That
+incoming commit is `chore(ci): refresh landing benchmark artifacts [skip ci]`.
+Its actual `e59..c372` path set is benchmark artifacts only; it has **no**
+three-way overlap with any #680-owned tracker/source/test path. The apparent
+five-path overlap in a two-tip `HEAD..upstream/main` listing is the existing
+#680 branch delta and must not be treated as an upstream deletion or source
+conflict.
+
+Perform a normal no-commit non-fast-forward merge of c372, preserve its
+incoming benchmark artifacts unchanged, and retain the existing #680 five-path
+contribution. After the merge commit, replay the exact source validation
+(focused 27 / 27, direct TS7, targeted static/budget/ratchet/path audit) and
+the full synthetic pre-push hook against the new actual SHA. A final fetch must
+still prove main has not advanced; otherwise repeat this same normal integration
+discipline before publication.
+
+### c372 merge and exact code-head replay (2026-09-01)
+
+The normal c372 integration committed at
+`cf6c524b8ea82538160b6b0c7f740b827b6e5367`
+(`merge(upstream): reconcile #680 with c372 main ✓`). It contained the
+incoming benchmark-refresh history unchanged and retained the exact five #680
+paths. Its normal hook passed LOC/function budgets and oracle ratchet and
+reran the #680 changed-root file successfully: **27 / 27** in **21.62 s**.
+
+Required exact-code-head replay then passed:
+
+- Single-fork focused #680 command exited 0: **1 file, 27 / 27 tests**,
+  **21.70 s** Vitest duration (**22 s** wall).
+- Direct TS7 `tsc --noEmit -p tsconfig.ts7.json` exited 0 with no diagnostics
+  in **14 s** wall.
+- Targeted Prettier and Biome error lint, `git diff --check
+  upstream/main...HEAD`, LOC/function budgets, and oracle ratchet passed.
+  The prospective range against c372 is exactly the five #680 paths and has
+  no benchmark/public/website/labs leakage.
+
+This tracker-only evidence will now be committed normally. The final
+synthetic pre-push must use that documentation commit's actual SHA; its
+typecheck/lint/format/ratchet/parity/issue-integrity result is the final local
+publication proof. Fetch upstream once more immediately afterward and only
+push if its live SHA still equals c372.
