@@ -126,10 +126,10 @@ interface OutcomeProjection {
   readonly unitId: string | undefined;
   readonly displayName: string;
   readonly unitKind: string;
-  readonly kind: "emitted" | "unsupported";
+  readonly kind: "emitted" | "unsupported" | "non-executable";
   readonly code?: string;
   readonly detail?: string;
-  readonly stage: "patch" | "resolve" | "build";
+  readonly stage: "patch" | "resolve" | "build" | "select";
   readonly legacyBodyEmitted: boolean;
   readonly irBodyEmitted: boolean;
   readonly backend: string;
@@ -562,7 +562,7 @@ function expectedOutcomeRows(
   target: Target,
   staticProjection: StaticFixtureProjection,
 ): OutcomeProjection[] {
-  return fixture.outcomes.map((expected) => {
+  const functionRows = fixture.outcomes.map((expected) => {
     const unitId = staticProjection.unitIdByName.get(expected.name);
     if (!unitId) throw new Error(`missing exact terminal identity for ${expected.name}`);
     return {
@@ -580,6 +580,23 @@ function expectedOutcomeRows(
       target,
     };
   });
+  // (#3523 R4 gap 4) Every #1231 fixture is statement-free at module scope, so
+  // each now records one trailing non-executable module-init row.
+  return [
+    ...functionRows,
+    {
+      sourceId: staticProjection.sourceId,
+      unitId: undefined,
+      displayName: "<module-init>",
+      unitKind: "module-init",
+      kind: "non-executable",
+      stage: "select",
+      legacyBodyEmitted: false,
+      irBodyEmitted: false,
+      backend: "wasmgc",
+      target,
+    },
+  ];
 }
 
 function inspectStaticFixture(fixture: Fixture): StaticFixtureProjection {
@@ -1159,6 +1176,23 @@ function expectedFinalBinary(
 }
 
 function normalizeOutcome(outcome: IrObservedOutcome): OutcomeProjection {
+  // (#3523 R4 gap 4) A non-executable module init is its own kind. Collapsing
+  // it into "unsupported" here would reintroduce, inside the test's own
+  // projection, exactly the untruth the new arm removes from the ledger.
+  if (outcome.kind === "non-executable") {
+    return {
+      sourceId: outcome.sourceId,
+      unitId: outcome.unitId,
+      displayName: outcome.displayName,
+      unitKind: outcome.unitKind,
+      kind: "non-executable",
+      stage: outcome.stage,
+      legacyBodyEmitted: outcome.legacyBodyEmitted,
+      irBodyEmitted: outcome.irBodyEmitted,
+      backend: outcome.backend,
+      target: outcome.target as Target,
+    };
+  }
   if (outcome.kind === "emitted") {
     return {
       sourceId: outcome.sourceId,

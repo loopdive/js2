@@ -2,7 +2,7 @@
 
 import type { ClassDeclaration, ClassExpression, Node, SourceFile } from "typescript";
 import type { IrClassId, IrClassRecord, IrSourceId, IrSourceRecord, IrUnitId, IrUnitKind } from "../ir/identity.js";
-import type { IrObservedOutcome } from "../ir/outcomes.js";
+import { nonExecutableOutcomeDefect, type IrObservedOutcome } from "../ir/outcomes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "../ir/program-abi.js";
 import { IR_COMPILE_ROUTE_MANIFEST, type IrCompileRoute } from "../ir/standalone-route-manifest.js";
@@ -28,6 +28,7 @@ export type IrDerivedBodyUnitDisposition =
 export type IrBodyRouteAuditViolationCode =
   | "duplicate-outcome-unit"
   | "unknown-outcome-unit"
+  | "unjoined-non-executable-outcome"
   | "missing-terminal-evidence"
   | "missing-legacy-entry-evidence"
   | "unresolved-legacy-entry"
@@ -406,6 +407,15 @@ export class IrBodyRouteAuditSession {
     this.#indexDirectFunctionBodyReceipt(entry);
   }
 
+  /** Sources that own a module-init terminal, so cannot be "nothing to do". */
+  #moduleInitTerminalSourceIds(): ReadonlySet<IrSourceId> {
+    return new Set(
+      this.#identity.inventory.terminalUnits.flatMap((unit) =>
+        unit.observedKind === "module-init" ? [unit.sourceId] : [],
+      ),
+    );
+  }
+
   snapshot(
     outcomes: readonly IrObservedOutcome[] = [],
     derivedUnitRecords: Iterable<ProgramAbiDerivedUnitRecord> = [],
@@ -416,8 +426,51 @@ export class IrBodyRouteAuditSession {
     const legacyEntryIds = new Set(
       [...this.#entries.values()].flatMap((entry) => (entry.unitId === undefined ? [] : [entry.unitId])),
     );
+    // (#3523 R4 gap 4) Sources with a physical module-init body root, counted
+    // ONLY from roots carrying exact terminal identity. A `compileModuleInitBody`
+    // entry whose unit identity does not resolve is already reported as
+    // `unresolved-legacy-entry`; its ambient `sourceId` is the source being
+    // compiled at the time, not proof that THAT source owns the body. Measured
+    // 2026-08-31: the whole-program `__module_init` of a multi-source graph is
+    // exactly such an entry, so trusting its `sourceId` would report a spurious
+    // second defect against an innocent empty dependency.
+    const moduleInitRootSourceIds = new Set(
+      [...this.#entries.values()].flatMap((entry) => {
+        if (entry.entryPoint !== "compileModuleInitBody" || entry.unitId === undefined) return [];
+        const terminal = this.#identity.inventory.terminalUnits.find((unit) => unit.id === entry.unitId);
+        return terminal?.observedKind === "module-init" ? [terminal.sourceId] : [];
+      }),
+    );
     const outcomesById = new Map<IrUnitId, IrObservedOutcome>();
+    const nonExecutableSourceIds = new Set<IrSourceId>();
     for (const outcome of outcomes) {
+      // (#3523 R4 gap 4) A non-executable module init has no terminal unit to
+      // join on, by contract. That is asserted here rather than skipped: the
+      // source must genuinely own zero module-init terminals and zero physical
+      // `compileModuleInitBody` roots, and must not already have such a row.
+      // Anything else is a row claiming an absence the audit can see is false.
+      if (outcome.kind === "non-executable") {
+        const defect =
+          nonExecutableOutcomeDefect(outcome) ??
+          (outcome.sourceId === undefined
+            ? "has no source identity"
+            : nonExecutableSourceIds.has(outcome.sourceId)
+              ? "is the second non-executable row for its source"
+              : this.#moduleInitTerminalSourceIds().has(outcome.sourceId)
+                ? "names a source that owns a module-init terminal"
+                : moduleInitRootSourceIds.has(outcome.sourceId)
+                  ? "names a source with a physical compileModuleInitBody root"
+                  : undefined);
+        if (defect) {
+          violations.push({
+            code: "unjoined-non-executable-outcome",
+            detail: `non-executable module-init outcome for ${outcome.file} ${defect}`,
+          });
+        } else if (outcome.sourceId !== undefined) {
+          nonExecutableSourceIds.add(outcome.sourceId);
+        }
+        continue;
+      }
       if (outcome.unitId === undefined || !this.#identity.terminalByUnitId.has(outcome.unitId)) {
         violations.push({
           code: "unknown-outcome-unit",
