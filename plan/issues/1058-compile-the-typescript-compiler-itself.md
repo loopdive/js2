@@ -65,10 +65,20 @@ loc-budget-allow:
   # subsystem now materializes that checker-proven callable projection.
   - src/codegen/module-namespace-value.ts
   - src/codegen/native-construct.ts
+  # 2026-09-01: the binder runtime's exported computed-option callback is a
+  # cross-source callable snapshot. Keep its module-init read on the Wasm
+  # carrier path and invoke it through a finalize-filled, ABI-complete driver.
+  - src/codegen/property-access-exact-shapes.ts
+  - src/codegen/host-fnctor-method-driver.ts
+  - src/codegen/object-runtime.ts
   # 2026-08-31: projected NodeArray vecs retain their host-backed sidecar/MOP
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
+  # 2026-09-01: the standalone apply bridge rejects a local closure whose live
+  # declared arity exceeds its fixed eight-position ABI while preserving the
+  # existing full-vector linked/native fallback.
+  - src/codegen/object-runtime.ts::fillApplyClosure
   # 2026-08-31: parser carrier preservation adds the narrow vec-projection
   # sidecar copy and its runtime import dispatch arm.
   - src/codegen/type-coercion.ts::coerceType
@@ -1405,8 +1415,107 @@ implementations by their body-bearing declarations, re-resolves exact Program
 ABI handles after late-import shifts, and never serves the partial projection
 for a bare/escaping namespace value or a non-admitted member. The exact
 `Debug[AssertionKeys]` circular-barrel regression now compiles, validates, and
-executes. A new authoritative full binder oracle is still required before this
-slice is accepted.
+executes.
+
+The first full rerun after that lowering change remained byte-identical to the
+previous module and stopped at the same `Debug[name]` boundary. The projection
+had not been admitted because consumer-driven specialization retained the
+exported runtime variable `Debug.loggingHost` but blanked its annotation owner,
+`LoggingHost`. The checker consequently treated the member as `any`, collapsed
+`MatchingKeys<typeof Debug, AnyFunction>` to `any`, and could no longer prove a
+finite key set. Commit `2fb2e6281be880a15d07ee8d669e0933933732ee`
+adds a checker-only type closure rooted narrowly at retained exported namespace
+variable annotations. It keeps the transitive `HostAlias` / `LoggingHost` /
+`LogRecord` chain without turning type-only declarations or exported function
+signatures into runtime roots. All four real `Debug` index sites then resolve to
+the same 51-member string-literal union, while the selected graph remains
+exactly **32 source files / 36 Program files**.
+
+The authoritative namespace post-fix run completed in 679,516 ms worker /
+680,545 ms wall, used 725,668 ms CPU (1.07 average cores), and peaked at
+**3,859.4 MiB RSS**, 236.6 MiB below the strict 4 GiB process target. It
+compiled and validated a **77,236,087-byte** module with **4,862 functions**,
+**21 non-fatal warnings**, and no hard compile errors. Relative to the
+pre-admission module, the additional 321,232 bytes and 34 functions prove that
+the bounded namespace projection reached the binary. Both committed fixtures
+passed the former `Debug[name]` frontier and then stopped while invoking the
+imported property-derived callback `getEmitScriptTarget(options)` at
+`binder.ts:586:9` (Wasm offset 14,612,147, source-map anchor 14,612,053).
+
+The callback itself was present, but its exported const snapshot had been
+initialized to null. `_computedOptions.target.computeValue` is a Wasm closure
+field on a generic object whose receiver is represented as externref. During
+module initialization, the JS-host property bridge cannot inspect WasmGC fields
+because instance wiring has not completed. Callable exact-shape reads now stay
+on the Wasm carrier/member-dispatch path in the host lane. Cross-source const
+aliases then invoke the stored snapshot through a finalize-filled driver rather
+than a body-time signature ladder: this sees closures registered by later
+source units, pads under-applied calls to the implementation arity while
+preserving the true argument count, and falls back directly for genuine host
+callables. Both host and standalone bridges now trap when the live closure
+exceeds their eight-formal ABI cap, so contextual types, property replacement,
+aliasing, or spreads cannot turn an unsupported closure into a silent undefined
+result. Standalone keeps its existing structural property reads.
+
+The focused multi-module regression now verifies the original computed-option
+callback, snapshot identity after the source property is replaced, a preceding
+truthy alias, positional argument order, under-application, the >8-formal
+boundary, direct/escaped/hoisted/factory/spread replacements before snapshot,
+and a host-free build with zero function imports (**8/8 passing**). A
+narrow real-upstream TypeScript probe selected **17
+source files / 21 Program files**, emitted and validated **2,465,088 bytes** in
+7.6 seconds with an 819.4 MiB peak, and invoked the previously null alias with
+the expected result **99**.
+
+The next authoritative binder run completed in 638,618 ms worker / 639,467 ms
+wall, used 720,370 ms CPU (1.13 average cores), and peaked at **4,089.9 MiB
+RSS**. It compiled and validated a **77,013,373-byte** module with **4,863
+functions**, the same **32 source files / 36 Program files / 312 module-init
+statements**, **21 non-fatal warnings**, and no hard compile errors. Both binder
+oracles passed `getEmitScriptTarget` and reached `bindSourceFileAsExternalModule`
+before trapping with a null dereference at `binder.ts:3133:9` (Wasm offset
+14,778,839; source-map anchor 14,778,791). Focused probes prove the allocator,
+its `getSymbolConstructor()` result, the exact small-graph late-assigned
+constructor, and the individual filename, symbol, declaration-array, and
+export-table operations; the remaining investigation is whether the complete
+closure registry changes that dynamic constructor ABI or whether another
+operation inside the call is the first null. Until both exact binder oracles
+match, the binder slice is not accepted and the failed invocation does not
+publish the latest artifact.
+
+### 2026-09-01 stop handoff — draft PR #5390
+
+Work is published from `codex/1058-typescript-binder` in draft PR **#5390**.
+The parser milestone remains accepted; this checkpoint fixes the next binder
+runtime boundary but does **not** claim binder or full TypeScript completion.
+
+Validated at handoff:
+
+- `tests/issue-1058-barrel-computed-option-capture.test.ts`: **8/8 passing**
+  across host and standalone, including snapshot identity, under-application,
+  runtime arity overflow, and direct/escaped/hoisted/factory/spread mutation
+  controls.
+- `tests/standalone-shared-globalthis-import.test.ts`: **2/2 passing**, proving
+  the arity guard preserves linked-realm callable delegation.
+- `pnpm run typecheck:ts5` and `pnpm run typecheck`: passing.
+- `pnpm run check:ir-fallbacks`, issue-ID validation, formatting, and diff
+  checks: passing.
+- A narrow real TypeScript callback graph compiles, validates, and returns 99;
+  the latest full binder module compiles and validates before the runtime trap
+  described above.
+
+Non-authoritative broader checks still expose existing branch/environment
+noise: the #1712 dynamic suite has its prior Acorn `parse is not a function`
+failure, #4384 retains its prior native-array 0-versus-42 failure, and direct
+#3592 execution requires Node's experimental Wasm exception-reference support.
+None is on the focused #1058 path.
+
+Resume at `binder.ts:3133:9` inside `bindAnonymousDeclaration`, using both
+committed binder oracles. First distinguish the complete-graph dynamic
+constructor ABI from the filename/symbol/declaration/export-table operations
+already proven independently. Do not rerun the ten-minute authoritative binder
+until a focused discriminator changes that boundary. After binder parity, move
+to the checker TS2322 oracle, then printer/emitter, and only then self-hosting.
 
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
