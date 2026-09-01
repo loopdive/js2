@@ -23,8 +23,9 @@
   },
   "selectedFiles": [
     "src/testRunner/unittests/base64.ts",
+    "src/testRunner/unittests/comments.ts",
     "src/testRunner/unittests/convertToBase64.ts",
     "src/testRunner/unittests/parsePseudoBigInt.ts"
   ],
-  "_note": "The complete src/testRunner/unittests inventory is verified. The adapter runs the original base64, convertToBase64, and parsePseudoBigInt callbacks against an exact projection of the release-tag implementations. Compiler, server, watch, evaluator, snapshot, async, and filesystem-heavy files remain explicit deferred coverage."
+  "_note": "The complete src/testRunner/unittests inventory is verified. The adapter runs the original base64, comment-scanner, convertToBase64, and parsePseudoBigInt callbacks against an exact projection of the release-tag implementations. Compiler, server, watch, evaluator, snapshot, async, and filesystem-heavy files remain explicit deferred coverage."
 }

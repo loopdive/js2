@@ -63,6 +63,7 @@ import { emitNativeGeneratorToVec } from "./generators-native.js";
 import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
+import { coerceTupleBindingElement, emitExhaustedTupleRest } from "./tuple-rest.js";
 // (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
 // imports `destructureParamArray` from here. ESM resolves the cycle because the
 // references are used only at call time (inside
@@ -2287,7 +2288,7 @@ export function destructureParamArray(
       for (let i = 0; i < pattern.elements.length; i++) {
         const element = pattern.elements[i]!;
         if (ts.isOmittedExpression(element)) continue;
-        if (i >= tupleDef.fields.length) break; // more bindings than tuple fields
+        if (emitExhaustedTupleRest(ctx, fctx, element, i >= tupleDef.fields.length)) break;
 
         const fieldType = tupleDef.fields[i]!.type;
 
@@ -2398,10 +2399,7 @@ export function destructureParamArray(
           if (isDecl) emitLocalTdzInit(fctx, localName);
           continue;
         }
-        // Coerce struct field type to local's declared type if they differ (#658)
-        if (localType && !valTypesMatch(fieldType, localType)) {
-          coerceType(ctx, fctx, fieldType, localType);
-        }
+        coerceTupleBindingElement(ctx, fctx, element, fieldType, localType);
         fctx.body.push({ op: "local.set", index: localIdx });
 
         // Handle element-level default initializer (e.g. [x = 23] in destructuring)

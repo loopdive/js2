@@ -247,32 +247,41 @@ function bindingIsStable(ctx: CodegenContext, name: ts.Identifier): boolean {
   return stable;
 }
 
-function functionDeclarationForCall(ctx: CodegenContext, call: ts.CallExpression): ts.FunctionDeclaration | undefined {
+function functionDeclarationForCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+  genericOnly = false,
+): ts.FunctionDeclaration | undefined {
   const callee = unwrapExpression(call.expression);
-  if (!ts.isIdentifier(callee) || !bindingIsStable(ctx, callee)) return undefined;
+  if (!ts.isIdentifier(callee)) return undefined;
+  let declaration: ts.FunctionDeclaration | undefined;
   const resolvedDeclaration = ctx.checker.getResolvedSignature(call)?.getDeclaration();
   if (resolvedDeclaration && ts.isFunctionDeclaration(resolvedDeclaration)) {
-    if (resolvedDeclaration.body) return resolvedDeclaration;
-    const implementation = symbolAt(ctx, resolvedDeclaration.name!)
-      ?.getDeclarations()
-      ?.find(
-        (candidate): candidate is ts.FunctionDeclaration =>
-          ts.isFunctionDeclaration(candidate) && candidate.body !== undefined,
-      );
-    if (implementation) return implementation;
+    declaration = resolvedDeclaration.body
+      ? resolvedDeclaration
+      : symbolAt(ctx, resolvedDeclaration.name!)
+          ?.getDeclarations()
+          ?.find(
+            (candidate): candidate is ts.FunctionDeclaration =>
+              ts.isFunctionDeclaration(candidate) && candidate.body !== undefined,
+          );
   }
   // Prefer the checker symbol at this exact call site. Program-ABI replay can
   // compile nested same-named factories from different source components; the
   // lightweight binder's value declaration may then point at a sibling replay
   // declaration even though the checker still retains the source-qualified
   // identity (`baseNodeFactory.createBaseNode` vs nodeFactory's generic helper).
-  const checkerDeclaration = canonicalSymbol(ctx, ctx.checker.getSymbolAtLocation(callee))
+  declaration ??= canonicalSymbol(ctx, ctx.checker.getSymbolAtLocation(callee))
     ?.getDeclarations()
     ?.find((candidate): candidate is ts.FunctionDeclaration => ts.isFunctionDeclaration(candidate) && !!candidate.body);
-  if (checkerDeclaration) return checkerDeclaration;
-  const declaration = ctx.oracle.valueDeclarationOf(callee);
-  if (declaration && ts.isFunctionDeclaration(declaration)) return declaration;
-  return undefined;
+  const oracleDeclaration = declaration ? undefined : ctx.oracle.valueDeclarationOf(callee);
+  if (!declaration && oracleDeclaration && ts.isFunctionDeclaration(oracleDeclaration)) declaration = oracleDeclaration;
+  // The generic factory/identity detectors call this helper for every
+  // identifier call in a bundle. Resolve the declaration first, then reject
+  // the overwhelmingly common non-generic body before bindingIsStable's
+  // whole-program write scan. Non-generic identity helpers opt out below.
+  if (!declaration || (genericOnly && !declaration.typeParameters?.length)) return undefined;
+  return bindingIsStable(ctx, callee) ? declaration : undefined;
 }
 
 function directVariableBySymbol(
@@ -768,7 +777,7 @@ function contextualFreshNestedFactoryCall(
   factoryDeclaration: ts.FunctionDeclaration,
   factoryInvocation: ts.CallExpression,
 ): boolean {
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   if (!declaration?.body || declaration.parent !== factoryDeclaration.body) return false;
   const signature = ctx.checker.getSignatureFromDeclaration(declaration);
   const result = signature && eraseReadonlyView(ctx.checker.getReturnTypeOfSignature(signature));
@@ -1098,7 +1107,7 @@ function provenFreshFactoryCall(ctx: CodegenContext, call: ts.CallExpression): b
   }
 
   if (stableReturnedFactoryMethodCall(ctx, call)) return true;
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   return declaration !== undefined && genericStructFactoryDeclaration(ctx, declaration) !== null;
 }
 
@@ -1305,7 +1314,7 @@ function wrapperFactoryReturn(
   if (!ts.isIdentifier(local.name) || !local.initializer) return false;
   const initializer = unwrapExpression(local.initializer);
   if (!ts.isCallExpression(initializer)) return false;
-  const seedDeclaration = functionDeclarationForCall(ctx, initializer);
+  const seedDeclaration = functionDeclarationForCall(ctx, initializer, true);
   if (!seedDeclaration || !genericStructFactoryDeclaration(ctx, seedDeclaration)) return false;
 
   const seedSignature = ctx.checker.getResolvedSignature(initializer);
@@ -1428,7 +1437,7 @@ export function genericStructFactoryCall(
   ctx: CodegenContext,
   call: ts.CallExpression,
 ): GenericStructFactoryCall | null {
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   if (!declaration) return null;
   const factory = genericStructFactoryDeclaration(ctx, declaration);
   if (!factory) return null;
@@ -1473,7 +1482,7 @@ export function genericStructFactoryCall(
  * an unrelated nominal sibling.
  */
 export function genericIdentityReturnParamIndex(ctx: CodegenContext, call: ts.CallExpression): number | undefined {
-  const declaration = functionDeclarationForCall(ctx, call);
+  const declaration = functionDeclarationForCall(ctx, call, true);
   if (!declaration?.typeParameters?.length) return undefined;
 
   let memo = identityReturnParamMemo.get(ctx);
@@ -1664,12 +1673,158 @@ function directBaseNodeFactoryAssertion(
   return { sourceConstraint, target };
 }
 
+function freshWrapperLocalReferenceIsAllowed(
+  identifier: ts.Identifier,
+  declaration: ts.VariableDeclaration,
+  returned: ts.ReturnStatement,
+): boolean {
+  if (identifier === declaration.name) return true;
+  if (returned.expression && unwrapExpression(returned.expression) === identifier) return true;
+
+  // A deferred closure would retain the source carrier after it has been
+  // copied into the asserted extension. Keep the proof in the wrapper's
+  // immediate body so later mutations cannot split the JavaScript identity.
+  for (
+    let ancestor: ts.Node | undefined = identifier.parent;
+    ancestor && ancestor !== returned.parent;
+    ancestor = ancestor.parent
+  ) {
+    if (ts.isFunctionLike(ancestor) || ts.isClassLike(ancestor)) return false;
+  }
+
+  let current: ts.Node = identifier;
+  while (current.parent) {
+    const parent = current.parent;
+    if (
+      (ts.isParenthesizedExpression(parent) ||
+        ts.isNonNullExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isTypeAssertionExpression(parent)) &&
+      parent.expression === current
+    ) {
+      current = parent;
+      continue;
+    }
+    // Reads and writes through a field do not expose the fresh carrier itself.
+    // A METHOD call is different: JavaScript passes the carrier as `this`, so
+    // the callee can retain it before structural materialization copies it.
+    if (
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === current
+    ) {
+      let use: ts.Node = parent;
+      while (
+        use.parent &&
+        (ts.isParenthesizedExpression(use.parent) ||
+          ts.isNonNullExpression(use.parent) ||
+          ts.isAsExpression(use.parent) ||
+          ts.isTypeAssertionExpression(use.parent)) &&
+        use.parent.expression === use
+      ) {
+        use = use.parent;
+      }
+      if (ts.isCallExpression(use.parent) && use.parent.expression === use) return false;
+      if (ts.isTaggedTemplateExpression(use.parent) && use.parent.tag === use) return false;
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Recognize a non-generic wrapper around an already-proven generic structural
+ * factory:
+ *
+ *     function createBasePropertyAccessExpression(...): PropertyAccessExpression {
+ *       const node = createBaseDeclaration<PropertyAccessExpression>(...);
+ *       node.expression = expression;
+ *       return node;
+ *     }
+ *     createBasePropertyAccessExpression(...) as Mutable<PropertyAccessChain>
+ *
+ * The wrapper still returns a fresh carrier. Treating the erased assertion as
+ * a nominal Wasm downcast tests the base struct against its not-yet-created
+ * extension, yielding null. This proof is intentionally limited to one stable,
+ * non-generic function declaration, one fresh local seeded by the existing
+ * generic-factory proof, immediate field accesses, and one final identity
+ * return.
+ */
+function assertedFreshWrapperFactory(
+  ctx: CodegenContext,
+  asserted: ts.AsExpression | ts.TypeAssertion,
+): StructFactoryExpression | null {
+  const operand = unwrapExpression(asserted.expression);
+  if (!ts.isCallExpression(operand)) return null;
+  const declaration = functionDeclarationForCall(ctx, operand);
+  if (!declaration?.body || declaration.typeParameters?.length) return null;
+
+  const callSignature = ctx.checker.getResolvedSignature(operand);
+  const sourceConstraint = callSignature && eraseReadonlyView(ctx.checker.getReturnTypeOfSignature(callSignature));
+  const target = eraseReadonlyView(ctx.checker.getTypeAtLocation(asserted));
+  if (
+    !sourceConstraint ||
+    sourceConstraint === target ||
+    sourceConstraint.getProperties().length === 0 ||
+    target.getProperties().length === 0 ||
+    !ctx.checker.isTypeAssignableTo(target, sourceConstraint)
+  ) {
+    return null;
+  }
+
+  const returns = outerReturns(declaration.body);
+  const returned = returns.length === 1 ? returns[0] : undefined;
+  if (!returned?.expression || declaration.body.statements[declaration.body.statements.length - 1] !== returned) {
+    return null;
+  }
+  const returnedName = unwrapExpression(returned.expression);
+  if (!ts.isIdentifier(returnedName)) return null;
+  const returnedSymbol = symbolAt(ctx, returnedName);
+  if (!returnedSymbol) return null;
+  const local = directVariableBySymbol(ctx, declaration.body, returnedSymbol);
+  if (!local || !ts.isIdentifier(local.name) || !local.initializer || !bindingIsStable(ctx, local.name)) return null;
+
+  const seed = unwrapExpression(local.initializer);
+  const factory = ts.isCallExpression(seed) ? genericStructFactoryCall(ctx, seed) : null;
+  if (!ts.isObjectLiteralExpression(seed) && !factory) return null;
+  const seedTarget = eraseReadonlyView(factory?.target ?? ctx.checker.getTypeAtLocation(seed));
+  const localType = eraseReadonlyView(ctx.checker.getTypeAtLocation(local.name));
+  if (
+    seedTarget.getProperties().length === 0 ||
+    !ctx.checker.isTypeAssignableTo(seedTarget, sourceConstraint) ||
+    !ctx.checker.isTypeAssignableTo(localType, sourceConstraint)
+  ) {
+    return null;
+  }
+
+  let valid = true;
+  const visit = (node: ts.Node): void => {
+    if (!valid) return;
+    if (
+      ts.isIdentifier(node) &&
+      symbolAt(ctx, node) === returnedSymbol &&
+      !freshWrapperLocalReferenceIsAllowed(node, local, returned)
+    ) {
+      valid = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body);
+  return valid ? { sourceConstraint, target } : null;
+}
+
 /** Resolve only the direct asserted BaseNodeFactory expression form. */
 export function assertedStructFactoryExpression(
   ctx: CodegenContext,
   expression: ts.Expression,
 ): StructFactoryExpression | null {
-  return directBaseNodeFactoryAssertion(ctx, expression);
+  const direct = directBaseNodeFactoryAssertion(ctx, expression);
+  if (direct) return direct;
+  const asserted = unwrapExpression(expression);
+  return ts.isAsExpression(asserted) || ts.isTypeAssertionExpression(asserted)
+    ? assertedFreshWrapperFactory(ctx, asserted)
+    : null;
 }
 
 /** Resolve a factory call through value-transparent expression wrappers. */

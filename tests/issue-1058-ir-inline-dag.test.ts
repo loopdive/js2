@@ -42,6 +42,7 @@ it("#1058 leaves shared IR opaque while still inlining an ordinary function", ()
   } as unknown as WasmModule;
   const ctx = {
     mod,
+    moduleInitChunkHelperNames: new Set<string>(),
     numImportGlobals: 0,
     callerStrictGlobalIdx: -1,
     sourceFunctionStrictness: new Map(),
