@@ -36,6 +36,7 @@ export const RUNTIME_HOST_CAPABILITY_IDS = Object.freeze([
   "extern.is_undefined",
   "number.box",
   "number.unbox",
+  "string.compare",
 ] as const);
 
 export type RuntimeHostCapabilityId = (typeof RUNTIME_HOST_CAPABILITY_IDS)[number];
@@ -129,6 +130,14 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   // ABI, not a second registration path.
   record("number.box", "__box_number", ["f64"], ["externref"]),
   record("number.unbox", "__unbox_number", ["externref"], ["f64"]),
+  // (#3526 F2-S1) The string relational boundary — family 2's first record.
+  // NOT a member of the `addUnionImports` family and NOT an `ensureLateImport`
+  // registration either: `env.string_compare` is a BASE import minted by the
+  // legacy import collector's pre-pass (`import-collector.ts`, gated on
+  // `!nativeStrings`), so this record is manifest AUTHORITY over an ABI whose
+  // physical registration happens before any IR preparation runs. That is why
+  // the resolve arm looks the field up in `ctx.funcMap` and never mints it.
+  record("string.compare", "string_compare", ["externref", "externref"], ["i32"]),
 ]);
 
 const RECORD_BY_ID: ReadonlyMap<RuntimeHostCapabilityId, RuntimeHostCapabilityRecord> = new Map(

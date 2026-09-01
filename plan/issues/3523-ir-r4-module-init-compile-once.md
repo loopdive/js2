@@ -2088,3 +2088,167 @@ first carries invariant 7's third arm for M2, the second the one option that
 scopes guard planting to the prepared preparation call. Both are
 reconciliation/routing at the site that owns the prepared module-init
 transaction. `scripts/*-baseline.json` untouched.
+
+## 2026-09-01 gap-2b implementation plan — retire the scalar-statement overlay remainder
+
+Grounded on `origin/main` `0d9bfedeea`. Slice claim: `#3523:gap2b`
+(`ttraenkler/fable-ir-takeover`). Three probe lanes (selector grammar /
+measured shape matrix + corpus frequency / IR-side expressiveness) ran
+against that commit, including a file-copy A/B of the candidate edit. Every
+line number below is theirs.
+
+### What gap 2 still is, measured
+
+A 15-shape × 4-lane matrix (host-start, host-deferred, standalone, wasi; each
+shape with an `export function f()` reader; harness = the
+`issue-3523-module-init-single-pass` pass-counter method) shows the gap-2
+remainder is **exactly three overlay cells**, identical on all four lanes:
+
+| shape | cell today | why |
+| --- | --- | --- |
+| s8 `let n = 0; n++;` | `1·1·1` overlay (p1=1,p2=0) | `isPreparedExactScalarModuleAssignment` requires `BinaryExpression` (`index.ts:4129`) |
+| s9 `let n = 0; n += 2;` | `1·1·1` overlay | requires `EqualsToken` (`:4132`) |
+| s12 `let s = 0; for (…) { s = s + i }` | `1·1·1` overlay | no statement-subtree arm |
+
+For s8/s9 the selector already claims the unit (`reason: null`, arms
+`select.ts:5125-5135` / `:5100-5118`), the semantic plan is byte-for-byte the
+landed `total = total + 1` shape (1 binding `let:mut:tdz`, evaluations
+`variable-initializer[1]`, `statement[0]`, gaps 0, liveSeeds 0), and the IR
+body is what already runs under the overlay. **The refusal is entirely inside
+`isPreparedExactScalarModuleAssignment` (`src/codegen/index.ts:4120-4184`).**
+
+Everything else in the matrix is NOT a prepared-route question: s1–s5
+(string/object/array/template/arrow initializers) are refused by the storage
+resolver at `select.ts:5658-5665` (`vardecl-module-storage-unrepresentable`,
+a value-representation gap); s6 `var` at `:5584-5586`; s7 `export const` at
+`:5587`; s11 `if (a)` at `:6802-6803` (numeric ToBoolean); s10/s13/s14 are
+call-bearing (gap 1, `2·1·x`). Every call-free non-admitted shape is already
+single-pass (gap 1a holds on all lanes).
+
+**Corpus weight is ~zero**: no module-level `++`/`+=`/`for`/`if` anywhere in
+playground/fixtures; in test262 (43,934 runnable files) 98.5 % of module-inits
+are call-bearing and the `++`-style shapes appear in <10 files. Gap 2b is an
+ownership-cleanliness slice that closes the scalar family; the
+conformance-visible R4 item after it is **gap 1** (call-bearing pass-1
+retirement), then the selector's `var` gate and storage representability
+(#2949-shaped, not prepared-route work).
+
+### The A/B that already ran (probe, throwaway edit, base restored + cmp-verified)
+
+Widening only the head of `isPreparedExactScalarModuleAssignment`
+(`:4129-4171`) so `targetIdent`/`readIdent` also come from postfix/prefix
+`++`/`--` on an identifier, `id (+=|-=|*=) NumericLiteral`, and
+`id = id (+|-|*) NumericLiteral` — leaving the evaluation match
+(`:4021-4047`), the oracle same-declaration check (`:4156-4171`) and the
+admitted-`let` check (`:4173-4183`) untouched:
+
+| shape | base (4 lanes) | candidate (4 lanes) | runtime |
+| --- | --- | --- | --- |
+| s8 `n++` | overlay | **`0·0·1` prepared** | 1 ✓ |
+| s9 `n += 2` | overlay | **`0·0·1` prepared** | 2 ✓ |
+| `let n = 5; n -= 2; n *= 3;` | overlay | **prepared** | 9 ✓ |
+| `let n = 5; n = n - 2; n = n * 3;` | overlay | **prepared** | 9 ✓ |
+| `let n = 0; n++; let k = 4; k--;` | overlay | overlay (unchanged) | 13 ✓ |
+| s12 `for` loop | overlay | overlay (unchanged) | 3 ✓ |
+| s15 / landed control | prepared | prepared | ✓ |
+
+The interleaved case stays overlay only because of `sawAssignment`
+(`:4280`, `:4286`, `:4307`) — an order-only rule: bindings are consumed by
+`declarationOrdinal`, evaluations by population ordinal (`:4265-4275`), so
+nothing in the plan requires declarations-first.
+
+### Contract
+
+1. **Sub-A — operator family.** `isPreparedExactScalarModuleAssignment`
+   admits, on an earlier-admitted mutable `let` target with numeric (`f64`)
+   storage: `id++`, `++id`, `id--`, `--id`; `id (+= | -= | *= | /=)
+   NumericLiteral`; `id = id (+ | - | * | /) NumericLiteral` (target and read
+   identifier must resolve to the SAME declaration via
+   `ctx.oracle.declarationsOf`, as today at `:4156-4171`); `id = NumericLiteral`.
+   The evaluation stays `kind:"statement"` at the exact ordinal with
+   `bindingIds: []`. NOT admitted (they are the new near-misses): `**=`,
+   `%=`, bitwise/shift ops, `id = 1 + id` (operand order), parenthesized RHS,
+   string RHS, `const` target, boolean `!flag` (i32 storage — `++` on a
+   boolean-branded binding must stay refused, from-ast.ts:11819-11823), any
+   RHS identifier other than the target.
+2. **Sub-B — drop `sawAssignment`.** Remove the declaration-after-assignment
+   refusal (`:4280`, `:4286`, `:4307`); zip stays by `declarationOrdinal`
+   (declarations) and population ordinal (evaluations); F1 at `:4322-4328`
+   still requires every planned binding consumed.
+3. Both edits are confined to `src/codegen/index.ts`. No change to the plan
+   builder, the overlay, `applyModuleInitGuard`, invocation wiring, the
+   `:4100-4117` reachability scan (it must still run on every admitted
+   initializer), TDZ-elision gating (`wasm-start` only, `:4668`), or
+   `plan.invocation`'s shape (`toEqual` pin at compile-once.test.ts:104).
+4. Every rejection stays a silent `return undefined` before any mutation.
+
+### Pins that move (all in `tests/issue-3523-ir-module-init-compile-once.test.ts`)
+
+- Near-miss controls at `:620-662` that become **positives**: `total += 1`,
+  `total++`, `total = total - 1`, the WASI compound (`:655-657`), and the two
+  `sawAssignment` controls (`total = total + 1; let total = 0` stays a
+  near-miss for the OTHER reason it pins — target not admitted — but
+  `let total=0; total=total+1; let later=2` at `:640` becomes a positive).
+- The host-deferred **overlay control** `let total = 0; total += 1;` at
+  `:677-679` (the `legacyBodyEmitted:true` control for the double-adapter
+  seam) flips to prepared — replace it with a shape that stays overlay
+  (s12's `for` loop, or `total **= 2`) so the seam test keeps a real control.
+- New near-misses added per contract item 1, each proven RED under the poison
+  seam (`JSW…POISON_DIRECT_MODULE_INIT_BODY=1`) while the admitted shapes go
+  GREEN — the existing "fails closed for every near-miss grammar" anatomy.
+- The "is structural rather than allowlisted" positives (`:546-584`) gain the
+  interleaved-declaration case.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — `/` and `id = NumericLiteral`**: the probe A/B covered `+ - *` and
+  `++/--/+=/-=/*=`; before admitting `/=`, `= id / num` and `= num`, A/B each
+  on all four lanes with a runtime value only that statement can produce
+  (e.g. `let n = 8; n /= 2;` → 4). Refuse any operator whose A/B is not
+  `0·0·1` with the right value.
+- **P2 — storage kind guard**: confirm the admitted target's storage is `f64`
+  (or dynamic) for `++/--` and the arithmetic ops — cite the resolver arm
+  (`from-ast.ts:11819-11823` / `select.ts:5125-5135`) and add the boolean-`let`
+  near-miss.
+- **P3 — `for`-loop non-admission**: confirm s12 stays overlay under the final
+  predicate (it must — statement-subtree admission is a later slice) and use
+  it as the replacement overlay control.
+- **P4 — ledger defect, adjacent**: the census found
+  `tests/fixtures/extern-demo.ts` (`declare namespace` = `ModuleDeclaration`)
+  counted in `collectModuleInitPopulation` (`src/ir/module-init.ts:11-24`) and
+  selector-rejected with `legacyBodyEmitted:true` while NO direct pass ran —
+  a truthfulness defect adjacent to gap 4. Do NOT fix here; confirm it with
+  one compile and file it as its own issue (`claim-issue.mjs --allocate`).
+
+### Verification matrix
+
+- **V-A byte neutrality of already-admitted shapes** (file-copy A/B, `cmp`):
+  census shapes (a) `const memo = new Map()`, (b) `let v = 7`, (c)
+  `let total = 0; total = total + 1;` × 4 lanes — 12/12 byte-identical
+  (predicate-only change). Any delta is a defect.
+- **V-B newly admitted shapes**: s8, s9, the four A/B multi-statement
+  variants, plus the P1 shapes — `0·0·1` on all four lanes, pass1=pass2=0,
+  `preparedComponentId` present, poison seam GREEN, double-adapter seam FATAL,
+  runtime values correct, and on the deferred lanes: throw before
+  `__module_init`, correct read after.
+- **V-C non-vacuity by revert**: restore only sub-A → exactly the operator
+  positives fail; restore only sub-B → exactly the interleaved positive fails;
+  the near-miss suite stays green in both.
+- **V-D census diff**: `pnpm run check:ir-fallbacks` output diffed (no bucket
+  moves — the corpus has none of these shapes); `check:ir-only` baseline
+  ceilings unchanged.
+- **V-E** the five ratchet gates chained before commit; affected suites
+  (`issue-3523-*`, `issue-4376`, `issue-1411`, `issue-1789`) green.
+
+### Out of scope (each has its own next step)
+
+Statement-subtree admission (`for`/`while`/`if`/`block`/`try` bodies — a
+recursive predicate, after this lands); multi-declarator statements;
+`export const/let` (`vardecl-modifier`, selector-side); string/object/array
+storage kinds (`IrModuleBindingValueKind` — a value-representation slice, NOT
+byte-neutral across the free-function population, needs the 25-file corpus
+A/B); arrow/function initializers (gap 1's pass-1 purpose); `var`
+(`initialization:"undefined-at-instantiation"` policy); call statements and
+call initializers (**gap 1 — the next R4 slice after this one**, with the
+13th census cell `function h(){…} h(); export function read()` the IR probe
+asked for); gap 5 (R3).
