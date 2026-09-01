@@ -1428,3 +1428,38 @@ the actual new SHA and `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false`. Fresh-fetch
 again before publication; if main advances, normally merge it and replay every
 affected gate. The prospective PR against that final live tip must contain
 only the five #680 paths and no benchmark/public/website/labs path.
+
+### e59 merge and exact code-head validation (2026-09-01)
+
+The normal live-main merge committed at
+`e9b475e1a28b93514d8885d2c8b84ebe58fc417f`
+(`merge(upstream): reconcile #680 with live main ✓`). Its automatic
+three-way result had no unresolved paths and retains both the incoming
+`ambientPlatform` option and #680's two native-generator continuation-local
+maps. The normal hook passed lint-staged (Prettier plus Biome), LOC and
+function budgets, and oracle ratchet. Its changed-root detector correctly
+reported 24 incoming root test paths and deferred that mass-edit test set to
+the post-merge issue validation.
+
+Exact code-head evidence:
+
+- `node node_modules/vitest/dist/cli.js run
+  tests/issue-680-generator-expression-continuations.test.ts --pool=forks
+  --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot`
+  (repository runtime PATH) exited 0: **1 file, 27 / 27 tests**, Vitest
+  duration **21.48 s** (**22 s** wall).
+- `node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`
+  (repository runtime PATH) exited 0 with no diagnostics in **14 s** wall.
+- Targeted Prettier and Biome error lint passed; `git diff --check
+  upstream/main...HEAD`, LOC budget, function budget, and oracle ratchet all
+  passed. The prospective range against e59 is exactly this tracker,
+  `src/codegen/context/types.ts`, `src/codegen/expressions.ts`,
+  `src/codegen/generators-native.ts`, and
+  `tests/issue-680-generator-expression-continuations.test.ts` — five paths,
+  with no `benchmarks/`, `public/`, `website/`, or `labs/` path.
+
+Next: commit this tracker-only evidence normally, then run the full synthetic
+pre-push hook against that actual final documentation SHA with
+`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false` and the repository runtime PATH.
+Fresh-fetch upstream immediately before publication; if main advances, merge
+normally and replay affected validation rather than pushing a stale base.
