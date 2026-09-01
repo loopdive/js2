@@ -1,7 +1,8 @@
 ---
 id: 3591
 title: "Native generator fn-expr: .next() dispatch tests a stale pass-1 state-struct type (4 silent regressions from #3032 W6)"
-status: in-progress
+status: done
+completed: 2026-09-01
 sprint: current
 priority: high
 horizon: m
@@ -50,6 +51,37 @@ The module reports `success: true` with **zero `env` imports**, then traps out o
 works — only the `.next()/.return()/.throw()` member-call path is broken.
 
 This is a **real product regression**, not a stale test (see Attribution).
+
+## Completion — 2026-09-01
+
+#3591 is complete. The original module-init-pass-2 opaque resume-dispatch
+defect is fixed by the reserve-then-fill native-generator dispatcher, with the
+standalone/WASI result-carrier and iterator-helper paths narrowed to their
+proper lanes. The original four `#3591` skipped cases in
+`tests/issue-3164.test.ts` and `tests/issue-3386.test.ts` are re-enabled, and
+all original acceptance criteria below are satisfied without adding `env`
+imports to the standalone generator shapes.
+
+The seven-row Test262 list was a diagnostic expansion, not the original
+acceptance scope. Its two captured-closure `chunks`/`windows` exhaustion rows
+are handed to [#5254](5254-es2015-native-generator-capture-carrier.md), and
+its `GeneratorPrototype/next/context-method-invocation` dynamic-`this` row is
+handed to [#5255](5255-es2015-generator-method-this-transport.md). Those
+independent residuals do not reopen #3591's stale-dispatch fix.
+
+Final validation after synchronizing `upstream/main` at
+`2d246ec12278721bfe5bee16dec321e03199e485`:
+
+- `tests/issue-3591.test.ts`, `tests/issue-3164.test.ts`,
+  `tests/issue-3386.test.ts`, and
+  `tests/issue-2864-standalone-generator-carrier.test.ts`: **68/68 pass** in
+  one single-worker lane.
+- The retained official controls keep their authoritative baseline statuses:
+  `language/statements/generators/no-yield.js` is the known `NaN` versus
+  `undefined` assertion failure, and
+  `language/statements/generators/yield-star-before-newline.js` is the known
+  `__gen_resume_g` `local.tee` Wasm compile error. Neither is caused by the
+  #3591 dispatch repair.
 
 ## 2026-09-01 current-main re-grounding and implementation plan
 
@@ -387,15 +419,15 @@ So #3356 could land fully green while breaking four assertions. Mitigated in
 this issue's PR by folding both suites into the required guard suite
 (`tests/guard-suite.json`, #3552) — the same class of fix as #3561/#3562/#3565.
 
-## Acceptance criteria
+## Acceptance criteria — complete
 
-- [ ] Shapes B, C, G above return their expected values host-free (zero `env`
+- [x] Shapes B, C, G above return their expected values host-free (zero `env`
       imports) in the standalone lane.
-- [ ] The four `it.skip`ped cases are re-enabled (search `#3591` in
+- [x] The four `it.skip`ped cases are re-enabled (search `#3591` in
       `tests/issue-3164.test.ts` and `tests/issue-3386.test.ts`) and pass.
-- [ ] `tests/issue-3164.test.ts` (13) and `tests/issue-3386.test.ts` (17) are
-      fully green, still in `tests/guard-suite.json`.
-- [ ] No new `env` imports in the standalone lane for any generator shape.
+- [x] `tests/issue-3164.test.ts` (13) and `tests/issue-3386.test.ts` (18) are
+      fully green and remain in `tests/guard-suite.json`.
+- [x] No new `env` imports in the standalone lane for any generator shape.
 
 ## Related
 
