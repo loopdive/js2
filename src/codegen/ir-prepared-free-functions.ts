@@ -863,6 +863,124 @@ function r2FastJsHostPassThroughStringSignature(
 }
 
 /**
+ * (#3521 R2-F1) The third fast-mode admission: a declaration whose every
+ * position is drawn from the #4514 carrier-fixed family — `number`/`boolean`
+ * scalars, `string`, and a `number[]`/`boolean[]` vector — mixed freely, plus
+ * a `void` return. `r2StableValType` already fixes one physical carrier per
+ * position per lane (`f64`, `i32`, the `nativeStrings`-keyed string carrier,
+ * one interned `$vec`), and the direct declaration pass allocated the slot
+ * from the same facts, so nothing is left for a prepared component to re-plan.
+ *
+ * Two refusals keep this predicate disjoint from the two it sits beside in the
+ * fast-arm OR, so that each one's revert stays observable on its own pins:
+ * an all-scalar signature belongs to `r2FastPreparedScalarFunctionSignature`,
+ * and an all-`string` signature under `nativeStrings: false` belongs to
+ * `r2FastJsHostPassThroughStringSignature`. All-`string` WITH native strings
+ * is this predicate's — no other fast predicate admits it.
+ *
+ * String positions are admitted only where the lane actually fixes a string
+ * carrier: the native `$anyStr` struct must be registered, or the lane must be
+ * the exact JS-host externref lane. Standalone / WASI / no-host-import lanes
+ * under `nativeStrings: false` have no string carrier to mirror and stay on
+ * the direct route.
+ *
+ * `string[]` and every reference carrier (`object`, callable, destructured,
+ * generic, `any`, optional/default/rest, async, generator) are deliberately
+ * NOT part of the family and keep their existing routes: the non-fast lanes do
+ * not agree those slots are stable, so the fast arm has nothing to mirror.
+ */
+function r2FastMixedFixedCarrierSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  unitId: IrUnitId,
+  claim: IrExactFunctionClaim,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  const declaration = claim.declaration;
+  // Mirrors `r2StableValType`'s string arm: the native carrier needs its
+  // registered `$anyStr` type, the host carrier needs the exact JS-host lane.
+  const stringCarrierFixed = ctx.nativeStrings
+    ? ctx.anyStrTypeIdx >= 0
+    : !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+
+  type FixedCarrierKind = "f64" | "i32" | "string" | "vec-f64" | "vec-i32";
+  const fixedCarrierKind = (type: ts.TypeNode | undefined): FixedCarrierKind | undefined => {
+    if (type === undefined) return undefined;
+    if (type.kind === ts.SyntaxKind.NumberKeyword) return "f64";
+    if (type.kind === ts.SyntaxKind.BooleanKeyword) return "i32";
+    if (type.kind === ts.SyntaxKind.StringKeyword) return stringCarrierFixed ? "string" : undefined;
+    if (ts.isArrayTypeNode(type)) {
+      if (type.elementType.kind === ts.SyntaxKind.NumberKeyword) return "vec-f64";
+      if (type.elementType.kind === ts.SyntaxKind.BooleanKeyword) return "vec-i32";
+    }
+    return undefined;
+  };
+  // The same parity `r2FastPreparedScalarFunctionSignature` performs, widened
+  // to the two non-scalar members of the family.
+  const overrideMatchesKind = (kind: FixedCarrierKind, type: IrType): boolean => {
+    if (kind === "string") return type.kind === "string";
+    if (kind === "vec-f64" || kind === "vec-i32") {
+      return type.kind === "vec" && asVal(type.elementType)?.kind === (kind === "vec-f64" ? "f64" : "i32");
+    }
+    return asVal(type)?.kind === kind;
+  };
+
+  if (
+    !declaration.name ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== claim.legacyName ||
+    declaration.parent !== sourceFile ||
+    !sourceFile.statements.some((statement) => statement === declaration) ||
+    !declaration.body ||
+    (declaration.typeParameters?.length ?? 0) !== 0 ||
+    declaration.asteriskToken !== undefined ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    declaration.parameters.length !== override.params.length
+  ) {
+    return false;
+  }
+
+  const positionKinds: FixedCarrierKind[] = [];
+  for (const [index, parameter] of declaration.parameters.entries()) {
+    const kind = fixedCarrierKind(parameter.type);
+    if (
+      !ts.isIdentifier(parameter.name) ||
+      parameter.questionToken !== undefined ||
+      parameter.dotDotDotToken !== undefined ||
+      parameter.initializer !== undefined ||
+      kind === undefined ||
+      !overrideMatchesKind(kind, override.params[index]!)
+    ) {
+      return false;
+    }
+    positionKinds.push(kind);
+  }
+
+  if (declaration.type?.kind === ts.SyntaxKind.VoidKeyword) {
+    if (override.returnType !== null) return false;
+  } else {
+    const returnKind = fixedCarrierKind(declaration.type);
+    if (
+      returnKind === undefined ||
+      override.returnType === null ||
+      !overrideMatchesKind(returnKind, override.returnType)
+    ) {
+      return false;
+    }
+    positionKinds.push(returnKind);
+  }
+
+  // Disjointness with the two predicates this one sits beside in the OR.
+  if (positionKinds.every((kind) => kind === "f64" || kind === "i32")) return false;
+  if (!ctx.nativeStrings && positionKinds.every((kind) => kind === "string")) return false;
+
+  // The syntax proof above is necessary, not sufficient: the direct pass has
+  // already allocated the callable slot and later direct callers/exports can
+  // target it. Re-prove physical equality so a wrong admission fails closed.
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
+}
+
+/**
  * (#4514) The narrow value vocabulary whose physical carrier is fixed by the
  * declaration alone, with no decision the prepared component could re-plan:
  * `void`, `f64`/`i32` scalars, `string` (one `nativeStrings`-keyed carrier both
@@ -1361,7 +1479,8 @@ export function selectR2PreparedOwnerComponents(input: {
           input.ctx.fast &&
           !(
             r2FastPreparedScalarFunctionSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
-            r2FastJsHostPassThroughStringSignature(input.ctx, input.sourceFile, unitId, claim, override)
+            r2FastJsHostPassThroughStringSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
+            r2FastMixedFixedCarrierSignature(input.ctx, input.sourceFile, unitId, claim, override)
           ),
       ],
       ["async-declaration", () => isAsync],
