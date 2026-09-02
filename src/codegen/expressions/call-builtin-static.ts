@@ -50,6 +50,7 @@ import {
 } from "../builtin-static-gopd.js";
 import { tryEmitBuiltinProtoConstructorDescriptor } from "../builtin-proto-constructor.js";
 import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#5268 step 6)
+import { emitObjectCoercion } from "./calls-guards.js"; // (#5268 step 3)
 import {
   emitImmutablePrototypeStatusCorrection,
   tryEmitObjectProtoProtoAccessorGopd,
@@ -3358,8 +3359,28 @@ export function compileBuiltinStaticCall(
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
     const funcIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [{ kind: "externref" }], [{ kind: "externref" }]);
+    // (#5268 step 3) §20.1.2.11 step 1 is `ToObject(O)`, which THROWS for
+    // null/undefined — the native answers an empty list for every non-`$Object`
+    // receiver instead, so the nullish case was a silent `[]`
+    // (`non-object-argument-invalid.js`). Every other primitive legitimately
+    // has no own symbol keys, so only the nullish half needs a guard.
+    const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+    const throwNotCoercible = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+      flush: fctx,
+    });
     flushLateImportShifts(ctx, fctx);
-    if (funcIdx !== undefined) {
+    if (funcIdx !== undefined && isUndefIdx !== undefined) {
+      const gopsLocal = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: gopsLocal });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({ op: "local.get", index: gopsLocal });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx });
+      fctx.body.push({ op: "i32.or" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwNotCoercible });
+      fctx.body.push({ op: "local.get", index: gopsLocal });
+      releaseTempLocal(fctx, gopsLocal);
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertySymbols") ?? funcIdx });
+    } else if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
     } else {
       fctx.body.push({ op: "drop" });
@@ -3546,9 +3567,25 @@ export function compileBuiltinStaticCall(
     expr.arguments.length >= 1
   ) {
     const targetArg = expr.arguments[0]!;
-    // (#2076) Object-literal operands must build as native $Objects in
-    // standalone so __object_assign's `ref.test $Object` recognises them.
-    compileObjectAssignArg(ctx, fctx, targetArg);
+    // (#5268 step 3) §20.1.2.1 step 1 is `to = ToObject(target)`, and the
+    // RESULT of the whole call is that wrapper — `Object.assign(1, {a:1})`
+    // must answer an object whose `valueOf()` is 1, not the number back.
+    // `__object_assign` only rejects a NULLISH target, so a primitive one flowed
+    // straight through. Route a statically-primitive target through the same
+    // §7.1.18 emission `Object(x)` uses (`emitObjectCoercion`), which already
+    // has the four wrapper arms. Nullish is deliberately NOT routed here:
+    // ToObject THROWS for it, while `Object()` answers a fresh plain object, so
+    // that case stays with the native's own guard.
+    const targetTag = ctx.standalone ? ctx.oracle.staticJsTypeOf(targetArg) : "mixed";
+    const targetIsPrimitive =
+      targetTag === "number" || targetTag === "string" || targetTag === "boolean" || targetTag === "bigint";
+    if (targetIsPrimitive) {
+      emitObjectCoercion(ctx, fctx, [targetArg]);
+    } else {
+      // (#2076) Object-literal operands must build as native $Objects in
+      // standalone so __object_assign's `ref.test $Object` recognises them.
+      compileObjectAssignArg(ctx, fctx, targetArg);
+    }
     // Build the variadic `...sources` list. Under the native semantic provider
     // the native __object_assign iterates a $ObjVec built by
     // the native $ObjVec builders (__objvec_new / __objvec_push) instead of the

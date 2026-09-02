@@ -25,7 +25,13 @@ related: [5145, 5148, 4491, 4492, 4444]
 # immutable-prototype correction at the `Reflect.setPrototypeOf` call site, and
 # the setter-native swap at the `o.__proto__ = v` assignment arm. The semantics
 # live in the new module, not in these god-files.
+# 2026-09-02 (Opus, step 2): `object-ops.ts` grows by ONE condition — the
+# `Object.{keys,values,entries}` receiver test now also admits a value whose
+# provenance is a Proxy, which routes it to the native enumerator instead of the
+# closed-struct expansion. The predicate itself lives in the new
+# `proxy-value-provenance.ts`.
 loc-budget-allow:
+  - src/codegen/object-ops.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
   - src/runtime.ts
@@ -56,7 +62,22 @@ loc-budget-allow:
 # 2026-09-02 (Opus implementation pass): the two step-1 wiring sites above are
 # each one arm inside an already-oversized dispatcher; splitting either is a
 # separate refactor with its own blast radius.
+# 2026-09-02 (Opus, step 2): `compileObjectKeysOrValues` grows by the one
+# Proxy-provenance condition; `ensureObjectRuntime` by the FIVE lines that call
+# the new `fillObjectIntegrityProxyArms` fill, in the same finalize slot as
+# `fillObjectAssignProxySourceArm`. Both algorithms live in
+# `object-integrity-proxy.ts`.
+# 2026-09-02 (Opus, step 2): the ONE new coercion site is `__is_truthy` on a
+# Proxy trap's booleanish result — §7.3.16 step 2 ("If status is false, throw"),
+# §7.3.17 step 1 and §7.3.25's `desc.[[Enumerable]]` test. That helper IS the
+# coercion engine's ToBoolean entry, and it is the same call the existing
+# `__object_isExtensible` Proxy front-guard makes (`object-runtime-proxy.ts`);
+# nothing here hand-rolls a ToString/ToNumber/equality matrix.
+coercion-sites-allow:
+  - src/codegen/object-integrity-proxy.ts
 func-budget-allow:
+  - src/codegen/object-ops.ts::compileObjectKeysOrValues
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/array-species.ts::emitArraySpeciesCreate
@@ -627,3 +648,135 @@ the reason):
   `arrobj-cl-*.txt`, `arrobj-controls.txt` + `arrobj-controls-run1.txt`,
   `probes/ts{1..4}.js` + `probes/ts-probe2.out` (the `env::toString` repro),
   `arrobj-cluster.py` (the partition, re-runnable).
+
+## 2026-09-02 implementation (Opus)
+
+Steps 1, 2 (partial) and 6 landed. Measured with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/arrobj-head.txt --standalone`
+on branch `worktree-agent-a9c998ea769df422c` (base `ef6aec3322`).
+
+**Whole 159-row head list: 0 pass / 154 fail / 5 CE → 21 pass / 138 fail.**
+No row that passed before regressed; the before/after non-pass sets differ by
+exactly the flipped rows (`comm` on both sorted lists, empty "NEW non-pass").
+
+Two rows in the after-run were reported `compile_error` and are LOAD ARTIFACTS,
+not results: `Object/freeze/abrupt-completion.js` (passes when re-run alone —
+so the real flip count is 21, not the 20 the diff shows) and
+`Array/prototype/filter/create-proto-from-ctor-realm-non-array.js` (an
+out-of-scope X0 realm row that keeps its original `fail` signature alone). The
+box ran at load 6–23 on 4 shared cores throughout; a bare compile of the
+control `concat_spreadable-number-wrapper.js` timed out at 28.7 s on HEAD and
+32.4 s on this tree, i.e. the timeout tracks load, not the change-set.
+
+### Step 1 — `Object.prototype.__proto__` accessor pair (commit `a7e974ee09`)
+
+`arrobj-cl-{a,b}.txt` (18 rows): **0 pass / 18 fail → 12 pass / 6 fail.**
+Controls 20/20.
+
+New `src/codegen/object-proto-proto-accessor.ts`: the `__object_proto_get` /
+`__object_proto_set` natives, the two identity-stable reflective closures
+(`get __proto__` / `set __proto__`, §17 names, `.length` 0/1), the gOPD arm, and
+the §10.4.7 immutable-prototype predicate for `%Object.prototype%`. Four wiring
+sites: the gOPD dispatch and the `Object.setPrototypeOf` status check
+(`call-builtin-static.ts`), the `.call` arm for a descriptor-traced accessor
+(`calls.ts`), the `Reflect.setPrototypeOf` boolean
+(`call-namespace-static.ts`), and the syntactic `o.__proto__ = v` assignment
+(`assignment.ts`).
+
+NOT done, with the measured reason:
+
+- `get-ordinary-obj`, `set-ordinary-obj`, `set-non-extensible` — a plain object
+  LITERAL lowers to a closed struct, so its implicit `%Object.prototype%`
+  terminal is invisible to the runtime `__getPrototypeOf` walk, and the
+  compile-time `Object.getPrototypeOf` fold (`object-get-prototype-of.ts`,
+  object-literal arm) does not know the REFLECTIVE setter wrote. The native does
+  re-apply the two-encodings distinction for an open `$Object` receiver
+  (`OBJ_FLAG_NULL_PROTO` clear ⇒ answer `%Object.prototype%`), which is why
+  `get.call(Object.create(proto))` and `get.call(Object.create(null))` are both
+  right; the closed-struct half needs the literal's carrier to change.
+- `set-cycle-shadowed` — `Object.create(proxy)` canonicalizes the proxy to its
+  TARGET (`canonicalizeProtoArg` → `__proxy_get_target`), so by walk time the
+  Proxy link the §10.1.2.1 step-8 loop must STOP at is already gone.
+- `set-abrupt` — the trailing `Object.getPrototypeOf(subject)` on a Proxy needs
+  the same implicit-terminal answer as the first bullet.
+- `prop-desc` — `verifyProperty(Object.prototype, "__proto__", …)` needs
+  `__proto__` in `OBJECT_PROTOTYPE_OWN_NAMES` (which changes the `in` answer for
+  every ordinary receiver) plus a working `delete` on `Object.prototype`.
+
+### Step 6 — IsArray over a Proxy (commit `885b615ba0`)
+
+`arrobj-cl-i.txt` (4 rows): **0 pass / 4 fail → 1 pass / 3 fail.** Controls
+20/20. Regression check: the 41 `Array/prototype/*/create-species*.js` +
+`Symbol.species*.js` rows are 38/3 on BOTH trees with an identical non-pass set
+(file-copy A/B).
+
+`fillExternIsArray` gained the §7.2.2 step-3 arm (bounded target unwrap,
+TypeError on a revoked proxy); new `src/codegen/proxy-value-provenance.ts`
+answers "may this expression be a Proxy" syntactically, because TypeScript types
+`new Proxy(t,h)` and `Proxy.revocable(t,h).proxy` as the TARGET's type and an
+array target folded `Array.isArray` to the constant `true`;
+`emitArraySpeciesCreate` runs §10.4.2.3 steps 2-3 before `Get(O,"constructor")`.
+
+NOT done: `{map,filter,splice}/create-revoked-proxy.js`.
+`Array.prototype.map.call(proxy, cb)` never reaches `emitArraySpeciesCreate` at
+all (measured `ctorCount === 0, cbCount === 0`, no throw) — the reflective
+`$NativeProto` member-call path is the gate on them, not the species prologue.
+Arming `arraySpeciesDirty` for `Object.defineProperty(o,"constructor",…)` was
+tried, changed nothing, and was reverted rather than shipped as dead weight.
+
+### Step 2 (partial) — the Proxy MOP inside the Object statics
+
+`arrobj-cl-e.txt` (17 rows): **0 pass / 17 fail → 6 pass / 11 fail.**
+
+New `src/codegen/object-integrity-proxy.ts` holds §7.3.16 SetIntegrityLevel,
+§7.3.17 TestIntegrityLevel and §7.3.25 EnumerableOwnProperties over a `$Proxy`
+as three natives, plus `__proxy_own_keys_all` (the trap result when an `ownKeys`
+trap is present; names ++ the target's own symbols when it is not). Eight
+front-guards: `__object_{freeze,seal,isFrozen,isSealed,isFrozen_obj,
+isSealed_obj,values,entries}`.
+
+Regression + yield check on the 280-row
+`built-ins/Object/{freeze,seal,isFrozen,isSealed,values,entries}` set:
+**245 pass / 35 fail → 253 pass / 26 fail, with ZERO new failures.** Two of the
+eight fixed rows are outside this issue's list —
+`Object/{freeze,seal}/throws-when-false.js`.
+
+`Object.{values,entries}` on a Proxy is a genuine SILENT-WRONG-ANSWER fix that
+the two test262 rows do not credit: a `$Proxy` failed `__object_values`'
+`ref.test $Object`, so it answered the EMPTY vec and fired no trap. File-copy
+A/B on the same probe: with the arm removed `log=` / `len=0`; with it,
+`log=|ownKeys|gopd:a|get:a|…` / `len=3`.
+
+NOT done, with the measured reason:
+
+- `{values,entries}/observable-operations.js` — the mechanism is correct; a
+  hand-written probe reproducing the test's exact source (including
+  `allowProxyTraps` and the `new Proxy(handler, check)` nested handler) prints
+  the full expected trap log. Something in the runner's `wrapTest` rewriting
+  makes the wrapped module take a different path; not diagnosed.
+- `{freeze,seal}/proxy-with-defineProperty-handler.js` — the per-key define DOES
+  run in the right order with the right descriptor shape (probe:
+  `definedKeys=foo,Symbol()`); the test then fails on
+  `seenDescriptors[key] = descriptor` inside the trap closure not persisting to
+  the captured EMPTY object literal — an unrelated closed-struct-capture defect.
+- `defineProperties/proxy-*`, `keys/proxy-*`, `getOwnPropertyDescriptors/proxy-*`,
+  `isPrototypeOf/arg-is-proxy` — plan steps 2.4-2.7, not started.
+
+### Step 3 (two pieces only)
+
+- `Object.getOwnPropertySymbols(undefined|null)` now throws the §20.1.2.11
+  ToObject TypeError instead of answering `[]` — 1 row
+  (`non-object-argument-invalid.js`).
+- `Object.assign(<primitive>, …)` routes its target through the same §7.1.18
+  emission `Object(x)` uses, so the result is the wrapper — 1 row
+  (`OnlyOneArgument.js`). The other four `Target-*` rows now fail one assertion
+  LATER, on `result.valueOf()`: a wrapper `$Object` has no `$NativeProto`
+  [[Prototype]] link, so a DYNAMIC `.valueOf()` reaches
+  `Object.prototype.valueOf` (which returns `this`) rather than
+  `Number.prototype.valueOf`. `native-proto-instance-method-read.ts` already
+  serves that read, but only for (brand, member) closures the module has
+  ALREADY minted — and these modules never name `Number.prototype.valueOf`.
+
+### Steps 4, 5, 7, 8, 9, 10 — not started
+
+No work was done on clusters D, D2, F, G, H, J, L, M, N, O, P, Q, R, S.

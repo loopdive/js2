@@ -154,6 +154,69 @@ describe("#5268 step 1 — Object.prototype.__proto__ accessor pair (standalone)
   });
 });
 
+describe("#5268 step 2 — the Proxy MOP inside the Object statics (standalone)", () => {
+  it("Object.freeze/seal on a Proxy run SetIntegrityLevel through the traps", async () => {
+    // RED on base: a `$Proxy` fell into the #4032 carrier-bag arm, so the
+    // `preventExtensions` trap never ran and the throw never happened.
+    const lines = await runLines(`
+      var p = new Proxy({}, { preventExtensions: function () { throw new TypeError("nope"); } });
+      var verdict = "no-throw";
+      try { Object.freeze(p); } catch (e) { verdict = e instanceof TypeError ? "TypeError" : "other"; }
+      LOG("freeze=" + verdict);
+      verdict = "no-throw";
+      try { Object.seal(p); } catch (e) { verdict = e instanceof TypeError ? "TypeError" : "other"; }
+      LOG("seal=" + verdict);
+    `);
+    expect(lines).toEqual(["freeze=TypeError", "seal=TypeError"]);
+  });
+
+  it("the per-key define runs in ownKeys order and includes the symbol key", async () => {
+    // RED on base: no key was visited at all. The symbol is the part that needs
+    // the trap-absent forward to be widened past `__getOwnPropertyNames`.
+    const lines = await runLines(`
+      var sym = Symbol("s");
+      var target = {};
+      target[sym] = 1;
+      target.foo = 2;
+      target[0] = 3;
+      var seen = [];
+      var proxy = new Proxy(target, {
+        getOwnPropertyDescriptor: function (t, key) {
+          seen.push(String(key));
+          return Object.getOwnPropertyDescriptor(t, key);
+        },
+      });
+      Object.freeze(proxy);
+      LOG("order=" + seen.join(","));
+      LOG("frozen=" + Object.isFrozen(proxy));
+    `);
+    expect(lines).toEqual(["order=0,foo,Symbol(s)", "frozen=true"]);
+  });
+
+  it("Object.values/entries on a Proxy run EnumerableOwnProperties through the traps", async () => {
+    // RED on base: `__object_values` `ref.test`s `$Object`, which a `$Proxy` is
+    // not, so it answered the EMPTY vec and fired no trap — a silent wrong
+    // answer, not a refusal. Verified by file-copy A/B: with the arm removed
+    // this prints `log=` / `len=0`.
+    const lines = await runLines(`
+      var log = "";
+      var object = { a: 0, b: 0, c: 0 };
+      var proxy = new Proxy(object, {
+        get: function (t, k) { log += "|get:" + k; return t[k]; },
+        getOwnPropertyDescriptor: function (t, k) {
+          log += "|gopd:" + k;
+          return Object.getOwnPropertyDescriptor(t, k);
+        },
+        ownKeys: function (t) { log += "|ownKeys"; return Object.getOwnPropertyNames(t); },
+      });
+      var result = Object.values(proxy);
+      LOG("log=" + log);
+      LOG("len=" + result.length);
+    `);
+    expect(lines).toEqual(["log=|ownKeys|gopd:a|get:a|gopd:b|get:b|gopd:c|get:c", "len=3"]);
+  });
+});
+
 describe("#5268 step 6 — IsArray over a Proxy (§7.2.2 step 3, standalone)", () => {
   it("unwraps a live proxy to its target and throws for a revoked one", async () => {
     // RED on base: `Array.isArray(handle.proxy)` folded to the constant `true`

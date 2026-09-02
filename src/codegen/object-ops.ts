@@ -54,6 +54,7 @@ import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descrip
 // `$Object` materialization. Reasoning lives in that module's header.
 import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./define-properties-map.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
+import { tracesToProxyValue } from "./proxy-value-provenance.js"; // (#5268 step 2)
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -4209,6 +4210,14 @@ export function compileObjectKeysOrValues(
   if (
     structName === "$Object" ||
     structName === "$Proxy" ||
+    // (#5268 step 2) …and a value whose PROVENANCE is a Proxy. TypeScript types
+    // `new Proxy(target, handler)` as the TARGET's type, so a proxy over an
+    // object LITERAL arrives here carrying that literal's struct name and fell
+    // into the closed-struct expansion below — whose `emitObjectArgNullGuard`
+    // then refused with "Object method called on null or undefined"
+    // (`{values,entries}/observable-operations.js`). The native enumerator
+    // carries the `$Proxy` front-guard, so it runs the traps.
+    tracesToProxyValue(ctx, arg) ||
     (objectRuntimeTypes !== undefined &&
       (structTypeIdx === objectRuntimeTypes.objectTypeIdx || structTypeIdx === objectRuntimeTypes.proxyTypeIdx))
   ) {

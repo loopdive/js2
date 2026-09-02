@@ -182,6 +182,7 @@ import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { buildObjectEnumerationHelpers, fillObjectAssignProxySourceArm } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
+import { fillObjectIntegrityProxyArms } from "./object-integrity-proxy.js"; // (#5268 step 2)
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -6737,6 +6738,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
   // arm now that descriptor helpers and Proxy dispatch front-guards exist.
   fillObjectAssignProxySourceArm(ctx, types.proxyTypeIdx, types.objectTypeIdx);
+
+  // (#5268 step 2) …and the §7.3.16/§7.3.17 integrity algorithms over a
+  // `$Proxy`, for the same reason and in the same slot: both compose from the
+  // Proxy dispatch helpers registered just above.
+  fillObjectIntegrityProxyArms(ctx, types.proxyTypeIdx);
 
   // (#4223) Mint the primitive-wrapper `.constructor` carriers, when the module
   // was pre-scanned as reading a `constructor` property. Hung HERE — the tail of
