@@ -770,3 +770,19 @@ export function resolveRuntimeHostCapabilityFuncRecord(
 ): RuntimeHostCapabilityFuncRecord {
   return asCallableRuntimeHostCapabilityRecord(resolveRuntimeHostCapabilityRecord(records, capability));
 }
+
+/**
+ * (#3526 F3-S1) The host callback MAKER's record, resolved from the catalogue
+ * once at module scope.
+ *
+ * from-ast runs in Phase 1, BEFORE the runtime manifest is frozen, so the maker
+ * crossing it emits cannot read a selected provider — but it must not spell the
+ * import by hand either. This const is the seam between those two facts: the
+ * STATIC catalogue is the authority over the maker's `env`.`__make_callback`
+ * ABI at build time, and the FROZEN manifest is the authority over whether that
+ * crossing is admitted at all, post-freeze
+ * (`preparedHostCallbackWrapProvider`). Both name the same record — this one —
+ * so a rename lands in one place and neither authority can drift from the other.
+ */
+export const HOST_CALLBACK_WRAP_CAPABILITY_RECORD: RuntimeHostCapabilityFuncRecord =
+  resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, "async.callback.wrap");
