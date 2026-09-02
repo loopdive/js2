@@ -1,0 +1,3 @@
+language/computed-property-names/class/method/constructor-can-be-generator.js
+language/computed-property-names/class/method/constructor-can-be-getter.js
+language/computed-property-names/class/method/constructor-can-be-setter.js

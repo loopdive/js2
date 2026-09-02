@@ -1,0 +1,7 @@
+language/arguments-object/mapped/Symbol.iterator.js
+language/arguments-object/unmapped/Symbol.iterator.js
+language/statements/function/arguments-with-arguments-fn.js
+language/statements/function/arguments-with-arguments-lex.js
+language/statements/function/params-dflt-ref-arguments.js
+language/rest-parameters/arrow-function.js
+language/rest-parameters/with-new-target.js

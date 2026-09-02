@@ -1,0 +1,4 @@
+var d = Object.getOwnPropertyDescriptor(Symbol, 'iterator');
+if (d === undefined) throw new Test262Error('no Symbol.iterator descriptor');
+if (d.value !== Symbol.iterator) throw new Test262Error('value mismatch');
+if (Object.getPrototypeOf(Symbol('66')) !== Symbol.prototype) throw new Test262Error('gPO(symbol)');

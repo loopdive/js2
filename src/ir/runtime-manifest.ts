@@ -25,9 +25,11 @@ import {
 } from "./async-runtime-providers.js";
 import {
   canonicalizeRuntimeHostCapabilityCatalog,
+  isRuntimeHostCapabilityFuncId,
   resolveRuntimeHostCapabilityRecord,
   RUNTIME_HOST_CAPABILITY_IDS,
   RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityFuncId,
   type RuntimeHostCapabilityId,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
@@ -40,6 +42,7 @@ import {
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+  EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
@@ -66,7 +69,10 @@ export type RuntimeFeature =
   | IntrinsicRuntimeFeature
   | AsyncRuntimeFeature
   | GeneratorNumberBoxRuntimeFeature
-  | StringCompareRuntimeFeature;
+  | StringCompareRuntimeFeature
+  | StringEqRuntimeFeature
+  | StringLenRuntimeFeature
+  | StringConcatRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -193,6 +199,92 @@ export const STRING_COMPARE_POLICY_DISABLED: StringComparePolicy = Object.freeze
   compare: "unsupported",
 });
 
+/**
+ * (#3526 F2-S3) The exact, already-resolved policy for the STRING EQUALITY
+ * seam (`a === b` / `a !== b` on two strings) — family 2's second policy, and a
+ * SIBLING of {@link StringComparePolicy}, never a widening of it.
+ *
+ * The truth table is the same one (`nativeStrings ? native : host`) because both
+ * seams answer to the same lane flag, but the physical pair is different: this
+ * arm's host provider is the `wasm:js-string.equals` BUILTIN import, not an
+ * `env` one. That namespace only became expressible as a capability record in
+ * F2-S2, which is why this seam could not move with the compare. Keeping the two
+ * policies separate means either seam can later be re-pointed — to a self-hosted
+ * helper, say — without dragging the other with it.
+ */
+export interface StringEqPolicy {
+  /**
+   * `host` selects the `wasm:js-string.equals` builtin import through the
+   * central `string.eq` capability; `native` selects the `__str_equals` Wasm
+   * helper `ensureNativeStringHelpers` registers.
+   */
+  readonly eq: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string equality seam resolve the arm to this. */
+export const STRING_EQ_POLICY_DISABLED: StringEqPolicy = Object.freeze({
+  eq: "unsupported",
+});
+
+/**
+ * (#3526 F2-S4) The exact, already-resolved policy for the STRING LENGTH seam
+ * (`s.length`) — family 2's third sibling, beside {@link StringComparePolicy}
+ * and {@link StringEqPolicy}.
+ *
+ * Same one-flag truth table as both (`nativeStrings ? native : host`, because
+ * `standalone` and `wasi` each imply `nativeStrings`), but the physical pair is
+ * a THIRD shape again and the first that is not a callable pair at all: the
+ * host arm is the `wasm:js-string.length` builtin import, while the native arm
+ * is a plain field read on the Program-ABI string carrier. That is why this
+ * seam needs the `carrier-field` implementation kind — the manifest's first
+ * non-callable native arm — and why it could not ride along with the eq.
+ */
+export interface StringLenPolicy {
+  /**
+   * `host` selects the `wasm:js-string.length` builtin import through the
+   * central `string.len` capability; `native` selects field 0 of the
+   * Program-ABI string carrier (the UTF-16 code-unit count).
+   */
+  readonly len: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string length seam resolve the arm to this. */
+export const STRING_LEN_POLICY_DISABLED: StringLenPolicy = Object.freeze({
+  len: "unsupported",
+});
+
+/**
+ * (#3526 F2-S5) The exact, already-resolved policy for the STRING
+ * CONCATENATION seam (`a + b` on two strings, and the `+=` builder append) —
+ * family 2's fourth sibling, beside {@link StringComparePolicy},
+ * {@link StringEqPolicy} and {@link StringLenPolicy}.
+ *
+ * Same one-flag truth table as all three (`nativeStrings ? native : host`), but
+ * this is the first seam in the catalogue where ONE policy answers TWO
+ * features. The manifest decides WHICH authority answers; the concat MODE —
+ * immutable `a + b` versus the `owned-append` builder-loop license (#3744) —
+ * decides WHICH helper on that authority. The host lane has no owned import at
+ * all and collapses both modes onto the same `wasm:js-string.concat` builtin;
+ * that collapse is a provider-ROW fact, not a policy fact, which is why it is
+ * modelled as two features under one policy rather than a second policy field.
+ * A module with no builder loop then requests no owned provider at all, and its
+ * frozen manifest says so.
+ */
+export interface StringConcatPolicy {
+  /**
+   * `host` selects the `wasm:js-string.concat` builtin import through the
+   * central `string.concat` capability, for BOTH modes; `native` selects the
+   * `__str_concat` / `__str_concat_owned` Wasm helpers
+   * `ensureNativeStringHelpers` registers as one pair.
+   */
+  readonly concat: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string concatenation seam resolve the arm to this. */
+export const STRING_CONCAT_POLICY_DISABLED: StringConcatPolicy = Object.freeze({
+  concat: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -221,6 +313,21 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly stringCompare?: StringComparePolicy;
+  /**
+   * Omission resolves to {@link STRING_EQ_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringEq?: StringEqPolicy;
+  /**
+   * Omission resolves to {@link STRING_LEN_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringLen?: StringLenPolicy;
+  /**
+   * Omission resolves to {@link STRING_CONCAT_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringConcat?: StringConcatPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
@@ -230,6 +337,9 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly externIsUndefined: ExternIsUndefinedPolicy;
   readonly generatorNumberBox: GeneratorNumberBoxPolicy;
   readonly stringCompare: StringComparePolicy;
+  readonly stringEq: StringEqPolicy;
+  readonly stringLen: StringLenPolicy;
+  readonly stringConcat: StringConcatPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -331,6 +441,65 @@ export const STRING_COMPARE_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type StringCompareRuntimeProviderId = (typeof STRING_COMPARE_RUNTIME_PROVIDER_IDS)[number];
 
+/**
+ * (#3526 F2-S3) The string equality seam's requirement.
+ *
+ * `string.eq` IS an IR instruction, unlike the compare — but the CALLABLE it
+ * resolves through is still a plain `call` on the `__ir_string_equals` sentinel
+ * func-ref, and the `intrinsic` walk that collects uses sees no `intrinsic`
+ * here. So the demand is requested at freeze from a `string.eq` instruction
+ * scan, exactly as the compare's is from a `call` scan.
+ */
+export const STRING_EQ_RUNTIME_FEATURES = Object.freeze(["js.string.eq"] as const);
+export type StringEqRuntimeFeature = (typeof STRING_EQ_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S3) One provider per admitted string-equality policy arm. */
+export const STRING_EQ_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.eq", "native.js.string.eq"] as const);
+export type StringEqRuntimeProviderId = (typeof STRING_EQ_RUNTIME_PROVIDER_IDS)[number];
+
+/**
+ * (#3526 F2-S4) The string length seam's requirement.
+ *
+ * `string.len` is an IR instruction like `string.eq`, and like it resolves
+ * through no `intrinsic`, so the demand is requested at freeze from a
+ * `string.len` instruction scan. Unlike either family-2 predecessor it is not a
+ * callable symbol at all on the native side — nothing in the resolve table
+ * names it — so the physical choice lives entirely on the instruction's
+ * attached provider. The feature exists so the frozen manifest, not a
+ * `ctx.nativeStrings` read inside the attachment pass, is the authority.
+ */
+export const STRING_LEN_RUNTIME_FEATURES = Object.freeze(["js.string.len"] as const);
+export type StringLenRuntimeFeature = (typeof STRING_LEN_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S4) One provider per admitted string-length policy arm. */
+export const STRING_LEN_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.len", "native.js.string.len"] as const);
+export type StringLenRuntimeProviderId = (typeof STRING_LEN_RUNTIME_PROVIDER_IDS)[number];
+
+/**
+ * (#3526 F2-S5) The string concatenation seam's requirements — the first seam
+ * in the catalogue with TWO features, one per concat MODE.
+ *
+ * `string.concat` is an IR instruction like `string.eq` and `string.len`, and
+ * like them it resolves through no `intrinsic`, so the demand is requested at
+ * freeze from a `string.concat` instruction scan. What is new is that the
+ * instruction carries a `concatMode`, and the producer already maps that mode
+ * onto one of two callable symbols (`__ir_string_concat` /
+ * `__ir_string_concat_owned`). The two features mirror that mapping exactly, so
+ * the frozen manifest can say which of the two helpers a module actually needs
+ * instead of pretending every concatenating module needs both.
+ */
+export const STRING_CONCAT_RUNTIME_FEATURES = Object.freeze(["js.string.concat", "js.string.concat.owned"] as const);
+export type StringConcatRuntimeFeature = (typeof STRING_CONCAT_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S5) One provider per admitted arm — two authorities × two modes. */
+export const STRING_CONCAT_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.string.concat",
+  "host.js.string.concat.owned",
+  "native.js.string.concat",
+  "native.js.string.concat.owned",
+] as const);
+export type StringConcatRuntimeProviderId = (typeof STRING_CONCAT_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -339,6 +508,9 @@ export type RuntimeProviderId =
   | ExternBoundaryRuntimeProviderId
   | GeneratorNumberBoxRuntimeProviderId
   | StringCompareRuntimeProviderId
+  | StringEqRuntimeProviderId
+  | StringLenRuntimeProviderId
+  | StringConcatRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -370,9 +542,14 @@ export type RuntimeProviderImplementation =
        * `irImportFuncRef` from that record — the semantic identity stays the
        * versioned `IntrinsicId`, the physical target stays the existing import
        * so legacy consumers and import order do not drift.
+       *
+       * (#3526 F2-S2) Typed on the FUNC half of the capability id union: a
+       * global capability (`string.const`) has no callable spelling, so
+       * naming one here is a compile error, not a lowering-time surprise.
+       * `#indexProviders` carries the runtime twin of this narrowing.
        */
       readonly kind: "host-callable";
-      readonly capability: RuntimeHostCapabilityId;
+      readonly capability: RuntimeHostCapabilityFuncId;
     }
   | {
       /**
@@ -381,6 +558,22 @@ export type RuntimeProviderImplementation =
        */
       readonly kind: "runtime-callable";
       readonly symbol: string;
+    }
+  | {
+      /**
+       * (#3526 F2-S4) A field read on a Program-ABI support carrier — the
+       * first native arm in the catalogue that is not a callable at all.
+       *
+       * Deliberately SYMBOLIC: the manifest names the ABI *role* (`"string"`)
+       * and the field index, and the consumer resolves the role to the
+       * registry's carrier type ref at attachment time. It never carries a raw
+       * physical type index, because the manifest is frozen BEFORE the carrier's
+       * physical layout is planned — a type index in a frozen manifest would be
+       * a lie the next lane has to discover.
+       */
+      readonly kind: "carrier-field";
+      readonly carrier: "string";
+      readonly fieldIndex: number;
     }
   | {
       /** Scheduling is supplied by the host Promise job queue, with no import. */
@@ -598,13 +791,19 @@ function numberBoundaryProvider(
     | BooleanBoundaryRuntimeProviderId
     | ExternBoundaryRuntimeProviderId
     | GeneratorNumberBoxRuntimeProviderId
-    | StringCompareRuntimeProviderId,
+    | StringCompareRuntimeProviderId
+    | StringEqRuntimeProviderId
+    | StringLenRuntimeProviderId
+    | StringConcatRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
     | BooleanBoundaryRuntimeFeature
     | ExternBoundaryRuntimeFeature
     | GeneratorNumberBoxRuntimeFeature
-    | StringCompareRuntimeFeature,
+    | StringCompareRuntimeFeature
+    | StringEqRuntimeFeature
+    | StringLenRuntimeFeature
+    | StringConcatRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -759,6 +958,162 @@ const STRING_COMPARE_FEATURE_SET: ReadonlySet<string> = new Set(STRING_COMPARE_R
 
 function isStringCompareFeature(feature: RuntimeFeature): feature is StringCompareRuntimeFeature {
   return STRING_COMPARE_FEATURE_SET.has(feature);
+}
+
+/**
+ * (#3526 F2-S3) The string equality seam's two arms. Both answer the same
+ * 0/1 code-unit equality: on the host lane through the central `string.eq`
+ * capability record (`wasm:js-string.equals`, one of the five builtins
+ * `addStringImports` registers as a block before Phase 3), on the native-strings
+ * lanes through the `__str_equals` Wasm helper. As with the compare, the
+ * manifest decides WHICH authority answers; it introduces no new spelling and no
+ * second registration path, which is why the migration is byte-neutral.
+ */
+export const STRING_EQ_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.eq",
+    "js.string.eq",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.eq" },
+    ["string.eq"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.eq",
+    "js.string.eq",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_equals" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted string-equality arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function stringEqProviderId(policy: StringEqPolicy): StringEqRuntimeProviderId | null {
+  if (policy.eq === "host") return "host.js.string.eq";
+  return policy.eq === "native" ? "native.js.string.eq" : null;
+}
+
+const STRING_EQ_FEATURE_SET: ReadonlySet<string> = new Set(STRING_EQ_RUNTIME_FEATURES);
+
+function isStringEqFeature(feature: RuntimeFeature): feature is StringEqRuntimeFeature {
+  return STRING_EQ_FEATURE_SET.has(feature);
+}
+
+/**
+ * (#3526 F2-S4) The string length seam's two arms. Both answer the same UTF-16
+ * code-unit count: on the host lane through the central `string.len` capability
+ * record (`wasm:js-string.length`, one of the five builtins `addStringImports`
+ * registers as a block before Phase 3), on the native-strings lanes by reading
+ * field 0 of the Program-ABI string carrier.
+ *
+ * The native row is the catalogue's first `carrier-field` provider, and it
+ * REUSES {@link EXTERNREF_TO_I32_INTRINSIC_SIGNATURE} nominally — exactly as
+ * `native.js.string.eq` reuses the externref pair for `__str_equals`. The
+ * signature states the seam's SEMANTIC shape (one string in, an i32 count out),
+ * not the physical `struct.get`; introducing a second signature for the same
+ * semantics would let the two arms drift.
+ */
+export const STRING_LEN_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.len",
+    "js.string.len",
+    EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.len" },
+    ["string.len"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.len",
+    "js.string.len",
+    EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "carrier-field", carrier: "string", fieldIndex: 0 },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted string-length arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function stringLenProviderId(policy: StringLenPolicy): StringLenRuntimeProviderId | null {
+  if (policy.len === "host") return "host.js.string.len";
+  return policy.len === "native" ? "native.js.string.len" : null;
+}
+
+const STRING_LEN_FEATURE_SET: ReadonlySet<string> = new Set(STRING_LEN_RUNTIME_FEATURES);
+
+function isStringLenFeature(feature: RuntimeFeature): feature is StringLenRuntimeFeature {
+  return STRING_LEN_FEATURE_SET.has(feature);
+}
+
+/**
+ * (#3526 F2-S5) The string concatenation seam's four arms — two authorities
+ * times two concat MODES.
+ *
+ * Both host rows name the SAME `string.concat` capability, and that is the
+ * documented collapse rather than an oversight: `wasm:js-string` has no owned
+ * append builtin, so on the host lane an `owned-append` concatenation is served
+ * by the ordinary `concat` import. The catalogue keys providers by id and
+ * projects host capabilities through a SET, so two rows naming one capability
+ * freeze to a single `string.concat` record and a single import.
+ *
+ * All four rows carry {@link EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE}
+ * — the seam's semantic shape, and the only signature in the catalogue whose
+ * result is a non-null `ref extern`, matching the `string.concat` host record.
+ */
+export const STRING_CONCAT_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.concat",
+    "js.string.concat",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.concat" },
+    ["string.concat"],
+  ),
+  numberBoundaryProvider(
+    "host.js.string.concat.owned",
+    "js.string.concat.owned",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.concat" },
+    ["string.concat"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.concat",
+    "js.string.concat",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_concat" },
+    [],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.concat.owned",
+    "js.string.concat.owned",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_concat_owned" },
+    [],
+  ),
+]);
+
+/** The `owned-append` half of the concat feature pair; named once here. */
+const STRING_CONCAT_OWNED_RUNTIME_FEATURE = STRING_CONCAT_RUNTIME_FEATURES[1];
+
+/**
+ * The exact provider the admitted string-concat arm selects for `feature`, or
+ * `null` when the caller resolved it to unsupported.
+ *
+ * Takes the FEATURE as well as the policy — the only selector in the family
+ * that does, because the policy picks the authority and the feature picks the
+ * mode's helper on it.
+ */
+function stringConcatProviderId(
+  feature: StringConcatRuntimeFeature,
+  policy: StringConcatPolicy,
+): StringConcatRuntimeProviderId | null {
+  const owned = feature === STRING_CONCAT_OWNED_RUNTIME_FEATURE;
+  if (policy.concat === "host") return owned ? "host.js.string.concat.owned" : "host.js.string.concat";
+  if (policy.concat === "native") return owned ? "native.js.string.concat.owned" : "native.js.string.concat";
+  return null;
+}
+
+const STRING_CONCAT_FEATURE_SET: ReadonlySet<string> = new Set(STRING_CONCAT_RUNTIME_FEATURES);
+
+function isStringConcatFeature(feature: RuntimeFeature): feature is StringConcatRuntimeFeature {
+  return STRING_CONCAT_FEATURE_SET.has(feature);
 }
 
 /** The exact provider the admitted generator-box arm selects, or `null` when
@@ -1020,6 +1375,9 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
     ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS,
     ...STRING_COMPARE_RUNTIME_PROVIDERS,
+    ...STRING_EQ_RUNTIME_PROVIDERS,
+    ...STRING_LEN_RUNTIME_PROVIDERS,
+    ...STRING_CONCAT_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -1031,6 +1389,9 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
   ...GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   ...STRING_COMPARE_RUNTIME_FEATURES,
+  ...STRING_EQ_RUNTIME_FEATURES,
+  ...STRING_LEN_RUNTIME_FEATURES,
+  ...STRING_CONCAT_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -1042,6 +1403,9 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS,
   ...STRING_COMPARE_RUNTIME_PROVIDER_IDS,
+  ...STRING_EQ_RUNTIME_PROVIDER_IDS,
+  ...STRING_LEN_RUNTIME_PROVIDER_IDS,
+  ...STRING_CONCAT_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -1248,6 +1612,9 @@ export class RuntimeManifestBuilder {
     const externIsUndefined = policy.externIsUndefined ?? EXTERN_IS_UNDEFINED_POLICY_DISABLED;
     const generatorNumberBox = policy.generatorNumberBox ?? GENERATOR_NUMBER_BOX_POLICY_DISABLED;
     const stringCompare = policy.stringCompare ?? STRING_COMPARE_POLICY_DISABLED;
+    const stringEq = policy.stringEq ?? STRING_EQ_POLICY_DISABLED;
+    const stringLen = policy.stringLen ?? STRING_LEN_POLICY_DISABLED;
+    const stringConcat = policy.stringConcat ?? STRING_CONCAT_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
@@ -1255,6 +1622,9 @@ export class RuntimeManifestBuilder {
       externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
       generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
       stringCompare: Object.freeze({ compare: stringCompare.compare }),
+      stringEq: Object.freeze({ eq: stringEq.eq }),
+      stringLen: Object.freeze({ len: stringLen.len }),
+      stringConcat: Object.freeze({ concat: stringConcat.concat }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -1507,6 +1877,46 @@ export class RuntimeManifestBuilder {
           `host-capability provider ${provider.id} must request at least one host capability`,
         );
       }
+      // (#3526 F2-S2) Runtime twin of the `host-callable` capability type
+      // narrowing. The static type already rejects a global id; this catches a
+      // provider table that arrived through an `unknown`/`as` boundary, where
+      // lowering would otherwise build a callable target out of a global.
+      if (
+        provider.implementation.kind === "host-callable" &&
+        !isRuntimeHostCapabilityFuncId(provider.implementation.capability)
+      ) {
+        throw new RuntimeManifestInvariantError(
+          "unknown-host-capability",
+          `host-callable provider ${provider.id} names non-callable host capability ${String(provider.implementation.capability)}`,
+        );
+      }
+      // (#3526 F2-S4) A `carrier-field` provider reads a Program-ABI carrier
+      // field; it imports nothing, so requesting a host capability would let a
+      // native arm silently drag a host import into a host-free lane. The
+      // carrier role and field index are checked here too, because the frozen
+      // manifest is the only place the consumer can learn them — a provider
+      // table that arrived through an `unknown`/`as` boundary would otherwise
+      // reach attachment with a nonsense field index and mislower.
+      if (provider.implementation.kind === "carrier-field") {
+        if (provider.hostCapabilities.length > 0) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-host-capability",
+            `carrier-field provider ${provider.id} cannot request concrete host capabilities`,
+          );
+        }
+        if (provider.implementation.carrier !== "string") {
+          throw new RuntimeManifestInvariantError(
+            "unknown-runtime-provider",
+            `carrier-field provider ${provider.id} names unknown carrier ${String(provider.implementation.carrier)}`,
+          );
+        }
+        if (!Number.isSafeInteger(provider.implementation.fieldIndex) || provider.implementation.fieldIndex < 0) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-runtime-provider",
+            `carrier-field provider ${provider.id} has an invalid field index ${String(provider.implementation.fieldIndex)}`,
+          );
+        }
+      }
       if (!provider.supportedTargets.every((target) => TARGET_SET.has(target))) {
         throw new RuntimeManifestInvariantError(
           "provider-target-unavailable",
@@ -1614,7 +2024,58 @@ export class RuntimeManifestBuilder {
                   }
                   return candidates.filter((candidate) => candidate.id === selectedId);
                 })()
-              : candidates;
+              : // (#3526 F2-S3) Family 2's second policy, and the compare's exact
+                // sibling: same lane flag, different physical pair. The refusal
+                // names `stringEq` so an operator can tell WHICH string seam a
+                // disabled adapter refused.
+                isStringEqFeature(feature)
+                ? ((): readonly RuntimeProviderDefinition[] => {
+                    const selectedId = stringEqProviderId(this.#policy.stringEq);
+                    if (selectedId === null) {
+                      throw new RuntimeManifestInvariantError(
+                        "provider-target-unavailable",
+                        `runtime feature ${feature} is unavailable under string-eq policy ` +
+                          `eq=${this.#policy.stringEq.eq}`,
+                      );
+                    }
+                    return candidates.filter((candidate) => candidate.id === selectedId);
+                  })()
+                : // (#3526 F2-S4) Family 2's third policy. Same lane flag as its
+                  // two siblings, but the arms it chooses between are not a
+                  // callable pair: the native one is a `carrier-field` read. The
+                  // refusal names `string-len` so an operator can tell WHICH
+                  // string seam a disabled adapter refused.
+                  isStringLenFeature(feature)
+                  ? ((): readonly RuntimeProviderDefinition[] => {
+                      const selectedId = stringLenProviderId(this.#policy.stringLen);
+                      if (selectedId === null) {
+                        throw new RuntimeManifestInvariantError(
+                          "provider-target-unavailable",
+                          `runtime feature ${feature} is unavailable under string-len policy ` +
+                            `len=${this.#policy.stringLen.len}`,
+                        );
+                      }
+                      return candidates.filter((candidate) => candidate.id === selectedId);
+                    })()
+                  : // (#3526 F2-S5) Family 2's fourth policy, and the first in
+                    // the catalogue where ONE policy answers TWO features: the
+                    // policy picks the authority, the feature picks the concat
+                    // MODE's helper on it. The refusal names `string-concat` so
+                    // an operator can tell WHICH string seam a disabled adapter
+                    // refused.
+                    isStringConcatFeature(feature)
+                    ? ((): readonly RuntimeProviderDefinition[] => {
+                        const selectedId = stringConcatProviderId(feature, this.#policy.stringConcat);
+                        if (selectedId === null) {
+                          throw new RuntimeManifestInvariantError(
+                            "provider-target-unavailable",
+                            `runtime feature ${feature} is unavailable under string-concat policy ` +
+                              `concat=${this.#policy.stringConcat.concat}`,
+                          );
+                        }
+                        return candidates.filter((candidate) => candidate.id === selectedId);
+                      })()
+                    : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",

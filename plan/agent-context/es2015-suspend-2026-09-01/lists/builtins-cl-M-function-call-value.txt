@@ -1,0 +1,3 @@
+built-ins/Function/prototype/Symbol.hasInstance/value-get-prototype-of-err.js
+built-ins/Function/prototype/Symbol.hasInstance/this-val-not-callable.js
+built-ins/Function/prototype/Symbol.hasInstance/this-val-poisoned-prototype.js

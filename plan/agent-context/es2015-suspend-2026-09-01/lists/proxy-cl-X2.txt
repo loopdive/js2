@@ -1,0 +1,7 @@
+built-ins/Reflect/set/set-value-on-accessor-descriptor-with-receiver.js
+built-ins/Reflect/set/different-property-descriptors.js
+built-ins/Reflect/set/creates-a-data-descriptor.js
+built-ins/Reflect/set/set-value-on-data-descriptor.js
+built-ins/Reflect/set/return-false-if-target-is-not-writable.js
+built-ins/Reflect/set/symbol-property.js
+built-ins/Reflect/set/receiver-is-not-object.js

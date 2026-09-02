@@ -55,6 +55,42 @@ function lowerDirect(source: string): void {
   });
 }
 
+/**
+ * Lower `test` with typed direct-call plans for its callees, returning nothing
+ * and letting any producer throw escape. Shared setup for the invariant and
+ * demote expectations below, and for the #4512 case where lowering now succeeds.
+ */
+function lowerWithCallees(
+  source: string,
+  calleeTypes: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>,
+  resolver?: IrFromAstResolver,
+): void {
+  const ast = analyzeSource(source, "producer-seam-invariant.ts");
+  const declaration = ast.sourceFile.statements.find(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === "test",
+  );
+  expect(declaration).toBeDefined();
+  const ownerIdentity = irIdentities.next("test");
+  const directCalls = collectIrDirectCallLoweringPlans(
+    declaration!,
+    ownerIdentity.unitId,
+    new Map(
+      [...calleeTypes].map(([calleeName, signature]) => [
+        calleeName,
+        { target: irUnitFuncRef(irIdentities.next(`callee:${calleeName}`)), signature },
+      ]),
+    ),
+  );
+  lowerFunctionAstToIr(declaration!, {
+    ownerUnitId: ownerIdentity.unitId,
+    exported: true,
+    checker: ast.checker,
+    directCalls,
+    resolver,
+  });
+}
+
 function expectLowerInvariant(
   source: string,
   calleeTypes: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>,
@@ -231,7 +267,6 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
   it.each([
     ["+", `return +new Box();`],
     ["-", `return -new Box();`],
-    ["!", `return !new Box() ? 1 : 0;`],
   ])("records unary %s coercion as unsupported", async (_operator, body) => {
     await expectBuildUnsupported(
       `
@@ -240,6 +275,31 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
       `,
       "operand-coercion-unsupported",
     );
+  });
+
+  // `c171454d11` (feat(#4512), "ref-typed ToBoolean in condition/ternary/!
+  // position") gave `!` a real lowering for a ref operand, so it no longer
+  // demotes with the arithmetic `+`/`-` siblings above — it is emitted, and at
+  // stage `patch` rather than `build`. Asserting the emitted shape (not just
+  // "not unsupported") keeps the gate: if `!` ever silently falls back to the
+  // legacy body again, `irBodyEmitted`/`legacyBodyEmitted` flip and this fails.
+  it("emits unary ! on a ref operand via the #4512 ToBoolean patch", async () => {
+    const result = await compile(
+      `
+        class Box { valueOf(): number { return 1; } }
+        export function test(): number { return !new Box() ? 1 : 0; }
+      `,
+      { fileName: "unary-not-toboolean.ts", trackIrOutcomes: true },
+    );
+    const outcome = terminalFor(result);
+    expect(outcome).toMatchObject({
+      kind: "emitted",
+      stage: "patch",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(evaluateIrOutcomePolicy([outcome], "hybrid").ready).toBe(true);
+    expect(evaluateIrOutcomePolicy([outcome], "ir-only").ready).toBe(true);
   });
 
   it.each([
@@ -310,7 +370,6 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
   it.each([
     ["-", "number", EXTERNREF],
     ["+", "number", EXTERNREF],
-    ["!", "boolean", F64],
   ] as const)("keeps unary %s with a checker-%s carrier contradiction invariant", (operator, sourceType, carrier) => {
     expectLowerInvariant(
       `
@@ -319,6 +378,23 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
       `,
       new Map([["value", { params: [], returnType: carrier }]]),
     );
+  });
+
+  // The `!` row of the table above asserted the same invariant backstop until
+  // `c171454d11` (feat(#4512)) made ToBoolean *convert* a mismatched carrier
+  // instead of throwing: a checker-`boolean` source over an `f64` carrier is now
+  // a lowerable contradiction, not an internal-throw one. The `+`/`-` rows are
+  // still genuine producer-contract cases and keep asserting `invariant`.
+  it("resolves a checker-boolean carrier contradiction under unary ! instead of throwing", () => {
+    expect(() =>
+      lowerWithCallees(
+        `
+        function value(): boolean { return true; }
+        export function test(): number { return !value() ? 1 : 0; }
+      `,
+        new Map([["value", { params: [], returnType: F64 }]]),
+      ),
+    ).not.toThrow();
   });
 
   it("keeps a checker-string RHS carrier contradiction invariant at string +=", () => {

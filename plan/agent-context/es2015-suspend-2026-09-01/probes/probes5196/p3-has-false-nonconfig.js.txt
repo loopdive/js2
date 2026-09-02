@@ -1,0 +1,7 @@
+// §10.5.7 step 9: trap false, target prop non-configurable → TypeError
+var target = {};
+Object.defineProperty(target, "attr", { configurable: false, value: 1 });
+var p = new Proxy(target, { has: function() { return false; } });
+var threw = false;
+try { "attr" in p; } catch (e) { threw = e instanceof TypeError; }
+if (!threw) throw new Error("no TypeError from has invariant");

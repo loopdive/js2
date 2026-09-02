@@ -111,7 +111,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
+import { inferTaViewType, proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -147,6 +147,7 @@ import {
   getOrRegisterHoleyArrayType,
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
+  isTaViewTypeIdx,
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
@@ -169,7 +170,13 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
-import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
+import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
+import {
+  applyModuleClosurePreLift,
+  moduleInitDiscoveryIsStatic,
+  planModuleClosurePreLift,
+  PRELIFT_DISABLE_SEAM,
+} from "./declarations/module-init-closure-prelift.js";
 import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
@@ -254,6 +261,60 @@ const STANDALONE_FN_STATIC_KEEP_EXCLUDED = new Set([
   "caller",
   "arguments",
 ]);
+
+/**
+ * (#5150) Is this module-global typed-array binding ever ASSIGNED a value the
+ * pinned `$__ta_view` slot cannot hold?
+ *
+ * `moduleGlobalWasmType` pins `var t = new Uint8Array(buf)` to the shared-backing
+ * view struct so `t[i]` / `t.length` see the buffer. A later `t = new Uint8Array(2)`
+ * (count constructor) or `t = new Uint8Array([7, 8])` (array literal) builds a
+ * plain `$Vec`, which does not fit that slot: the store is dropped, the global
+ * reads back null and every subsequent access traps. The heterogeneous /
+ * rebind-widening helpers cannot catch it — both sides are objects, so there is
+ * no JS-tag disagreement to detect.
+ *
+ * A rebind to a view of the SAME element type keeps the pin (the value fits);
+ * anything else falls back to the checker-derived vec slot, which is what this
+ * binding had before the pin existed. Binding identity comes from the oracle;
+ * a sloppy-`var` redeclaration makes that lookup return undefined, and the
+ * conservative reading there is "assume it is ours" — losing a pin only costs
+ * the view aliasing, while keeping a wrong one costs a null-pointer trap.
+ */
+function taViewGlobalIsRebound(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  decl: ts.VariableDeclaration,
+  pinned: ValType,
+): boolean {
+  if (!ts.isIdentifier(decl.name)) return false;
+  const name = decl.name.text;
+  const fits = (assigned: ts.Expression): boolean => {
+    const rebindType = inferTaViewType(ctx, assigned);
+    if (rebindType === null || rebindType.kind !== pinned.kind) return false;
+    return rebindType.kind !== "ref_null" || pinned.kind !== "ref_null" || rebindType.typeIdx === pinned.typeIdx;
+  };
+  let rebound = false;
+  const visit = (node: ts.Node): void => {
+    if (rebound) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      !fits(node.right)
+    ) {
+      const target = ctx.oracle.variableDeclarationOf(node.left);
+      if (target === undefined || target === decl) {
+        rebound = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return rebound;
+}
 
 /**
  * Emit the narrow JS/Wasm adapter for native `any`/`unknown` boundary values.
@@ -3456,6 +3517,43 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // predicate the lowering's dispatcher asks, so slot and value cannot
     // disagree — see array-concat-carrier.ts.
     if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
+    // (#5150) `var ta = new Uint8Array(buffer[, byteOffset[, length]])` at
+    // MODULE scope. The constructor lowers to a shared-backing `$__ta_view`
+    // struct (#3054 B1/B2), but the checker-inferred slot is the plain
+    // TypedArray vec, so the value failed the slot's type and the global stayed
+    // null — every later `ta[i]` / `ta.length` threw "Cannot access property on
+    // null or undefined". Function-local `let`/`const` slots already consult
+    // this (#4376, `inferLetConstInitializerWasmType`); module globals did not,
+    // and test262 writes its bindings at top level.
+    // Only when the binding is never REBOUND to something the pinned view
+    // struct cannot hold: `var t = new Uint8Array(buf); t = new Uint8Array(2)`
+    // stores a plain `$Vec` into a `$__ta_view` slot, which drops to null and
+    // traps on the next read. The widening helpers below (#4428/#4204/#4491)
+    // do not cover this — both sides are objects, so no tag disagreement — so
+    // the rebind check has to live with the pin it guards.
+    //
+    // ONLY the `$__ta_view` struct answer is adopted here — the wave's target is
+    // the standalone shared-backing view. `inferTaViewType` ALSO answers
+    // `externref` on the js-host lane (it doubles as the local-slot chooser for
+    // the #3097 host construct bridge), and widening a MODULE GLOBAL that way is
+    // a behaviour change this wave never measured: it swaps the native vec the
+    // rest of the host lane assumes for a real host TypedArray. That flipped
+    // nine host rows on main — `Atomics/{notify,wait}` stopped throwing their
+    // TypeError, and seven detached/resizable `TypedArray/**` rows went from an
+    // ordinary assertion failure to `illegal cast in __module_init_chunk_*`
+    // where a downstream read cast the host view to the checker-typed vec.
+    // A host-lane global keeps the slot it had before this wave.
+    {
+      const taViewGlobalType = inferTaViewType(ctx, decl.initializer);
+      if (
+        taViewGlobalType !== null &&
+        (taViewGlobalType.kind === "ref" || taViewGlobalType.kind === "ref_null") &&
+        isTaViewTypeIdx(ctx, taViewGlobalType.typeIdx) &&
+        !taViewGlobalIsRebound(ctx, sourceFile, decl, taViewGlobalType)
+      ) {
+        return taViewGlobalType;
+      }
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -5995,21 +6093,60 @@ export function compileDeclarations(
     !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
     moduleInitChunksRequired(orderedInitEntriesForChunking);
 
+  // (#3523 R4 gap-6a) Pass 1's only decision-changing product for the bodies
+  // below is the closure binding family. When the pre-lift can reproduce that
+  // family from the AST alone, the initializer compiles exactly ONCE, in the
+  // pass-2 slot — no pass-1 body, and no dead re-lifted `$__closure_N` twin.
+  // Fail-closed; see `declarations/module-init-closure-prelift.ts` for the
+  // measured mechanism (the call site casts to the SIGNATURE wrapper, not to
+  // the per-closure struct) and for every refusal.
+  const preLift =
+    (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
+      ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
+      : undefined;
+  // `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` means "the unconditional two-pass
+  // build" — the A/B baseline every pin in this family compares against — so it
+  // restores pass 1 as well as pass 2, not just the recompile.
+  const discoveryStatic =
+    preLift !== undefined &&
+    process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
+    moduleInitDiscoveryIsStatic(preLift);
+
+  // (#4195) The dedupe MARK is a program POSITION, not a pass-1 artifact: it
+  // records where the initializer's diagnostics start so the post-pass-2
+  // reconcile never truncates what came before. Taken here whether or not pass 1
+  // runs, so a discovery-static population still collapses the duplicate pair
+  // measured on `for-in/cptn-decl-itr.js` (top-level function body + the single
+  // init compile both report it).
+  pass1DiagnosticMark = ctx.errors.length;
+
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
-  // skipped only in `"skip"` mode, where an earlier source already ran it over
-  // the same complete statement list.
+  // skipped in `"skip"` mode, where an earlier source already ran it over the
+  // same complete statement list, and for a discovery-static population, where
+  // the pre-lift above already published what it would have discovered.
   if (
     (hasModuleInits || hasStaticInits) &&
     moduleInitMode !== "skip" &&
     moduleInitMode !== "prepared" &&
-    !skipModuleInitBody
+    !skipModuleInitBody &&
+    !discoveryStatic
   ) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
-    pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
+  } else if (discoveryStatic) {
+    profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    profileCount("module-init-discovery-static", 1);
+    // The test-only seam runs the GATE without the registrations, so the suite
+    // can MEASURE that the inventory is load-bearing (h1's body loses its
+    // `call_ref` and falls back to `__call_function_*`) instead of asserting it.
+    if (process.env[PRELIFT_DISABLE_SEAM] !== "1") {
+      profilePhase("module-init-prelift", () =>
+        applyModuleClosurePreLift(ctx, preLift!, createModuleInitFunctionContext()),
+      );
+    }
   }
 
   // (#3419) Last-wins for duplicate top-level function declarations — mirror
@@ -6178,19 +6315,30 @@ export function compileDeclarations(
     }
   }
 
-  // Recompile module init after top-level functions are compiled so call sites
-  // inside module-level code can see the final inlinable-function registry.
+  // Recompile module init after top-level functions are compiled.
+  //
+  // (#3523 R4 gap-1b) The historical comment here said the recompile exists
+  // "so call sites inside module-level code can see the final inlinable-function
+  // registry". Measured 2026-09-01, that is NOT what happens for a DIRECT init
+  // statement: with `JS2WASM_IR_INLINE=0` the two-pass `__module_init` still
+  // emits a plain `call` for a module-level call to a small local function.
+  // Every inlining actually observed there comes from the finalize-time
+  // `ir-inline.ts` pass, which runs after both passes over every function. The
+  // registry reaches only the closure BODIES compiled during init — which is
+  // why the gate below refuses on call-plus-closure and not on calls alone.
   // The first compile above still serves early closure/setup discovery.
-  // Only the emitting call needs the final-registry recompile; in the other
-  // multi-source modes the body it would produce is discarded unread.
+  // Only the emitting call needs the recompile; in the other multi-source
+  // modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
-    // call, so a population with no call anywhere recompiles to the body pass 1
-    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
-    // the end. Skipping then also skips `restorePropOrderState` (nothing
-    // recompiles; pass 1's end state is where pass 2 converged anyway) and
-    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
-    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // (#3523 R4 gap-1a/1b) A second direct compile can differ from pass 1's
+    // (fixup-maintained) body through exactly two measured mechanisms: the
+    // inlinable-function registry, read only when compiling a call, and closure
+    // re-lifting, which needs a closure to lift. A population missing either
+    // ingredient recompiles to what pass 1 already produced, so pass 1's body
+    // stands and the recompile is skipped. Skipping then also skips
+    // `restorePropOrderState` (nothing recompiles; pass 1's end state is where
+    // pass 2 converged anyway). Fail closed — see
+    // `declarations/module-init-pass2-stable.ts`. An async-graph init always
     // takes pass 2 (its lowering exists only there), stated explicitly rather
     // than via the scan's AwaitExpression refusal. The env seam restores the
     // unconditional recompile so tests can A/B against the two-pass body.
@@ -6198,7 +6346,10 @@ export function compileDeclarations(
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
-      !moduleInitPopulationIsCallFree(ctx)
+      // (#3523 R4 gap-6a) With pass 1 skipped this IS the only compile, so it
+      // always runs — the pass-2-stability question is about a SECOND compile.
+      discoveryStatic ||
+      !moduleInitPopulationIsPass2Stable(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
       // pre-pass-1 value so this recompile does not treat pass 1's own

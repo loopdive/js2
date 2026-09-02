@@ -1,0 +1,12 @@
+/*---
+description: probe .tmp/es2015/probes5195/accessor-stmt-effects.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var g = 0, s = 0, ss = 0;
+class C { get x() { g++; } set x(v) { s = v; } static set staticX(v) { ss = v; } }
+new C().x;
+assert.sameValue(g, 1, 'void getter invoked in statement position');
+new C().x = 5;
+assert.sameValue(s, 5, 'setter invoked on temp instance');
+C.staticX = 2;
+assert.sameValue(ss, 2, 'static setter invoked');

@@ -1,0 +1,8 @@
+language/expressions/tagged-template/constructor-invocation.js
+language/expressions/tagged-template/template-object-frozen-non-strict.js
+language/expressions/tagged-template/template-object-frozen-strict.js
+language/expressions/tagged-template/member-expression-argument-list-evaluation.js
+language/expressions/tagged-template/member-expression-context.js
+language/expressions/tagged-template/call-expression-context-strict.js
+language/expressions/tagged-template/call-expression-argument-list-evaluation.js
+language/expressions/template-literal/evaluation-order.js

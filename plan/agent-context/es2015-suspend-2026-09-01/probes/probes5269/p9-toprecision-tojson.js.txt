@@ -1,0 +1,8 @@
+var toPrecision = Number.prototype.toPrecision;
+var threw = false;
+try { toPrecision.call(1, function () {}); } catch (e) { threw = e instanceof RangeError; if (!threw) throw new Test262Error('got ' + e.constructor.name + ': ' + e.message); }
+if (!threw) throw new Test262Error('no RangeError');
+var toJSON = Date.prototype.toJSON;
+var threw2 = false;
+try { toJSON.call(undefined); } catch (e) { threw2 = e instanceof TypeError; }
+if (!threw2) throw new Test262Error('toJSON.call(undefined) no TypeError');

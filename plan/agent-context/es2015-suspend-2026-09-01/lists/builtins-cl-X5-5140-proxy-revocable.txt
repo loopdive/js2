@@ -1,0 +1,1 @@
+built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js

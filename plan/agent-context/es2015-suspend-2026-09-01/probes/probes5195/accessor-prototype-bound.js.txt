@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/accessor-prototype-bound.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var calls = 0;
+var Base = function() {}.bind();
+Object.defineProperty(Base, 'prototype', { get: function() { calls++; return null; }, configurable: true });
+class C extends Base {}
+assert.sameValue(calls, 1, 'Base.prototype getter observed once');

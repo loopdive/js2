@@ -17,7 +17,7 @@
 //                   wrappers, chained-resolution machinery, rejection
 //                   propagation.
 
-import type { Instr, LocalDef, ValType } from "../ir/types.js";
+import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
@@ -31,12 +31,12 @@ import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stab
 // never at module evaluation). The other three are cycle-free leaves relative
 // to this module.
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import {
-  CLOSURE_CAPTURE_FIELD_BASE,
-  closureArityField,
-  closureBagField,
-  closureBagInitInstr,
-} from "./closures/funcref-wrapper-types.js";
+import { closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+// (#5197 Slice B) The settle closures escape to user code as real function
+// objects, so they carry the standard builtin-function metadata subtype rather
+// than a Promise-local imitation. Cycle-free: builtin-fn-meta.ts imports only
+// the closure-header leaf and func-space.
+import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
@@ -965,10 +965,55 @@ export interface PromiseExecutorClosures {
   rejectClFuncIdx: number;
   /** The `$__promise_settle_cap` struct typeIdx (subtype of the canonical `(externref)->()` wrapper). */
   capTypeIdx: number;
+  /**
+   * (#5197 Slice B) Field index of the captured `$Promise` inside
+   * `$__promise_settle_cap`. NOT `CLOSURE_CAPTURE_FIELD_BASE`: the cap struct
+   * subtypes the §27.2.1.3 builtin-function METADATA type, whose two extra
+   * header slots (`bfnstate`, `bfnid`) sit between the closure header and the
+   * capture. Every read/write of the capture derives from this, never a literal.
+   */
+  capPromiseFieldIdx: number;
+  /**
+   * (#5197 Slice B) The `$__promise_settle_meta` typeIdx — the shared
+   * builtin-function metadata subtype (`{name: "", length: 1}`) both settle
+   * closures carry, so `resolve`/`reject` escape as real function objects.
+   */
+  capMetaTypeIdx: number;
   /** `$Promise` struct typeIdx. */
   promiseTypeIdx: number;
   /** `__promise_reject(promise, reason) -> reason` funcIdx (used by the executor-throw catch). */
   rejectFuncIdx: number;
+}
+
+/**
+ * (#5197 Slice B) The `struct.new` sequence for one settle closure VALUE
+ * (`resolve` / `reject`), leaving `(ref $__promise_settle_cap)` on the stack.
+ *
+ * A FACTORY, not a shared constant: the three mint sites splice the result into
+ * three different function bodies, and aliasing one `Instr[]` across them would
+ * be double-remapped by the late-import index walks (the `ref.func` operand is
+ * a DEFINED-function index).
+ *
+ * `promiseInstrs` must leave the captured `(ref $Promise)` on the stack.
+ */
+export function buildPromiseSettleClosureInstrs(
+  closures: PromiseExecutorClosures,
+  clFuncIdx: number,
+  promiseInstrs: readonly Instr[],
+): Instr[] {
+  return [
+    { op: "ref.func", funcIdx: clFuncIdx },
+    { op: "i32.const", value: 1 }, // (#3673) $arity — settle fns take 1 arg
+    closureBagInitInstr(), // (#4241) $bag
+    // (#5197) `bfnstate` delete-bits + the `bfnid` metadata anchor, in the
+    // layout `ensureBuiltinFnMetaType` fixed. Both settle functions share ONE
+    // metadata entry because §27.2.1.3.1/.2 give them identical `{name: "",
+    // length: 1}`; the id therefore selects that single entry for both.
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: closures.capMetaTypeIdx },
+    ...promiseInstrs,
+    { op: "struct.new", typeIdx: closures.capTypeIdx },
+  ];
 }
 
 /**
@@ -1003,19 +1048,38 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [{ kind: "externref" }], []);
   if (!wrapper) return null;
 
+  // (#5197 Slice B) §27.2.1.3.1/.2 — a promise resolve/reject function is an
+  // anonymous BUILT-IN function object: `typeof === "function"`,
+  // `[[Prototype]] === %Function.prototype%`, extensible, own `length` (1) then
+  // `name` ("") with `{writable:F, enumerable:F, configurable:T}`, and no
+  // [[Construct]]. All of that is exactly what the repository's builtin-function
+  // metadata carrier already answers (`builtin-fn-meta.ts` + the finalize-time
+  // arms in `fillBuiltinFnMeta` / `prependBuiltinFnObjectSemantics`), so the cap
+  // struct SUBTYPES that carrier instead of introducing a second function-object
+  // representation. Both settle functions share ONE metadata entry: the spec
+  // gives them identical `{name, length}`, and the entry is keyed by
+  // (name,length) identity, not by which of the two is being materialized.
+  const capMetaTypeIdx = ensureBuiltinFnMetaType(
+    ctx,
+    wrapper.structTypeIdx,
+    wrapper.closureInfo,
+    "promise:settle",
+    "",
+    1,
+  );
+  const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
+  const capPromiseFieldIdx = capMetaFields.length;
   const capTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
     name: "$__promise_settle_cap",
     fields: [
-      // Field 0 is inherited from the wrapper root (funcref); it MUST be
-      // redeclared identically in the subtype — as must the #3673 $arity slot.
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(),
-      closureBagField(),
+      // The metadata supertype's fields MUST be redeclared verbatim (closure
+      // header + `bfnstate` + `bfnid`); the capture is appended after them.
+      ...capMetaFields.map((f) => ({ ...f })),
       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
     ],
-    superTypeIdx: wrapper.structTypeIdx,
+    superTypeIdx: capMetaTypeIdx,
   });
 
   // Mint both trampolines UP-FRONT (stable-regime handles) before any code
@@ -1032,7 +1096,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   const makeBody = (settleFuncIdx: number): Instr[] => [
     { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE }, // captured (ref $Promise)
+    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: capPromiseFieldIdx }, // captured (ref $Promise)
     { op: "local.get", index: 1 }, // value: externref
     { op: "call", funcIdx: settleFuncIdx }, // settle -> externref
     { op: "drop" }, // trampoline result type is () — discard the settled value
@@ -1060,6 +1124,8 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     resolveClFuncIdx,
     rejectClFuncIdx,
     capTypeIdx,
+    capPromiseFieldIdx,
+    capMetaTypeIdx,
     promiseTypeIdx,
     rejectFuncIdx,
   };
@@ -1193,12 +1259,10 @@ function ensurePromiseThenableSubstrate(
     { name: "$argvec", type: { kind: "externref" } },
   ];
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
-    { op: "ref.func", funcIdx: clFuncIdx },
-    { op: "i32.const", value: 1 }, // (#3673) $arity — settle callbacks take 1 arg
-    closureBagInitInstr(), // (#4241) $bag
-    { op: "local.get", index: promiseLocal },
-    { op: "ref.as_non_null" },
-    { op: "struct.new", typeIdx: execClosures.capTypeIdx },
+    ...buildPromiseSettleClosureInstrs(execClosures, clFuncIdx, [
+      { op: "local.get", index: promiseLocal },
+      { op: "ref.as_non_null" },
+    ]),
     { op: "extern.convert_any" },
   ];
   const jobTryBody: Instr[] = [

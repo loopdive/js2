@@ -1,0 +1,14 @@
+built-ins/Object/assign/Override-notstringtarget.js
+built-ins/Object/assign/target-is-non-extensible-property-creation-throws.js
+built-ins/Object/assign/ObjectOverride-sameproperty.js
+built-ins/Object/getOwnPropertySymbols/non-object-argument-invalid.js
+built-ins/Object/assign/Target-Number.js
+built-ins/Object/symbol_object-returns-fresh-symbol.js
+built-ins/Object/assign/target-is-frozen-data-property-set-throws.js
+built-ins/Object/assign/target-is-sealed-property-creation-throws.js
+built-ins/Object/assign/Target-Boolean.js
+built-ins/Object/assign/target-is-non-extensible-existing-accessor-property.js
+built-ins/Object/assign/OnlyOneArgument.js
+built-ins/Object/assign/Target-Symbol.js
+built-ins/Object/assign/target-is-frozen-accessor-property-set-succeeds.js
+built-ins/Object/assign/Target-String.js

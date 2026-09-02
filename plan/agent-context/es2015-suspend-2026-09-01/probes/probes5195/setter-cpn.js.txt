@@ -1,0 +1,8 @@
+/*---
+description: probe .tmp/es2015/probes5195/setter-cpn.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var calls = 0;
+class C { set ['a'](_) { calls++; } }
+new C().a = 'A';
+assert.sameValue(calls, 1, 'computed-string setter fired');

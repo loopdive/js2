@@ -1,0 +1,4 @@
+built-ins/Proxy/defineProperty/null-handler.js
+built-ins/Proxy/getOwnPropertyDescriptor/null-handler.js
+built-ins/Proxy/setPrototypeOf/return-abrupt-from-get-trap.js
+built-ins/Proxy/defineProperty/call-parameters.js

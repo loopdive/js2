@@ -1,0 +1,6 @@
+var n = 0;
+try { Reflect.get(1, 'p'); } catch (e) { if (e instanceof TypeError) n++; }
+try { Reflect.has('', 'p'); } catch (e) { if (e instanceof TypeError) n++; }
+try { Reflect.apply({}, null, []); } catch (e) { if (e instanceof TypeError) n++; }
+try { Reflect.apply(function(){}, null); } catch (e) { if (e instanceof TypeError) n++; }
+if (n !== 4) throw new Error("only " + n + "/4 TypeErrors");

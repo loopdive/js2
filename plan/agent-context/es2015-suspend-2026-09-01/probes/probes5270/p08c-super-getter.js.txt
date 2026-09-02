@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var proto = { _x: 42, get x() { return 'proto' + this._x; } };
+var object = { get x() { return super.x; } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.x, 'proto42', 'getter super.x=' + String(object.x));

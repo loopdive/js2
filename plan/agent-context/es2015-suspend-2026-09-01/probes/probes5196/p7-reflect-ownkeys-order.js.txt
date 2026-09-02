@@ -1,0 +1,3 @@
+var o = {}; o.p1 = 42; var s1 = Symbol('1'); o[s1] = 44; o[2] = 46; o[0] = 47;
+var k = Reflect.ownKeys(o);
+if (k.length !== 4 || k[0] !== '0' || k[1] !== '2' || k[2] !== 'p1' || k[3] !== s1) throw new Error("ownKeys = " + k.map(String).join(","));

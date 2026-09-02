@@ -1,0 +1,10 @@
+/*---
+description: probe .tmp/es2015/probes5195/static-gopd.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C { method() { return 1; } static sm() { return 2; } }
+var d = Object.getOwnPropertyDescriptor(C, 'sm');
+assert.sameValue(typeof d, 'object', 'gOPD(C,"sm") is an object');
+assert.sameValue(typeof d.value, 'function');
+assert.sameValue(C.hasOwnProperty('sm'), true, 'hasOwnProperty sm');
+assert.sameValue(C.hasOwnProperty('caller'), false, 'no caller');

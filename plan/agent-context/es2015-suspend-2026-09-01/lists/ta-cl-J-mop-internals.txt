@@ -1,0 +1,13 @@
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/not-enumerable-keys.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-symbol.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-canonical-index.js
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-keys.js
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-and-symbol-keys-.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-numeric-index.js
+built-ins/TypedArrayConstructors/internals/HasProperty/key-is-not-canonical-index.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-prototype-chain-set.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-prototype-chain-set.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/non-extensible-redefine-key.js
+built-ins/TypedArrayConstructors/internals/HasProperty/inherited-property.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/desc-value-throws.js
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes.js

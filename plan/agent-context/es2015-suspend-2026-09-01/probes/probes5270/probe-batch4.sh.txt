@@ -1,0 +1,11 @@
+#!/bin/bash
+# Batch 4: after batch 3 (its last step writes wat/p21.log), re-run the one
+# anomalous control alone and dump the closure-void TCO probe to WAT.
+cd "$(dirname "$0")/../.." || exit 1
+while ! grep -q "wat exit=" .tmp/es2015/wat/p21.log 2>/dev/null; do sleep 30; done
+bash .tmp/es2015/run-when-quiet.sh true
+printf '%s\n' 'test/language/expressions/assignment/dstr/array-elem-iter-thrw-close-skip.js' > .tmp/es2015/expr-ctrl-one.txt
+npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-ctrl-one.txt --standalone > .tmp/es2015/expr-ctrl-one.log 2>&1
+echo "ctrl-one exit=$?" >> .tmp/es2015/expr-ctrl-one.log
+npx tsx src/cli.ts .tmp/es2015/probes5270/p51-tco-closure-void.js --target standalone --wat -o .tmp/es2015/wat/p51 > .tmp/es2015/wat/p51.log 2>&1
+echo "wat exit=$?" >> .tmp/es2015/wat/p51.log

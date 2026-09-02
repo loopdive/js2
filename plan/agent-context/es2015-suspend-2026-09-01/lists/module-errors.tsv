@@ -1,0 +1,23 @@
+test/language/module-code/eval-export-dflt-expr-gen-named.js	compile_error/host_import_leak	standalone target emitted host imports: env::g (#2961)
+test/language/module-code/eval-export-dflt-expr-gen-anon.js	compile_error/host_import_leak	standalone target emitted host imports: env::g (#2961)
+test/language/module-code/instn-uniq-env-rec.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/has-property-str-found-init.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/has-property-sym-found.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/delete-non-exported.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/get-own-property-str-found-uninit.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/get-own-property-sym.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/get-sym-found.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/instn-named-bndng-gen.js	compile_error/host_import_leak	standalone target emitted host imports: env::g2 (#2961)
+test/language/module-code/namespace/internals/delete-exported-uninit.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/get-str-found-uninit.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/get-str-initialize.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/delete-exported-init.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/Symbol.toStringTag.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/instn-named-bndng-dflt-gen-named.js	compile_error/host_import_leak	standalone target emitted host imports: env::g (#2961)
+test/language/module-code/namespace/internals/own-property-keys-sort.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/own-property-keys-binding-types.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/instn-iee-bndng-gen.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/has-property-str-found-uninit.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/set.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/define-own-property.js	fail/other	[object WebAssembly.Exception]
+test/language/module-code/namespace/internals/super-access-to-tdz-binding.js	fail/other	[object WebAssembly.Exception]

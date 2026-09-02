@@ -1,0 +1,2 @@
+built-ins/AsyncFunction/is-a-constructor.js
+built-ins/AsyncFunction/AsyncFunctionPrototype-to-string.js

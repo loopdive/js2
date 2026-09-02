@@ -4,11 +4,12 @@ import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBi
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import {
-  resolveRuntimeHostCapabilityRecord,
+  resolveRuntimeHostCapabilityFuncRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
+import type { IrStringConcatMode } from "./string-runtime.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
   forEachInstrDeep,
@@ -26,6 +27,9 @@ import {
 import {
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   STRING_COMPARE_RUNTIME_FEATURES,
+  STRING_EQ_RUNTIME_FEATURES,
+  STRING_LEN_RUNTIME_FEATURES,
+  STRING_CONCAT_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -83,8 +87,11 @@ const ADMITTED_CALLABLE_TARGETS: ReadonlyMap<IrInstrIntrinsic["id"], ReadonlySet
         implementation.kind === "host-callable"
           ? callableBindingKey(
               irImportFuncRef(
+                // (#3526 F2-S2) `resolveRuntimeHostCapabilityFuncRecord` is the
+                // fail-closed kind guard: a global capability has no callable
+                // spelling, so admitting one here would mint a nonsense target.
                 ...((record) => [record.module, record.field] as const)(
-                  resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
+                  resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
                 ),
               ).binding,
             )
@@ -226,7 +233,7 @@ function providerAttachment(
     // The canonical record IS the manifest authority for this ABI; the emitted
     // target stays the exact physical union import so raw consumers and import
     // order are untouched.
-    const record = resolveRuntimeHostCapabilityRecord(capabilityRecords, provider.implementation.capability);
+    const record = resolveRuntimeHostCapabilityFuncRecord(capabilityRecords, provider.implementation.capability);
     return Object.freeze({ kind: "callable", target: irImportFuncRef(record.module, record.field, record.field) });
   }
   if (provider.implementation.kind === "runtime-callable") {
@@ -271,7 +278,7 @@ export function preparedGeneratorNumberBoxProvider(
     return irRuntimeFuncRef(provider.implementation.symbol);
   }
   if (provider.implementation.kind === "host-callable") {
-    const record = resolveRuntimeHostCapabilityRecord(
+    const record = resolveRuntimeHostCapabilityFuncRecord(
       prepared!.manifest.hostCapabilityRecords,
       provider.implementation.capability,
     );
@@ -306,13 +313,146 @@ export function preparedStringCompareProvider(
     return { arm: "native", symbol: provider.implementation.symbol };
   }
   if (provider.implementation.kind === "host-callable") {
-    const record = resolveRuntimeHostCapabilityRecord(
+    const record = resolveRuntimeHostCapabilityFuncRecord(
       prepared!.manifest.hostCapabilityRecords,
       provider.implementation.capability,
     );
     return { arm: "host", field: record.field };
   }
   throw new Error(`IR string-compare provider ${provider.id} is not a callable implementation`);
+}
+
+/** The one string-eq feature row; named once so no caller spells it. */
+const STRING_EQ_RUNTIME_FEATURE = STRING_EQ_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S3) Which arm of the string equality seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * Like {@link preparedStringCompareProvider} this returns the CLASSIFICATION
+ * plus the physical spelling, not an `IrFuncRef` — the two arms are materialized
+ * by different existing routines and a single callable reference could not carry
+ * the decision without moving a registration.
+ *
+ * It differs from the compare's twin in ONE way, and the difference is the whole
+ * reason F2-S2 had to land first: the host arm returns the record's MODULE as
+ * well as its field. `wasm:js-string.equals` is a builtin import, not an `env`
+ * one, so `ctx.funcMap` cannot name it unambiguously (it is keyed on the bare
+ * field `equals`, which a user function shadows — #1072). The consumer looks it
+ * up by import-section position instead, which needs both halves of the name.
+ */
+export function preparedStringEqProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_EQ_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-eq provider ${provider.id} is not a callable implementation`);
+}
+
+/** The one string-len feature row; named once so no caller spells it. */
+const STRING_LEN_RUNTIME_FEATURE = STRING_LEN_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S4) Which arm of the string length seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * Third in the family-2 series and the first whose native arm is not a callable
+ * at all: it returns the ABI **role** and field index the `carrier-field`
+ * provider names, and the consumer resolves the role to the Program-ABI string
+ * carrier's type ref. It deliberately does NOT return a physical type index —
+ * the manifest is frozen before the carrier's layout is planned.
+ *
+ * The host arm carries the record's MODULE as well as its field, for the same
+ * reason {@link preparedStringEqProvider} does: `wasm:js-string.length` is a
+ * builtin, so locating it needs both halves of the name.
+ */
+export function preparedStringLenProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly carrier: "string"; readonly fieldIndex: number }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_LEN_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "carrier-field") {
+    return { arm: "native", carrier: provider.implementation.carrier, fieldIndex: provider.implementation.fieldIndex };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-len provider ${provider.id} is not a length implementation`);
+}
+
+/** The two string-concat feature rows, one per mode; named once so no caller spells them. */
+const STRING_CONCAT_RUNTIME_FEATURE = STRING_CONCAT_RUNTIME_FEATURES[0];
+const STRING_CONCAT_OWNED_RUNTIME_FEATURE = STRING_CONCAT_RUNTIME_FEATURES[1];
+
+/** The frozen feature row a concat instruction of `mode` answers to. */
+function stringConcatFeatureFor(mode: IrStringConcatMode): string {
+  return mode === "owned-append" ? STRING_CONCAT_OWNED_RUNTIME_FEATURE : STRING_CONCAT_RUNTIME_FEATURE;
+}
+
+/**
+ * (#3526 F2-S5) Which arm of the string concatenation seam the frozen manifest
+ * selected for `mode`, or `undefined` when no manifest carries that row.
+ *
+ * The family's fourth twin, and the first that takes a second argument: the
+ * policy chose the AUTHORITY, and the instruction's `concatMode` chooses which
+ * of the two helpers on that authority answers. On the host lane both modes
+ * resolve to the SAME `wasm:js-string.concat` record — `wasm:js-string` has no
+ * owned append builtin — and the two feature rows say so explicitly rather than
+ * leaving the collapse implicit at the call site.
+ *
+ * Like {@link preparedStringEqProvider} the host arm returns the record's
+ * MODULE as well as its field: `concat` is a builtin import, so `ctx.funcMap`
+ * cannot name it unambiguously (it is keyed on the bare field, which a
+ * same-named user function shadows — #1072), and the consumer locates it by
+ * import-section position instead.
+ */
+export function preparedStringConcatProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+  mode: IrStringConcatMode,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const feature = stringConcatFeatureFor(mode);
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === feature,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-concat provider ${provider.id} is not a callable implementation`);
 }
 
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
@@ -393,6 +533,32 @@ export function prepareIrRuntimeManifest(input: {
    * all and the resolve arm would have no provider row to read.
    */
   readonly stringCompareDemand?: boolean;
+  /**
+   * (#3526 F2-S3) True when some function in `functions` compares two strings
+   * for equality. Same shape and same reason as `stringCompareDemand`, read off
+   * the `string.eq` instruction population: the instruction exists, but it is
+   * not an `intrinsic`, so the walk below never collects it and an eq-only
+   * module would otherwise freeze no manifest at all.
+   */
+  readonly stringEqDemand?: boolean;
+  /**
+   * (#3526 F2-S4) True when some function in `functions` reads a string's
+   * `.length`. Same shape and same reason as `stringEqDemand`, read off the
+   * `string.len` instruction population. It matters MORE here than for either
+   * predecessor: `string.len` resolves through no callable symbol at all, so
+   * the frozen row is the only place the physical choice can live, and a
+   * length-only module that froze no manifest would leave the attachment pass
+   * with nothing to read.
+   */
+  readonly stringLenDemand?: boolean;
+  /**
+   * (#3526 F2-S5) Which concat MODES some function in `functions` performs.
+   * Same shape and same reason as `stringLenDemand`, read off the
+   * `string.concat` instruction population — but a PAIR rather than a flag,
+   * because the seam has two feature rows and a module with no builder loop
+   * must not freeze an `owned-append` provider it will never call.
+   */
+  readonly stringConcatDemand?: { readonly immutable: boolean; readonly owned: boolean };
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -425,7 +591,16 @@ export function prepareIrRuntimeManifest(input: {
     for (const block of fn.blocks) collectBuffer(block.instrs);
     for (const state of fn.asyncPlan?.states ?? []) collectBuffer(state.body);
   }
-  if (uses.length === 0 && asyncPlans.size === 0 && !input.generatorNumberBoxDemand && !input.stringCompareDemand) {
+  if (
+    uses.length === 0 &&
+    asyncPlans.size === 0 &&
+    !input.generatorNumberBoxDemand &&
+    !input.stringCompareDemand &&
+    !input.stringEqDemand &&
+    !input.stringLenDemand &&
+    !input.stringConcatDemand?.immutable &&
+    !input.stringConcatDemand?.owned
+  ) {
     return undefined;
   }
 
@@ -435,6 +610,10 @@ export function prepareIrRuntimeManifest(input: {
   }
   if (input.generatorNumberBoxDemand) builder.requestFeature(GENERATOR_NUMBER_BOX_RUNTIME_FEATURE);
   if (input.stringCompareDemand) builder.requestFeature(STRING_COMPARE_RUNTIME_FEATURE);
+  if (input.stringEqDemand) builder.requestFeature(STRING_EQ_RUNTIME_FEATURE);
+  if (input.stringLenDemand) builder.requestFeature(STRING_LEN_RUNTIME_FEATURE);
+  if (input.stringConcatDemand?.immutable) builder.requestFeature(STRING_CONCAT_RUNTIME_FEATURE);
+  if (input.stringConcatDemand?.owned) builder.requestFeature(STRING_CONCAT_OWNED_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

@@ -56,7 +56,7 @@
   "codegen/host-import-allowlist.ts": 2,
   "codegen/index.ts": 6,
   "codegen/is-truthy-inline-ic.ts": 4,
-  "codegen/iter-hof-native.ts": 2,
+  "codegen/iter-hof-native.ts": 3,
   "codegen/iter-lazy-native.ts": 2,
   "codegen/iterator-native.ts": 4,
   "codegen/json-codec-native.ts": 10,

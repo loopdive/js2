@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildStringConstants } from "../src/runtime.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 
 /**
  * Helper: compile TS source and instantiate with string_constants + polyfill.
@@ -14,26 +15,14 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
     );
   }
 
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_bool: () => {},
-    console_log_string: () => {},
-    number_toString: (v: number) => String(v),
-  };
-
-  const jsStringPolyfill = {
-    concat: (a: string, b: string) => a + b,
-    length: (s: string) => s.length,
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => s.substring(start, end),
-    charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-  };
-
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports);
+  // The hand-rolled `env` stub this helper used to carry froze the host-import
+  // surface of 2026-03. `56d1211acc` (#2773 S7, 2026-07-09, "externref
+  // plain-array OOB reads undefined") made `days[1]` pull in
+  // `env.__get_undefined` plus the boxing pair, which the stub could not supply
+  // — the e2e cases below died on LinkError, not on anything about string
+  // constants. Route through the production runtime's import builder so this
+  // file tracks the current surface instead of re-pinning a snapshot of it.
+  const instance = await instantiateWithRuntime(result);
   return (instance.exports as any)[fn](...args);
 }
 
@@ -69,7 +58,10 @@ describe("importedStringConstants", () => {
       expect(result.stringPool).toContain("foo");
       expect(result.stringPool).toContain("bar");
       expect(result.stringPool).toContain("baz");
-      expect(result.stringPool.length).toBe(3);
+      // (#731, 8d17e2d8e0) also pre-registers the enclosing function's `.name`
+      // and the implicit "" alongside the user literals. Pin the exact pool so
+      // a literal that stops being interned is still caught.
+      expect([...result.stringPool].sort()).toEqual(["", "bar", "baz", "foo", "test"]);
     });
 
     it("duplicate string literals share the same global import", async () => {
@@ -92,9 +84,12 @@ describe("importedStringConstants", () => {
         }
       `);
       expect(result.success).toBe(true);
-      expect(result.stringPool.length).toBe(0);
-      // WAT should not mention string_constants
-      expect(result.wat).not.toContain("string_constants");
+      // (#731, 8d17e2d8e0) makes the pool non-empty for any named declaration:
+      // the `.name` metadata for `add`, plus the implicit "". The claim worth
+      // keeping is that no *user* string literal is interned, so pin the pool to
+      // exactly that metadata — a stray literal import would still fail here.
+      expect([...result.stringPool].sort()).toEqual(["", "add"]);
+      expect(result.wat).toContain('(import "string_constants" "add"');
     });
   });
 
@@ -261,10 +256,16 @@ describe("importedStringConstants", () => {
         }
       `);
       expect(result.success).toBe(true);
-      // Should instantiate fine without string_constants
+      // Same (#731, 8d17e2d8e0) fact from the instantiation side: the module now
+      // imports `string_constants` for its `.name` metadata, so a bare `env: {}`
+      // no longer links. The intent — a string-free module runs correctly — is
+      // kept by supplying only what the pool actually asks for and still
+      // asserting no `env` import is required.
+      expect(result.imports).toEqual([]);
       const { instance } = await WebAssembly.instantiate(result.binary, {
         env: {},
-      });
+        string_constants: buildStringConstants(result.stringPool),
+      } as WebAssembly.Imports);
       expect((instance.exports as any).add(2, 3)).toBe(5);
     });
 

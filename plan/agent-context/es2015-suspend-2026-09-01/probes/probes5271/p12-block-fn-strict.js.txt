@@ -1,0 +1,6 @@
+/*---
+description: strict block-level function declaration is block scoped (#5271 probe)
+flags: [onlyStrict]
+---*/
+{ function f() {} }
+assert.throws(ReferenceError, function() { f; });

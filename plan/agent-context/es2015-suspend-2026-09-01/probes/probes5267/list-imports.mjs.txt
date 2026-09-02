@@ -1,0 +1,5 @@
+// Usage: node .tmp/es2015/probes5267/list-imports.mjs <file.wasm>
+// Prints the module's import list — must be [] for a standalone module (Step A acceptance).
+import { readFileSync } from "node:fs";
+const mod = new WebAssembly.Module(readFileSync(process.argv[2]));
+console.log(JSON.stringify(WebAssembly.Module.imports(mod).map((i) => `${i.module}::${i.name}`)));

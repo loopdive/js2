@@ -333,14 +333,24 @@ export function emitStandalonePromiseCustomCapabilityCheck(
   return true;
 }
 
-/** (#4727) Invoke C with a native capability, then call its resolve slot. */
-export function emitStandalonePromiseCustomResolve(
+/**
+ * (#4727) Invoke C with a native capability, then call one of its settle slots.
+ *
+ * (#5197 Slice D) `settle` selects which slot the value is handed to, because
+ * §27.2.4.7 `Promise.resolve` and §27.2.4.6 `Promise.reject` differ ONLY in
+ * that step — both are `NewPromiseCapability(C)` followed by
+ * `Call(capability.[[Resolve|Reject]], undefined, «x»)`. The capability record's
+ * field 0 is `[[Resolve]]` and field 1 is `[[Reject]]`, so the slot index is the
+ * whole difference and no second protocol is needed.
+ */
+export function emitStandalonePromiseCustomSettle(
   ctx: CodegenContext,
   fctx: FunctionContext,
   constructorLocal: number,
   constructorInfo: ClosureInfo,
   constructorSelfTypeIdx: number,
   valueInstrs: Instr[],
+  settle: "resolve" | "reject",
 ): boolean {
   if (!isStandalonePromiseActive(ctx)) return false;
   const runtime = ensureCustomCapabilityRuntime(ctx);
@@ -418,7 +428,10 @@ export function emitStandalonePromiseCustomResolve(
     { op: "local.get", index: valueLocal },
     { op: "call", funcIdx: vec.pushIdx },
     { op: "local.get", index: stateLocal },
-    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: 0 },
+    // §27.2.4.7 step 5 / §27.2.4.6 step 4 — `Call(capability.[[Resolve]] or
+    // [[Reject]], undefined, «x»)`. `undefined` for the receiver is the null
+    // externref the apply helper already treats as "no thisArg".
+    { op: "struct.get", typeIdx: runtime.stateTypeIdx, fieldIdx: settle === "reject" ? 1 : 0 },
     { op: "ref.null.extern" },
     { op: "local.get", index: argsLocal },
     { op: "call", funcIdx: applyIdx },

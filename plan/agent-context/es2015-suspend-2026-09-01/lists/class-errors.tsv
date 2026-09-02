@@ -1,0 +1,209 @@
+test/language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/statements/class/cpn-class-decl-computed-property-name-from-expression-coalesce.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/statements/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/expressions/super/prop-dot-cls-ref-this.js	fail/assertion_fail	Test262Error: via CallExpression Expected SameValue(«null», «[object Object]») to be true
+test/language/expressions/super/prop-dot-obj-null-proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/statements/class/subclass/builtin-objects/ArrayBuffer/regular-subclassing.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/class/elements/syntax/valid/grammar-static-ctor-gen-meth-valid.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/language/statements/class/definition/invalid-extends.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/new.target/value-via-super-call.js	fail/assertion_fail	Test262Error: within "parent" constructor Expected SameValue(«3», «[object Object]») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-expression-logical-and.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/definition/fn-name-accessor-get.js	fail/type_error	TypeError: Cannot access property on null or undefined at 855:10
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-async-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/statements/class/dstr/gen-meth-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/eval-code/direct/new.target-fn.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true
+test/language/computed-property-names/class/accessor/setter.js	fail/assertion_fail	Test262Error: The value of `calls` is `1`, after executing `new C().a = 'A';` Expected SameValue(«0», «1») to be true
+test/language/expressions/super/call-bind-this-value.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «[object Object]») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/expressions/class/dstr/gen-meth-static-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-async-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/expressions/super/prop-expr-obj-ref-this.js	fail/assertion_fail	Test262Error: via CallExpression Expected SameValue(«null», «[object Object]») to be true
+test/language/statements/class/gen-method/yield-spread-arr-single.js	fail/type_error	TypeError: Cannot access property on null or undefined at 354:12
+test/language/statements/class/name-binding/const.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/super/prop-dot-cls-null-proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/super/prop-expr-obj-val-from-eval.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"a"») to be true
+test/language/expressions/super/prop-dot-cls-val-from-arrow.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"a"») to be true
+test/language/statements/class/definition/methods.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/global-code/new.target-arrow.js	fail/negative_test_fail	expected SyntaxError but compiled with no diagnostic (early error not detected)
+test/language/statements/class/definition/side-effects-in-extends.js	compile_error/other	L1:0 Codegen error: indexed support unit ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Atest.js:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Atest.js%3Aroot%3Adeclaration%3A0000000000000001:class-implicit-const
+test/language/expressions/arrow-function/lexical-new.target-closure-returned.js	fail/assertion_fail	Test262Error: Expected SameValue(«2», «1») to be true
+test/language/expressions/super/prop-dot-obj-ref-this.js	fail/assertion_fail	Test262Error: via CallExpression Expected SameValue(«null», «[object Object]») to be true
+test/language/computed-property-names/class/accessor/getter-duplicates.js	fail/assertion_fail	Test262Error: The first `b` getter definition in `C2` is unreachable
+test/language/computed-property-names/class/method/string.js	fail/assertion_fail	Test262Error: `new C().d()` returns `'D'`. Defined as `[ID('d')]() { return 'D'; }` Expected SameValue(«null», «"D"») to be true
+test/language/expressions/super/prop-expr-cls-unresolvable.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/class/heritage-async-arrow-function.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/expressions/super/prop-expr-cls-ref-this.js	fail/assertion_fail	Test262Error: via CallExpression Expected SameValue(«null», «[object Object]») to be true
+test/language/statements/class/subclass/derived-class-return-override-with-null.js	fail/null_deref	dereferencing a null pointer [in Derived_init() ← __closure_63 ← __closure_58 ← __call_fn_method_3]
+test/language/statements/class/subclass/builtin-objects/NativeError/ReferenceError-message.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/statements/class/definition/prototype-getter.js	fail/assertion_fail	Test262Error: The value of `calls` is `1` Expected SameValue(«0», «1») to be true
+test/language/statements/class/dstr/meth-static-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/expressions/super/prop-expr-cls-val-from-arrow.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"a"») to be true
+test/language/expressions/class/ident-name-method-def-new-escaped.js	compile_error/wasm_compile	L44:1 invalid Wasm binary (WebAssembly.Module(): Compiling function #503:"__module_init" failed: local.tee[0] expected type (ref null 77), found block of type f64 @+303375) [in __module_init()] [@+303375] [wat: (func $__module_init (type 51
+test/language/statements/class/subclass/binding.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/definition/accessors.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/class/subclass/builtins.js	fail/assertion_fail	Test262Error: The value of `eua.length` is `10` Expected SameValue(«2», «10») to be true
+test/language/statements/class/dstr/meth-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/statements/class/subclass/builtin-objects/RegExp/regular-subclassing.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/class/subclass/superclass-generator-function.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-expression-logical-and.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/restricted-properties.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-expression-logical-and.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/expressions/class/method-static/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/expressions/super/call-construct-invocation.js	compile_error/runtime_error	L28:12 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/language/expressions/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js	compile_error/other	L33:10 'yield' is a reserved word and may not be used as an identifier in strict mode
+test/language/statements/class/definition/fn-name-method.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/statements/class/definition/setters-restricted-ids.js	fail/assertion_fail	Test262Error: The value of `x` is `1` Expected SameValue(«0», «1») to be true
+test/language/statements/class/cpn-class-decl-computed-property-name-from-assignment-expression-assignment.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/language/expressions/super/prop-dot-cls-this-uninit.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/super/call-bind-this-value-twice.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-assignment-expression-bitwise-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/method/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/statements/class/subclass/builtin-objects/String/length.js	fail/assertion_fail	Test262Error: length should be an own property
+test/language/statements/class/subclass/default-constructor-2.js	fail/assertion_fail	Test262Error: The value of `s2prime.x` is `3` Expected SameValue(«undefined», «3») to be true
+test/language/expressions/new.target/value-via-new.js	fail/assertion_fail	Test262Error: Invoked without Arguments Expected SameValue(«undefined», «function () { [native code] }») to be true
+test/language/statements/class/dstr/gen-meth-static-dflt-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/statements/class/method-static/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-accessor-meth-valid.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/language/expressions/class/accessor-name-static-computed-in.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"via get"») to be true
+test/language/expressions/class/heritage-arrow-function.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/super/prop-expr-obj-unresolvable.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/new.target/value-via-reflect-construct.js	compile_error/runtime_error	L26:1 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/language/statements/class/subclass/builtin-objects/Function/regular-subclassing.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «84») to be true
+test/language/statements/class/definition/fn-name-accessor-set.js	fail/type_error	TypeError: Cannot access property on null or undefined at 856:10
+test/language/statements/class/cpn-class-decl-computed-property-name-from-expression-logical-and.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/statements/class/cpn-class-decl-computed-property-name-from-generator-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/statements/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js	compile_error/other	L52:3 'yield' is a reserved word and may not be used as an identifier in strict mode
+test/language/expressions/class/dstr/gen-meth-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/expressions/class/gen-method-static/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/expressions/class/gen-method/yield-spread-arr-multiple.js	fail/type_error	TypeError: Cannot access property on null or undefined at 364:12
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/expressions/super/prop-expr-cls-val.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"a"») to be true
+test/language/statements/class/cpn-class-decl-computed-property-name-from-expression-logical-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/statements/class/definition/getters-restricted-ids.js	fail/assertion_fail	Test262Error: The value of `C.eval` is `3` Expected SameValue(«1», «3») to be true
+test/language/statements/class/subclass/class-definition-null-proto-contains-return-override.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/language/computed-property-names/class/method/constructor-can-be-getter.js	compile_error/other	L9:3 Class constructor may not be a getter
+test/language/expressions/class/gen-method-static/yield-spread-arr-multiple.js	fail/type_error	TypeError: Cannot access property on null or undefined at 364:12
+test/language/statements/class/subclass/derived-class-return-override-with-undefined.js	fail/null_deref	dereferencing a null pointer [in Derived_init() ← __module_init]
+test/language/statements/class/subclass/builtin-objects/DataView/regular-subclassing.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «») to be true
+test/language/statements/class/subclass/builtin-objects/Array/length.js	fail/type_error	TypeError: Cannot access property on null or undefined at 343:18
+test/language/statements/class/gen-method/yield-spread-arr-multiple.js	fail/type_error	TypeError: Cannot access property on null or undefined at 364:12
+test/language/statements/class/definition/this-check-ordering.js	fail/assertion_fail	Test262Error: The result of `exn instanceof ReferenceError` is `true` Expected SameValue(«false», «true») to be true
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/expressions/super/prop-dot-cls-val-from-eval.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"a"») to be true
+test/language/statements/class/name-binding/expression.js	fail/assertion_fail	Test262Error: The value of `Csx` is `Cv`, after executing `new Cv().x = 1;` Expected SameValue(«undefined», «[object Object]») to be true
+test/language/computed-property-names/class/static/method-symbol.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/language/statements/class/arguments/access.js	fail/assertion_fail	Test262Error: The value of `arguments.length` is `2` Expected SameValue(«0», «2») to be true
+test/language/expressions/class/dstr/gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-gen-meth-valid.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-assignment-expression-assignment.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/language/expressions/class/dstr/gen-meth-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/expressions/class/dstr/gen-meth-static-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/expressions/class/gen-method-static/yield-spread-arr-single.js	fail/type_error	TypeError: Cannot access property on null or undefined at 354:12
+test/language/statements/class/subclass/builtin-objects/NativeError/URIError-message.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/statements/class/name-binding/basic.js	fail/assertion_fail	Test262Error: The value of `C` is `C2` Expected SameValue(«[object Object]», «undefined») to be true
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/expressions/super/prop-expr-cls-null-proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/statements/class/subclass/class-definition-evaluation-empty-constructor-heritage-present.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «0») to be true
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-assignment-expression-bitwise-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/definition/this-access-restriction-2.js	fail/assertion_fail	Test262Error: The value of `b.prp` is `3` Expected SameValue(«undefined», «3») to be true
+test/language/statements/class/arguments/default-constructor.js	fail/assertion_fail	Test262Error: The value of `args.length` is `3` Expected SameValue(«0», «3») to be true
+test/language/expressions/class/dstr/meth-static-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/statements/class/subclass/builtin-objects/NativeError/TypeError-message.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/computed-property-names/class/static/method-symbol-order.js	fail/assertion_fail	Test262Error: Actual [] and expected [Symbol(), Symbol()] should have the same contents. 
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-assignment-expression-assignment.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/language/statements/class/ident-name-method-def-new-escaped.js	compile_error/wasm_compile	L44:1 invalid Wasm binary (WebAssembly.Module(): Compiling function #501:"__module_init" failed: local.tee[0] expected type (ref null 75), found block of type f64 @+307756) [in __module_init()] [@+307756] [wat: (func $__module_init (type 51
+test/language/statements/class/gen-method/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/statements/class/subclass/builtin-objects/RegExp/lastIndex.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/class/subclass/builtin-objects/Date/regular-subclassing.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/class/subclass/builtin-objects/Symbol/new-symbol-with-super-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/expressions/super/realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 353:44
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-assignment-expression-bitwise-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/expressions/super/prop-dot-cls-val.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"a"») to be true
+test/language/statements/class/subclass/builtin-objects/TypedArray/regular-subclassing.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true (Testing with Float64Array and makeArray.)
+test/language/statements/class/definition/basics.js	fail/assertion_fail	Test262Error: `Object.getPrototypeOf(C.prototype)` returns `Object.prototype` Expected SameValue(«null», «[object Object]») to be true
+test/language/statements/class/subclass/builtin-objects/Function/instance-length.js	fail/assertion_fail	Test262Error: length should be an own property
+test/language/statements/class/definition/constructor-property.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/language/computed-property-names/class/method/constructor-can-be-setter.js	compile_error/other	L9:3 Class constructor may not be a setter
+test/language/computed-property-names/class/accessor/setter-duplicates.js	fail/assertion_fail	Test262Error: The value of `calls` is `1`, after executing `new C().a = 'A';` Expected SameValue(«0», «1») to be true
+test/language/expressions/super/prop-expr-obj-ref-non-strict.js	fail/assertion_fail	Test262Error: x is defined as an own property
+test/language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/statements/class/subclass/builtin-objects/Promise/regular-subclassing.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/strict-mode/arguments-callee.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/class/gen-method/yield-spread-arr-single.js	fail/type_error	TypeError: Cannot access property on null or undefined at 354:12
+test/language/computed-property-names/class/method/symbol.js	fail/type_error	TypeError: Cannot access property on null or undefined
+test/language/statements/class/definition/methods-gen-yield-as-yield-operand.js	fail/assertion_fail	Test262Error: First result `value` Expected SameValue(«undefined», «1») to be true
+test/language/expressions/super/prop-dot-obj-ref-non-strict.js	fail/assertion_fail	Test262Error: x is defined as an own property
+test/language/expressions/super/prop-expr-cls-ref-strict.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/statements/class/gen-method-static/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/statements/class/cpn-class-decl-computed-property-name-from-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/statements/class/subclass/superclass-arrow-function.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/super/prop-expr-cls-val-from-eval.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"a"») to be true
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-generator-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/statements/class/definition/setters-prop-desc.js	fail/assertion_fail	Test262Error: The value of `staticX` is `2` Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/cpn-class-decl-computed-property-name-from-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/expressions/class/method/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-generator-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/expressions/class/restricted-properties.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/subclass/builtin-objects/Function/instance-name.js	fail/assertion_fail	Test262Error: name should be an own property
+test/language/expressions/class/dstr/meth-dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-expression-coalesce.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/statements/class/cpn-class-decl-computed-property-name-from-assignment-expression-bitwise-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/statements/class/dstr/gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-expression-coalesce.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/expressions/super/prop-dot-obj-val-from-eval.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"a"») to be true
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-expression-coalesce.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/definition/this-access-restriction.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/class/subclass/builtin-objects/Boolean/regular-subclassing.js	fail/assertion_fail	Test262Error: Expected SameValue(«false», «true») to be true
+test/language/statements/class/subclass/builtin-objects/Number/regular-subclassing.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/class/subclass/builtin-objects/Array/contructor-calls-super-multiple-arguments.js	fail/assertion_fail	Test262Error: Actual [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, nu
+test/language/computed-property-names/class/method/constructor-can-be-generator.js	compile_error/other	L9:3 Class constructor may not be a generator
+test/language/statements/class/dstr/gen-meth-ary-ptrn-elem-ary-empty-init.js	fail/type_error	TypeError: Cannot destructure 'null' or 'undefined'
+test/language/statements/class/gen-method-static/yield-spread-arr-single.js	fail/type_error	TypeError: Cannot access property on null or undefined at 354:12
+test/language/statements/class/elements/syntax/valid/grammar-static-ctor-accessor-meth-valid.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/language/expressions/super/prop-expr-cls-this-uninit.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js	compile_error/other	L44:10 'yield' is a reserved word and may not be used as an identifier in strict mode
+test/language/statements/class/definition/methods-restricted-properties.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/expressions/class/cpn-class-expr-accessors-computed-property-name-from-expression-logical-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-expression-logical-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «2») to be true
+test/language/expressions/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js	compile_error/other	L51:11 'yield' is a reserved word and may not be used as an identifier in strict mode
+test/language/statements/class/cpn-class-decl-computed-property-name-from-async-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «1») to be true
+test/language/statements/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js	compile_error/other	L45:2 'yield' is a reserved word and may not be used as an identifier in strict mode
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-generator-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/statements/class/subclass/derived-class-return-override-with-object.js	fail/assertion_fail	Test262Error: Expected SameValue(«"number"», «"undefined"») to be true
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-expression-logical-or.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «2») to be true
+test/language/statements/class/subclass/builtin-objects/String/regular-subclassing.js	fail/type_error	TypeError: called value is not a function
+test/language/expressions/arrow-function/lexical-new.target.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/language/expressions/class/gen-method/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js	compile_error/other	L24:3 A class may only have one constructor
+test/language/expressions/super/prop-dot-obj-ref-strict.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/class/accessor-name-inst-computed-in.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"via get"») to be true
+test/language/expressions/super/prop-expr-obj-ref-strict.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/super/prop-expr-obj-null-proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/statements/class/definition/getters-prop-desc.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/class/gen-method-static/yield-spread-arr-multiple.js	fail/type_error	TypeError: Cannot access property on null or undefined at 364:12
+test/language/statements/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js	compile_error/other	L24:3 A class may only have one constructor
+test/language/statements/class/definition/numeric-property-names.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/class/definition/prototype-setter.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/cpn-class-decl-accessors-computed-property-name-from-assignment-expression-assignment.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/language/expressions/super/prop-dot-cls-ref-strict.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/expressions/class/cpn-class-expr-computed-property-name-from-async-arrow-function-expression.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/statements/class/definition/constructor.js	fail/type_error	TypeError: Cannot access property on null or undefined at 341:18
+test/language/statements/class/definition/constructable-but-no-prototype.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/class/subclass/class-definition-null-proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Function]») to be true
+test/language/computed-property-names/class/method/number.js	fail/assertion_fail	Test262Error: `new C()[2]()` returns `'D'`, from `[ID(2)]() { return 'D'; }` Expected SameValue(«null», «"D"») to be true
+test/language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js	fail/assertion_fail	Test262Error: message should be an own property
+test/language/statements/class/cpn-class-decl-computed-property-name-from-function-declaration.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «1») to be true
+test/language/expressions/super/call-expr-value.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «[object Object]») to be true
+test/language/expressions/new.target/asi.js	fail/assertion_fail	Test262Error: tokens separateed by whitespace Expected SameValue(«undefined», «function () { [native code] }») to be true
+test/language/expressions/super/call-proto-not-ctor.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/statements/class/subclass/derived-class-return-override-with-empty.js	fail/type_error	TypeError: Cannot access property on null or undefined at 354:18
+test/language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js	compile_error/other	L34:2 'yield' is a reserved word and may not be used as an identifier in strict mode

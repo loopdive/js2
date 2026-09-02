@@ -1,0 +1,8 @@
+/*---
+description: array[Symbol.iterator]().next() in a Map-containing module (5151 note repro)
+---*/
+var m = new Map();
+var it = [1, 2][Symbol.iterator]();
+var r = it.next();
+assert.sameValue(r.done, false, 'done');
+assert.sameValue(r.value, 1, 'value');

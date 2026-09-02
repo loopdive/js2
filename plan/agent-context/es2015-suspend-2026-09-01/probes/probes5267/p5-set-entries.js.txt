@@ -1,0 +1,9 @@
+/*---
+description: set.entries() must not leak env::Set_entries
+---*/
+var set = new Set([1]);
+var it = set.entries();
+var r = it.next();
+assert.sameValue(r.done, false);
+assert.sameValue(r.value[0], 1);
+assert.sameValue(r.value[1], 1);

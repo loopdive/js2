@@ -1,0 +1,6 @@
+var p = new Proxy({a: 1, b: 1}, {});
+var s = JSON.stringify(p);
+if (s !== '{"a":1,"b":1}') throw new Test262Error('proxy object: ' + String(s));
+var sym = Symbol('d');
+if (JSON.stringify(sym) !== undefined) throw new Test262Error('symbol: ' + String(JSON.stringify(sym)));
+if (JSON.stringify([sym]) !== '[null]') throw new Test262Error('[symbol]: ' + JSON.stringify([sym]));
