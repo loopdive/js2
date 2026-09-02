@@ -16,9 +16,14 @@ import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4394) null-carrier ToString
+import { STRING_CONCAT_MANY_NATIVE_ARITY } from "../ir/runtime-manifest.js";
 
-const MIN_BATCHED_CONCAT_ARITY = 3;
-const MAX_BATCHED_CONCAT_ARITY = 8;
+// (#3526 F2-S6) The bound is the NATIVE provider row's, imported rather than
+// copied. It used to live here as two literals, with a third copy of the max
+// hand-written into the IR pass's call site; the manifest row is now the one
+// authority and both readers derive from it.
+const MIN_BATCHED_CONCAT_ARITY = STRING_CONCAT_MANY_NATIVE_ARITY.min;
+const MAX_BATCHED_CONCAT_ARITY = STRING_CONCAT_MANY_NATIVE_ARITY.max;
 const FLAT_CONCAT_LIMIT = 64;
 
 /** Flatten only `+` subtrees whose TypeScript result is already a string. */

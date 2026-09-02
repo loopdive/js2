@@ -64,7 +64,9 @@ import {
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
   STRING_COMPARE_POLICY_DISABLED,
+  STRING_CHAR_CODE_AT_POLICY_DISABLED,
   STRING_CONCAT_POLICY_DISABLED,
+  STRING_CONCAT_MANY_POLICY_DISABLED,
   STRING_CONCAT_RUNTIME_FEATURES,
   STRING_CONCAT_RUNTIME_PROVIDER_IDS,
   STRING_EQ_POLICY_DISABLED,
@@ -364,6 +366,7 @@ describe("#3526 F2-S5 provider policy", () => {
     builder.requestFeature("math.sqrt");
     const frozen = builder.freeze();
     expect(frozen.policy.stringConcat).toEqual(STRING_CONCAT_POLICY_DISABLED);
+    expect(frozen.policy.stringCharCodeAt).toEqual(STRING_CHAR_CODE_AT_POLICY_DISABLED);
     // EIGHT independent policies now, not one widened field.
     expect(frozen.policy.numberBoundary).toEqual(NUMBER_BOUNDARY_POLICY_DISABLED);
     expect(frozen.policy.booleanBoundary).toEqual(BOOLEAN_BOUNDARY_POLICY_DISABLED);
@@ -372,6 +375,9 @@ describe("#3526 F2-S5 provider policy", () => {
     expect(frozen.policy.stringCompare).toEqual(STRING_COMPARE_POLICY_DISABLED);
     expect(frozen.policy.stringEq).toEqual(STRING_EQ_POLICY_DISABLED);
     expect(frozen.policy.stringLen).toEqual(STRING_LEN_POLICY_DISABLED);
+    // (#3526 F2-S6) NINE now: the batched many-arity pass policy is a
+    // sibling of the concatenation policy, not a field on it.
+    expect(frozen.policy.stringConcatMany).toEqual(STRING_CONCAT_MANY_POLICY_DISABLED);
   });
 
   it("resolves independently of the eq, the len, the compare, and every family-1 arm", () => {

@@ -322,7 +322,9 @@ import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-gl
 import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
+  preparedStringCharCodeAtProvider,
   preparedStringCompareProvider,
+  preparedStringConcatManyProvider,
   preparedStringConcatProvider,
   preparedStringEqProvider,
   preparedStringLenProvider,
@@ -349,11 +351,14 @@ import type {
   GeneratorNumberBoxPolicy,
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
+  StringCharCodeAtPolicy,
   StringComparePolicy,
+  StringConcatManyPolicy,
   StringConcatPolicy,
   StringEqPolicy,
   StringLenPolicy,
 } from "./runtime-manifest.js";
+import { stringConcatManyArityCap } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -1045,6 +1050,130 @@ function irStringConcatDemand(fns: readonly IrFunction[]): { readonly immutable:
   return { immutable, owned };
 }
 
+/**
+ * (#3526 F2-S7) This caller's already-resolved guarded-`charCodeAt` policy.
+ *
+ * The EXACT fact the resolve-time table read directly off `ctx.nativeStrings`
+ * (the `IR_STRING_CHAR_CODE_AT_FN` arm's single ternary), consulted once, here,
+ * before freeze — and the same fact `stringMethodPlan` reads at PLAN time to
+ * bake the lane into the intrinsic symbol. Inside `compile()` the two cannot
+ * disagree, because this IS that expression; the resolve arms therefore VERIFY
+ * the plan-time symbol against the frozen row rather than re-deciding it.
+ * Same one-flag truth table as its four family-2 siblings, for the same reason:
+ * `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringCharCodeAtPolicy(ctx: CodegenContext): StringCharCodeAtPolicy {
+  return Object.freeze({ charCodeAt: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S7) True when any of `fns` performs a guarded `charCodeAt` read.
+ *
+ * TWO producers reach WasmGC codegen and BOTH are demand — this is the only
+ * scan in the family that is not a single instruction kind:
+ *
+ *  * a `string.char_code_at` instruction, minted by `from-ast` only with
+ *    receiver-encoding evidence; and
+ *  * an `intrinsic` `call` whose symbol is the plan-path pair
+ *    `__jsstr_charCodeAt` / `__str_charCodeAt` — the SAME enumeration the host
+ *    pre-registration scan performs further down, minus the trusted symbol.
+ *
+ * The proof-licensed symbols (`__jsstr_charCodeAt_trusted`, and the
+ * `__str_flatten` + `__str_flat_charCodeAt` preheader pair) are deliberately
+ * NOT demand: they are a different, plan-time-decided feature this slice does
+ * not govern, so a hoisted char-read loop freezes no row and its arms are
+ * untouched.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringCharCodeAtDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.char_code_at") {
+            found = true;
+            return;
+          }
+          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+          if (
+            instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
+            instr.target.binding.symbol === NATIVE_CHARCODEAT_FN
+          ) {
+            found = true;
+          }
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * (#3526 F2-S6) This caller's already-resolved BATCHED many-arity policy.
+ *
+ * The verbatim projection of the two selector predicates the fusion pass used
+ * to compute inline, consulted once, here, before the pass runs — the pass
+ * CREATES the demand, so unlike every sibling in family 2 this decision cannot
+ * wait for a demand scan.
+ *
+ * Every term is load-bearing and none is a simplification of the others. In
+ * particular `wasi` is NOT redundant with `nativeStrings`: `nativeStrings:
+ * false` is an accepted override on target wasi, and such a module compiles on
+ * the host string backend — measured at 1000 bytes with a pairwise
+ * `wasm:js-string.concat` and no `__concat_`. Only the wasi term keeps the
+ * pass off there.
+ */
+function integrationStringConcatManyPolicy(ctx: CodegenContext): StringConcatManyPolicy {
+  if (ctx.nativeStrings) {
+    return Object.freeze({ batch: ctx.standalone && !ctx.wasi ? ("native" as const) : ("off" as const) });
+  }
+  return Object.freeze({
+    batch: ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? ("off" as const) : ("host" as const),
+  });
+}
+
+/**
+ * (#3526 F2-S6) The sorted unique arities any of `fns` concatenates in one
+ * batched call.
+ *
+ * Scanned AFTER the fusion pass, off the BATCHED IR, which is what makes it
+ * different from its four siblings: there is no instruction kind to look for,
+ * only the `call` targets the pass minted. Both producers are covered — the
+ * `string.concat$arityN` family the pass emits, and the fixed
+ * `async.string.concat$arity5` symbol async planning emits for the prepared
+ * final main, which has its own arm with the identical lowering.
+ *
+ * A module with no fused root returns `[]` and freezes no family row.
+ */
+function irStringConcatManyDemand(fns: readonly IrFunction[]): { readonly arities: readonly number[] } {
+  const arities = new Set<number>();
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+          const symbol = instr.target.binding.symbol;
+          if (symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+            arities.add(5);
+            return;
+          }
+          const arity = parseIrStringConcatManyArity(symbol);
+          if (arity !== null) arities.add(arity);
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { arities: Object.freeze([...arities].sort((left, right) => left - right)) };
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -1104,6 +1233,8 @@ function prepareBuiltFnRuntimeManifest(
       stringEq: integrationStringEqPolicy(ctx),
       stringLen: integrationStringLenPolicy(ctx),
       stringConcat: integrationStringConcatPolicy(ctx),
+      stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
+      stringConcatMany: integrationStringConcatManyPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1126,6 +1257,14 @@ function prepareBuiltFnRuntimeManifest(
     // uses, or a concat-only module would carry an `owned-append` row nothing
     // ever calls (and an append-only one would be missing the row it needs).
     stringConcatDemand: irStringConcatDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S7) Same predicate the partition scan above runs, same reason
+    // again — and it must count BOTH producers, or the 35 plan-path cells would
+    // reach the verify arms with no frozen row to be checked against.
+    stringCharCodeAtDemand: irStringCharCodeAtDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S6) Scanned off the ALREADY-BATCHED functions — the fusion
+    // pass ran on the way to this freeze, so every fused root is visible here
+    // and a module that fused nothing freezes no family row.
+    stringConcatManyDemand: irStringConcatManyDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3713,6 +3852,9 @@ export function compileIrPathFunctions(
   const readyForLower: BuiltFn[] = [];
   // (#4605/#4608) Re-derive function/global declarations after monomorphization.
   const declsAfterTU = programAbiModuleDeclarations(ctx, modAfterTU);
+  // (#3526 F2-S6) One resolved decision for the whole module, taken before the
+  // pass that creates its demand.
+  const batchPolicy = integrationStringConcatManyPolicy(ctx);
 
   for (const fn of modAfterTU.functions) {
     const before = afterInlineByUnitId.get(fn.unitId);
@@ -3729,13 +3871,13 @@ export function compileIrPathFunctions(
       const changed = before === undefined || fn !== before.fn;
       const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
       // Final synchronous parity pass: fuse only after mono/TU has settled.
-      const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
-      const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
-      const batched = hostBatchedConcat
-        ? batchStringConcat(hygienic, allocRegistry)
-        : standaloneBatchedConcat
-          ? batchStringConcat(hygienic, allocRegistry, 8)
-          : hygienic;
+      // (#3526 F2-S6) Under manifest authority. The four-flag selection and the
+      // hand-copied native ceiling are gone: `batch` is the frozen decision and
+      // the ceiling is derived from the provider rows.
+      const batched =
+        batchPolicy.batch === "off"
+          ? hygienic
+          : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(batchPolicy.batch));
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU);
       if (verifyErrors.length > 0) {
@@ -3841,6 +3983,8 @@ export function compileIrPathFunctions(
   const stringEqPolicy = integrationStringEqPolicy(ctx);
   const stringLenPolicy = integrationStringLenPolicy(ctx);
   const stringConcatPolicy = integrationStringConcatPolicy(ctx);
+  const stringCharCodeAtPolicy = integrationStringCharCodeAtPolicy(ctx);
+  const stringConcatManyPolicy = integrationStringConcatManyPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -3960,6 +4104,45 @@ export function compileIrPathFunctions(
           "late-preparation-unsupported",
           "resolve",
           "ir/integration: string concatenation has no provider under string-concat policy " +
+            `concat=${stringConcatPolicy.concat}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S7) The guarded charCodeAt seam partitions on the same rule, in
+    // the same pass. Its demand spans two producers, so an owner whose policy
+    // cannot provide the seam is refused whichever producer minted the read —
+    // the policy refuses, it never re-lowers.
+    if (stringCharCodeAtPolicy.charCodeAt === "unsupported" && irStringCharCodeAtDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: charCodeAt has no provider under string-char-code-at policy " +
+            `charCodeAt=${stringCharCodeAtPolicy.charCodeAt}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S6) The BATCHED many-arity family partitions on the same rule.
+    // Its demand is neither an instruction kind nor a flag but a set of fused
+    // ARITIES, and it is the concatenation authority — not the pass policy —
+    // that can refuse them: `batch` only decides whether the pass ran.
+    const stringConcatManyDemand = irStringConcatManyDemand([entry.fn]);
+    if (stringConcatPolicy.concat === "unsupported" && stringConcatManyDemand.arities.length > 0) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: batched string concatenation has no provider under string-concat policy " +
             `concat=${stringConcatPolicy.concat}`,
         ),
         "resolve",
@@ -6376,6 +6559,47 @@ function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void
   ctx.programAbiCallableProviders?.observe(irRuntimeFuncRef(symbol), index);
 }
 
+/**
+ * (#3526 F2-S6) The single lowering of a BATCHED many-arity concatenation, for
+ * both of the two symbols that produce one.
+ *
+ * The arm no longer reads `ctx.nativeStrings`: the frozen `stringConcat` policy
+ * already resolved which authority answers, and the family row derives the
+ * concrete import field or helper symbol from the arity. Both routines below
+ * are the same two as before, called with the same arguments, so the migration
+ * is byte-neutral.
+ *
+ * The host arm keeps `ensureLateImport` deliberately — late minting IS the
+ * contract here, not an implementation detail. The emitted bytes depend on the
+ * import's POSITION (measured: `__concat_5` at import index 21 of 27 on the
+ * async fixture, `__concat_N` at index 5 before dead-import elimination on the
+ * small ones), so registering at freeze time would move every batching cell by
+ * design. Its params and results now come from the record rather than being
+ * spelled here.
+ */
+function batchedConcatProviderIndex(
+  ctx: CodegenContext,
+  prepared: PreparedIrRuntimeManifest | undefined,
+  arity: number,
+): number | undefined | null {
+  const arm = preparedStringConcatManyProvider(prepared, arity);
+  if (!arm) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "batched string concatenation has no frozen provider under the string-concat policy",
+    );
+  }
+  if (arm.arm === "native") return ensureNativeBatchedConcat(ctx, arity);
+  return ensureLateImport(
+    ctx,
+    arm.field,
+    arm.params.map((param) => ({ kind: param }) as ValType),
+    arm.results.map((result) => ({ kind: result }) as ValType),
+    arm.module,
+  );
+}
+
 function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
@@ -6433,24 +6657,12 @@ function resolveAndObserveCallableProvider(
       ? (ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null)
       : ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-    index = ctx.nativeStrings
-      ? ensureNativeBatchedConcat(ctx, 5)
-      : ensureLateImport(
-          ctx,
-          "__concat_5",
-          Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
-          [{ kind: "externref" }],
-        );
+    // (#3526 F2-S6) The prepared final main's fixed five-part concat. Same
+    // family, same frozen row, same two routines — only the arity is a
+    // constant here rather than parsed from the symbol.
+    index = batchedConcatProviderIndex(ctx, prepared, 5);
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
-    const arity = parseIrStringConcatManyArity(symbol)!;
-    index = ctx.nativeStrings
-      ? ensureNativeBatchedConcat(ctx, arity)
-      : ensureLateImport(
-          ctx,
-          `__concat_${arity}`,
-          Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
-          [{ kind: "externref" }],
-        );
+    index = batchedConcatProviderIndex(ctx, prepared, parseIrStringConcatManyArity(symbol)!);
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);
@@ -6490,10 +6702,35 @@ function resolveAndObserveCallableProvider(
     const vecTypeIdx = Number(symbol.slice(VEC_NEW_SIZED_PREFIX.length));
     index = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
+    // (#3526 F2-S7) The PLAN path keeps its materializer — `stringMethodPlan`
+    // baked the lane into this symbol before the freeze, and re-deciding it here
+    // would be from-ast-side vocabulary (#2955). What the slice adds is a
+    // fail-closed VERIFY: the frozen row and the plan-time symbol are the same
+    // `ctx.nativeStrings` fact inside `compile()`, so a disagreement can only
+    // come from an adapter that passed a policy AND a demand, and that is an
+    // invariant violation, never a lane fact to re-decide locally.
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm || arm.symbol !== symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row",
+      );
+    }
     index = ensureHostCharCodeAtGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_SUBSTRING_FN) {
     index = ensureHostSubstringGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
+    // (#3526 F2-S7) The native half of the same plan-path verify — see the host
+    // arm above. Same materializer, same fail-closed check.
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm || arm.symbol !== symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row",
+      );
+    }
     index = ensureNativeCharCodeAtHelper(ctx);
   } else if (
     ref.binding.kind === "intrinsic" &&
@@ -6622,7 +6859,28 @@ function resolveAndObserveCallableProvider(
       index = exactCallableImportIndex(ctx, "env", "string_charAt");
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
-    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+    // (#3526 F2-S7) THE R6-shaped decision on this seam. The arm no longer reads
+    // `ctx.nativeStrings`: the frozen `stringCharCodeAt` policy already resolved
+    // which authority answers, and this only materializes it through the SAME
+    // two routines as before. Fail-closed: an owner whose policy cannot provide
+    // the seam is partitioned out before freeze, so a missing row here is an
+    // invariant, not a lane fact to re-decide locally.
+    //
+    // Both routines return `number | null`, and a `null` keeps its existing
+    // meaning exactly: it falls to the `unknown-function-ref` invariant below —
+    // a hard compile error — and never registers a late import, which would
+    // shift every defined funcidx. `funcMap.get(arm.symbol)` is never used
+    // either: these are DEFINED helpers a same-named user export shadows
+    // (#1072 / the #3520 pin).
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "charCodeAt has no frozen provider under the string-char-code-at policy",
+      );
+    }
+    index = arm.arm === "native" ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_ITERATOR_CHAR_AT_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -7069,9 +7327,14 @@ function makeResolver(
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
       }
-      const idx = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
-      if (idx === null) throw new Error("ir/integration: guarded charCodeAt helper unavailable");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S7) The seam's second un-governed lane read, RETIRED on a
+      // measurement: `string-support.ts` attaches the semantic provider to every
+      // `string.char_code_at` unconditionally, so this branch was reached zero
+      // times across the 65-cell byte matrix (which stayed byte-identical with a
+      // throw in its place) and across 39 suites / 604 passing tests. An
+      // unattached instruction is now a hard refusal rather than a private
+      // re-decision of the authority the manifest already resolved.
+      throw new Error("ir/integration: string.char_code_at has no prepared runtime provider");
     },
     // -------------------------------------------------------------------
     // Exception handling dispatch (slice 9 — #1169h).

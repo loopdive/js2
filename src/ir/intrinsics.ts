@@ -316,6 +316,26 @@ export const EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE: IntrinsicSignatur
   result: REF_EXTERN_TYPE,
 });
 
+/**
+ * `(externref, i32) -> f64` — the exact SEMANTIC shape of the guarded
+ * `charCodeAt` read: a string and a UTF-16 index in, a code unit or `NaN` out.
+ *
+ * (#3526 F2-S7) The first row in the catalogue whose signature is deliberately
+ * NOT its capability record's ABI. `wasm:js-string.charCodeAt` is
+ * `(externref, i32) -> i32` and TRAPS out of range (#2003); the seam both
+ * authorities implement is the guarded f64 that answers `NaN` instead, and the
+ * providers are defined helpers over that builtin (`__jsstr_charCodeAt`) or
+ * over the native carrier (`__str_charCodeAt`) rather than the builtin itself.
+ * The native helper physically takes `(ref $AnyString, i32)`; the signature
+ * states the seam's shape, exactly as `native.js.string.eq` reuses the
+ * externref pair for `__str_equals`.
+ */
+export const EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, I32_TYPE]),
+  result: F64_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
