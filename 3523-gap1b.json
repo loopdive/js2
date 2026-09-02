@@ -3,9 +3,10 @@
   "slice": "gap1b",
   "assignee": "ttraenkler/fable-ir-takeover",
   "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "status": "done",
   "branch": "claude/docs-r4-gap1b-plan",
   "claimed_at": "2026-09-01T23:54:38Z",
-  "updated_at": "2026-09-01T23:54:38Z",
-  "write_id": "17970-7y6f43ne"
+  "updated_at": "2026-09-02T02:53:24Z",
+  "write_id": "17691-ds17tivy",
+  "released_at": "2026-09-02T02:53:24Z"
 }
