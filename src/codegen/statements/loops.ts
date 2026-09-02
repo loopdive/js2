@@ -18,7 +18,7 @@ import {
   updateLocalType,
 } from "../expressions/helpers.js";
 import { emitAssignToTarget } from "../expressions/assignment.js";
-import { tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
+import { emitConstIdentifierUpdateGuard, tryEmitForOfIdentifierWrite } from "../expressions/identifier-assignment.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -525,6 +525,22 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
     }
   }
 
+  // (#5271 step 7, G1) A `const` head is still a `const` BINDING: `i++` inside
+  // `for (const i = 0; i < 1; i++)` must throw TypeError (§13.15.2 / the
+  // AssignmentTargetType rule). The shadow save above DELETED the name from
+  // `fctx.constBindings` so the head's own declarator would not trip the guard,
+  // and — unlike the for-of lanes — never re-added it, so
+  // `emitConstIdentifierUpdateGuard` never fired for the incrementor. The loop
+  // exit restores the outer state (`savedForConstBindings`).
+  if (
+    stmt.initializer &&
+    ts.isVariableDeclarationList(stmt.initializer) &&
+    stmt.initializer.flags & ts.NodeFlags.Const
+  ) {
+    if (!fctx.constBindings) fctx.constBindings = new Set();
+    for (const name of introducedNames) fctx.constBindings.add(name);
+  }
+
   // #1453: Per-iteration fresh binding for `for (let/const X = ...)`.
   //
   // ECMA-262 §14.7.4.4 (CreatePerIterationEnvironment) requires that each
@@ -847,7 +863,14 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   ctx.liveBodies.add(incrInstrs);
   fctx.body = incrInstrs;
   if (stmt.incrementor) {
-    if (!emitPromotedI32Increment(fctx, stmt)) {
+    // (#5271 step 7, G1) The i32-counter fast path writes the slot directly, so
+    // it never reaches `emitConstIdentifierUpdateGuard` — `for (const i = 0;
+    // i < 1; i++)` incremented a `const` silently. Ask the guard FIRST; it takes
+    // over (throw + unreachable) exactly when the target is a const binding.
+    const constIncrTarget = updateExpressionIdentifierTarget(stmt.incrementor);
+    if (constIncrTarget !== undefined && emitConstIdentifierUpdateGuard(ctx, fctx, constIncrTarget)) {
+      // Handled: the guard emitted the abrupt completion.
+    } else if (!emitPromotedI32Increment(fctx, stmt)) {
       const resultType = compileExpression(ctx, fctx, stmt.incrementor);
       if (resultType !== null) fctx.body.push({ op: "drop" });
     }
@@ -3449,6 +3472,24 @@ function emitForInMemberTargetWrite(
  * body } incr; br } }` scaffolding with the dynamic-object path so `break` /
  * `continue` / nested-loop depth handling is consistent.
  */
+/**
+ * (#5271 step 7, G1) The identifier a for-incrementor WRITES, if it writes one:
+ * `i++` / `++i` / `i--` / `--i` / `i += e`. Used to run the `const`-assignment
+ * guard before the i32-counter fast path claims the incrementor.
+ */
+function updateExpressionIdentifierTarget(expr: ts.Expression): ts.Identifier | undefined {
+  if (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) {
+    const op = expr.operator;
+    if (op !== ts.SyntaxKind.PlusPlusToken && op !== ts.SyntaxKind.MinusMinusToken) return undefined;
+    return ts.isIdentifier(expr.operand) ? expr.operand : undefined;
+  }
+  if (ts.isBinaryExpression(expr) && ts.isIdentifier(expr.left)) {
+    const kind = expr.operatorToken.kind;
+    if (kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment) return expr.left;
+  }
+  return undefined;
+}
+
 /**
  * (#5271 step 4) The binding kind of a `for…in` head, for the decl-mode
  * destructure helpers (TDZ init fires for `let`/`const`, is a no-op for `var`).

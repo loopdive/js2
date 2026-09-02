@@ -121,6 +121,7 @@ import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
   classIdentityFromExpression,
+  classObjectDisplayName,
   classStaticOwnPropertyNames,
   hasClassStaticMethod,
 } from "../class-static-metadata.js";
@@ -3012,8 +3013,11 @@ export function compileBuiltinStaticCall(
           }
 
           if (propLiteral === "name") {
-            addStringConstantGlobal(ctx, classIdentity);
-            fctx.body.push(...stringConstantExternrefInstrs(ctx, classIdentity));
+            // (#5271 step 7, G2) §10.2.9 SetFunctionName — the OBSERVABLE name,
+            // not the `__anonClass_<n>` registry key.
+            const classDisplay = classObjectDisplayName(ctx, classIdentity);
+            addStringConstantGlobal(ctx, classDisplay);
+            fctx.body.push(...stringConstantExternrefInstrs(ctx, classDisplay));
             fctx.body.push({ op: "i32.const", value: 0x04 });
           } else if (propLiteral === "length") {
             fctx.body.push({ op: "f64.const", value: classConstructorLength(ctx, classIdentity) });

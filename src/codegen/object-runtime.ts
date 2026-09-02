@@ -58,6 +58,7 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   buildArgumentsToPrimitiveArm,
   buildArgumentsLengthAbsentMiss,
@@ -363,7 +364,12 @@ function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[]
     }
     entries.push({
       className,
-      displayName: ctx.functionNameMap.get(className) ?? className,
+      // (#5271 step 7, G2) A class expression's registry key can be the
+      // synthetic `__anonClass_<n>` id; §10.2.9 says the observable name is the
+      // declared one or, for an anonymous class, the binding it is defined into.
+      displayName: className.startsWith("__anonClass_")
+        ? classObjectDisplayName(ctx, className)
+        : (ctx.functionNameMap.get(className) ?? className),
       structTypeIdx,
       classObjectGlobalIdx,
     });

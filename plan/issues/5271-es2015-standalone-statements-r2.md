@@ -25,6 +25,13 @@ related: [5154, 5158, 5157, 4444]
 loc-budget-allow:
   - total
   - src/codegen/statements/loops.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/class-static-metadata.ts
+  - src/codegen/analysis/static-string-constants.ts
+  - src/codegen/expressions/misc.ts
+  - src/codegen/statements.ts
+  - src/codegen/forin-key-destructure.ts
+  - src/codegen/with-has-binding-native.ts
   - src/codegen/statements/shared.ts
   - src/codegen/statements/variables.ts
   - src/codegen/statements/destructuring.ts
@@ -62,6 +69,7 @@ coercion-sites-allow:
   - src/codegen/with-has-binding-native.ts
 func-budget-allow:
   - src/codegen/statements.ts::compileStatementInner
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
   - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/statements/loops.ts::compileForStatement
   - src/codegen/statements/loops.ts::compileForInStatement
@@ -744,3 +752,29 @@ cleared).
 
 `stmt-cl-B.txt`: **0 → 3 pass**. Controls 20/20. Full list after steps 1-5:
 **0 → 30 pass**.
+
+### Step 7 — declaration-lane residue (cluster G, 4 of 7)
+
+- **G1 (1 row).** A `const` for-head is re-added to `fctx.constBindings` after
+  the head declarators, and — the part the plan's site did not cover — the
+  **i32-counter fast path** (`emitPromotedI32Increment`) writes the slot
+  directly and never reaches `emitConstIdentifierUpdateGuard`. The guard is now
+  asked FIRST for an incrementor that writes an identifier, so
+  `for (const i = 0; i < 1; i++)` throws TypeError.
+- **G2 (3 rows).** `Object.getOwnPropertyDescriptor(class {}, 'name').value`
+  reported the compiler's `__anonClass_<n>` REGISTRY KEY. New
+  `classObjectDisplayName` (`class-static-metadata.ts`) routes a synthetic class
+  identity through the shared §10.2.9 `fnInstanceNameOf`, and both the
+  literal-key gOPD fold (`call-builtin-static.ts`) and the dynamic native-MOP
+  arm (`object-runtime.ts fillClassObjectNameArms`) use it. A NAMED class
+  expression and a class declaration are unchanged; a `static name()` member
+  still overrides the intrinsic (the existing `classIntrinsicOverridden` /
+  `staticMethodSet` screens).
+- **G3 (3 rows) NOT done** — the param-destructuring lanes
+  (`ary-ptrn-elem-ary-rest-init`, `dflt-obj-ptrn-prop-ary`,
+  `dflt-params-arg-val-not-undefined`). The plan itself sequences these last
+  ("high blast radius", #5154 L(a) call-site-driven lane widening); left for a
+  follow-up.
+
+`stmt-cl-G.txt`: **0 → 4 pass**. Controls 20/20. Full list after steps 1-5 + 7:
+**0 → 34 pass**.

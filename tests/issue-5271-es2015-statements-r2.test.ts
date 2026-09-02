@@ -506,6 +506,82 @@ describe("#5271 step 4 — for-in lexical head (standalone)", () => {
   });
 });
 
+describe("#5271 step 7 — declaration-lane residue", () => {
+  it("a `const` for-head still guards its incrementor", async () => {
+    // RED on base: the i32-counter fast path wrote the slot without the guard.
+    await expectBothLanes(
+      `
+      var t = 'no';
+      try { for (const i = 0; i < 1; i++) {} } catch (e) { t = e.name; }
+      LOG("t=" + t);
+    `,
+      ["t=TypeError"],
+    );
+  });
+
+  it("an anonymous class expression's own `name` is the BINDING name", async () => {
+    // RED on base: the descriptor's value was the compiler's `__anonClass_<n>`
+    // registry key.
+    expect(
+      await runStandalone(`
+      let cls = class {};
+      var gopd = function(o, k) { return Object.getOwnPropertyDescriptor(o, k); };
+      var d = gopd(cls, 'name');
+      LOG("value=" + d.value);
+      LOG("writable=" + d.writable);
+      LOG("enumerable=" + d.enumerable);
+      LOG("configurable=" + d.configurable);
+    `),
+    ).toEqual(["value=cls", "writable=false", "enumerable=false", "configurable=true"]);
+  });
+
+  it("CONTROL — a NAMED class expression keeps its own name", async () => {
+    expect(
+      await runStandalone(`
+      let xCls = class x {};
+      var gopd = function(o, k) { return Object.getOwnPropertyDescriptor(o, k); };
+      LOG("name=" + gopd(xCls, 'name').value);
+    `),
+    ).toEqual(["name=x"]);
+  });
+
+  it("CONTROL — a class DECLARATION keeps its declared name", async () => {
+    expect(
+      await runStandalone(`
+      class Decl {}
+      var gopd = function(o, k) { return Object.getOwnPropertyDescriptor(o, k); };
+      LOG("name=" + gopd(Decl, 'name').value);
+      LOG("direct=" + Decl.name);
+    `),
+    ).toEqual(["name=Decl", "direct=Decl"]);
+  });
+
+  it("CONTROL — an ordinary `let` for-head counter is unaffected by the const guard", async () => {
+    await expectBothLanes(
+      `
+      var total = 0;
+      for (let i = 0; i < 4; i++) total = total + i;
+      LOG("total=" + total);
+      var j = 0, seen = 0;
+      for (j = 0; j < 3; j += 1) seen = seen + 1;
+      LOG("seen=" + seen);
+    `,
+      ["total=6", "seen=3"],
+    );
+  });
+
+  it("CONTROL — a `const` for-head with NO incrementor still runs", async () => {
+    await expectBothLanes(
+      `
+      var n = 0;
+      for (const c = 5; n < 1; ) { n = n + c; }
+      LOG("n=" + n);
+    `,
+      ["n=5"],
+    );
+  });
+});
+
 describe("#5271 step 5 — a constant fold must not erase a TDZ throw", () => {
   it("a NUMERIC top-level const read before its declaration throws", async () => {
     // RED on base: `x + 1` folded to `f64.const 2` at the call site, so the
