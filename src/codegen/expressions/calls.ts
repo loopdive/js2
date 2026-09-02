@@ -330,6 +330,7 @@ import {
   ensureObjectProtoToStringClassifierFn,
 } from "../object-proto-tostring-native.js";
 import { emitObjectProtoToStringWithSymbolTag } from "../object-proto-symbol-tag.js";
+import { tryCompileObjectProtoProtoAccessorReflectiveCall } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import {
   emitBrandCheckTypeError,
   ensureStandaloneNativeMethodClosure,
@@ -1873,7 +1874,27 @@ function tryEmitNativeProtoDescriptorAccessorCall(
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
 
   const resolved = resolveDescriptorAccessorSource(ctx, recv);
-  if (!resolved || resolved.accessorName !== "get") return undefined; // setter synthesis not wired
+  if (!resolved) return undefined;
+
+  // (#5268 step 1) `gOPD(Object.prototype, "__proto__").{get,set}.call(…)` —
+  // the Annex B accessor pair, whose halves are NOT `$NativeProto` members
+  // (the glue models no set-half), so the shared closure-recovery emitter
+  // below cannot reach them. Both halves are plain natives; call them
+  // directly with `thisArg → param 0`, which is observationally identical to
+  // `call_ref`ing the forwarding closure the descriptor carries.
+  {
+    const protoAccessor = tryCompileObjectProtoProtoAccessorReflectiveCall(
+      ctx,
+      fctx,
+      expr,
+      resolved.accessorName,
+      parseBuiltinProtoGopdCall(ctx, fctx, resolved.gopdCall),
+      isCall,
+    );
+    if (protoAccessor !== undefined) return protoAccessor;
+  }
+
+  if (resolved.accessorName !== "get") return undefined; // setter synthesis not wired
 
   const info = parseBuiltinProtoGopdCall(ctx, fctx, resolved.gopdCall);
   if (!info) return undefined;
@@ -4300,7 +4321,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
  * aliased via `classExprNameMap`), or `undefined`. Uses the type oracle
  * (#1930) rather than a raw checker query.
  */
-function elemAccessReceiverClassName(ctx: CodegenContext, elemAccess: ts.ElementAccessExpression): string | undefined {
+export function elemAccessReceiverClassName(
+  ctx: CodegenContext,
+  elemAccess: ts.ElementAccessExpression,
+): string | undefined {
   let name = ctx.oracle.declaredNameOf(elemAccess.expression);
   if (name && !ctx.classSet.has(name)) name = ctx.classExprNameMap.get(name) ?? name;
   return name && ctx.classSet.has(name) ? name : undefined;

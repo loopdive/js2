@@ -1,10 +1,10 @@
 ---
 id: 5195
 title: "ES2015 standalone class — r2 residual pass"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-01
+updated: 2026-09-02
 priority: medium
 horizon: l
 feasibility: medium
@@ -34,7 +34,20 @@ loc-budget-allow:
   - src/codegen/context/create-context.ts
   - src/compiler/early-errors/node-checks.ts
   - src/compiler/early-errors/module-rules.ts
+  - src/codegen/declarations.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/index.ts
+coercion-sites-allow:
+  - src/codegen/class-proto-lookup.ts
 func-budget-allow:
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/statements/nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/class-bodies.ts::compileSuperCall
@@ -48,6 +61,8 @@ func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::compileNestedClassDeclaration
   - src/codegen/typeof-delete.ts::compileTypeofExpression
   - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 ---
 
 # #5195 — class r2: cluster and fix the residual class-bucket failures
@@ -62,6 +77,60 @@ TDZ arms in `nested-declarations.ts`/`class-bodies.ts`/`control-flow.ts`, and
 (4) a `new.target` value carrier in `new-target.ts`. Each is an arm added at
 the decision point that already owns the case; the listed functions grow by
 those arms.
+
+Growth allowance amendment (2026-09-01, implementation pass):
+`property-access-dispatch.ts::finalizeStructAndDynamicMemberGet` (+21) — Step
+3.2 turned out to live in that function's `isExternObj` admission test, not in
+a separate receiver-classification helper as the plan guessed. The added arm is
+one more clause in the same disjunction that already admits externref LOCALS
+(#3033 Bug 2b); it admits the module-GLOBAL twin under the same
+slot-representation rule, restricted to receivers whose static type is purely
+`undefined`/`void` so no resolvable receiver changes lane.
+
+Growth allowance amendment (2026-09-02, resumed implementation pass):
+`call-builtin-static.ts::compileBuiltinStaticCall` (+3 now, more in Step 2.3) —
+Steps 1.3/1.4 make `<Class>.prototype` a real `$Object` for EVERY standalone
+class, so the `getOwnPropertyDescriptor` struct fast paths in that function must
+decline that receiver (the predicate itself is hoisted to a module-level helper
+`isStandaloneClassProtoObjectReceiver` to keep the growth to the two call sites);
+Step 2.3 adds the class-object sidecar redirect at the same two folds.
+
+Growth allowance amendment (2026-09-02, Step 1): `declarations.ts` (+12) —
+Step 1.2 needs a top-level class with a runtime-keyed member to reach
+`__module_init`, and the one collector that decides that
+(`collectPreparedTopLevelClassComputedNameEffects`) lives in that file; the
+added arm is one more clause beside the runtime-heritage one it already has.
+`create-context.ts::createCodegenContext` (+2) — the two new context maps.
+`nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects` — the same
+walk now covers methods, stores the key into its module global, and force-inits
+the prototype singleton.
+
+Growth allowance amendment (2026-09-02, Step 1.7): `call-tail-dispatch.ts` /
+`::compileTailDispatch` (+18) — one clause added to the existing user-class
+element-call arm so a runtime-keyed prototype member is INVOKED rather than
+folded to `ref.null.extern`; `calls.ts` (+3) for exporting the receiver-class
+resolver that clause needs; `index.ts` / `::generateModule` /
+`::generateMultiModule` (+7/+4/+2) for the one finalize call that mints
+`__class_proto_lookup` (new leaf file `class-proto-lookup.ts`).
+
+Coercion-sites allowance (2026-09-02, Step 2): `class-proto-lookup.ts`
+(`number_toString` +1) — `class C { [ID(2)]() {} }` spells its member with a
+NUMERIC key, and `C[2]` / `new C()[2]` lower to `__extern_get_idx(recv, f64)`,
+whose own `$Object` arm converts the index with `number_toString` before
+delegating to `__extern_get` (#2551: the canonical decimal key, not a truncated
+one). The class-receiver arm added here delegates the same way and therefore
+calls the same helper for the same reason — reuse of the existing engine call,
+not a new hand-rolled ToString.
+
+Growth allowance amendment (2026-09-02, verification findings F1-F5):
+`object-ops.ts` (+26) / `::compilePropertyIntrospection` (+11) — F5. A class
+with a runtime-keyed member has an own-key set the CHECKER cannot enumerate, so
+that function's static `hasOwnProperty` / `propertyIsEnumerable` fold answered
+`false` for `C.prototype.hasOwnProperty('dyn')` while `gOPD(C.prototype,'dyn')`
+found the property: two answers about one object. The added arm is one
+predicate plus one clause on the existing "delegate to the runtime" condition
+the externref-receiver case already uses — the fold is declined, not
+reimplemented, and only for a prototype or constructor receiver of such a class.
 
 ## Problem
 
@@ -697,3 +766,377 @@ Control list verification on HEAD `0d9bfedee` (2026-09-01):
 - **Traps**: the plan's out-of-scope table (generator carrier, decorators, eval
   tier, #3371, #5198, realm) — 38 rows — must not be chased. Merge, never
   rebase.
+
+## 2026-09-02 resumed implementation (Opus)
+
+Resumed from the suspension handoff (`git am` of `lane-5195.mbox`, 2 patches,
+onto `0f801557a`). Four commits on `worktree-agent-aa423580afa75b4c5`.
+
+**Whole-list, `class-head.txt` (209 rows), `--standalone`, in-process runner:**
+
+| point | pass | fail | compile_error |
+|---|---|---|---|
+| baseline (HEAD `0d9bfedee`, 2026-09-01) | 0 | 190 | 19 |
+| after the resumed patch (Step 3 + 9K) | 9 | 189 | 11 |
+| after Step 1 + 1.7 | 24 | 172 | 13 |
+| after Steps 1.6 / 9 H / 9 I / 11 E | 24 | 172 | 13 |
+| after Step 2 | 28 | 170 | 11 |
+| after the fill-order fix | 29 | 167 | 13 |
+| **CORRECTED, integrated tree (2026-09-02, post-F1–F5)** | **28** | **169** | **12** |
+
+**The 29/167/13 row was wrong and is superseded.** Independent verification on
+the integrated tree (this branch merged onto main, carrying #5224 and the #5272
+in-process host-import leak check) measured **28 / 169 / 12**, and this branch
+re-measured the same 28/169/12 after merging `origin/main` again. Two corrections
+to the earlier claim:
+
+- `computed-property-names/class/method/constructor-can-be-generator.js` is NOT
+  a standalone pass. Its generator body leaks `env::__create_generator` /
+  `env::__gen_create_buffer` — the native generator carrier, owned by #680 /
+  #2864 — and #5272 taught the in-process runner CI's leak check, so it now
+  scores as `compile_error`. The class mechanism this issue owns IS fixed there:
+  the HOST lane passes the row. `tests/issue-5195-es2015-class-r2.test.ts` pins
+  the exact leak string, so the row flips loudly when that lane closes it.
+- The earlier 13-CE reading included two `compilation timeout` rows that
+  alternate with box load; they are environment-blocked either way.
+
+**Host lane, same 209-row list: 32 pass / 168 fail / 9 compile_error.**
+
+`class-controls.txt`: **22/22 standalone**, unchanged after every step.
+**Host controls are 20/22, and the two failures are PRE-EXISTING on main** —
+`expressions/class/accessor-name-static/computed-err-to-prop-key.js` and
+`statements/class/dstr/meth-ary-init-iter-close.js`. They are not this branch's
+and are excluded from the green claim.
+
+### Verification findings F1–F5 (2026-09-02)
+
+An independent skeptic reproduced five defects against base `0f801557ad`;
+probes live in `/home/user/js2/.tmp/refute-F1/` and `.../refute-F2/`, and the
+branch-local ones in `.tmp/es2015/p3/`.
+
+| # | Severity | State | Evidence |
+|---|---|---|---|
+| F1 | HIGH | **fixed** | `class D extends C {}` over a runtime-keyed parent was a hard compile error; now compiles AND inherits. `refute-F1`: base 0/4 shapes, now 3/4 |
+| F2 | MEDIUM | **fixed** | class object no longer answers instance-prototype members. `refute-F2` probe1/2/3: 0/0/0 → 3/3/15, matching the js lane |
+| F3 | MEDIUM | **fixed** | the runtime-keyed call binds its receiver and no longer depends on codegen order |
+| F4 | LOW | **half fixed, half documented** | `in` through a dynamic holder: 0 → 3 (A/B against the base tree). Statically-typed `in` and the WRITE side remain open |
+| F5 | LOW | **fixed** | `hasOwnProperty` and `gOPD` now agree on a runtime-keyed member |
+
+**F1** — the inheritance loop aliased the parent's synthetic `__cmdyn$<ordinal>`
+funcMap entry into the child. That alias is a program-ABI claim, and the planner
+resolves it back to the source member and asks for its spec key, which is
+`undefined` for an unfoldable computed name — so it threw `no complete exact
+canonical class-member authority` and the whole module failed. Base compiled
+these (silently dropping the member). Fixed by skipping the alias and making
+inheritance a runtime [[Prototype]] walk: `emitStandaloneClassProtoObject` links
+the child prototype `$Object` to the parent's (§15.7.14 step 6, previously left
+null), `__class_proto_lookup` covers every class in such a hierarchy, and the
+static half walks to the nearest ancestor sidecar.
+
+**F2** — `__class_<C>` is itself a `$C` struct, so the lookup's `ref.test`
+matched it and returned the INSTANCE prototype whenever no sidecar existed;
+`C[ID('m')]` answered an instance method where base (and the spec) says
+`undefined`. The class-object identity test is now unconditional and answers the
+sidecar or NULL, never the prototype.
+
+**F3** — the call went through `tryEmitInlineDynamicCall`, which invokes with
+`this` unbound (so ANY runtime-keyed call into a `this`-using method threw, not
+only the `new C()[k]()` shape) and whose `ref.test` candidate set depends on
+which closure wrappers codegen has registered so far (so an inherited member's
+call folded to null or not depending on source order). Replaced by
+`class-dynamic-member-call.ts`:
+`__apply_closure(__extern_get(recv, ToPropertyKey(key)), recv, args)`, receiver
+compiled exactly once.
+
+**Found while fixing F3:** `ref.test` cannot identify a class at all — WasmGC
+canonicalizes struct types structurally, so two unrelated classes with the same
+field shape are the same type and the first lookup arm swallowed the other's
+instances. Every arm now also tests the class's `__tag`.
+
+
+### Second-round review findings R2-1 – R2-9 (2026-09-02)
+
+A second independent review (~45 probes across js / host / standalone; harness
+`/home/user/js2/.tmp/rev2-5195/batch.mts`, probes under
+`.tmp/refute-cls2-R2-{1,2,3}/`) confirmed three blockers and six lower-severity
+observations. Common-case hierarchies were byte-identical; deep chains,
+overrides, tag discrimination, Proxy/symbol/numeric keys, optional calls,
+aliases, key-once evaluation and derived returns all passed.
+
+| # | Severity | State | Evidence |
+|---|---|---|---|
+| R2-1 | HIGH | **fixed** | `super[k]()` in an override recursed on itself (depth 51). Now js 1 / lane 1; value probe 111 in both lanes |
+| R2-2 | MEDIUM (regression vs base) | **fixed** | `C.hasOwnProperty('sm'/'sf')` flipped true → false. probe1 0 → 11; probe2 → 111111111111, exact js match |
+| R2-3 | MEDIUM (order-dependence) | **fixed** | `new D()[ID('n')]` was undefined until something touched `D.prototype`. r2-notouch 11 → 111, r4-call 1 → 11 |
+| R2-4 | LOW | **documented** | spread argument lists do not take the receiver-binding lane |
+| R2-5 | LOW | **fixed** | callee is now read before the arguments; order probe 12 in both lanes |
+| R2-6 | LOW | **documented** | calling a non-callable member returns instead of throwing TypeError (base parity) |
+| R2-7 | — | **documented** | the host lane is deliberately no longer byte-identical for runtime-keyed programs |
+| R2-8 | — | **documented** | an inherited static reached through the sidecar binds `this` to the declaring class |
+| R2-9 | — | **documented** | the "statically-typed `in`" residual is wider than first stated |
+
+**R2-1.** `super[k](…)` was routed through the F3 member-call lowering, which
+uses one compiled receiver for BOTH the lookup and the `this` — and `super`
+compiles to `this`, so an overriding method calling `super[k]()` re-entered
+itself. The stack overflow escapes the wasm try/catch. §13.3.7.1 splits those
+roles, and the emitter now models the split (separate lookup and receiver
+locals); the super target is the enclosing class's parent prototype `$Object`,
+and the lane declines to the existing super lowering when any part of that is
+unresolvable.
+
+**R2-2.** The F5 decline accepted a bare class identifier, routing CONSTRUCTOR
+receivers to the runtime `__hasOwnProperty`, which has no arm for a
+`$ClassName` class-object's statics. Restricted to `.prototype` receivers.
+
+**R2-3.** The top-level collector inspected a class's OWN members only, so a
+descendant's prototype was never force-built. It now admits a class whose
+hierarchy carries a runtime-keyed member — which is what the force-init comment
+in `nested-declarations.ts` already claimed.
+
+### Residuals after R2 (each with a probe)
+
+- **R2-4, spread argument lists.** `c[ID('m')](...[1, 2])` declines the
+  receiver-binding lane (building the argument vector from a spread needs the
+  iterator protocol) and falls back to the receiver-less dispatch, so a
+  `this`-using method answers wrongly or throws. The commit message's "binds its
+  receiver" holds for non-spread argument lists only. Probe:
+  `.tmp/es2015/p4/r2-456b.js`.
+- **R2-6, calling a non-callable.** `c[ID('nope')]()` — a data field, or a
+  missing key — returns silently instead of throwing TypeError. Base does the
+  same. Probe: same file.
+- **String concatenation of a dynamic-call result.** `'E' + c[ID('m')](1)` traps
+  with "Cannot convert object to primitive value". **Pre-existing and not this
+  issue's**: the identical shape fails on base through the #4252 plain-object
+  dynamic-call path (measured on the base tree,
+  `.tmp/es2015/p4/concat2.js`), and `refute-cls2-R2-1/r3-static-name.js` throws
+  identically on base. It is only more reachable now because the class call
+  actually happens. This is what keeps `refute-cls2-R2-1/r2-value.js` from
+  matching js.
+- **R2-8, inherited static `this`.** `D[ID('s')]()` reached through the parent's
+  sidecar binds `this` to the declaring class C, not D. Pre-existing on the
+  typed static path.
+- **R2-9, statically-typed `in`.** Wider than the earlier note: for a
+  runtime-keyed class that ALSO declares a field, statically-typed `in`
+  compiles to INVALID wasm (`array.set[0] expected type (ref null 1), found
+  local.get of type i32`). Pre-existing — the same failure on base
+  (`rev2-5195/p4-ownfield.js` on the base tree).
+- **R2-2 residual.** A runtime-keyed STATIC still folds `C.hasOwnProperty('s')`
+  to false; widening needs the fold to OR in the sidecar's answer.
+- **F4 write side** and the **class-EXPRESSION inheritance shape** are unchanged
+  from the previous round.
+
+**R2-7 — deliberate host-lane change.** The host lane is NOT byte-identical for
+a program with runtime-keyed class members: a METHOD's computed key is now
+evaluated at ClassDefinitionEvaluation there too. That is a FIX (§15.7.14
+requires the evaluation, and its side effects were previously dropped on both
+lanes), not an accident; classes whose keys all fold are unaffected.
+
+### Third-round review residuals R3-1 – R3-7 (2026-09-02)
+
+A third independent review (~95 probes across js / host / standalone, lane vs
+base; harness under `/home/user/js2/.tmp/rev3-5195/`) returned
+**ship-with-notes**: no regression against base, programs with no class are
+byte-identical, and every R2 fix verified. It found seven residual gaps. All
+seven are of the same shape — **the lane is wrong, but base is null / 0 / a
+throw** — so none is a regression; they are the next residual pass, deliberately
+NOT fixed in this branch.
+
+Skeptic review confirmed R3-1, R3-2 and R3-3 independently, and confirmed R3-4's
+mechanism.
+
+| # | Severity | Site | Probe | js | lane | base |
+|---|---|---|---|---|---|---|
+| R3-1 | medium | `class-dynamic-member-call.ts:107` | `s1b-static-noinst.js` | 12 | 10 | — |
+| R3-2 | medium | `declarations.ts:2431` | `c3-classexpr-child.js` | 123 | 20 | — |
+| R3-2 | medium | (same) | `s8c` class-expression parent | 11 | 10 | — |
+| R3-2 | medium | (same) | `k4b` top-level `var C = class { [K(1)](){} }` | key evaluated | key never evaluated | — |
+| R3-3 | medium | `class-dynamic-member-call.ts:188` | `s12-getter-receiver.js` | 7 | 1 | — |
+| R3-4 | medium | `call-tail-dispatch.ts:1413/1534` | `s9d` | 11 | TypeError | TypeError |
+| R3-5 | low | (root cause unconfirmed) | `g/s33d` | 17 | TypeError 1059 | — |
+| R3-6 | low | `call-tail-dispatch.ts:735` | `super['m']()` / `super[2]()` | member value | `undefined` | — |
+| R3-7 | low | `nested-declarations.ts:437` | function-local runtime-keyed hierarchy | 1256 | 5656 | 0 |
+
+**R3-1 — `super[k]()` inside a STATIC method is a silent no-call.** A static
+method has no `this` local, so the lane declines to `tryEmitInlineDynamicCall`
+with a null callee and the call is simply not made. Resolved-key `super.t()` in
+a static works, so this is specific to the computed-key form.
+
+**R3-2 — the force-build covers ClassDeclaration STATEMENTS only.** A top-level
+class EXPRESSION, as child or parent (`const D = class extends C {…}`), is
+neither key-evaluated nor prototype-built, so the R2-3 order-dependence persists
+for the expression form: `c3-classexpr-child.js` answers 20 against js's 123,
+and touching `D.prototype` first restores 123. `k4b` shows the same collector
+gap on a bare top-level `var C = class { [K(1)](){} }` — the computed key is
+never evaluated at all. This is the same boundary as the class-EXPRESSION
+inheritance shape already listed under "Residuals after F1–F5".
+
+**R3-3 — `super[k]` on an ACCESSOR uses the wrong receiver.** When the parent
+member is an accessor, the getter is invoked with the parent PROTOTYPE as
+receiver instead of `this`. §10.1.8.1 passes the original Receiver through the
+chain walk; `s12-getter-receiver.js` reads 1 where js reads 7.
+
+**R3-4 — a unique-symbol const key is claimed by the wrong lowering.**
+`super[s]()` where `s` is a `unique symbol` const is taken first by
+`compileCallableElementAccessCall`, which folds the read to `ref.null` and
+throws TypeError. `this[s]()` works. Base throws here too, so this is a
+long-standing gap the super lane simply does not rescue: `s9d` js 11, lane and
+base both TypeError.
+
+**R3-5 — `this` inside a RUNTIME-KEYED accessor body is not the real receiver.**
+The dynamic-call lanes reached from inside a runtime-keyed accessor get a wrong
+`this`; a NAMED getter is fine. `g/s33d` reads js 17, lane TypeError 1059. Root
+cause unconfirmed — a dummy-receiver trampoline is suspected but was not proven.
+
+**R3-6 — a LITERAL-key super call misses `__cmdyn$N`.** `super['m']()` and
+`super[2]()` against a runtime-keyed parent member take the resolved-key
+lowering, which looks for the literal name and never consults the synthetic
+`__cmdyn$<ordinal>` member, so the call answers `undefined`.
+
+**R3-7 — a function-local runtime-keyed hierarchy shares one prototype
+singleton.** Declared INSIDE a function, the hierarchy reuses a single prototype
+`$Object` across calls, so the second evaluation's install overwrites the
+first's: js 1256, lane 5656, base 0. Same mechanism as the same-name
+class-expression identity gap documented above.
+
+### Residuals after F1–F5
+
+- **F4 write side.** `c[ID('s')] = 7` neither runs the runtime-keyed setter nor
+  creates an own property. §10.1.9 OrdinarySet needs a receiver-aware chain walk
+  (`__reflect_set_receiver`, this plan's Step 6); `__reflect_set` has no receiver
+  parameter, and setting on the prototype instead would be a different wrong
+  answer. Probes: `.tmp/es2015/p3/f4-write.js`, `f4-write-has.js`.
+- **F4 statically-typed `in`.** `ID('m') in c` where `c` has the class's static
+  type still folds `false`; the dynamic-holder form is fixed. Probe:
+  `.tmp/es2015/p3/f4-write-has.js` (first assert).
+- **F1 class-EXPRESSION shape (`q25`).** `var C = class { [ID('dyn')](){} };
+  var D = class extends C {};` still answers 0 — unchanged from base. Same
+  pre-existing same-name class-expression identity gap listed below; the
+  declaration form is fixed.
+
+### Per step
+
+| Step | Sub-list before → after | Notes |
+|---|---|---|
+| 3 (D1) | 0/14 → 4/14 | one more than the plan's estimate of 3 |
+| 9 K | 0/3 → 3/3 | complete |
+| 1.3/1.4 (C) | 0/2 → 2/2 | complete |
+| 1 + 1.7 + 2 (A) | 0/48 → 12/48 | see residuals |
+| 1.6 | — | `getter-duplicates` + `setter-duplicates` (counted in A and H) |
+| 9 H | 0/5 → 3/5 | |
+| 9 I | 0/1 → 0/1 | mechanism lands, the row needs more (below) |
+| 11 E (cheap half) | 0/8 → 3/8 | the override half is not attempted |
+
+### What landed
+
+- **Step 3 / 9 K** (inherited from the suspension patch, re-validated):
+  the #2623 P-7 `typeof` unsound-fold guard now applies in every lane, the
+  module-GLOBAL twin of the `isExternObj` admission in
+  `finalizeStructAndDynamicMemberGet`, and a computed `['constructor']` key is
+  no longer treated as the constructor.
+- **Step 1.3/1.4**: `C.prototype.constructor` is installed FIRST (spec own-key
+  order) and every standalone class with a class object gets the real `$Object`
+  prototype, including a member-less one.
+- **Step 1**: a class element whose ComputedPropertyName does not fold is
+  registered under a synthetic `__cmdyn$<ordinal>` name
+  (`class-dynamic-keys.ts`), its key expression is evaluated once in source
+  order at ClassDefinitionEvaluation into a `__cmkey_` global (methods included
+  — they used to be dropped entirely, and a top-level class evaluated nothing
+  at all), and the install reads that global instead of an interned string.
+- **Step 1.7**: `class-proto-lookup.ts` — a finalize-minted
+  `__class_proto_lookup` maps a class-instance receiver to its prototype
+  `$Object`, with one prepended `__extern_get` arm guarded by
+  `__hasOwnProperty` so §7.3.2 own-shadowing holds regardless of arm order;
+  plus the element-CALL admission so `new C()[2]()` invokes rather than folding
+  to `ref.null.extern`.
+- **Step 2**: `class-static-sidecar.ts` — a parallel `$Object` holding the
+  static METHODS, reached through the same lookup by reference identity against
+  the class-object singleton, plus the `__extern_get_idx` arm that makes a
+  NUMERIC computed key (`[ID(2)]`) reachable at all.
+- **Step 1.6**: two accessors of the same kind and key are last-definition-wins.
+- **Step 9 H**: a top-level `new C().x = v` / `C.staticX = v` now reaches
+  `__module_init` (it wrote no named global, so the whole statement was
+  dropped), and `compilePropertyAssignment` gained the static-setter arm.
+- **Step 9 I**: the class body's own name is an immutable binding.
+- **Step 11 E**: the struct-result derived-ctor return arm (`return;` /
+  `return undefined` → `this`, `return null` → TypeError).
+
+### Residuals (measured, with the reason)
+
+- **A, 36 rows.** Two causes. (i) The ~20 `cpn-class-*-accessors-*` rows need
+  STATIC accessors on the sidecar; installing them as written traps (their
+  compiled half takes the class struct as `this`, the sidecar invokes with an
+  `$Object` receiver → illegal cast), so they need a per-half trampoline that
+  supplies the dummy struct receiver `emitGetterCallWithDummy` already builds.
+  That trampoline is the next slice of Step 2. (ii) `method/string.js` needs the
+  PropertyAccess twin of the Step-1.7 element-call admission (`new C().d()`
+  where `d` is a runtime key still folds to null). `accessor-name-*-computed-in`
+  and the `cpn-class-expr-*` rows additionally need the class-EXPRESSION
+  identity fix: two anonymous class expressions bound to the same name share one
+  identity, so the first one's prototype is unreachable after the second is
+  evaluated (reproduced standalone with two `for (C = class {…})` loops).
+- **9 I, 1 row.** All five source shapes the rule covers pass (pinned in
+  `tests/issue-5195-es2015-class-r2.test.ts`); `name-binding/const.js` declares
+  eight same-named classes across eight function scopes and one
+  `new (class C {…})` shape still does not throw — the same class-expression
+  identity gap as above.
+- **9 H, 2 rows.** `setter-duplicates.js` passes in isolation and only
+  compile-times-out under load; `setters-prop-desc.js` needs `gOPD` on a
+  prototype accessor.
+- **11 E, 5 rows.** The override half (`return {}` must REPLACE `this`) needs
+  the derived ctor to take the externref-result lane; not attempted.
+- **Steps 4, 5, 6, 7, 8, 10, 12 not attempted** (D2 11, D3 5, D4 6, F 10, G 6,
+  M 8, N 8, O 3, P 2, Q 13, R 7, T 4). Step 10 M was investigated and declined:
+  the plan's fix widens every unannotated defaulted parameter with a scalar
+  initializer to `externref`, which changes the slot type for typed code as
+  well, and the rows additionally need `C.prototype.method(...)` dispatch.
+
+### Gates
+
+Five ratchet gates green at every commit (`check-loc-budget`,
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`); allowances recorded in this file's frontmatter with
+dated rationales. `pnpm run typecheck` (TS7) clean;
+`pnpm run typecheck:ts5` reports only the pre-existing
+`linked-provider-runtime.ts` `WebAssembly.Tag` errors, which this branch does
+not touch. `tests/issue-5195-es2015-class-r2.test.ts` **66/66** after the
+F1–F5 pass (was 38/38), host and standalone lanes, with a zero-host-import
+assertion on every standalone case and one pinned owned-leak row.
+
+`pnpm run test:equivalence:gate` run three times on this branch (after the
+Steps-1.6/9/11E commit, after Step 2, and once more on the final F1–F5 tree with
+`origin/main` merged): **24 failing / 1718 passing / 24 known-failures in
+baseline — no new equivalence regressions**, every time.
+
+Final validation, re-run in full after the R2 round, on this branch with
+`origin/main` merged (`47e337f3b6`). Both `class-head` lanes, both control
+lanes and the gates are unchanged from the F1–F5 measurement, i.e. the R2 fixes
+cost nothing on the tracked lists:
+
+| run | result |
+|---|---|
+| `class-head.txt` standalone | 28 pass / 169 fail / 12 compile_error |
+| `class-head.txt` host | 32 pass / 168 fail / 9 compile_error |
+| `class-controls.txt` standalone | 22/22 |
+| `class-controls.txt` host | 20/22 — the 2 failures are pre-existing on main |
+| `tests/issue-5195-es2015-class-r2.test.ts` | 76/76 (66 before the R2 round) |
+| five ratchet gates | green |
+| `pnpm run typecheck` (TS7) | clean |
+| `pnpm run test:equivalence:gate` | no new regressions |
+
+Related vitest files, run in batches: `classes`, `class-methods`,
+`class-expression(s)`, `class-method-calls`, `class-elements-619`,
+`private-class-members`, `abstract-classes`, `class-static-private-this`,
+`nested-class-declarations`, `#5212`, `#5213`, `#802`, `#846`, `#1058`,
+`#1364a/b`, `#1824`, `#2029`, `#2101a`, `#2158`, `#3024`, `#3520` ×2, `#4584`,
+`#4616`, `#4618` ×2, `#4628`, `#4646`, `#4770`, `#5169`, `#5191`, `#5202`,
+`#5237`, `#5239`, `#5242`, `es5-standalone-static-eval-class` — **all pass.**
+Two runs exited non-zero on a vitest `onTaskUpdate` RPC timeout with every test
+green, and one `#5213` row timed out at 35 s in a 3-file batch and passed when
+re-run alone; both are box-load artifacts.
+
+**One pre-existing failure found and confirmed NOT ours**:
+`tests/issue-1965-super-ctor-body.test.ts` fails 4 of 13 with `illegal cast` in
+`B_init` (js-host lane). Verified by an A/B file swap — the same 4 fail at the
+branch point `0f801557a` with this branch's sources removed, and the same 4
+(no more) with them restored. Worth its own issue; it is not in this issue's
+scope and nothing here touches it.

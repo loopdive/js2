@@ -1,7 +1,7 @@
 ---
 id: 5268
 title: "ES2015 standalone: Array + Object built-ins — r2 residual pass (136 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
@@ -19,7 +19,21 @@ related: [5145, 5148, 4491, 4492, 4444]
 # symbol-key arm, a ToObject wrapper, an accessor pair, an IsArray unwrap) in
 # the files listed. Growth is expected and granted for this change-set only;
 # new mechanisms go in NEW files (named per step) rather than in the god-files.
+# 2026-09-02 (Opus implementation pass): step 1 landed the `__proto__` accessor
+# pair. Two of its wiring sites were not on the planner's list, and both are
+# pure WIRING of the new `object-proto-proto-accessor.ts` module — the §10.4.7
+# immutable-prototype correction at the `Reflect.setPrototypeOf` call site, and
+# the setter-native swap at the `o.__proto__ = v` assignment arm. The semantics
+# live in the new module, not in these god-files.
+# 2026-09-02 (Opus, step 2): `object-ops.ts` grows by ONE condition — the
+# `Object.{keys,values,entries}` receiver test now also admits a value whose
+# provenance is a Proxy, which routes it to the native enumerator instead of the
+# closed-struct expansion. The predicate itself lives in the new
+# `proxy-value-provenance.ts`.
 loc-budget-allow:
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/expressions/assignment.ts
   - src/runtime.ts
   - src/codegen/array-species.ts
   - src/codegen/array-concat-spec.ts
@@ -45,7 +59,27 @@ loc-budget-allow:
   - src/codegen/expressions/calls-guards.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/declarations/import-collector.ts
+# 2026-09-02 (Opus implementation pass): the two step-1 wiring sites above are
+# each one arm inside an already-oversized dispatcher; splitting either is a
+# separate refactor with its own blast radius.
+# 2026-09-02 (Opus, step 2): `compileObjectKeysOrValues` grows by the one
+# Proxy-provenance condition; `ensureObjectRuntime` by the FIVE lines that call
+# the new `fillObjectIntegrityProxyArms` fill, in the same finalize slot as
+# `fillObjectAssignProxySourceArm`. Both algorithms live in
+# `object-integrity-proxy.ts`.
+# 2026-09-02 (Opus, step 2): the ONE new coercion site is `__is_truthy` on a
+# Proxy trap's booleanish result — §7.3.16 step 2 ("If status is false, throw"),
+# §7.3.17 step 1 and §7.3.25's `desc.[[Enumerable]]` test. That helper IS the
+# coercion engine's ToBoolean entry, and it is the same call the existing
+# `__object_isExtensible` Proxy front-guard makes (`object-runtime-proxy.ts`);
+# nothing here hand-rolls a ToString/ToNumber/equality matrix.
+coercion-sites-allow:
+  - src/codegen/object-integrity-proxy.ts
 func-budget-allow:
+  - src/codegen/object-ops.ts::compileObjectKeysOrValues
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/array-species.ts::emitArraySpeciesCreate
   - src/codegen/array-concat-spec.ts::compileArrayConcatNativeSpecFromReceiverAndArgsVec
   - src/codegen/array-object-proto.ts::emitArrayProtoMemberBody
@@ -614,3 +648,285 @@ the reason):
   `arrobj-cl-*.txt`, `arrobj-controls.txt` + `arrobj-controls-run1.txt`,
   `probes/ts{1..4}.js` + `probes/ts-probe2.out` (the `env::toString` repro),
   `arrobj-cluster.py` (the partition, re-runnable).
+
+## 2026-09-02 implementation (Opus)
+
+Steps 1, 2 (partial) and 6 landed, plus two pieces of step 3. Measured with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/arrobj-head.txt --standalone`
+on branch `worktree-agent-a9c998ea769df422c`.
+
+### Integration measurement (the authoritative one)
+
+Both sides run on the SAME tree — branch tip `47f0973f1e`, which merges
+`origin/main` `f64beb1a03` (so it carries PR #5461's runner standalone-leak
+check, the #5224 buffers wave and PR #5469's post-#5224 regression fix). The
+base side is that tree with this change-set's ten source files checked out from
+`origin/main` and its three new modules moved aside; the after side is the tree
+as committed. Nothing else differs.
+
+| 159-row head list | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| `origin/main` (f64beb1a03) | 1 | 148 | 10 |
+| this branch (47f0973f1e) | **22** | 127 | 10 |
+
+**21 rows flipped, ZERO new non-pass rows, and the compile_error SET is
+identical on both sides** (`comm` over both sorted non-pass lists: 21 lines on
+the base-only side, 0 on the after-only side). The single row `origin/main`
+already passes is one the buffers/for-of waves fixed, not one of ours.
+
+`.tmp/es2015/arrobj-controls.txt`: **20 / 20** on the merged tree.
+
+Equivalence gate on the same tree: 24 failing / 1718 passing / 24
+known-failures in baseline — "No new equivalence regressions", exit 0. All
+five source ratchets (loc / func / coercion-sites / oracle-ratchet /
+dead-exports) green; `pnpm run typecheck` (TS7) clean.
+
+Existing suites for the touched areas were A/B'd rather than merely run, and
+every failure they show is STANDING RED on `origin/main` with an identical
+failure set: `issue-3661-freeze-seal-descriptor-readback` (2),
+`issue-3403-object-integrity-var-key` (1, the host lane),
+`issue-4492-wave5` (5, its three self-declared "residual R1/R2/R3" groups) and
+`issue-4492-builtin-as-value` (1). `es5-array-isarray-arguments`,
+`issue-4616-patched-isarray-recursion`, `issue-2984-species` and
+`issue-3420-species-result-store` are fully green on both sides.
+
+### A note on compile-timeout noise
+
+The box ran at load 6–23 on 4 shared cores throughout, and a slow row is
+reported as `compile_error: compilation timeout`. Every such row in this work
+was re-run ALONE and A/B'd before being believed: `concat_spreadable-number-
+wrapper.js` (a control) timed out at 28.7 s on the base tree and 32.4 s on
+this one, and `splice/create-proto-from-ctor-realm-non-array.js` at 22.7 s
+vs 27.3 s — i.e. the timeouts track load, not the change-set. Do not read a
+`compile_error` in a shared-box run as a compiler refusal without that check.
+
+### Earlier per-step measurement (pre-merge base `ef6aec3322`)
+
+The same 159-row list was 0 pass / 154 fail / 5 CE at the branch point, so the
+per-step numbers below are quoted against that base; they compose to the same
+21 rows.
+
+### Step 1 — `Object.prototype.__proto__` accessor pair (commit `a7e974ee09`)
+
+`arrobj-cl-{a,b}.txt` (18 rows): **0 pass / 18 fail → 12 pass / 6 fail.**
+Controls 20/20.
+
+New `src/codegen/object-proto-proto-accessor.ts`: the `__object_proto_get` /
+`__object_proto_set` natives, the two identity-stable reflective closures
+(`get __proto__` / `set __proto__`, §17 names, `.length` 0/1), the gOPD arm, and
+the §10.4.7 immutable-prototype predicate for `%Object.prototype%`. Four wiring
+sites: the gOPD dispatch and the `Object.setPrototypeOf` status check
+(`call-builtin-static.ts`), the `.call` arm for a descriptor-traced accessor
+(`calls.ts`), the `Reflect.setPrototypeOf` boolean
+(`call-namespace-static.ts`), and the syntactic `o.__proto__ = v` assignment
+(`assignment.ts`).
+
+NOT done, with the measured reason:
+
+- `get-ordinary-obj`, `set-ordinary-obj`, `set-non-extensible` — a plain object
+  LITERAL lowers to a closed struct, so its implicit `%Object.prototype%`
+  terminal is invisible to the runtime `__getPrototypeOf` walk, and the
+  compile-time `Object.getPrototypeOf` fold (`object-get-prototype-of.ts`,
+  object-literal arm) does not know the REFLECTIVE setter wrote. The native does
+  re-apply the two-encodings distinction for an open `$Object` receiver
+  (`OBJ_FLAG_NULL_PROTO` clear ⇒ answer `%Object.prototype%`), which is why
+  `get.call(Object.create(proto))` and `get.call(Object.create(null))` are both
+  right; the closed-struct half needs the literal's carrier to change.
+- `set-cycle-shadowed` — `Object.create(proxy)` canonicalizes the proxy to its
+  TARGET (`canonicalizeProtoArg` → `__proxy_get_target`), so by walk time the
+  Proxy link the §10.1.2.1 step-8 loop must STOP at is already gone.
+- `set-abrupt` — the trailing `Object.getPrototypeOf(subject)` on a Proxy needs
+  the same implicit-terminal answer as the first bullet.
+- `prop-desc` — `verifyProperty(Object.prototype, "__proto__", …)` needs
+  `__proto__` in `OBJECT_PROTOTYPE_OWN_NAMES` (which changes the `in` answer for
+  every ordinary receiver) plus a working `delete` on `Object.prototype`.
+
+### Step 6 — IsArray over a Proxy (commit `885b615ba0`)
+
+`arrobj-cl-i.txt` (4 rows): **0 pass / 4 fail → 1 pass / 3 fail.** Controls
+20/20. Regression check: the 41 `Array/prototype/*/create-species*.js` +
+`Symbol.species*.js` rows are 38/3 on BOTH trees with an identical non-pass set
+(file-copy A/B).
+
+`fillExternIsArray` gained the §7.2.2 step-3 arm (bounded target unwrap,
+TypeError on a revoked proxy); new `src/codegen/proxy-value-provenance.ts`
+answers "may this expression be a Proxy" syntactically, because TypeScript types
+`new Proxy(t,h)` and `Proxy.revocable(t,h).proxy` as the TARGET's type and an
+array target folded `Array.isArray` to the constant `true`;
+`emitArraySpeciesCreate` runs §10.4.2.3 steps 2-3 before `Get(O,"constructor")`.
+
+NOT done: `{map,filter,splice}/create-revoked-proxy.js`.
+`Array.prototype.map.call(proxy, cb)` never reaches `emitArraySpeciesCreate` at
+all (measured `ctorCount === 0, cbCount === 0`, no throw) — the reflective
+`$NativeProto` member-call path is the gate on them, not the species prologue.
+Arming `arraySpeciesDirty` for `Object.defineProperty(o,"constructor",…)` was
+tried, changed nothing, and was reverted rather than shipped as dead weight.
+
+### Step 2 (partial) — the Proxy MOP inside the Object statics
+
+`arrobj-cl-e.txt` (17 rows): **0 pass / 17 fail → 6 pass / 11 fail.**
+
+New `src/codegen/object-integrity-proxy.ts` holds §7.3.16 SetIntegrityLevel,
+§7.3.17 TestIntegrityLevel and §7.3.25 EnumerableOwnProperties over a `$Proxy`
+as three natives, plus `__proxy_own_keys_all` (the trap result when an `ownKeys`
+trap is present; names ++ the target's own symbols when it is not). Eight
+front-guards: `__object_{freeze,seal,isFrozen,isSealed,isFrozen_obj,
+isSealed_obj,values,entries}`.
+
+Regression + yield check on the 280-row
+`built-ins/Object/{freeze,seal,isFrozen,isSealed,values,entries}` set:
+**245 pass / 35 fail → 253 pass / 26 fail, with ZERO new failures.** Two of the
+eight fixed rows are outside this issue's list —
+`Object/{freeze,seal}/throws-when-false.js`.
+
+`Object.{values,entries}` on a Proxy is a genuine SILENT-WRONG-ANSWER fix that
+the two test262 rows do not credit: a `$Proxy` failed `__object_values`'
+`ref.test $Object`, so it answered the EMPTY vec and fired no trap. File-copy
+A/B on the same probe: with the arm removed `log=` / `len=0`; with it,
+`log=|ownKeys|gopd:a|get:a|…` / `len=3`.
+
+NOT done, with the measured reason:
+
+- `{values,entries}/observable-operations.js` — the mechanism is correct; a
+  hand-written probe reproducing the test's exact source (including
+  `allowProxyTraps` and the `new Proxy(handler, check)` nested handler) prints
+  the full expected trap log. Something in the runner's `wrapTest` rewriting
+  makes the wrapped module take a different path; not diagnosed.
+- `{freeze,seal}/proxy-with-defineProperty-handler.js` — the per-key define DOES
+  run in the right order with the right descriptor shape (probe:
+  `definedKeys=foo,Symbol()`); the test then fails on
+  `seenDescriptors[key] = descriptor` inside the trap closure not persisting to
+  the captured EMPTY object literal — an unrelated closed-struct-capture defect.
+- `defineProperties/proxy-*`, `keys/proxy-*`, `getOwnPropertyDescriptors/proxy-*`,
+  `isPrototypeOf/arg-is-proxy` — plan steps 2.4-2.7, not started.
+
+### Step 3 (two pieces only)
+
+- `Object.getOwnPropertySymbols(undefined|null)` now throws the §20.1.2.11
+  ToObject TypeError instead of answering `[]` — 1 row
+  (`non-object-argument-invalid.js`).
+- `Object.assign(<primitive>, …)` routes its target through the same §7.1.18
+  emission `Object(x)` uses, so the result is the wrapper — 1 row
+  (`OnlyOneArgument.js`). The other four `Target-*` rows now fail one assertion
+  LATER, on `result.valueOf()`: a wrapper `$Object` has no `$NativeProto`
+  [[Prototype]] link, so a DYNAMIC `.valueOf()` reaches
+  `Object.prototype.valueOf` (which returns `this`) rather than
+  `Number.prototype.valueOf`. `native-proto-instance-method-read.ts` already
+  serves that read, but only for (brand, member) closures the module has
+  ALREADY minted — and these modules never name `Number.prototype.valueOf`.
+
+### 2026-09-02 adversarial review — four findings, all FIXED
+
+An independent skeptic reproduced four defects against the pristine merge-base
+AND `origin/main`, with ~20 A/B probes across both lanes. All four are fixed on
+this branch; none was merely documented. Commits `bc111a1d30` (F1+F2) and
+`b3deafa2f4` (F3+F4). Six new pins, including the first JS-HOST-lane runner in
+the focused test — F1 was a host-lane COMPILE ERROR, which a standalone-only
+pin cannot see.
+
+| # | What was wrong | Resolution |
+| --- | --- | --- |
+| **F1** (high) | The `Object.{keys,values,entries}` Proxy-provenance arm had NO `ctx.standalone` gate, and its body resolves `__object_<method>` from `ctx.funcMap` — a native the JS-host lane lacks. `var p = new Proxy({a:1},{}); var q = p; Object.keys(q)` was a host-lane `Codegen error: absoluteFuncIndex: unresolved call target`; base prints "a". | Gated on `ctx.standalone`. The two sibling sites were gated already; this one was the outlier. |
+| **F2** (medium) | Standalone: routing an ALIAS of a proxy binding to the runtime enumerator answered `[]`, because `var qt = pt` nulls the alias — a widening defect present on `origin/main` too — where base's compile-time expansion still printed the keys without loading the value. | New `isDirectProxyBinding` (expression itself, or ONE identifier hop) replaces the alias-following trace at this site. `Array.isArray` keeps the wider trace deliberately: its target is a runtime predicate correct for every value, and the array-typed twin is not nulled (measured). Repairing the nulling is left alone — it is a value-representation defect, not a conformance one. |
+| **F3** (medium) | `__proxy_set_integrity` forwarded a per-key `[[DefineOwnProperty]]` unconditionally; with no `defineProperty` trap that reaches `__obj_define_from_desc` on the target, which APPENDS on a closed-struct target. `Reflect.ownKeys(t)` read `a,b,a,b`, `getOwnPropertyNames(t).length` 4, and a later `Object.isFrozen(proxy)` threw on the duplicate-key invariant. | The forward now happens only when a `defineProperty` trap exists (without one it is unobservable). The helper stopped claiming the receiver outright — it answers "I did the spec-VISIBLE trap work, now run your ordinary body too", so the level still lands in the #4032 bag where base put it. `__proxy_test_integrity` gained the mirror rule: it runs its loop for the trap calls but VOTES only when a `defineProperty` trap recorded the level per key, else returns a `-1` "not handled" sentinel. Without that second half the fix traded a TypeError for an all-`false` isFrozen/isSealed matrix. |
+| **F4** (low) | The syntactic `o.__proto__ = v` went to the §B.2.2.1 setter native regardless of whether the receiver INHERITS that accessor, so `Object.create(null)` + `preventExtensions` threw where base and a sloppy host ignore it. | Gated on the existing `hasExplicitNullObjectPrototype` proof. Fixed, not documented. |
+
+**Probe A/B after the fixes.** All fourteen review probes (`f3`, `f3b`, `f3c`,
+`f3d`, `f4`, `f2`, `f1b`, `p13` standalone; `v1`/`v3`/`v4`/`v5`/`v6`/`h2` host)
+print BYTE-IDENTICAL output on this branch and on the reviewer's pristine
+`base-main` tree — except the two where the improvement is the point: `f3d`
+fires the `getOwnPropertyDescriptor` trap per key in ownKeys order
+(`0,foo,Symbol(s)`, matching node) where base fires none, and `p13` runs the
+full EnumerableOwnProperties sequence where base silently answers `[]`.
+
+**Re-validated integration** (both sides on the tree that merges `origin/main`
+`1c8ee381a9`; base = that tree with this change-set's ten source files from
+`origin/main` and its three new modules moved aside):
+
+| 179 rows (`arrobj-head.txt` + `arrobj-controls.txt`) | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| `origin/main` | 21 | 148 | 10 |
+| this branch | **42** | 127 | 10 |
+
+21 rows flipped, ZERO new non-pass rows, **identical compile_error set** — so
+the review fixes cost nothing (the non-pass set is unchanged from the
+pre-review measurement) and no standalone host-import leak was introduced. Of
+the 10 shared CEs, 5 are the cluster-G `env::toString` leak that step 5 owns,
+4 are cluster Q's `flat`/`flatMap` refusal, and 1 is the out-of-scope
+`subclass-object-arg`. Controls **20/20**.
+
+Touched-area suites A/B'd again on the new base: an IDENTICAL 9-failure set
+(`issue-3661` ×2, `issue-3403` host lane ×1, `issue-4492-wave5` ×5,
+`issue-4492-builtin-as-value` ×1) — all standing red on `origin/main`.
+
+**Two gaps the review surfaced that remain open on BOTH trees** (measured, and
+stated so they are not mistaken for fixed): `Object.freeze(proxy)` does not
+make the target's own data properties non-writable (`t.a = 99` still lands;
+node throws), and an ordinary `__proto__` write on an extensible
+null-prototype object does not create the own `__proto__` data property node
+reports.
+
+### 2026-09-02 round-2 adversarial review — six findings
+
+A second skeptic re-reviewed the F1-F4 fixes with ~45 probes (node vs lane vs
+base, both lanes). Verdict: ship-with-notes, one confirmed new wrong
+observable. **Four items fixed, two documented** — the two documented ones are
+BASE PARITY, i.e. this change-set neither caused nor worsened them.
+
+| # | Item | Resolution |
+| --- | --- | --- |
+| **R2-1** (medium, must-fix) | `Object.freeze/seal(proxy)` whose `defineProperty` trap forwards via `Reflect.defineProperty` — the canonical and test262 shape — DOUBLED the closed-struct target's own-key list (`Reflect.ownKeys(t)` → `a,b,a,b`, length 4, gopd trap firing 4× on a later `isFrozen`). Lane-new: base fired no trap and so never reached it. | **Fixed at the primitive, not the arm.** `__carrier_bag_push_keys` pushed every live bag key without checking whether the caller had already listed it as a STATIC own key. §10.1.11 OrdinaryOwnPropertyKeys is a key LIST and a list has no duplicates. The skeptic's r4 CONTROL — `Reflect.defineProperty({a:1,b:2}, "a", d)` with no proxy at all — read `a,b,a` on **base too**, which is what identifies the defect as the merge rather than the arm; it now reads `a,b` and a genuinely new key still appends. |
+| **R2-2** (low) | The `-1` "not handled" sentinel returned BEFORE §7.3.17 step 1 `[[IsExtensible]]` and step 3 `[[OwnPropertyKeys]]`, so `isFrozen`/`isSealed` skipped two OBSERVABLE trap calls that can also throw. | **Fixed.** Both calls run first; the sentinel is decided after. node's `isext|ownKeys` sequence reproduced. |
+| **R2-3** (documented → **fixed**) | `isDirectProxyBinding` admitted the `Proxy.revocable(…).proxy` hop, which the alias-nulling defect nulls, so `Object.keys(proxy)` answered `[]`. | **Fixed rather than named.** Base answers `"a"`, so this was a lane-new SILENT wrong answer — the worst of the three outcomes. The predicate is now `new Proxy(…)` only (expression, or one identifier hop). `tracesToProxyValue` keeps the hop: its consumer is a runtime predicate correct for every value. |
+| **R2-4** (low) | The `Object.getOwnPropertySymbols` nullish ToObject guard was emitted on the JS-host lane too — same behaviour, different bytes. | **Fixed.** Standalone-gated, so the focused test's "every arm is standalone-gated" claim holds. Verified: the host-lane module for a gOPS program is now sha-IDENTICAL to base (`d6164f8790013a7f`, 3182 bytes). |
+| **R2-5** (documented) | Three F3 comments credited the #4032 carrier bag with holding a `$Proxy`'s integrity level. | **Comments corrected in place.** `__integrity_bag` answers null for a `$Proxy` (it covers the vec, closure and Error carriers only); the verdict comes from the COMPILE-TIME integrity fold at the call site (`frozenVars`/`sealedVars`/`nonExtensibleVars`), with the native's non-`$Object` terminal behind it. That is what base answered, which is why the fall-through preserves base's verdicts. |
+| **R2-6** (documented) | `hasExplicitNullObjectPrototype` proves null-prototype from the INITIALIZER only, so an object that is given a prototype later via `setPrototypeOf` and then made non-extensible swallows the §B.2.2.1 TypeError. | **Named, not fixed — base parity.** Probe `Object.create(null)` + `setPrototypeOf(o, Object.prototype)` + `preventExtensions(o)` + `o.__proto__ = {z:1}`: `no-throw` on this tree AND on `origin/main`; node throws. Proving the receiver's LIVE prototype needs flow analysis the syntactic proof does not have. |
+
+**Two gaps R2-1 surfaced that stay open, on BOTH trees** (so the r1/r2 pins
+deliberately assert the trap and key lines but NOT `Object.isFrozen(target)`):
+a closed-struct carrier does not let a bag entry SHADOW a static field's
+descriptor, so the forwarded define does not change what
+`getOwnPropertyDescriptor(target, k)` reports; and `Object.isExtensible` on a
+non-syntactic receiver answers from the compile-time fold, so the forwarded
+`[[PreventExtensions]]` is not visible either. Both are why `t.a = 99` still
+lands where node throws — measured identically on base.
+
+**Re-validated at the round-2 merge point** (`origin/main` 77ca8fbaae merged
+in as 1eafc91f99). Head list + controls, both sides run on the same merged
+tree: base 21 pass / 147 fail / 11 CE, branch 42 pass / 124 fail / 13 CE — 21
+rows flipped to pass, ZERO new non-pass rows, controls 20/20. Focused test
+23/23. Typecheck clean, five ratchet gates green, equivalence gate exit 0 (24
+failing / 1718 passing, all 24 in the baseline). The eight touched-area vitest
+suites were re-A/B'd at THIS merge point rather than reusing the earlier
+measurement: 9 failed / 73 passed on both sides, and the nine FAIL names are
+byte-identical (`#3403` host-lane defineProperty ×1, `#3661` ×2, `#4492
+wave-5` ×5, `#4492 builtin-as-value` ×1) — all standing red on `origin/main`.
+
+**A note on compile-timeout noise, again.** The final after-run reported 13
+`compile_error` rows against the base's 10; the three extra are all
+`compilation timeout` at load 11-12 on 4 shared cores
+(`filter/create-proto-from-ctor-realm-non-array` 29.5 s,
+`of/proto-from-ctor-realm` 15.9 s, `concat_spreadable-function` 18.0 s), all
+already non-pass, and all re-run alone to confirm. The other 10 are the same
+set on both trees: 5 cluster-G `env::toString` leaks (step 5 owns them), 4
+cluster-Q `flat`/`flatMap`, 1 out-of-scope `subclass-object-arg`.
+
+### Steps 4, 5, 7, 8, 9, 10 — not started
+
+No work was done on clusters D, D2, F, G, H, J, L, M, N, O, P, Q, R, S. Three
+findings from reconnaissance that a follow-up should not re-derive:
+
+- **Step 5 (cluster G) is bigger than "add classifier arms".** Five of its nine
+  rows want `delete <Builtin>.prototype[Symbol.toStringTag]` to be OBSERVABLE
+  and `symbol-tag-generators-builtin.js` additionally wants
+  `[object GeneratorFunction]` / `[object Generator]` tags plus a
+  configurable-and-deletable `@@toStringTag` on the generator prototype. The
+  classifier arms alone will not flip them.
+- **Cluster M's three rows are an ITERATOR-IDENTITY problem, not a body
+  problem.** Each asserts
+  `Object.getPrototypeOf(iter) === %ArrayIteratorPrototype%`, so giving
+  `keys`/`values`/`entries` a reflective body without a reified
+  `%ArrayIteratorPrototype%` moves the failure rather than fixing it.
+- **The four `Object.assign/Target-*` rows are one shared blocker**, described
+  in the step-3 section above: a DYNAMIC `.valueOf()` on a wrapper `$Object`.
+  Fixing that one seam flips all four at once.

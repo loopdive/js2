@@ -49,6 +49,26 @@ export {
 export type { JsErrorKind } from "../js-errors.js";
 
 /**
+ * (#5195 Step 9 I) True when `id` sits inside one of `decl`'s own class
+ * elements — a method/accessor/field/static-block body, a parameter default,
+ * or a computed key — rather than in its name or heritage clause. That is
+ * exactly the region §15.7.14 step 3's immutable inner binding covers.
+ *
+ * A nested class or function inside a member body is still inside the outer
+ * class's element, and the binding is still visible there, so the walk does not
+ * stop at function boundaries. A same-named inner class SHADOWS the binding,
+ * but then the oracle resolves `id` to that inner declaration instead and this
+ * predicate is asked about the inner one.
+ */
+function writeIsInsideOwnClassBody(decl: ts.ClassLikeDeclaration, id: ts.Identifier): boolean {
+  for (let node: ts.Node | undefined = id.parent; node !== undefined; node = node.parent) {
+    if (node === decl) return false; // reached the class without passing an element
+    if (node.parent === decl) return decl.members.indexOf(node as ts.ClassElement) >= 0;
+  }
+  return false;
+}
+
+/**
  * Whether this exact identifier reference resolves to a const binding.
  *
  * `constBindings` models currently-active local scopes, while the oracle is
@@ -68,6 +88,18 @@ export function isConstIdentifierAssignmentTarget(
   // BindingElement through its binding pattern to the owning declaration.
   const declaration = ctx.oracle.valueDeclarationOf(id);
   if (declaration !== undefined) {
+    // (#5195 Step 9 I) §15.7.14 step 3: ClassDefinitionEvaluation creates a
+    // second, IMMUTABLE binding of the class name inside the class body's own
+    // scope. `class C { m() { C = 42; } }` must therefore TypeError, while the
+    // OUTER binding stays an ordinary mutable `let`-like one — `class C {};
+    // C = 42;` is legal. The discriminator is purely lexical: the write is
+    // inside one of this declaration's own elements.
+    if (
+      (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) &&
+      writeIsInsideOwnClassBody(declaration, id)
+    ) {
+      return true;
+    }
     let current: ts.Node | undefined = declaration;
     while (current !== undefined && !ts.isVariableDeclaration(current)) {
       if (!ts.isBindingElement(current) && !ts.isObjectBindingPattern(current) && !ts.isArrayBindingPattern(current)) {
