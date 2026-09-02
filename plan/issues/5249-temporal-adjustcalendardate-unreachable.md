@@ -1,13 +1,14 @@
 ---
 id: 5249
 title: "Compiled Temporal polyfill traps `RuntimeError: unreachable` in HelperBase_adjustCalendarDate — largest residual family after provider wiring (123 of 838 sampled rows)"
-status: ready
+status: in-progress
 sprint: current
 priority: high
 horizon: m
 goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
+assignee: ttraenkler/dev-5249
 created: 2026-08-31
 ---
 
