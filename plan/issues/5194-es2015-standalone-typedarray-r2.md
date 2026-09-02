@@ -1271,3 +1271,81 @@ pending** of 84.
 Gates re-run on the merged tree, bare with `$?` captured: all five green, and
 green again with `LOC_GATE_BASE=$(git rev-parse origin/main)` (CI's merge-preview
 base). `tests/issue-5194-es2015-typedarray-r2.test.ts` 4/4.
+
+### Adversarial review (2026-09-02) — resolution
+
+Base for every figure below: `git merge origin/main` (`f64beb1a03`, carrying
+PR #5469). Clean merge, no conflicts. Probes are
+`.tmp/es2015/probes/review-f1f2.mts` and `review-f3.mts`; all three findings now
+also have controls on BOTH lanes in
+`tests/issue-5194-es2015-typedarray-r2.test.ts` (10/10).
+
+| # | verdict | what changed |
+|---|---|---|
+| F1 | **FIXED** | Both TypedArray arms in `expressions/object-get-prototype-of.ts` keyed on the NAME only. The `<View>.prototype` arm now takes the same `isGlobalBuiltinIdentifier` gate the NativeError arm above it already had; the INSTANCE arm — which has no identifier to check, because it keys on `ctx.oracle.declaredNameOf` and a user class of that name yields the identical type name — takes a new file-scoped `sourceShadowsGlobalName`. Probe (standalone): `class Uint8Array { … }` + `Object.getPrototypeOf(new Uint8Array(3)) === Uint8Array.prototype` was **0**, now **1**. The TypedArray proto graph is also no longer minted into such a program: **478,540 → 169,895 bytes**. |
+| F2 | **FIXED** | The shadow check in `builtin-value-read.ts` (both sites) was `fctx.localMap` / `boxedCaptures` — FUNCTION-scope facts that cannot see a MODULE-level `class Int16Array`. Both now also consult `sourceShadowsGlobalName`, and so does `builtin-static-gopd.ts:resolveBuiltinProtoGopdReceiver`, which feeds the same descriptor synthesis. Probe (standalone): `Int16Array.prototype.constructor === Int16Array` was **0**, now **1**, zero `env::` imports. |
+| F3 | **DOCUMENTED (fix attempted and reverted — it moved the error, it did not remove it)** | see below |
+| F4 | **DOCUMENTED, comment corrected** | see below |
+| F5 | **FIXED** | `proto-index-store.ts:parentLevelProbeArms` spread ONE shared `guardInstrs` array into every emitted arm (up to 11). The parameter is now a factory invoked once per arm, per this file's own per-arm-fresh discipline (#1058). |
+
+#### F3 — exactly which shapes fold wrong, and why the obvious fix is wrong
+
+The instance arm is a COMPILE-TIME fold: it answers the prototype of the
+argument's **declared type**. That is correct for every shape where the declared
+type is the runtime type, and wrong for exactly one family:
+
+- **Folds wrong:** a binding whose declared type is a view but whose runtime
+  object is a SUBCLASS instance — `class Bytes extends Uint8Array {}`,
+  `const b: Uint8Array = new Bytes(2)`. Spec (§23.2.5.6 via
+  OrdinaryCreateFromConstructor) says `Bytes.prototype`; the fold answers
+  `Uint8Array.prototype`. Measured: lane 1, spec 0.
+- **Folds correctly:** every non-subclass shape — a direct
+  `new <View>(…)`, a parameter/field annotated as the view and only ever
+  assigned view instances, and `<View>.prototype` itself (a different arm).
+- **Not affected:** dynamically constructed views (`new TA(…)` where `TA` is a
+  value), which never reach the fold — they resolve at runtime through the
+  `ta-dyn-mop.ts` `__getPrototypeOf` arm.
+
+**The obvious fix was tried and reverted.** Declining the fold for any file that
+subclasses the view (a `sourceSubclassesGlobalName` scan) does not route the
+work to a better answer — it routes it to a different wrong one. The runtime arm
+cannot recover the kind from a statically typed carrier (`i8_byte` serves
+Int8Array, Uint8Array **and** Uint8ClampedArray; `f64` serves Float64Array and
+`number[]`), which is why the arm was compile-time to begin with. With the
+decline in place the ORDINARY `Object.getPrototypeOf(new Uint8Array(1))` in the
+same file also went wrong — measured, the focused control returned 2. A real fix
+needs a **per-binding** subclass fact, not a per-file one.
+
+The divergence is pinned by an asserted characterization control
+("standalone residual (F3)"), which expects the folded answer today, so whoever
+fixes it gets a RED test rather than a silent flip.
+
+#### F4 — the residual behind the `noJsHost` decline
+
+`calls-closures.ts`'s decline sends `sort`/`keys`/`values`/`entries`/… on an
+`any` receiver to the closed-method dispatcher. The old comment said that
+dispatcher "resolves these by runtime shape"; it resolves them only for
+receivers that HAVE an arm. **Residual:** an `any`-typed plain array, `Map` or
+`Set` receiver has none, so in standalone those calls now raise a runtime
+TypeError from the bottom `__extern_method_call` arm. Base emitted
+`env::Uint8ClampedArray_*` instead, which made the whole module fail to
+instantiate — so this is strictly better and regresses no passing row, but it is
+a real gap and not the "resolved by runtime shape" the comment claimed. The
+comment now says this; closing it means giving those receivers real arms.
+
+#### Re-validation after the review fixes
+
+Merged tree (`f64beb1a03` merged in), standalone, one process at a time:
+
+| list | result |
+|---|---|
+| `ta-passing-all.txt` (the 84 claimed head-list passes) + `ta-controls.txt` (21) | **105 / 105 pass** — no regressions, no `host_import_leak`, and the two rows that had been unverifiable compile timeouts (`TypedArray/Symbol.species/name.js`, `TypedArray/from/prop-desc.js`) now pass on a quieter box, so the head-list figure is **84 confirmed**, nothing pending |
+| the 52-row step-3/4 list (`step34-final.txt`) | C5 **4**/9, D **2**/16, C2 0/6, controls **21**/21 — unchanged, zero leaks, zero compile errors |
+| `tests/issue-5194-es2015-typedarray-r2.test.ts` | **10 / 10** (3 original standalone controls + F1/F2 on both lanes + F3 host + the F3 standalone characterization control) |
+
+Five ratchet gates green (bare, `$?` captured); `pnpm run typecheck` (TS7)
+green. `typecheck:ts5` still fails only on `src/linked-provider-runtime.ts`
+(`WebAssembly.Tag`), pre-existing on `main`.
+
+`pnpm run test:equivalence:gate` on this tree: **24 failing / 1718 passing, all
+24 in the baseline — no new regressions.**
