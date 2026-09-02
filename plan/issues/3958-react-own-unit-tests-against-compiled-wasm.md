@@ -14,6 +14,13 @@ task_type: test
 area: dogfood
 language_feature: compiler-internals
 goal: dogfood
+# 2026-09-02 regression fix (0/180 → 144/180): a re-lifted sibling keeps its
+# phase-0 capture ABI across an intermediate transitive promotion (two helpers
+# + their doc comment; the lift function itself grows by the two call sites).
+loc-budget-allow:
+  - src/codegen/statements/nested-declarations.ts
+func-budget-allow:
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
 ---
 
 # Run React's own unit tests against compiled React
@@ -168,3 +175,17 @@ compile-quarantined. Two generic fixes account for the move:
 The other 200 admitted tests remain `harness-incompatible` because the native
 oracle also lacks their Jest/renderer infrastructure. They are still executed
 and counted, not filtered from the corpus.
+
+## 2026-09-02 regression: 144/180 → 0/180 (every batch INVALID)
+
+Bisected to 302443772e (`fix(standalone): deno-core bootstrap local-index
+remapping`, #4376, PR #5202): the lift-time transitive-capture promotion it
+added runs while an EARLIER sibling is lifted (`itRenders`) and moves
+`initModules` to a module global. The later real lift of `testMarkupMatch`
+then recomputed 4 captures, while `expectMarkupMatch` — compiled in between —
+still prepended the 5 pre-registered ones ("type error in fallthru[0]"). Fix: a
+re-lift honours the phase-0 pre-registered ABI (slot + order) for bindings
+promoted in the meantime (`collectPromotedPreRegisteredSlots` /
+`reorderToPreRegisteredAbi` in src/codegen/statements/nested-declarations.ts).
+Verified locally: 144/180 scored (80%), 0 invalid batches. Regression test:
+`tests/npm-compat-acorn-react-regressions.test.ts`.

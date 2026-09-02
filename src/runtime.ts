@@ -12014,7 +12014,8 @@ assert._isSameValue = isSameValue;
       // through the closure's vivified `.prototype` object.
       if (name === "__register_fnctor_instance")
         return (inst: any, ctor: any) => {
-          if (_canBeWeakKey(inst) && ctor != null) _fnctorInstanceCtor.set(inst, ctor);
+          // `ctor` may be the host-callable mirror of the closure (acorn's `new this(...)` in `Parser.parse`); link the RAW closure, whose sidecar holds `.prototype`.
+          if (_canBeWeakKey(inst) && ctor != null) _fnctorInstanceCtor.set(inst, _unwrapForHost(ctor) ?? ctor);
         };
       // (#2743 a) Mark a compiled `arguments` vec as an ordinary Object so the
       // MOP hooks (`__getPrototypeOf` / `__extern_get` / `__hasOwnProperty`)
