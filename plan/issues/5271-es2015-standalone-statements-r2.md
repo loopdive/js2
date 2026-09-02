@@ -824,3 +824,28 @@ shipped unmeasured.
 
 No work was done on `arguments`/rest (F, 7 rows) or the direct-eval seams (J,
 4 rows); they are untouched and still fail exactly as the baseline records.
+
+## 2026-09-02 wave result (Opus)
+
+`stmt-head.txt` (the 68 in-scope rows), `--target standalone`, in-process
+runner (which applies CI's standalone host-import leak check since #5461):
+
+| | before | after |
+|---|---:|---:|
+| pass | **0** | **36** |
+| fail | 67 | 31 |
+| compile_error | 1 (D5, deferred by the plan) | 1 (same row) |
+
+`stmt-controls.txt`: **20/20 before and after.** No previously-passing row
+regressed, and every flip is a real `pass` (the runner's leak check makes a
+standalone pass host-import-free by construction).
+
+Per cluster: E 6/6 · A+A2+A3 8/8 · C 10/10 · G 4/7 · B 3/6 · D 3/14 (+1 CE
+deferred) · H 2/3 · I 0/2 · F 0/7 (not attempted) · J 0/4 (not attempted).
+Two rows outside the step lists flipped as a side effect of step 2
+(`{let,const}/block-local-use-before-initialization-in-prior-statement`).
+
+**Below the plan's ≥48 target, above its floor of 28.** What is left, and why,
+is recorded per step above; the four largest remaining groups are cluster F
+(7 rows, untouched), cluster J (4, untouched), cluster D's D2-D4 (10, three
+independent blockers measured), and G3 (3, sequenced last by the plan itself).
