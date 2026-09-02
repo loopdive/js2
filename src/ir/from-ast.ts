@@ -82,6 +82,7 @@ import { IrFunctionBuilder } from "./builder.js";
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
+import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
   irImportFuncRef,
   irIntrinsicFuncRef,
@@ -8309,14 +8310,21 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         // so it cannot cross the boundary a second time. The runtime may
         // therefore skip the identity WeakMap used by the reusable -1 ABI.
         const sentinel = cx.builder.emitConst({ kind: "i32", value: -2 }, irVal({ kind: "i32" }));
+        // (#3526 F3-S1) The maker's import is NAMED by the central capability
+        // record, never spelled here. from-ast runs in Phase 1, before the
+        // runtime manifest freezes, so this reads the STATIC catalogue; the
+        // frozen manifest is what ADMITS the crossing, post-freeze. The binding
+        // KIND stays `import` — pins compare kinds, not names (the S4 lesson).
         const wrapped = cx.builder.emitCall(
-          irImportFuncRef("env", "__make_callback"),
+          irImportFuncRef(HOST_CALLBACK_WRAP_CAPABILITY_RECORD.module, HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field),
           [sentinel, packed],
           irVal({ kind: "externref" }),
         );
         if (wrapped === null) {
           // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: __make_callback produced no value in ${cx.funcName}`);
+          throw new Error(
+            `ir/from-ast: ${HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field} produced no value in ${cx.funcName}`,
+          );
         }
         args.push(wrapped);
         continue;
