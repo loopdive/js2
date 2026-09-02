@@ -977,13 +977,153 @@ typecheck green, `biome lint src tests scripts` green.
    A/B on `literals.ts`). Only the METHOD form is. Unrelated to this issue, but
    it is why the H precondition fixture asserts a member read.
 
-### Not attempted
+### Not attempted (as of the first pass)
 
-D (`Error.prototype.stack` accessor pair, 7 rows), M+F (7), J-2
-(`Date.prototype.toJSON`, 2 — its rows need `toJSON.call(10)` and
+M+F (7), J-2 (`Date.prototype.toJSON`, 2 — its rows need `toJSON.call(10)` and
 `toJSON.call(Symbol())` to find a user-installed `toISOString` on the boxed
 primitive's native-proto companion, a different substrate question from the glue
 ladder), I (7, of which the 3 normalize rows are a table-generation job), K (2).
-E is re-scoped by findings 2 and 3 above: E-2 (native SuppressedError) is now
-the actionable half, and E-1 needs the real dynamic-`new` dispatch site found
-first.
+
+## 2026-09-02 second pass (Opus) — J-1 follow-up, E-2, D
+
+Three more commits on the same branch. The pass opened by running the two checks
+the first pass still owed (the focused suite and the equivalence gate); the
+focused suite failed on its own new fixture, and chasing that produced the first
+of these commits.
+
+### J-1 follow-up — an absent precision is `ToString(x)`
+
+Two PRE-EXISTING defects in `src/codegen/number-format-native.ts`, found only
+because the reflective and direct spellings of `x.toPrecision()` now disagreed:
+
+1. `emitToPrecision`'s no-arg branch delegated to `toExponential(value, NaN)`,
+   an approximation its own comment acknowledged ("close enough for no-arg
+   output"). §21.1.3.5 step 2 says an absent precision is `! ToString(x)`, so
+   `(7).toPrecision(undefined)` rendered `"7.000000e+0"`.
+2. Fixing (1) by calling `number_toString` was silently a no-op: in a module
+   whose only number formatting is `toPrecision`, that helper DOES NOT EXIST.
+   `emitNativeNumberFormat` pulls `number_toString` in on `needFixed`, but
+   `emitToString` itself bails out when `number_toString_radix` is absent — and
+   `needRadix` did not ride on `needFixed`. The same broken link also silently
+   disarmed toFixed's own `>= 1e21` ToString fallback, whose comment asserts
+   "number_toString is guaranteed emitted alongside toFixed".
+
+Measured over the four Number formatting families (138 rows —
+toString/toFixed/toExponential/toPrecision), standalone, file-copy A/B:
+
+| | pass | fail |
+|---|---|---|
+| base | 129 | 9 |
+| after | **130** | 8 |
+
+One row flipped (`toPrecision/undefined-precision-arg.js`); nothing regressed.
+The host lane over the toPrecision family is byte-identical before and after
+(15/2, the same two rows) — it uses the host import.
+
+Also in that commit, both found while diagnosing it:
+
+- the focused suite's standalone lane now compiles with `hostBridge: "always"`,
+  exactly as `test262-runner.ts` does (#4035). Standalone defaults to
+  `hostBridge: "off"`, which drops the `__exn_render_*` exports (#2962) —
+  without them every standalone failure in this file reported the opaque
+  `"[object WebAssembly.Exception]"` instead of its assertion text. It adds
+  EXPORTS, not imports, so the zero-`env` assertion still means what it says.
+- `runLane` renders thrown values through `scripts/lib/wasm-exn-render.mjs`, the
+  one renderer the sharded and local runners already share (#3613).
+
+### E-2 — SuppressedError without a JS host
+
+`new SuppressedError(...)` and `SuppressedError(...)` both lowered
+unconditionally to `env::__new_SuppressedError`. Both sites now ask
+`ensureNativeSuppressedErrorCtor` first (the `$Error_struct` shape the dispose
+driver already builds for its LIFO nesting) and keep the import path when it
+declines.
+
+E cluster, standalone: **`compile_error` x2 → `fail` x2.** The leak is gone and
+both rows reach their assertions for the first time. They now fail for reasons
+outside E-2, both confirmed from the runner's own messages:
+
+- `message_property_native_error.js` — "Expected obj[message] to equal
+  my-message, actually undefined" — needs **E-1**, whose arm is unreachable as
+  the plan specifies it (finding 3 above still stands).
+- `getter-subclass.js` — "Function.prototype.call is not yet implemented in
+  --target standalone" — needs **M-1**.
+
+Direct probe of the constructor (standalone, zero `env` imports):
+`name=SuppressedError`, `message=both`, `error`/`suppressed` identity both hold,
+`options.cause` installs, and the call-without-`new` form constructs identically.
+
+### D — the own `Error.prototype.stack` accessor pair
+
+`stack` is the one Error.prototype property that is neither a method nor a data
+property, so neither `memberCsv` nor `dataProps` could express it. D-1 adds an
+`accessorProps` glue kind that seeds a real getter/setter PAIR; D-2 supplies the
+two bodies in a new `src/codegen/error-stack-accessor.ts`.
+
+D cluster, standalone: **0 → 1 pass** (`setter-proxy-trap-rejects.js`). The
+descriptor is fully spec-shaped, probed directly:
+
+| | value |
+|---|---|
+| `typeof d.get` / `typeof d.set` | `function` / `function` |
+| `d.configurable` / `d.enumerable` | `true` / `false` |
+| `d.get.name` / `d.set.name` | `get stack` / `set stack` |
+| `d.get.length` / `d.set.length` | `0` / `1` |
+| `hasOwnProperty(Error.prototype,"stack")` | `true` |
+
+**D-3 was not needed and was not written.** The plan called for a
+`(Error, "stack")` arm in `builtin-static-gopd.ts`. Measurement says the static
+arm already declines — it requires the member to be in `memberCsv`, and `stack`
+deliberately is not — so the query falls through to the dynamic path and reads
+the seeded companion entry correctly. Adding the arm would have created a second
+source of truth for a descriptor that already answers.
+
+The other five D rows fail on `Function.prototype.call` (M-1): every one of them
+reaches the accessor as `Object.getOwnPropertyDescriptor(...).get.call(x)`.
+
+### Findings from the second pass
+
+8. **A dependency closure, not a formatter bug, is why `toPrecision()` was
+   wrong.** Worth stating separately because the same shape can recur: helper A
+   is pulled in on demand X, helper A silently *bails out* when helper B is
+   absent, and B's demand condition does not include X. Nothing errors; the
+   caller just gets a fallback. Both the toPrecision no-arg branch and the
+   toFixed `>= 1e21` branch were disarmed this way, and a comment in the second
+   one asserted the invariant that was already false.
+
+9. **`Object.getOwnPropertyDescriptor` on a builtin prototype already reaches
+   the seeded companion.** The static gOPD arm's `memberCsv` membership test is
+   what routes a non-CSV member to the dynamic path, so a glue that seeds an own
+   property outside the CSV (`dataProps`, and now `accessorProps`) does not also
+   need a static descriptor arm.
+
+10. **Two pre-existing defects surfaced while validating D, both established by
+    file-copy A/B with the change disabled — neither is introduced by it:**
+    - `new Proxy(new Error("i"), {})` property access traps with "illegal cast";
+    - a statically-typed Error's `e.stack` reads the raw `$Error_struct` field
+      instead of invoking the prototype accessor — the static property-access
+      fast path shadows it. `typeof e.stack` is `"object"`, not `"string"`.
+
+11. **`$Error_struct` with a null `$message` and a NON-null `$props` reads its
+    `message` back as the STRING `"null"`.** `new Error()` (whose `$props` IS
+    null) correctly answers `undefined`, and an arbitrary absent key on the same
+    value also answers `undefined` correctly — so the defect is the `message`
+    arm in `fillExternGetErrorProps`, not the sidecar. E-2 makes this reachable
+    (a SuppressedError always has a `$props` sidecar) but does not cause it. The
+    focused fixture deliberately does not assert either answer: the spec one
+    fails, and pinning `"null"` would enshrine the bug.
+
+12. **`String(<boolean>) !== "true"` can be wrongly true in some standalone
+    module shapes.** Two E-2 fixtures failed reporting `got true` while
+    expecting `"true"` — i.e. the actual, stringified, WAS `"true"`. The same
+    construct passes in a neighbouring fixture in the same file, so it is
+    shape-dependent. Not chased; the fixtures now assert identity with a direct
+    `if (a !== b) throw` instead, which is what they were really testing.
+
+### Still not attempted
+
+M+F (7), J-2 (2), I (7), K (2), E-1 (needs the real dynamic-`new` dispatch site
+first), and the five D rows and eight C rows that are all waiting on the same
+thing: **M-1, `Function.prototype.call`/`apply`.** That is now the highest-value
+remaining item in this wave — thirteen in-scope rows across three clusters block
+on it.
