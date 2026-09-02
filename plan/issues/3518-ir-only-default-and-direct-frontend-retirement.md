@@ -2076,3 +2076,181 @@ Acceptance is a clean dead-export check with 23 known entries, zero new rows,
 and no stale-baseline progress notice, plus formatting, issue integrity, LOC
 and function ratchets, and the normal unskipped precommit and prepush hooks.
 Do not remove or reclassify any of the remaining 23 rows in this checkpoint.
+
+## 2026-09-02 — R9 coverage-closure gap, measured
+
+The ladder gap noted above ("R9 needs an explicit coverage-closure dependency")
+now has a number attached. It was measured, not inherited from an artifact.
+
+`pnpm run check:ir-only` reports **READY** on `main`. That verdict is real but
+it is scoped to five entry files hardcoded at `scripts/check-ir-only.ts:14-20`,
+and the script's own comment already says so: *"Wider compiler reachability
+remains a separate R9/R10 requirement."* The playground directory it draws from
+holds **thirteen** `.ts` entries. The other eight have never been in the gate.
+
+Running the gate's own lane observers over those eight (they accept an entries
+override, so no compiler change was needed):
+
+| | gate corpus (5 files) | uncovered (8 files) |
+| --- | --- | --- |
+| terminal units, single-host | 41 | 32 |
+| `emitted` | 38 | 16 |
+| `unsupported` | **0** | **8** (7 `@select`, 1 `@build`) |
+| legacy body emitted | **0** | **10** |
+| terminal units, standalone | 41 | 32 |
+| `emitted` | 38 | 10 |
+| `unsupported` | **0** | **14** (all `@select`) |
+| legacy body emitted | **0** | **14** |
+
+Every one of the eight files has at least one unsupported unit on both lanes;
+`benchmarks.ts` and `benchmarks/helpers.ts` have three each on standalone. So
+this is not one exotic file dragging a corner — the rejection is spread across
+the whole uncovered population.
+
+Three things follow that change what R9 has to do:
+
+1. **The denominator is not 5, and widening it flips the verdict.** Adding the
+   eight to the gate takes it from READY to NOT READY with 10 (single-host) /
+   14 (standalone) direct-body emissions to retire first. R9's fail-closed flip
+   cannot be scheduled off the current READY.
+2. **Standalone is the harder lane by a factor, and the gap is growing in the
+   direction R10 cares about.** 14 unsupported vs 8, and 10 emitted vs 16. The
+   DOM-touching entries (`dom.ts`, `style.ts`, `helpers.ts`) reject wholesale on
+   standalone while emitting on single-host.
+3. **Two single-host units emit BOTH a direct body and an IR body** — the
+   literal compile-once violation, distinct from a clean rejection. They are the
+   only units in the population carrying an `r2Withdrawal` record, and it reads
+   `stage: "not-attempted", reason: "late-feature-preparation"`. Every other
+   legacy-emitting unit has **no withdrawal record at all**, because it never
+   reached R2 admission — it was rejected at `select`. R2 withdrawal telemetry
+   (#3521, landed in #5486) therefore does not explain this population, and a
+   census that reads only withdrawal reasons will report an empty histogram and
+   look clean. That is a trap worth naming for whoever runs the full census.
+
+### Reproducing
+
+The gate exports `observeSingleHostLane(entries?)` / `observeStandaloneLane(entries?)`,
+both of which take an entry-list override. A scratch script that calls them with
+the eight uncovered paths and histograms `kind`, `kind@stage`, `legacyBodyEmitted`
+and `irBodyEmitted` reproduces the table above. Put it in `.tmp/`.
+
+**One correction worth carrying, because it cost a wrong reading here:** the
+outcome field is `kind`, not `status`. A probe that filters on
+`o.status === "unsupported"` returns **zero** for every lane and every file,
+which reads as "nothing is rejected, everything silently falls back" — the
+opposite of the truth. And `legacyBodyEmitted` / `irBodyEmitted` are **not
+mutually exclusive**: a unit can carry both, which is precisely the compile-once
+violation in item 3. Tallying them as if they partitioned the units
+double-counts and hides that case.
+
+### What this does not settle
+
+The playground is still not the whole compiler. Thirteen entry files is the
+bounded population this gate was built around; the true R9 denominator is the
+standalone corpus plus whatever #4522's `retire-at-R9` table enumerates. This
+measurement closes the gap between "5 files" and "the playground", which is the
+first step, not the last. The remaining question for the full census is what the
+denominator is beyond `website/playground/examples/`.
+
+### The denominator beyond the playground — dogfood corpus, measured
+
+The section above closed "five files → the playground" and left open what the
+denominator is beyond `website/playground/examples/`. Measuring the next
+corpus out — `tests/dogfood/corpus`, 20 real JS programs, directly R10-relevant
+because dogfooding is what "the compiler compiles itself" means:
+
+| | playground gate (5 `.ts`) | dogfood (20 `.js`) single-host | dogfood standalone |
+| --- | --- | --- | --- |
+| terminal units | 41 | 35 | 35 |
+| IR bodies emitted | **38** | **1** | **0** |
+| unsupported | 0 | 33 (`@select`) | 31 (30 `@select`, 1 `@build`) |
+| legacy bodies | 0 | 33 | 31 |
+| entries compiling clean | 5/5 | 18/20 | 18/20 |
+
+The IR path covers ~100% of the gate's corpus and **1 of 35 units** on the
+dogfood corpus (0 on standalone). The two entries that fail outright
+(`destructuring.js`, `objects.js`) do so with a fatal diagnostic on both lanes.
+
+**A hypothesis worth stating because it was tested and refuted.** The obvious
+explanation is that the dogfood files are untyped `.js` while the gate corpus is
+annotated `.ts`, and the known IR fallback vocabulary has three type-resolution
+buckets. If that were the cause, type reasons would dominate. They do not —
+exactly **one** of 33 rejections is `return-type-not-resolvable`. The histogram:
+
+| reason | single-host | standalone |
+| --- | --- | --- |
+| `body-shape-rejected` | 19 | 16 |
+| `class-member-unsupported` | 4 | 4 |
+| `class-projection-unsupported` | 2 | 2 |
+| `class-method` | 1 | 1 |
+| `static-class-initialization` | 1 | 1 |
+| `destructuring-param-complex` | 1 | 1 |
+| `async-function` | 1 | 1 |
+| `async-generator` | 1 | 1 |
+| `operand-coercion-unsupported` | 1 | 1 |
+| `param-shape-rejected` | 1 | 1 |
+| `return-type-not-resolvable` | 1 | 1 |
+| `imported-call-planning-unsupported` | — | 1 |
+
+So the wider denominator is gated on **body shape (≈58%) and class coverage
+(8 units across four class reasons)** — that is R3 (#3522) territory plus the
+`body-shape-rejected` bucket the IR fallback budget already flags as
+*unintended* — and **not** on type propagation. A plan that widens the corpus by
+improving TypeMap propagation first would be optimising the 1, not the 19.
+
+**Consequence for the ladder.** R9's fail-closed flip is not a small step past
+the current READY. On the corpus that matters most for R10, IR adoption is
+effectively at zero, and the blocking reasons are the same unintended buckets
+#2855 is already ratcheting. R9 should take an explicit dependency on
+`body-shape-rejected` and the class family reaching zero on a corpus wider than
+the playground, not merely on the current gate staying green.
+
+**Still not settled:** dogfood is 20 files. Neither it nor the playground is the
+full standalone denominator, and #4522's `retire-at-R9` table has not been
+cross-checked against either. Both numbers above are floors on the work, not the
+total.
+
+#### Correction to the section above: the blocker is module-init (R4), not class coverage (R3)
+
+The table above attributed the wider-corpus gap to "body shape (~58%) and class
+coverage — R3 (#3522)". **The class half of that is wrong, and the body-shape
+half was true but uninformative.** Splitting `body-shape-rejected` by unit kind:
+
+| | count |
+| --- | --- |
+| `body-shape-rejected` on `<module-init>` | **17** |
+| `body-shape-rejected` on ordinary functions | 2 (`exportedFn`, `Ctor`) |
+
+So the largest bucket is not scattered function-body shapes at all. It is one
+unit kind, once per file. Grouping every dogfood rejection by unit kind makes
+the split plain:
+
+| lane | module-init units | of those, unsupported | non-module-init unsupported |
+| --- | --- | --- | --- |
+| single-host | 20 | **19** (17 body-shape, 1 static-class-init, 1 operand-coercion) | 14 |
+| standalone | 20 | **16** (14 body-shape, 1 static-class-init, 1 operand-coercion) | 14 |
+
+**Module-init adoption on this corpus is zero of twenty executable units, on
+both lanes.** That is R4 (#3523, module-init compile-once), not R3. The class
+family accounts for 7 of 33 single-host rejections, real but a third the size.
+
+**And this explains why the gate is green rather than merely narrow.** Its five
+entries hold five module-init units: 2 emitted, **3 non-executable**, 0
+unsupported. A non-executable module-init has no body by construction, so the
+gate exercises module-init on exactly two files. The corpus is not just small —
+it is unrepresentative in precisely the dimension that dominates everywhere
+else.
+
+**Revised consequence for the ladder.** R9's coverage-closure dependency is
+first and foremost **R4**. Widening the corpus without module-init compile-once
+converts ~58% of the single-host gap and ~45% of the standalone gap into
+permanent red. The class family is the second dependency, not the first.
+
+**Method note, since this is the second time in one session the same mistake
+shape appeared.** The previous section read a reason histogram and named an
+owner from the reason label alone. `body-shape-rejected` is emitted from ~20
+sites in `src/ir/from-ast.ts` spanning entirely different constructs, so the
+label identifies a *demote path*, not a *feature area*. Grouping by
+`unitKind` — one extra field already present in the telemetry — moved the
+conclusion from the wrong lane to the right one. Any future census over these
+outcomes should group by `unitKind` before assigning an owner.

@@ -5,7 +5,7 @@ status: ready
 created: 2026-09-02
 updated: 2026-09-02
 sprint: current
-priority: medium
+priority: high
 horizon: s
 feasibility: easy
 task_type: bug
@@ -57,12 +57,29 @@ This is the **sixth instance** of the staleness family documented inside
 all fixed a *cache*; this one is a value in flight on the stack, which no fixup
 can reach.
 
-## Why it is invisible on `main` today
+## Reachability — CORRECTED 2026-09-02: it is NOT invisible on `main`
+
+**This section originally claimed the default two-pass route masks the bug.
+Two independent measurements say otherwise, so the claim is withdrawn.** The
+implementing lane (PR #5498) found its pin fails on the base tree on BOTH
+routes — the numeric repro asserting `expected 4 to be 2`, and a string-typed
+head failing at `WebAssembly.instantiate` with `global.set[0] expected type
+f64, found call of type (ref extern)` — with the pass-1 skip seam OFF. The R4
+gap-6b verification independently re-executed the reduced shape on `main`'s
+default route and read `read = 4` where a forced two-pass build
+(`JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1`) gives `read = 2`.
+
+So this is a **live wrong-code bug on `main`'s default route today**, not a
+latent one. Its blast radius across the corpus is still unmeasured.
+
+The masking argument below is why it went unnoticed and why it is *usually*
+masked, and it still explains the gap-6a regression cluster — it is simply not
+total:
 
 The default two-pass module-init route compiles the whole initializer once in
 pass 1, which creates every string-constant import the emitting compile would
-have needed, so the second compile inserts no global mid-body and nothing goes
-stale. PR #5474 (gap-6a, skipping pass 1 when discovery is static) removed the
+have needed, so the second compile usually inserts no global mid-body and
+nothing goes stale. PR #5474 (gap-6a, skipping pass 1 when discovery is static) removed the
 mask and regressed 76 test262 rows (16 decodeURI/decodeURIComponent OOB traps,
 the `do-while` single, part of cluster 2) before it was reverted (#5477). The
 re-land [PR #5480](https://github.com/loopdive/js2/pull/5480) keeps the skip
