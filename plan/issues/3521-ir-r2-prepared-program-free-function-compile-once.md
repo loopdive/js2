@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-01
+updated: 2026-09-02
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -15,14 +15,12 @@ sprint: current
 parent: 3518
 depends_on: [3520, 4260]
 required_by: [3522, 3523, 3525, 3526, 3792, 4601]
-assignee: ttraenkler/codex-ir-lead
-pr: 5000
-branch: codex/3521-linked-owner-closure-current
+assignee: ttraenkler/fable-ir-takeover
 horizon: xl
 complexity: XL
 es_edition: n/a
 lane: ir-retirement-r2
-model: gpt-5.6-terra
+model: claude-fable-5.1 (plans); implementation lanes per slice claim
 related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 loc-budget-allow:
   - src/ir/propagate.ts
