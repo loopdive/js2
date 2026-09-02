@@ -355,6 +355,10 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     return { kind: "externref" };
   }
 
+  // (#5269 B-d) A property WRITE whose RECEIVER is a symbol primitive.
+  const symbolReceiverWrite = tryEmitSymbolReceiverPropertyWrite(ctx, fctx, expr, lhs);
+  if (symbolReceiverWrite !== undefined) return symbolReceiverWrite;
+
   if (ts.isIdentifier(expr.left)) {
     const name = expr.left.text;
     const withRes = resolveWithBinding(fctx, name);
@@ -3806,6 +3810,54 @@ function emitExternrefBackedOwnFieldWrite(
   // drops it; an `x = (this.code = v)` consumer sees the boxed value (externref
   // is the uniform own-field representation through this backing).
   fctx.body.push({ op: "local.get", index: tmpBoxed });
+  return { kind: "externref" };
+}
+
+/**
+ * (#5269 B-d) `sym.a = 0` / `sym["a" + "b"] = 0` / `sym[62] = 0`.
+ *
+ * §6.2.5.6 PutValue on a PRIMITIVE base runs OrdinarySetWithOwnDescriptor
+ * against a THROWAWAY wrapper object, so the write can never be observed: the
+ * follow-up read goes through a fresh wrapper and answers `undefined`. In
+ * STRICT code the failed CreateDataProperty is a TypeError; in sloppy code it
+ * completes as a no-op whose value is the RHS.
+ *
+ * Before this arm the write reached the generic member-set path, which silently
+ * ACCEPTED it — so the strict spelling threw nothing at all.
+ *
+ * Returns `undefined` (nothing emitted) unless the receiver is STATICALLY a
+ * symbol, so no other receiver kind changes.
+ */
+function tryEmitSymbolReceiverPropertyWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  lhs: ts.Expression,
+): InnerResult | undefined {
+  if (expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+  if (!ts.isPropertyAccessExpression(lhs) && !ts.isElementAccessExpression(lhs)) return undefined;
+  if (ctx.oracle.staticJsTypeOf(lhs.expression) !== "symbol") return undefined;
+
+  // §13.15.2 evaluation order: the LHS Reference (base, then key) before the
+  // RHS. Each part still runs for its side effects even though the store is
+  // discarded.
+  const recvType = compileExpression(ctx, fctx, lhs.expression);
+  if (recvType) fctx.body.push({ op: "drop" });
+  if (ts.isElementAccessExpression(lhs)) {
+    const keyType = compileExpression(ctx, fctx, lhs.argumentExpression);
+    if (keyType) fctx.body.push({ op: "drop" });
+  }
+  const rhsType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+  if (rhsType === null) return null;
+  if (rhsType.kind !== "externref") coerceType(ctx, fctx, rhsType, { kind: "externref" });
+
+  if (isStrictContext(lhs, ctx.inferModuleStrictArguments)) {
+    fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "Cannot create property on a Symbol");
+    return { kind: "externref" };
+  }
+  // Sloppy: the store is dropped, and the assignment expression's value is the
+  // RHS — which is already the single value left on the stack.
   return { kind: "externref" };
 }
 

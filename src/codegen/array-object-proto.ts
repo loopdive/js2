@@ -110,7 +110,8 @@ import {
 } from "./builtin-static-globals.js";
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
-import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
+import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
+import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 import {
@@ -2312,6 +2313,16 @@ function makeGlue(
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
+      // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
+      // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the
+      // wrapper-brand arms, which do not list Symbol) so the reflective read
+      // answers a real closure instead of the refusal, whose `.call` transfer
+      // returned a NULL externref that trapped at its first use.
+      (name === "Symbol" && member === "toString" ? emitSymbolProtoToStringBody(c, fctx) : null) ??
+      // (#5269 B-c) §20.4.3.5 `Symbol.prototype[@@toPrimitive](hint)` returns
+      // `thisSymbolValue(this)` regardless of the hint — literally `valueOf`'s
+      // body, so it shares it rather than restating the two brand arms.
+      (name === "Symbol" && member === "@@3" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
       // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
       // builtin whose ToPrimitive prefers `toString` under the "default" hint.
       (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
@@ -2621,7 +2632,10 @@ export function ensureSymbolNativeProtoGlue(ctx: CodegenContext): number | undef
   const brand = getBuiltinBrand(ctx, "Symbol");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Symbol", SYMBOL_PROTO_METHODS));
+    // (#5269 B-b) §20.4.3.5 `Symbol.prototype[Symbol.toStringTag]` is an own
+    // data property `"Symbol"` with `{w:false, e:false, c:true}` — the tag
+    // seeder installs it from this argument (WeakMap/WeakSet already pass one).
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Symbol", SYMBOL_PROTO_METHODS, "Symbol"));
   }
   return brand;
 }
