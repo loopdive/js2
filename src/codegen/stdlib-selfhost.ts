@@ -76,6 +76,7 @@ import {
   STRING_EQ_POLICY_DISABLED,
   STRING_LEN_POLICY_DISABLED,
   STRING_CONCAT_POLICY_DISABLED,
+  STRING_CONCAT_MANY_POLICY_DISABLED,
   NUMBER_BOUNDARY_POLICY_DISABLED,
 } from "../ir/runtime-manifest.js";
 import { isIntrinsicId } from "../ir/intrinsics.js";
@@ -511,6 +512,7 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
       stringEq: STRING_EQ_POLICY_DISABLED,
       stringLen: STRING_LEN_POLICY_DISABLED,
       stringConcat: STRING_CONCAT_POLICY_DISABLED,
+      stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED,
     },
   });
   const funcIdx = lowerAndRegister(ctx, def.name, prepared?.functions[0] ?? ir);

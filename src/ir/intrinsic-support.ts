@@ -4,9 +4,11 @@ import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBi
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import {
+  resolveRuntimeHostCapabilityFuncFamilyRecord,
   resolveRuntimeHostCapabilityFuncRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
   type RuntimeHostCapabilityRecord,
+  type RuntimeHostCapabilityValueType,
 } from "./runtime-host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import type { IrStringConcatMode } from "./string-runtime.js";
@@ -30,6 +32,7 @@ import {
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
   STRING_CONCAT_RUNTIME_FEATURES,
+  STRING_CONCAT_MANY_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -455,6 +458,62 @@ export function preparedStringConcatProvider(
   throw new Error(`IR string-concat provider ${provider.id} is not a callable implementation`);
 }
 
+/** The one batched many-arity feature row; named once so no caller spells it. */
+const STRING_CONCAT_MANY_RUNTIME_FEATURE = STRING_CONCAT_MANY_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S6) Which arm of the BATCHED many-arity concat seam the frozen
+ * manifest selected, at one concrete `arity`, or `undefined` when no manifest
+ * carries the row.
+ *
+ * The family's distinguishing move: one frozen row answers every arity, and
+ * the CONCRETE import or symbol is derived here rather than stored. The host
+ * arm returns the derived module/field AND the derived params, because the
+ * caller mints the import itself (`ensureLateImport`) and the record is the
+ * only authority for its shape; the native arm returns the derived symbol,
+ * range-checked against the row.
+ *
+ * Late minting is deliberate and is the contract, not an accident: the host
+ * import's POSITION in the import section is what the emitted bytes depend on
+ * (the census measured `__concat_5` landing at import index 21 of 27 on the
+ * async fixture), and a freeze-time registration would move every batching
+ * cell by design.
+ */
+export function preparedStringConcatManyProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+  arity: number,
+):
+  | {
+      readonly arm: "host";
+      readonly module: string;
+      readonly field: string;
+      readonly params: readonly RuntimeHostCapabilityValueType[];
+      readonly results: readonly RuntimeHostCapabilityValueType[];
+    }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_CONCAT_MANY_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable-family") {
+    const { symbolPrefix, arity: range } = provider.implementation;
+    if (arity < range.min || arity > range.max) {
+      throw new Error(`IR string-concat-many provider ${provider.id} does not cover arity ${arity}`);
+    }
+    return { arm: "native", symbol: `${symbolPrefix}${arity}` };
+  }
+  if (provider.implementation.kind === "host-callable-family") {
+    const row = resolveRuntimeHostCapabilityFuncFamilyRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+      arity,
+    );
+    return { arm: "host", module: row.module, field: row.field, params: row.params, results: row.results };
+  }
+  throw new Error(`IR string-concat-many provider ${provider.id} is not a callable family implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -559,6 +618,21 @@ export function prepareIrRuntimeManifest(input: {
    * must not freeze an `owned-append` provider it will never call.
    */
   readonly stringConcatDemand?: { readonly immutable: boolean; readonly owned: boolean };
+  /**
+   * (#3526 F2-S6) Which ARITIES some function in `functions` concatenates in
+   * one batched call, sorted and unique.
+   *
+   * Unlike every sibling demand this is scanned AFTER the producing pass, not
+   * before it: `batchStringConcat` CREATES the demand, so there is nothing to
+   * scan until it has run. An empty list is a module with no fused root, and it
+   * freezes no family row at all — the same "no row when nothing concatenates"
+   * rule the pair arm follows.
+   *
+   * The arities are carried rather than a bare flag because they are the
+   * checkable part: a frozen row that does not cover a demanded arity is a
+   * contract violation the resolve arm can name.
+   */
+  readonly stringConcatManyDemand?: { readonly arities: readonly number[] };
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -599,7 +673,8 @@ export function prepareIrRuntimeManifest(input: {
     !input.stringEqDemand &&
     !input.stringLenDemand &&
     !input.stringConcatDemand?.immutable &&
-    !input.stringConcatDemand?.owned
+    !input.stringConcatDemand?.owned &&
+    (input.stringConcatManyDemand?.arities.length ?? 0) === 0
   ) {
     return undefined;
   }
@@ -614,6 +689,9 @@ export function prepareIrRuntimeManifest(input: {
   if (input.stringLenDemand) builder.requestFeature(STRING_LEN_RUNTIME_FEATURE);
   if (input.stringConcatDemand?.immutable) builder.requestFeature(STRING_CONCAT_RUNTIME_FEATURE);
   if (input.stringConcatDemand?.owned) builder.requestFeature(STRING_CONCAT_OWNED_RUNTIME_FEATURE);
+  if ((input.stringConcatManyDemand?.arities.length ?? 0) > 0) {
+    builder.requestFeature(STRING_CONCAT_MANY_RUNTIME_FEATURE);
+  }
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {
