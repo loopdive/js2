@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1115,
+      "passCount": 1117,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -657,7 +657,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 246,
+          "pass": 248,
           "total": 277
         },
         {
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2173,
+      "passCount": 2178,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -849,7 +849,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 159,
+          "pass": 164,
           "total": 263
         },
         {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2107,
+      "passCount": 2112,
       "totalCount": 2486
     },
     {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 349,
+      "passCount": 353,
       "totalCount": 461
     },
     {
@@ -1074,13 +1074,13 @@
         "built-ins/WeakMap",
         "built-ins/WeakSet"
       ],
-      "passCount": 121,
+      "passCount": 123,
       "totalCount": 129
     },
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1296,
+      "passCount": 1322,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 787,
+      "passCount": 793,
       "totalCount": 1106
     },
     {
@@ -1197,7 +1197,7 @@
     {
       "name": "SharedArrayBuffer / Atomics",
       "testCategories": ["built-ins/SharedArrayBuffer", "built-ins/Atomics"],
-      "passCount": 64,
+      "passCount": 65,
       "totalCount": 342
     },
     {
@@ -1340,7 +1340,7 @@
     {
       "name": "Resizable ArrayBuffer",
       "testCategories": ["built-ins/ArrayBuffer/prototype/resize"],
-      "passCount": 0,
+      "passCount": 16,
       "totalCount": 18
     },
     {
@@ -1366,7 +1366,7 @@
     {
       "name": "Iterator helpers (map, filter, take)",
       "testCategories": ["built-ins/Iterator"],
-      "passCount": 138,
+      "passCount": 144,
       "totalCount": 393
     },
     {
@@ -1384,7 +1384,7 @@
     {
       "name": "Upsert (Map.getOrInsert)",
       "testCategories": [],
-      "passCount": 49,
+      "passCount": 56,
       "totalCount": 72
     },
     {

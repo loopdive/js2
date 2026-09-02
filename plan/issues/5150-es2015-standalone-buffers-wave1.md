@@ -14,6 +14,7 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
+  - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
   - src/codegen/builtin-value-read.ts
   - src/codegen/property-access.ts
@@ -23,6 +24,7 @@ loc-budget-allow:
   - src/codegen/expressions/new-indexed.ts
   - src/codegen/expressions/new-builtin-globals.ts
 func-budget-allow:
+  - src/codegen/array-methods.ts::compileArrayMethodCall
   - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
   - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
@@ -636,3 +638,107 @@ the spec arm is untouched for every other shape.
 | `pnpm run test:equivalence:gate` | 24 failing / 1718 passing / 24 known-failures — **no new regressions** |
 | `ab.slice(2,6)` standalone binary | 51,125 bytes, `result.imports` empty, no `__to_primitive` |
 | rebind probes A/B/C/E (standalone) | `29` / `29` / `28` / `10` — A and C back to main's answers, B and E keep the wave's improvement |
+
+## 2026-09-02 post-merge regression fix (PR #5224 → main)
+
+The wave landed as `5dd7a92169` (first parent `985de5b65b`). The merge-group run
+[33593621223](https://github.com/loopdive/js2/actions/runs/33593621223) —
+"check for test262 regressions", JS-HOST lane — then flagged nine rows that the
+PR-level checks could not see, and the lead re-confirmed them on current main.
+
+### Root cause
+
+Cluster F pinned a MODULE-GLOBAL typed-array binding to the type
+`inferTaViewType` answers (`declarations.ts`, `moduleGlobalWasmType`). That
+helper is dual-purpose: on the STANDALONE lane it answers the shared-backing
+`$__ta_view` struct — the thing the wave is about — but on the JS-HOST lane it
+answers **`externref`**, because it doubles as the local-slot chooser for the
+#3097 host construct bridge. Adopting the host answer for a module global is a
+representation change on a lane the wave never measured: a top-level
+`const i32a = new Int32Array(new SharedArrayBuffer(16))` stopped being the
+native element vec the rest of the host lane assumes and became a REAL host
+`Int32Array`. Two consequences, both observed:
+
+- **`Atomics/{notify,wait}` stopped throwing their TypeError** (pass→fail). The
+  pre-wave native vec is not a valid `Atomics` receiver, and that is what
+  produced the TypeError those two rows assert. Handed a genuine host view over
+  a genuine SharedArrayBuffer, `Atomics.wait(i32a, 0, 0, 0)` simply returns.
+- **Seven detached / resizable `TypedArray/**` rows went from an ordinary
+  assertion failure to `RuntimeError: illegal cast in __module_init_chunk_*`** —
+  a downstream read `ref.cast`s the host view to the checker-typed vec. That is
+  the illegal_cast trap growth 28→35 the same run reported.
+
+A **second, standalone-lane** defect of the same pin surfaced while measuring:
+both `$__ta_view` arms in `array-methods.ts::compileArrayMethodCall` (the
+`subarray` sibling-view arm and the #3054 B1 materialise-and-rebind arm) are
+guarded by `fctx.localMap.has(receiver)`, i.e. they only ever ran for a LOCAL
+receiver. With the module-global pin in place, `ta.fill(…)` on a top-level `ta`
+fell through to the generic arm and `ref.cast` the view to the element vec —
+five standalone rows changed trap kind (null-deref / TypeError → illegal cast).
+Minimal repro, `--target standalone`:
+
+```ts
+let rab = new ArrayBuffer(4, { maxByteLength: 8 });
+let ta = new Int8Array(rab);
+export function test(): number { ta.fill(9); return ta[0]; }   // illegal cast
+```
+
+### Fix
+
+1. **`declarations.ts`** — the module-global pin adopts `inferTaViewType`'s
+   answer **only when it is a `$__ta_view` struct** (`isTaViewTypeIdx`). A
+   host-lane global keeps the slot it had before the wave. This is the whole
+   host-lane regression: reverting only this file restores all nine rows
+   verdict-for-verdict.
+2. **`array-methods.ts`** — a `$__ta_view` receiver that is a MODULE GLOBAL is
+   spilled into a synthetic local (the same struct ref, so the shared backing
+   and the #3054 B3 write-through are unaffected) so both existing arms apply
+   unchanged. The synthetic mapping is DELETED after dispatch — restoring it
+   would shadow the global for the rest of the function.
+
+No trap-growth valve, no skip-list edit, no new host import.
+
+### Verdict matrix — the nine flagged rows, 9 × 2 lanes × 3 trees
+
+`pre` = pristine `git archive 985de5b65b` tree, `main` = `5dd7a92169` (current
+main), `fix` = this change. Compile timeout 120 s (the stock 15 s default
+falsely reports a third of these rows as `compilation timeout` on a loaded
+4-core box).
+
+| # | Row | host `pre` | host `main` | host `fix` | sa `pre` | sa `main` | sa `fix` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `Atomics/notify/null-bufferdata-throws.js` | **pass** | fail (Expected a TypeError but got a undefined) | **pass** | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 2 | `Atomics/wait/cannot-suspend-throws.js` | **pass** | fail (Expected a TypeError… no exception at all) | **pass** | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 3 | `TypedArray/from/…-mapper-detaches-result.js` | fail (TypeError: `%TypedArray%.from` on incompatible receiver) | fail (**illegal cast**) | fail (same TypeError as `pre`) | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 4 | `TypedArray/from/…-makes-result-out-of-bounds.js` | fail (same TypeError) | fail (**illegal cast**) | fail (same TypeError as `pre`) | fail (Array method called on null/undefined) | fail (**illegal cast**) | fail (TypeError, no trap) |
+| 5 | `TypedArray/out-of-bounds-behaves-like-detached.js` | fail (SameValue «10» vs «undefined») | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 6 | `TypedArray/prototype/fill/absent-indices-computed-from-initial-length.js` | fail (SameValue «1» vs «4») | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (dereferencing a null pointer) | fail (**illegal cast**) | fail (SameValue «1» vs «4» — real assertion) |
+| 7 | `TypedArray/prototype/set/array-arg-value-conversion-resizes-array-buffer.js` | fail (compareArray mismatch) | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (Array method called on null/undefined) | fail (**illegal cast**) | fail (compareArray mismatch — real assertion) |
+| 8 | `TypedArray/prototype/subarray/result-byteOffset-from-out-of-bounds.js` | fail (SameValue «NaN» vs «4») | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (Array method called on null/undefined) | fail (**illegal cast**) | fail (SameValue «0» vs «4» — real assertion) |
+| 9 | `TypedArray/prototype/with/index-validated-against-current-length.js` | fail (array element access out of bounds) | fail (**illegal cast**) | fail (same trap as `pre`) | fail (WebAssembly.Exception) | fail (**illegal cast**) | fail (array element access out of bounds) |
+
+Totals — host: `pre` 2 pass / 7 fail, `main` 0 pass / 9 fail (7 illegal casts),
+`fix` **2 pass / 7 fail, row-for-row identical to `pre`, zero illegal casts**.
+Standalone: no pass/fail movement in any tree; the illegal-cast SET is
+`{1, 2, 3, 5}` in `pre` and exactly `{1, 2, 3, 5}` again in `fix` (it was all
+nine on `main`), so standalone trap growth is back to zero and rows 6/7/8 now
+reach a real assertion instead of any trap.
+
+### Re-validation
+
+| Check | Result |
+| --- | --- |
+| 9 rows, host lane, 120 s | **2 pass / 7 fail**, identical to the pre-PR tree, no `illegal cast` |
+| 9 rows, standalone, 120 s | 9 fail; illegal casts only the 4 that pre-date the wave |
+| 53-row buffers list, standalone, 120 s | **16 pass / 32 fail / 5 compile_error** — same 16 rows as the wave's own run, `diff` of status+path against it: no differences |
+| 20-row `built-ins/TypedArray/prototype/**` control (deterministic every-38th passing row) | **20/20 pass** |
+| 27-row `fill/set/subarray/with/copyWithin/sort/slice/includes/indexOf/join/reverse` control (every-11th passing row) | **27/27 pass** — covers the `array-methods.ts` arm directly |
+| `npx vitest run tests/issue-5150-es2015-buffers.test.ts` | **18/18** (14 + the 4 new guards) |
+| `pnpm run typecheck` (TS7) | clean |
+| loc / func / coercion / oracle-ratchet / dead-exports | all exit 0 |
+| `pnpm run test:equivalence:gate` | no NEW failures |
+
+The four rows above are now IN-PROCESS cases in
+`tests/issue-5150-es2015-buffers.test.ts` (`HOST_ATOMICS_ROWS` must `pass`;
+`HOST_NO_TRAP_ROWS` must not contain `illegal cast`), so this cannot return
+silently — the host lane had no guard at all in the original wave.

@@ -147,6 +147,7 @@ import {
   getOrRegisterHoleyArrayType,
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
+  isTaViewTypeIdx,
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
@@ -3524,9 +3525,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // traps on the next read. The widening helpers below (#4428/#4204/#4491)
     // do not cover this — both sides are objects, so no tag disagreement — so
     // the rebind check has to live with the pin it guards.
+    //
+    // ONLY the `$__ta_view` struct answer is adopted here — the wave's target is
+    // the standalone shared-backing view. `inferTaViewType` ALSO answers
+    // `externref` on the js-host lane (it doubles as the local-slot chooser for
+    // the #3097 host construct bridge), and widening a MODULE GLOBAL that way is
+    // a behaviour change this wave never measured: it swaps the native vec the
+    // rest of the host lane assumes for a real host TypedArray. That flipped
+    // nine host rows on main — `Atomics/{notify,wait}` stopped throwing their
+    // TypeError, and seven detached/resizable `TypedArray/**` rows went from an
+    // ordinary assertion failure to `illegal cast in __module_init_chunk_*`
+    // where a downstream read cast the host view to the checker-typed vec.
+    // A host-lane global keeps the slot it had before this wave.
     {
       const taViewGlobalType = inferTaViewType(ctx, decl.initializer);
-      if (taViewGlobalType !== null && !taViewGlobalIsRebound(ctx, sourceFile, decl, taViewGlobalType)) {
+      if (
+        taViewGlobalType !== null &&
+        (taViewGlobalType.kind === "ref" || taViewGlobalType.kind === "ref_null") &&
+        isTaViewTypeIdx(ctx, taViewGlobalType.typeIdx) &&
+        !taViewGlobalIsRebound(ctx, sourceFile, decl, taViewGlobalType)
+      ) {
         return taViewGlobalType;
       }
     }
