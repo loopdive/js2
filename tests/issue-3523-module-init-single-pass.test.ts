@@ -1,25 +1,42 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#3523 R4 gap-1a) One direct compile for a call-free module-init population.
+// (#3523 R4 gap-1a/1b) One direct compile for a pass-2-stable module-init
+// population.
 //
 // A typed-Unsupported module initializer used to compile its DIRECT body
 // TWICE: `module-init-pass1` seeds closure/setup discovery for the top-level
 // function bodies compiled after it, and `module-init-pass2` recompiles once
-// those bodies exist "so call sites inside module-level code can see the final
-// inlinable-function registry". That registry (`ctx.inlinableFunctions`) is
-// consulted only when compiling a call, so a population containing no call
-// anywhere recompiles to the body pass 1 already produced — and pass 1's body
-// is kept structurally valid to the end by the `ctx.pendingInitBody` fixups.
+// those bodies exist. Pass 1's body is kept structurally valid to the end by
+// the `ctx.pendingInitBody` fixups, so the recompile is only worth paying for
+// when it can actually differ.
 //
-// The census below is the acceptance criterion: gated shapes read `1/0`,
-// controls stay `1/1`, IR-owned and function-only modules stay `0/0`.
+// Measured, a second compile differs through exactly two mechanisms:
+//
+//   1. the inlinable-function registry, which is consulted only when compiling
+//      a CALL (gap-1a: no call anywhere ⇒ nothing to observe);
+//   2. closure re-lifting, which needs a CLOSURE to lift (gap-1b: pass 2 mints
+//      a re-lifted `$__closure_N` twin and applies registry inlining inside the
+//      closure body it recompiles).
+//
+// A population missing EITHER ingredient is pass-2-stable. Populations that
+// carry both keep two passes — and that refusal is load-bearing twice over:
+// admitting closures alongside calls breaks byte identity (the mutation pin
+// below) and re-opens the #4195 duplicate-diagnostic that only the post-pass-2
+// dedupe collapses.
+//
+// The census below is the acceptance criterion: pass-2-stable shapes read
+// `1/0`, closure+call controls stay `1/1`, IR-owned and function-only modules
+// stay `0/0`.
 
 import { afterEach, describe, expect, it } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
 
 import { getCompileProfile, refreshCompileProfileConfig, resetCompileProfile } from "../src/compile-profile.js";
 import { compileMultiSource } from "../src/compiler.js";
 import { compile, type CompileResult } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
+import { assembleOriginalHarness } from "./test262-original-harness.js";
+import { parseMeta } from "./test262-runner.js";
 
 // Register the statement/expression delegates used by generateModule.
 import "../src/codegen/expressions.js";
@@ -27,6 +44,7 @@ import "../src/codegen/expressions.js";
 const PROFILE_ENV = "JS2WASM_COMPILE_PROFILE";
 const FORCE_PASS2_ENV = "JS2WASM_TEST_FORCE_MODULE_INIT_PASS2";
 const POISON_ENV = "JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY";
+const ADMIT_CLOSURES_ENV = "JS2WASM_TEST_ADMIT_CLOSURES_IN_MODULE_INIT_PASS2_GATE";
 
 const originalProfileMode = process.env[PROFILE_ENV];
 
@@ -35,6 +53,7 @@ function restoreEnv(): void {
   else process.env[PROFILE_ENV] = originalProfileMode;
   Reflect.deleteProperty(process.env, FORCE_PASS2_ENV);
   Reflect.deleteProperty(process.env, POISON_ENV);
+  Reflect.deleteProperty(process.env, ADMIT_CLOSURES_ENV);
   refreshCompileProfileConfig();
   resetCompileProfile();
 }
@@ -62,18 +81,24 @@ function censusFromProfile(): DirectPassCensus {
   return { pass1: calls("module-init-pass1"), pass2: calls("module-init-pass2") };
 }
 
-function compileLane(source: string, lane: Lane, fileName: string): Promise<CompileResult> {
+function compileLane(
+  source: string,
+  lane: Lane,
+  fileName: string,
+  extra: Record<string, unknown> = {},
+): Promise<CompileResult> {
   return compile(source, {
     fileName,
     target: lane.target,
     skipSemanticDiagnostics: true,
     emitWat: false,
+    ...extra,
   });
 }
 
 /**
  * Run `body` with the profiler armed. `profileCount`/`profileModuleScale` write
- * straight to stderr while it is on, and this file profiles ~60 compiles — mute
+ * straight to stderr while it is on, and this file profiles ~120 compiles — mute
  * that stream for the duration so the suite log stays readable.
  */
 async function withProfiler<T>(forceSecondPass: boolean, body: () => Promise<T>): Promise<T> {
@@ -101,9 +126,10 @@ function compileWithCensus(
   lane: Lane,
   fileName: string,
   forceSecondPass = false,
+  extra: Record<string, unknown> = {},
 ): Promise<{ readonly result: CompileResult; readonly census: DirectPassCensus }> {
   return withProfiler(forceSecondPass, async () => {
-    const result = await compileLane(source, lane, fileName);
+    const result = await compileLane(source, lane, fileName, extra);
     return { result, census: censusFromProfile() };
   });
 }
@@ -139,8 +165,14 @@ async function observableSurface(
   };
 }
 
-/** Call-free populations: nothing in the init subtrees is a call. */
-const GATED_SHAPES: ReadonlyArray<{ readonly name: string; readonly source: string; readonly read: number }> = [
+interface Shape {
+  readonly name: string;
+  readonly source: string;
+  readonly read: number;
+}
+
+/** gap-1a: call-free populations (some of them closure-BEARING). */
+const CALL_FREE_SHAPES: readonly Shape[] = [
   {
     name: "string-const",
     source: `const greeting = "hi";\nexport function read(): number { return greeting.length; }\n`,
@@ -148,6 +180,8 @@ const GATED_SHAPES: ReadonlyArray<{ readonly name: string; readonly source: stri
   },
   { name: "top-level-var", source: `var w = 5;\nexport function read(): number { return w; }\n`, read: 5 },
   {
+    // Closure-bearing but call-free: pass 2 has nothing to inline, so this
+    // stays on the one-pass route it reached in gap-1a.
     name: "arrow-initializer",
     source: `const f = (x: number): number => x * 2;\nexport function read(): number { return f(3); }\n`,
     read: 6,
@@ -164,16 +198,34 @@ const GATED_SHAPES: ReadonlyArray<{ readonly name: string; readonly source: stri
   },
 ];
 
-/** Call-bearing populations: every one keeps today's two passes. */
-const CONTROL_SHAPES: ReadonlyArray<{ readonly name: string; readonly source: string; readonly read: number }> = [
+/**
+ * gap-1b: call-bearing but closure-FREE populations. Every one of these was
+ * `1/1` before this slice.
+ */
+const CALL_BEARING_SHAPES: readonly Shape[] = [
   {
     name: "call-in-initializer",
     source: `function h(): number { return 4; }\nlet z = h();\nexport function read(): number { return z; }\n`,
     read: 4,
   },
   {
+    name: "call-as-statement",
+    source: `let acc = 0;\nfunction bump(): void { acc = acc + 3; }\nbump();\nexport function read(): number { return acc; }\n`,
+    read: 3,
+  },
+  {
     name: "new-in-initializer",
     source: `class C { x: number = 1; }\nconst c = new C();\nexport function read(): number { return c.x; }\n`,
+    read: 1,
+  },
+  {
+    name: "new-map-and-set",
+    source: `const m = new Map<string, number>();\nm.set("a", 2);\nexport function read(): number { return m.size; }\n`,
+    read: 1,
+  },
+  {
+    name: "object-freeze",
+    source: `const o = { p: 1 };\nObject.freeze(o);\nexport function read(): number { return o.p; }\n`,
     read: 1,
   },
   {
@@ -182,25 +234,79 @@ const CONTROL_SHAPES: ReadonlyArray<{ readonly name: string; readonly source: st
     read: 4,
   },
   {
-    name: "call-in-initializer-arrow-body",
-    source: `function h(): number { return 4; }\nconst f = (): number => h();\nexport function read(): number { return f(); }\n`,
-    read: 4,
+    name: "string-method-call",
+    source: `const s = "ab".toUpperCase();\nexport function read(): number { return s.length; }\n`,
+    read: 2,
   },
   {
-    name: "tagged-template",
-    source: `function tag(parts: TemplateStringsArray): number { return parts.length; }\nconst t = tag\`abc\`;\nexport function read(): number { return t; }\n`,
+    name: "array-push",
+    source: `const a: number[] = [];\na.push(7);\nexport function read(): number { return a[0]!; }\n`,
+    read: 7,
+  },
+  {
+    name: "parse-int",
+    source: `const n = parseInt("21", 10);\nexport function read(): number { return n; }\n`,
+    read: 21,
+  },
+  {
+    // Legacy `any` parameter — the callee the IR path refuses.
+    name: "legacy-any-callee",
+    source: `function h(a: any): number { return a + 1; }\nconst z = h(41);\nexport function read(): number { return z; }\n`,
+    read: 42,
+  },
+  {
+    name: "console-log",
+    source: `console.log("hi");\nexport function read(): number { return 1; }\n`,
     read: 1,
   },
 ];
 
-describe("#3523 gap-1a — a call-free module-init population compiles the direct body once", () => {
-  it("reads pass1=1, pass2=0 for every gated shape in both lanes", async () => {
-    for (const shape of GATED_SHAPES) {
+/**
+ * Call-bearing, closure-free, and byte-identical to the forced two-pass build
+ * on both lanes — measured 2026-09-01. `tagged-template` is deliberately NOT
+ * here: it has its own dead-artifact test below.
+ */
+const BYTE_IDENTICAL_SHAPES = CALL_BEARING_SHAPES;
+
+/** A call in operator clothing — admitted, with a measured dead-global delta. */
+const TAGGED_TEMPLATE: Shape = {
+  name: "tagged-template",
+  source: `function tag(parts: TemplateStringsArray): number { return parts.length; }\nconst t = tag\`abc\`;\nexport function read(): number { return t; }\n`,
+  read: 1,
+};
+
+/** Both ingredients present: these keep today's two passes. */
+const CLOSURE_PLUS_CALL_SHAPES: readonly Shape[] = [
+  {
+    name: "arrow-body-calls-local",
+    source: `function h(): number { return 4; }\nconst f = (): number => h();\nexport function read(): number { return f(); }\n`,
+    read: 4,
+  },
+  {
+    name: "fn-expression-calls-local",
+    source: `function h(): number { return 4; }\nconst g = function (): number { return h(); };\nexport function read(): number { return g(); }\n`,
+    read: 4,
+  },
+  {
+    name: "var-fn-expression",
+    source: `function h(): number { return 5; }\nvar g = function (): number { return h(); };\nexport function read(): number { return g(); }\n`,
+    read: 5,
+  },
+  {
+    name: "legacy-callee-inside-arrow",
+    source: `function h(a: any): number { return a + 1; }\nconst f = (): number => h(41);\nexport function read(): number { return f(); }\n`,
+    read: 42,
+  },
+];
+
+describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles the direct body once", () => {
+  it("reads pass1=1, pass2=0 for every pass-2-stable shape in both lanes", async () => {
+    for (const shape of [...CALL_FREE_SHAPES, ...CALL_BEARING_SHAPES, TAGGED_TEMPLATE]) {
       for (const lane of LANES) {
         const { result, census } = await compileWithCensus(
           shape.source,
           lane,
-          `gap1a-gated-${shape.name}-${lane.name}.ts`,
+          `gap1b-stable-${shape.name}-${lane.name}.ts`,
         );
         expect(result.success, `${shape.name}/${lane.name}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(
           true,
@@ -213,30 +319,83 @@ describe("#3523 gap-1a — a call-free module-init population compiles the direc
         });
       }
     }
-  });
+  }, 300_000);
 
   it("matches the forced-two-pass control on runtime value, exports, imports and validity", async () => {
-    for (const shape of GATED_SHAPES) {
+    for (const shape of [...CALL_FREE_SHAPES, ...CALL_BEARING_SHAPES, TAGGED_TEMPLATE]) {
       for (const lane of LANES) {
-        const single = await compileWithCensus(shape.source, lane, `gap1a-ab-${shape.name}-${lane.name}.ts`);
-        const twoPass = await compileWithCensus(shape.source, lane, `gap1a-ab-${shape.name}-${lane.name}.ts`, true);
+        const single = await compileWithCensus(shape.source, lane, `gap1b-ab-${shape.name}-${lane.name}.ts`);
+        const twoPass = await compileWithCensus(shape.source, lane, `gap1b-ab-${shape.name}-${lane.name}.ts`, true);
         expect(single.census).toEqual({ pass1: 1, pass2: 0 });
         expect(twoPass.census).toEqual({ pass1: 1, pass2: 1 });
 
         const singleSurface = await observableSurface(single.result, lane);
         const twoPassSurface = await observableSurface(twoPass.result, lane);
         expect(singleSurface.read, `${shape.name}/${lane.name}`).toBe(shape.read);
-        // Byte equality is NOT required (a second pass may emit deduped closure
-        // twins); the observable surface is.
         expect(singleSurface).toEqual(twoPassSurface);
       }
     }
-  });
+  }, 300_000);
 
-  it("keeps pass1=1, pass2=1 and unchanged behavior for every call-bearing control", async () => {
-    for (const shape of CONTROL_SHAPES) {
+  it("emits BYTE-IDENTICAL output to the forced two-pass build for the closure-free call-bearing family", async () => {
+    for (const shape of BYTE_IDENTICAL_SHAPES) {
       for (const lane of LANES) {
-        const gated = await compileWithCensus(shape.source, lane, `gap1a-control-${shape.name}-${lane.name}.ts`);
+        const single = await compileLane(shape.source, lane, `gap1b-bytes-${shape.name}-${lane.name}.ts`);
+        const forced = await withProfiler(true, () =>
+          compileLane(shape.source, lane, `gap1b-bytes-${shape.name}-${lane.name}.ts`),
+        );
+        expect(
+          Buffer.from(single.binary).equals(Buffer.from(forced.binary)),
+          `${shape.name}/${lane.name}: ${single.binary.length} vs ${forced.binary.length} bytes`,
+        ).toBe(true);
+      }
+    }
+  }, 300_000);
+
+  it("drops the dead duplicate template-object cache global that pass 2 re-registers", async () => {
+    // The ONE measured byte delta in the closure-free call-bearing family on
+    // these two lanes: pass 2 mints a second `$__tt_cache_N` global and leaves
+    // pass 1's orphaned. Skipping pass 2 emits one cache, not two — the code is
+    // otherwise identical and the runtime value is unchanged.
+    for (const lane of LANES) {
+      const single = await compileLane(TAGGED_TEMPLATE.source, lane, `gap1b-tt-${lane.name}.ts`, { emitWat: true });
+      const forced = await withProfiler(true, () =>
+        compileLane(TAGGED_TEMPLATE.source, lane, `gap1b-tt-${lane.name}.ts`, { emitWat: true }),
+      );
+      const caches = (wat: string | undefined) => (wat?.match(/\(global \$__tt_cache_\d+/g) ?? []).length;
+      expect(caches(single.wat), `single/${lane.name}`).toBe(1);
+      expect(caches(forced.wat), `forced/${lane.name}`).toBe(2);
+      expect(single.binary.length).toBeLessThan(forced.binary.length);
+      expect(WebAssembly.validate(single.binary)).toBe(true);
+      expect((await observableSurface(single, lane)).read).toBe(TAGGED_TEMPLATE.read);
+    }
+  }, 120_000);
+
+  it("drops the dead duplicate data segments a WASI console.log re-registers", async () => {
+    // WASI is the one lane where `console.log` is not byte-identical: pass 2
+    // re-registers the call's data segments, so the two-pass module carries a
+    // dead copy of each. Acceptance here is validity + import surface + a
+    // strictly smaller module, not byte identity.
+    const wasi = { name: "wasi", target: "wasi" as const } as unknown as Lane;
+    const single = await compileLane(CALL_BEARING_SHAPES[10]!.source, wasi, "gap1b-wasi-console.ts", {
+      emitWat: true,
+    });
+    const forced = await withProfiler(true, () =>
+      compileLane(CALL_BEARING_SHAPES[10]!.source, wasi, "gap1b-wasi-console.ts", { emitWat: true }),
+    );
+    const segments = (wat: string | undefined) => (wat?.match(/\(data \(i32\.const \d+\)/g) ?? []).length;
+    expect(segments(forced.wat) - segments(single.wat)).toBe(2);
+    expect(single.binary.length).toBeLessThan(forced.binary.length);
+    expect(WebAssembly.validate(single.binary)).toBe(true);
+    expect(single.imports.map((d) => `${d.module}.${d.name}`).sort()).toEqual(
+      forced.imports.map((d) => `${d.module}.${d.name}`).sort(),
+    );
+  }, 120_000);
+
+  it("keeps pass1=1, pass2=1 and unchanged behavior when a population carries BOTH ingredients", async () => {
+    for (const shape of CLOSURE_PLUS_CALL_SHAPES) {
+      for (const lane of LANES) {
+        const gated = await compileWithCensus(shape.source, lane, `gap1b-control-${shape.name}-${lane.name}.ts`);
         expect(gated.result.success, `${shape.name}/${lane.name}`).toBe(true);
         expect({ shape: shape.name, lane: lane.name, ...gated.census }).toEqual({
           shape: shape.name,
@@ -247,7 +406,47 @@ describe("#3523 gap-1a — a call-free module-init population compiles the direc
         expect((await observableSurface(gated.result, lane)).read, `${shape.name}/${lane.name}`).toBe(shape.read);
       }
     }
-  });
+  }, 300_000);
+
+  it("keeps two passes for a chunk-forced population even though it is pass-2-stable", async () => {
+    // Only the final emitting pass materializes the private chunk helpers, so
+    // `moduleInitChunkingRequired` overrides the predicate.
+    const statements = Array.from({ length: 17 }, (_, i) => `let v${i} = ${i}; v${i} = v${i} + 1;`).join("\n");
+    const source = `function h(): number { return 1; }\n${statements}\nconst zz = h();\nexport function read(): number { return v16 + zz; }\n`;
+    for (const lane of LANES) {
+      const run = await compileWithCensus(source, lane, `gap1b-chunked-${lane.name}.ts`);
+      expect(run.result.success, `${lane.name}`).toBe(true);
+      expect(run.census, `chunk-forced/${lane.name}`).toEqual({ pass1: 1, pass2: 1 });
+      expect((await observableSurface(run.result, lane)).read).toBe(18);
+    }
+  }, 120_000);
+
+  it("the closure refusal is load-bearing — admitting closures breaks byte identity", async () => {
+    // P4 mutation. `legacy-callee-inside-arrow` is `1/1` under the shipped
+    // predicate. Widen the predicate through the test-only seam and the same
+    // population goes `1/0` AND stops matching its two-pass build byte for
+    // byte — which is exactly the divergence the refusal exists to avoid.
+    const shape = CLOSURE_PLUS_CALL_SHAPES[3]!;
+    for (const lane of LANES) {
+      const shipped = await compileWithCensus(shape.source, lane, `gap1b-mut-${lane.name}.ts`);
+      expect(shipped.census, `shipped/${lane.name}`).toEqual({ pass1: 1, pass2: 1 });
+
+      process.env[ADMIT_CLOSURES_ENV] = "1";
+      try {
+        const mutated = await compileWithCensus(shape.source, lane, `gap1b-mut-${lane.name}.ts`);
+        expect(mutated.census, `mutated/${lane.name}`).toEqual({ pass1: 1, pass2: 0 });
+        expect(
+          Buffer.from(mutated.result.binary).equals(Buffer.from(shipped.result.binary)),
+          `mutated/${lane.name} must differ from the two-pass build`,
+        ).toBe(false);
+        // The mutant is still a valid module producing the right answer — the
+        // refusal is about output stability, not about correctness collapsing.
+        expect((await observableSurface(mutated.result, lane)).read).toBe(shape.read);
+      } finally {
+        Reflect.deleteProperty(process.env, ADMIT_CLOSURES_ENV);
+      }
+    }
+  }, 120_000);
 
   it("scans the compile inputs, not the source file", async () => {
     // A call that lives only inside a top-level FUNCTION body is not an init
@@ -258,14 +457,16 @@ function h(): number { return 4; }
 function g(): number { return h(); }
 export function read(): number { return greeting.length + g(); }
 `;
-    // A call inside a STATIC BLOCK, or inside a class-expression method whose
-    // owning statement reaches the init population (it carries statics), IS an
-    // init input and must disqualify.
+    // A call inside a STATIC BLOCK is an init input — but a call alone is now
+    // admitted, so this population is single-pass.
     const staticBlockCall = `const greeting = "hi";
 function h(): number { return 4; }
 class C { static n: number = 0; static { C.n = h(); } }
 export function read(): number { return greeting.length + C.n; }
 `;
+    // A class-expression method whose owning statement reaches the population
+    // (it carries statics) brings the CLOSURE ingredient with it, and the call
+    // in its body brings the other — so this one keeps two passes.
     const classExpressionMethodCall = `const greeting = "hi";
 function h(): number { return 4; }
 const K = class { static s: number = 1; m(): number { return h(); } };
@@ -273,19 +474,19 @@ export function read(): number { return greeting.length + K.s; }
 `;
     for (const lane of LANES) {
       expect(
-        (await compileWithCensus(functionBodyOnly, lane, `gap1a-fnbody-${lane.name}.ts`)).census,
+        (await compileWithCensus(functionBodyOnly, lane, `gap1b-fnbody-${lane.name}.ts`)).census,
         `function-body-only/${lane.name}`,
       ).toEqual({ pass1: 1, pass2: 0 });
       expect(
-        (await compileWithCensus(staticBlockCall, lane, `gap1a-staticblock-${lane.name}.ts`)).census,
+        (await compileWithCensus(staticBlockCall, lane, `gap1b-staticblock-${lane.name}.ts`)).census,
         `static-block/${lane.name}`,
-      ).toEqual({ pass1: 1, pass2: 1 });
+      ).toEqual({ pass1: 1, pass2: 0 });
       expect(
-        (await compileWithCensus(classExpressionMethodCall, lane, `gap1a-clsexpr-${lane.name}.ts`)).census,
+        (await compileWithCensus(classExpressionMethodCall, lane, `gap1b-clsexpr-${lane.name}.ts`)).census,
         `class-expression-method/${lane.name}`,
       ).toEqual({ pass1: 1, pass2: 1 });
     }
-  });
+  }, 120_000);
 
   it("lets the ACCUMULATED multi-source population decide", async () => {
     async function multiCensus(files: Record<string, string>): Promise<DirectPassCensus> {
@@ -297,62 +498,114 @@ export function read(): number { return greeting.length + K.s; }
     }
 
     const entry = `import { depValue } from "./dep";\nconst local = depValue;\nexport function read(): number { return local; }\n`;
-    // Both sources call-free: the emitting source skips its recompile.
+    // Both sources stable: the emitting source skips its recompile.
     expect(
       await multiCensus({ "dep.ts": `export const depValue = 7;\n`, "entry.ts": entry }),
-      "both sources call-free",
+      "both sources stable",
     ).toEqual({ pass1: 2, pass2: 0 });
-    // A call contributed by an EARLIER source keeps two passes even though the
-    // emitting source's own statements are call-free.
+    // A CALL contributed by an earlier source is not enough on its own.
     expect(
       await multiCensus({
         "dep.ts": `function mk(): number { return 7; }\nexport const depValue = mk();\n`,
         "entry.ts": entry,
       }),
-      "earlier source contributes a call",
+      "earlier source contributes a call only",
+    ).toEqual({ pass1: 2, pass2: 0 });
+    // A call AND a closure contributed by an EARLIER source keep two passes
+    // even though the emitting source's own statements are stable.
+    expect(
+      await multiCensus({
+        "dep.ts": `function mk(): number { return 7; }\nconst make = (): number => mk();\nexport const depValue = make();\n`,
+        "entry.ts": entry,
+      }),
+      "earlier source contributes call + closure",
     ).toEqual({ pass1: 2, pass2: 1 });
-  });
+  }, 120_000);
 
   it("reports an init-statement diagnostic exactly once on both routes", async () => {
-    // A call-free init statement whose codegen genuinely fails: before this
-    // slice it compiled twice and `dedupeDiagnosticsFrom` reconciled the pair.
-    const gated = `const greeting = "hi";
+    // (#4195) Two passes report every top-level diagnostic twice and
+    // `dedupeDiagnosticsFrom` reconciles the pair after pass 2. The one-pass
+    // route never creates the pair — measured, it does not need the dedupe.
+    const callFree = `const greeting = "hi";
 const nn: number = 1;
 const [p, q] = nn as unknown as number[];
 export function read(): number { return p + q; }
 `;
-    // The same failure with a call in the population — pass 2 still runs, so
-    // the dedupe path is the one under test there.
-    const control = `const greeting = "hi";
+    // Call-bearing and closure-free: newly on the one-pass route (gap-1b).
+    const callBearing = `const greeting = "hi";
 function h(): number { return 1; }
 const z = h();
 const nn: number = z;
 const [p, q] = nn as unknown as number[];
 export function read(): number { return p + q; }
 `;
+    // Both ingredients: still two passes, so the dedupe path is under test.
+    const closurePlusCall = `function h(): number { return 1; }
+const f = (): number => h();
+const nn: number = f();
+const [p, q] = nn as unknown as number[];
+export function read(): number { return p + q; }
+`;
     const message = "Cannot destructure: not an array type";
+    const hits = (result: CompileResult) => result.errors.filter((error) => error.message.includes(message)).length;
 
     for (const lane of LANES) {
-      const gatedRun = await compileWithCensus(gated, lane, `gap1a-diag-gated-${lane.name}.ts`);
-      expect(gatedRun.census).toEqual({ pass1: 1, pass2: 0 });
-      expect(gatedRun.result.errors.filter((error) => error.message.includes(message))).toHaveLength(1);
+      const free = await compileWithCensus(callFree, lane, `gap1b-diag-free-${lane.name}.ts`);
+      expect(free.census).toEqual({ pass1: 1, pass2: 0 });
+      expect(hits(free.result), `call-free/${lane.name}`).toBe(1);
+
+      const bearing = await compileWithCensus(callBearing, lane, `gap1b-diag-call-${lane.name}.ts`);
+      expect(bearing.census).toEqual({ pass1: 1, pass2: 0 });
+      expect(hits(bearing.result), `call-bearing/${lane.name}`).toBe(1);
 
       // The dedupe path still runs whenever pass 2 ran.
-      const controlRun = await compileWithCensus(control, lane, `gap1a-diag-control-${lane.name}.ts`);
-      expect(controlRun.census).toEqual({ pass1: 1, pass2: 1 });
-      expect(controlRun.result.errors.filter((error) => error.message.includes(message))).toHaveLength(1);
+      const both = await compileWithCensus(closurePlusCall, lane, `gap1b-diag-both-${lane.name}.ts`);
+      expect(both.census).toEqual({ pass1: 1, pass2: 1 });
+      expect(hits(both.result), `closure+call/${lane.name}`).toBe(1);
 
-      // And the gated shape reports once under the forced-two-pass control too.
-      const forced = await compileWithCensus(gated, lane, `gap1a-diag-forced-${lane.name}.ts`, true);
+      // And every route reports once under the forced-two-pass control too.
+      const forced = await compileWithCensus(callBearing, lane, `gap1b-diag-forced-${lane.name}.ts`, true);
       expect(forced.census).toEqual({ pass1: 1, pass2: 1 });
-      expect(forced.result.errors.filter((error) => error.message.includes(message))).toHaveLength(1);
+      expect(hits(forced.result), `forced/${lane.name}`).toBe(1);
     }
-  });
+  }, 120_000);
 
-  it("still compiles pass 1 for a gated shape (the skip must not skip BOTH passes)", async () => {
+  it("keeps test262 diagnostic counts identical through the runner harness", async () => {
+    // (#3523 gap-1b P2) `cptn-decl-itr.js` is the file where an unconditional
+    // pass-2 skip doubled a diagnostic: its harness population is
+    // closure-bearing AND call-bearing, so pass 1 alone emits the pair that
+    // only the post-pass-2 dedupe collapses. Under the shipped predicate it
+    // keeps two passes and reports once — this pin is what would catch a future
+    // widening that admits closures.
+    const file = "test262/test/language/statements/for-in/cptn-decl-itr.js";
+    if (!existsSync(file)) return; // submodule not present in this job
+    const raw = readFileSync(file, "utf-8");
+    const meta = parseMeta(raw);
+    const source = assembleOriginalHarness(raw, meta as never).primary.source;
+    const options = {
+      allowJs: true,
+      sourceMap: true,
+      emitWat: false,
+      skipSemanticDiagnostics: true,
+      deferTopLevelInit: true,
+    };
+    const single = await withProfiler(false, async () => {
+      const result = await compile(source, { fileName: "cptn-decl-itr.js", ...options });
+      return { result, census: censusFromProfile() };
+    });
+    const forced = await withProfiler(true, async () => {
+      const result = await compile(source, { fileName: "cptn-decl-itr.js", ...options });
+      return { result, census: censusFromProfile() };
+    });
+    const errorCount = (result: CompileResult) => result.errors.filter((e) => e.severity === "error").length;
+    expect(single.census).toEqual({ pass1: 1, pass2: 1 });
+    expect(errorCount(single.result)).toBe(errorCount(forced.result));
+  }, 120_000);
+
+  it("still compiles pass 1 for a stable shape (the skip must not skip BOTH passes)", async () => {
     process.env[POISON_ENV] = "1";
     try {
-      const poisoned = await compileLane(GATED_SHAPES[0]!.source, LANES[0]!, "gap1a-poison-gated.ts");
+      const poisoned = await compileLane(CALL_BEARING_SHAPES[0]!.source, LANES[0]!, "gap1b-poison-stable.ts");
       expect(poisoned.success).toBe(false);
       expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
         "injected direct module-init body poison",
@@ -362,25 +615,28 @@ export function read(): number { return p + q; }
       const irOwned = await compileLane(
         `let v = 7;\nexport function read(): number { return v; }\n`,
         LANES[0]!,
-        "gap1a-poison-ir-owned.ts",
+        "gap1b-poison-ir-owned.ts",
       );
       expect(irOwned.success, irOwned.errors.map((error) => error.message).join("\n")).toBe(true);
     } finally {
       restoreEnv();
     }
-  });
+  }, 60_000);
 
-  it("leaves the inlining route byte-identical where pass 2 still supplies the final registry", async () => {
+  it("keeps the inlining route byte-identical now that it is single-pass", async () => {
+    // The shape pass 2 was supposed to exist for: a module-level call to a
+    // small local function. Measured, the final registry changes nothing here
+    // (the finalize-time inliner owns it), so the one-pass build is identical.
     const source = `function twice(x: number): number { return x * 2; }\nconst v = twice(21);\nexport function read(): number { return v; }\n`;
     for (const lane of LANES) {
-      const single = await compileWithCensus(source, lane, `gap1a-inline-${lane.name}.ts`);
-      const forced = await compileWithCensus(source, lane, `gap1a-inline-${lane.name}.ts`, true);
-      expect(single.census).toEqual({ pass1: 1, pass2: 1 });
+      const single = await compileWithCensus(source, lane, `gap1b-inline-${lane.name}.ts`);
+      const forced = await compileWithCensus(source, lane, `gap1b-inline-${lane.name}.ts`, true);
+      expect(single.census).toEqual({ pass1: 1, pass2: 0 });
       expect(forced.census).toEqual({ pass1: 1, pass2: 1 });
       expect(Buffer.from(single.result.binary).equals(Buffer.from(forced.result.binary)), lane.name).toBe(true);
       expect((await observableSurface(single.result, lane)).read).toBe(42);
     }
-  });
+  }, 120_000);
 
   it("leaves IR-owned and function-only modules at 0/0", async () => {
     const shapes: ReadonlyArray<{ readonly name: string; readonly source: string }> = [
@@ -400,7 +656,7 @@ export function read(): number { return p + q; }
         const { result, census } = await compileWithCensus(
           shape.source,
           lane,
-          `gap1a-untouched-${shape.name}-${lane.name}.ts`,
+          `gap1b-untouched-${shape.name}-${lane.name}.ts`,
         );
         expect(result.success, `${shape.name}/${lane.name}`).toBe(true);
         expect({ shape: shape.name, lane: lane.name, ...census }).toEqual({
@@ -411,5 +667,5 @@ export function read(): number { return p + q; }
         });
       }
     }
-  });
+  }, 120_000);
 });
