@@ -7,6 +7,7 @@ import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; 
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
@@ -4518,6 +4519,20 @@ function compilePropertyAssignment(
     const clsName = target.expression.text;
     const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
     const fullName = `${clsName}_${propName}`;
+    // (#5195 Step 9 H) A STATIC SETTER must run. `C.staticX = 2` reached this
+    // arm, found no `staticProps` global (an accessor has no storage slot) and
+    // fell straight to the dynamic extern-set — so the setter body never ran
+    // and the write landed in the class object's bag instead. The
+    // element-target twin (`C[key] = v`) has had this arm since #848; this is
+    // the dot form of it. Placed before the storage lookup because an accessor
+    // and a static field can never share a name.
+    if (ctx.staticAccessorSet.has(fullName)) {
+      const setterName = `${clsName}_set_${propName}`;
+      const setterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, setterName, "static"));
+      if (setterIdx !== undefined) {
+        return emitSetterCallWithDummy(ctx, fctx, clsName, setterName, setterIdx, value);
+      }
+    }
     const globalIdx = ctx.staticProps.get(fullName);
     if (globalIdx !== undefined) {
       const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];

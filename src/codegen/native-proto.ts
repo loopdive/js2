@@ -302,6 +302,23 @@ export function nativeProtoParentBrands(ctx: CodegenContext): ReadonlyMap<number
 
 // ── Lazy `$NativeProto` materializer ──────────────────────────────────────────
 
+/**
+ * (#5194) Brands whose `$parent` link is being emitted right now, per context.
+ * Read by {@link buildLazyNativeProtoGetInstrs} so a cyclic parent declaration
+ * terminates the chain instead of recursing until the compiler's stack blows.
+ * A `WeakMap` keyed on the context cannot outlive the compile.
+ */
+const parentEmitInProgressByCtx = new WeakMap<CodegenContext, Set<number>>();
+
+function parentEmitInProgress(ctx: CodegenContext): Set<number> {
+  let set = parentEmitInProgressByCtx.get(ctx);
+  if (!set) {
+    set = new Set<number>();
+    parentEmitInProgressByCtx.set(ctx, set);
+  }
+  return set;
+}
+
 function nativeProtoGlobalName(brand: number): string {
   return `__native_proto_${brand}`;
 }
@@ -352,11 +369,32 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   // `buildLazyNativeProtoGetInstrs` is idempotent and append-only, and the
   // recursion is bounded by the parent chain (one level today: a concrete
   // TypedArray view proto → `%TypedArray%.prototype`, whose glue declares no
-  // parent). A self-referential or unregistered parent falls back to null, so
-  // every family that does not declare one is byte-identical to before.
+  // parent). An unregistered parent falls back to null, so every family that
+  // does not declare one is byte-identical to before.
+  //
+  // TERMINATION (#5194, post-#5479 hardening). The self-parent guard alone
+  // (`parentBrand !== brand`) only stops a 1-cycle: a future pair of glues
+  // declaring each other — or any longer cycle — would recurse here until the
+  // COMPILER's own stack overflows ("Maximum call stack size exceeded"), which
+  // is a hard, unhelpful crash rather than a diagnosable refusal. The chain is
+  // therefore walked with an explicit in-progress set, and a cycle terminates
+  // the link at null exactly as an unregistered parent does. This is DEFENSIVE:
+  // no cycle exists today (the only declared links are the 11 view protos →
+  // `%TypedArray%.prototype`, whose glue declares no parent), and the emitted
+  // bytes are unchanged for every currently reachable graph — verified by the
+  // standalone re-run holding at 105/105 with an identical wasm hash for the
+  // rows in `ta-passing-all.txt`.
   const parentBrand = glue.parentBrand;
-  const parentInstrs =
-    parentBrand !== undefined && parentBrand !== brand ? buildLazyNativeProtoGetInstrs(ctx, parentBrand) : null;
+  const inProgress = parentEmitInProgress(ctx);
+  let parentInstrs: Instr[] | null = null;
+  if (parentBrand !== undefined && parentBrand !== brand && !inProgress.has(parentBrand)) {
+    inProgress.add(brand);
+    try {
+      parentInstrs = buildLazyNativeProtoGetInstrs(ctx, parentBrand);
+    } finally {
+      inProgress.delete(brand);
+    }
+  }
   if (parentInstrs) {
     for (const instr of parentInstrs) initBody.push(instr);
   } else {
