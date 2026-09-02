@@ -11,8 +11,9 @@
  * for a Proxy — whose integrity is defined entirely in terms of trap calls
  * (`preventExtensions`, then `[[OwnPropertyKeys]]`, then a
  * `[[DefineOwnProperty]]` per key). Worse, a `$Proxy` receiver fell into the
- * #4032 carrier-BAG arm, so it silently acquired a bag flag nothing ever reads
- * and the traps never fired: `Object.freeze(new Proxy({}, {preventExtensions(){
+ * #4032 carrier-BAG arm — which does not even own a slot for it
+ * (`__integrity_bag` answers null for a `$Proxy`; it covers the vec, closure and
+ * Error carriers only) — and the traps never fired: `Object.freeze(new Proxy({}, {preventExtensions(){
  * throw … }}))` completed normally. The predicates `__object_isFrozen` /
  * `__object_isSealed` had the mirror-image gap.
  *
@@ -461,11 +462,14 @@ function ensureProxySetIntegrity(
     // `preventExtensions` abrupt, the `[[OwnPropertyKeys]]` call, the per-key
     // `[[GetOwnProperty]]` and, when a trap exists, the per-key
     // `[[DefineOwnProperty]]`. It deliberately does NOT own where this compiler
-    // RECORDS the level: that is the #4032 carrier bag on the receiver, which
-    // the ordinary body already writes, and which every integrity predicate
-    // already reads. Doing both keeps base's answers intact instead of
-    // replacing them with a per-key verdict a closed-struct target cannot
-    // support.
+    // RECORDS the level. For a `$Proxy` receiver that is NOT the #4032 bag —
+    // `__integrity_bag` answers null for one — it is the COMPILE-TIME integrity
+    // fold at the call site (`frozenVars` / `sealedVars` / `nonExtensibleVars`,
+    // object-ops.ts), with the mutator's non-`$Object` terminal behind it. That
+    // is exactly what base answered, so running the ordinary body too keeps
+    // base's verdicts instead of replacing them with a per-key one a
+    // closed-struct target cannot support. (#5268 review R2-5 corrected this
+    // comment: an earlier draft credited the bag.)
     { op: "i32.const", value: 0 },
   ];
 
@@ -516,6 +520,7 @@ function ensureProxyTestIntegrity(
   const K = 5;
   const CUR = 6;
   const HAS_DEFINE_TRAP = 7;
+  const NO_GOPD_TRAP = 8;
 
   const readTruthy = (key: string): Instr[] => [
     { op: "local.get", index: CUR },
@@ -585,12 +590,12 @@ function ensureProxyTestIntegrity(
     // loop below is unobservable, and its verdict is only as good as the
     // descriptor the forward reports. On a CLOSED-STRUCT target that descriptor
     // still reads `configurable: true` after a freeze — this compiler records a
-    // closed carrier's integrity in the #4032 bag, not in per-entry flags — so
-    // the loop answered `false` for a genuinely frozen proxy where base and
-    // node both say `true` (measured: all six of the frozen/sealed × isFrozen/
-    // isSealed cells flipped to `false`). Ask the ORDINARY predicate about the
-    // TARGET instead, which is the reader that understands every carrier's
-    // integrity storage. A gopd trap keeps the spec loop, so
+    // closed carrier's integrity outside its per-entry flags — so the loop
+    // answered `false` for a genuinely frozen proxy where base and node both
+    // say `true` (measured: all six of the frozen/sealed × isFrozen/isSealed
+    // cells flipped to `false`). Defer to the ordinary body instead, whose
+    // answer for a `$Proxy` comes from the compile-time integrity fold at the
+    // call site. A gopd trap keeps the spec loop, so
     // `isFrozen/proxy-no-ownkeys-returned-keys-order.js` (which asserts the
     // trap fires per key, in ownKeys order) is untouched.
     { op: "local.get", index: P },
@@ -612,30 +617,53 @@ function ensureProxyTestIntegrity(
         { op: "ref.is_null" },
       ],
     },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: -1 }, { op: "return" }],
-    },
+    // (#5268 review R2-2) Stash the answer instead of returning on it. §7.3.17
+    // steps 1 and 3 are OBSERVABLE — `[[IsExtensible]]` and
+    // `[[OwnPropertyKeys]]` invoke traps that a program can count, and that can
+    // THROW — so returning the "not handled" sentinel here would let
+    // `Object.isFrozen(proxy)` skip both. Both calls now happen first, and the
+    // sentinel is decided afterwards.
+    { op: "local.set", index: NO_GOPD_TRAP },
     // hasDefineTrap — see the two in-loop votes and the tail.
     { op: "local.get", index: P },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: proxyTypeIdx },
     { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
-    { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
     { op: "ref.is_null" },
-    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: P },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    },
     { op: "local.set", index: HAS_DEFINE_TRAP },
-    // 1/2. An extensible object is neither sealed nor frozen.
+    // 1/2. An extensible object is neither sealed nor frozen. (§7.3.17 step 1 —
+    // observable, and it runs even when the verdict will be deferred.)
     { op: "local.get", index: P },
     { op: "local.get", index: P },
     { op: "call", funcIdx: d.isext },
     { op: "call", funcIdx: d.isTruthy },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    // §7.3.17 step 3 — also observable, same reason.
     { op: "local.get", index: P },
     { op: "call", funcIdx: ownKeysAllIdx },
     { op: "local.set", index: KEYS },
+    // Only NOW may the deferral be taken: both trap-visible steps have run.
+    { op: "local.get", index: NO_GOPD_TRAP },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: -1 }, { op: "return" }],
+    },
     { op: "local.get", index: KEYS },
     { op: "call", funcIdx: d.externLength },
     { op: "i32.trunc_sat_f64_s" },
@@ -648,8 +676,9 @@ function ensureProxyTestIntegrity(
       body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
     },
     // Every key passed — but that verdict is only meaningful when a
-    // `defineProperty` trap recorded the level per key. Otherwise the level
-    // lives in the receiver's #4032 bag, which the ordinary body reads.
+    // `defineProperty` trap recorded the level per key. Otherwise the answer
+    // belongs to the ordinary body (see R2-5 above: for a `$Proxy` that is the
+    // compile-time integrity fold, not the #4032 bag).
     { op: "local.get", index: HAS_DEFINE_TRAP },
     {
       op: "if",
@@ -672,6 +701,7 @@ function ensureProxyTestIntegrity(
       { name: "k", type: EXTERNREF },
       { name: "cur", type: EXTERNREF },
       { name: "hasDefineTrap", type: I32 },
+      { name: "noGopdTrap", type: I32 },
     ],
     body,
     exported: false,

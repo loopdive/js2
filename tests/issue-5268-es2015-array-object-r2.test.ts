@@ -386,6 +386,101 @@ describe("#5268 review F3 — SetIntegrityLevel must not corrupt a trap-less tar
   });
 });
 
+describe("#5268 round-2 review R2-1 — a forwarded define must not duplicate an own key", () => {
+  // r4 is the NON-PROXY control: the root cause is the define primitive, not
+  // the proxy arm. It reproduced on `origin/main` too — the proxy path merely
+  // reached it, because base fired no trap at all.
+  it("control — a direct Reflect.defineProperty on an EXISTING key updates in place", async () => {
+    // RED on this tree AND on origin/main: "a,b,a" / 3.
+    expect(
+      await runLines(`
+        var u = { a: 1, b: 2 };
+        Reflect.defineProperty(u, "a", { configurable: false, writable: false });
+        LOG("keys:" + Reflect.ownKeys(u).join() + ":" + Object.getOwnPropertyNames(u).length);
+        Reflect.defineProperty(u, "c", { value: 9, configurable: true, writable: true, enumerable: true });
+        LOG("newkey:" + Reflect.ownKeys(u).join());
+      `),
+    ).toEqual(["keys:a,b:2", "newkey:a,b,c"]);
+  });
+
+  it("freeze and seal through a Reflect-forwarding defineProperty trap", async () => {
+    // RED: `rok` read "a,b,a,b" / 4. The trap line and the key line now match
+    // node exactly. `Object.isFrozen(target)` is deliberately NOT asserted —
+    // it is `false` here on this tree AND on base, for two pre-existing
+    // reasons the issue file records.
+    expect(
+      await runLines(`
+        var log = [];
+        var t = { a: 1, b: 2 };
+        var p = new Proxy(t, {
+          defineProperty: function (x, k, d) { log.push(String(k)); return Reflect.defineProperty(x, k, d); },
+        });
+        Object.freeze(p);
+        LOG("trap:" + log.join());
+        LOG("rok:" + Reflect.ownKeys(t).join() + ":" + Object.getOwnPropertyNames(t).length);
+      `),
+    ).toEqual(["trap:a,b", "rok:a,b:2"]);
+    expect(
+      await runLines(`
+        var log = [];
+        var t = { a: 1, b: 2 };
+        var p = new Proxy(t, {
+          defineProperty: function (x, k, d) { log.push(String(k)); return Reflect.defineProperty(x, k, d); },
+        });
+        Object.seal(p);
+        LOG("trap:" + log.join());
+        LOG("rok:" + Reflect.ownKeys(t).join() + ":" + Object.getOwnPropertyNames(t).length);
+      `),
+    ).toEqual(["trap:a,b", "rok:a,b:2"]);
+  });
+
+  it("the gopd+define pair matches node's full trap sequence", async () => {
+    // RED: `rok` "a,b,a,b" and the isFrozen log fired the gopd trap FOUR times
+    // over the duplicated list (node: twice). Every line here is node's.
+    expect(
+      await runLines(`
+        var log = [];
+        var t = { a: 1, b: 2 };
+        var p = new Proxy(t, {
+          getOwnPropertyDescriptor: function (x, k) {
+            log.push("gopd:" + String(k));
+            return Reflect.getOwnPropertyDescriptor(x, k);
+          },
+          defineProperty: function (x, k, d) { log.push("dp:" + String(k)); return Reflect.defineProperty(x, k, d); },
+        });
+        Object.freeze(p);
+        LOG("freeze:" + log.join("|"));
+        log.length = 0;
+        LOG("rok:" + Reflect.ownKeys(t).join());
+        LOG("isFrozen:" + Object.isFrozen(p) + " log:" + log.join("|"));
+      `),
+    ).toEqual(["freeze:gopd:a|dp:a|gopd:b|dp:b", "rok:a,b", "isFrozen:true log:gopd:a|gopd:b"]);
+  });
+});
+
+describe("#5268 round-2 review R2-2 — the deferral must not skip observable trap calls", () => {
+  it("isFrozen still invokes isExtensible and ownKeys before deferring", async () => {
+    // RED: the "not handled" sentinel returned BEFORE §7.3.17 steps 1 and 3, so
+    // both traps — observable, and able to throw — were skipped entirely
+    // (`traps:`). node fires `isext|ownKeys`; so do we now. The verdict itself
+    // is the pre-existing bag/compile-time-fold parity documented in the issue.
+    expect(
+      await runLines(`
+        var log = [];
+        var t = { a: 1 };
+        var p = new Proxy(t, {
+          isExtensible: function (x) { log.push("isext"); return Reflect.isExtensible(x); },
+          ownKeys: function (x) { log.push("ownKeys"); return Reflect.ownKeys(x); },
+        });
+        Object.preventExtensions(p);
+        log.length = 0;
+        Object.isFrozen(p);
+        LOG("traps:" + log.join("|"));
+      `),
+    ).toEqual(["traps:isext|ownKeys"]);
+  });
+});
+
 describe("#5268 review F4 — the syntactic `__proto__` write needs an inherited accessor", () => {
   it("a null-prototype receiver keeps the ordinary-write posture", async () => {
     // RED: routing `o.__proto__ = v` to the §B.2.2.1 setter native threw a

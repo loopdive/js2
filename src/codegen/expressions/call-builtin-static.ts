@@ -3374,10 +3374,18 @@ export function compileBuiltinStaticCall(
     // receiver instead, so the nullish case was a silent `[]`
     // (`non-object-argument-invalid.js`). Every other primitive legitimately
     // has no own symbol keys, so only the nullish half needs a guard.
-    const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-    const throwNotCoercible = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
-      flush: fctx,
-    });
+    //
+    // (#5268 review R2-4) Standalone-gated. The JS-host lane already throws
+    // there (its `__getOwnPropertySymbols` import is the host builtin), so on
+    // that lane the guard only changed the emitted BYTES — and this
+    // change-set's contract, stated in the focused test's header, is that every
+    // arm it adds is standalone-only.
+    const isUndefIdx = ctx.standalone
+      ? ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }])
+      : undefined;
+    const throwNotCoercible = ctx.standalone
+      ? buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", { flush: fctx })
+      : [];
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined && isUndefIdx !== undefined) {
       const gopsLocal = allocTempLocal(fctx, { kind: "externref" });
