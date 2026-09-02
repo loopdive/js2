@@ -87,6 +87,7 @@ import {
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { compileProtoArg } from "./calls.js";
 import { ensureObjectProtoProtoSetNative } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
+import { hasExplicitNullObjectPrototype } from "../object-proto-name-in.js"; // (#5268 review F4)
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
 import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
@@ -4252,7 +4253,26 @@ function compilePropertyAssignment(
     // not a `$Object` fails the native's step-3 "Type(O) is Object" test and
     // returns undefined without writing — while a real `$Object` marked
     // non-extensible now throws, which is what §B.2.2.1 step 5 requires.
-    const protoSetIdx = ctx.standalone ? ensureObjectProtoProtoSetNative(ctx) : -1;
+    //
+    // (#5268 review F4) …and ONLY when the receiver actually INHERITS that
+    // accessor. `o.__proto__ = v` is the §B.2.2.1 setter because `o`'s
+    // prototype chain reaches `%Object.prototype%`; on a null-prototype
+    // receiver there is no accessor to invoke and the assignment is an
+    // ORDINARY own-property write, which in sloppy mode fails silently on a
+    // non-extensible object. Routing it to the setter native made
+    // `Object.create(null)` + `preventExtensions` throw a TypeError where base
+    // (and a sloppy-mode host) silently ignore it. `hasExplicitNullObjectPrototype`
+    // is the existing proof for the two shapes that can be proven —
+    // `Object.create(null)` and a `{__proto__: null}` literal, through one
+    // variable hop; every unprovable receiver keeps the setter route, which is
+    // the correct answer for an ordinary object.
+    //
+    // Still NOT modelled on either tree (measured, both answer `""`): the
+    // own `__proto__` DATA property such a write creates on an extensible
+    // null-prototype object — node reports `getOwnPropertyNames` `["__proto__"]`.
+    // That is a pre-existing gap in the ordinary write path, unchanged here.
+    const receiverHasNullProto = ctx.standalone && hasExplicitNullObjectPrototype(ctx, target.expression);
+    const protoSetIdx = ctx.standalone && !receiverHasNullProto ? ensureObjectProtoProtoSetNative(ctx) : -1;
     if (protoSetIdx < 0) {
       if (
         ctx.standalone &&

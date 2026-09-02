@@ -326,6 +326,102 @@ describe("#5268 review F1/F2 — the Proxy-provenance routing stays inside its l
   });
 });
 
+describe("#5268 review F3 — SetIntegrityLevel must not corrupt a trap-less target", () => {
+  it("a trap-less Object.freeze(proxy) leaves the target's own-key list intact", async () => {
+    // RED: `Reflect.ownKeys(t)` read "a,b,a,b" and `getOwnPropertyNames(t).length`
+    // 4 — the forwarded per-key [[DefineOwnProperty]] APPENDS on a closed-struct
+    // target instead of updating in place. base and node both say "a,b" / 2.
+    expect(
+      await runLines(`
+        var t = { a: 1, b: 2 };
+        var p = new Proxy(t, {});
+        Object.freeze(p);
+        LOG("ownKeys:" + Reflect.ownKeys(t).join());
+        LOG("names:" + Object.getOwnPropertyNames(t).length);
+      `),
+    ).toEqual(["ownKeys:a,b", "names:2"]);
+  });
+
+  it("…and Object.isFrozen/isSealed keep base's answers over a trap-less proxy", async () => {
+    // RED (twice over): first a TypeError from the duplicate-key invariant,
+    // then — after the define was skipped — an all-`false` matrix, because a
+    // closed-struct target still reports `configurable: true` when frozen. The
+    // predicate now falls through to the ordinary reader unless a
+    // `getOwnPropertyDescriptor` trap makes the per-key walk observable.
+    expect(
+      await runLines(`
+        var p1 = new Proxy({ a: 1 }, {});
+        LOG("unfrozen:" + Object.isFrozen(p1) + "," + Object.isSealed(p1));
+        var p2 = new Proxy({ a: 1 }, {});
+        Object.freeze(p2);
+        LOG("frozen:" + Object.isFrozen(p2) + "," + Object.isSealed(p2));
+        var p3 = new Proxy({ a: 1 }, {});
+        Object.seal(p3);
+        LOG("sealed:" + Object.isSealed(p3));
+      `),
+    ).toEqual(["unfrozen:false,false", "frozen:true,true", "sealed:true"]);
+  });
+
+  it("…while a proxy WITH traps still drives the spec sequence", async () => {
+    // The step-2 win must survive both F3 halves: the gopd trap fires per key
+    // in ownKeys order (symbol included) and the predicate uses the loop.
+    expect(
+      await runLines(`
+        var sym = Symbol("s");
+        var target = {};
+        target[sym] = 1;
+        target.foo = 2;
+        target[0] = 3;
+        var seen = [];
+        var proxy = new Proxy(target, {
+          getOwnPropertyDescriptor: function (t, key) {
+            seen.push(String(key));
+            return Object.getOwnPropertyDescriptor(t, key);
+          },
+        });
+        Object.freeze(proxy);
+        LOG("order=" + seen.join(","));
+      `),
+    ).toEqual(["order=0,foo,Symbol(s)"]);
+  });
+});
+
+describe("#5268 review F4 — the syntactic `__proto__` write needs an inherited accessor", () => {
+  it("a null-prototype receiver keeps the ordinary-write posture", async () => {
+    // RED: routing `o.__proto__ = v` to the §B.2.2.1 setter native threw a
+    // TypeError on a non-extensible null-prototype object, where base — and a
+    // sloppy-mode host — silently ignore the write. There is no inherited
+    // accessor on such a receiver, so this is an ordinary own-property write.
+    expect(
+      await runLines(`
+        var o = Object.create(null);
+        Object.preventExtensions(o);
+        var v = "no-throw";
+        try { o.__proto__ = { z: 1 }; } catch (e) { v = e instanceof TypeError ? "TypeError" : "other"; }
+        LOG("nonext:" + v);
+        var o2 = Object.create(null);
+        v = "no-throw";
+        try { o2.__proto__ = { z: 1 }; } catch (e) { v = e instanceof TypeError ? "TypeError" : "other"; }
+        LOG("ext:" + v);
+      `),
+    ).toEqual(["nonext:no-throw", "ext:no-throw"]);
+  });
+
+  it("…and an ORDINARY receiver still throws on a refused [[SetPrototypeOf]]", async () => {
+    // The step-1 win, re-pinned here so the F4 narrowing cannot silently undo it.
+    expect(
+      await runLines(`
+        var root = {};
+        var intermediary = Object.create(root);
+        var leaf = Object.create(intermediary);
+        var v = "no-throw";
+        try { root.__proto__ = leaf; } catch (e) { v = e instanceof TypeError ? "TypeError" : "other"; }
+        LOG("cycle:" + v);
+      `),
+    ).toEqual(["cycle:TypeError"]);
+  });
+});
+
 describe("#5268 step 6 — IsArray over a Proxy (§7.2.2 step 3, standalone)", () => {
   it("unwraps a live proxy to its target and throws for a revoked one", async () => {
     // RED on base: `Array.isArray(handle.proxy)` folded to the constant `true`

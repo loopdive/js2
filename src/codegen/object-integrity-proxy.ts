@@ -62,7 +62,9 @@ const I32: ValType = { kind: "i32" };
  */
 const F_PTARGET = 1;
 const F_PTRAPS = 3;
+const TRAP_GOPD = 5;
 const TRAP_OWNKEYS = 10;
+const TRAP_DEFINE = 11;
 
 interface IntegrityProxyDeps {
   isTruthy: number;
@@ -292,7 +294,12 @@ function ensureProxyOwnKeysAll(ctx: CodegenContext, proxyTypeIdx: number, proxyT
  * params: 0=p 1=frozen ; locals: 2=keys 3=n 4=i 5=k 6=desc(current) 7=out
  *         8=isAccessor
  */
-function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): number {
+function ensureProxySetIntegrity(
+  ctx: CodegenContext,
+  ownKeysAllIdx: number,
+  proxyTypeIdx: number,
+  proxyTrapsTypeIdx: number,
+): number {
   const cached = ctx.funcMap.get("__proxy_set_integrity");
   if (cached !== undefined) return cached;
   const d = resolveDeps(ctx);
@@ -312,6 +319,7 @@ function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): nu
   const CUR = 6;
   const OUT = 7;
   const IS_ACCESSOR = 8;
+  const HAS_DEFINE_TRAP = 9;
 
   const setFalse = (key: string): Instr[] => [
     { op: "local.get", index: OUT },
@@ -366,19 +374,40 @@ function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): nu
         { op: "local.set", index: IS_ACCESSOR },
       ],
     },
-    { op: "call", funcIdx: d.newPlainObject },
-    { op: "local.set", index: OUT },
-    ...setFalse("configurable"),
-    { op: "local.get", index: FROZEN },
-    { op: "local.get", index: IS_ACCESSOR },
-    { op: "i32.eqz" },
-    { op: "i32.and" },
-    { op: "if", blockType: { kind: "empty" }, then: setFalse("writable") },
-    { op: "local.get", index: P },
-    { op: "local.get", index: K },
-    { op: "local.get", index: OUT },
-    { op: "call", funcIdx: d.define },
-    { op: "drop" },
+    // (#5268 review F3) The per-key [[DefineOwnProperty]] is forwarded ONLY
+    // when the proxy actually has a `defineProperty` trap. Without one,
+    // `__proxy_define_dispatch` forwards to `__obj_define_from_desc` on the
+    // TARGET — and on a closed-struct target that APPENDS a duplicate own-key
+    // entry instead of updating in place, so `Object.freeze(new Proxy({a:1,
+    // b:2}, {}))` left `Reflect.ownKeys(target)` reading `a,b,a,b` (measured;
+    // base and node both say `a,b`) while the target was not frozen at all,
+    // and a later `Object.isFrozen(proxy)` threw on the duplicate-key
+    // invariant. With no trap the define is UNOBSERVABLE — it is an internal
+    // operation on the target — so the loop skips it and the tail below
+    // applies the ordinary flag mutator to the target ONCE, which is what
+    // actually freezes it. The `getOwnPropertyDescriptor` trap above still
+    // fires per key in ownKeys order, which is what
+    // `proxy-no-ownkeys-returned-keys-order.js` asserts.
+    { op: "local.get", index: HAS_DEFINE_TRAP },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "call", funcIdx: d.newPlainObject },
+        { op: "local.set", index: OUT },
+        ...setFalse("configurable"),
+        { op: "local.get", index: FROZEN },
+        { op: "local.get", index: IS_ACCESSOR },
+        { op: "i32.eqz" },
+        { op: "i32.and" },
+        { op: "if", blockType: { kind: "empty" }, then: setFalse("writable") },
+        { op: "local.get", index: P },
+        { op: "local.get", index: K },
+        { op: "local.get", index: OUT },
+        { op: "call", funcIdx: d.define },
+        { op: "drop" },
+      ],
+    },
     { op: "br", depth: 0 },
   ];
 
@@ -391,6 +420,28 @@ function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): nu
     { op: "call", funcIdx: d.isTruthy },
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: throwNotExtensible },
+    // (#5268 review F3) hasDefineTrap = p.ptraps !== null && p.ptraps.define !== null
+    { op: "local.get", index: P },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: proxyTypeIdx },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: P },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    },
+    { op: "local.set", index: HAS_DEFINE_TRAP },
     { op: "local.get", index: P },
     { op: "call", funcIdx: ownKeysAllIdx },
     { op: "local.set", index: KEYS },
@@ -405,10 +456,20 @@ function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): nu
       blockType: { kind: "empty" },
       body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
     },
-    { op: "local.get", index: P },
+    // (#5268 review F3) Answer `0` = "the caller must ALSO run its ordinary
+    // flag path". This helper owns the spec-VISIBLE half of §7.3.16 — the
+    // `preventExtensions` abrupt, the `[[OwnPropertyKeys]]` call, the per-key
+    // `[[GetOwnProperty]]` and, when a trap exists, the per-key
+    // `[[DefineOwnProperty]]`. It deliberately does NOT own where this compiler
+    // RECORDS the level: that is the #4032 carrier bag on the receiver, which
+    // the ordinary body already writes, and which every integrity predicate
+    // already reads. Doing both keeps base's answers intact instead of
+    // replacing them with a per-key verdict a closed-struct target cannot
+    // support.
+    { op: "i32.const", value: 0 },
   ];
 
-  const typeIdx = addFuncType(ctx, [EXTERNREF, I32], [EXTERNREF]);
+  const typeIdx = addFuncType(ctx, [EXTERNREF, I32], [I32]);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__proxy_set_integrity", funcIdx);
   pushDefinedFunc(ctx, funcIdx, {
@@ -422,6 +483,7 @@ function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): nu
       { name: "cur", type: EXTERNREF },
       { name: "out", type: EXTERNREF },
       { name: "isAccessor", type: I32 },
+      { name: "hasDefineTrap", type: I32 },
     ],
     body,
     exported: false,
@@ -434,7 +496,12 @@ function ensureProxySetIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): nu
  *
  * params: 0=p 1=frozen ; locals: 2=keys 3=n 4=i 5=k 6=desc
  */
-function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): number {
+function ensureProxyTestIntegrity(
+  ctx: CodegenContext,
+  ownKeysAllIdx: number,
+  proxyTypeIdx: number,
+  proxyTrapsTypeIdx: number,
+): number {
   const cached = ctx.funcMap.get("__proxy_test_integrity");
   if (cached !== undefined) return cached;
   const d = resolveDeps(ctx);
@@ -448,6 +515,7 @@ function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): n
   const I = 4;
   const K = 5;
   const CUR = 6;
+  const HAS_DEFINE_TRAP = 7;
 
   const readTruthy = (key: string): Instr[] => [
     { op: "local.get", index: CUR },
@@ -481,8 +549,14 @@ function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): n
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // A configurable own property means the level was not reached.
+        // A configurable own property means the level was not reached — but
+        // only VOTE on it when the level was actually recorded per key, i.e.
+        // when a `defineProperty` trap took the writes (#5268 review F3). With
+        // no such trap the loop runs purely for its observable trap calls and
+        // the verdict is deferred to the ordinary reader below.
         ...readTruthy("configurable"),
+        { op: "local.get", index: HAS_DEFINE_TRAP },
+        { op: "i32.and" },
         { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
         // …and, for `frozen`, a WRITABLE data property.
         { op: "local.get", index: FROZEN },
@@ -496,6 +570,8 @@ function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): n
             { op: "i32.eqz" },
             ...readTruthy("writable"),
             { op: "i32.and" },
+            { op: "local.get", index: HAS_DEFINE_TRAP },
+            { op: "i32.and" },
             { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
           ],
         },
@@ -505,6 +581,52 @@ function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): n
   ];
 
   const body: Instr[] = [
+    // (#5268 review F3) With NO `getOwnPropertyDescriptor` trap the per-key
+    // loop below is unobservable, and its verdict is only as good as the
+    // descriptor the forward reports. On a CLOSED-STRUCT target that descriptor
+    // still reads `configurable: true` after a freeze — this compiler records a
+    // closed carrier's integrity in the #4032 bag, not in per-entry flags — so
+    // the loop answered `false` for a genuinely frozen proxy where base and
+    // node both say `true` (measured: all six of the frozen/sealed × isFrozen/
+    // isSealed cells flipped to `false`). Ask the ORDINARY predicate about the
+    // TARGET instead, which is the reader that understands every carrier's
+    // integrity storage. A gopd trap keeps the spec loop, so
+    // `isFrozen/proxy-no-ownkeys-returned-keys-order.js` (which asserts the
+    // trap fires per key, in ownKeys order) is untouched.
+    { op: "local.get", index: P },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: proxyTypeIdx },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [
+        { op: "local.get", index: P },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_GOPD },
+        { op: "ref.is_null" },
+      ],
+    },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: -1 }, { op: "return" }],
+    },
+    // hasDefineTrap — see the two in-loop votes and the tail.
+    { op: "local.get", index: P },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: proxyTypeIdx },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_DEFINE },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "local.set", index: HAS_DEFINE_TRAP },
     // 1/2. An extensible object is neither sealed nor frozen.
     { op: "local.get", index: P },
     { op: "local.get", index: P },
@@ -525,7 +647,16 @@ function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): n
       blockType: { kind: "empty" },
       body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
     },
-    { op: "i32.const", value: 1 },
+    // Every key passed — but that verdict is only meaningful when a
+    // `defineProperty` trap recorded the level per key. Otherwise the level
+    // lives in the receiver's #4032 bag, which the ordinary body reads.
+    { op: "local.get", index: HAS_DEFINE_TRAP },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [{ op: "i32.const", value: -1 }],
+    },
   ];
 
   const typeIdx = addFuncType(ctx, [EXTERNREF, I32], [I32]);
@@ -540,6 +671,7 @@ function ensureProxyTestIntegrity(ctx: CodegenContext, ownKeysAllIdx: number): n
       { name: "i", type: I32 },
       { name: "k", type: EXTERNREF },
       { name: "cur", type: EXTERNREF },
+      { name: "hasDefineTrap", type: I32 },
     ],
     body,
     exported: false,
@@ -699,8 +831,8 @@ export function fillObjectIntegrityProxyArms(ctx: CodegenContext, proxyTypeIdx: 
   if (proxyTrapsTypeIdx === undefined) return;
   const ownKeysAllIdx = ensureProxyOwnKeysAll(ctx, proxyTypeIdx, proxyTrapsTypeIdx);
   if (ownKeysAllIdx < 0) return;
-  const setIdx = ensureProxySetIntegrity(ctx, ownKeysAllIdx);
-  const testIdx = ensureProxyTestIntegrity(ctx, ownKeysAllIdx);
+  const setIdx = ensureProxySetIntegrity(ctx, ownKeysAllIdx, proxyTypeIdx, proxyTrapsTypeIdx);
+  const testIdx = ensureProxyTestIntegrity(ctx, ownKeysAllIdx, proxyTypeIdx, proxyTrapsTypeIdx);
   const enumIdx = ensureProxyEnumerableOwn(ctx, ownKeysAllIdx);
   if (setIdx < 0 || testIdx < 0 || enumIdx < 0) return;
 
@@ -709,29 +841,87 @@ export function fillObjectIntegrityProxyArms(ctx: CodegenContext, proxyTypeIdx: 
    * different bodies, and one shared `Instr[]` would be remapped once per
    * containing body by the finalize walks (#5188 followUp 4).
    *
-   * `keep` names what the guarded native must leave on the stack — the helper's
-   * own i32/externref result, or the RECEIVER (the mutators return their
-   * argument, but the helper's return is the receiver too, so only the
-   * predicates differ in arity).
+   * `kind` selects the helper's answer protocol (#5268 review F3):
+   *
+   *  - `"integrity"` — `__proxy_set_integrity` returns `0` = "I did the
+   *    spec-visible trap work; now ALSO run your ordinary body". It never
+   *    returns non-zero today, but the branch is kept so the helper can claim
+   *    a receiver outright later without touching eight call sites.
+   *  - `"predicate"` — `__proxy_test_integrity` answers `0`/`1`, or `-1` for
+   *    "not handled, fall through to the ordinary body". A proxy with no
+   *    `getOwnPropertyDescriptor` trap takes that fall-through, because the
+   *    per-key verdict is only as good as the forwarded descriptor and a
+   *    closed-struct target reports `configurable: true` even when frozen.
+   *  - `"enumerate"` — `__proxy_enumerable_own` always owns the answer.
    */
-  const guard = (flag: boolean, targetIdx: number, keep: "result" | "receiver"): Instr[] => [
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: proxyTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
+  const guard = (flag: boolean, targetIdx: number, kind: "integrity" | "predicate" | "enumerate"): Instr[] => {
+    const call: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "i32.const", value: flag ? 1 : 0 },
+      { op: "call", funcIdx: targetIdx },
+    ];
+    if (kind === "enumerate") {
+      return [
         { op: "local.get", index: 0 },
-        { op: "i32.const", value: flag ? 1 : 0 },
-        { op: "call", funcIdx: targetIdx },
-        ...(keep === "result" ? [] : ([{ op: "drop" }, { op: "local.get", index: 0 }] satisfies Instr[])),
-        { op: "return" },
-      ],
-    },
-  ];
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: proxyTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: [...call, { op: "return" }] },
+      ];
+    }
+    if (kind === "integrity") {
+      return [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: proxyTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...call,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ],
+        },
+      ];
+    }
+    return [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...call,
+          { op: "local.tee", index: PREDICATE_SCRATCH },
+          { op: "i32.const", value: -1 },
+          { op: "i32.ne" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: PREDICATE_SCRATCH }, { op: "return" }],
+          },
+        ],
+      },
+    ];
+  };
 
-  const install = (name: string, flag: boolean, targetIdx: number, keep: "result" | "receiver"): void => {
+  /**
+   * The predicates need one i32 scratch to hold the helper's three-valued
+   * answer across the `-1` test. It is APPENDED, so every existing local index
+   * in those bodies is unchanged.
+   */
+  let PREDICATE_SCRATCH = 0;
+
+  const install = (
+    name: string,
+    flag: boolean,
+    targetIdx: number,
+    kind: "integrity" | "predicate" | "enumerate",
+  ): void => {
     const idx = ctx.funcMap.get(name);
     if (idx === undefined) return;
     const fn = definedFuncAt(ctx, idx);
@@ -742,17 +932,21 @@ export function fillObjectIntegrityProxyArms(ctx: CodegenContext, proxyTypeIdx: 
       const test = fn.body[2];
       if (test?.op === "ref.test" && (test as { typeIdx?: number }).typeIdx === proxyTypeIdx) return;
     }
-    fn.body.unshift(...guard(flag, targetIdx, keep));
+    if (kind === "predicate") {
+      PREDICATE_SCRATCH = 1 + fn.locals.length;
+      fn.locals.push({ name: "__proxyIntegrityAnswer", type: I32 });
+    }
+    fn.body.unshift(...guard(flag, targetIdx, kind));
   };
 
   // The mutators must be guarded ABOVE the #4032 carrier-bag arm, which a
   // `$Proxy` would otherwise fall into silently — `unshift` puts them first.
-  install("__object_freeze", true, setIdx, "receiver");
-  install("__object_seal", false, setIdx, "receiver");
-  install("__object_isFrozen", true, testIdx, "result");
-  install("__object_isSealed", false, testIdx, "result");
-  install("__object_isFrozen_obj", true, testIdx, "result");
-  install("__object_isSealed_obj", false, testIdx, "result");
-  install("__object_values", false, enumIdx, "result");
-  install("__object_entries", true, enumIdx, "result");
+  install("__object_freeze", true, setIdx, "integrity");
+  install("__object_seal", false, setIdx, "integrity");
+  install("__object_isFrozen", true, testIdx, "predicate");
+  install("__object_isSealed", false, testIdx, "predicate");
+  install("__object_isFrozen_obj", true, testIdx, "predicate");
+  install("__object_isSealed_obj", false, testIdx, "predicate");
+  install("__object_values", false, enumIdx, "enumerate");
+  install("__object_entries", true, enumIdx, "enumerate");
 }
