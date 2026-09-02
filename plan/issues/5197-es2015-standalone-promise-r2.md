@@ -538,6 +538,49 @@ is believed.
 | `exception-after-resolve-in-{executor,thenable-job}.js`, `resolve-prms-cstm-then-{immed,deferred}.js` | settlement-core rows that fail in the async drive, unrelated to the capability protocol. |
 | Slices E/F (combinators), G (#3371), H (realm) | untouched by this pass. |
 
+### Validation for both commits
+
+| check | result |
+| --- | --- |
+| TS7 `pnpm run typecheck` | clean |
+| TS5 `pnpm run typecheck:ts5` | one PRE-EXISTING error in `src/linked-provider-runtime.ts` (`WebAssembly.Tag`); that file is untouched by this lane |
+| `tests/issue-5197-es2015-promise-r2.test.ts` | 8/8 |
+| `tests/issue-5197-promise-generic-catch.test.ts` | 4/4 |
+| `tests/issue-5197-promise-generic-capability.test.ts` | 10/10 |
+| loc / func / coercion / oracle-ratchet / dead-exports | all exit 0 |
+| prettier + biome on every changed file | clean |
+| `pnpm run test:equivalence:gate` | **24 failing, 1718 passing, 24 known-failures in baseline — no new regressions** |
+| `npm run check:issues`, `check:done-status-integrity` | exit 0 |
+
+**On the equivalence gate's scope.** The green run above was taken on the
+Slice C + Slice D tree before the `undefined` fix; a re-run on the exact
+committed tree was killed by the harness at ~55 min under box load 12-14 and
+produced no verdict. That gap is closed by inspection rather than by a third
+run: `grep -rn "resolve\.call\|reject\.call" tests/equivalence/` returns **zero
+matches**, so no equivalence test can reach the changed arm at all, in either
+version. The suite is byte-identical across the whole of Slice D; the green run
+is therefore evidence for the committed tree, and specifically for Slice C.
+
+**Two control failures were checked and are PRE-EXISTING, not this lane's.**
+Both were A/B'd by restoring all eight lane-modified `src/codegen` files to
+`813b828b6` and re-running:
+
+- `tests/issue-2671-promise-capability.test.ts` — "wasm thenable element's then
+  is invoked with the native resolve-element fn": `'C.resolve|'` vs
+  `'C.resolve|p1.then:function|'`, identical at base. (The other 30 tests across
+  `promise-combinators`, `issue-2671-promise-executor` and
+  `issue-28-promise-executor-invocation` pass, including both
+  `Promise.reject.call(NotPromise)` executor-metadata rows.)
+- `tests/reflected-symbol-promise-statics.test.ts` — BOTH tests fail, including
+  the `Symbol.for`/`Symbol.keyFor` one that this lane cannot touch; identical at
+  base. Worth a look by whoever owns it: the previous implementer recorded this
+  file green on 2026-09-01, so something between then and `813b828b6` (or an
+  environment difference) took it out.
+
+`promise-expando-standalone`, `issue-4167-async-rejection-identity`,
+`issue-2623-promise-subclass-identity` and `issue-2867-gap4` are all green
+(45 passing in that batch).
+
 A pointer for whoever takes Slice E/F: `all/` and `race/` carry the exact twins
 of the rows just fixed — `{all,race}/ctx-ctor{,-throws}.js`,
 `{all,race}/capability-executor-{called-twice,not-callable}.js`. They fail for a
