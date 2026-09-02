@@ -822,3 +822,56 @@ describe("#5271 F1 — a hoisted function nested inside a block reads the SAME s
     );
   });
 });
+
+describe("#5271 F2 — the TDZ fold gate must not cost the ordinary constant fold", () => {
+  const foldSource = `
+      const NAME = "kern";
+      function label(n) { return NAME + ":" + n; }
+      LOG(label(1));
+    `;
+
+  it("a top-level const read from a function declared AFTER it still folds", async () => {
+    await expectBothLanes(foldSource, ["kern:1"]);
+  });
+
+  it("the folded constant is still in the module (no runtime concat regression)", async () => {
+    // RED between the first cut of step 5 and this fix: the gate refused the
+    // fold, so `"kern:"` disappeared and a runtime `__concat_*` plus two TDZ
+    // flag guards took its place. Both lanes are byte-identical to the branch
+    // base again (verified with the reviewer's WAT-diff harness); the folded
+    // literal is the stable observable of that.
+    // Host lane: native string literals are host `string_constants` imports, so
+    // the folded value is spelled literally in the WAT. (The standalone lane
+    // encodes literals as char arrays, with no readable spelling to assert on;
+    // its byte-identity to the branch base was verified with the WAT-diff
+    // harness instead.)
+    const result = await compile(`function LOG(s) { console.log(s); }\n${foldSource}\n`, {
+      allowJs: true,
+      fileName: "issue-5271-f2-fold.js",
+      skipSemanticDiagnostics: true,
+      hostBridge: "always",
+      deferTopLevelInit: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.wat ?? "", "host lane keeps the folded constant").toContain('"kern:"');
+    // …and does NOT fall back to the runtime three-operand concat the refused
+    // fold produced.
+    expect(result.wat ?? "", "no runtime concat for the folded expression").not.toContain("__concat_3");
+  });
+
+  it("CONTROL — a call BEFORE the declaration still refuses the fold and throws", async () => {
+    // `const/global-closure-get-before-initialization`: an expression statement
+    // precedes the declaration, so nothing is provably initialized and the
+    // runtime TDZ check must stay.
+    await expectBothLanes(
+      `
+      function f() { return x + 1; }
+      var t = 'no';
+      try { f(); } catch (e) { t = e.name; }
+      const x = 1;
+      LOG("t=" + t);
+    `,
+      ["t=ReferenceError"],
+    );
+  });
+});

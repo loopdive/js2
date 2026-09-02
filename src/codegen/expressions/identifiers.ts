@@ -478,6 +478,76 @@ export function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip"
   }
 }
 
+/**
+ * (#5271 F2) True when a top-level `const` is provably INITIALIZED before any
+ * user code in this module can run, so a read of it — from anywhere, including a
+ * hoisted function declaration — can never be in its temporal dead zone.
+ *
+ * `analyzeTdzAccess` answers "check" for every read whose containing function is
+ * a FunctionDeclaration, because hoisting lets a call precede the declaration.
+ * That is right in general, but it made the constant folders refuse an ordinary
+ * `const NAME = "kern"; function label(n) { return NAME + ":" + n; }` — the
+ * module then emitted a runtime concat plus two flag guards where it used to
+ * emit one folded string constant. Same output, worse code, on ordinary typed
+ * source.
+ *
+ * The proof is positional and cheap: module initialization runs the top-level
+ * statements in order, so if EVERY statement that ends before this declaration
+ * begins is inert — an import, a type-only declaration, a function declaration
+ * (hoisted, not executed), or a variable statement whose initializers cannot
+ * invoke anything — then the first user code to run is at or after the
+ * declaration. An importer cannot run earlier either: a module's body completes
+ * before its exports are used.
+ *
+ * Deliberately conservative. Anything else before the declaration (an expression
+ * statement, a class with static initializers, a control-flow statement) answers
+ * false and the read keeps its runtime check, which is what
+ * `const/global-closure-get-before-initialization` needs.
+ */
+function initializerCannotRunUserCode(node: ts.Node): boolean {
+  let clean = true;
+  const visit = (n: ts.Node): void => {
+    if (!clean) return;
+    if (
+      ts.isCallExpression(n) ||
+      ts.isNewExpression(n) ||
+      ts.isTaggedTemplateExpression(n) ||
+      ts.isPropertyAccessExpression(n) ||
+      ts.isElementAccessExpression(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isClassExpression(n)
+    ) {
+      clean = false;
+      return;
+    }
+    forEachChild(n, visit);
+  };
+  visit(node);
+  return clean;
+}
+
+export function topLevelConstInitializedBeforeAnyUserCode(decl: ts.Declaration): boolean {
+  if (!ts.isVariableDeclaration(decl)) return false;
+  const list = decl.parent;
+  if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+  const statement = list.parent;
+  if (!ts.isVariableStatement(statement)) return false;
+  const sourceFile = statement.parent;
+  if (!ts.isSourceFile(sourceFile)) return false;
+  const declStart = statement.getStart(sourceFile);
+  for (const stmt of sourceFile.statements) {
+    if (stmt.getEnd() > declStart) break;
+    if (ts.isImportDeclaration(stmt) || ts.isImportEqualsDeclaration(stmt)) continue;
+    if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) continue;
+    // A hoisted FunctionDeclaration is created, never executed, at this point.
+    if (ts.isFunctionDeclaration(stmt)) continue;
+    if (ts.isVariableStatement(stmt) && initializerCannotRunUserCode(stmt)) continue;
+    return false;
+  }
+  return true;
+}
+
 /** Walk up to find the nearest containing function (or source file for top-level). */
 function getContainingFunction(node: ts.Node): ts.Node | undefined {
   let current = node.parent;

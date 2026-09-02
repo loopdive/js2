@@ -24,7 +24,7 @@ import { evaluateConstantCondition } from "../statements/control-flow.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.js";
 // (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
-import { analyzeTdzAccess } from "./identifiers.js";
+import { analyzeTdzAccess, topLevelConstInitializedBeforeAnyUserCode } from "./identifiers.js";
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
@@ -606,7 +606,9 @@ export function tryStaticToNumber(
         // (`function f(){ return x + 1; } f(); const x = 1;`). #1607 below is
         // the narrow self-reference case of the same rule; this is the general
         // one.
-        if (analyzeTdzAccess(ctx, expr) !== "skip") return undefined;
+        if (analyzeTdzAccess(ctx, expr) !== "skip" && !topLevelConstInitializedBeforeAnyUserCode(decl)) {
+          return undefined;
+        }
         // #1607: self-referential lexical initializer (TDZ). If we are already
         // tracing through this exact declaration, the initializer names the
         // very binding it declares (`const x = x;`, `await using x = x + 1;`).

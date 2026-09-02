@@ -2,7 +2,7 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 // (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
-import { analyzeTdzAccess } from "../expressions/identifiers.js";
+import { analyzeTdzAccess, topLevelConstInitializedBeforeAnyUserCode } from "../expressions/identifiers.js";
 
 /**
  * Resolve a compile-time constant, but only for truly immutable values.
@@ -22,7 +22,13 @@ export function resolveStrictConstant(ctx: CodegenContext, expression: ts.Expres
     // throw: `function f(){ return x + '!'; } f(); const x = 'a';` compiled to a
     // bare string constant, so `const/global-closure-get-before-initialization`
     // saw no ReferenceError. The plain (unfolded) read already emits the check.
-    if (analyzeTdzAccess(ctx, expr) !== "skip") return undefined;
+    const declaration = ctx.oracle.valueDeclarationOf(expr);
+    if (
+      analyzeTdzAccess(ctx, expr) !== "skip" &&
+      !(declaration !== undefined && topLevelConstInitializedBeforeAnyUserCode(declaration))
+    ) {
+      return undefined;
+    }
     const initializer = ctx.oracle.constInitializerOf(expr);
     return initializer ? resolveStrictConstant(ctx, initializer) : undefined;
   }
