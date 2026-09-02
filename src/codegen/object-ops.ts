@@ -4567,8 +4567,16 @@ function emitRuntimePropertyIntrospection(
  * runtime — i.e. an object whose own-key set the checker cannot enumerate.
  */
 function introspectionReceiverHasRuntimeKeys(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
-  const identifier =
-    ts.isPropertyAccessExpression(recvExpr) && recvExpr.name.text === "prototype" ? recvExpr.expression : recvExpr;
+  // (#5195 R2-2) PROTOTYPE receivers ONLY. The first cut also accepted a bare
+  // class identifier, which sent CONSTRUCTOR receivers to the runtime
+  // `__hasOwnProperty` — and that native has no arm for a `$ClassName`
+  // class-object's statics, so `C.hasOwnProperty('sm')` / `('sf')` flipped
+  // true → false against base. The class object's static surface is exactly
+  // what the fold below already knows and the runtime does not; only
+  // `C.prototype` is the object whose own-key set moved to a `$Object` the
+  // checker cannot enumerate.
+  if (!ts.isPropertyAccessExpression(recvExpr) || recvExpr.name.text !== "prototype") return false;
+  const identifier = recvExpr.expression;
   if (!ts.isIdentifier(identifier)) return false;
   const className = ctx.classExprNameMap.get(identifier.text) ?? identifier.text;
   return ctx.classSet.has(className) && classHierarchyHasDynamicMember(ctx, className);
