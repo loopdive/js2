@@ -1,7 +1,7 @@
 ---
 id: 5271
 title: "ES2015 standalone: statements + language semantics — r2 residual pass (68 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-02
 updated: 2026-09-02
@@ -581,3 +581,26 @@ rows explicitly deferred in the PR body with the reason):
   X5); #5272 (done) — runner leak check that makes every local pass honest.
 - #4444 — ES2015 standalone closeout umbrella ("2026-09-01 evening dispatch
   census": this cluster's 84 rows).
+
+## 2026-09-02 implementation (Opus)
+
+Worktree `.claude/worktrees/agent-a6e921d2f4c8cf407`, branch
+`worktree-agent-a6e921d2f4c8cf407`. Honest base measured on this worktree's
+HEAD before any edit with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/stmt-head.txt --standalone`:
+**0 pass · 67 fail · 1 compile_error** over the 68 in-scope rows (the CE is
+D5 `with/unscopables-inc-dec`, deferred by the plan), and **20/20** on
+`stmt-controls.txt`. The 27 planner probes reproduced **25 fail / 2 pass**,
+matching the plan.
+
+### Step 1 — elision-only array patterns (cluster E)
+
+`compileArrayDestructuring`'s native-generator drain
+(`src/codegen/statements/destructuring.ts`) called `emitNativeGeneratorToVec`
+with no `stepLimit`, so `let [,] = g()` ran the generator to completion.
+Passing `patternIteratorStepCount(pattern.elements)` (the same helper and the
+same `-1`-means-unbounded guard the param lane uses, #4768) bounds the drain to
+the pattern's §8.5.3 IteratorStep count.
+
+- `stmt-cl-E.txt`: **0 → 6 pass** (all six rows).
+- Controls: 20/20. Probe p10 fail → pass.
