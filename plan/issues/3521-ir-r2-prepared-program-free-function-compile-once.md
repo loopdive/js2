@@ -1079,6 +1079,14 @@ node scripts/equivalence-gate.mjs
 pnpm exec vitest run tests/cross-backend-diff.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 ```
 
+**`tests/issue-3214-imported-hof.test.ts` is a known BLOCKER of this list, and
+it is not R2's** (2026-09-02, R2-T1/G1). Its `:44` case is a #5165 regression
+in the selector's pre-claim guard, bisected to `ff403c6b2c`; the diagnosis and
+the ready-to-file issue text are in the R2-T1/G1 checkpoint note at the end of
+this record, under deviation 5. The blocker's own issue id is still to be
+allocated — it needs a lead-assigned owner, because `src/ir/select.ts` is
+listed by both #3520 and #3522.
+
 The PR report must include inventory and outcome denominators, a per-unit
 direct/IR emission table, the old-allowlist vs Prepared delta, all post-Prepared
 failure injections, and proof that no in-scope placeholder or compile-twice
@@ -3849,3 +3857,221 @@ a failed direct body — its own R2 follow-up); the inherited boolean allowlist 
 | next | the direct body's dead residue on `(1,1,1)` rows generally | P0 showed a `(1,1,1)` vec row ships a dead `string_constants` global, an `__exn` tag and an `__exn_tag` export; every remaining overlay row likely does — a byte-size and import-surface question for the ledger, sized by R2-T1 |
 | later | fast-lane `string[]` (`vec-string-param`) | requires the non-fast lanes to agree first (host `(1,1,1)`, others `abi-signature-parity`) — a slot-shape question, not a fast-arm one |
 | later | retire the fast arm (`:1320-1324` → fall through to `r2StableSignatureType`) | only once fast mode's reference family (`index.ts:2920/:3049/:3116`) is buildable; the three fast predicates then collapse |
+
+### 2026-09-02 R2-T1/G1 checkpoint note — Opus lane
+
+Implemented from the `## 2026-09-02 R2-T1/G1 implementation plan` section
+above, on branch `claude/issue-3521-r2-t1g1-telemetry-ci` off `origin/main`
+`079332e3e7`, merged forward through `77ca8fba` (PR #5483, the plan itself).
+Claim `3521:r2-t1g1`, held by `ttraenkler/opus-3521-r2-t1g1` since
+2026-09-02T13:40:36Z (`node scripts/claim-issue.mjs --check 3521:r2-t1g1`,
+read `origin/issue-assignments`). Every number below names the artifact that
+produced it; all artifacts are under `.tmp/r2-t1g1/` in the lane's container.
+
+**Anchor drift: none.** All 113 plan anchors in the six cited files still match
+by line: `ir-prepared-free-functions.ts` (`:272`, `:364`, `:565`, `:583`,
+`:622`, `:695`, `:705`, `:742`, `:802`, `:856`, `:890`, `:1262`, `:1715`,
+`:1840`, 2,027 lines), `outcomes.ts` (`:250-279`, `:314`, `:345`, `:365`),
+`ir-overlay-outcomes.ts` (`:42-57`, `:280`, `:862-864`, `:927-934`),
+`index.ts` (`:2501`, `:2516`, `:4573`, `:4624`, `:4646`, `:5628-5629`,
+`:10156`, `:10165`, `:10698`), `context/types.ts` (`:1543`, `:4284`, `:4291`),
+`check-ir-only.ts` (`:258`, `:294-320`), `select-changed-issue-tests.mjs`
+(`:39-44`, `:46`), `ci.yml` (`:690-712`), `docs/ci-policy.md` (`:63`).
+
+#### Probe answers
+
+**P1 — byte/behaviour matrix, BEFORE and AFTER.** `.tmp/r2-t1g1/bytes-matrix.mts`
+over `.tmp/r2-t1g1/shapes.mts`: 46 shapes × 6 lanes (host, fast, fast-hostStr,
+native, standalone, wasi) + 13 corpus files × 2 `compileFiles` lanes =
+**302 cells**, each recording sha256 of the binary, `success`, sorted error
+text and every function row's triple. `bytes-matrix-before.json` (base
+`079332e3e7`): **302 cells, 300 `success`**. `bytes-matrix-after.json`
+(candidate): 302 cells, 300 `success`, and the two files compare
+**302/302 identical on every field** (sha AND triples AND error text). The two
+non-`success` cells are `shape/generator/{standalone,wasi}`, an internal error
+that predates this slice and whose message is byte-identical in both runs.
+
+**P2 — the real recorder equals the scratch instrumentation.**
+`.tmp/r2-t1g1/census.mts` → `census.json`, reading `why` from
+`r2WithdrawalOf(row)`: **484 function rows**, of which **98 are `(1,1,1)`;
+98/98 carry exactly one reason, 0 are unattributed, and 0 rows that are not
+`(1,1,1)` carry a reason.** Distribution: `not-attempted:multi-source-driver`
+55, `admission:fast-signature-unproven` 24, `admission:param-signature-unstable`
+9, `admission:return-signature-unstable` 4, `admission:async-declaration` 2,
+`fixed-point:storage-terminal-unprepared` 2,
+`not-attempted:late-feature-preparation` 2. The last two are
+`compile/website/playground/examples/benchmarks/helpers.ts` `el` and `bcrd` —
+the plan's site-5 measurement reproduced exactly, and with it the refutation of
+Report A's R2-E1 diagnosis of those two names.
+
+**Deviation from the plan's expected P2 numbers, and why.** The plan's 57-row
+attribution is against `.tmp/r2-census/shape-census.ts`, a planning-lane
+SCRATCH file; `.tmp/` is gitignored, so neither it, `bytes-matrix.mts`,
+`shape-census-instr.ts` nor `corpus-files-census-instr.mjs` exists in the
+repo or in this lane's container. Every probe harness was therefore rebuilt
+in-lane, with its own 46-shape corpus. The claim the plan's design rests on —
+*every `(1,1,1)` row has exactly one cause and the instrumentation is
+tally-neutral* — is reproduced (98/98, 0 stray, 302/302 byte-identical); the
+per-bucket counts are not comparable across two different corpora and are not
+claimed to be. `compileFiles` was run through a `createRequire` shim in the
+harness only: `analyzeFiles` (`src/checker/index.ts:1315`) uses a bare
+`require("node:path")` that is undefined under tsx's ESM loader. No src change.
+
+**P3 — a claimable shape per unmeasured reason** (`p3.mts`, `p3b.mts`,
+`p3c.mts`). **Eleven of the twenty reasons now have a (b) behaviour pin**:
+the seven P2 found, plus `fixed-point:callee-outside-component` (the
+implicit-any component of the routing suite's `:753` shape — which also
+answers the plan's open question: that shape's reason is
+`callee-outside-component`, **not** `allocated-slot-mismatch`),
+`fixed-point:construction-callee-outside`,
+`fixed-point:outside-caller-uncertified` (a `callable-param` owner with a
+module-init caller — R2-E1's whole population) and
+`not-attempted:ir-first-disabled`.
+
+**Nine reasons are "recorder present, unreached" and carry a (d) source pin
+only**, exactly as the plan directs — none was dropped to make a count fit:
+`generator-lane`, `nested-executable-syntax`, `poison-pill-read`,
+`direct-caller-activation-target`, `function-value-reference`,
+`allocated-slot-mismatch`, `callee-of-unowned-caller`, `class-atom`,
+`unsealed-component`. `generator-lane` is the plan's one expectation not met,
+and the measurement says why: in every lane where `generatorsPreparable` is
+false (standalone, wasi, `strictNoHostImports`) the generator's row is
+`(1,1,0)` — #2951's gate 2 excludes it BEFORE R2 admission runs, so no
+`(1,1,1)` generator row can exist today. `class-atom` is unreachable by
+construction until #3522 migrates class-member body accounting (only function
+rows carry the triple), which the plan already predicted.
+
+**P4 — gates see no `(1,1,1)` row.** `pnpm run check:ir-only` (hybrid) and
+`-- --policy=ir-only`: both **`41/38/0/0/0/38/3`, verdict READY**, matching
+the plan's expectation exactly. `check:ir-only --json` contains **zero**
+occurrences of `r2Withdrawal` — the field is absent in the gate corpus, so
+the new row rule is live but fires 0 times. Non-vacuity is carried by V-C(3)
+and V-C(6) below, not by this run.
+
+**P5 — cold-tail semantics: yes.** `ctx.fnctorColdTailStructName` is written
+only at `src/codegen/fnctor-cold-tail.ts:361`; `ctx.fnctorColdTailTypeIdx`
+only at `src/codegen/linear-type-reservations.ts:243` (`grep -rn` over `src/`;
+all other references are reads). So `program-abi-fnctor-producer.ts:225` is
+correct and item 11 — the one-line fixture change — is the whole fix. `:81`
+untouched.
+
+**P6 — `tests/ir/` baseline on the lane's base, one file per `vitest run`**
+(`.tmp/r2-t1g1/p6/run.sh`, `summary.txt`): **19 green,
+`fnctor-producer` 20/21, `counted-string-append-provenance` 13/29 (16
+failed)** — the plan's expectation reproduced exactly, and **no third red**.
+
+#### Verification matrix
+
+- **V-A (byte/behaviour neutrality) — PASS.** P1's 302/302. `check:ir-only
+  --json` and `check:ir-fallbacks` were run on the candidate and on a
+  file-copy revert to `origin/main`'s five sources (`.tmp/r2-t1g1/ab/`):
+  **`diff` is 0 lines for both**
+  (`ir-only-{base,after}.json`, `ir-fallbacks-{base,after}.out`).
+  `tests/cross-backend-diff.test.ts` and `node scripts/equivalence-gate.mjs`
+  run once on the candidate (`.tmp/r2-t1g1/vb/summary2.txt`).
+- **V-B (pins) — PASS.** New suites 22/22 under CI's exact flags
+  (`--pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism`);
+  the six pinned files + `issue-3529-selector-preclaim` **199/199**;
+  `tests/ir/fnctor-producer` **21/21**; routing suite **46/46**;
+  `issue-3521-linked-string-parser-abi` **4/4**;
+  `issue-3520-outcome-correlation-identity` **13/13**;
+  `issue-3519-ir-only-gate` **14/14**; `issue-3519-ir-outcomes` **25/30**
+  (5 pre-existing skips). Full log: `.tmp/r2-t1g1/vb/summary.txt`.
+- **V-C (non-vacuity) — PASS, six reverts, each alone, counts measured:**
+  1. B4's recorder made a no-op → **6 of 8** shape pins fail (the 2 survivors
+     are the `not-attempted` pins, which come from `index.ts`, not the
+     selector — correct).
+  2. C7 + C8 defaults removed → the `ir-first-disabled` pin and the whole
+     multi-source suite fail (**2 pins**). The linked-parser suite stays 4/4
+     under this revert: every `(1,1,1)` assertion under `tests/` is
+     `toMatchObject`, so it cannot see an added field either way — which is
+     also why no existing pin had to move.
+  3. A3's validator neutered → **3 of 11** (a) pins fail.
+  4. Item 11 reverted → `fnctor-producer` back to **20/21**.
+  5. Item 10 reverted → **2** (e) pins fail.
+  6. D's row rule removed → **2** (a) `evaluateIrOnlyReport` pins fail.
+  Deviation from the plan's V-C(1) expectation: it also expected the "(a)
+  `(1,1,1)`-without-reason blocker" to fail under revert 1. It does not, and
+  cannot — that pin is a hand-built ledger row, which is precisely what makes
+  the validator policy-independent and testable without a compile. Reverts 3
+  and 6 are what cover it.
+- **V-D (gates) — PASS.** The five ratchets bare and under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`: `check-loc-budget` (net
+  **+294** src LOC, all four grown files granted by this file's
+  `loc-budget-allow`), `check-func-budget` (`index.ts::generateModule`
+  1729 → 1733, already granted), `check-coercion-sites`,
+  `check:oracle-ratchet` (getTypeAtLocation +0, ctx.checker +0),
+  `check:dead-exports`. Also `typecheck`, `lint`, `format:check`,
+  `check:ir-dialect`, `check:ir-layering`, `check:ir-kind-neutrality`,
+  `check:ir-fallbacks`, `check:ir-only` both lanes,
+  `check:test-vacuity-shapes`.
+
+#### Deviations from the plan, and why
+
+1. **Probe harnesses rebuilt.** See P2 above. The plan's `.tmp/r2-plans/`
+   artifacts are scratch and were not in the repo or this container.
+2. **`src/ir/r2-withdrawal.ts` is 135 lines, not the estimated +45.** The
+   estimate did not carry the doc comments the file needs to be reviewable
+   (why it is not in `outcomes.ts`, why `detail` is admissible on exactly one
+   reason, what each stage means). Far under the 1,500 god-file threshold, so
+   no grant and no gate movement.
+3. **The (F) suite is four files, not one** —
+   `issue-3521-r2-withdrawal-{telemetry,shapes,neutrality,multi-source}.test.ts`
+   — purely for memory. A vitest fork gets 512 MB (`vitest.config.ts:5`); one
+   `compile` retains ~20 MB of `ts.Program` and `compileFiles` ~90 MB
+   (measured: 470 MB → 558 MB on that one case), so a single file carrying
+   every compile OOMs while each case passes alone. The four run together
+   green under CI's exact flags. Related pre-existing finding, measured by
+   file-copy A/B against `origin/main`'s sources:
+   `tests/issue-3521-prepared-free-function-routing.test.ts` **already** OOMs
+   at 512 MB in a 4-core/16 GB container, unmodified — it needs
+   `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, as do the 3520-correlation and
+   3519-outcomes suites. Not caused by this slice; recorded because the R2
+   record's own Required-completion command block runs those files.
+4. **`generator-lane` and `allocated-slot-mismatch` got no (b) pin.** P3
+   above; both keep their recorder and a (d) pin.
+5. **Item 12 — the #5165-regression selector issue is NOT filed.** Filing it
+   requires `node scripts/claim-issue.mjs --allocate`, which pushes a
+   reservation to the shared `origin/issue-assignments` ref; that write was
+   refused by this lane's sandbox policy, and `gh` is not installed in the
+   container. Hand-picking an id is forbidden (#2531), so the issue is left
+   unfiled rather than filed wrongly. Everything needed to file it in one
+   step is below; the open-PR half of the `--allocate` scan was done by hand
+   against the REST API on 2026-09-02 (all 8 open PRs — #5485, #5484, #5480,
+   #5400, #5397, #5393, #5390, #5063 — add **zero** `plan/issues/*.md`
+   files), and `--allocate --dry-run --no-pr-scan` previews **#5277**. The
+   plan already requires a lead-assigned owner for this issue, so it is
+   handed to the Fable lane with the PR.
+
+   > **title** `selector: reject callable-family equality operands pre-claim
+   > (#5165 regression; red issue-3214-imported-hof)` · `goal:
+   > ir-full-coverage` · `related: [3214, 3529, 5165, 3521]` ·
+   > **insertion point** `src/ir/select.ts:9377` · **expected shape**
+   > `capabilityNo("operand-coercion-unsupported", "expr-callable-equality",
+   > expr)` when either operand is callable-typed · **body** the plan's
+   > diagnosis: first-parent bisect over 1,437 commits `037ff37d9a` (GOOD) →
+   > `47e337f3b6` (BAD) makes `ff403c6b2c` (merge of PR #5219, #5165
+   > tail-position loops / finally-less `try`) the first bad commit, parent
+   > `82a09a9b33` GOOD; on main `identical` compiles once and correctly, and
+   > its row is `(1,1,0) unsupported/build/operand-coercion-unsupported` — a
+   > POST-claim typed demote from `from-ast.ts:13226-13242` where both
+   > operands are `callable`, which before #5165 was rejected PRE-claim. It
+   > is a selector pre-claim gap (`select.ts:9377-9381` guards only
+   > module-extern operands), not R2 and not #3522's `from-ast` typing. That
+   > lane measures its own `check:ir-fallbacks` bucket. Once filed, add the
+   > id to this record's `related:` and name it as the `issue-3214` blocker
+   > under `## Required completion evidence`.
+6. **`func-budget-allow` needed no new entry** —
+   `src/codegen/index.ts::generateModule` was already listed. The plan did not
+   anticipate the +4 lines landing inside that function (C7 sits at
+   `index.ts:5629`, inside `generateModule`); the existing grant covers it and
+   the dated `loc-budget-allow` rationale records it.
+
+#### Reported to other owners, not fixed here
+
+`tests/ir/counted-string-append-provenance.test.ts` is **13/29** on this base
+and on main — 16 failures, all `mismatched counted trip-count proof`
+(`src/ir/counted-string-append-provenance.ts:365`), first red at `0f42c1fde4`
+(2026-08-27, Codex, #3518). Out of scope for R2-T1/G1, deliberately **not**
+pinned (a red pin makes the fatal CI step noise for every PR), and named in
+this slice's PR body so #3518's owner sees it.
