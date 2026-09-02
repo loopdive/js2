@@ -1,0 +1,7 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var o; o = { a: 1 };
+assert.sameValue(Object.getPrototypeOf(o), Object.prototype, 'gpo({a:1}) is Object.prototype: ' + (Object.getPrototypeOf(o) === null ? 'null' : 'other'));

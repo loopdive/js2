@@ -1,0 +1,5 @@
+/*---
+description: bare identifier read before let in a block inside a function (#5271 probe)
+flags: [noStrict]
+---*/
+assert.throws(ReferenceError, function() { { x; let x; } });

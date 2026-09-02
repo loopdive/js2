@@ -1,0 +1,6 @@
+language/statements/for/scope-head-lex-open.js
+language/statements/for/scope-head-lex-close.js
+language/statements/let/syntax/let-outer-inner-let-bindings.js
+language/statements/const/syntax/const-outer-inner-let-bindings.js
+language/statements/try/scope-catch-block-lex-open.js
+language/statements/try/scope-catch-block-lex-close.js

@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var obj = { a: 1 };
+var obj = { method() { return 1; } };
+assert.sameValue(obj.method(), 1);

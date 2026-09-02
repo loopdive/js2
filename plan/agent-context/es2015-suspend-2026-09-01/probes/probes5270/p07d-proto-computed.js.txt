@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var sample = {}; var obj = { ['__proto__']: sample };
+assert(obj.hasOwnProperty('__proto__'), 'computed __proto__ is own');
+assert.sameValue(obj.__proto__, sample);
+assert.sameValue(Object.getPrototypeOf(obj), Object.prototype, 'gpo unchanged');

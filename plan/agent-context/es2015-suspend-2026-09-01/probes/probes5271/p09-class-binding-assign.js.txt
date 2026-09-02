@@ -1,0 +1,7 @@
+/*---
+description: class declaration binding is mutable (#5271 probe)
+flags: [noStrict]
+---*/
+class C {}
+C = 5;
+assert.sameValue(C, 5);

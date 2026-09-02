@@ -1,0 +1,12 @@
+/*---
+description: probe
+includes: []
+flags: [onlyStrict]
+---*/
+var context = null;
+var fn = function() { return () => { context = this; }; };
+fn()`x`;
+assert.sameValue(context, undefined, 'arrow lexical this of a bare-called strict fn: ' + String(context));
+context = null;
+fn()();
+assert.sameValue(context, undefined, 'same via plain call: ' + String(context));
