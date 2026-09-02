@@ -1116,3 +1116,85 @@ null` as a regression lock on the standalone prototype surface. Both now answer
 `Array.prototype` and `Object.prototype`; the lock is re-pointed at those
 values, and the identity/carrier findings the rest of that suite records are
 untouched.
+
+### 2026-09-02 adversarial review — F1 fixed, N1 fixed, N2/N3/N4 documented
+
+An adversarial review (~50 probes, both lanes, node as the oracle; probes under
+`.tmp/rev5270/`) cleared steps 1, 2, 3-M and 8 with no finding — `return_call`
+across try/catch still lets the catch run (#1972 guard intact), mutual recursion
+does not grow the stack, and programs touching none of the changed paths are
+byte-identical. One HIGH finding blocked the branch.
+
+**F1 (HIGH, fixed) — `"prototype" in <arrow-bound identifier>` regressed for an
+arrow that HAS a `prototype`.** The cluster-N route folded a hard `false` for
+any identifier whose initializer is an arrow, with **no write check at all**,
+and additionally suppressed the `__extern_has` runtime fallback. Both the fold
+and the fallback were off, so all four write forms answered `false` where node
+AND the base compiler answer `true`:
+
+| probe | node | base | lane (before) | lane (after) |
+|---|---:|---:|---:|---:|
+| `a42` `arrow.prototype = 5` (standalone / host) | 1 | 1 | **0** | 1 |
+| `a44` bitmask, standalone (`defineProperty` \| `["prototype"]=` \| `Object.assign`) | 7 | 7 | **0** | 7 |
+| `a44` bitmask, host | 7 | 3 | **0** | 3 |
+
+The comment's premise was the bug: an arrow's ABSENCE of `prototype` is a fact
+about its CREATION, not its lifetime — it is an ordinary extensible object
+afterwards. Two changes, both in `binary-ops-in.ts`:
+
+1. `receiverIsArrowFunctionValue` now admits an identifier only when
+   `arrowBindingNeverGainsProperties` holds: no member write through the
+   binding (`a.k = …` / `a[k] = …`, any assignment operator, through
+   paren/`as`/`!` wrappers), no appearance as a call or `new` ARGUMENT
+   (`identifierEscapesToCall`, #4765 — this is what covers
+   `Object.defineProperty` and `Object.assign`), and no rebinding of the
+   identifier (`identifierIsWrittenTo`, #4484 D). An arrow LITERAL still folds
+   unconditionally: there is no binding anyone could have written to.
+2. The `!arrowPrototypeRoute` suppression on the runtime route is **removed**,
+   so a folded `false` may once again be re-asked through `__extern_has` — the
+   belt-and-braces half. Verified this does not cost the cluster-N flip:
+   `arrow-function/prototype-rules` still passes.
+
+The `a44` host-lane `Object.assign` bit answers `3` rather than `7` — measured
+by file-copy A/B to be **identical on `origin/main`**, so it is pre-existing and
+outside this issue. The pin for that form is therefore standalone-only, with the
+reason recorded in the test.
+
+Five pins added under `#5270 review F1`; the four regression pins were verified
+to FAIL on the pre-fix tree and the fold-survival control to stay green.
+`tests/in-operator-edge-cases.test.ts` and
+`tests/function-prototype-assignment-descriptor.test.ts` stay green (10/10).
+
+**N1 (low, latent soundness — fixed).** `tailCallResultsMatch`
+(`statements/control-flow.ts`) compared ValType KIND only: it matched `ref $A`
+against an unrelated `ref $B` and cross-matched `ref` ↔ `ref_null` in BOTH
+directions, though `ref null $T` does not satisfy a `ref $T` return. Nothing
+reproduced end-to-end — an inserted `ref.cast` makes `peelToTailCallIdx` decline
+exactly the shapes that would differ — but step 1 removed the param-count
+filter, so strictly more call sites now reach this check and it should not rest
+on that accident. Tightened to `valTypesMatch` (which compares `typeIdx`) plus
+the one sound widening direction, `ref $T` → `ref null $T`. Cluster A holds at
+8/11 and the four TCO suites stay green (24/24).
+
+**N2 (low, documented — measured systemic change).** `ir-inline.ts:603` refuses
+to inline any body containing `return_call`. With the standalone externref
+refusal gone, nearly every value-returning standalone function with a tail call
+is now non-inlinable. No size regression measured (the reviewer's 400-literal
+synthetic: lane 715,033 B vs base 716,940 B — the lane is SMALLER). Recorded as
+a known consequence of step 1, not a defect: an inliner that understood
+`return_call` would recover the cases, and that belongs to the inliner's own
+issue rather than here.
+
+**N3 (low, inherited — claim narrowed).** The `%Object.prototype%` answer added
+by step 2 lands only inside `__getPrototypeOf`'s `ref.test $Object` arm
+(`object-runtime-prototype.ts`), so a literal carried on a NON-`$Object` carrier
+still answers `null`, and two ordinary literals in one program can disagree.
+Base answered `null` for both, so nothing got worse — but the step-2 claim above
+should be read as "an ordinary `$Object` literal now answers
+`%Object.prototype%`", not "every ordinary literal does".
+
+**N4 (low, inherited — known gap).** A module-scope `var` redeclared with a
+divergent shape PLUS a same-named block `let` in the same function traps at
+runtime; `collectRedeclaredShapeDivergentObjects` does not cover that shape.
+The base compiler traps identically, so this is a pre-existing gap rather than a
+regression — noted because it sits on the exact surface step 3-M claims.

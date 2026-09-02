@@ -86,10 +86,70 @@ function receiverIsArrowFunctionValue(ctx: CodegenContext, receiver: ts.Expressi
   ) {
     expr = expr.expression;
   }
+  // An arrow LITERAL has no binding anybody could have written to between its
+  // creation and this `in`, so the syntactic fact is the whole answer.
   if (ts.isArrowFunction(expr)) return true;
   if (!ts.isIdentifier(expr)) return false;
   const initializer = ctx.oracle.variableInitializerOf(expr);
-  return initializer !== undefined && ts.isArrowFunction(initializer);
+  if (initializer === undefined || !ts.isArrowFunction(initializer)) return false;
+  return arrowBindingNeverGainsProperties(expr.getSourceFile(), expr.text);
+}
+
+/**
+ * (#5270 review F1) An arrow's MISSING `prototype` is a fact about its
+ * CREATION, not about its lifetime: the arrow is an ordinary extensible object
+ * afterwards, so `arrow.prototype = 5` gives it one and `"prototype" in arrow`
+ * must then answer true. The first cut of the route above folded a hard `false`
+ * for any identifier whose initializer is an arrow, with no write check — which
+ * regressed all four write forms against the base compiler AND against node
+ * (`arrow.prototype = 5`, `Object.defineProperty(arrow, "prototype", …)`,
+ * `arrow["prototype"] = 9`, `Object.assign(arrow, {prototype: 4})`).
+ *
+ * So the fold now applies only where the binding provably never gains a
+ * property. Deliberately conservative, and cheap — mirrors the reasoning of
+ * `identifierEscapesToCall` (#4765) and `identifierIsWrittenTo` (#4484 D):
+ * being wrong in the PERMISSIVE direction costs only the loss of a fold (the
+ * base answer, which is what the write forms need anyway), while being wrong in
+ * the restrictive direction is a wrong answer.
+ *
+ * Refuses when the file contains, anywhere:
+ *   - a member write through the binding (`a.k = …`, `a[k] = …`, any assignment
+ *     operator) — the `arrow.prototype = 5` / `a2["prototype"] = 9` forms;
+ *   - the binding as a call/new ARGUMENT — `Object.defineProperty(a1, …)` and
+ *     `Object.assign(a3, …)`, and every opaque escape besides;
+ *   - a rebinding of the identifier itself, so the initializer stops being a
+ *     fact about the value at this site.
+ */
+function arrowBindingNeverGainsProperties(file: ts.SourceFile, name: string): boolean {
+  if (identifierEscapesToCall(file, name)) return false;
+  if (identifierIsWrittenTo(file, name)) return false;
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+    ) {
+      let base: ts.Expression = node.left.expression;
+      while (
+        ts.isParenthesizedExpression(base) ||
+        ts.isAsExpression(base) ||
+        ts.isNonNullExpression(base) ||
+        ts.isTypeAssertionExpression(base)
+      ) {
+        base = base.expression;
+      }
+      if (ts.isIdentifier(base) && base.text === name) {
+        written = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return !written;
 }
 
 /** Return true for an approved standalone fnctor instance struct. */
@@ -546,9 +606,14 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
     if (
       !has &&
-      // (#5270 step 10) An arrow's missing `prototype` is a syntactic fact, so
-      // never re-ask `__extern_has` about it.
-      !arrowPrototypeRoute &&
+      // (#5270 review F1) The suppression that used to sit here
+      // (`!arrowPrototypeRoute`) is GONE. It stopped a folded `false` from
+      // falling through to `__extern_has`, so an arrow that had been GIVEN a
+      // `prototype` still answered false — the fold and the runtime fallback
+      // were both disabled at once. The route above is now gated on the
+      // binding provably never gaining a property, and a `false` fold is once
+      // more allowed to be re-asked at runtime, which is what the base
+      // compiler did.
       (rightWasm.kind === "externref" ||
         rightWasm.kind === "anyref" ||
         vecNamedKeyRoute ||

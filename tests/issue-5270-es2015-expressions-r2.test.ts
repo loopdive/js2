@@ -415,3 +415,68 @@ describe("#5270 step 10 — arrow-function surface (cluster N)", () => {
     expect(await runHostLines(body)).toEqual(expected);
   });
 });
+
+describe("#5270 review F1 — an arrow that HAS been given a `prototype`", () => {
+  // An arrow's MISSING `prototype` is a fact about its CREATION, not its
+  // lifetime: it is an ordinary extensible object afterwards. The first cut of
+  // the cluster-N route folded a hard `false` for any binding whose initializer
+  // is an arrow — with no write check — and additionally suppressed the
+  // `__extern_has` fallback, so all four write forms answered `false` where
+  // node and the base compiler answer `true`. The cluster-N pins above only
+  // exercise a FRESH arrow, which is why nothing in-tree caught it.
+  const bothLanes = async (body: string, expected: string[]): Promise<void> => {
+    expect(await runStandaloneLines(body)).toEqual(expected);
+    expect(await runHostLines(body)).toEqual(expected);
+  };
+
+  it("member-assignment: arrow.prototype = 5", async () => {
+    await bothLanes(
+      `var arrow = () => 1;
+       arrow.prototype = 5;
+       LOG("in=" + ("prototype" in arrow) + " value=" + arrow.prototype);`,
+      ["in=true value=5"],
+    );
+  });
+
+  it('computed member-assignment: arrow["prototype"] = 9', async () => {
+    await bothLanes(
+      `var a2 = () => 1;
+       a2["prototype"] = 9;
+       LOG("in=" + ("prototype" in a2));`,
+      ["in=true"],
+    );
+  });
+
+  it('Object.defineProperty(arrow, "prototype", …)', async () => {
+    await bothLanes(
+      `var a1 = () => 1;
+       Object.defineProperty(a1, "prototype", { value: 3, writable: true, enumerable: false, configurable: true });
+       LOG("in=" + ("prototype" in a1));`,
+      ["in=true"],
+    );
+  });
+
+  // Standalone only: `Object.assign(a3, {prototype: 4})` answers false in the
+  // JS-HOST lane on `origin/main` too (measured by file-copy A/B against the
+  // base `binary-ops-in.ts`), so pinning both lanes here would pin a defect
+  // this issue did not introduce and does not fix.
+  it("Object.assign(arrow, { prototype: 4 }) — standalone", async () => {
+    expect(
+      await runStandaloneLines(
+        `var a3 = () => 1;
+         Object.assign(a3, { prototype: 4 });
+         LOG("in=" + ("prototype" in a3));`,
+      ),
+    ).toEqual(["in=true"]);
+  });
+
+  // The fold must SURVIVE for the population it was added for: an arrow that
+  // provably never gains a property still answers false on both lanes.
+  it("still answers false for an arrow that is never written to", async () => {
+    await bothLanes(
+      `var fresh = () => 1;
+       LOG("binding=" + ("prototype" in fresh) + " literal=" + ("prototype" in (() => {})));`,
+      ["binding=false literal=false"],
+    );
+  });
+});

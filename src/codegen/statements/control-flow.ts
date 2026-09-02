@@ -111,10 +111,21 @@ function tailCallResultsMatch(fctx: FunctionContext, calleeResults: readonly Val
   if (calleeResults.length !== 1) return false;
   const calleeRet = calleeResults[0]!;
   const callerRet = fctx.returnType;
-  if (calleeRet.kind === callerRet.kind) return true;
+  // (#5270 review N1) `valTypesMatch` compares the heap type too, where the
+  // old `calleeRet.kind === callerRet.kind` test did not: it matched `ref $A`
+  // against an unrelated `ref $B`, and cross-matched `ref` against `ref_null`
+  // in BOTH directions. `return_call` requires the callee's results to satisfy
+  // the CALLER's declared results, so only the widening direction is sound —
+  // a non-null `ref $T` result may flow into a `ref null $T` return, never the
+  // reverse. Nothing reproduced end-to-end (an inserted `ref.cast` makes
+  // `peelToTailCallIdx` decline the shapes that would have differed), but step
+  // 1 removed the param-count filter, so strictly more call sites reach this
+  // check and it should not rest on that accident.
+  if (valTypesMatch(calleeRet, callerRet)) return true;
   return (
-    (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
-    (callerRet.kind === "ref" || callerRet.kind === "ref_null")
+    calleeRet.kind === "ref" &&
+    callerRet.kind === "ref_null" &&
+    (calleeRet as { typeIdx: number }).typeIdx === (callerRet as { typeIdx: number }).typeIdx
   );
 }
 
