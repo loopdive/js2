@@ -781,22 +781,92 @@ onto `0f801557a`). Four commits on `worktree-agent-aa423580afa75b4c5`.
 | after Step 1 + 1.7 | 24 | 172 | 13 |
 | after Steps 1.6 / 9 H / 9 I / 11 E | 24 | 172 | 13 |
 | after Step 2 | 28 | 170 | 11 |
-| **final (fill-order fix)** | **29** | **167** | **13** |
+| after the fill-order fix | 29 | 167 | 13 |
+| **CORRECTED, integrated tree (2026-09-02, post-F1–F5)** | **28** | **169** | **12** |
 
-The two extra `compile_error`s in the final row are
-`subclass/builtin-objects/Function/instance-{length,name}.js` reporting
-`compilation timeout` rather than their usual `fail`: they route to the QuickJS
-runtime-eval provider, which is not built in this container, and the final run
-shared the box with the equivalence gate. They are on the out-of-scope
-environment list either way, and they alternate between the two statuses purely
-with load.
+**The 29/167/13 row was wrong and is superseded.** Independent verification on
+the integrated tree (this branch merged onto main, carrying #5224 and the #5272
+in-process host-import leak check) measured **28 / 169 / 12**, and this branch
+re-measured the same 28/169/12 after merging `origin/main` again. Two corrections
+to the earlier claim:
 
-`class-controls.txt` re-run after every step: **22/22**, unchanged throughout.
-Every remaining `compile_error` was already one at baseline (decorators ×6,
-#3371 ×2, the `new Function` environment gap ×2, the comma-heritage
-`side-effects-in-extends.js`, `grammar-static-ctor-meth-valid.js`); no row moved
-from `fail` to a worse class, and the whole-list run contains zero illegal
-casts or traps.
+- `computed-property-names/class/method/constructor-can-be-generator.js` is NOT
+  a standalone pass. Its generator body leaks `env::__create_generator` /
+  `env::__gen_create_buffer` — the native generator carrier, owned by #680 /
+  #2864 — and #5272 taught the in-process runner CI's leak check, so it now
+  scores as `compile_error`. The class mechanism this issue owns IS fixed there:
+  the HOST lane passes the row. `tests/issue-5195-es2015-class-r2.test.ts` pins
+  the exact leak string, so the row flips loudly when that lane closes it.
+- The earlier 13-CE reading included two `compilation timeout` rows that
+  alternate with box load; they are environment-blocked either way.
+
+**Host lane, same 209-row list: 32 pass / 168 fail / 9 compile_error.**
+
+`class-controls.txt`: **22/22 standalone**, unchanged after every step.
+**Host controls are 20/22, and the two failures are PRE-EXISTING on main** —
+`expressions/class/accessor-name-static/computed-err-to-prop-key.js` and
+`statements/class/dstr/meth-ary-init-iter-close.js`. They are not this branch's
+and are excluded from the green claim.
+
+### Verification findings F1–F5 (2026-09-02)
+
+An independent skeptic reproduced five defects against base `0f801557ad`;
+probes live in `/home/user/js2/.tmp/refute-F1/` and `.../refute-F2/`, and the
+branch-local ones in `.tmp/es2015/p3/`.
+
+| # | Severity | State | Evidence |
+|---|---|---|---|
+| F1 | HIGH | **fixed** | `class D extends C {}` over a runtime-keyed parent was a hard compile error; now compiles AND inherits. `refute-F1`: base 0/4 shapes, now 3/4 |
+| F2 | MEDIUM | **fixed** | class object no longer answers instance-prototype members. `refute-F2` probe1/2/3: 0/0/0 → 3/3/15, matching the js lane |
+| F3 | MEDIUM | **fixed** | the runtime-keyed call binds its receiver and no longer depends on codegen order |
+| F4 | LOW | **half fixed, half documented** | `in` through a dynamic holder: 0 → 3 (A/B against the base tree). Statically-typed `in` and the WRITE side remain open |
+| F5 | LOW | **fixed** | `hasOwnProperty` and `gOPD` now agree on a runtime-keyed member |
+
+**F1** — the inheritance loop aliased the parent's synthetic `__cmdyn$<ordinal>`
+funcMap entry into the child. That alias is a program-ABI claim, and the planner
+resolves it back to the source member and asks for its spec key, which is
+`undefined` for an unfoldable computed name — so it threw `no complete exact
+canonical class-member authority` and the whole module failed. Base compiled
+these (silently dropping the member). Fixed by skipping the alias and making
+inheritance a runtime [[Prototype]] walk: `emitStandaloneClassProtoObject` links
+the child prototype `$Object` to the parent's (§15.7.14 step 6, previously left
+null), `__class_proto_lookup` covers every class in such a hierarchy, and the
+static half walks to the nearest ancestor sidecar.
+
+**F2** — `__class_<C>` is itself a `$C` struct, so the lookup's `ref.test`
+matched it and returned the INSTANCE prototype whenever no sidecar existed;
+`C[ID('m')]` answered an instance method where base (and the spec) says
+`undefined`. The class-object identity test is now unconditional and answers the
+sidecar or NULL, never the prototype.
+
+**F3** — the call went through `tryEmitInlineDynamicCall`, which invokes with
+`this` unbound (so ANY runtime-keyed call into a `this`-using method threw, not
+only the `new C()[k]()` shape) and whose `ref.test` candidate set depends on
+which closure wrappers codegen has registered so far (so an inherited member's
+call folded to null or not depending on source order). Replaced by
+`class-dynamic-member-call.ts`:
+`__apply_closure(__extern_get(recv, ToPropertyKey(key)), recv, args)`, receiver
+compiled exactly once.
+
+**Found while fixing F3:** `ref.test` cannot identify a class at all — WasmGC
+canonicalizes struct types structurally, so two unrelated classes with the same
+field shape are the same type and the first lookup arm swallowed the other's
+instances. Every arm now also tests the class's `__tag`.
+
+### Residuals after F1–F5
+
+- **F4 write side.** `c[ID('s')] = 7` neither runs the runtime-keyed setter nor
+  creates an own property. §10.1.9 OrdinarySet needs a receiver-aware chain walk
+  (`__reflect_set_receiver`, this plan's Step 6); `__reflect_set` has no receiver
+  parameter, and setting on the prototype instead would be a different wrong
+  answer. Probes: `.tmp/es2015/p3/f4-write.js`, `f4-write-has.js`.
+- **F4 statically-typed `in`.** `ID('m') in c` where `c` has the class's static
+  type still folds `false`; the dynamic-holder form is fixed. Probe:
+  `.tmp/es2015/p3/f4-write-has.js` (first assert).
+- **F1 class-EXPRESSION shape (`q25`).** `var C = class { [ID('dyn')](){} };
+  var D = class extends C {};` still answers 0 — unchanged from base. Same
+  pre-existing same-name class-expression identity gap listed below; the
+  declaration form is fixed.
 
 ### Per step
 
@@ -883,13 +953,28 @@ Five ratchet gates green at every commit (`check-loc-budget`,
 dated rationales. `pnpm run typecheck` (TS7) clean;
 `pnpm run typecheck:ts5` reports only the pre-existing
 `linked-provider-runtime.ts` `WebAssembly.Tag` errors, which this branch does
-not touch. `tests/issue-5195-es2015-class-r2.test.ts` 38/38, host and
-standalone lanes, with a zero-host-import assertion on every standalone case.
+not touch. `tests/issue-5195-es2015-class-r2.test.ts` **66/66** after the
+F1–F5 pass (was 38/38), host and standalone lanes, with a zero-host-import
+assertion on every standalone case and one pinned owned-leak row.
 
-`pnpm run test:equivalence:gate` run twice on this branch (after the
-Steps-1.6/9/11E commit and again on the final tree): **24 failing / 1718
-passing / 24 known-failures in baseline — no new equivalence regressions**,
-both times.
+`pnpm run test:equivalence:gate` run three times on this branch (after the
+Steps-1.6/9/11E commit, after Step 2, and once more on the final F1–F5 tree with
+`origin/main` merged): **24 failing / 1718 passing / 24 known-failures in
+baseline — no new equivalence regressions**, every time.
+
+Final validation of the F1–F5 pass, on this branch with `origin/main` merged
+(`f64beb1a03`, carrying #5224 and the PR #5469 follow-up):
+
+| run | result |
+|---|---|
+| `class-head.txt` standalone | 28 pass / 169 fail / 12 compile_error |
+| `class-head.txt` host | 32 pass / 168 fail / 9 compile_error |
+| `class-controls.txt` standalone | 22/22 |
+| `class-controls.txt` host | 20/22 — the 2 failures are pre-existing on main |
+| `tests/issue-5195-es2015-class-r2.test.ts` | 66/66 |
+| five ratchet gates | green |
+| `pnpm run typecheck` (TS7) | clean |
+| `pnpm run test:equivalence:gate` | no new regressions |
 
 Related vitest files, run in batches: `classes`, `class-methods`,
 `class-expression(s)`, `class-method-calls`, `class-elements-619`,
