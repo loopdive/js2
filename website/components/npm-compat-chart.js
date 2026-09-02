@@ -136,6 +136,67 @@ class NpmCompatChart extends HTMLElement {
     };
   }
 
+  /**
+   * The newest ECMAScript edition the package's own module graph requires.
+   *
+   * Syntax and library surface are shown separately when they differ, because
+   * the difference is the actionable part: react's grammar is ES5 (it ships
+   * transpiled) while its runtime needs ES2021 `AggregateError`, so "supports
+   * ES5" would not run it. The tooltip carries the evidence that set the
+   * number so a reader never has to take the badge on faith.
+   */
+  _editionBadge(pkg) {
+    const edition = pkg.esEdition;
+    if (!edition || !edition.requiredLabel) return "";
+    const split =
+      edition.syntaxLabel !== edition.requiredLabel || edition.builtinsLabel !== edition.requiredLabel
+        ? ` (syntax ${edition.syntaxLabel}, library ${edition.builtinsLabel})`
+        : "";
+    const top = [...(edition.evidence?.syntax ?? []), ...(edition.evidence?.builtins ?? [])]
+      .slice(0, 6)
+      .map((item) => `${item.feature} — ${item.file}:${item.line}`)
+      .join("\n");
+    const title = `Requires ${edition.requiredLabel}${split}. Classified from ${edition.scannedFiles} file${
+      edition.scannedFiles === 1 ? "" : "s"
+    } of this package's own module graph.${top ? `\n\n${top}` : ""}`;
+    return `<span class="badge edition" title="${this._esc(title)}">needs ${this._esc(edition.requiredLabel)}</span>`;
+  }
+
+  /**
+   * The corpus as an edition timeline: how many packages need each edition,
+   * oldest first. This is the "what must the compiler support to run real npm
+   * code" view — a single ES2022 package is a different piece of work from
+   * half the corpus needing it.
+   */
+  _editionStrip(data, pkgs) {
+    const rollup = data?.esEditions;
+    const editions = rollup?.editions ?? [];
+    if (editions.length === 0) return "";
+    const classified = editions.reduce((sum, entry) => sum + entry.count, 0);
+    const cells = editions
+      .map(
+        (entry) =>
+          `<span class="edition-cell" title="${this._esc(entry.packages.join(", "))}">
+            <span class="edition-label">${this._esc(entry.label)}</span>
+            <span class="edition-count">${entry.count}</span>
+          </span>`,
+      )
+      .join("");
+    const unclassified = rollup?.unclassified?.length
+      ? `<span class="edition-unclassified" title="${this._esc(rollup.unclassified.join(", "))}">${
+          rollup.unclassified.length
+        } unclassified</span>`
+      : "";
+    return `
+      <div class="edition-strip" title="${this._esc(rollup?.method ?? "")}">
+        <span class="edition-strip-title">Required ECMAScript edition</span>
+        <span class="edition-cells">${cells}</span>
+        <span class="edition-note">${classified} of ${pkgs.length} classified${
+          unclassified ? " · " : ""
+        }</span>${unclassified}
+      </div>`;
+  }
+
   _row(label, valueHtml, cls) {
     return `<div class="row"><span class="k">${this._esc(label)}</span><span class="v ${cls || ""}">${valueHtml}</span></div>`;
   }
@@ -612,7 +673,7 @@ class NpmCompatChart extends HTMLElement {
           pkg.capabilities?.nodeFs
             ? '<span class="badge" title="This compatibility lane explicitly grants the compiled package Node filesystem access.">fs enabled</span>'
             : ""
-        }${
+        }${this._editionBadge(pkg)}${
           // The entry is a re-export barrel with no implementation in it, so
           // the two badges above describe the barrel, not the package. Saying
           // so on the badge line is the point — a green "compiles" next to a
@@ -679,6 +740,7 @@ class NpmCompatChart extends HTMLElement {
         ${metric(`${compiling}/${pkgs.length}`, "compile")}
         ${metric(`${validating}/${pkgs.length}`, "validate")}
       </div>
+      ${this._editionStrip(data, pkgs)}
       <div class="chart-dashboard" data-target="standalone" data-precompilation="off">
         <div class="benchmark-toolbar">
           <div>
@@ -1040,6 +1102,27 @@ class NpmCompatChart extends HTMLElement {
           text-decoration: none;
         }
         .entry:hover { color: var(--text-muted, rgba(255,255,255,0.46)); text-decoration: underline; }
+        .edition-strip {
+          display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px;
+          margin: 0 0 18px; padding: 10px 12px;
+          border: 1px solid var(--border, rgba(255,255,255,0.12)); border-radius: 8px;
+        }
+        .edition-strip-title { font-size: 12px; color: var(--text-muted, rgba(255,255,255,0.46)); }
+        .edition-cells { display: flex; flex-wrap: wrap; gap: 6px; }
+        .edition-cell {
+          display: inline-flex; align-items: baseline; gap: 5px;
+          padding: 2px 8px; border-radius: 999px;
+          border: 1px solid color-mix(in srgb, var(--accent, #7aa2f7) 40%, transparent);
+        }
+        .edition-label { font-size: 11px; color: var(--accent, #7aa2f7); }
+        .edition-count { font-size: 12px; font-weight: 600; }
+        .edition-note, .edition-unclassified {
+          font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.46));
+        }
+        .badge.edition {
+          border-color: color-mix(in srgb, var(--accent, #7aa2f7) 45%, transparent);
+          color: var(--accent, #7aa2f7);
+        }
         .card-links {
           display: flex;
           flex-wrap: wrap;

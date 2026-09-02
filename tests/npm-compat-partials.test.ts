@@ -36,6 +36,29 @@ describe("npm-compat partial aggregation", () => {
     expect(result.perfHistory.runs).toHaveLength(1);
   });
 
+  it("rebuilds the ES-edition rollup, which the sharded path would otherwise drop (#5279)", () => {
+    // The partial report carries a trimmed `summaryMeta`, and this merge builds
+    // the shipped summary itself — so a rollup added only to the single-process
+    // generator is present locally and absent from every artifact CI publishes.
+    const withEditions = {
+      ...partial(["acorn", "react"]),
+      packages: [
+        { name: "acorn", compile: { success: true }, esEdition: { required: 2022 } },
+        { name: "react", compile: { success: true }, esEdition: { required: 2021 } },
+      ],
+    };
+    const result = mergeNpmCompatPartials([withEditions], {
+      expectedNames: ["acorn", "react"],
+      sourceRevision: "source",
+    });
+
+    expect(result.summary.esEditions.editions.map((entry: { label: string }) => entry.label)).toEqual([
+      "ES2021",
+      "ES2022",
+    ]);
+    expect(result.summary.esEditions.unclassified).toEqual([]);
+  });
+
   it("rejects duplicate or missing package rows instead of publishing a partial dashboard", () => {
     expect(() =>
       mergeNpmCompatPartials([partial(["acorn"]), partial(["acorn"])], {
