@@ -3967,8 +3967,10 @@ failed)** — the plan's expectation reproduced exactly, and **no third red**.
   file-copy revert to `origin/main`'s five sources (`.tmp/r2-t1g1/ab/`):
   **`diff` is 0 lines for both**
   (`ir-only-{base,after}.json`, `ir-fallbacks-{base,after}.out`).
-  `tests/cross-backend-diff.test.ts` and `node scripts/equivalence-gate.mjs`
-  run once on the candidate (`.tmp/r2-t1g1/vb/summary2.txt`).
+  Run once on the candidate (`.tmp/r2-t1g1/vb/summary2.txt`):
+  `tests/cross-backend-diff.test.ts` **29/29**, and
+  `node scripts/equivalence-gate.mjs` **exit 0 — 24 failing, 1,718 passing,
+  24 known-failures in baseline; no new equivalence regressions**.
 - **V-B (pins) — PASS.** New suites 22/22 under CI's exact flags
   (`--pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism`);
   the six pinned files + `issue-3529-selector-preclaim` **199/199**;
@@ -3976,7 +3978,8 @@ failed)** — the plan's expectation reproduced exactly, and **no third red**.
   `issue-3521-linked-string-parser-abi` **4/4**;
   `issue-3520-outcome-correlation-identity` **13/13**;
   `issue-3519-ir-only-gate` **14/14**; `issue-3519-ir-outcomes` **25/30**
-  (5 pre-existing skips). Full log: `.tmp/r2-t1g1/vb/summary.txt`.
+  (5 pre-existing skips); `check:test-vacuity-shapes` exit 0 on the new
+  suites. Full logs: `.tmp/r2-t1g1/vb/summary{,2}.txt`.
 - **V-C (non-vacuity) — PASS, six reverts, each alone, counts measured:**
   1. B4's recorder made a no-op → **6 of 8** shape pins fail (the 2 survivors
      are the `not-attempted` pins, which come from `index.ts`, not the
@@ -4061,7 +4064,23 @@ failed)** — the plan's expectation reproduced exactly, and **no third red**.
    > lane measures its own `check:ir-fallbacks` bucket. Once filed, add the
    > id to this record's `related:` and name it as the `issue-3214` blocker
    > under `## Required completion evidence`.
-6. **`func-budget-allow` needed no new entry** —
+6. **A V-B expectation corrected by measurement: the linked-parser suite's
+   `(1,1,1)` rows carry `multi-source-driver`, not `ir-first-disabled`.** The
+   plan's V-B line expected `ir-first-disabled` there. That route is BOTH — it
+   is `compileMulti` AND it sets `JS2WASM_IR_FIRST=0` — and the multi default
+   is written later, at the multi overlay entry in `generateMultiModule`'s
+   tail, so it wins. Measured by instrumenting the real suite
+   (`tests/probe-lp.test.ts`, gitignored, removed after the run): `readNumber`
+   and `stringToNumber` both read `not-attempted:multi-source-driver`; the
+   suite is 4/4 either way, since every `(1,1,1)` assertion under `tests/` is
+   `toMatchObject`. The precedence is the right one and is kept: the multi lane
+   never runs the R2 owner selector even with IR-first ON (41/41 corpus rows,
+   measured), so it is the proximate cause, while `ir-first-disabled` is the
+   sole cause only on the single-source route — which is where its own (b) pin
+   lives. Pinned by source position in the (d) block rather than by a second
+   `compileFiles` call, because a whole-program `ts.Program` is ~90 MB and two
+   do not fit in one 512 MB fork.
+7. **`func-budget-allow` needed no new entry** —
    `src/codegen/index.ts::generateModule` was already listed. The plan did not
    anticipate the +4 lines landing inside that function (C7 sits at
    `index.ts:5629`, inside `generateModule`); the existing grant covers it and

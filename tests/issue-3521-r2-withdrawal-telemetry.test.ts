@@ -262,6 +262,24 @@ describe("#3521 R2 withdrawal telemetry — (d) recorder source pins", () => {
     expect(assignment).toBeLessThan(gate);
   });
 
+  it("sets the multi default AFTER the ir-first one, so it wins where both apply", () => {
+    // The linked-parser route is both: `compileMulti` with `JS2WASM_IR_FIRST=0`.
+    // Its two `(1,1,1)` rows read `multi-source-driver` (measured 2026-09-02),
+    // which is the right answer — the multi lane never runs the R2 owner
+    // selector even with IR-first ON, so it is the proximate cause, while
+    // `ir-first-disabled` is the sole cause only on the single-source route.
+    // The behaviour follows from write order, so write order is what is pinned.
+    const irFirstDefault = at(CODEGEN_INDEX_SOURCE, 'irR2NotAttemptedReason = "ir-first-disabled"', "precedence");
+    const multiDefault = at(CODEGEN_INDEX_SOURCE, 'irR2NotAttemptedReason = "multi-source-driver"', "precedence");
+    const multiCallSite = at(
+      CODEGEN_INDEX_SOURCE,
+      "compileMultiPreparedProgramOverlays(multiPreparedProgram",
+      "precedence",
+    );
+    expect(irFirstDefault).toBeLessThan(multiCallSite);
+    expect(multiDefault).toBeLessThan(multiCallSite);
+  });
+
   it("keeps a recorder for every reason no shape reaches today", () => {
     // Measured 2026-09-02 (checkpoint note P3): these nine have no claimable
     // `(1,1,1)` shape on this base — `generator-lane` and the generator's
