@@ -2076,3 +2076,78 @@ Acceptance is a clean dead-export check with 23 known entries, zero new rows,
 and no stale-baseline progress notice, plus formatting, issue integrity, LOC
 and function ratchets, and the normal unskipped precommit and prepush hooks.
 Do not remove or reclassify any of the remaining 23 rows in this checkpoint.
+
+## 2026-09-02 — R9 coverage-closure gap, measured
+
+The ladder gap noted above ("R9 needs an explicit coverage-closure dependency")
+now has a number attached. It was measured, not inherited from an artifact.
+
+`pnpm run check:ir-only` reports **READY** on `main`. That verdict is real but
+it is scoped to five entry files hardcoded at `scripts/check-ir-only.ts:14-20`,
+and the script's own comment already says so: *"Wider compiler reachability
+remains a separate R9/R10 requirement."* The playground directory it draws from
+holds **thirteen** `.ts` entries. The other eight have never been in the gate.
+
+Running the gate's own lane observers over those eight (they accept an entries
+override, so no compiler change was needed):
+
+| | gate corpus (5 files) | uncovered (8 files) |
+| --- | --- | --- |
+| terminal units, single-host | 41 | 32 |
+| `emitted` | 38 | 16 |
+| `unsupported` | **0** | **8** (7 `@select`, 1 `@build`) |
+| legacy body emitted | **0** | **10** |
+| terminal units, standalone | 41 | 32 |
+| `emitted` | 38 | 10 |
+| `unsupported` | **0** | **14** (all `@select`) |
+| legacy body emitted | **0** | **14** |
+
+Every one of the eight files has at least one unsupported unit on both lanes;
+`benchmarks.ts` and `benchmarks/helpers.ts` have three each on standalone. So
+this is not one exotic file dragging a corner — the rejection is spread across
+the whole uncovered population.
+
+Three things follow that change what R9 has to do:
+
+1. **The denominator is not 5, and widening it flips the verdict.** Adding the
+   eight to the gate takes it from READY to NOT READY with 10 (single-host) /
+   14 (standalone) direct-body emissions to retire first. R9's fail-closed flip
+   cannot be scheduled off the current READY.
+2. **Standalone is the harder lane by a factor, and the gap is growing in the
+   direction R10 cares about.** 14 unsupported vs 8, and 10 emitted vs 16. The
+   DOM-touching entries (`dom.ts`, `style.ts`, `helpers.ts`) reject wholesale on
+   standalone while emitting on single-host.
+3. **Two single-host units emit BOTH a direct body and an IR body** — the
+   literal compile-once violation, distinct from a clean rejection. They are the
+   only units in the population carrying an `r2Withdrawal` record, and it reads
+   `stage: "not-attempted", reason: "late-feature-preparation"`. Every other
+   legacy-emitting unit has **no withdrawal record at all**, because it never
+   reached R2 admission — it was rejected at `select`. R2 withdrawal telemetry
+   (#3521, landed in #5486) therefore does not explain this population, and a
+   census that reads only withdrawal reasons will report an empty histogram and
+   look clean. That is a trap worth naming for whoever runs the full census.
+
+### Reproducing
+
+The gate exports `observeSingleHostLane(entries?)` / `observeStandaloneLane(entries?)`,
+both of which take an entry-list override. A scratch script that calls them with
+the eight uncovered paths and histograms `kind`, `kind@stage`, `legacyBodyEmitted`
+and `irBodyEmitted` reproduces the table above. Put it in `.tmp/`.
+
+**One correction worth carrying, because it cost a wrong reading here:** the
+outcome field is `kind`, not `status`. A probe that filters on
+`o.status === "unsupported"` returns **zero** for every lane and every file,
+which reads as "nothing is rejected, everything silently falls back" — the
+opposite of the truth. And `legacyBodyEmitted` / `irBodyEmitted` are **not
+mutually exclusive**: a unit can carry both, which is precisely the compile-once
+violation in item 3. Tallying them as if they partitioned the units
+double-counts and hides that case.
+
+### What this does not settle
+
+The playground is still not the whole compiler. Thirteen entry files is the
+bounded population this gate was built around; the true R9 denominator is the
+standalone corpus plus whatever #4522's `retire-at-R9` table enumerates. This
+measurement closes the gap between "5 files" and "the playground", which is the
+first step, not the last. The remaining question for the full census is what the
+denominator is beyond `website/playground/examples/`.
