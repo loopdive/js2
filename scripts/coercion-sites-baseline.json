@@ -68,6 +68,7 @@
   "codegen/native-string-slot-bridge.ts": 1,
   "codegen/new-boolean-tobooleanarg.ts": 2,
   "codegen/number-format-native.ts": 14,
+  "codegen/object-integrity-proxy.ts": 1,
   "codegen/object-ops.ts": 4,
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 6,

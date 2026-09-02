@@ -48,12 +48,12 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9884,
-    "fail": 1428,
+    "pass": 9905,
+    "fail": 1407,
     "ce": 392,
     "skip": 0,
     "total": 11704,
-    "pct": 84,
+    "pct": 85,
     "features": [
       {
         "name": "destructuring-binding",
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 463,
-        "fail": 140,
+        "pass": 470,
+        "fail": 133,
         "ce": 6,
         "skip": 0,
         "total": 609,
-        "pct": 76
+        "pct": 77
       },
       {
         "name": "arrow-function",
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 219,
-        "fail": 189,
+        "pass": 227,
+        "fail": 181,
         "ce": 23,
         "skip": 0,
         "total": 431,
-        "pct": 51
+        "pct": 53
       },
       {
         "name": "Reflect.construct",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 177,
-        "fail": 111,
+        "pass": 181,
+        "fail": 107,
         "ce": 42,
         "skip": 0,
         "total": 330,
-        "pct": 54
+        "pct": 55
       },
       {
         "name": "Symbol.species",
@@ -399,12 +399,12 @@
       },
       {
         "name": "Reflect.setPrototypeOf",
-        "pass": 14,
-        "fail": 9,
+        "pass": 17,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 61
+        "pct": 74
       },
       {
         "name": "Map",
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3349,
-    "fail": 494,
-    "ce": 980,
+    "fail": 496,
+    "ce": 978,
     "skip": 0,
     "total": 4823,
     "pct": 69,
@@ -1198,8 +1198,8 @@
       {
         "name": "Promise.prototype.finally",
         "pass": 11,
-        "fail": 14,
-        "ce": 4,
+        "fail": 16,
+        "ce": 2,
         "skip": 0,
         "total": 29,
         "pct": 38
@@ -2683,30 +2683,30 @@
   },
   {
     "edition": "ES2023",
-    "pass": 165,
-    "fail": 154,
-    "ce": 15,
+    "pass": 168,
+    "fail": 164,
+    "ce": 2,
     "skip": 0,
     "total": 334,
-    "pct": 49,
+    "pct": 50,
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 56,
-        "fail": 63,
-        "ce": 13,
+        "pass": 59,
+        "fail": 73,
+        "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 42
+        "pct": 45
       },
       {
         "name": "TypedArray",
-        "pass": 62,
-        "fail": 35,
-        "ce": 13,
+        "pass": 65,
+        "fail": 45,
+        "ce": 0,
         "skip": 0,
         "total": 110,
-        "pct": 56
+        "pct": 59
       },
       {
         "name": "array-find-from-last",
@@ -2810,8 +2810,8 @@
       {
         "name": "Symbol.species",
         "pass": 0,
-        "fail": 1,
-        "ce": 2,
+        "fail": 3,
+        "ce": 0,
         "skip": 0,
         "total": 3,
         "pct": 0
@@ -3264,8 +3264,8 @@
   {
     "edition": "ES2025",
     "pass": 556,
-    "fail": 326,
-    "ce": 119,
+    "fail": 333,
+    "ce": 112,
     "skip": 0,
     "total": 1001,
     "pct": 56,
@@ -3273,8 +3273,8 @@
       {
         "name": "iterator-helpers",
         "pass": 101,
-        "fail": 283,
-        "ce": 9,
+        "fail": 286,
+        "ce": 6,
         "skip": 0,
         "total": 393,
         "pct": 26
@@ -3291,8 +3291,8 @@
       {
         "name": "set-methods",
         "pass": 151,
-        "fail": 20,
-        "ce": 15,
+        "fail": 24,
+        "ce": 11,
         "skip": 0,
         "total": 186,
         "pct": 81
@@ -3571,45 +3571,45 @@
   },
   {
     "edition": "ES2026",
-    "pass": 256,
-    "fail": 2596,
-    "ce": 2069,
+    "pass": 265,
+    "fail": 4083,
+    "ce": 573,
     "skip": 0,
     "total": 4921,
     "pct": 5,
     "features": [
       {
         "name": "Temporal",
-        "pass": 153,
-        "fail": 2492,
-        "ce": 1966,
+        "pass": 162,
+        "fail": 3979,
+        "ce": 470,
         "skip": 0,
         "total": 4611,
-        "pct": 3
+        "pct": 4
       },
       {
         "name": "Symbol",
-        "pass": 71,
-        "fail": 281,
-        "ce": 42,
+        "pass": 75,
+        "fail": 288,
+        "ce": 31,
         "skip": 0,
         "total": 394,
-        "pct": 18
+        "pct": 19
       },
       {
         "name": "BigInt",
-        "pass": 44,
-        "fail": 104,
-        "ce": 31,
+        "pass": 48,
+        "fail": 116,
+        "ce": 15,
         "skip": 0,
         "total": 179,
-        "pct": 25
+        "pct": 27
       },
       {
         "name": "arrow-function",
         "pass": 8,
-        "fail": 108,
-        "ce": 62,
+        "fail": 146,
+        "ce": 24,
         "skip": 0,
         "total": 178,
         "pct": 4
@@ -3698,8 +3698,8 @@
       {
         "name": "Intl.Era-monthcode",
         "pass": 0,
-        "fail": 0,
-        "ce": 10,
+        "fail": 9,
+        "ce": 1,
         "skip": 0,
         "total": 10,
         "pct": 0
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4382,
-    "fail": 976,
-    "ce": 87,
+    "pass": 4384,
+    "fail": 973,
+    "ce": 88,
     "skip": 0,
     "total": 5445,
-    "pct": 80
+    "pct": 81
   }
 ]
