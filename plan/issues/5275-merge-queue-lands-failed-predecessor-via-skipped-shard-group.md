@@ -27,6 +27,9 @@ nevertheless landed on `main`, carrying its regressions:
 | --- | --- | --- | --- |
 | #5224 (ES2015 buffers) | run 33593621223, failed 05:32:22 UTC — 2 Atomics pass→fail, `illegal_cast` 28→35 | #5459 `chore(ci): refresh npm-compat artifacts`, head `gh-readonly-queue/main/pr-5459-5dd7a92169…` (its base IS #5224's merge commit `5dd7a92169`), run 33595116406, 05:32:56→05:34:04, shards skipped | 05:34:20 |
 | #5474 (#3523 gap-6a) | run 33619016636, failed 10:42:26 — 76 pass→other, net −71, `oob` 14→29, `null_deref` 70→74 | #5475 `docs(#5270, #5271)`, head `gh-readonly-queue/main/pr-5475-48724f80f6…` (its base IS #5474's merge commit `48724f80f6`), run 33620860207, 10:42:38→10:43:47, shards skipped | 10:51 |
+| #5472 (#3526 F2-S7; parked on #5474's collateral, not its own regression) | run 33621580290, failed 11:29:14 — the identical 76 rows, signature `742f2e587506a8a1` | #5477 (the revert of #5474), head `gh-readonly-queue/main/pr-5477-31f36c267b7b…` (its base IS #5472's merge commit `31f36c267b7b`), run 33624852723, full matrix green because the revert restores the floor | 11:51 |
+
+The third row is the same mechanism with a benign payload (F2-S7 is byte-neutral and its park was collateral), which is the point: whether the carried commit is harmful is luck, not policy.
 
 The mechanism, from the queue's own run history: the merge queue builds
 groups speculatively (`max_entries_to_build > 1`, #2522), so group N+1's merge
