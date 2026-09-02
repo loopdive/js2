@@ -18,6 +18,79 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-02 post-wave census — 9,905 / 11,704 (84.6%), +232 rows in one day
+
+Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched
+2026-09-02 21:06 UTC (row timestamps 20:27–20:41 UTC, i.e. after PR #5494
+merged at 19:44 UTC, so every wave below is reflected), edition map
+`website/public/benchmarks/results/test262-file-editions.json` (`ES2015`;
+11,778 labelled, 11,704 in the official runner scope).
+
+**ES2015 standalone: 9,905 pass / 11,704 (84.6%) — 1,799 non-pass**
+(1,407 fail · 391 compile_error · 1 compile_timeout), up from
+**9,673 / 11,704 (82.6%)** at the 2026-09-01 evening census: **+232 rows**.
+
+Landed this day (all merged to `main`), in order:
+
+| PR | wave | issue | rows claimed |
+| --- | --- | --- | ---: |
+| #5454 | Promise slices B–D | #5197 | +19 |
+| #5458 | for-of / iterators / collections r2 | #5267 | +37 |
+| #5224 | buffers wave 1 | #5150 | +16 |
+| #5461 | runner: standalone leak check on the in-process path | #5272 | (honesty fix) |
+| #5469 | post-#5224 regression fix (module-global `$__ta_view` pin) | #5150 | (restores 9 host rows) |
+| #5475 | r2 implementation plans (expressions, statements) | #5270/#5271 | (docs) |
+| #5479 | TypedArray r2 | #5194 | +84 |
+| #5489 | class r2 (+ #5194 null-proto follow-up) | #5195 | +28 |
+| #5494 | Array/Object built-ins r2 | #5268 | +21 |
+
+Two process notes worth keeping:
+
+- **#5461 changed what a measurement means.** Before it, the in-process runner
+  (`scripts/run-test262-paths.mts`, every local before/after probe) satisfied a
+  leaked `env::*` import from the JS host and scored the row on what happened
+  next — so a slice could read "fixed" locally while CI scored
+  `host_import_leak`. Every number above is measured with the check in place;
+  the TypedArray lane re-scored its 84 claimed flips afterwards and found no
+  pseudo-pass, but the class lane found one (`constructor-can-be-generator.js`
+  leaks `env::__create_generator`, owned by #680/#2864, now pinned as a leak).
+- **Every wave went through an independent adversarial review before shipping,
+  and five of six had confirmed regressions their own row lists, controls,
+  ratchet gates and equivalence runs all missed** — 13 in total, including two
+  that only appeared on the JS-host lane, one that made a whole class of
+  subclass declarations fail to compile, and one pre-existing defect in the
+  shared carrier-bag key merge (`Reflect.defineProperty` on an existing
+  closed-struct field double-listed the key on `main` too). A row list is not a
+  regression test: none of these shapes were in the cluster lists the planners
+  built, because the lists are drawn from *failing* rows and these broke
+  *passing* behaviour outside the cluster.
+
+Remaining non-pass by cluster (same split as the 09-01 census, so the two are
+comparable):
+
+| Cluster | 09-01 | 09-02 | Δ | Owner |
+| --- | ---: | ---: | ---: | --- |
+| class | 209 | 225 | +16 | #5195 r3 residuals R3-1…R3-7 recorded |
+| typedarray | 300 | 208 | −92 | #5194 residuals (F3/F4 documented) |
+| generators | 318 | 195 | −123 | #680 / #2864 codex lane |
+| array + object | 159 | 179 | +20 | #5268 steps 4/5/7/8/9/10 not started |
+| other built-ins | 150 | 165 | +15 | #5269 in flight (G/H/A/B/L/J/E/D landed) |
+| expressions | 117 | 163 | +46 | #5270 in flight (steps 4–7, 9, 11 open) |
+| proxy + reflect | 157 | 157 | 0 | #5196 not dispatched; #3371 / #2046 blocked |
+| regexp | 148 | 140 | −8 | #5198 codex lane |
+| for-of + collections | 155 | 119 | −36 | #5267 residuals |
+| promise | 140 | 118 | −22 | #5197 slices E–H open |
+| statements + lang | 84 | 79 | −5 | #5271 in flight (0 → 39 of 68 in scope) |
+| module-code | 23 | 24 | +1 | #4759 codex closeout lane |
+| rest | 18 | 27 | +9 | folded into the nearest cluster plan |
+
+The clusters that grew did not regress — the counts move because rows leave a
+cluster when they pass and because this census clusters by path prefix while
+the 09-01 one clustered by the dispatch split; treat the Δ column as a
+direction indicator, not as a per-cluster regression signal. The authoritative
+"no row regressed" evidence is each wave's own before/after on its row list
+plus the merge-group regression gate.
+
 ## 2026-09-01 evening dispatch census at d39779cb — cluster ownership + Fable/Opus fan-out
 
 Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` (baselines

@@ -29,6 +29,7 @@ import {
   destructureParamArray,
   destructureParamObject,
   emitExternrefDestructureGuard,
+  patternIteratorStepCount,
 } from "../destructuring-params.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
@@ -1168,7 +1169,25 @@ export function compileArrayDestructuring(
       // destructure path bounds-checks against `array.len(data)`, so the
       // backing array must be sized to exactly the logical length for
       // out-of-length binding defaults (`const [a,b=9]=g()`) to fire.
-      emitNativeGeneratorToVec(ctx, fctx, genInfo, resultType, genVecTypeIdx, genArrTypeIdx, true);
+      //
+      // (#5271 step 1) Bound the drain by the pattern's iterator-step count
+      // (§8.5.3 IteratorBindingInitialization: every element — elision holes
+      // included — costs exactly one IteratorStep). Without the limit
+      // `let [,] = g()` ran the generator to completion, so statements after
+      // the first `yield` executed (probe p10: `second === 1`). A rest element
+      // returns the `-1` sentinel and keeps the unbounded drain, exactly as the
+      // param lane does at `destructuring-params.ts` (#4768).
+      const genStepLimit = patternIteratorStepCount(pattern.elements);
+      emitNativeGeneratorToVec(
+        ctx,
+        fctx,
+        genInfo,
+        resultType,
+        genVecTypeIdx,
+        genArrTypeIdx,
+        true,
+        genStepLimit < 0 ? undefined : genStepLimit,
+      );
       // struct.new yields a non-null ref; type the local `ref` (not `ref_null`)
       // so the typed-vec destructure's OOB→default logic matches the
       // literal-array path (mirrors the custom-iterable drain below).
