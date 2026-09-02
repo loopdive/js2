@@ -3228,12 +3228,37 @@ export function tryLengthAndNameReads(
     }
     // Check the actual local type (may differ from TS type, e.g. arguments vec struct)
     if (ts.isIdentifier(expr.expression)) {
-      const localIdx = fctx.localMap.get(expr.expression.text);
+      let localIdx = fctx.localMap.get(expr.expression.text);
+      let spilledGlobalType: ValType | undefined;
+      if (localIdx === undefined) {
+        // (#5150) …or a MODULE GLOBAL holding a `$__ta_view`. test262 declares
+        // its bindings at top level (`var ta = new Uint8Array(buffer, 0)`), and
+        // the locals-only lookup missed them: `ta.length` then fell to the
+        // checker-typed vec arm below, whose `ref.test` fails on the view struct
+        // and answers 0. Spill the global into a temp local so the existing
+        // effective-length lowering applies unchanged.
+        const globalIdx = ctx.moduleGlobals.get(expr.expression.text);
+        const globalType = globalIdx !== undefined ? ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type : undefined;
+        if (
+          (globalType?.kind === "ref" || globalType?.kind === "ref_null") &&
+          globalType.typeIdx !== undefined &&
+          isTaViewTypeIdx(ctx, globalType.typeIdx)
+        ) {
+          const compiled = compileExpression(ctx, fctx, expr.expression);
+          if (compiled) {
+            const tmp = allocLocal(fctx, `__tav_glob_${fctx.locals.length}`, globalType);
+            fctx.body.push({ op: "local.set", index: tmp });
+            localIdx = tmp;
+            spilledGlobalType = globalType;
+          }
+        }
+      }
       if (localIdx !== undefined) {
         const localType =
-          localIdx < fctx.params.length
+          spilledGlobalType ??
+          (localIdx < fctx.params.length
             ? fctx.params[localIdx]!.type
-            : fctx.locals[localIdx - fctx.params.length]?.type;
+            : fctx.locals[localIdx - fctx.params.length]?.type);
         // Vec struct ref local (e.g. `arguments` object) — struct.get field 0 (length)
         // Note: for externref locals (e.g. `obj: any` in filter callbacks), we fall through
         // to the generic externref path below (line ~1731) which uses multi-struct dispatch
@@ -3634,7 +3659,13 @@ export function tryNamespaceConstantAndSymbolReads(
     const symId = getWellKnownSymbolId(propName);
     if (symId !== undefined) {
       fctx.body.push({ op: "i32.const", value: symId });
-      return { kind: "i32" };
+      // (#5267 A-2) Carry the symbol BRAND in the native-symbol lanes, exactly
+      // as `compileSymbolCall` does for `Symbol()` (literals.ts, #4626): an
+      // any-channel coercion then boxes through `__box_symbol` instead of
+      // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
+      // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
+      // stays unbranded for the #4626 index-shift reason recorded there.
+      return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
     }
   }
 
@@ -3827,8 +3858,21 @@ export function tryStringLengthIteratorAndExternClassReads(
   if (isIteratorResultType(objType) || isGeneratorIteratorResultLike(ctx, objType, propName)) {
     const nativeResult = tryCompileNativeGeneratorResultProperty(ctx, fctx, expr.expression, propName);
     if (nativeResult !== undefined) return nativeResult;
+    // (#5267 B-6) Resolve the reader FIRST, compile the receiver only once one
+    // exists. Both arms used to push the receiver and then fall through when
+    // their `__gen_result_*` reader was absent — which is the ordinary case in
+    // a standalone module with no generator (those readers are host imports).
+    // The receiver was then left on the stack and the caller re-compiled the
+    // whole read through the dynamic path, so an `IteratorResult`-typed
+    // `.value` / `.done` used as a CALL ARGUMENT pushed one operand too many:
+    // `assert.sameValue(result.value, 'foo')` resolved its callee off the
+    // shifted stack and died with "called value is not a function" — the
+    // #5151 blocker, and every `Map`/`Set` `keys()/values()/entries()` row
+    // (17) once Step B made `.next()` return a real result object. Hoisting the
+    // read into a variable hid it: the statement boundary's #1058 stack repair
+    // absorbed the stray operand. When a reader IS registered the emitted bytes
+    // are unchanged.
     if (propName === "value") {
-      compileExpression(ctx, fctx, expr.expression);
       // Check the expected value type from the IteratorResult<T>. NOTE (#2030):
       // an exhausted result's `.value` is `undefined`; the f64 fast path below
       // runs `Number(undefined)` → NaN, so a string context of the
@@ -3837,23 +3881,23 @@ export function tryStringLengthIteratorAndExternClassReads(
       // intentionally NOT changed here — routing `.value` through externref
       // breaks numeric consumers (illegal cast on the raw-f64 iteration path).
       const valueType = getIteratorResultValueType(ctx, objType);
-      if (valueType && valueType.kind === "f64") {
-        const funcIdx = ctx.funcMap.get("__gen_result_value_f64");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return { kind: "f64" };
-        }
+      const f64Idx = valueType && valueType.kind === "f64" ? ctx.funcMap.get("__gen_result_value_f64") : undefined;
+      if (f64Idx !== undefined) {
+        compileExpression(ctx, fctx, expr.expression);
+        fctx.body.push({ op: "call", funcIdx: f64Idx });
+        return { kind: "f64" };
       }
       const funcIdx = ctx.funcMap.get("__gen_result_value");
       if (funcIdx !== undefined) {
+        compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
     }
     if (propName === "done") {
-      compileExpression(ctx, fctx, expr.expression);
       const funcIdx = ctx.funcMap.get("__gen_result_done");
       if (funcIdx !== undefined) {
+        compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "call", funcIdx });
         // #2030: `.done` is a boolean — brand it so string contexts render
         // "true"/"false" rather than the raw i32 "1"/"0".

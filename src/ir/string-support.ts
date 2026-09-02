@@ -155,3 +155,48 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
   });
   return blocks === fn.blocks ? fn : { ...fn, blocks };
 }
+
+/**
+ * (#3526 F2-S4) Attach ONLY the `string.len` provider.
+ *
+ * {@link attachIrStringSupport} is an omnibus pass, and its callable arm is
+ * UNCONDITIONAL: it re-derives the provider for `string.concat`, `.repeat`,
+ * `.eq`, `.char_at`, `.char_code_at` and `forof.string` on every run and
+ * compares the result to whatever is already attached. So a caller that wants
+ * to settle only the LENGTH seam — because the frozen manifest decides that one
+ * later than the rest — cannot reuse it: it would have to re-decide five other
+ * seams it has no authority over, and getting any one of them wrong is a hard
+ * error rather than a no-op.
+ *
+ * Measured, not argued: running the omnibus pass a second time with only
+ * `providerForLength` supplied made `irStringCallableProviderRef` fall back to
+ * the generic `__ir_string_repeat` for instructions the first pass had bound to
+ * the counted-native helper, and every module with a counted native
+ * `string.repeat` failed with "IR string.repeat already carries a different
+ * prepared provider binding" (4 corpus cells, invisible to the 60-cell byte
+ * matrix because no fixture there carries that shape).
+ *
+ * Same discipline as the omnibus pass's own `string.len` arm: an existing
+ * attachment is CHECKED, never overwritten, so repeated preparation is
+ * idempotent and a component cannot seal against one provider then lower
+ * through another.
+ */
+export function attachIrStringLengthProvider(fn: IrFunction, provider: IrStringLengthProvider): IrFunction {
+  const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
+  const mapInstr = (instr: IrInstr): IrInstr => {
+    const nested = mapNestedBuffers(instr, mapBuffer);
+    if (nested.kind !== "string.len") return nested;
+    if (nested.provider) {
+      if (!sameLengthProvider(nested.provider, provider)) {
+        throw new Error("IR string.len already carries a different prepared provider binding");
+      }
+      return nested;
+    }
+    return { ...nested, provider };
+  };
+  const blocks = mapArray(fn.blocks, (block) => {
+    const instrs = mapBuffer(block.instrs);
+    return instrs === block.instrs ? block : { ...block, instrs };
+  });
+  return blocks === fn.blocks ? fn : { ...fn, blocks };
+}
