@@ -139,6 +139,7 @@ import {
   GENERATOR_NUMBER_BOX_POLICY_DISABLED,
   STRING_COMPARE_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
+  STRING_LEN_POLICY_DISABLED,
   NUMBER_BOUNDARY_POLICY_DISABLED,
 } from "../runtime-manifest.js";
 import type { TypeConverter } from "./contract.js";
@@ -680,6 +681,7 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
         generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
         stringCompare: STRING_COMPARE_POLICY_DISABLED,
         stringEq: STRING_EQ_POLICY_DISABLED,
+        stringLen: STRING_LEN_POLICY_DISABLED,
       },
     })?.functions ?? functions
   );

@@ -21,7 +21,7 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 34,155 / 48,232 (70.8 %)
+**standalone (host-free) test262 conformance**: 34,218 / 48,232 (70.9 %)
 
 <!-- AUTO:conformance-standalone-end -->
 
