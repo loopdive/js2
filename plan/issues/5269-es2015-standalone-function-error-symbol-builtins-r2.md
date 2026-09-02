@@ -100,6 +100,11 @@ func-budget-allow:
   # proxy-of-a-proxy to its first non-proxy [[ProxyTarget]] before the
   # array-vs-object classification. Same arm shape, one more unwrap.
   - src/codegen/json-codec-native.ts::emitJsonParseTextReviver
+  # 2026-09-02 (Opus impl, Step B-d): `compileAssignment` gains ONE guard
+  # line — the `tryEmitSymbolReceiverPropertyWrite` probe — in the same
+  # early-arm shape as the `maybeCaptureArrayProtoOverride` arm directly
+  # above it; the arm's body lives in its own function.
+  - src/codegen/expressions/assignment.ts::compileAssignment
 ---
 
 # #5269 — ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins (r2)
