@@ -373,9 +373,16 @@ describe("#5270 step 10 — arrow-function surface (cluster N)", () => {
   // `"prototype" in (() => {})` folded TRUE: `tsTypeHasProperty` reads the
   // checker's APPARENT type, and TypeScript's `Function` interface declares
   // `prototype: any` for every callable. An arrow is never a constructor.
+  // (#5270 review R2-F1b) The BINDING half is `const`, not `var`. The fold is
+  // now admitted only for a `const` binding, because that is the only kind
+  // that cannot be rebound — see the R2-F1b describe block below for the three
+  // rebinding spellings that made a `let`/`var` fold wrong. A `let`/`var`-bound
+  // fresh arrow therefore answers `true` here, which is what the BASE compiler
+  // also answers: a known remaining gap (node says `false`), not a regression,
+  // and the price of closing the rebinding class structurally.
   it('answers `"prototype" in <arrow>` false', async () => {
     const lines = await runStandaloneLines(`
-      var af = () => {};
+      const af = () => {};
       LOG("literal=" + ("prototype" in (() => {})) +
           " binding=" + ("prototype" in af) +
           " typeofArrow=" + (typeof (() => {})));
@@ -424,6 +431,11 @@ describe("#5270 review F1 — an arrow that HAS been given a `prototype`", () =>
   // `__extern_has` fallback, so all four write forms answered `false` where
   // node and the base compiler answer `true`. The cluster-N pins above only
   // exercise a FRESH arrow, which is why nothing in-tree caught it.
+  //
+  // Every binding here is `const` on purpose: since review R2-F1b the fold is
+  // admitted only for a `const` binding, so a `var`/`let` spelling would pass
+  // these pins for the wrong reason (declining at the binding kind, never
+  // reaching the property-gaining scan they exist to test).
   const bothLanes = async (body: string, expected: string[]): Promise<void> => {
     expect(await runStandaloneLines(body)).toEqual(expected);
     expect(await runHostLines(body)).toEqual(expected);
@@ -431,7 +443,7 @@ describe("#5270 review F1 — an arrow that HAS been given a `prototype`", () =>
 
   it("member-assignment: arrow.prototype = 5", async () => {
     await bothLanes(
-      `var arrow = () => 1;
+      `const arrow = () => 1;
        arrow.prototype = 5;
        LOG("in=" + ("prototype" in arrow) + " value=" + arrow.prototype);`,
       ["in=true value=5"],
@@ -440,7 +452,7 @@ describe("#5270 review F1 — an arrow that HAS been given a `prototype`", () =>
 
   it('computed member-assignment: arrow["prototype"] = 9', async () => {
     await bothLanes(
-      `var a2 = () => 1;
+      `const a2 = () => 1;
        a2["prototype"] = 9;
        LOG("in=" + ("prototype" in a2));`,
       ["in=true"],
@@ -449,7 +461,7 @@ describe("#5270 review F1 — an arrow that HAS been given a `prototype`", () =>
 
   it('Object.defineProperty(arrow, "prototype", …)', async () => {
     await bothLanes(
-      `var a1 = () => 1;
+      `const a1 = () => 1;
        Object.defineProperty(a1, "prototype", { value: 3, writable: true, enumerable: false, configurable: true });
        LOG("in=" + ("prototype" in a1));`,
       ["in=true"],
@@ -463,20 +475,82 @@ describe("#5270 review F1 — an arrow that HAS been given a `prototype`", () =>
   it("Object.assign(arrow, { prototype: 4 }) — standalone", async () => {
     expect(
       await runStandaloneLines(
-        `var a3 = () => 1;
+        `const a3 = () => 1;
          Object.assign(a3, { prototype: 4 });
          LOG("in=" + ("prototype" in a3));`,
       ),
     ).toEqual(["in=true"]);
   });
 
-  // The fold must SURVIVE for the population it was added for: an arrow that
-  // provably never gains a property still answers false on both lanes.
-  it("still answers false for an arrow that is never written to", async () => {
+  // The fold must SURVIVE for the population it was added for: a `const` arrow
+  // that provably never gains a property still answers false on both lanes.
+  it("still answers false for a const arrow that is never written to", async () => {
     await bothLanes(
-      `var fresh = () => 1;
+      `const fresh = () => 1;
        LOG("binding=" + ("prototype" in fresh) + " literal=" + ("prototype" in (() => {})));`,
       ["binding=false literal=false"],
+    );
+  });
+});
+
+describe("#5270 review R2-F1b — a REBOUND binding whose initializer was an arrow", () => {
+  // The R1 fix admitted any binding whose initializer is an arrow and leaned on
+  // `identifierIsWrittenTo` for the rebinding guard — but that matcher requires
+  // a BARE-IDENTIFIER assignment LHS, so three spellings walked past it. After
+  // any of them the binding holds a function EXPRESSION, which HAS a
+  // `prototype`, and the fold still answered `false` (node 1 / base 1 / lane 0
+  // on both lanes). It bites hardest exactly here: the receiver stays a typed
+  // closure ref rather than externref, so the un-suppressed `__extern_has`
+  // fallback never fires and the folded `false` is final.
+  //
+  // The fix is structural, not another spelling list: the fold is admitted only
+  // for a `const` binding (`ctx.oracle.constInitializerOf`), which cannot be
+  // rebound at all.
+  const bothLanes = async (body: string, expected: string[]): Promise<void> => {
+    expect(await runStandaloneLines(body)).toEqual(expected);
+    expect(await runHostLines(body)).toEqual(expected);
+  };
+
+  it("array-destructuring rebind: [a] = src", async () => {
+    await bothLanes(
+      `let a = () => 1;
+       const src = [function () { return 2; }];
+       [a] = src;
+       LOG("in=" + ("prototype" in a));`,
+      ["in=true"],
+    );
+  });
+
+  it("object-destructuring rebind: ({ a } = src)", async () => {
+    await bothLanes(
+      `let a = () => 1;
+       const src = { a: function () { return 2; } };
+       ({ a } = src);
+       LOG("in=" + ("prototype" in a));`,
+      ["in=true"],
+    );
+  });
+
+  it("for-of head rebind: for (a of src) {}", async () => {
+    await bothLanes(
+      `let a = () => 1;
+       const src = [function () { return 2; }];
+       for (a of src) { }
+       LOG("in=" + ("prototype" in a));`,
+      ["in=true"],
+    );
+  });
+
+  // CONTROL, not a regression pin: the bare-identifier rebind is the one
+  // spelling `identifierIsWrittenTo` DID catch, so it passes on the pre-fix
+  // tree too. It is here to pin that the structural `const` guard keeps
+  // answering it correctly.
+  it("plain rebind: a = function () {}", async () => {
+    await bothLanes(
+      `let a = () => 1;
+       a = function () { return 2; };
+       LOG("in=" + ("prototype" in a));`,
+      ["in=true"],
     );
   });
 });

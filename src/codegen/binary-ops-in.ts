@@ -90,8 +90,25 @@ function receiverIsArrowFunctionValue(ctx: CodegenContext, receiver: ts.Expressi
   // creation and this `in`, so the syntactic fact is the whole answer.
   if (ts.isArrowFunction(expr)) return true;
   if (!ts.isIdentifier(expr)) return false;
-  const initializer = ctx.oracle.variableInitializerOf(expr);
+  // (#5270 review R2-F1b) `constInitializerOf`, NOT `variableInitializerOf`.
+  // The fold is justified ENTIRELY by the initializer, so it is sound only for
+  // a binding that cannot be REBOUND — and `const` gives that structurally,
+  // where enumerating rebinding spellings does not. The first cut used
+  // `variableInitializerOf` (which deliberately accepts `let`/`var`) plus a
+  // hand-rolled rebinding guard, and three spellings walked straight past it
+  // because `identifierIsWrittenTo` only matches a BARE-IDENTIFIER assignment
+  // LHS: `[a] = src` (array-pattern LHS), `({ a } = src)` (object-pattern LHS),
+  // and `for (a of src) {}` (not a BinaryExpression at all). After any of those
+  // the binding holds a function EXPRESSION — which HAS a `prototype` — and the
+  // fold still answered `false`. It bit hardest exactly where the runtime
+  // fallback cannot rescue it: the receiver stays a typed closure ref rather
+  // than externref, so `__extern_has` never fires and the folded `false` is
+  // final.
+  const initializer = ctx.oracle.constInitializerOf(expr);
   if (initializer === undefined || !ts.isArrowFunction(initializer)) return false;
+  // `const` still permits MUTATION of the object it binds
+  // (`const a = () => 1; a.prototype = 5`), so the property-gaining scan below
+  // is still required — the two guards answer different questions.
   return arrowBindingNeverGainsProperties(expr.getSourceFile(), expr.text);
 }
 
@@ -116,13 +133,18 @@ function receiverIsArrowFunctionValue(ctx: CodegenContext, receiver: ts.Expressi
  *   - a member write through the binding (`a.k = …`, `a[k] = …`, any assignment
  *     operator) — the `arrow.prototype = 5` / `a2["prototype"] = 9` forms;
  *   - the binding as a call/new ARGUMENT — `Object.defineProperty(a1, …)` and
- *     `Object.assign(a3, …)`, and every opaque escape besides;
- *   - a rebinding of the identifier itself, so the initializer stops being a
- *     fact about the value at this site.
+ *     `Object.assign(a3, …)`, and every opaque escape besides.
+ *
+ * REBINDING is deliberately NOT checked here: the caller admits only `const`
+ * bindings (`ctx.oracle.constInitializerOf`), which makes rebinding impossible
+ * by construction. An earlier cut used `identifierIsWrittenTo` for that job and
+ * it did not hold — that matcher requires a bare-identifier assignment LHS, so
+ * `[a] = src`, `({ a } = src)` and `for (a of src)` all slipped past. A guard
+ * that enumerates spellings reads as protection it does not give; `const`
+ * answers the question once, for every spelling.
  */
 function arrowBindingNeverGainsProperties(file: ts.SourceFile, name: string): boolean {
   if (identifierEscapesToCall(file, name)) return false;
-  if (identifierIsWrittenTo(file, name)) return false;
   let written = false;
   const visit = (node: ts.Node): void => {
     if (written) return;
