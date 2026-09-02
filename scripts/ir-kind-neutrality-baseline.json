@@ -284,7 +284,7 @@
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:713",
       "why": "This is `%String.prototype%[@@iterator]` inlined as a statement form. The per-iteration element is a CODE POINT rendered as a one-element string — the intent field resolves to `__str_charAt_cp`, deliberately not the code-unit `string.char_at` next door. Its general sibling `forof.iter` is already in the dialect, so keeping the string specialization in core splits one protocol across the boundary.",
-      "evidence": ["src/ir/dialect/js.ts:722", "src/ir/integration.ts:6531"]
+      "evidence": ["src/ir/dialect/js.ts:722", "src/ir/integration.ts:6629"]
     },
     "forof.vec": {
       "verdict": "neutral",
@@ -518,7 +518,7 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts:1252",
       "why": "The MEANING is settled and it is not encoding-parameterized: every backend returns the UTF-16 CODE-UNIT count. The linear backend calls `__str_length_utf16` regardless of `inputEncoding`, and the WasmGC native provider reads a field documented as the UTF-16 code-unit length. What is NOT settled is the placement: that commitment is shared verbatim with Java/C#/the whole UTF-16 family, so it is not ECMAScript-specific the way `char_at`'s out-of-range sentinel is, yet it is a language commitment a Rust or Python producer could not use.",
-      "evidence": ["src/ir/nodes.ts:1268", "src/ir/backend/linear-integration.ts:1630", "src/ir/string-runtime.ts:15"],
+      "evidence": ["src/ir/nodes.ts:1268", "src/ir/backend/linear-integration.ts:1632", "src/ir/string-runtime.ts:15"],
       "settledBy": "A policy call phase 2 has to make anyway: does `js` mean ECMAScript-SPECIFIC, or LANGUAGE-COMMITTED? If the former, `string.len` stays in core with a documented commitment; if the latter it moves — and the same answer then governs a future `utf16-string` dialect shared by the family, which is the third option."
     },
     "string.repeat": {
