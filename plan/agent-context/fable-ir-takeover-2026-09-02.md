@@ -79,7 +79,7 @@ done and only needs harvesting into issue files.
 
 1. **The merge-queue configuration contradiction — unresolved, and it decides
    whether an escalation already made to the project lead was a no-op.**
-   `plan/issues/5275-...md` attributes four same-day landings of a failed
+   `plan/issues/5275-merge-queue-lands-failed-predecessor-via-skipped-shard-group.md` attributes four same-day landings of a failed
    predecessor to speculative group building (`max_entries_to_build > 1`), and
    this seat escalated "set it to 1" to the user twice. But
    `docs/ci-policy.md:189-190` says the canonical config **already is**
