@@ -1821,6 +1821,17 @@ export function tryGlobalThisAndProcessRead(
       // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
       else if (procProp === "stdout") hostImport = "__get_process_stdout";
       else if (procProp === "stderr") hostImport = "__get_process_stderr";
+      // Standalone has no process to read: `process.env` is the host-free
+      // empty object the JS-host import also answers when no `process` exists
+      // (react's / redux's `process.env.NODE_ENV === "production"` gate kept a
+      // `__get_process_env` import and failed the standalone npm-compat lane).
+      if (ctx.standalone && procProp === "env") {
+        const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
+        else fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -4565,6 +4576,27 @@ export function finalizeStructAndDynamicMemberGet(
               ? fctx.params[localIdx]!.type
               : fctx.locals[localIdx - fctx.params.length]?.type;
           return localType?.kind === "externref";
+        })()) ||
+      // (#5195 Step 3.2) Same rule one scope up, and ONLY where the read would
+      // otherwise fall to the terminal `ref.null.extern`: a MODULE-level
+      // binding whose static type is purely `undefined`/`void` but whose wasm
+      // global slot is externref. The local-slot clause above only sees
+      // function locals, so `var caught; function f(){ …catch(e){ caught = e } }`
+      // — the idiom every `expressions/super/*` error test uses — read
+      // `caught.constructor` as a constant null, even though the write had
+      // physically stored an externref in the global. The slot's representation
+      // is the honest source of truth about the runtime value, exactly as it is
+      // for locals; the checker's flow type (`undefined`, because the only
+      // write is inside a nested closure) is not. Restricted to the
+      // purely-undefined static type so every resolvable receiver keeps its
+      // existing (often struct/fast) lane byte-for-byte.
+      (ts.isIdentifier(expr.expression) &&
+        (objType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0 &&
+        fctx.localMap.get(expr.expression.text) === undefined &&
+        (() => {
+          const globalIdx = ctx.moduleGlobals.get(expr.expression!.text);
+          if (globalIdx === undefined) return false;
+          return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
         })());
     if (isExternObj) {
       // These bindings were deliberately placed on the dynamic object carrier

@@ -81,6 +81,7 @@ import {
   type IrPreparationStage,
   type IrUnsupportedCode,
 } from "../ir/outcomes.js";
+import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -274,6 +275,7 @@ import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
+import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import {
   hoistedVarRetypesToConcreteRef,
@@ -498,6 +500,7 @@ import {
   collectDeclaredFuncRefs,
   compileClassBodies,
   resolveClassMemberName,
+  resolveInstallableClassMemberName,
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
@@ -688,6 +691,7 @@ export {
   collectEnumDeclarations,
   collectClassDeclaration,
   compileClassBodies,
+  resolveInstallableClassMemberName,
   destructureParamArray,
   destructureParamObject,
   destructureParamObjectExternref,
@@ -2521,6 +2525,8 @@ function recordObservedIrOutcomes(
     preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
     skippedBodyUnitIds,
     ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
+    ...(ctx.irR2WithdrawalsByUnitId ? { r2WithdrawalsByUnitId: ctx.irR2WithdrawalsByUnitId } : {}),
+    ...(ctx.irR2NotAttemptedReason ? { r2NotAttemptedReason: ctx.irR2NotAttemptedReason } : {}),
     report,
     existingOutcomes,
     target,
@@ -4642,7 +4648,23 @@ function planIrFirstBodyRouting(
     : {
         freeFunctionNames: new Set<string>(),
         classMemberUnitIds: classIds,
+        withdrawals: new Map<IrUnitId, IrR2Withdrawal>(),
       };
+  // (#3521 R2-T1) One reason per compile-twice row. The selector's own
+  // withdrawals are per-unit; a name the timer routing never handed it was
+  // never a candidate at all, so it gets the `not-attempted` stage instead of
+  // an invented admission reason.
+  const r2Withdrawals = (ctx.irR2WithdrawalsByUnitId ??= new Map<IrUnitId, IrR2Withdrawal>());
+  for (const [unitId, withdrawal] of preliminaryOwnerPopulation.withdrawals) {
+    if (!r2Withdrawals.has(unitId)) r2Withdrawals.set(unitId, withdrawal);
+  }
+  for (const legacyName of preliminarySelection.funcs) {
+    if (freeNames?.has(legacyName)) continue;
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName);
+    if (!r2Withdrawals.has(unitId)) {
+      r2Withdrawals.set(unitId, { stage: "not-attempted", reason: "late-feature-preparation" });
+    }
+  }
   const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
   const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
   withdrawClassMembersOutsidePreparedOwnerClosure(plan, classIds, preliminaryClassMemberUnitIds);
@@ -5627,6 +5649,10 @@ export function generateModule(
     // `undefined`. The ordinary IR overlay (`experimentalIR`) still runs.
     const irFirst =
       !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST);
+    // (#3521 R2-T1) The R2 selector only runs on the IR-first route, so with it
+    // off no per-unit withdrawal can exist. Record the source-level reason here,
+    // where the decision is actually made — `irPlan` is still null at this point.
+    if (!irFirst) ctx.irR2NotAttemptedReason = "ir-first-disabled";
     let irPlan: IrOverlayPlan | null = null;
     let requestedSkipProjection: ReturnType<typeof buildIrRequestedFunctionSkipProjection> | undefined;
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
@@ -6489,6 +6515,17 @@ export function generateModule(
     // funcs only (no import shifts). No-op unless standalone AND the
     // scanForDynamicProto prescan marked a class hierarchy — byte-identical
     // otherwise.
+    // (#5195 Step 1.7 / Step 2) Mint `__class_proto_lookup` and prepend its
+    // delegating arms into `__extern_get` / `__extern_get_idx`. Runs HERE, with
+    // the other late prependers, for two reasons: `fillExternGetIdxVecArms`
+    // locates its splice point by `__extern_get_idx`'s 3-instruction preamble
+    // shape, so prepending before it would silently drop every typed-vec arm;
+    // and #802's dynamic-proto arm must keep the front slot of `__extern_get`,
+    // because a class whose instance prototype was mutated at runtime has to
+    // answer through the mutated link, not through this pass's compile-time
+    // prototype singleton. No-op unless the module has a class with a
+    // runtime-keyed member.
+    fillClassProtoLookupArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -10160,6 +10197,13 @@ function compileMultiPreparedProgramOverlays(
   ctx: CodegenContext,
   authority: IrPlanningAuthority | undefined,
 ): void {
+  // (#3521 R2-T1) The multi-source lane never runs the R2 owner selector, on
+  // EITHER outcome of the gate below, so every compile-twice row it produces is
+  // "not attempted" rather than withdrawn. Set before the early return: the
+  // reason is a property of the driver, not of the gate's verdict. This is the
+  // multi overlay ENTRY (called unconditionally from `generateMultiModule`'s
+  // tail) — #3525's `multi-prepared-callable-orchestration.ts` stays untouched.
+  ctx.irR2NotAttemptedReason = "multi-source-driver";
   // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
   // ABI cannot safely be replaced by the current f64 IR ABI.
   if (!options?.experimentalIR || ctx.fast || !authority) return;
@@ -11001,6 +11045,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // layouts/prototype globals exist. The runtime-eval callable carrier is the
     // last __extern_get fill so its owner-module delegation keeps front
     // precedence over every graph-local receiver arm.
+    // (#5195 Step 1.7 / Step 2) Same position and the same two reasons as the
+    // twin site above: after `fillExternGetIdxVecArms`' preamble-shape probe,
+    // before #802's dynamic-proto arm takes the front slot of `__extern_get`.
+    profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
