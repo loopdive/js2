@@ -36,6 +36,16 @@ loc-budget-allow:
   - src/codegen/ta-dyn-mop.ts
   - src/codegen/iterator-native.ts
   - src/codegen/closed-method-dispatch.ts
+  # 2026-09-01 r2 IMPLEMENTATION (steps 1-2, Opus). Three readers the plan
+  # named by function but not by file: the static `<Builtin>.prototype.<m>`
+  # value read plus its `.length`/`.name` meta fold (`builtin-value-read.ts`),
+  # the own-CSV resolver that now retries on the declared parent brand
+  # (`native-proto-value-read.ts`), and the `$__ta_ctor` metadata arm that
+  # makes `<View>.prototype` an OWN property of the constructor
+  # (`ta-ctor-meta.ts`) — `verifyProperty`'s first assertion.
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/native-proto-value-read.ts
+  - src/codegen/ta-ctor-meta.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -59,6 +69,10 @@ func-budget-allow:
   - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
   - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  # 2026-09-01 r2 implementation — the `$__ta_ctor` metadata fill gains the
+  # §23.2.6.2 `prototype` get_meta + gOPD arm pair (one splice ladder over one
+  # native, so the arms belong in it rather than in a parallel filler).
+  - src/codegen/ta-ctor-meta.ts::fillTaCtorGetMetaArm
 ---
 
 # #5194 — typedarray r2: cluster and fix the 461 residual failures
@@ -1072,3 +1086,266 @@ index-coercion helper and retire part of them.
   gap); 16 baseline "CEs" are load-induced compile timeouts — re-run alone.
   #5150 edits neighbouring functions in `dataview-native.ts` — reconcile at
   merge, never rebase. Local probes skip the standalone leak check (#5272).
+
+## 2026-09-02 resumed r2 implementation (Opus)
+
+Resumed from the 2026-09-01 suspension snapshot (`git am` of the two WIP
+patches, base `dc29e1f15`, rebuilt on `0f801557a`). Worktree
+`/home/user/js2/.claude/worktrees/agent-ad914157d74cd7f02`, branch
+`worktree-agent-ad914157d74cd7f02`. All measurements are in-process
+`npx tsx scripts/run-test262-paths.mts <list> --standalone` in this worktree.
+**Correction (2026-09-02, after the merge below).** The original text here said
+"a `pass` from that runner already implies zero host imports", citing the
+`standaloneHostImportError` call at `tests/test262-runner.ts` L4944. That was
+**wrong for the lane these measurements actually used**: L4944 guards the
+legacy SYNTHETIC path, while `run-test262-paths.mts` drives
+`runOriginalHarnessVariant`, which had no such check until #5272 (PR #5461,
+`1d0380840a`) — so a row whose standalone module still imported an `env::`
+symbol could be satisfied from the host and scored a pseudo-pass. Every number
+below was **re-verified on the merged tree with the fixed runner**; see
+"#5272 re-verification" at the end of this section.
+
+### Numbers
+
+| scope | before (2026-09-01 HEAD) | after | target |
+|---|---|---|---|
+| Step 1 — cluster A (63) | 0 pass | **63 pass** | ≥ 55 ✓ |
+| Step 2 — cluster B (31) | 0 pass | **21 pass** (+1 load-timeout row that passes alone ⇒ 22) | ≥ 22 ✓ (marginal) |
+| Step 3 — clusters C1–C5 (61) | 0 pass | **4 pass** (C5 only) | ≥ 45 ✗ PARTIAL |
+| Step 4 — cluster D (16 of the 49) | 0 pass | **2 pass** | ≥ 30 ✗ PARTIAL |
+| whole `typedarray-head.txt` (300) | 0 pass / 271 fail / 28 CE | **84 pass / 180 fail / 36 CE** at the Step-1+2 commit; +6 more from the second commit measured on sub-lists (not a re-run of the head list) | — |
+| controls `ta-controls.txt` (21) | 21 | **21** | 21 ✓ |
+
+Of the 36 CEs, **24 are load-induced compile timeouts** (the box ran at load
+10–22 with five lanes; every one of them re-runs green with `--isolate`, spot-
+checked on `TypedArrayConstructors/prototype/indexOf/inherited.js`,
+`TypedArray/prototype/forEach/length.js` and `keys/invoked-as-method.js`) and
+**12 are the genuine out-of-scope CEs the plan already named** — 6
+`Reflect.set` (#2046) and 6 `Reflect.construct` (#3371). The QuickJS adapter
+artifact was present this session (`d4799bda84cfed0d`), so the 10 rows the
+handoff called locally unmeasurable **were measured**.
+
+### What landed
+
+Commit 1 — Step 1 complete, Step 2 partial (the resumed snapshot):
+per-kind `$parent` link, empty own-member CSV on concrete views + parent-brand
+retry in both readers, `constructor`/`BYTES_PER_ELEMENT` own data properties,
+`__getPrototypeOf` `$NativeProto → $parent` arm, the compile-time
+`Object.getPrototypeOf(<typed view>)` arm, `$__ta_ctor.prototype` own property;
+`%TypedArray%` own `name`/`length`/`prototype`/`@@species`/`from`/`of`,
+`@@toStringTag` getter body, `@@iterator → values` alias.
+
+Commit 2 — Step 2 rest (part), Step 3 (part), Step 4 (part):
+- `%TypedArray%` added to `SPECIES_OWNER_CTORS`, and the species-gOPD receiver
+  is now recovered through `isTypedArrayIntrinsicCtorExpr` (the harness's
+  `var TypedArray = Object.getPrototypeOf(Int8Array)` binding is not a global
+  identifier, so `resolveBuiltinReceiverName` could never name it).
+- `tryExternClassMethodOnAny` declines `sort`/`keys`/`values`/`entries`/
+  `includes`/`at`/`toLocaleString`/`subarray`/`slice` under `noJsHost`
+  (`STANDALONE_TA_DISPATCHED_METHODS`, local to `calls-closures.ts` so the
+  `calls.ts` god-file does not grow).
+- `compileArrayMethodCall` is declined when the receiver statically traces to
+  `%TypedArray%.prototype`, so the call reaches the closed dispatcher's
+  `$NativeProto` arm and the seeded companion closure raises the spec
+  TypeError — **cluster C5 0 → 4** (`keys`/`values`/`entries`/`sort`).
+- `hof-native.ts`: IsCallable(callbackfn) gate before the loop, and
+  `reduce`/`reduceRight` of an empty receiver with no initial value now throws
+  the §23.1.3.24 TypeError instead of returning `undefined` (the documented
+  boundary is retired — the #1839 index-shift justification does not hold,
+  because standalone resolves the throw to the in-module append-only
+  `__new_TypeError`). **Cluster D 0 → 2** (the two `empty-instance-with-no-
+  initialvalue-throws.js` rows).
+- Two-arm gate: the `≥ 1 argument` clause is lifted for
+  `at`/`includes`/`indexOf`/`lastIndexOf` (they model an absent argument) and
+  for the three arity-0 iterator factories; the boolean-result box now reaches
+  the ELSE arm as well as the THEN arm.
+
+### Leftovers — read this before continuing
+
+1. **The dyn-view two-arm in `array-methods.ts` does not serve `any`
+   receivers.** `call-receiver-method.ts` skips the whole array ladder when
+   `ctx.targetProfile.semanticProviders === "native-first"` and the receiver
+   type is `any` — which is exactly the shape every
+   `testWithTypedArrayConstructors(function (TA) { var sample = new TA([…]); … })`
+   row has. So `shouldWrapDynViewTwoArm` (and the C2/C3 edits made through it)
+   is **unreachable for clusters C1–C4**. The working precedent for `any`
+   receivers is the *other* two-arm — the `taFillIdx`/`taSetIdx` block in
+   `call-receiver-method.ts` (~L4034) that serves `set`/`fill`/`copyWithin`/
+   `reverse` through the 5-slot `__ta_dyn_<m>(recv, v1, v2, v3, argc)` ABI.
+   **Steps 3.2–3.5 must be wired there, not in `array-methods.ts`.** This is
+   the single reason cluster C came in at 4/61 instead of ≥45, and it was not
+   visible from the plan's file:function citations.
+2. Cluster C3's 22 rows all answer the NUMBER `0` (`includes(42)` → «0»,
+   `indexOf()` → «0»), both before and after this session — so the closed
+   dispatcher's `VEC_SEARCH_METHODS` arm is not the producer. Find what
+   actually answers `0` before writing the helper. (Excluding
+   `$__ta_dyn_view` from that arm, as plan step 3.4b says, was tried and
+   reverted: it changed nothing measurable, and `$__ta_dyn_view` IS a
+   `$__vec_base` subtype whose `__extern_length`/`__extern_get_idx` reads go
+   through the correct dyn-view MOP arms, so the exclusion removes a path that
+   is not obviously wrong.)
+3. The IsCallable gate in `ensureNativeArrayHof` is in place but the
+   `*-not-callable-throws` rows still do not throw. Probed directly
+   (`.tmp/es2015/probes/cbguard{,2}.mts`): a standalone module doing
+   `sample.find(false)` / `sample.every()` / `sample.reduce()` on a
+   `new TA([42,43,44])` dyn view emits **zero host imports**, contains
+   `__hof_find`, `__typeof_function`, `__call_m_find` and `__new_TypeError` —
+   and still catches nothing (`hits === 0`). So the guard is either compiled
+   out (`ctx.funcMap.get("__typeof_function")` still undefined at the reserve
+   -time moment `ensureNativeArrayHof` runs, even though the native is minted
+   later) or the call never reaches `__hof_find` at runtime. Resolve THAT
+   before writing more callback-protocol code; do NOT reach for
+   `ensureLateImport` inside that helper (#1839).
+4. Cluster B's residual 10: 4 rows need `Function.prototype.call` in
+   standalone (out of scope for #5194 — `getter.call(value)`), 2 need the
+   `length`/`byteLength` getters to be invoked by a DYNAMIC read of
+   `TypedArrayPrototype.length` (the syntactic `<Ctor>.prototype.<getter>` arm
+   already invokes; the var-routed read does not), 2 need
+   `isConstructor(TypedArray.from) === false`, 1 needs `%TypedArray%()` itself
+   to throw, and 1 is `Symbol.toStringTag/invoked-as-func` (the gOPD `.get`
+   symbol-key synthesis of plan step 2.3).
+5. Steps 5, 6 and 7 (clusters F+G, H+I, J) are **not started**.
+6. Measurement cost on a shared box is the binding constraint: the 300-row
+   head list took **48 minutes** in-process at load 10–22. Budget for that, or
+   measure per-cluster only.
+
+### Validation
+
+- Five ratchet gates green (`check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`), run
+  bare with `$?` captured, before each commit.
+- `pnpm run typecheck` (TS7) green. `pnpm run typecheck:ts5` fails on
+  `src/linked-provider-runtime.ts` (`WebAssembly.Tag` missing from the ambient
+  lib) — **pre-existing on `main`, untouched by this branch.**
+- `tests/issue-5194-es2015-typedarray-r2.test.ts` 4/4.
+- `pnpm run test:equivalence:gate`: **24 failing / 1718 passing, all 24 in the
+  baseline — no new regressions.**
+- Neighbour vitest files, one at a time with
+  `NODE_OPTIONS=--max-old-space-size=3072`:
+  `issue-2872-ta-dynview-reduce-includes` 9/9, `issue-4449-species-controls`
+  5/5. Two files fail, and **both fail identically with `src/` reverted to
+  `main` (`git checkout 0f801557a -- src/`), so they are pre-existing, not
+  this branch**: `issue-2872.test.ts` "non-TA dynamic callee still constructs
+  through the class dispatch" (expected NaN to be 7), and three rows across
+  `issue-3177.test.ts` / `issue-3177-fromof.test.ts` (ctor cross-check,
+  `[[Delete]]` MOP, `from(iterable Set)`).
+- Method note: run the A/B revert **serially**. Doing it while an equivalence
+  gate was in flight put ~6 minutes of that run on `main`'s compiler (vitest
+  isolates the module graph per file), so that run was repeated end-to-end on
+  a quiet tree — the 24/1718/no-regressions figure above is the CLEAN re-run,
+  and the contaminated run agreed with it.
+
+### #5272 re-verification (2026-09-02, on the merged tree)
+
+`git merge origin/main` (`7f998ff873`, which carries PR #5461 / `1d0380840a` —
+the #5272 leak check on the original-harness path — and the #5224 buffers
+wave). **The merge was clean: no conflicts**, including in the three files the
+coordinator flagged as overlapping (`builtin-value-read.ts`, `new-indexed.ts`,
+`declarations.ts`); the #5194 markers survive in all touched files and
+`pnpm run typecheck` (TS7) is green on the merged tree.
+
+Armed-check control first: `tests/issue-5272-runner-standalone-leak.test.ts`
+**7/7 on this tree**, so the leak check really is active in the lane these
+measurements use — a negative result below is evidence, not an untested claim.
+
+| re-run (standalone, merged tree, one process at a time) | result |
+|---|---|
+| the 84 claimed head-list passes + the 21 controls (105 rows) | **103 pass / 2 compile timeouts — ZERO `host_import_leak`** |
+| the 52-row list behind the second commit's +6 (`.tmp/es2015/step34-final.txt` = C5 9 + D 16 + C2 6 + controls 21) | C5 **4**/9 (3 in-process + `keys/invoked-as-method.js` passing under `--isolate`), D **2**/16, C2 0/6, controls **21**/21 — no leaks |
+
+**No row was a pseudo-pass.** The corrected before→after is therefore
+**unchanged** from the table above: cluster A 0 → 63, cluster B 0 → 21 (22 with
+the load-timeout row), C5 0 → 4, D 0 → 2, controls 21 → 21, head list
+0 → 84 pass.
+
+Two of the 84 are **unverified rather than disproven** on the merged tree:
+`built-ins/TypedArray/Symbol.species/name.js` and
+`built-ins/TypedArray/from/prop-desc.js` exceed the runner's ~15 s in-process
+compile deadline (measured 19.7–27.2 s across three attempts, including under
+`--isolate`, at box load ~10.6 on 4 cores). They are **compile timeouts, not
+leaks** — the leak check runs before the deadline can matter and reported
+nothing for them — but nobody should claim them as flips until they are
+re-measured on an idle box. Treat the head-list figure as **82 confirmed + 2
+pending** of 84.
+
+Gates re-run on the merged tree, bare with `$?` captured: all five green, and
+green again with `LOC_GATE_BASE=$(git rev-parse origin/main)` (CI's merge-preview
+base). `tests/issue-5194-es2015-typedarray-r2.test.ts` 4/4.
+
+### Adversarial review (2026-09-02) — resolution
+
+Base for every figure below: `git merge origin/main` (`f64beb1a03`, carrying
+PR #5469). Clean merge, no conflicts. Probes are
+`.tmp/es2015/probes/review-f1f2.mts` and `review-f3.mts`; all three findings now
+also have controls on BOTH lanes in
+`tests/issue-5194-es2015-typedarray-r2.test.ts` (10/10).
+
+| # | verdict | what changed |
+|---|---|---|
+| F1 | **FIXED** | Both TypedArray arms in `expressions/object-get-prototype-of.ts` keyed on the NAME only. The `<View>.prototype` arm now takes the same `isGlobalBuiltinIdentifier` gate the NativeError arm above it already had; the INSTANCE arm — which has no identifier to check, because it keys on `ctx.oracle.declaredNameOf` and a user class of that name yields the identical type name — takes a new file-scoped `sourceShadowsGlobalName`. Probe (standalone): `class Uint8Array { … }` + `Object.getPrototypeOf(new Uint8Array(3)) === Uint8Array.prototype` was **0**, now **1**. The TypedArray proto graph is also no longer minted into such a program: **478,540 → 169,895 bytes**. |
+| F2 | **FIXED** | The shadow check in `builtin-value-read.ts` (both sites) was `fctx.localMap` / `boxedCaptures` — FUNCTION-scope facts that cannot see a MODULE-level `class Int16Array`. Both now also consult `sourceShadowsGlobalName`, and so does `builtin-static-gopd.ts:resolveBuiltinProtoGopdReceiver`, which feeds the same descriptor synthesis. Probe (standalone): `Int16Array.prototype.constructor === Int16Array` was **0**, now **1**, zero `env::` imports. |
+| F3 | **DOCUMENTED (fix attempted and reverted — it moved the error, it did not remove it)** | see below |
+| F4 | **DOCUMENTED, comment corrected** | see below |
+| F5 | **FIXED** | `proto-index-store.ts:parentLevelProbeArms` spread ONE shared `guardInstrs` array into every emitted arm (up to 11). The parameter is now a factory invoked once per arm, per this file's own per-arm-fresh discipline (#1058). |
+
+#### F3 — exactly which shapes fold wrong, and why the obvious fix is wrong
+
+The instance arm is a COMPILE-TIME fold: it answers the prototype of the
+argument's **declared type**. That is correct for every shape where the declared
+type is the runtime type, and wrong for exactly one family:
+
+- **Folds wrong:** a binding whose declared type is a view but whose runtime
+  object is a SUBCLASS instance — `class Bytes extends Uint8Array {}`,
+  `const b: Uint8Array = new Bytes(2)`. Spec (§23.2.5.6 via
+  OrdinaryCreateFromConstructor) says `Bytes.prototype`; the fold answers
+  `Uint8Array.prototype`. Measured: lane 1, spec 0.
+- **Folds correctly:** every non-subclass shape — a direct
+  `new <View>(…)`, a parameter/field annotated as the view and only ever
+  assigned view instances, and `<View>.prototype` itself (a different arm).
+- **Not affected:** dynamically constructed views (`new TA(…)` where `TA` is a
+  value), which never reach the fold — they resolve at runtime through the
+  `ta-dyn-mop.ts` `__getPrototypeOf` arm.
+
+**The obvious fix was tried and reverted.** Declining the fold for any file that
+subclasses the view (a `sourceSubclassesGlobalName` scan) does not route the
+work to a better answer — it routes it to a different wrong one. The runtime arm
+cannot recover the kind from a statically typed carrier (`i8_byte` serves
+Int8Array, Uint8Array **and** Uint8ClampedArray; `f64` serves Float64Array and
+`number[]`), which is why the arm was compile-time to begin with. With the
+decline in place the ORDINARY `Object.getPrototypeOf(new Uint8Array(1))` in the
+same file also went wrong — measured, the focused control returned 2. A real fix
+needs a **per-binding** subclass fact, not a per-file one.
+
+The divergence is pinned by an asserted characterization control
+("standalone residual (F3)"), which expects the folded answer today, so whoever
+fixes it gets a RED test rather than a silent flip.
+
+#### F4 — the residual behind the `noJsHost` decline
+
+`calls-closures.ts`'s decline sends `sort`/`keys`/`values`/`entries`/… on an
+`any` receiver to the closed-method dispatcher. The old comment said that
+dispatcher "resolves these by runtime shape"; it resolves them only for
+receivers that HAVE an arm. **Residual:** an `any`-typed plain array, `Map` or
+`Set` receiver has none, so in standalone those calls now raise a runtime
+TypeError from the bottom `__extern_method_call` arm. Base emitted
+`env::Uint8ClampedArray_*` instead, which made the whole module fail to
+instantiate — so this is strictly better and regresses no passing row, but it is
+a real gap and not the "resolved by runtime shape" the comment claimed. The
+comment now says this; closing it means giving those receivers real arms.
+
+#### Re-validation after the review fixes
+
+Merged tree (`f64beb1a03` merged in), standalone, one process at a time:
+
+| list | result |
+|---|---|
+| `ta-passing-all.txt` (the 84 claimed head-list passes) + `ta-controls.txt` (21) | **105 / 105 pass** — no regressions, no `host_import_leak`, and the two rows that had been unverifiable compile timeouts (`TypedArray/Symbol.species/name.js`, `TypedArray/from/prop-desc.js`) now pass on a quieter box, so the head-list figure is **84 confirmed**, nothing pending |
+| the 52-row step-3/4 list (`step34-final.txt`) | C5 **4**/9, D **2**/16, C2 0/6, controls **21**/21 — unchanged, zero leaks, zero compile errors |
+| `tests/issue-5194-es2015-typedarray-r2.test.ts` | **10 / 10** (3 original standalone controls + F1/F2 on both lanes + F3 host + the F3 standalone characterization control) |
+
+Five ratchet gates green (bare, `$?` captured); `pnpm run typecheck` (TS7)
+green. `typecheck:ts5` still fails only on `src/linked-provider-runtime.ts`
+(`WebAssembly.Tag`), pre-existing on `main`.
+
+`pnpm run test:equivalence:gate` on this tree: **24 failing / 1718 passing, all
+24 in the baseline — no new regressions.**

@@ -103,3 +103,67 @@ export function sourceAssignsAliasedFunctionMember(
   if (members.get(name)?.has(receiver.text) === true) return true;
   return includeMemberAliases && members.get(`member:${name}`)?.has(receiver.text) === true;
 }
+
+/** Module-level binding names per source file (lazily built, cached). */
+const moduleLevelBindingNames = new WeakMap<ts.SourceFile, Set<string>>();
+
+/**
+ * (#5194 review F1/F2) Does this source file declare a MODULE-LEVEL binding
+ * called `name` — i.e. does the program shadow the global builtin of that name?
+ *
+ * The two review findings this closes both came from a name-only test. A
+ * lowering that keys on a BUILTIN NAME must also establish that the name still
+ * denotes the builtin:
+ *
+ * - `Object.getPrototypeOf(x)` where `x`'s declared TYPE NAME is `Uint8Array`
+ *   answered the intrinsic `<View>.prototype` glue even when the program
+ *   declared its own `class Uint8Array { … }` — the type name is identical, and
+ *   there is no identifier at the call site to run the ordinary
+ *   `isGlobalBuiltinIdentifier` check against.
+ * - `<Ctor>.prototype.constructor` had a shadow check that looked only at
+ *   `fctx.localMap` / `fctx.boxedCaptures`, which by construction cannot see a
+ *   MODULE-level `class Uint8Array` — a function-scope test for a
+ *   file-scope declaration.
+ *
+ * Deliberately syntactic and file-scoped: it needs no checker (so it is safe
+ * from a finalize-adjacent or oracle-ratcheted site) and it answers the
+ * question the callers actually have — "did THIS program rebind the name". A
+ * `declare`d ambient statement is NOT a shadow (it re-describes the global);
+ * an `interface` is not either (it merges with the global type rather than
+ * replacing the value).
+ */
+export function sourceShadowsGlobalName(sourceFile: ts.SourceFile, name: string): boolean {
+  let names = moduleLevelBindingNames.get(sourceFile);
+  if (!names) {
+    names = new Set<string>();
+    const addBindingName = (binding: ts.BindingName): void => {
+      if (ts.isIdentifier(binding)) {
+        names!.add(binding.text);
+        return;
+      }
+      for (const element of binding.elements) {
+        if (ts.isBindingElement(element)) addBindingName(element.name);
+      }
+    };
+    const isAmbient = (node: ts.Node): boolean =>
+      ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.DeclareKeyword);
+    for (const statement of sourceFile.statements) {
+      if (isAmbient(statement)) continue;
+      if (ts.isClassDeclaration(statement) || ts.isFunctionDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+        if (statement.name) names.add(statement.name.text);
+      } else if (ts.isVariableStatement(statement)) {
+        for (const decl of statement.declarationList.declarations) addBindingName(decl.name);
+      } else if (ts.isImportDeclaration(statement) && statement.importClause) {
+        const clause = statement.importClause;
+        if (clause.name) names.add(clause.name.text);
+        const bindings = clause.namedBindings;
+        if (bindings) {
+          if (ts.isNamespaceImport(bindings)) names.add(bindings.name.text);
+          else for (const spec of bindings.elements) names.add(spec.name.text);
+        }
+      }
+    }
+    moduleLevelBindingNames.set(sourceFile, names);
+  }
+  return names.has(name);
+}

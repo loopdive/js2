@@ -65,10 +65,31 @@ export function resolveStandaloneProtoMemberValueClosure(
     // toUTCString. Value reads bypass prototype seeding, so canonicalize here
     // as well as in the seeded-property path.
     const closureMember = builtinName === "Date" && member === "toGMTString" ? "toUTCString" : member;
-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
+    // (#5194 step 2) §23.2.3.32 — a member whose initial value IS another
+    // prototype's function object resolves to that brand's singleton.
+    const closureBrand = glue.memberBrandAliasOf?.(ctx, member) ?? brand;
+    const closure = ensureStandaloneNativeMethodClosure(ctx, closureBrand, closureMember, kind, {
       refusalBodyFallback: true,
     });
     return closure ? { closure, kind } : null;
+  }
+
+  // Tier 1.5 (#5194 step 1) — inherited from the glue's declared PARENT level.
+  // `Uint8Array.prototype` owns no methods (§23.2.7); `Uint8Array.prototype.map`
+  // resolves through `%TypedArray%.prototype`'s glue, and deliberately to the
+  // PARENT brand's closure singleton, so `Uint8Array.prototype.map ===
+  // TypedArray.prototype.map` holds by `ref.eq` — which is exactly what the
+  // `gOPD(TypedArray.prototype, m).value === TA.prototype[m]` rows compare.
+  const parentBrand = glue.parentBrand;
+  if (parentBrand !== undefined && parentBrand !== brand) {
+    const parentGlue = getNativeProtoBuiltinGlue(ctx, parentBrand);
+    if (parentGlue && parentGlue.memberCsv.split(",").includes(member)) {
+      const kind = parentGlue.memberKind(member);
+      const closure = ensureStandaloneNativeMethodClosure(ctx, parentBrand, member, kind, {
+        refusalBodyFallback: true,
+      });
+      if (closure) return { closure, kind };
+    }
   }
 
   // Tier 2 — inherited from Object.prototype (methods only; Object.prototype
