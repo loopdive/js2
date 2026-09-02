@@ -48,12 +48,12 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9884,
-    "fail": 1428,
+    "pass": 9905,
+    "fail": 1407,
     "ce": 392,
     "skip": 0,
     "total": 11704,
-    "pct": 84,
+    "pct": 85,
     "features": [
       {
         "name": "destructuring-binding",
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 463,
-        "fail": 140,
+        "pass": 470,
+        "fail": 133,
         "ce": 6,
         "skip": 0,
         "total": 609,
-        "pct": 76
+        "pct": 77
       },
       {
         "name": "arrow-function",
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 219,
-        "fail": 189,
+        "pass": 227,
+        "fail": 181,
         "ce": 23,
         "skip": 0,
         "total": 431,
-        "pct": 51
+        "pct": 53
       },
       {
         "name": "Reflect.construct",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 177,
-        "fail": 111,
+        "pass": 181,
+        "fail": 107,
         "ce": 42,
         "skip": 0,
         "total": 330,
-        "pct": 54
+        "pct": 55
       },
       {
         "name": "Symbol.species",
@@ -399,12 +399,12 @@
       },
       {
         "name": "Reflect.setPrototypeOf",
-        "pass": 14,
-        "fail": 9,
+        "pass": 17,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 61
+        "pct": 74
       },
       {
         "name": "Map",
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4382,
-    "fail": 976,
-    "ce": 87,
+    "pass": 4384,
+    "fail": 973,
+    "ce": 88,
     "skip": 0,
     "total": 5445,
-    "pct": 80
+    "pct": 81
   }
 ]
