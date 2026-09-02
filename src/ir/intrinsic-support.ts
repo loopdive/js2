@@ -26,6 +26,8 @@ import {
 import {
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   STRING_COMPARE_RUNTIME_FEATURES,
+  STRING_EQ_RUNTIME_FEATURES,
+  STRING_LEN_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -318,6 +320,88 @@ export function preparedStringCompareProvider(
   throw new Error(`IR string-compare provider ${provider.id} is not a callable implementation`);
 }
 
+/** The one string-eq feature row; named once so no caller spells it. */
+const STRING_EQ_RUNTIME_FEATURE = STRING_EQ_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S3) Which arm of the string equality seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * Like {@link preparedStringCompareProvider} this returns the CLASSIFICATION
+ * plus the physical spelling, not an `IrFuncRef` — the two arms are materialized
+ * by different existing routines and a single callable reference could not carry
+ * the decision without moving a registration.
+ *
+ * It differs from the compare's twin in ONE way, and the difference is the whole
+ * reason F2-S2 had to land first: the host arm returns the record's MODULE as
+ * well as its field. `wasm:js-string.equals` is a builtin import, not an `env`
+ * one, so `ctx.funcMap` cannot name it unambiguously (it is keyed on the bare
+ * field `equals`, which a user function shadows — #1072). The consumer looks it
+ * up by import-section position instead, which needs both halves of the name.
+ */
+export function preparedStringEqProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_EQ_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-eq provider ${provider.id} is not a callable implementation`);
+}
+
+/** The one string-len feature row; named once so no caller spells it. */
+const STRING_LEN_RUNTIME_FEATURE = STRING_LEN_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S4) Which arm of the string length seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * Third in the family-2 series and the first whose native arm is not a callable
+ * at all: it returns the ABI **role** and field index the `carrier-field`
+ * provider names, and the consumer resolves the role to the Program-ABI string
+ * carrier's type ref. It deliberately does NOT return a physical type index —
+ * the manifest is frozen before the carrier's layout is planned.
+ *
+ * The host arm carries the record's MODULE as well as its field, for the same
+ * reason {@link preparedStringEqProvider} does: `wasm:js-string.length` is a
+ * builtin, so locating it needs both halves of the name.
+ */
+export function preparedStringLenProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly carrier: "string"; readonly fieldIndex: number }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_LEN_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "carrier-field") {
+    return { arm: "native", carrier: provider.implementation.carrier, fieldIndex: provider.implementation.fieldIndex };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-len provider ${provider.id} is not a length implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -396,6 +480,24 @@ export function prepareIrRuntimeManifest(input: {
    * all and the resolve arm would have no provider row to read.
    */
   readonly stringCompareDemand?: boolean;
+  /**
+   * (#3526 F2-S3) True when some function in `functions` compares two strings
+   * for equality. Same shape and same reason as `stringCompareDemand`, read off
+   * the `string.eq` instruction population: the instruction exists, but it is
+   * not an `intrinsic`, so the walk below never collects it and an eq-only
+   * module would otherwise freeze no manifest at all.
+   */
+  readonly stringEqDemand?: boolean;
+  /**
+   * (#3526 F2-S4) True when some function in `functions` reads a string's
+   * `.length`. Same shape and same reason as `stringEqDemand`, read off the
+   * `string.len` instruction population. It matters MORE here than for either
+   * predecessor: `string.len` resolves through no callable symbol at all, so
+   * the frozen row is the only place the physical choice can live, and a
+   * length-only module that froze no manifest would leave the attachment pass
+   * with nothing to read.
+   */
+  readonly stringLenDemand?: boolean;
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -428,7 +530,14 @@ export function prepareIrRuntimeManifest(input: {
     for (const block of fn.blocks) collectBuffer(block.instrs);
     for (const state of fn.asyncPlan?.states ?? []) collectBuffer(state.body);
   }
-  if (uses.length === 0 && asyncPlans.size === 0 && !input.generatorNumberBoxDemand && !input.stringCompareDemand) {
+  if (
+    uses.length === 0 &&
+    asyncPlans.size === 0 &&
+    !input.generatorNumberBoxDemand &&
+    !input.stringCompareDemand &&
+    !input.stringEqDemand &&
+    !input.stringLenDemand
+  ) {
     return undefined;
   }
 
@@ -438,6 +547,8 @@ export function prepareIrRuntimeManifest(input: {
   }
   if (input.generatorNumberBoxDemand) builder.requestFeature(GENERATOR_NUMBER_BOX_RUNTIME_FEATURE);
   if (input.stringCompareDemand) builder.requestFeature(STRING_COMPARE_RUNTIME_FEATURE);
+  if (input.stringEqDemand) builder.requestFeature(STRING_EQ_RUNTIME_FEATURE);
+  if (input.stringLenDemand) builder.requestFeature(STRING_LEN_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

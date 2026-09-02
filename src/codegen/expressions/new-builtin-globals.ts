@@ -2418,8 +2418,25 @@ export function tryCompileErrorCtorCallWithoutNew(
  * (§24.1.1.1 / §24.2.1.1 / §24.3.1.1 step 1), which were never added here — so
  * `Map()`, `Set()` and `WeakMap()` each returned an object instead of throwing.
  * They are table-driven off the one set below rather than three copies.
+ *
+ * (#5150) …and the BUFFER constructors, whose §25.1.3.1 / §25.3.2.1 step 1 is
+ * word-for-word the same clause: `ArrayBuffer(10)` and `DataView(buf)` both
+ * returned an object instead of throwing (`ArrayBuffer/undefined-newtarget-
+ * throws.js`, `DataView/newtarget-undefined-throws.js`). Arguments are still
+ * EVALUATED — §13.3.6.1 evaluates the argument list before [[Call]] is entered
+ * — but never coerced, which is exactly what the DataView row asserts: a
+ * `byteOffset` whose `valueOf` throws must not run, because ToIndex is never
+ * reached.
  */
-const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
+const CALL_WITHOUT_NEW_COLLECTION_CTORS = new Set([
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+]);
 
 export function tryCompileCollectionCtorCallWithoutNew(
   ctx: CodegenContext,

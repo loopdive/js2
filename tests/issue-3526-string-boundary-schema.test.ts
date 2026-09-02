@@ -83,6 +83,16 @@ const NEW_IDS = [
 
 const NEW_ID_SET: ReadonlySet<string> = new Set(NEW_IDS);
 
+/**
+ * (#3526 F2-S4) The four of those six that STILL have no provider row.
+ *
+ * `string.eq` left this set in F2-S3 and `string.len` in F2-S4, each when its
+ * seam moved under manifest authority; the other four are untouched and the
+ * fence below still holds them for F2-S5 and later.
+ */
+const PROVIDED_IDS = ["string.eq", "string.len"] as const;
+const STILL_UNPROVIDED_IDS = NEW_IDS.filter((id) => !(PROVIDED_IDS as readonly string[]).includes(id));
+
 function row(capability: RuntimeHostCapabilityId): RuntimeHostCapabilityRecord {
   return resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, capability);
 }
@@ -354,13 +364,20 @@ describe("#3526 F2-S2 each row's ABI equals its registration site", () => {
 // --------------------------------------------------------------------------
 
 describe("#3526 F2-S2 no provider selects a new row", () => {
-  it("has no provider naming any of the six capabilities — the byte-identity argument", () => {
+  it("has no provider naming any of the four STILL-unprovided capabilities", () => {
+    // (#3526 F2-S4) Narrowed again, from five to four: `string.len` now HAS a
+    // provider (`host.js.string.len`), which is exactly what this slice moved.
+    // The pin is the regression fence for the NEXT slice, so the correct edit is
+    // to shrink it by the id that landed — not to delete it. The remaining four
+    // are still un-provided and this keeps saying so.
     const named = new Set<string>();
     for (const provider of RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]) {
       if (provider.implementation.kind === "host-callable") named.add(provider.implementation.capability);
       for (const capability of provider.hostCapabilities) named.add(capability);
     }
-    for (const id of NEW_IDS) expect([...named]).not.toContain(id);
+    expect(STILL_UNPROVIDED_IDS).toHaveLength(4);
+    for (const id of STILL_UNPROVIDED_IDS) expect([...named]).not.toContain(id);
+    for (const id of PROVIDED_IDS) expect([...named]).toContain(id);
   });
 
   it("keeps Math-only, async-only and compare-only manifests free of every new row", () => {
@@ -624,25 +641,32 @@ function integrationSlice(startMarker: string, endMarker: string): string {
 }
 
 describe("#3526 F2-S2 the un-migrated arms still read the lane", () => {
-  it("keeps the concat/eq resolve arm on ctx.nativeStrings and the raw import lookup", () => {
-    // F2-S3 splits `string.eq` out of this three-symbol arm. Until then the arm
-    // is UNGOVERNED, and pinning that is what stops this slice from being
-    // mistaken for the move it prepares.
+  it("keeps the CONCAT resolve arm on ctx.nativeStrings and the raw import lookup", () => {
+    // (#3526 F2-S3) F2-S3 lifted `string.eq` out of what was a three-symbol arm,
+    // so this pin is now concat-only and the eq half is INVERTED in
+    // `issue-3526-string-boundary-eq.test.ts` (which asserts the arm reads no
+    // lane discriminator at all). The concat pair is still UNGOVERNED, and
+    // pinning that is what stops F2-S5 from being mistaken for having landed.
+    // The `field` variable went with the eq half — after the split the arm names
+    // its one spelling directly.
     const arm = integrationSlice(
       "symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN",
       "\n  } else if (",
     );
     expect(arm).toContain("ctx.nativeStrings");
-    expect(arm).toContain('exactCallableImportIndex(ctx, "wasm:js-string", field)');
+    expect(arm).toContain('exactCallableImportIndex(ctx, "wasm:js-string", "concat")');
     expect(arm).not.toContain("hostCapabilityRecords");
+    expect(arm).not.toContain("IR_STRING_EQUALS_FN");
   });
 
-  it("keeps the string.len provider on ctx.nativeStrings and the raw import ref", () => {
-    const slice = integrationSlice("if (usesStringLen) {", "\n  const nativeMaterializations");
-    expect(slice).toContain("ctx.nativeStrings");
-    expect(slice).toContain('irImportFuncRef("wasm:js-string", "length", "length")');
-    expect(slice).not.toContain("hostCapabilityRecords");
-  });
+  // (#3526 F2-S4) The `string.len` twin of the pin above is GONE, not shrunk.
+  // It fenced `prepareStrings`'s `if (usesStringLen) { … }` decision block,
+  // which F2-S4 deleted outright: the length provider is now built from the
+  // frozen manifest in `prepareStringLength`, inside the freeze. There is no
+  // remaining half to re-scope the way the concat/eq pin was, so the assertion
+  // is INVERTED into `issue-3526-string-boundary-len.test.ts`, which pins that
+  // `prepareStrings` no longer names a length provider at all and that the new
+  // site reads neither `ctx.nativeStrings` nor `ctx.anyStrTypeIdx`.
 
   it("adds no string-literal storage authority — storageForConst still reads the lane", () => {
     const slice = integrationSlice("const storageForConst = (instr: IrInstrStringConst)", "\n  const materializerRefs");

@@ -1420,6 +1420,23 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       ],
       [{ op: "i32.const", value: 0 }],
     );
+    // (#5197) `__builtinfn_is_builtin(v) -> i32` — 1 iff v is one of the §17
+    // built-in function objects this module materializes (a registered
+    // `ctx.builtinFnMetaByTypeIdx` family). Filled from the SAME finalized
+    // predicate `prependBuiltinFnObjectSemantics` uses for
+    // `isExtensible`/`getPrototypeOf`, so the three answers cannot disagree
+    // about what counts as a builtin function object.
+    //
+    // Its consumer is §7.2.4 IsConstructor at a dynamic `new` site: a built-in
+    // function that is not identified as a constructor has no [[Construct]], so
+    // `new resolveFn()` must throw a TypeError rather than evaluate to null.
+    registerNative(
+      "__builtinfn_is_builtin",
+      [{ kind: "externref" }],
+      [{ kind: "i32" }],
+      [],
+      [{ op: "i32.const", value: 0 }],
+    );
   }
   const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
   const bfnGopdIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_gopd") : undefined;
@@ -11942,6 +11959,10 @@ function prependBuiltinFnObjectSemantics(ctx: CodegenContext, typeIdxs: readonly
     ["__object_isExtensible", 1],
     ["__object_isFrozen", 0],
     ["__object_isSealed", 0],
+    // (#5197) `__builtinfn_is_builtin` answers the same question the three
+    // integrity predicates are being taught, so it is filled from the same
+    // predicate rather than a second `ref.test` chain that could drift.
+    ["__builtinfn_is_builtin", 1],
   ] as const) {
     const integrityFn = findFn(name);
     if (!integrityFn) continue;
