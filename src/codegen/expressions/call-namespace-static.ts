@@ -100,6 +100,7 @@ import {
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolvePromiseSubclassName } from "./promise-subclass.js";
+import { objectPrototypeIsImmutableInstrs } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import {
   compileCallExpression,
   compileProtoArg,
@@ -1274,19 +1275,56 @@ export function compileNamespaceStaticCall(
           return { kind: "i32" };
         }
         if (objType.kind !== "externref") coerceType(ctx, fctx, objType, externRef);
+        // (#5268 step 1, cluster B) Stash the operands so the §10.4.7
+        // immutable-prototype receiver can answer `false` instead of the
+        // KNOWN LIMITATION's unconditional `true`. The ordinary refusals
+        // (non-extensible, cycle) still return `true` — closing those needs the
+        // failure channel the limitation note describes, which is not this
+        // slice; `%Object.prototype%` is the one receiver whose refusal is a
+        // pure predicate on the receiver's identity.
+        const spoTargetLocal = allocTempLocal(fctx, externRef);
+        const spoProtoLocal = allocTempLocal(fctx, externRef);
+        fctx.body.push({ op: "local.tee", index: spoTargetLocal });
         // proto (externref) — compileProtoArg reifies an inline-literal proto
         // into a native $Object so __object_setPrototypeOf's `ref.test $Object`
         // succeeds (the same #2580 M3 Stage A handling Object.setPrototypeOf
         // uses); keeps the ordinary externref path for non-literal / null protos.
         compileProtoArg(ctx, fctx, protoArg);
+        fctx.body.push({ op: "local.tee", index: spoProtoLocal });
         const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
         if (spoIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: spoIdx });
-          fctx.body.push({ op: "drop" }); // native returns obj; Reflect wants a boolean
-          fctx.body.push({ op: "i32.const", value: 1 }); // success → true (see KNOWN LIMITATION)
+          const immutable = objectPrototypeIsImmutableInstrs(ctx, spoTargetLocal);
+          if (immutable) {
+            // An immutable-prototype receiver must NOT be written and must
+            // answer `SameValue(V, current)` — `current` is null, so only a
+            // null proto succeeds.
+            fctx.body.push({ op: "drop" }); // proto
+            fctx.body.push({ op: "drop" }); // obj
+            fctx.body.push(...immutable);
+            fctx.body.push({
+              op: "if",
+              blockType: { kind: "val", type: i32Ty },
+              then: [{ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }],
+              else: [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: spoIdx },
+                { op: "drop" }, // native returns obj; Reflect wants a boolean
+                { op: "i32.const", value: 1 }, // success → true (see KNOWN LIMITATION)
+              ],
+            });
+          } else {
+            fctx.body.push({ op: "call", funcIdx: spoIdx });
+            fctx.body.push({ op: "drop" }); // native returns obj; Reflect wants a boolean
+            fctx.body.push({ op: "i32.const", value: 1 }); // success → true (see KNOWN LIMITATION)
+          }
+          releaseTempLocal(fctx, spoProtoLocal);
+          releaseTempLocal(fctx, spoTargetLocal);
           return { kind: "i32" };
         }
+        releaseTempLocal(fctx, spoProtoLocal);
+        releaseTempLocal(fctx, spoTargetLocal);
         return fallbackReturn(0, "i32-true");
       }
 

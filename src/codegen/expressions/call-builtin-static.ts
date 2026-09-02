@@ -49,6 +49,10 @@ import {
   tryEmitStandaloneStructGopdKeyDispatch,
 } from "../builtin-static-gopd.js";
 import { tryEmitBuiltinProtoConstructorDescriptor } from "../builtin-proto-constructor.js";
+import {
+  emitImmutablePrototypeStatusCorrection,
+  tryEmitObjectProtoProtoAccessorGopd,
+} from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import { compileArrowAsClosure } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -2002,6 +2006,12 @@ export function compileBuiltinStaticCall(
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "local.get", index: protoLocal });
         fctx.body.push({ op: "call", funcIdx: statusIdx });
+        // (#5268 step 1, cluster B) …corrected for the §10.4.7 immutable-
+        // prototype exotic `%Object.prototype%`, which the ordinary predicate
+        // cannot see (it is a `$NativeProto`, not a `$Object`). Emitted here,
+        // after arg0 has compiled, so an `Object.prototype` receiver has
+        // already registered the type this test needs.
+        emitImmutablePrototypeStatusCorrection(ctx, fctx, objLocal, protoLocal);
         fctx.body.push({ op: "i32.eqz" });
         fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwRefused });
         fctx.body.push({ op: "local.get", index: protoLocal });
@@ -3056,6 +3066,14 @@ export function compileBuiltinStaticCall(
       tracesToTypedArrayIntrinsicProto(ctx, e),
     );
     if (tryCompileOverriddenBuiltinProtoDescriptor(ctx, fctx, expr, gopdProtoBuiltin, propLiteral)) {
+      return { kind: "externref" };
+    }
+
+    // (#5268 step 1) `gOPD(Object.prototype, "__proto__")` — the Annex B
+    // §B.2.2.1 accessor PAIR. The `$NativeProto` glue below models getters and
+    // methods only (no set-half), so this member is synthesized from its own
+    // two closures; see object-proto-proto-accessor.ts.
+    if (tryEmitObjectProtoProtoAccessorGopd(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
       return { kind: "externref" };
     }
 

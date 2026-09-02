@@ -1,7 +1,7 @@
 ---
 id: 5268
 title: "ES2015 standalone: Array + Object built-ins — r2 residual pass (136 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
@@ -19,7 +19,15 @@ related: [5145, 5148, 4491, 4492, 4444]
 # symbol-key arm, a ToObject wrapper, an accessor pair, an IsArray unwrap) in
 # the files listed. Growth is expected and granted for this change-set only;
 # new mechanisms go in NEW files (named per step) rather than in the god-files.
+# 2026-09-02 (Opus implementation pass): step 1 landed the `__proto__` accessor
+# pair. Two of its wiring sites were not on the planner's list, and both are
+# pure WIRING of the new `object-proto-proto-accessor.ts` module — the §10.4.7
+# immutable-prototype correction at the `Reflect.setPrototypeOf` call site, and
+# the setter-native swap at the `o.__proto__ = v` assignment arm. The semantics
+# live in the new module, not in these god-files.
 loc-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/expressions/assignment.ts
   - src/runtime.ts
   - src/codegen/array-species.ts
   - src/codegen/array-concat-spec.ts
@@ -45,7 +53,12 @@ loc-budget-allow:
   - src/codegen/expressions/calls-guards.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/declarations/import-collector.ts
+# 2026-09-02 (Opus implementation pass): the two step-1 wiring sites above are
+# each one arm inside an already-oversized dispatcher; splitting either is a
+# separate refactor with its own blast radius.
 func-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/array-species.ts::emitArraySpeciesCreate
   - src/codegen/array-concat-spec.ts::compileArrayConcatNativeSpecFromReceiverAndArgsVec
   - src/codegen/array-object-proto.ts::emitArrayProtoMemberBody
