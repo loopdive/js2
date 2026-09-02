@@ -3,9 +3,10 @@
   "slice": "f2s3",
   "assignee": "ttraenkler/fable-ir-takeover",
   "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "status": "done",
   "branch": "claude/docs-r6-f2s3-plan",
   "claimed_at": "2026-09-02T00:26:56Z",
-  "updated_at": "2026-09-02T00:26:56Z",
-  "write_id": "3950-3olf81jd"
+  "updated_at": "2026-09-02T02:15:28Z",
+  "write_id": "11605-j7d1cvoo",
+  "released_at": "2026-09-02T02:15:28Z"
 }
