@@ -79,8 +79,22 @@ describe("Dead import and type elimination (#320)", () => {
     `);
     expect(result.success).toBe(true);
 
-    // Pure arithmetic - no imports at all
-    expect(result.wat).not.toContain("(import");
+    // (#731, 8d17e2d8e0 "add function/class .name property infrastructure")
+    // pre-registers every function/class name — and, once the pool is non-empty,
+    // the implicit "" — as a `string_constants` global, so even pure arithmetic
+    // now carries imports. The #320 intent is *dead-import elimination*, so pin
+    // that instead: no `wasm:js-string` and no `env` import survive, and the only
+    // imports left are exactly the two `.name` metadata globals.
+    expect(result.wat).not.toContain('(import "wasm:js-string"');
+    expect(result.wat).not.toContain('(import "env"');
+    const importLines = result.wat
+      .split("\n")
+      .map((l: string) => l.trim())
+      .filter((l: string) => l.startsWith("(import"));
+    expect(importLines).toEqual([
+      '(import "string_constants" "add" (global $add externref))',
+      '(import "string_constants" "" (global $ externref))',
+    ]);
 
     const mod = new WebAssembly.Module(result.binary);
     expect(mod).toBeDefined();

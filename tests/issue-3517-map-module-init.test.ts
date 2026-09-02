@@ -143,17 +143,119 @@ describe("#3517 exact generic Map module initializer", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it.each([
-    ["native strings", { nativeStrings: true }],
-    ["fast", { fast: true }],
-    ["standalone", { target: "standalone" as const }],
-    ["WASI", { target: "wasi" as const }],
-    ["strict no-host", { strictNoHostImports: true }],
-  ])("keeps the Map module initializer legacy-owned in %s", async (_label, options) => {
-    const result = await tracked(MAP_SOURCE, options);
+  /**
+   * (#5259) The five lane pins below asserted `<module-init>` ∉ `irCompiledFuncs`
+   * — a "these lanes are legacy-owned" assumption that the IR module-init work
+   * has since retired lane by lane, leaving this file red 5/14 on main. Every
+   * lane here now IR-compiles the Map initializer; what still differs per lane
+   * is WHICH route claims it:
+   *
+   * - **overlay** — the #3142 slice-2 module-init lowering patches the IR body
+   *   into the `__module_init` slot while the legacy body dispatcher still
+   *   runs, so the outcome row reads `legacy 1 · IR 1`.
+   * - **prepared** — `preparedExactLexicalModuleInit`
+   *   (`src/codegen/index.ts:4269-4310`) owns the body outright and emits no
+   *   legacy body at all: `legacy 0 · IR 1`.
+   */
+  interface ModuleInitLaneRouting {
+    readonly label: string;
+    readonly route: "overlay" | "prepared";
+    readonly options: CompileOptions;
+    /** `irCompiledFuncs`, in order, exactly as this lane produces it. */
+    readonly irCompiledFuncs: readonly string[];
+    /** Module-init outcome row: the legacy body dispatcher emitted a body. */
+    readonly legacyBodyEmitted: boolean;
+    /** Module-init outcome row: the IR body dispatcher emitted a body. */
+    readonly irBodyEmitted: boolean;
+    /** Post-claim demotions this lane legitimately still reports, by unit. */
+    readonly postClaimErrorFuncs: readonly string[];
+  }
+
+  const MODULE_INIT_LANES: ModuleInitLaneRouting[] = [
+    {
+      // Routing owner: #3142 slice 2 (PR #3168) — the IR module-init overlay.
+      // The prepared lane's host arm requires `!ctx.nativeStrings` (index.ts:4270)
+      // and its standalone arm requires `ctx.standalone` (:4276), so native
+      // strings on gc keeps the overlay's dual emission. `memo` demotes
+      // post-claim under the gc number-boundary policy, which is a function-lane
+      // fact, not a module-init one.
+      label: "native strings",
+      route: "overlay",
+      options: { nativeStrings: true },
+      irCompiledFuncs: ["<module-init>"],
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+      postClaimErrorFuncs: ["memo"],
+    },
+    {
+      // Routing owner: #3142 slice 2 (PR #3168) — the IR module-init overlay.
+      // `ctx.fast` is refused outright by the prepared lane (index.ts:4292), so
+      // fast mode can only ever reach `<module-init>` through the overlay.
+      label: "fast",
+      route: "overlay",
+      options: { fast: true },
+      irCompiledFuncs: ["<module-init>"],
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+      postClaimErrorFuncs: ["memo"],
+    },
+    {
+      // Routing owner: #3523 "retire standalone lexical module-init bodies"
+      // (PR #4662) — the prepared lane's standalone native-first arm
+      // (index.ts:4275-4280). No legacy body is emitted on this lane.
+      label: "standalone",
+      route: "prepared",
+      options: { target: "standalone" as const },
+      irCompiledFuncs: ["memo", "<module-init>"],
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      postClaimErrorFuncs: [],
+    },
+    {
+      // Routing owner: #3523 gap 3 (PR #5425) — WASI joined the prepared lane
+      // via the invocation-policy-driven `_start` guard (index.ts:4281-4290),
+      // so the prepared route is `legacy 0 · IR 1` here too.
+      label: "WASI",
+      route: "prepared",
+      options: { target: "wasi" as const },
+      irCompiledFuncs: ["memo", "<module-init>"],
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      postClaimErrorFuncs: [],
+    },
+    {
+      // Routing owner: #3142 slice 2 (PR #3168) — the IR module-init overlay.
+      // An EXPLICIT `--no-host-imports` gc build stays refused by the prepared
+      // lane by design (index.ts:4293-4299, #3523 gap 3), so this lane keeps a
+      // legacy body alongside the overlay's IR body.
+      label: "strict no-host",
+      route: "overlay",
+      options: { strictNoHostImports: true },
+      irCompiledFuncs: ["memo", "<module-init>"],
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+      postClaimErrorFuncs: [],
+    },
+  ];
+
+  it.each(MODULE_INIT_LANES)("routes the Map module initializer through the $route lane in $label", async (lane) => {
+    const result = await tracked(MAP_SOURCE, { ...lane.options, trackIrOutcomes: true });
     expectSuccess(result);
-    expect(result.irCompiledFuncs ?? []).not.toContain("<module-init>");
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect(result.irCompiledFuncs ?? []).toEqual(lane.irCompiledFuncs);
+
+    const moduleInitRows = (result.irOutcomes ?? []).filter((outcome) => outcome.unitKind === "module-init");
+    expect(moduleInitRows).toHaveLength(1);
+    expect({
+      kind: moduleInitRows[0]!.kind,
+      legacyBodyEmitted: moduleInitRows[0]!.legacyBodyEmitted,
+      irBodyEmitted: moduleInitRows[0]!.irBodyEmitted,
+    }).toEqual({
+      kind: "emitted",
+      legacyBodyEmitted: lane.legacyBodyEmitted,
+      irBodyEmitted: lane.irBodyEmitted,
+    });
+
+    expect((result.irPostClaimErrors ?? []).map((error) => error.func)).toEqual(lane.postClaimErrorFuncs);
   });
 
   it("keeps module init legacy-owned in the M0 multi-source overlay", async () => {

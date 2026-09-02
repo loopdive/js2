@@ -323,6 +323,7 @@ import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
   preparedStringCompareProvider,
+  preparedStringConcatProvider,
   preparedStringEqProvider,
   preparedStringLenProvider,
   type PreparedIrRuntimeManifest,
@@ -349,6 +350,7 @@ import type {
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
   StringComparePolicy,
+  StringConcatPolicy,
   StringEqPolicy,
   StringLenPolicy,
 } from "./runtime-manifest.js";
@@ -997,6 +999,52 @@ function irStringLenDemand(fns: readonly IrFunction[]): boolean {
   return false;
 }
 
+/**
+ * (#3526 F2-S5) This caller's already-resolved STRING-CONCATENATION policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (the two-symbol concat arm's single `if`), consulted once,
+ * here, before freeze. Same one-flag truth table as its three family-2
+ * siblings, for the same reason: `standalone` and `wasi` both imply
+ * `nativeStrings`. The concat MODE is deliberately absent — it selects the
+ * helper on the chosen authority, not the authority, and lives on the feature.
+ */
+function integrationStringConcatPolicy(ctx: CodegenContext): StringConcatPolicy {
+  return Object.freeze({ concat: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S5) Which concat MODES any of `fns` performs.
+ *
+ * A `string.concat` instruction-kind scan like `irStringLenDemand`, but it
+ * returns a PAIR: the seam has two feature rows and the producer maps
+ * `concatMode` onto one of two callable symbols
+ * (`src/ir/string-support.ts`'s `irStringCallableProviderRef`), so this mirrors
+ * that mapping exactly — `instr.concatMode ?? "immutable"`. A module with no
+ * builder loop then freezes no `owned-append` row at all.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringConcatDemand(fns: readonly IrFunction[]): { readonly immutable: boolean; readonly owned: boolean } {
+  let immutable = false;
+  let owned = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "string.concat") return;
+          if ((instr.concatMode ?? "immutable") === "owned-append") owned = true;
+          else immutable = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { immutable, owned };
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -1055,6 +1103,7 @@ function prepareBuiltFnRuntimeManifest(
       stringCompare: integrationStringComparePolicy(ctx),
       stringEq: integrationStringEqPolicy(ctx),
       stringLen: integrationStringLenPolicy(ctx),
+      stringConcat: integrationStringConcatPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1072,6 +1121,11 @@ function prepareBuiltFnRuntimeManifest(
     // length-only module that froze no manifest would leave
     // `prepareStringLength` below with nothing to read.
     stringLenDemand: irStringLenDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S5) Same predicate the partition scan above runs, same reason
+    // again — but a PAIR: the freeze must request exactly the modes the module
+    // uses, or a concat-only module would carry an `owned-append` row nothing
+    // ever calls (and an append-only one would be missing the row it needs).
+    stringConcatDemand: irStringConcatDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3786,6 +3840,7 @@ export function compileIrPathFunctions(
   const stringComparePolicy = integrationStringComparePolicy(ctx);
   const stringEqPolicy = integrationStringEqPolicy(ctx);
   const stringLenPolicy = integrationStringLenPolicy(ctx);
+  const stringConcatPolicy = integrationStringConcatPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -3886,6 +3941,26 @@ export function compileIrPathFunctions(
           "late-preparation-unsupported",
           "resolve",
           "ir/integration: string length has no provider under string-len policy " + `len=${stringLenPolicy.len}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S5) The string concatenation seam partitions on the same rule,
+    // in the same pass. Its demand is an instruction kind like the length's,
+    // but it is a PAIR of modes — EITHER of which is demand, because one
+    // unsupported policy refuses both feature rows at once.
+    const stringConcatDemand = irStringConcatDemand([entry.fn]);
+    if (stringConcatPolicy.concat === "unsupported" && (stringConcatDemand.immutable || stringConcatDemand.owned)) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string concatenation has no provider under string-concat policy " +
+            `concat=${stringConcatPolicy.concat}`,
         ),
         "resolve",
       );
@@ -6491,12 +6566,35 @@ function resolveAndObserveCallableProvider(
     ref.binding.kind === "intrinsic" &&
     (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN)
   ) {
-    if (ctx.nativeStrings) {
+    // (#3526 F2-S5) Under manifest authority, like the compare and the eq
+    // before it. The arm no longer reads `ctx.nativeStrings`: the frozen
+    // `stringConcat` policy already resolved which authority answers, and the
+    // instruction's concat MODE — recovered here from the intrinsic SYMBOL,
+    // which is all the resolve table receives — picks which helper on that
+    // authority. The two routines below are the same two as before, so the
+    // migration is byte-neutral.
+    const arm = preparedStringConcatProvider(
+      prepared,
+      symbol === IR_STRING_CONCAT_OWNED_FN ? "owned-append" : "immutable",
+    );
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string concatenation has no frozen provider under the string-concat policy",
+      );
+    }
+    if (arm.arm === "native") {
       ensureNativeStringHelpers(ctx);
-      const helper = symbol === IR_STRING_CONCAT_OWNED_FN ? "__str_concat_owned" : "__str_concat";
-      index = nativeStrHelperHandle(ctx, helper);
+      index = nativeStrHelperHandle(ctx, arm.symbol);
     } else {
-      index = exactCallableImportIndex(ctx, "wasm:js-string", "concat");
+      // The host arm names the capability record's MODULE and field and is
+      // located by import-section POSITION — never `ctx.funcMap`, which keys
+      // `wasm:js-string` builtins on the bare field and so is shadowable by a
+      // same-named user function (#1072). Never `ensureLateImport` either: the
+      // five-import block is minted by a base-phase caller long before Phase 3,
+      // and a late registration here would shift every defined funcidx.
+      index = exactCallableImportIndex(ctx, arm.module, arm.field);
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
     index = ensureIrNativeCountedStringRepeatProvider(ctx);
@@ -6882,27 +6980,23 @@ function makeResolver(
     ): readonly Instr[] {
       return emitResolvedStringConst(ctx, resolver, value, alloc, storage, materializer);
     },
-    emitStringConcat(_alloc, mode, provider): readonly Instr[] {
+    emitStringConcat(_alloc, _mode, provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
       }
-      if (ctx.nativeStrings) {
-        // (#3744) `owned-append` — the builder-loop license computed by
-        // `collectOwnedStringAppendSymbols`; see src/ir/string-builder-shape.ts.
-        // Unregistered helper falls through to general concat (correctness first).
-        if (mode === "owned-append") {
-          const ownedIdx = stringBackend.nativeHelpers.get("__str_concat_owned");
-          if (ownedIdx !== undefined) return [{ op: "call", funcIdx: ownedIdx }];
-        }
-        const idx = stringBackend.nativeHelpers.get("__str_concat");
-        if (idx === undefined) {
-          throw new Error("ir/integration: __str_concat helper not registered");
-        }
-        return [{ op: "call", funcIdx: idx }];
-      }
-      const idx = stringBackend.hostImports.get("concat");
-      if (idx === undefined) throw new Error("ir/integration: wasm:js-string concat not registered");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S5) The no-provider fallback is RETIRED. It was the adapter's
+      // own `ctx.nativeStrings` read — a second, independent copy of the lane
+      // decision the frozen manifest now owns, including its own private
+      // mode-to-helper mapping — and it was dead: `attachIrStringSupport` binds
+      // a callable provider to every `string.concat` in every healthy owner. An
+      // owner that reaches lowering with no attachment must demote ALONE rather
+      // than silently mint a body from a locally decided lane. Measured before
+      // removal: zero reaches across the 65-cell byte matrix (which stayed
+      // byte-identical WITH a temporary throw in its place) and 352 passing
+      // tests in 22 string suites. The `_mode` parameter stays because the
+      // `emitStringConcat` contract is shared with the linear backend, which
+      // does dispatch on it.
+      throw new Error("ir/integration: string.concat has no prepared runtime provider");
     },
     emitStringRepeat(_alloc, _inputEncoding, provider, countedStringAppendTripCount): readonly Instr[] {
       if (!provider) throw new Error("ir/integration: string.repeat has no prepared provider");
