@@ -13724,19 +13724,76 @@ export function preallocateBlockScopedSlots(
   fctx: FunctionContext,
   stmts: readonly ts.Statement[],
 ): void {
-  // (#5271 step 5) A block that also hoists a FUNCTION DECLARATION is left
-  // alone. The hoisted function is materialized before the block's statements
-  // run, so giving it a block-scoped binding to capture makes it capture a ref
-  // cell that is only minted at the DECLARATION — a call before that point then
-  // dereferences null instead of throwing the §13.3.1 ReferenceError. Boxing
-  // the value + flag at block entry is the real fix (#5271 cluster B2, not
-  // done); until then this keeps the pre-#5271 lowering for that shape rather
-  // than turning a wrong answer into a trap.
+  // (#5271 step 5) A block that also hoists a FUNCTION DECLARATION as a DIRECT
+  // child is left alone. The hoisted function is materialized before the
+  // block's statements run, so giving it a block-scoped binding to capture
+  // makes it capture a ref cell that is only minted at the DECLARATION — a call
+  // before that point then dereferences null instead of throwing the §13.3.1
+  // ReferenceError. Boxing the value + flag at block entry is the real fix
+  // (#5271 cluster B2, not done); until then this keeps the pre-#5271 lowering
+  // for that shape rather than turning a wrong answer into a trap.
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt)) return;
   }
   for (const stmt of stmts) {
-    if (ts.isVariableStatement(stmt)) walkStmtForLetConst(ctx, fctx, stmt);
+    if (!ts.isVariableStatement(stmt)) continue;
+    reinstallPreHoistedCapturedSlots(ctx, fctx, stmt);
+    walkStmtForLetConst(ctx, fctx, stmt);
+  }
+}
+
+/**
+ * (#5271 F1) Put back the slot the FUNCTION-ENTRY pre-hoist already claimed for
+ * a block's own `let`/`const`, when a plain nested `function` captures it.
+ *
+ * `hoistFunctionDeclarations` runs at function entry and recurses into nested
+ * `if`/`try`/block statements, PINNING each capture to `fctx.localMap.get(name)`
+ * as it stands then — the slot `hoistLetConstWithTdz` claimed. Block entry then
+ * hides that entry (`saveBlockScopedShadowsForNames`), and without this the
+ * block-entry pre-allocation minted a SECOND slot and overwrote the
+ * `preHoistedLetConstSlots` record, so the declaration wrote slot B while the
+ * hoisted function kept reading slot A (null / 0 / a trap). On the base tree
+ * `compileVariableStatement`'s #2814 Bug-C path realigned the declaration to A;
+ * it is guarded by `!fctx.localMap.has(name)`, so the extra slot silenced it.
+ *
+ * The admission test is deliberately the SAME one that Bug-C path uses — a
+ * capture by a plain (non-async, non-generator) nested function, and a
+ * pre-hoist record for THIS declaration. A declaration the function-entry hoist
+ * skipped (because an outer same-named binding had already claimed the name)
+ * has no record and still gets its own block-fresh slot, which is what makes
+ * `{ p = function(){ return x; }; let x; }` capture the block binding.
+ */
+function reinstallPreHoistedCapturedSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+): void {
+  const records = fctx.preHoistedLetConstSlots;
+  if (records === undefined || records.size === 0) return;
+  const TDZ_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  if (!(stmt.declarationList.flags & TDZ_FLAGS)) return;
+  for (const decl of stmt.declarationList.declarations) {
+    if (!ts.isIdentifier(decl.name)) continue;
+    const record = records.get(decl);
+    if (record === undefined || record.valueSlot < fctx.params.length) continue;
+    const name = decl.name.text;
+    if (fctx.localMap.has(name)) continue;
+    let capturedByPlainFn = false;
+    let cpsCaptured = false;
+    for (const [capturerName, caps] of ctx.nestedFuncCaptures) {
+      if (!caps.some((c) => c.name === name)) continue;
+      if ((ctx.asyncFunctions?.has(capturerName) ?? false) || (ctx.generatorFunctions?.has(capturerName) ?? false)) {
+        cpsCaptured = true;
+        break;
+      }
+      capturedByPlainFn = true;
+    }
+    if (!capturedByPlainFn || cpsCaptured) continue;
+    fctx.localMap.set(name, record.valueSlot);
+    if (record.flagSlot !== undefined) {
+      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+      fctx.tdzFlagLocals.set(name, record.flagSlot);
+    }
   }
 }
 

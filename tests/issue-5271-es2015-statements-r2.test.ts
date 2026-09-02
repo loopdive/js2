@@ -715,3 +715,110 @@ describe("#5271 step 5 — a constant fold must not erase a TDZ throw", () => {
     );
   });
 });
+
+describe("#5271 F1 — a hoisted function nested inside a block reads the SAME slot the declaration writes", () => {
+  // Adversarial-review finding: `hoistFunctionDeclarations` runs at FUNCTION
+  // entry and recurses into nested `if`/`try`/block statements, pinning each
+  // capture to the slot `hoistLetConstWithTdz` claimed. The block-entry
+  // pre-allocation then minted a SECOND slot and overwrote the pre-hoist record,
+  // so the declaration wrote one slot while the hoisted function read another —
+  // 0 / null on the host lane, a null-pointer trap in standalone. Every shape
+  // below is a REGRESSION pin: it passes on the branch base and on node.
+  it("if-nested function reading a numeric block `let`", async () => {
+    await expectBothLanes(
+      `
+      function f() { { let x = 5; if (true) { function g() { return x; } return g(); } } }
+      LOG("f=" + f());
+    `,
+      ["f=5"],
+    );
+  });
+
+  it("if-nested function reading a STRING block `let` (property access on the capture)", async () => {
+    await expectBothLanes(
+      `
+      function s() { { let v = "nine"; if (true) { function g() { return v.length; } return g(); } } }
+      LOG("s=" + s());
+    `,
+      ["s=4"],
+    );
+  });
+
+  it("inner-block function reading TWO enclosing block bindings", async () => {
+    await expectBothLanes(
+      `
+      function h1() { { let x = 1; { let y = 2; function g() { return x + y; } return g(); } } }
+      LOG("h1=" + h1());
+    `,
+      ["h1=3"],
+    );
+  });
+
+  it("plain inner block", async () => {
+    await expectBothLanes(
+      `
+      function k8() { { let x = 8; { function g() { return x; } return g(); } } }
+      LOG("k8=" + k8());
+    `,
+      ["k8=8"],
+    );
+  });
+
+  it("a `const` string read through an inner-block function", async () => {
+    await expectBothLanes(
+      `
+      function c4() { { const s = "four"; { function g() { return s + "!"; } return g(); } } }
+      LOG("c4=" + c4());
+    `,
+      ["c4=four!"],
+    );
+  });
+
+  it("try-nested function", async () => {
+    await expectBothLanes(
+      `
+      function h5() { { let x = 9; try { function g() { return x; } return g(); } catch (e) { return -1; } } }
+      LOG("h5=" + h5());
+    `,
+      ["h5=9"],
+    );
+  });
+
+  it("mutation AFTER the declaration is visible to the nested function", async () => {
+    await expectBothLanes(
+      `
+      function h6() { { let x = 1; x = 2; if (true) { function g() { return x; } return g(); } } }
+      LOG("h6=" + h6());
+    `,
+      ["h6=2"],
+    );
+  });
+
+  it("mutation INSIDE the nested function writes the same slot", async () => {
+    await expectBothLanes(
+      `
+      function c5() { { let x = 2; if (true) { function g() { x = x + 5; return x; } return g(); } } }
+      LOG("c5=" + c5());
+    `,
+      ["c5=7"],
+    );
+  });
+
+  it("CONTROL — a closure built BEFORE the block's `let` still captures the BLOCK binding", async () => {
+    // The step-2 behaviour this fix must not undo: no pre-hoist record exists
+    // for a declaration the function-entry hoist skipped, so it still gets its
+    // own block-fresh slot.
+    await expectBothLanes(
+      `
+      function f() {
+        var p;
+        let x = 'outside';
+        { p = function() { return x; }; let x = 'inside'; }
+        return p();
+      }
+      LOG("f=" + f());
+    `,
+      ["f=inside"],
+    );
+  });
+});
