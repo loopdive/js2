@@ -741,3 +741,136 @@ describe("#5195 F4/F5 — `in` and hasOwnProperty over runtime-keyed members", (
     expect(runHost(HASOWN_CONTROL_SOURCE, "probe")).toBe(1);
   });
 });
+
+describe("#5195 R2-1 — `super[k](...)` reads the parent, not the receiver", () => {
+  // Routing `super[k](…)` through the ordinary member-call lowering compiled
+  // `super` as the RECEIVER, i.e. as `this` — so an overriding method calling
+  // `super[k]()` re-entered ITSELF. Unbounded recursion whose stack overflow
+  // escapes the wasm try/catch (measured depth 51 with a guard; base made no
+  // call at all). §13.3.7.1 splits the two roles: the lookup happens on the
+  // home object's [[Prototype]], the invocation on the current `this`.
+  const SUPER_ELEM_SOURCE = `
+    function ID(x) { return x; }
+    var depth = 0;
+    class C { [ID('m')](a) { return 10 + a; } }
+    class E extends C {
+      [ID('m')](a) {
+        depth = depth + 1;
+        if (depth > 50) { throw new RangeError('loop'); }
+        return 100 + super[ID('m')](a);
+      }
+    }
+    export function probe() {
+      depth = 0;
+      var v = new E()[ID('m')](1);
+      return v === 111 && depth === 1 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: an override calling super[k] does not recurse", async () => {
+    expect(await runStandalone(SUPER_ELEM_SOURCE, "probe", "issue-5195-r2-1-super.js")).toBe(1);
+  });
+
+  it("host lane agrees on super[k]", () => {
+    expect(runHost(SUPER_ELEM_SOURCE, "probe")).toBe(1);
+  });
+
+  // Two levels: the middle class's `super[k]` must reach the ROOT, and the
+  // leaf's must reach the middle.
+  const SUPER_CHAIN_SOURCE = `
+    function ID(x) { return x; }
+    class A { [ID('m')]() { return 1; } }
+    class B extends A { [ID('m')]() { return 10 + super[ID('m')](); } }
+    class D extends B { [ID('m')]() { return 100 + super[ID('m')](); } }
+    export function probe() { return new D()[ID('m')]() === 111 ? 1 : 0; }
+  `;
+
+  it("standalone: super[k] walks one level per frame", async () => {
+    expect(await runStandalone(SUPER_CHAIN_SOURCE, "probe", "issue-5195-r2-1-chain.js")).toBe(1);
+  });
+
+  it("host lane agrees on the super[k] chain", () => {
+    expect(runHost(SUPER_CHAIN_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-2 — the static fold still owns constructor receivers", () => {
+  // The F5 decline was too wide: it also sent CONSTRUCTOR receivers to the
+  // runtime `__hasOwnProperty`, which has no arm for a `$ClassName`
+  // class-object's statics — so `C.hasOwnProperty('sm')` / `('sf')` flipped
+  // true → false against base. Only `C.prototype` is the object whose own-key
+  // set moved to a `$Object` the checker cannot enumerate.
+  const CONSTRUCTOR_HASOWN_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 2; } static sm() { return 3; } static sf = 4; }
+    class P { m() { return 1; } static sm() { return 3; } static sf = 4; }
+    export function probe() {
+      return C.hasOwnProperty('sm') && C.hasOwnProperty('sf') && !C.hasOwnProperty('nope')
+        && P.hasOwnProperty('sm') && P.hasOwnProperty('sf')
+        && C.prototype.hasOwnProperty('dyn') && !C.prototype.hasOwnProperty('sm')
+        && C.propertyIsEnumerable('sf') && !C.propertyIsEnumerable('sm') ? 1 : 0;
+    }
+  `;
+
+  it("standalone: statics stay visible on the class object", async () => {
+    expect(await runStandalone(CONSTRUCTOR_HASOWN_SOURCE, "probe", "issue-5195-r2-2-ctor-hasown.js")).toBe(1);
+  });
+
+  it("host lane agrees on constructor-receiver hasOwnProperty", () => {
+    expect(runHost(CONSTRUCTOR_HASOWN_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-3 — an inheriting class's prototype is built at definition", () => {
+  // `class D extends C { n(){} }` where only C is runtime-keyed: `__proto_D`
+  // was never force-built, because the top-level collector looked only at the
+  // class's OWN members. So `new D()[ID('n')]` answered `undefined` until
+  // something happened to touch `D.prototype`, and correctly afterwards — an
+  // order-dependent wrong answer. The probe reads BEFORE any such touch.
+  const NO_TOUCH_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('d')]() { return 2; } }
+    class D extends C { n() { return 'n'; } }
+    export function probe() {
+      var d = new D();
+      var ownViaRuntimeKey = typeof d[ID('n')] === 'function';
+      var inheritedRuntimeKeyed = d[ID('d')]() === 2;
+      var plainStatic = d.n() === 'n';
+      var called = d[ID('n')]() === 'n';
+      return ownViaRuntimeKey && inheritedRuntimeKeyed && plainStatic && called ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a descendant resolves before anything touches its prototype", async () => {
+    expect(await runStandalone(NO_TOUCH_SOURCE, "probe", "issue-5195-r2-3-notouch.js")).toBe(1);
+  });
+
+  it("host lane agrees on the untouched descendant", () => {
+    expect(runHost(NO_TOUCH_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-5 — the callee is read before the arguments", () => {
+  // §13.3.6.1 evaluates the MemberExpression and performs GetValue on it before
+  // ArgumentListEvaluation. Observable when the member is an accessor (or sits
+  // behind a Proxy `get` trap): its side effects must come first.
+  const ORDER_SOURCE = `
+    function ID(x) { return x; }
+    var order = 0;
+    class C { get [ID('acc')]() { order = order * 10 + 1; return function () { return 7; }; } }
+    function arg() { order = order * 10 + 2; return 0; }
+    export function probe() {
+      order = 0;
+      new C()[ID('acc')](arg());
+      return order === 12 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: an accessor member runs before the argument list", async () => {
+    expect(await runStandalone(ORDER_SOURCE, "probe", "issue-5195-r2-5-order.js")).toBe(1);
+  });
+
+  it("host lane agrees on the evaluation order", () => {
+    expect(runHost(ORDER_SOURCE, "probe")).toBe(1);
+  });
+});

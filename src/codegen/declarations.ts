@@ -63,7 +63,7 @@ import {
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
-import { classHasUnresolvedComputedMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1)
+import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -2394,6 +2394,25 @@ function isTopLevelClassAccessorPropertyWrite(ctx: CodegenContext, target: ts.Ex
  * runtime-heritage effects require source-ordered module initialization. The
  * statement emitter consults the final IR skip set.
  */
+/**
+ * (#5195 R2-3) True when this top-level class declaration INHERITS a
+ * runtime-keyed member — its own keys may all fold, but the prototype `$Object`
+ * that starts the chain walk to the inherited one still has to be built at
+ * ClassDefinitionEvaluation.
+ *
+ * Name-keyed, so it needs the class-collection pass to have run; it has, the
+ * same way `isExactTopLevelClassAccessorWrite` above relies on
+ * `ctx.classAccessorSet`. A class with runtime-keyed members of its OWN is
+ * covered by the syntactic check beside this one and does not reach here.
+ */
+function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.ClassDeclaration): boolean {
+  if (!ctx.standalone) return false;
+  const declaredName = statement.name?.text;
+  if (declaredName === undefined) return false;
+  const className = ctx.anonClassExprNames.get(statement) ?? declaredName;
+  return ctx.classSet.has(className) && classHierarchyHasDynamicMember(ctx, className);
+}
+
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
   if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
     ctx.moduleInitStatements.push(statement);
@@ -2406,7 +2425,18 @@ function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, st
   // prototype install. Collecting the declaration routes it through
   // `compileNestedClassDeclaration`, which owns that emission. Byte-inert for
   // every class whose keys fold.
-  if (ts.isClassDeclaration(statement) && classHasUnresolvedComputedMemberName(ctx, statement)) {
+  // (#5195 R2-3) …and so does a DESCENDANT of such a class, even when its own
+  // keys all fold. Its prototype `$Object` is the start of the chain walk that
+  // reaches the inherited runtime-keyed member, so it must be built at
+  // ClassDefinitionEvaluation too. Without this, `class D extends C { n(){} }`
+  // answered `new D()[ID('n')]` as `undefined` until something happened to
+  // touch `D.prototype`, and correctly afterwards — an order-dependent wrong
+  // answer. (`shouldCollectTopLevelClassForRuntimeHeritage` above cannot cover
+  // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
+  if (
+    ts.isClassDeclaration(statement) &&
+    (classHasUnresolvedComputedMemberName(ctx, statement) || topLevelClassInheritsRuntimeKeys(ctx, statement))
+  ) {
     ctx.moduleInitStatements.push(statement);
     return true;
   }
