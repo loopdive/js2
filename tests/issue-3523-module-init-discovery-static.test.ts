@@ -25,13 +25,14 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { getCompileProfile, refreshCompileProfileConfig, resetCompileProfile } from "../src/compile-profile.js";
 import { compileMultiSource } from "../src/compiler.js";
 import { compile, type CompileResult } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 import { assembleOriginalHarness } from "./test262-original-harness.js";
-import { parseMeta } from "./test262-runner.js";
+import { parseMeta, runTest262File } from "./test262-runner.js";
 
 // Register the statement/expression delegates used by generateModule.
 import "../src/codegen/expressions.js";
@@ -39,6 +40,12 @@ import "../src/codegen/expressions.js";
 const PROFILE_ENV = "JS2WASM_COMPILE_PROFILE";
 const FORCE_PASS2_ENV = "JS2WASM_TEST_FORCE_MODULE_INIT_PASS2";
 const DISABLE_PRELIFT_ENV = "JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT";
+/**
+ * (gap-6a v2) The route is opt-in. Every case below that exercises it says so
+ * explicitly through {@link withProfiler}; the `(g)` case deliberately does NOT,
+ * which is how "off by default" is measured rather than asserted.
+ */
+const ENABLE_ENV = "JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC";
 
 const originalProfileMode = process.env[PROFILE_ENV];
 
@@ -47,6 +54,7 @@ function restoreEnv(): void {
   else process.env[PROFILE_ENV] = originalProfileMode;
   Reflect.deleteProperty(process.env, FORCE_PASS2_ENV);
   Reflect.deleteProperty(process.env, DISABLE_PRELIFT_ENV);
+  Reflect.deleteProperty(process.env, ENABLE_ENV);
   refreshCompileProfileConfig();
   resetCompileProfile();
 }
@@ -97,7 +105,11 @@ async function withProfiler<T>(env: Record<string, string>, body: () => Promise<
   process.env[PROFILE_ENV] = "1";
   Reflect.deleteProperty(process.env, FORCE_PASS2_ENV);
   Reflect.deleteProperty(process.env, DISABLE_PRELIFT_ENV);
+  // Opt in by default HERE, not in production: this suite's subject is the
+  // route. `{ [ENABLE_ENV]: "" }` from a caller turns it back off.
+  process.env[ENABLE_ENV] = "1";
   Object.assign(process.env, env);
+  if (process.env[ENABLE_ENV] === "") Reflect.deleteProperty(process.env, ENABLE_ENV);
   refreshCompileProfileConfig();
   resetCompileProfile();
   const realWrite = process.stderr.write.bind(process.stderr);
@@ -698,6 +710,69 @@ export function read(): number { return p + q; }
     expect(refused.result.success).toBe(false);
     expect(refused.result.errors.some((e) => e.message.includes(message))).toBe(true);
   }, 120_000);
+
+  it("(g) the route is OFF by default — the opt-in seam is the only thing that skips pass 1", async () => {
+    // (gap-6a v2) The default build must be the two-pass build, unchanged. Every
+    // shape this suite calls ADMITTED still runs pass 1 with the seam unset, and
+    // still reads its value — so the whole slice is inert until someone opts in.
+    for (const shape of ADMITTED_SHAPES) {
+      for (const lane of LANES) {
+        const dflt = await compileWithCensus(shape.source, lane, `g6a-default-${shape.name}-${lane.name}.ts`, {
+          [ENABLE_ENV]: "",
+        });
+        expect({ shape: shape.name, lane: lane.name, prelift: dflt.census.prelift, pass1: dflt.census.pass1 }).toEqual({
+          shape: shape.name,
+          lane: lane.name,
+          prelift: 0,
+          pass1: 1,
+        });
+        expect(WebAssembly.validate(dflt.result.binary), `${shape.name}/${lane.name}`).toBe(true);
+        if (lane.runnable) expect(await readValue(dflt.result, lane), `${shape.name}/${lane.name}`).toBe(shape.read);
+      }
+    }
+  }, 180_000);
+
+  it("(g) WHY it is off — two runner-faithful files the seam turns from pass to fail", async () => {
+    // The measurement that put the route behind the seam, kept as a mutation
+    // rather than a paragraph. Both files' populations are ADMITTED by the gate
+    // (census re-measured 2026-09-02: 87/87 of the cited regression list is),
+    // and both are green on the default two-pass route:
+    //
+    //  * `decodeURI/S15.1.3.1_A1.2_T1.js` — `for (var indexJ = interval[i][0]; …)`
+    //    at module scope. `compileForStatement` captures the module-global index
+    //    BEFORE compiling `interval[i][0]` and pushes the `global.set` after it,
+    //    so the string-constant import that the element access's bounds-check
+    //    error path adds shifts every live index except the captured one. Pass 1
+    //    masked it by pre-creating that import. Latent compiler bug, exposed —
+    //    not caused — by the pass-1 skip; worth its own issue.
+    //  * `function/dstr/ary-ptrn-elem-id-iter-val.js` — a top-level
+    //    `function f([w]) { … }` whose body is compiled between the passes emits
+    //    a `ref.test` fast-path arm for the tuple struct that the initializer's
+    //    own `f([…])` call mints. With pass 1 gone the init compiles after the
+    //    body, the arm never exists, and `w` reads `undefined`. This one is a
+    //    property of the ROUTE: producing that fact IS compiling the initializer.
+    //
+    // If a later change makes either of these pass under the seam, that is a
+    // real result — re-measure the full corpus before flipping the default.
+    const files = [
+      "test262/test/built-ins/decodeURI/S15.1.3.1_A1.2_T1.js",
+      "test262/test/language/statements/function/dstr/ary-ptrn-elem-id-iter-val.js",
+    ];
+    if (!files.every((file) => existsSync(file))) return; // submodule not present in this job
+    for (const file of files) {
+      Reflect.deleteProperty(process.env, ENABLE_ENV);
+      const byDefault = await runTest262File(resolve(file), "gap6a-v2");
+      process.env[ENABLE_ENV] = "1";
+      let underSeam;
+      try {
+        underSeam = await runTest262File(resolve(file), "gap6a-v2");
+      } finally {
+        Reflect.deleteProperty(process.env, ENABLE_ENV);
+      }
+      expect(byDefault.status, `${file}: default route`).toBe("pass");
+      expect(underSeam.status, `${file}: under the opt-in seam`).not.toBe("pass");
+    }
+  }, 300_000);
 
   it("(f) keeps test262 harness diagnostic counts identical through the runner assembly", async () => {
     const file = "test262/test/language/statements/for-in/cptn-decl-itr.js";

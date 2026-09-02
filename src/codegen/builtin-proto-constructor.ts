@@ -66,6 +66,11 @@ import {
   isSupportedBuiltinNamespace,
 } from "./builtin-static-globals.js";
 import { emitStandaloneFunctionIntrinsicValue } from "./function-intrinsic-carrier.js";
+// (#5194 step 1) TypedArray carriers. Both are used only inside functions, so
+// the module cycle these introduce is evaluation-order safe.
+import { emitTaCtorValue } from "./dataview-native.js";
+import { taCtorKindOf } from "./registry/types.js";
+import { emitTypedArrayIntrinsicCtorObject } from "./array-object-proto.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -86,8 +91,26 @@ export function hasBuiltinProtoConstructorCarrier(builtinName: string): boolean 
   return (
     builtinName === "Function" ||
     isBuiltinConstructorIdentityName(builtinName) ||
-    isSupportedBuiltinNamespace(builtinName)
+    isSupportedBuiltinNamespace(builtinName) ||
+    // (#5194 step 1) The TypedArray family. `<View>.prototype.constructor` is
+    // the per-kind `$__ta_ctor` singleton — the SAME value the bare
+    // `Uint8Array` identifier reads (Int8Array is already covered above by the
+    // #4490 identity carrier). `%TypedArray%.prototype.constructor` is the
+    // abstract intrinsic ctor object (§23.2.3.5). Without a carrier here the
+    // seeder skipped `constructor` entirely, so `verifyNotEnumerable(
+    // TA.prototype, "constructor")` null-dereferenced the missing descriptor.
+    isTypedArrayProtoConstructorName(builtinName)
   );
+}
+
+/**
+ * (#5194 step 1) The TypedArray-family prototype names whose own `constructor`
+ * resolves to a TypedArray carrier: the 9 wired concrete views plus the
+ * abstract `%TypedArray%` intrinsic. `taCtorKindOf` is the same predicate the
+ * bare-identifier read uses, so the two cannot drift.
+ */
+function isTypedArrayProtoConstructorName(builtinName: string): boolean {
+  return builtinName === "%TypedArray%" || taCtorKindOf(builtinName) >= 0;
 }
 
 /**
@@ -110,6 +133,13 @@ export function emitBuiltinProtoConstructorValue(
   }
   if (isSupportedBuiltinNamespace(builtinName)) {
     return emitBuiltinNamespaceObject(ctx, fctx, builtinName);
+  }
+  // (#5194 step 1) TypedArray family — see `isTypedArrayProtoConstructorName`.
+  if (builtinName === "%TypedArray%") {
+    return emitTypedArrayIntrinsicCtorObject(ctx, fctx);
+  }
+  if (taCtorKindOf(builtinName) >= 0) {
+    return emitTaCtorValue(ctx, fctx, builtinName);
   }
   return null;
 }

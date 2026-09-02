@@ -5,20 +5,30 @@
  *
  * ## The question pass 1 exists to answer
  *
- * `module-init-pass1` compiles the whole initializer before any top-level
- * function body, purely so those bodies can see what pass 1 discovers. Measured
- * (gap-6 design record, 2026-09-02) pass 1 mutates 45+ `ctx` collections on a
- * test262 harness population, but only ONE of them is decision-changing for the
- * bodies compiled between the passes: the closure binding family
- * (`closureMap` / `closureInfoByTypeIdx` / `closureStructByNode`). Remove pass 1
- * with nothing in its place and `doneprintHandle.js`'s
- * `var __consolePrintHandle__ = function (msg) { print(msg); }` compiles from a
- * `call_ref` on the closure struct to a bare call through the dynamic
- * `__call_function_*` boundary; `$DONE` inlines it and the runner never observes
- * completion — six async regressions on an 89-file runner-faithful sample.
+ * **This route is OPT-IN and OFF by default** — see
+ * {@link DISCOVERY_STATIC_ENABLE_SEAM} for the six measured regression clusters
+ * that put it there. Everything below describes what the route DOES when it is
+ * switched on; it is not a claim that switching it on is sound.
  *
- * This module produces that one family AHEAD of the bodies, so the initializer
- * can compile exactly ONCE, after them.
+ * `module-init-pass1` compiles the whole initializer before any top-level
+ * function body, purely so those bodies can see what pass 1 discovers. The
+ * gap-6 design record (2026-09-02) measured that pass 1 mutates 45+ `ctx`
+ * collections on a test262 harness population and concluded that only ONE of
+ * them — the closure binding family (`closureMap` / `closureInfoByTypeIdx` /
+ * `closureStructByNode`) — is decision-changing for the bodies compiled between
+ * the passes. **That conclusion is FALSE, and the falsifying measurement is
+ * recorded on {@link DISCOVERY_STATIC_ENABLE_SEAM}:** the bodies also specialize
+ * against the argument TYPES the initializer's own expressions mint, which no
+ * AST-level inventory can publish. The census that produced it sampled 39
+ * harness files, and the effect it missed is a ~0.2 % rate.
+ *
+ * The closure family is nevertheless real: remove pass 1 with nothing in its
+ * place and `doneprintHandle.js`'s `var __consolePrintHandle__ = function (msg)
+ * { print(msg); }` compiles from a `call_ref` on the closure struct to a bare
+ * call through the dynamic `__call_function_*` boundary; `$DONE` inlines it and
+ * the runner never observes completion — six async regressions on an 89-file
+ * runner-faithful sample. This module produces that family AHEAD of the bodies,
+ * so that under the seam the initializer compiles exactly ONCE, after them.
  *
  * ## Why registering the shared WRAPPER is sufficient — the measured mechanism
  *
@@ -64,7 +74,11 @@
  * | population reaches beyond this source | `"discover"` mode exists to run pass 1 for the whole graph; a multi-source population is out of scope |
  * | population has no pre-liftable closure | there is no discovery to replace, so skipping pass 1 would be a bet on the OTHER families rather than a substitution |
  *
- * Fail-closed throughout: anything not provably reproducible keeps pass 1.
+ * Fail-closed throughout: anything not provably reproducible keeps pass 1. The
+ * refusal table above is what the gate checks; it is NOT sufficient, because the
+ * two clusters named on {@link DISCOVERY_STATIC_ENABLE_SEAM} have no syntactic
+ * marker a fail-closed AST gate could name short of "the population contains a
+ * top-level function declaration", which every runner-faithful harness does.
  */
 
 import ts from "typescript";
@@ -85,6 +99,37 @@ import { mintClosureStructTypes, registerClosureBindingInfo } from "../closures/
  * it.
  */
 export const PRELIFT_DISABLE_SEAM = "JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT";
+
+/**
+ * The route this module implements is **opt-in and OFF by default**
+ * (2026-09-02, gap-6a v2). `compileDeclarations` plans nothing, registers
+ * nothing and skips no pass unless this is set to `"1"`, so a default build is
+ * byte-identical to the two-pass one.
+ *
+ * Why: the first landing (PR #5474) defaulted the route ON and its merge group
+ * measured **76 pass→other test262 regressions** across six clusters, every one
+ * of them on an ADMITTED population (measured again on this branch: 87/87 of the
+ * cited files take the pre-lift route). Two mechanisms were root-caused, and one
+ * of them is not a gap in the inventory but a property of the route:
+ *
+ * 1. **Bodies specialize against types the INITIALIZER mints.** `function
+ *    f([w]) { … }` compiled between the passes emits a `ref.test` fast-path arm
+ *    for the tuple struct that `f([7])` mints in the init. With pass 1 gone the
+ *    init compiles AFTER the bodies, the arm is never generated, and `w` reads
+ *    `undefined` — 33 of the 76. No AST-level closure inventory can publish that
+ *    family; producing it IS compiling the initializer, i.e. pass 1.
+ * 2. **A latent stale-index bug that pass 1 was masking.** `compileForStatement`
+ *    captures `ctx.moduleGlobals.get(name)` BEFORE compiling the initializer
+ *    expression and pushes the `global.set` after it, so a string-constant
+ *    import inserted by that expression shifts every live index except the one
+ *    already captured. Pass 1 hid it by pre-creating those imports; without pass
+ *    1 a top-level `for (var j = a[0]; …)` writes `a[0]` into the PRECEDING
+ *    global — the decodeURI/encodeURI OOB and ill-typed-module clusters.
+ *
+ * The gate below is unchanged and still fail-closed; what changed is that
+ * passing it no longer skips anything on its own.
+ */
+export const DISCOVERY_STATIC_ENABLE_SEAM = "JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC";
 
 /** A module-scope closure whose declare half can be reproduced ahead of the bodies. */
 export interface ModuleClosurePreLiftSite {

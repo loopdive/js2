@@ -173,6 +173,7 @@ import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hois
 import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
 import {
   applyModuleClosurePreLift,
+  DISCOVERY_STATIC_ENABLE_SEAM,
   moduleInitDiscoveryIsStatic,
   planModuleClosurePreLift,
   PRELIFT_DISABLE_SEAM,
@@ -6093,15 +6094,15 @@ export function compileDeclarations(
     !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
     moduleInitChunksRequired(orderedInitEntriesForChunking);
 
-  // (#3523 R4 gap-6a) Pass 1's only decision-changing product for the bodies
-  // below is the closure binding family. When the pre-lift can reproduce that
-  // family from the AST alone, the initializer compiles exactly ONCE, in the
-  // pass-2 slot — no pass-1 body, and no dead re-lifted `$__closure_N` twin.
-  // Fail-closed; see `declarations/module-init-closure-prelift.ts` for the
-  // measured mechanism (the call site casts to the SIGNATURE wrapper, not to
-  // the per-closure struct) and for every refusal.
+  // (#3523 R4 gap-6a) The pass-1 skip is OPT-IN and OFF by default — see
+  // `declarations/module-init-closure-prelift.ts` for the mechanism, and the
+  // `gap-6a v2 repair record` in `plan/issues/3523-ir-r4-module-init-compile-once.md`
+  // for the six measured regression clusters that put it behind this seam. With
+  // the seam unset every expression below is `false`/`undefined` and this
+  // function takes exactly the two-pass path it took before the slice.
+  const discoveryStaticEnabled = process.env[DISCOVERY_STATIC_ENABLE_SEAM] === "1";
   const preLift =
-    (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
+    discoveryStaticEnabled && (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
       ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
       : undefined;
   // `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` means "the unconditional two-pass
@@ -6112,18 +6113,19 @@ export function compileDeclarations(
     process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
     moduleInitDiscoveryIsStatic(preLift);
 
-  // (#4195) The dedupe MARK is a program POSITION, not a pass-1 artifact: it
-  // records where the initializer's diagnostics start so the post-pass-2
-  // reconcile never truncates what came before. Taken here whether or not pass 1
-  // runs, so a discovery-static population still collapses the duplicate pair
-  // measured on `for-in/cptn-decl-itr.js` (top-level function body + the single
-  // init compile both report it).
-  pass1DiagnosticMark = ctx.errors.length;
+  // (#4195) With pass 1 skipped the dedupe MARK is a program POSITION, not a
+  // pass-1 artifact: it records where the initializer's diagnostics start so the
+  // post-pass-2 reconcile never truncates what came before. Taken early ONLY on
+  // the opt-in route, so a discovery-static population still collapses the
+  // duplicate pair measured on `for-in/cptn-decl-itr.js`; the default route
+  // keeps the mark exactly where it has always been, inside the pass-1 branch.
+  if (discoveryStatic) pass1DiagnosticMark = ctx.errors.length;
 
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
   // skipped in `"skip"` mode, where an earlier source already ran it over the
-  // same complete statement list, and for a discovery-static population, where
-  // the pre-lift above already published what it would have discovered.
+  // same complete statement list, and — under the opt-in seam only — for a
+  // discovery-static population, where the pre-lift already published what it
+  // would have discovered.
   if (
     (hasModuleInits || hasStaticInits) &&
     moduleInitMode !== "skip" &&
@@ -6132,6 +6134,7 @@ export function compileDeclarations(
     !discoveryStatic
   ) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
