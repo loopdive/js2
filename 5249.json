@@ -1,11 +1,10 @@
 {
   "id": "5249",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-31T21:37:22Z",
-  "updated_at": "2026-08-31T21:37:22Z",
-  "write_id": "8406-s0doezc3",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/dev-5249",
+  "requested_by": "ttraenkler/dev-5249",
+  "status": "in-progress",
+  "branch": "issue-5249-adjustcalendardate-unreachable",
+  "claimed_at": "2026-09-02T20:14:41Z",
+  "updated_at": "2026-09-02T20:14:41Z",
+  "write_id": "11559-p3gl4ap4"
 }
