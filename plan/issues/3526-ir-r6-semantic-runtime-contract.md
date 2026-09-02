@@ -3987,3 +3987,205 @@ one this slice's rows describe; `stringMethodPlan`; `String()` coercion;
 — all unchanged. The whole-shape frozen-policy pin at
 `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-445` did **not**
 move, which is the mechanical signature of a slice that adds no policy field.
+
+## 2026-09-02 F2-S3 implementation plan — string.eq under manifest policy (family 2, slice 3)
+
+Grounded on `origin/main` `351f2bfc6b` (= merged F2-S2, PR #5440). Slice
+claim: `#3526:f2s3` (`ttraenkler/fable-ir-takeover`). Three probe lanes
+(resolve arm + registration / BEFORE-half byte matrix / test surface) ran
+against that commit; every line number below is theirs. The F2-S2 checkpoint's
+P4 handoff (`:3786-3802`) is the starting point and is confirmed by
+measurement.
+
+### What moves and what does not
+
+- **The arm is a THREE-symbol branch today**: `integration.ts:6280-6296`
+  serves `IR_STRING_CONCAT_FN || IR_STRING_CONCAT_OWNED_FN ||
+  IR_STRING_EQUALS_FN` with one raw `ctx.nativeStrings` read (`:6284`) and one
+  symbol→spelling ternary per lane (`:6286-6291` native helpers, `:6294`
+  host field). **First move is a SPLIT, not a rewrite**: lift
+  `symbol === IR_STRING_EQUALS_FN` into its own `else if` directly after the
+  F2-S1 compare arm (`:6256-6279`), above the concat pair; the two concat
+  symbols keep their lane read and raw lookup (`else if` order across
+  disjoint symbols is byte-inert). Then migrate only the lifted arm.
+- **Host arm = `exactCallableImportIndex(ctx, arm.module, arm.field)`, NOT
+  `ctx.funcMap.get`.** `wasm:js-string.equals` is registered by
+  `addStringImports` (`registry/imports.ts:609-700`) as the third of a fixed
+  five-import block (`concat, length, equals, substring, charCodeAt`,
+  `:628-663`), by a base-phase caller (legacy collector pre-pass
+  `import-collector.ts:1668/2142/2157/2175`, or the IR pre-pass
+  `prepareStrings` `:7099-7101` — `instrUsesStrings` already includes
+  `string.eq` at `:7232`), never alone and always ahead of Phase 3. It IS in
+  `funcMap` but under the bare field `"equals"`, subject to #1072 user-function
+  shadowing — which is exactly why the arm has never used `funcMap`.
+  `exactCallableImportIndex` (`:6362-6370`) derives the index from
+  import-section position, mints nothing, and is shift-immune. So
+  `preparedStringEqProvider` returns `{arm:"host", module: record.module,
+  field: record.field}` (a deliberate deviation from F2-S1's `{arm, field}`
+  shape and from its source pin `toContain("ctx.funcMap.get(arm.field)")`).
+  No attached-target recognition is needed (F1-S4's
+  `attachedExternIsUndefinedArm` exists because from-ast deleted the raw call;
+  here from-ast is untouched and the `string.eq` instr still triggers
+  `addStringImports`).
+- **Native arm** = `runtime-callable` on `__str_equals`
+  (`native-strings-basics.ts:433-449`, minted via `ensureNativeStringHelpers`
+  `native-strings.ts:94-140`, resolved by `nativeStrHelperHandle`
+  `func-space.ts:126-133` as a #3909 stable handle). Physical ABI
+  `(ref $str, ref $str) -> i32`; semantic signature
+  `EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE` (`intrinsics.ts:287-291`) — the
+  same relationship F2-S1's `__str_compare` row has. Reuse it; no new
+  signature.
+- **Untouched**: from-ast (`:13178-13183`, `:11410` — lane-free, #2955 gate
+  scoped to from-ast stays green), `string-support.ts` attach (`:57-77`,
+  `:132-148` — unconditional, binding kind stays `intrinsic`), `lower.ts:2275`,
+  `wasmgc-emitter.ts:91-96` (`i32.eqz` on negate), `nodes.ts`, `builder.ts`,
+  `runtime-host-capabilities.ts` (row exists `:303`, func id `:67`),
+  `registry/imports.ts`, `import-collector.ts`, `legality.ts:274` (`string.eq`
+  allowed on linear), `linear-integration.ts:1620-1622` (resolves `__str_eq`
+  ignoring the provider — the disabled policy there is inert, as for compare).
+- **The emitter no-provider fallback `integration.ts:6718-6727`** (the second
+  `ctx.nativeStrings` read in `emitStringEquals`, backed by
+  `computeStringBackend` `:5163-5188`): measured **0 reaches** across all 55
+  BEFORE cells; attach is unconditional on every healthy owner (`:7195-7210`)
+  but conditional on `ctx.programAbiTypes` (`:7137-7138`), and
+  `prepared-component-dependencies.ts:636-642` fails any component whose
+  `string.eq` lacks a provider before lowering. Probe P1 decides
+  retire-vs-pin by measurement (temporary throw over the full matrix), NOT by
+  argument from F2-S1's sub-B (whose linear half was itself corrected).
+
+### Contract (F2-S1's 10-point edit list, with the eq-specific deltas)
+
+1. `StringEqPolicy { eq: "host" | "native" | "unsupported" }` +
+   `STRING_EQ_POLICY_DISABLED` beside `runtime-manifest.ts:184-196`; optional
+   field on `RuntimeManifestPolicy` beside `:221-225`, required on
+   `FrozenRuntimeManifestPolicy` beside `:229-235`; constructor default +
+   refreeze beside `:1257`/`:1264`.
+2. Feature `js.string.eq` (`:326-327`, union `:66-70`); provider ids
+   `host.js.string.eq` / `native.js.string.eq` (`:330-336`); rows beside
+   `:741-756` — host `{kind:"host-callable", capability:"string.eq"}` with
+   `hostCapabilities:["string.eq"]` (type-checks: `string.eq` is a func id),
+   native `{kind:"runtime-callable", symbol:"__str_equals"}`; both with
+   `EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE`; `stringEqProviderId` beside
+   `:760-763`; feature-set predicate beside `:765-769`; splice into
+   `RUNTIME_PROVIDERS` `:1021-1029`; `#selectProvider` branch beside
+   `:1621-1636` throwing `provider-target-unavailable` naming `stringEq`.
+3. `integrationStringEqPolicy(ctx) = { eq: ctx.nativeStrings ? "native" :
+   "host" }` beside `integration.ts:889-891` — the exact former truth table
+   of `:6284`; policy literal beside `:976`; owner-local partition twin of
+   `:3696-3710`; demand `irStringEqDemand` beside `:902-919` — a plain
+   `instr.kind === "string.eq"` scan over blocks + `asyncPlan.states`
+   (simpler than compare's call scan); `stringEqDemand:` beside `:983`;
+   `intrinsic-support.ts` input field beside `:390-398`, the "freeze nothing"
+   guard `:431` (`&& !input.stringEqDemand`), `requestFeature` beside `:440`,
+   feature const beside `:286`; `preparedStringEqProvider` beside `:301-320`
+   using `resolveRuntimeHostCapabilityFuncRecord` and returning
+   `{arm:"host", module, field}` / `{arm:"native", symbol}`.
+4. The resolve arm: split as above, then the lifted eq arm reads
+   `preparedStringEqProvider(prepared)`, throws `selection-preparation-mismatch`
+   when absent, native → `ensureNativeStringHelpers(ctx); nativeStrHelperHandle(ctx, arm.symbol)`,
+   host → `exactCallableImportIndex(ctx, arm.module, arm.field)`. The arm body
+   runs once per module per symbol (registry-cached by
+   `irCallableBindingKey`); the per-instr count equals the attach count.
+5. Adapters: `stringEq: STRING_EQ_POLICY_DISABLED` in
+   `backend/linear-integration.ts:680` and `codegen/stdlib-selfhost.ts:507`
+   (+ import lists `:140` / `:75`).
+6. No edit to `plan.invocation`, no from-ast edit, no new import
+   registration anywhere (contract: import set AND order on every lane
+   unchanged by construction; the matrix confirms rather than establishes).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — emitter fallback `:6718-6727`**: temporary throw + the full 55-cell
+  matrix + the affected suites; 0 reaches ⇒ retire it fail-closed (F2-S1
+  sub-B shape, with the "refuses to lower an unattached string.eq" pin);
+  any reach ⇒ keep and pin it explicitly as not-moved, naming the lane.
+- **P2 — the import-pruning pass**: at arm time `exactCallableImportIndex`
+  returns 2 (`EQ`/`NEQ`/`TPLEQ`) or 3 (`EQMIX`/`STRMIX`) while the emitted
+  module has `equals` at #0/#1/#3 — unused string imports are dropped before
+  emission and the registry's locator (`program-abi-provider-planning.ts:299-300`)
+  keeps the final index right. The probe could not name the pruning pass;
+  name it, and state why the migrated arm (same lookup, same locator) is
+  unaffected.
+- **P3 — pins that move**, all measured: (a)
+  `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-443` gains
+  `stringEq: { eq: "unsupported" }` (the only whole-shape pin;
+  `issue-3526-ir-runtime-manifest.test.ts` has no policy analog;
+  `compare.test.ts:252-262` asserts fields individually — extend to six); (b)
+  `tests/issue-3526-string-boundary-schema.test.ts:356-363` "no provider
+  names any of the six capabilities" FIRES once `host.js.string.eq` names
+  `string.eq` — narrow `NEW_IDS` (`:75-84`) for that pin to the five still
+  un-provided ids (F2-S2 called this "the regression fence for the NEXT
+  slice"); (c) `schema.test.ts:627-638` "keeps the concat/eq resolve arm on
+  ctx.nativeStrings and the raw import lookup" — keyed on the three-symbol
+  marker and `exactCallableImportIndex(ctx, "wasm:js-string", field)`: after
+  the split the concat arm has no `field` variable, so re-spell to
+  `"concat"` and retitle concat-only; the eq half INVERTS into the new suite;
+  (d) `scripts/ir-kind-neutrality-baseline.json:287` cites
+  `integration.ts:6327` (`forof.string`) — inserting the eq arm above shifts
+  it: the sanctioned one-line citation refresh (normalize-and-diff both JSON
+  documents; never commit the regenerator's 500-line output).
+- **P4 — pre-existing red controls on the grounding sha, NOT this slice's**:
+  `tests/issue-320.test.ts` "no dead imports (no-op)" (WAT now carries
+  `string_constants."add"` module-init globals) and three `issue-3529-*`
+  pins (#4512 `!ref` ToBoolean; array-literal widening `<module-init>` row).
+  Confirm they are red on base BEFORE your first edit and leave them; file
+  or cite an issue for them, do not fix here.
+
+### Verification matrix
+
+- **V-A byte cells — 55/55 identical to the BEFORE record.** The BEFORE
+  half is preserved: `scratchpad/f2s3-matrix-before.{mts,json,md}` + 55 full
+  WAT texts under `wat/` + the 6-site instrumentation patch
+  (`.instrument.py/.diff`). Fixtures (sources verbatim in the JSON): `EQ`,
+  `NEQ`, `EQMIX`, `FOROFEQ`, `TPLEQ`, `CLEAN`, `STRCMP`, `STRCMP4`, `STRMIX`,
+  `FOROFSTR`, `BOTH` × gc-host / gc-native-strings / standalone / wasi /
+  linear: bytes, sha256, WAT sha256, ordered import list WITH func/global
+  indices (parsed from the binary import section — `result.imports` covers
+  only `env` func descriptors and is blind to this seam), errors,
+  `irOutcomes`. Includes reproducing `FOROFEQ::gc-host`'s pre-existing
+  build-stage demote (`operand-coercion-unsupported`, 1513 B, `270e2a6a…`)
+  byte-identically — it is the host `stringForOfPlan() === "iter-host"`
+  binding the loop variable as externref, not the eq seam.
+- **V-B reach**: re-apply the instrumentation on the AFTER tree — host 5 /
+  native 18 / linear 4 eq resolutions, fallback 0, `resolve-entry`
+  fresh+cached per cell as before; runtime oracle for `===`/`!==` on
+  ≥7 input pairs across lanes via instantiation.
+- **V-C import-order pin** on the host lane via the module import section
+  or WAT (`tests/strings.test.ts:69` route) — an `result.imports`-only pin
+  is blind to `wasm:js-string`.
+- **V-D fail-closed**: `provider-target-unavailable` naming `stringEq` at
+  the manifest unit level; the production projection is total (`nativeStrings
+  ? native : host`), the linear lane admits `string.eq` and ignores the
+  provider, so the `unsupported` arm is unreachable on every lane —
+  **divergence-4 class EMPTY** (all `string.eq` producers are guarded before
+  emission at `from-ast.ts:13162-13173` / `:11388-11402`; #3529 pins stay at
+  `build`). Record integration-level reachability as a limit (F1-S2 style)
+  unless a policy-injection seam exists (none does).
+- **V-E revert non-vacuity**: revert only the arm → exactly the new
+  source-shape pins fail (`stringEqArmSource` marker
+  `symbol === IR_STRING_EQUALS_FN) {`, host assertion
+  `exactCallableImportIndex(ctx, arm.module, arm.field)`); revert only the
+  fallback retirement (if P1 retires it) → exactly its pin fails.
+- **V-F**: five ratchet gates chained bare AND under `LOC_GATE_BASE`;
+  `runtime-manifest.ts` (1690 lines, over threshold) needs the dated
+  `loc-budget-allow` rationale; `check:ir-fallbacks` diffed (no bucket
+  moves); controls: `issue-2955-depolymorph-gate`,
+  `issue-3520-callable-preregistration` (`equals` NOT imported on native
+  lanes), `strings`, `host-string-prefix-suffix-fast-path`,
+  `issue-3521-prepared-component-dependencies:1017-1029` (attach binding
+  kind), all #3526 suites, both async suites.
+
+New suite: `tests/issue-3526-string-boundary-eq.test.ts`, anatomy from the
+compare suite (contract `:166-216`, policy `:218-296`, end-to-end
+`:298-337`, demote `:339-358` — but see V-D, the linear trick does not carry
+because `string.eq` is linear-admitted — source-shape arm pins `:361-409`).
+
+### Out of scope
+
+`string.concat` / `_OWNED` (stay on the lane read — F2-S5, with `__concat_N`
+and the `string-builder-candidate` bucket), `string.len` (F2-S4; native
+struct-field arm needs provider vocabulary), `charCodeAt` (two-record
+`host-capability` provider behind a defined helper), `string.const` (global
+kind), `stringForOfPlan` (`:5970-5972` — the FOROFEQ host demote is its
+business, not this slice's), `TPLEQ`'s `env.__concat_3` late import, the
+`:6718-6727` twin reads in the other string emitters.
