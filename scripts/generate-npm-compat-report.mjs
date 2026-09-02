@@ -41,6 +41,7 @@ import { runHarness as runClsxUpstreamSuite } from "../tests/dogfood/clsx-upstre
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
 import { runHarness as runCookieUpstreamSuite } from "../tests/dogfood/cookie-upstream-suite.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
+import { classifyPackageRow, esEditionRollup } from "./lib/npm-compat-es-edition.mjs";
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
 import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
@@ -3030,6 +3031,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
 }
 
 for (const pkg of packages) {
+  pkg.esEdition = classifyPackageRow(pkg, ROOT);
   pkg.weeklyDownloads = NPM_DOWNLOADS_SNAPSHOT.packages[pkg.name] ?? null;
   pkg.playground ??= {
     kind: "unavailable",
@@ -3061,6 +3063,10 @@ const summary = {
   // `unverified` list is named, not just counted, so the size of the blind spot
   // is legible rather than implied.
   correctness: correctnessRollup(packages),
+  // Which ECMAScript edition each package actually needs — the corpus
+  // ordered as a timeline, so "what must the compiler support to run real npm
+  // code" is answerable from the artifact rather than by reading bundles.
+  esEditions: esEditionRollup(packages),
   note: "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   popularity: {
     metric: "weekly npm downloads",

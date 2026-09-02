@@ -51,9 +51,9 @@
   },
   "built-ins/Array": {
     "ES5": {
-      "pass": 162,
+      "pass": 163,
       "fail": 46,
-      "ce": 4,
+      "ce": 3,
       "skip": 0
     },
     "ES2015": {
@@ -547,6 +547,14 @@
       "skip": 0
     }
   },
+  "built-ins/WeakRef": {
+    "ES2021": {
+      "pass": 14,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/DataView": {
     "ES2015": {
       "pass": 320,
@@ -581,14 +589,6 @@
     "ES2027": {
       "pass": 0,
       "fail": 11,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/WeakRef": {
-    "ES2021": {
-      "pass": 14,
-      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1327,16 +1327,10 @@
       "skip": 0
     }
   },
-  "built-ins/Boolean": {
-    "ES5": {
-      "pass": 6,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    },
+  "built-ins/GeneratorFunction": {
     "ES2015": {
-      "pass": 4,
-      "fail": 1,
+      "pass": 6,
+      "fail": 17,
       "ce": 0,
       "skip": 0
     }
@@ -1385,10 +1379,16 @@
       "skip": 0
     }
   },
-  "built-ins/GeneratorFunction": {
-    "ES2015": {
+  "built-ins/Boolean": {
+    "ES5": {
       "pass": 6,
-      "fail": 17,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 4,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }

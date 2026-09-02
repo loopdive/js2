@@ -357,7 +357,16 @@ describe("#3521 Program-ABI fnctor producer", () => {
 
   it.each([
     ["a split layout", (ctx: CodegenContext) => (ctx.fnctorLayoutInfo = new Map([["__fnctor_Parser", {} as never]]))],
-    ["a cold tail", (ctx: CodegenContext) => (ctx.fnctorColdTailTypeIdx = new Map([["Parser", 10]]))],
+    // The standalone observation's cold-tail signal is the WasmGC split's
+    // struct-name map (`fnctor-cold-tail.ts:361`), not the linear reservation's
+    // type-index map (`linear-type-reservations.ts:243`). `cb733cde37` moved
+    // `program-abi-fnctor-producer.ts:225` onto the struct-name map; this
+    // fixture kept setting the old one, so the case stopped rejecting. The host
+    // twin at `:81` still reads `fnctorColdTailTypeIdx` — do not change it.
+    [
+      "a cold tail",
+      (ctx: CodegenContext) => (ctx.fnctorColdTailStructName = new Map([["__fnctor_Parser", "__fnctor_Parser__cold"]])),
+    ],
     ["a fast lane", (ctx: CodegenContext) => (ctx.fast = true)],
     ["a host lane", (ctx: CodegenContext) => (ctx.standalone = false)],
   ])("does not build the standalone observation for %s", (_label, mutate) => {
