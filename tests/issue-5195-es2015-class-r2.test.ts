@@ -176,3 +176,130 @@ describe("#5195 Step 9K — computed class keys are not the constructor", () => 
     expect(messages).toContain("Class constructor may not be a getter");
   });
 });
+
+describe("#5195 Step 1 — runtime-computed class element keys", () => {
+  // §15.7.14 / §13.2.5.5: the ComputedPropertyName of EVERY class element is
+  // evaluated once, in source order, at ClassDefinitionEvaluation. Before this
+  // step a METHOD's key expression was dropped on the floor entirely (only
+  // accessors got a side-effect-only evaluation, and only for a class nested in
+  // a function), so its assignments and calls never happened.
+  const KEY_EFFECTS_SOURCE = `
+    var log = "";
+    function k(v) { log = log + v; return v; }
+    class C {
+      [k('m')]() { return 1; }
+      get [k('g')]() { return 2; }
+      set [k('s')](v) { this.got = v; }
+      static [k('t')]() { return 3; }
+    }
+    export function probe() { return log === "mgst" ? 1 : 0; }
+  `;
+
+  it("standalone: every computed member key is evaluated once, in source order", async () => {
+    expect(await runStandalone(KEY_EFFECTS_SOURCE, "probe", "issue-5195-key-effects.js")).toBe(1);
+  });
+
+  it("host lane agrees on key evaluation order", () => {
+    expect(runHost(KEY_EFFECTS_SOURCE, "probe")).toBe(1);
+  });
+
+  // The key's VALUE reaches the prototype, as a real own property of the
+  // prototype `$Object` — readable, and ordered after `constructor` (which
+  // §15.7.14 creates before any element).
+  const RUNTIME_KEY_SOURCE = `
+    function ID(x) { return x; }
+    class C {
+      a() { return 'A'; }
+      [ID('d')]() { return 'D'; }
+      get [ID('g')]() { return 'G'; }
+    }
+    export function probe() {
+      const names = Object.getOwnPropertyNames(C.prototype).join(",");
+      return (typeof C.prototype.d === "function") && C.prototype.g === 'G'
+        && names === "constructor,a,d,g" ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a runtime key installs on the prototype in spec order", async () => {
+    expect(await runStandalone(RUNTIME_KEY_SOURCE, "probe", "issue-5195-runtime-key.js")).toBe(1);
+  });
+
+  it("host lane agrees on the runtime-key prototype surface", () => {
+    expect(runHost(RUNTIME_KEY_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a class whose keys all FOLD keeps every static
+  // lane — dot dispatch, `C.prototype.m` identity, own-key order — untouched.
+  const FOLDED_KEYS_SOURCE = `
+    class C {
+      m() { return 1; }
+      ['n']() { return 2; }
+      get p() { return 3; }
+    }
+    export function probe() {
+      const c = new C();
+      const names = Object.getOwnPropertyNames(C.prototype).join(",");
+      return c.m() === 1 && c.n() === 2 && c.p === 3
+        && c.m === C.prototype.m && names === "constructor,m,n,p" ? 1 : 0;
+    }
+  `;
+
+  // Step 1.7: the member has no source-spellable name, so the only route to it
+  // is the dynamic one — an instance read/call with the key as data. Both the
+  // static-key form (`c[2]`, which const-folds) and the runtime-key form
+  // (`c[k]`) must reach the prototype `$Object`.
+  const INSTANCE_DYNAMIC_SOURCE = `
+    function ID(x) { return x; }
+    class C {
+      a() { return 'A'; }
+      [ID('d')]() { return 'D'; }
+      [ID(2)]() { return 'N'; }
+    }
+    export function probe() {
+      const c = new C();
+      const k = 'd';
+      return c[k]() === 'D' && c['d']() === 'D' && c[2]() === 'N'
+        && typeof c.a === 'function' && c.a() === 'A' ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a runtime-keyed member is reachable through a dynamic instance call", async () => {
+    expect(await runStandalone(INSTANCE_DYNAMIC_SOURCE, "probe", "issue-5195-instance-dynamic.js")).toBe(1);
+  });
+
+  it("host lane agrees on the dynamic instance call", () => {
+    expect(runHost(INSTANCE_DYNAMIC_SOURCE, "probe")).toBe(1);
+  });
+
+  it("standalone: folding keys keep their static lanes", async () => {
+    expect(await runStandalone(FOLDED_KEYS_SOURCE, "probe", "issue-5195-folded-keys.js")).toBe(1);
+  });
+
+  it("host lane agrees on folding keys", () => {
+    expect(runHost(FOLDED_KEYS_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 1.3/1.4 — prototype `constructor` for every class", () => {
+  // §15.7.14 creates `C.prototype.constructor` BEFORE the elements, so it is
+  // the first own key — and it exists even when the class declares no element
+  // at all.
+  const CTOR_PROP_SOURCE = `
+    class Empty {}
+    class WithCtor { constructor() { this.x = 1; } }
+    export function probe() {
+      const d1 = Object.getOwnPropertyDescriptor(Empty.prototype, 'constructor');
+      const d2 = Object.getOwnPropertyDescriptor(WithCtor.prototype, 'constructor');
+      return d1.value === Empty && d1.writable === true && d1.enumerable === false
+        && d1.configurable === true && d2.value === WithCtor ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a member-less class still has an own prototype `constructor`", async () => {
+    expect(await runStandalone(CTOR_PROP_SOURCE, "probe", "issue-5195-ctor-prop.js")).toBe(1);
+  });
+
+  it("host lane agrees on the prototype `constructor` descriptor", () => {
+    expect(runHost(CTOR_PROP_SOURCE, "probe")).toBe(1);
+  });
+});

@@ -34,7 +34,16 @@ loc-budget-allow:
   - src/codegen/context/create-context.ts
   - src/compiler/early-errors/node-checks.ts
   - src/compiler/early-errors/module-rules.ts
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/index.ts
 func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/statements/nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/class-bodies.ts::compileSuperCall
@@ -81,6 +90,24 @@ class, so the `getOwnPropertyDescriptor` struct fast paths in that function must
 decline that receiver (the predicate itself is hoisted to a module-level helper
 `isStandaloneClassProtoObjectReceiver` to keep the growth to the two call sites);
 Step 2.3 adds the class-object sidecar redirect at the same two folds.
+
+Growth allowance amendment (2026-09-02, Step 1): `declarations.ts` (+12) —
+Step 1.2 needs a top-level class with a runtime-keyed member to reach
+`__module_init`, and the one collector that decides that
+(`collectPreparedTopLevelClassComputedNameEffects`) lives in that file; the
+added arm is one more clause beside the runtime-heritage one it already has.
+`create-context.ts::createCodegenContext` (+2) — the two new context maps.
+`nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects` — the same
+walk now covers methods, stores the key into its module global, and force-inits
+the prototype singleton.
+
+Growth allowance amendment (2026-09-02, Step 1.7): `call-tail-dispatch.ts` /
+`::compileTailDispatch` (+18) — one clause added to the existing user-class
+element-call arm so a runtime-keyed prototype member is INVOKED rather than
+folded to `ref.null.extern`; `calls.ts` (+3) for exporting the receiver-class
+resolver that clause needs; `index.ts` / `::generateModule` /
+`::generateMultiModule` (+7/+4/+2) for the one finalize call that mints
+`__class_proto_lookup` (new leaf file `class-proto-lookup.ts`).
 
 ## Problem
 

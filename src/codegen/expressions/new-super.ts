@@ -2942,7 +2942,7 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   // The generic expression route owns ClassDefinitionEvaluation for inline and
   // comma-position classes. Variable-bound singleton materialization bypasses
   // this function and emits the same shared effect in variables.ts.
-  emitUnresolvedComputedAccessorNameEffects(ctx, fctx, expr);
+  emitUnresolvedComputedAccessorNameEffects(ctx, fctx, expr, syntheticName);
 
   // ES2015 14.5.14 step 21: class with static 'prototype' member must throw TypeError
   if (classNameForCheck && ctx.classThrowsOnEval.has(classNameForCheck)) {

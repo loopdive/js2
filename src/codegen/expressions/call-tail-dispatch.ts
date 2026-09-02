@@ -86,6 +86,7 @@ import {
   compileConditionalCallee,
   compileFunctionBind,
   compileIIFE,
+  elemAccessReceiverClassName,
   elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
   emitBoundFunctionCall,
@@ -1458,7 +1459,25 @@ export function compileTailDispatch(
       // closure dispatch. The runtime
       // ref.test guards make this safe for a non-closure field value (the
       // default arm reproduces the historical `ref.null.extern`).
-      if (elemAccessReceiverIsUserClass(ctx, elemAccess) && classInstanceHasField(ctx, elemAccess, methodName)) {
+      // (#5195 Step 1.7) …and the same route for a class whose prototype
+      // carries a member installed under a RUNTIME key (`class C { [ID(2)]()
+      // {…} }`). That member has no source-spellable name, so it is in neither
+      // the struct field set nor funcMap under anything `methodName` can match,
+      // and `new C()[2]()` folded to `ref.null.extern` with the method never
+      // entered. The dynamic READ now resolves it through the prototype
+      // `$Object` (class-proto-lookup.ts), so the invocation is all that was
+      // missing. Restricted to classes that actually have such a member, so
+      // every other class keeps its exact lowering. Like the field arm above,
+      // the callee runs with `this` unbound — the same posture the
+      // unresolved-key twin below has always had for a user-class receiver;
+      // binding it needs the receiver captured without re-evaluating
+      // `new C()`, which is #5195 Step 4's receiver work.
+      const elemClassName = elemAccessReceiverClassName(ctx, elemAccess);
+      if (
+        elemAccessReceiverIsUserClass(ctx, elemAccess) &&
+        (classInstanceHasField(ctx, elemAccess, methodName) ||
+          (elemClassName !== undefined && (ctx.classDynamicMembers.get(elemClassName)?.length ?? 0) > 0))
+      ) {
         const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
         if (dyn !== null) return dyn;
       }

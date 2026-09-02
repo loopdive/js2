@@ -63,6 +63,7 @@ import {
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
+import { classHasUnresolvedComputedMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -2296,6 +2297,17 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
  */
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
   if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
+    ctx.moduleInitStatements.push(statement);
+    return true;
+  }
+  // (#5195 Step 1) A class with a METHOD (or an accessor in a body this
+  // collector's accessor-only shape test declines) whose computed key does not
+  // fold has ClassDefinitionEvaluation work of its own: the key expression must
+  // run — once, in source order, in THIS frame — and its value must reach the
+  // prototype install. Collecting the declaration routes it through
+  // `compileNestedClassDeclaration`, which owns that emission. Byte-inert for
+  // every class whose keys fold.
+  if (ts.isClassDeclaration(statement) && classHasUnresolvedComputedMemberName(ctx, statement)) {
     ctx.moduleInitStatements.push(statement);
     return true;
   }

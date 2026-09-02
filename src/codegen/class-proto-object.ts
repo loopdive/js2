@@ -91,7 +91,11 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
-import { emitClassProtoAccessorInstalls, installableClassAccessors } from "./class-proto-accessors.js";
+import {
+  emitClassMemberKeyOperand,
+  emitClassProtoAccessorInstalls,
+  installableClassAccessors,
+} from "./class-proto-accessors.js";
 
 /**
  * §17 / §15.7.14 method descriptor attributes — `{writable: true,
@@ -232,8 +236,13 @@ export function emitStandaloneClassProtoObject(
       const fullName = `${className}_${name}`;
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName))!;
       fctx.body.push({ op: "local.get", index: objLocal });
-      addStringConstantGlobal(ctx, name);
-      for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
+      // (#5195 Step 1) A member whose computed key is only known at runtime
+      // reads its key out of the `__cmkey_` global instead of an interned
+      // string constant; everything downstream is identical.
+      if (!emitClassMemberKeyOperand(ctx, fctx, className, name)) {
+        ok = false;
+        break;
+      }
       // The SAME canonical closure singleton the typed `C.prototype.m` read and
       // the dynamic `c.m` read both yield, so the §15.7 identities
       // `c.m === C.prototype.m === gOPD(C.prototype,"m").value` all hold.
