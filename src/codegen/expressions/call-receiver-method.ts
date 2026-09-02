@@ -264,6 +264,7 @@ import {
   resolveAssignedNominalType,
   sourceHasMethodReassignment,
   standaloneThenMissArmCanBeNative,
+  tracesToTypedArrayIntrinsicProto,
   tryEmitAsyncGenNextDispatch,
   tryEmitAsyncGenReturnThrowDispatch,
 } from "./calls.js";
@@ -2593,7 +2594,23 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
+  // (#5194 step 3) `%TypedArray%.prototype.<m>()` invoked ON THE PROTOTYPE must
+  // throw a TypeError (§23.2.3.x step 1 ValidateTypedArray: the receiver has no
+  // [[TypedArrayName]] slot). The receiver is a `$NativeProto`, but the array
+  // ladder below claims `slice`/`join`/`sort`/`keys`/`values`/`entries`/
+  // `indexOf`/… first and lowers it as an ARRAY, which quietly answered
+  // `undefined` for all nine `invoked-as-method.js` rows. Declining here routes
+  // the call to the closed-method dispatcher, whose `__extern_method_call`
+  // `$NativeProto` arm invokes the seeded companion closure — and that
+  // closure's brand cascade raises the spec TypeError. This is exactly why
+  // `subarray/invoked-as-method.js` already passed: `subarray` is not an
+  // `ARRAY_METHODS` name, so it never reached this claim.
+  const receiverIsTypedArrayIntrinsicProto =
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(propAccess) &&
+    tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
   if (
+    !receiverIsTypedArrayIntrinsicProto &&
     !(
       ctx.targetProfile.semanticProviders === "native-first" &&
       (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0

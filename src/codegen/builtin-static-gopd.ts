@@ -79,6 +79,7 @@ import {
 } from "./property-access.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 
 // §6.1.7.3 attribute flag bits — mirrors object-runtime's `__create_descriptor`
 // (1=writable, 2=enumerable, 4=configurable).
@@ -249,7 +250,14 @@ export function resolveBuiltinProtoGopdReceiver(
     arg0.name.text === "prototype" &&
     ts.isIdentifier(arg0.expression) &&
     builtinCtorNames.has(arg0.expression.text) &&
-    !(fctx.localMap.has(arg0.expression.text) || (fctx.boxedCaptures?.has(arg0.expression.text) ?? false))
+    // (#5194 review F2) Function-scope shadow facts plus the FILE-scope one:
+    // a module-level `class Int16Array { … }` is invisible to `localMap`, and
+    // the same descriptor synthesis feeds `<Ctor>.prototype.constructor`.
+    !(
+      fctx.localMap.has(arg0.expression.text) ||
+      (fctx.boxedCaptures?.has(arg0.expression.text) ?? false) ||
+      sourceShadowsGlobalName(arg0.getSourceFile(), arg0.expression.text)
+    )
   ) {
     return arg0.expression.text;
   }
@@ -381,6 +389,11 @@ const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
   "Set",
   "Promise",
   "RegExp",
+  // (#5194 step 2) §23.2.2.4 — the abstract `%TypedArray%` intrinsic owns
+  // `@@species` too. It is not a global identifier, so the receiver is
+  // recovered by the static `isTypedArrayIntrinsicCtorExpr` tracer at the call
+  // site rather than by `resolveBuiltinReceiverName`.
+  "%TypedArray%",
 ]);
 
 /**

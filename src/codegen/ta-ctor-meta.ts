@@ -30,6 +30,8 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { TA_CTOR_BYTES, TA_CTOR_KINDS } from "./registry/types.js";
+import { ensureTypedArrayViewNativeProtoGlue } from "./array-object-proto.js";
+import { buildLazyNativeProtoGetInstrs } from "./native-proto.js";
 import { FNINST_BAG_OWNS, FNINST_TOMBSTONE } from "./function-instance-props.js";
 
 /**
@@ -181,6 +183,57 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
     { op: "ref.test", typeIdx: taCtorTypeIdx },
   ];
 
+  /**
+   * (#5194 step 1) `externref`: the receiver kind's `<View>.prototype` glue
+   * singleton — the SAME object `__extern_get`'s `$__ta_ctor` arm and
+   * `Object.getPrototypeOf(new View())` yield, so `TA.prototype ===
+   * Object.getPrototypeOf(new TA(0))` holds by `ref.eq`. A kind whose glue this
+   * module never materialized falls through to a null miss, which keeps the
+   * arm's shape identical to `bpeChain`'s.
+   *
+   * This fill runs AFTER `fillTaDynViewMopArms`, which materializes every
+   * registered view glue, so the reads below are plain global consults.
+   */
+  const protoChain = (): Instr[] => {
+    let chain: Instr[] = [{ op: "ref.null.extern" }];
+    for (let k = TA_CTOR_KINDS.length - 1; k >= 0; k--) {
+      const brand = ensureTypedArrayViewNativeProtoGlue(ctx, TA_CTOR_KINDS[k]!);
+      const protoInstrs = brand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, brand);
+      if (!protoInstrs) continue;
+      chain = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: taCtorTypeIdx },
+        { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: k },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: protoInstrs,
+          else: chain,
+        },
+      ];
+    }
+    return chain;
+  };
+
+  // ── `prototype` (§23.2.6.2 `{writable:false, enumerable:false,
+  // ── configurable:false}`) ────────────────────────────────────────────────
+  // Claiming the key in `get_meta` is what makes `hasOwnProperty(TA,
+  // "prototype")` true — `verifyProperty`'s very first assertion, so all nine
+  // `TypedArrayConstructors/<Kind>/prototype.js` rows died on it even though
+  // the descriptor itself already read correctly. It also routes `TA.prototype
+  // = x` into the shared write refusal, which is the §23.2.6.2 non-writability.
+  getMetaFn.body.splice(0, 0, ...isTaCtor(), {
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      ...keyIs("prototype"),
+      { op: "if", blockType: { kind: "empty" }, then: [...protoChain(), { op: "return" }] },
+    ],
+  });
+
   // ── `BYTES_PER_ELEMENT` static (§23.2.6.2) ────────────────────────────────
   // Answering it from `get_meta` buys the VALUE, `hasOwnProperty`, and the
   // §23.2.6.2 `writable: false` write refusal (`buildBuiltinFnSetRefusalArm`
@@ -215,6 +268,27 @@ export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
           blockType: { kind: "empty" },
           then: [
             ...bpeChain(),
+            { op: "i32.const", value: FLAG_NONE },
+            { op: "call", funcIdx: createDescIdx },
+            { op: "return" },
+          ],
+        },
+      ],
+    });
+    // (#5194 step 1) `prototype` is all-false too (§23.2.6.2), so it needs the
+    // same front-spliced descriptor: once `get_meta` claims the key the generic
+    // prologue would otherwise pair it with `FLAG_CONFIGURABLE` and
+    // `verifyNotConfigurable` would fail on a property `delete` refuses.
+    gopdFn.body.splice(0, 0, ...isTaCtor(), {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...keyIs("prototype"),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...protoChain(),
             { op: "i32.const", value: FLAG_NONE },
             { op: "call", funcIdx: createDescIdx },
             { op: "return" },
