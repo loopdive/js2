@@ -3730,3 +3730,401 @@ build that does not opt in.
    effect (0.2 % of passes), count instantiation as part of success, and prefer
    an A/B on the FULL required globs over a spread sample when the change
    reorders compilation.
+
+## 2026-09-02 gap-6b design record — Family B (initializer-minted types) census and the initializer-first ordering option
+
+Written by the Fable planning lane, re-verified against `origin/main`
+`87425a3eb389ee633ca411114aea1f984f57b8f3`, and independently re-verified at tip
+`01b1c0f96d58f3e171ea68fd24e81c8f74c11e9e` (2026-09-02), where
+`git diff --stat 87425a3e origin/main -- src/` is empty — so every anchor below still resolves
+unchanged at the newer tip.
+
+The two probe passes measured `4abfe80ea18aa44637620bb8ec33679d471aba0f` (PR #5480, gap-6a v2).
+`git diff --stat 4abfe80e origin/main -- src/` is **not** empty — PR #5495 (`8ba755c88d`) adds 9 lines
+to `src/codegen/expressions/calls-closures.ts` and 11 to `src/codegen/property-access-dispatch.ts`.
+Neither file is anchored below and every `file:line` here was re-checked at the tip, so the
+measurements stand; any re-run of a compile-time A/B must be pinned at `4abfe80e`.
+`src/codegen/declarations/module-init-closure-prelift.ts` is present at 459 lines.
+
+This answers gap-6a v2's R7 item 2 ("the census's *order drift only* bucket must be re-read — those
+collections are decision-changing for anything compiled BEFORE the initializer") and R7's standing
+requirement that any future pass-1 retirement answer Family B first.
+
+**The headline is a reframe.** The brief asks whether *initializer-first ordering on the skip route*
+would eliminate Family B. It would — but the skip route is *defined* by not compiling the
+initializer first, so "initializer-first" is not a variant of it. Initializer-first **is pass 1**.
+The ordering that eliminates Family B by construction is therefore not a new mechanism to build; it
+is the one that already ships, and the reachable slice is the opposite of gap-6a: **retire pass 2,
+keep pass 1**. That direction is already default-on for part of the corpus, and its widening lever
+already exists on `main` as a test seam — so its acceptance can be measured before any code is
+written. What it costs is not zero: it removes one function per module-scope closure and **swaps
+which closure body ships** (item 4/4b).
+
+---
+
+### Census — what mints types, what reads them, and where the ordering is decided
+
+Static census, `origin/main` snapshot (`.tmp/r4-gap6b/type-minting-sites/INDEX-4abfe80e.txt`;
+the suffix-less files in that directory are a stale earlier pass against `617b476c` — ignore them).
+**Scope caveat:** the rows below count `src/codegen` only. `W1` also carries 5 `src/ir` mints
+(`ir/backend/linear-integration.ts:1916`, `ir/closure-struct-registry.ts:142`,
+`ir/prepared-closure-support.ts:78`, `ir/integration.ts:2870`, `:9067`) and `W2` 3 `src/ir`
+`structMap.set` twins (`ir/closure-struct-registry.ts:148`, `ir/prepared-closure-support.ts:79`,
+`ir/integration.ts:9072`), all writing the same `mod.types` / `structMap`. Whether an IR-path mint
+can land on the initializer side of a body compile is **not answered here** — open question 6.
+
+| what | count | artifact |
+| --- | --- | --- |
+| `mod.types.push(` sites in `src/codegen` | 132 (of 137 rows; 5 are `src/ir`) | `W1-mod-types-push-4abfe80e.txt` |
+| of those, one-shot idempotent runtime-helper mints | 82 (`ensure*` 59 + `register*` 13 + `reserve*` 10) | `W5-mint-by-enclosing-fn-4abfe80e.txt` |
+| of those, **AST-shape-driven — can fire while an initializer expression compiles** | **33 sites in 29 distinct functions** | `W6-ast-shape-driven-mints-4abfe80e.txt` |
+| `ctx.structMap.set(` in `src/codegen` | 62 (of 65 rows) | `W2-structMap-set-4abfe80e.txt` |
+| `ctx.anonTypeMap.set(` | 6 | `W3-anonTypeMap-set-4abfe80e.txt` |
+| `ctx.structMap` reads (name-keyed) | 218 `.get` + 33 `.has` = 251 rows | `C3-structMap-readers-4abfe80e.txt` |
+
+The gap-6a pre-lift publishes exactly **one** of the 29 AST-driven families (closures,
+`closures/arrow-phases.ts` `mintClosureStructTypes` at `:839`, applied at
+`declarations/module-init-closure-prelift.ts:424-458`).
+
+**The arm generator — Family B's exact mechanism, verified.**
+`destructureParamArray` (`src/codegen/destructuring-params.ts:1677`) walks the entire **live**
+type table at `:1846` — `for (let ti = 0; ti < ctx.mod.types.length; ti++)` — and for every struct
+whose fields are named `_0.._n` (`:1849-1857`) with `fields.length >= pattern.elements.length`
+(`:1861`) emits a `ref.test typeIdx: ti` (`:1897`) → `ref.cast` (`:1884`) → recursive-destructure
+arm. It is reached from the parameter prologue of every compiled function body
+(`src/codegen/function-body.ts:603`, inside `compileFunctionBody` at `:231`). **The arm count is a
+pure function of what is in `mod.types` at the moment that body compiles.** A type minted later is
+not a cache miss; it is an arm that was never generated.
+
+Same shape, other sites (all order-sensitive, all read a table the initializer can grow):
+
+- `destructureParamObject` — `destructuring-params.ts:1300`; `anonTypeMap` → `structMap` lookup at
+  `:1328-1329`; `undefined` ⇒ the `ref.test`/`ref.cast` arm is skipped entirely.
+- `structHintForBindingPattern` — `:1194`, lookup `:1209-1210`; a wrong answer boxes nested fields
+  to `externref`, producing a struct that then *fails* the `ref.test`.
+- `compileIdentifierCall` — `expressions/call-identifier.ts:2141` builds
+  `new Set(ctx.tupleTypeMap.values())` to gate the erased-generic `any.convert_extern` + `ref.cast`
+  bridge; a not-yet-minted tuple ⇒ no bridge ⇒ the funcref ladder ends in its TypeError terminal.
+- `property-access.ts:5978-5979`, `iterator-native.ts:4269` / `:4313` (one arm per tuple type
+  present), and `typeof-delete.ts:1188`, where a `structMap.has` miss falls back through
+  `classExprNameMap` (`:1189`); the actual bail — drop the operand, emit `i32.const 0` — is at
+  `:1199-1204`, once the `rootStructTypeIdx` fallback (`:1195-1197`) also fails to resolve an index.
+
+**Order-keyed *names*, not just indices** (`W4-order-keyed-counters-4abfe80e.txt`) —
+`__tuple_${ctx.tupleTypeMap.size}` (`index.ts:11769`), `__anon_${ctx.anonTypeCounter++}`
+(`literals.ts:2859`), and the `arrayTypeMap` cache key `` `ref_${elemTypeOverride.typeIdx}` ``
+(`registry/types.ts:94-99`, which keys array *type identity* on a struct index). `structMap` is
+**name**-keyed with 251 reader rows, so a different mint *order* can make a lookup resolve to a
+*different* struct — not merely miss.
+
+**Two entries the brief's candidate list should drop.** `inheritedArrayElementType`
+(`index.ts:11961`) is a pure `ts.Type` base-type walk and reads no `ctx` table. The
+`mod.types.length` uses at `struct-hierarchy-layout.ts:52/75/85/124/196`, `type-coercion.ts:2525`,
+`registry/types.ts:163` and `declarations/struct-type-registration.ts:611` are depth caps on
+supertype walks, not population scans. Neither is order-sensitive (`C1`, `C6`).
+
+**The three routes, at their anchors** (`src/codegen/declarations.ts`, `compileDeclarations` at
+`:5259`, total 6,628 lines):
+
+| route | init compile | when | emitted init body |
+| --- | --- | --- | --- |
+| two-pass (default, call **and** closure bearing) | pass 1 `:6219` → bodies `:6280` → pass 2 `:6442` | always today for the harness | pass 2's |
+| **pass-2 skip (default, already on — no env gate)** | pass 1 `:6219` → bodies → pass 2 refused at `:6429-6437` | `moduleInitPopulationIsPass2Stable(ctx)` true | **pass 1's** |
+| discovery-static skip (`JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC=1`, default off) | pre-lift `:6230-6231` → bodies → single compile in the pass-2 slot `:6442` (forced by `discoveryStatic ||` at `:6435`) | opt-in only | the single compile's |
+
+Bodies always compile between `:6248` and `:6380`. **Function indices are not the ordering
+obstacle**: `collectDeclarations` reserves signature + handle + `funcMap` entry at
+`declarations.ts:3005-3007` before either pass, and `mintDefinedFunc`
+(`src/codegen/func-space.ts:199-205`) returns `STABLE_FUNC_BASE + ordinal` with
+`STABLE_FUNC_BASE = 1 << 21` (`src/emit/resolve-layout.ts:80`), exempt from every shifter. Module
+globals have **no such stable-handle regime** — no `STABLE_GLOBAL_BASE`, no
+`globalOrdinalToPosition` anywhere in `src/` — which is exactly why Family A exists and Family A has
+no function-index twin.
+
+### Measurement — the skip route's regressions are 100 % Family B, and Family A is live on `main` today
+
+**A/B, 415 runner-faithful test262 files, default vs `…DISCOVERY_STATIC=1`**
+(`.tmp/r4-gap6b/family-b-measure/results.json`, 21 min single-process under `nice -n 10`):
+
+| | value |
+| --- | --- |
+| pass, default / skip | 376 / 366 |
+| pass→other regressions / improvements | **10 / 0** (2.7 % of default passes) |
+| classified Family B | **10 of 10** |
+| classified Family A (#5276) | **0 of 10** |
+| restored by `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` | 10 of 10 |
+| unchanged by `JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT=1` | 10 of 10 |
+| flipped by the #5276 one-line `loops.ts` fix | 0 of 10 |
+| wasm sha differs / identical (of 345 comparable rows) | 288 / 57; **278 order-drift-only** (96.5 %) |
+| admission oracle: sha-identical ⇔ pass 1 present ⇔ gate refused | 12/12 and 12/12 (`admission_census`) |
+
+The negative result is usable because the patch was shown live: the `familyA.js` witness
+(`witness/familyA.js`) is default `pass`, skip `fail` (`SameValue(«4», «2»)`), **skip + #5276 fix
+`pass`**; `familyB.js` is skip `fail` and stays `fail` under the fix (`witness.jsonl`). The #5276 fix
+is byte-neutral on the default route (10/10 files + 2/2 witnesses identical `wasm_sha`,
+`routes-fixdefault.jsonl`). All 10 regressions are `dstr/` files — 8 in arm B (213 files; arm B is
+**both** Family-B-targeted dstr sets, `function/dstr` 186 + arrow `dstr` 231 sampled every 2nd, per
+`results.json` `sample.design`), 2 in the uniform spread arm of 202.
+
+**Family A is a live wrong-code bug on the DEFAULT route on `main` today** — the probe raised this as
+an unmeasured hypothesis; this record settles it. Compiling
+`var a = [1,2]; var n = 0; for (var j = a[0]; j <= 2; j++) { n = n+1; }` bare (no harness, so the
+population is neither call- nor closure-bearing ⇒ `moduleInitPopulationIsPass2Stable` admits it ⇒
+pass 2 is skipped ⇒ pass 1's body is emitted):
+
+```
+default (pass1 present, pass2 ABSENT under JS2WASM_COMPILE_PROFILE=1):  global.set 4
+JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1:                                 global.set 5
+```
+— a one-line WAT diff at line 80, `.tmp/r4-gap6b/familyA-default/{default,forced2}.wat`. Globals are
+`3=$__mod_a, 4=$__mod_n, 5=$__mod_j` (three imported `string_constants` globals occupy 0-2), so the
+for-head writes `a[0]` into **`n`** while the loop reads `global.get 5` for `j`. **Executed, not
+inferred:** `.tmp/r4-gap6b/critique/run-familyA.mts` supplies the `string_constants` imports the
+saved `probe.mts` omits (that probe's own instantiate fails with
+`Import #0 module="string_constants"`); run on both routes it prints default `read = 4`,
+`…FORCE_MODULE_INIT_PASS2=1` `read = 2`. R7 item 1 called this "unreachable through the two-pass
+route" — true, but the pass-2 *skip* is a third route, default-on since gap-1a/1b, and it reaches it.
+
+**The decisive triple — the three routes on one call+closure witness**
+(`var h = function (m) { return m; }; function f([w]) { return w; } var r = f([7]);`,
+`.tmp/r4-gap6b/familyA-default/b-{default,optionA,skip}.wat`, all three re-compiled 2026-09-02):
+
+| route | bytes | `ref.test` | funcs | `__dparam_tup` | `$__closure_*` |
+| --- | --- | --- | --- | --- | --- |
+| default (two-pass) | 6,406 | 42 | 101 | 2 | `$__closure_0` (idx 17, **dead**) + `$__closure_3` (idx 18, **live**, `ref.func 18`) |
+| **(A) pass-2 retired** (`JS2WASM_TEST_ADMIT_CLOSURES_IN_MODULE_INIT_PASS2_GATE=1`) | 6,386 | **42** | **100** | **2** | `$__closure_0` only (idx 17, live, `ref.func 17`) |
+| skip route (`…DISCOVERY_STATIC=1`) | 6,298 | **40** | 100 | **0** | `$__closure_2` only |
+
+`diff -a b-default.wat b-optionA.wat` is 86 removed / 82 added. Normalizing every integer to `N`,
+the left-only lines are exactly `(func $__closure_N (type N)`, `local.get N`, `return`, `)` and the
+right-only set is **empty** — the four-line twin, with every other changed line an index renumber
+(of the 86 removed: 40 `(export`, 21 `ref.func`, 15 `(elem`, 5 `call`, 1 `(start`). Nothing else
+moves *on this witness* — see item 4b for why that does not generalize.
+
+### What that settles
+
+1. **Family B cannot be closed by an inventory, and the gap-6a lever reaches none of it.**
+   `JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT=1` changed 0 of 10 regressions: widening or narrowing
+   the closure inventory is measurably orthogonal. R3's claim — "producing this family *is*
+   compiling the initializer" — now has a mechanism (`destructuring-params.ts:1846`, one arm per
+   live type) and a byte-level witness (42 → 40 `ref.test`, 2 → 0 `__dparam_tup` locals, with
+   `$__tuple_0` **present in both modules** but at a different position in the type section —
+   `b-default.wat:12` vs `b-skip.wat:18` — so this is a re-ordering, not a missing mint).
+2. **The gap-6 census's "order drift only" bucket splits by *when*, not by *what*.** Identical
+   collections, identical mechanism: harmless on 278 of 288 admitted populations, decision-changing
+   on 10. No drift threshold separates them, because the difference is which side of the body
+   compile the mint lands on. (R7 item 2, closed.)
+3. **Initializer-first ordering already exists and is already default-on** (`:6429-6437`, no env
+   gate). The blocker on widening it is not types and not function indices; it is the two pass-2
+   mechanisms named in `declarations/module-init-pass2-stable.ts:26-37` — the inlinable-function
+   registry and closure re-lifting.
+4. **Retiring pass 2 leaves top-level function bodies seeing today's type table — but it CHANGES
+   the emitted closure body, and that is not yet measured at corpus scale.** Bodies compile after an
+   unchanged pass 1 on both routes, so Family B cannot recur. What moves is the closure: in
+   `b-default.wat` `$__closure_0` (idx 17) has **zero** references and `$__closure_3` (idx 18) is
+   live; under the widened gate `$__closure_3` is gone and `$__closure_0` is live. The **live** twin
+   is replaced, not a dead one deleted (101 → 100 functions).
+4b. **The surviving closure body is different codegen, measured — and in the direction the shipped
+   docstring does not predict.** The witness above cannot show it: `function (m) { return m; }` has
+   no call, so no inlining opportunity, and both twins there are byte-identical
+   (`local.get 1; return`). Adding one call —
+   `function g(x){return x+1}; var h = function(m){return g(m);}; function f([w]){return w} var r=f([7])`,
+   `.tmp/r4-gap6b/critique/ca-{default,optionA}.wat` — gives 6,942 B / 103 funcs / `valid true`
+   → 6,939 B / 102 funcs / `valid true`, diff 108 removed / 110 added. Normalized, the left-only
+   lines are the twin header, two `call N` and `return`; the right-only lines are inline scaffolding
+   (`(local $__inlN_pN fN)`, `(block (result fN)`, `fN.const N`, `fN.add`, `local.set N`, `br N`).
+   Concretely the **live** closure body goes from `local.get 1; call 16; return` (default, idx 20)
+   to an inlined `f64` block (widened gate, idx 19). Note the direction: `module-init-pass2-stable.ts:31-36`
+   says *pass 2* applies registry inlining inside the closure it recompiles, yet here the pass-2
+   twin is the *un*-inlined one. Unexplained — open question 5; it means the predicate's stated
+   mechanism is at best incompletely modelled, so P1/P4 must prove **runtime parity**, not counts.
+5. **#5276 is not latent.** It mis-compiles a bare module on `main` today. It is a hard prerequisite
+   for widening the pass-2 skip, and a live-bug fix on its own.
+
+### Slice gap-6b — retire pass 2 for call-and-closure-bearing populations
+
+**Contract**
+
+1. **`src/codegen/declarations/module-init-pass2-stable.ts`** — replace the closure half of the
+   predicate (`:155-159`, `sawClosure`) with admission. The function keeps its `"always"` refusals
+   (`Decorator` `:107`, `AwaitExpression` `:108`, both → `:109`) and `declarations.ts:6429-6437`
+   keeps its `hasAsyncGraphInit` (`:6431`) and `moduleInitChunkingRequired` (`:6432`)
+   unconditional-pass-2 arms. The existing `CLOSURE_ADMIT_SEAM` (`:125`) inverts to a *narrowing*
+   seam so the mutation test at `tests/issue-3523-module-init-single-pass.test.ts:424` survives.
+2. **`src/codegen/declarations.ts`** — `dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark)` currently
+   runs **only inside the pass-2 branch** (`:6449`). Skipping pass 2 skips the dedupe, and the
+   `CLOSURE_ADMIT_SEAM` docstring (`module-init-pass2-stable.ts:118-122`) records that a
+   closure-bearing harness population then "starts reporting its diagnostics twice". Move the
+   reconcile so it runs once on both routes, after the last body compile. The existing pin is
+   `single-pass.test.ts:525-569` (`closure+call` currently `pass2: 1`, diagnostics `toBe(1)`).
+3. **No change to `restorePropOrderState`** (`:5867`, called at `:6441`): the pass-2 skip already
+   skips it today and `:6421-6423` records why that is correct (nothing recompiles).
+4. **The gap-6a machinery stays inert and is marked superseded** — `module-init-closure-prelift.ts`,
+   `moduleInitDiscoveryIsStatic` and the `discoveryStatic ||` arm at `:6435` keep working behind
+   `JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC=1`. Do **not** delete in this slice: it is the only
+   surviving A/B lever for the bodies-first ordering, and deleting exports fails `check:dead-exports`.
+5. **Prerequisite, not part of this slice:** #5276 (`statements/loops.ts:416` reads
+   `ctx.moduleGlobals.get(name)`, `:421` `compileExpression`, `:422` `global.set` with the stale
+   index) must be on `main` first. Widening admission widens the population for which pass 1's body
+   is the emitted one.
+
+**Required pre-implementation probes** — P1 needs **no production code**, because the widened route
+already exists on `main` as an env seam. That is the whole risk-management story for this slice, and
+it is also the sequencing rule: **run P1 and P4 first, then write item 4's corpus-scale claim.**
+Every corpus row in this record was measured under `…DISCOVERY_STATIC=1` — the route being
+*rejected*; zero rows were measured under `…ADMIT_CLOSURES…=1`, the route being *recommended*.
+
+- **P1 (acceptance, run BEFORE writing code).** `JS2WASM_TEST_ADMIT_CLOSURES_IN_MODULE_INIT_PASS2_GATE=1`
+  vs default, runner-faithful, instantiation counted, on the gap-6a v2 required globs
+  (`test/language/statements/**/dstr/**`, the four `decodeURI*`/`encodeURI*` trees, `Temporal/Duration/**`,
+  all 8 `unscopables-with*.js`) **plus** a uniform spread sized to ≥ **1,500 default passes** —
+  0 observed regressions then excludes a 0.2 % rate at 95 % (`0.998^1500 ≈ 0.05`), which is the rate
+  gap-6a's sample had no power to see (R4: 71 passes, `0.9979^71 ≈ 0.86` chance of showing zero
+  against 0.21 %). Count duplicate-diagnostic rows **separately** — item 2 is not yet applied, so
+  they are expected.
+- **P2 (inlining).** The registry mechanism is `ctx.inlinableFunctions`, written at
+  `function-body.ts:208` and **invalidated** at `index.ts:10089` and `iterator-native.ts:679` (both
+  `.delete`) — instrument all three, or an invalidation-ordering effect is invisible. Measure on the
+  corpus what module-init call sites lose: WAT `call` counts and binary size, host + standalone.
+  Item 4b shows the delta is not always a loss; confirm, do not assume.
+- **P3 (Family A blast radius).** With #5276 reverted, sweep the P1 corpus for the
+  `global.set N` / `global.get N+1` signature in `__module_init`. This sizes the bug the pass-2 skip
+  already exposes today and validates that the fix is non-vacuous on real files, not only on the
+  witness.
+- **P4 (the surviving closure, not a twin count).** Function count is the weak signal — item 4b
+  shows the live closure body is replaced and its instructions change (`call` → inlined block).
+  Across the shape matrix × 4 lanes, diff each surviving `$__closure_*` body against the two-pass
+  build's **live** twin and establish **runtime parity** (call it, compare the value), not just
+  `mod.functions.length` −1 and `WebAssembly.validate`. Both witnesses validate on both routes
+  (101 → 100; 103 → 102); neither has been *executed* — the stub-host instantiate for the call
+  witness dies in host-import glue on both routes, so parity is currently **unestablished**.
+- **P5 (multi-source).** `"discover"`/`"skip"`/`"prepared"` module-init modes and
+  `moduleInitChunkingRequired` populations must be unaffected; `ctx.moduleInitStatements` is
+  graph-global accumulated state (`module-init-pass2-stable.ts:129-134`), so a sibling source's
+  statement decides the predicate (pinned at `single-pass.test.ts:491-522`).
+
+**Verification** — V-A the shape matrix × 4 lanes (host-start, host-deferred, standalone, wasi):
+census `pass1=1 pass2=0` for every admitted shape, `pass2=1` for async-graph / chunked / decorator /
+await, reason named. V-B corpus `website/playground/examples/**` + `examples/**`, host + standalone:
+zero success/error divergence, runtime parity where a `read`-style export exists; expect exactly one
+fewer function per module-scope closure **and a changed surviving closure body**. V-C the P1 sweep at
+its stated power. V-D pins: `single-pass.test.ts`'s gap-1b `pass2: 1` controls for closure-bearing
+shapes (`:395-404`, `:487`, `:522`, `:563`) become `pass2: 0` — named, deliberate; the
+byte-identity-vs-forced pins now apply to *more* populations, not fewer, and should be extended
+rather than scoped away. V-E the five ratchets bare and under `LOC_GATE_BASE=origin/main`,
+`check:ir-fallbacks` byte-identical, `check:dead-exports`, typecheck/lint/prettier, the seven
+scar-family suites plus `tests/issue-3523-module-init-discovery-static.test.ts` (which must still
+pass with its seam ON).
+
+**Tests** — extend the existing suite rather than adding a third: (a) census as V-A; (b) the
+surviving-closure check (P4: body diff + runtime parity, not a bare count); (c) diagnostics reported
+exactly once on the `for-in/cptn-decl-itr.js` shape *and* on a closure-bearing harness population —
+the case item 2 fixes, pinned as a regression witness; (d) load-bearing mutation — with the
+narrowing seam set, the twin returns and the byte delta reappears; (e) Family B non-recurrence — the
+two-line `function f([w])` witness keeps its 42 `ref.test` arms and 2 `__dparam_tup` locals under
+the widened gate.
+
+**LOC** ≈ +275: `module-init-pass2-stable.ts` +40/−20 (mostly the docstring, which carries the
+measured table), `declarations.ts` +15, tests +220. Grant in this file's frontmatter with a dated
+rationale; do not touch `scripts/*-baseline.json`.
+
+**Ownership / sequencing** — Opus implementation lane per the plan/implement split. Claim
+`3523:gap6b`. Dispatch **after #5276 merges** (lane already in flight) **and after P1 + P4 report**.
+Independent of #3526; branch from `origin/main`. The kill switch already exists and is unchanged
+(`JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` restores the unconditional two-pass build), so a
+merge-queue park is diagnosable without a revert.
+
+### Rejected alternatives
+
+**(A-as-briefed) Initializer-first ordering *on the skip route*.** Rejected as a non-slice, not on
+cost: the skip route is constituted by compiling the initializer after the bodies
+(`declarations.ts:6223-6235` replaces pass 1 with the declare-half pre-lift; `:6435` forces the
+single compile into the pass-2 slot). Moving that compile back before the bodies restores pass 1
+exactly, which makes the pre-lift redundant by construction — the reachable form of the idea is the
+slice above, same ordering, reached by deleting the *second* compile instead of the first. For the
+record, the init phases on the call+closure witness under `JS2WASM_COMPILE_PROFILE=1` (worktree
+`r4-gap6b-main` @ `4abfe80e`, this box, 2026-09-02): default `module-init-pass1` 28.8 ms +
+`module-init-pass2` 2.1 ms of a 214.0 ms total; `…DISCOVERY_STATIC=1` `module-init-prelift` 1.5 ms +
+one pass-2-slot compile 21.5 ms of 215.5 ms; `…ADMIT_CLOSURES…=1` pass 1 31.2 ms, pass 2 absent, of
+231.1 ms. Totals are noisy run-to-run; the shape is not. Moving the single compile earlier adds no
+second compile — so cost is not the argument here, and any restatement of it as "prelift plus a
+reintroduced pass 1" double-counts.
+
+**(B) A pre-typing pass that mints initializer types from the AST without compiling.** Rejected on
+three independent measurements:
+- Getting the *set* right is insufficient. The consumers are order- and name-keyed:
+  `__tuple_${ctx.tupleTypeMap.size}` (`index.ts:11769`) and `__anon_${ctx.anonTypeCounter++}`
+  (`literals.ts:2859`) are counter-named, the `arrayTypeMap` key `` `ref_${typeIdx}` ``
+  (`registry/types.ts:94-99`) keys array *type identity* on a struct index, and 251 `structMap`
+  reader rows resolve by name. A pre-typing pass that mints the same types in a different order
+  silently rebinds those lookups.
+- The 33 AST-driven mint sites are reached through `resolveWasmType` (`index.ts:12065`),
+  `compileTupleLiteral` (`literals.ts:4338`) and `ensureStructForType` (`index.ts:12700`) — all
+  driven by the checker type of an *expression*. Reproducing them means walking the same expression
+  paths `compileExpression` walks. That is pass 1 with the emit suppressed, which buys nothing: pass
+  1 already discards its body on the default two-pass route.
+- There is no oracle to validate it against. 278 of 288 admitted rows already drift in bytes with no
+  status change, so a pre-typing pass that mints in a third order produces a binary that differs
+  from **both** existing routes, and "different bytes" carries no signal. Acceptance would collapse
+  to full-corpus runtime parity — the same cost as P1, with a new mechanism to maintain instead of
+  one to delete.
+
+**(C) Keep pass 1 only for files with array-pattern params / tuple literals (narrowed gate).** The
+gap-6a v2 record rejected narrowing on measurement (every regressing population was ADMITTED, 87/87;
+a fail-closed Family-B rule needs "a top-level function declaration compiled between the passes and
+called from the initializer", which the harness prelude puts in **325/325** sampled populations, so
+admission goes to 0). **The new data does not change that verdict; it sharpens why.** All 10
+regressions here are `dstr/` shapes, which looks like a narrowing invitation — but the arm is
+biased: 8 of the 10 came from the dstr-targeted arm, and the sample deliberately over-weighted it.
+More decisively, the census shows Family B's mechanism is not confined to array patterns: the same
+"read a table the initializer grows" pattern appears in `destructureParamObject` (`:1328-1329`),
+`structHintForBindingPattern` (`:1209-1210`), `compileIdentifierCall`'s tuple live-set
+(`call-identifier.ts:2141`), `property-access.ts:5978-5979`, `iterator-native.ts:4269`/`:4313` and
+`typeof-delete.ts:1199-1204`. A gate keyed on array patterns would still admit v2's cluster 4
+(`with`/`@@unscopables`, 8 rows) and cluster 5's unreduced singles (`eval`-declared function,
+`scope-*-param-rest-elem-var-close`, `-function(){}`), which is fitting the gate to the failures we
+happened to find — the move that produced the v2 incident. **Narrowing stays rejected.** The slice
+above needs no narrowing because it never moves a type mint across a body compile.
+
+### Open questions
+
+1. **What does losing the inlinable-function registry cost the init?** P2 measures bytes and call
+   counts; nobody has measured whether any *runtime* observable depends on an init call site seeing
+   a body-derived inline. gap-1b measured byte identity only for populations that were already
+   missing one ingredient, so the call+closure cell is untested in this direction.
+2. **How wide is Family A on `main` today?** One bare shape is proven to mis-compile (executed,
+   `read = 4` vs `2`). The test262 exposure is unknown, because the harness makes most populations
+   call+closure-bearing and therefore two-pass. P3 sizes it; the answer decides whether #5276 is a
+   normal fix or an escalation.
+3. **v2's clusters 4 and 5 were never reduced.** They were skip-route failures and should not arise
+   under gap-6b, but "should not" is a prediction. P1's globs include all 8 `unscopables-with*.js`
+   precisely so it is checked rather than assumed.
+4. **The WASI `console.log` duplicate dead data segment** (gap-1b, pinned at
+   `single-pass.test.ts:374`) should *disappear* under gap-6b for closure-bearing populations too.
+   Pin it or explain its absence; an unexplained size change on the wasi lane is how a real delta
+   gets waved through.
+5. **Why is the pass-2 twin the un-inlined one?** On the call witness the widened gate's surviving
+   closure is inlined and the two-pass build's live closure is not — the opposite of what
+   `module-init-pass2-stable.ts:31-36` describes. Until this is explained, the shipped predicate's
+   rationale is only partly validated, and P4's parity check is the thing standing in for it.
+6. **Can an IR-path mint land on the initializer side of a body compile?** The census above scopes
+   to `src/codegen`; `src/ir` has 5 `mod.types.push` and 3 `structMap.set` sites writing the same
+   tables. Either they are unreachable during module-init compilation — state why — or they are a
+   census hole with the same Family-B shape.
+7. **Async-graph and chunked inits keep two compiles by construction** (`declarations.ts:6431`,
+   `:6432`). Is that R4's permanent floor, or a later slice? Nothing in this record is evidence
+   either way — stating it so the R4 endgame is not later mistaken for "compile once, everywhere".
+
+---
+
+**Artifacts.** `.tmp/r4-gap6b/type-minting-sites/*-4abfe80e.txt` (static census, index in
+`INDEX-4abfe80e.txt`); `.tmp/r4-gap6b/family-b-measure/{results.json,results.md,main.jsonl,routes.jsonl,routes-fix.jsonl,routes-fixdefault.jsonl,witness.jsonl,red2-*.wat}`
+(415-file A/B — **artifact trap:** `routes.mts` sets the `…DISCOVERY_STATIC` seam for every route
+name that is not literally `"default"`, so `routes-fix.jsonl`'s `default_fix5276` rows are a duplicate
+SKIP run, sha-identical to `skip_fix5276` 10/10, NOT a default-route run; the default-route
+byte-neutrality evidence is `routes-fixdefault.jsonl` alone, whose 10 shas match `main.jsonl`'s
+`sha_default` 10/10); `.tmp/r4-gap6b/familyA-default/{default.wat,forced2.wat,b-default.wat,b-optionA.wat,b-skip.wat}`
+(Family-A-on-default proof and the three-route triple); `.tmp/r4-gap6b/critique/{run-familyA.mts,ca-run.mts,ca-default.wat,ca-optionA.wat,prof.mts}`
+and `.tmp/r4-gap6b/rev/ca-bytes.mts` (item 4b, the executed Family-A run, and the phase timings).
+Read-only worktree `.claude/worktrees/r4-gap6b-main` detached at `4abfe80e`, clean. No tracked file
+was modified.
