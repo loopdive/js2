@@ -18,6 +18,7 @@ import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -303,7 +304,17 @@ export function tryCompileEs5GetPrototypeOfValue(
       ts.isPropertyAccessExpression(arg0) && arg0.name.text === "prototype" && ts.isIdentifier(arg0.expression)
         ? arg0.expression.text
         : undefined;
-    if (protoOfName !== undefined && isTypedArrayViewProtoName(protoOfName)) {
+    // (#5194 review F1) `<View>.prototype` only denotes the intrinsic when the
+    // identifier IS the global builtin. Without this gate a program with its own
+    // `class Uint8Array { … }` had `Object.getPrototypeOf(Uint8Array.prototype)`
+    // answer `%TypedArray%.prototype`. Same guard the NativeError arm above uses.
+    if (
+      protoOfName !== undefined &&
+      isTypedArrayViewProtoName(protoOfName) &&
+      ts.isPropertyAccessExpression(arg0) &&
+      ts.isIdentifier(arg0.expression) &&
+      isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+    ) {
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) fctx.body.push({ op: "drop" });
       const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
@@ -313,8 +324,30 @@ export function tryCompileEs5GetPrototypeOfValue(
       fctx.body.push({ op: "ref.null.extern" });
       return { kind: "externref" };
     }
+    // (#5194 review F1) The INSTANCE arm keys on the declared TYPE NAME, and a
+    // user `class Uint8Array { … }` produces exactly the same name — there is no
+    // identifier here to run `isGlobalBuiltinIdentifier` against, so the file's
+    // module-level bindings are the check. Base answered the user class's
+    // prototype correctly; the name-only test regressed it (and minted the whole
+    // TypedArray proto graph into such a program: 405,180 -> 478,540 bytes).
     const viewName = ctx.oracle.declaredNameOf(arg0) ?? "";
-    if (protoOfName === undefined && isTypedArrayViewProtoName(viewName)) {
+    if (
+      protoOfName === undefined &&
+      isTypedArrayViewProtoName(viewName) &&
+      !sourceShadowsGlobalName(expr.getSourceFile(), viewName)
+    ) {
+      // (#5194 review F3, DOCUMENTED RESIDUAL — measured, not assumed.) This
+      // fold answers the DECLARED type's prototype, so a SUBCLASS instance in a
+      // base-typed binding (`class Bytes extends Uint8Array {}`;
+      // `const b: Uint8Array = new Bytes(2)`) reports `Uint8Array.prototype`
+      // where the spec says `Bytes.prototype`. Declining the fold for any file
+      // that subclasses the view was tried and REVERTED: it does not move the
+      // work to a better answer, it moves it to a different wrong one — the
+      // runtime arm cannot recover the kind from a statically typed carrier
+      // (`i8_byte` serves Int8/Uint8/Uint8Clamped), so the ORDINARY
+      // `Object.getPrototypeOf(new Uint8Array(1))` in the same file then
+      // answered wrong too (measured: the focused control returned 2). Fixing
+      // this needs a per-binding subclass fact, not a per-file one.
       const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
       if (brand !== undefined) {
         const argType = compileExpression(ctx, fctx, arg0);
