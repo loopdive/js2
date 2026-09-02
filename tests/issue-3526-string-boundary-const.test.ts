@@ -161,7 +161,9 @@ function constFunction(name: string, values: readonly string[]): IrFunction {
 }
 
 function prepare(values: readonly string[], stringConst: StringConstPolicy, name = "consts") {
-  const utf16 = values.some((value) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value));
+  const utf16 = values.some((value) =>
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value),
+  );
   const prepared = prepareIrRuntimeManifest({
     functions: [constFunction(name, values)],
     sourceFile: "/repo/string-const.ts",
@@ -600,7 +602,10 @@ describe("#3526 F2-S8 the attachment reads the frozen manifest", () => {
   });
 
   it("has left prepareStrings — that pass decides no literal storage at all", () => {
-    const prepareStringsSource = integrationSlice("function prepareStrings(ctx: CodegenContext", "\nfunction prepareVectors(");
+    const prepareStringsSource = integrationSlice(
+      "function prepareStrings(ctx: CodegenContext",
+      "\nfunction prepareVectors(",
+    );
     expect(prepareStringsSource).not.toContain("const storageForConst");
     expect(prepareStringsSource).not.toContain("programAbiStringConstantRef");
     expect(prepareStringsSource).toContain("storageForConst: () => undefined");
