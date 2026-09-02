@@ -277,3 +277,94 @@ describe("#5270 step 2 — [[Prototype]] of ordinary literals and colon __proto_
     expect(lines).toEqual(["before=true", "nulled=true"]);
   });
 });
+
+describe("#5270 step 3 — redeclared `var` with two literal shapes (cluster M)", () => {
+  // `var obj = {a: 1}; var obj = {b: 2};` is ONE binding with two differently
+  // shaped initializers. The shared slot took the first declaration's anonymous
+  // struct, so the second literal's `b` landed in the field the first called
+  // `a` — `obj.a` read `2`.
+  it("keeps the two shapes distinct", async () => {
+    const lines = await runStandaloneLines(`
+      var obj = { a: 1 };
+      var obj = { b: 2 };
+      LOG("a=" + String(obj.a) + " b=" + String(obj.b));
+    `);
+    expect(lines).toEqual(["a=undefined b=2"]);
+  });
+
+  it("handles a non-literal first declaration followed by a method literal", async () => {
+    const lines = await runStandaloneLines(`
+      var obj = Object.defineProperty({}, "attr", { get: function () { return 1; } });
+      var obj = { method: function () { return 7; } };
+      LOG("m=" + obj.method());
+    `);
+    expect(lines).toEqual(["m=7"]);
+  });
+
+  // Control: a var redeclared with the SAME shape keeps its previous lowering.
+  it("leaves same-shape redeclarations and single declarations alone", async () => {
+    const body = `
+      var same = { a: 1 };
+      var same = { a: 2 };
+      var once = { x: 1, y: 2 };
+      LOG("same=" + same.a + " once=" + once.x + "," + once.y);
+    `;
+    expect(await runStandaloneLines(body)).toEqual(["same=2 once=1,2"]);
+    expect(await runHostLines(body)).toEqual(["same=2 once=1,2"]);
+  });
+});
+
+describe("#5270 step 8 — ToPrimitive hint and bare expression statements (cluster D)", () => {
+  // §7.1.1.1 step 1/2.b: an absent PreferredType is the STRING "default", and
+  // that string is what the user's @@toPrimitive method receives. The internal
+  // hint slot encodes "default" as null, and that null was passed through.
+  it("passes the string 'default' to a user @@toPrimitive", async () => {
+    const lines = await runStandaloneLines(`
+      var left = {}; var right = {}; var log = "";
+      left[Symbol.toPrimitive] = function (h) { log += "L" + h; return 1; };
+      right[Symbol.toPrimitive] = function (h) { log += "R" + h; return 2; };
+      var r = left + right;
+      LOG(log + " r=" + r);
+    `);
+    expect(lines).toEqual(["LdefaultRdefault r=3"]);
+  });
+
+  // A bare `left + right;` / `0 == y;` statement runs ToPrimitive on any object
+  // operand, so it is observable — the top-level collector dropped it whole.
+  it("runs ToPrimitive for a bare `+` expression statement", async () => {
+    const lines = await runStandaloneLines(`
+      var log = ""; var left = {}; var right = {};
+      left[Symbol.toPrimitive] = function () { log += "L"; };
+      right[Symbol.toPrimitive] = function () { log += "R"; };
+      left + right;
+      LOG("log=" + log);
+    `);
+    expect(lines).toEqual(["log=LR"]);
+  });
+
+  it("runs ToPrimitive for a bare `==` expression statement", async () => {
+    const lines = await runStandaloneLines(`
+      var n = 0; var y = {};
+      y[Symbol.toPrimitive] = function () { n++; };
+      0 == y;
+      LOG("n=" + n);
+    `);
+    expect(lines).toEqual(["n=1"]);
+  });
+
+  // Controls: the COMMON case of both mechanisms must be unchanged.
+  // NOT part of the control, because it is already wrong on HEAD in BOTH lanes
+  // and this step does not touch it: `"x" + o` for an object with a `valueOf`
+  // (or a `toString`) answers `x[object Object]` instead of running
+  // OrdinaryToPrimitive. Recorded in the issue file as a separate defect.
+  it("leaves ordinary arithmetic, comparison and valueOf coercion unchanged", async () => {
+    const body = `
+      var o = { valueOf: function () { return 4; } };
+      LOG("a=" + (1 + 2) + " b=" + (o * 3) + " c=" + (o - 1) +
+          " d=" + (o == 4) + " e=" + (o === 4) + " f=" + (2 < 3) + " g=" + ("a" + 1));
+    `;
+    const expected = ["a=3 b=12 c=3 d=true e=false f=true g=a1"];
+    expect(await runStandaloneLines(body)).toEqual(expected);
+    expect(await runHostLines(body)).toEqual(expected);
+  });
+});

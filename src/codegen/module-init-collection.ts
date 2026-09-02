@@ -233,6 +233,58 @@ export function createsGlobalObjectBinding(
  * discarded. The sole exception is the synchronous top-level-await recovery
  * shape described by `isSynchronousTopLevelAwaitRecovery`.
  */
+/**
+ * (#5270 step 8) Binary operators whose evaluation reaches ToPrimitive
+ * (§7.1.1) and can therefore run a user `valueOf` / `toString` /
+ * `@@toPrimitive` method. `===`/`!==` are absent on purpose: strict equality
+ * never coerces. So are `&&`/`||`/`??`/`,` (no coercion of their own) and the
+ * bitwise/shift operators, which reach ToNumeric on an object — those are a
+ * larger surface and no row in this wave needs them.
+ */
+function binaryOperatorReachesToPrimitive(kind: ts.SyntaxKind): boolean {
+  switch (kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * (#5270 step 8) SYNTACTIC "this operand is not provably a primitive". Used
+ * only to keep `1 + 2;`-shaped statements on their existing drop; this module
+ * runs before any type information is available, so anything that is not a
+ * literal primitive counts as possibly-object.
+ */
+function operandMayBeObject(operand: ts.Expression): boolean {
+  switch (operand.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.BigIntLiteral:
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.NullKeyword:
+      return false;
+    case ts.SyntaxKind.TypeOfExpression:
+    case ts.SyntaxKind.VoidExpression:
+      return false;
+    default:
+      return true;
+  }
+}
+
 export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -266,7 +318,17 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
       // dropping it made every `Proxy/has/call-*` test a vacuous pass.
       (ts.isBinaryExpression(node) &&
         (node.operatorToken.kind === ts.SyntaxKind.InKeyword ||
-          node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword))
+          node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) ||
+      // (#5270 step 8) The SAME argument for the ToPrimitive-reaching
+      // operators. `left + right;` and `0 == y;` run `valueOf` / `toString` /
+      // `@@toPrimitive` on any object operand (§7.1.1), so a bare statement of
+      // that shape is observable — measured on HEAD, both were dropped whole
+      // and the two `coerce-symbol-to-prim-invocation` rows counted ZERO
+      // invocations. Restricted to operands that are not SYNTACTICALLY
+      // primitive, so `1 + 2;` keeps its previous drop.
+      (ts.isBinaryExpression(node) &&
+        binaryOperatorReachesToPrimitive(node.operatorToken.kind) &&
+        (operandMayBeObject(node.left) || operandMayBeObject(node.right)))
     ) {
       found = true;
       return;

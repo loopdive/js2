@@ -172,10 +172,58 @@ function bareTypeofStatementOperand(expr: ts.Expression): ts.Expression | undefi
  * on `expressionRunsUserCode`, so a statement with nothing to evaluate keeps its
  * previous lowering byte-for-byte.
  */
+/**
+ * (#5270 step 8) True for a bare `a <op> b;` statement whose operands can be
+ * OBJECTS, for an operator that reaches ToPrimitive (§7.1.1) — i.e. whose
+ * evaluation can run user code through `valueOf` / `toString` /
+ * `@@toPrimitive`.
+ *
+ * In statement position the value is dropped, so `compileExpression` is called
+ * with NO expected type and the binary lowering picks a scalar carrier that
+ * unboxes each operand directly, skipping ToPrimitive entirely: measured on
+ * HEAD, `left + right;` invoked the operands' `@@toPrimitive` ZERO times
+ * (probe p62 logged `""`) while `var r = left + right` — the same expression
+ * with an `externref` expectation — invoked both. Asking for `externref` here
+ * routes the statement through the same dynamic lowering the assignment gets.
+ *
+ * Deliberately narrow: an operand the oracle proves is a number / string /
+ * boolean / bigint cannot reach ToPrimitive, so those statements keep their
+ * previous lowering byte-for-byte.
+ */
+function bareBinaryStatementReachesToPrimitive(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isBinaryExpression(expr)) return false;
+  switch (expr.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      break;
+    default:
+      return false;
+  }
+  const mayBeObject = (operand: ts.Expression): boolean => {
+    const tag = ctx.oracle.staticJsTypeOf(operand);
+    return tag === "object" || tag === "function" || tag === "mixed";
+  };
+  return mayBeObject(expr.left) || mayBeObject(expr.right);
+}
+
 function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
   const typeofOperand = bareTypeofStatementOperand(stmt.expression);
   const evaluated = typeofOperand ?? stmt.expression;
-  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated));
+  const expected =
+    typeofOperand === undefined && bareBinaryStatementReachesToPrimitive(ctx, evaluated)
+      ? ({ kind: "externref" } as const)
+      : undefined;
+  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated, expected));
 }
 
 function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {

@@ -92,6 +92,13 @@ func-budget-allow:
   # `object-runtime-prototype.ts`.
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # 2026-09-02 (Opus implementation, steps 3 and 8): the §7.1.1.1 hint-string
+  # normalisation is 13 lines inside `symbolToPrimitive`, which is nested in
+  # `ensureObjectRuntime`; the cluster-M collector is a sibling function of
+  # `collectRedeclaredWithTargetObjects` plus one call line inside
+  # `collectGrowableObjectLiterals`.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
 ---
 
 # #5270 — ES2015 standalone: expressions, r2 residual pass
@@ -877,3 +884,97 @@ byte-for-byte.
   to the open path was tried and REVERTED: it changes routing without fixing
   the fold, and the fold is a member-access/type-lowering defect outside every
   cluster this issue names.
+
+### Step 3 — object-literal representation (clusters J + K + M, 10 rows): 0 → 1 pass
+
+Only cluster **M** landed. J and K were re-measured and the plan's root cause
+is falsified for both; the corrected diagnosis is below so the next pass starts
+from it instead of re-deriving it.
+
+**M — redeclared `var` with two literal shapes (2 rows): 0 → 1.**
+New `collectRedeclaredShapeDivergentObjects` in
+`declarations/object-shape-widening.ts` — the same shape-divergence test
+`collectRedeclaredWithTargetObjects` already performs, WITHOUT its `with`-target
+requirement (which made it apply to almost nothing). A module-scoped `var` with
+≥2 declarations whose object-literal shapes differ (or whose shape is not
+comparable — a method, accessor, computed key, spread, or a non-literal
+initializer) routes every literal declaration through
+`redeclaredObjectIdentityDeclarations` / `…Literals`, i.e. the existing
+externref `$Object` carrier. `p44`, `p09`, `p09b` all flip. Flipped row:
+`object/dstr/meth-dflt-obj-ptrn-empty`.
+Not done: `object/dstr/gen-meth-dflt-obj-ptrn-empty`, whose remaining failure is
+generator machinery (`TypeError: Cannot read properties of undefined (reading
+'next')`) — X4 / #680 territory, not cluster M.
+
+**J — method-shorthand `this` (4 rows): NOT done, plan diagnosis falsified.**
+The plan located this in `emitObjectLiteralMethodFn` →
+`compileArrowAsClosure`, where every `this`-boundary test is
+`ts.isFunctionExpression(arrow)`. WAT of the exact probe shape
+(`.tmp/wat/j01.js`, `--target standalone --wat`) shows the method never reaches
+that path: `{ method() {…} }` is a CLOSED struct, so the method compiles to
+`(func $__anon_0_method (param (ref null 257)))` — a TYPED-`this` function whose
+receiver is the struct — reached through
+`__obj_meth_tramp___anon_0_method_12`, which reads `__current_this`,
+`ref.test`s it against the struct and passes `ref.null 257` when the test fails
+(`closures/method-trampolines.ts:148 buildTrampolineThisSlot`). Hence the
+observed JS `null`. Introducing `isOwnThisFunction` at the
+`ts.isFunctionExpression` sites would not touch this lowering at all.
+The real requirement is that such a method's `this` be an **externref** that can
+carry the §10.4.3 answer (`undefined` strict / `globalThis` sloppy), which the
+struct-typed param cannot represent. Note also that
+`buildTrampolineThisSlot`'s other arm THROWS a TypeError for a genuinely-absent
+receiver when `methodBodyReadsThis` is true — also wrong for these rows, which
+want `undefined`. This is a receiver-representation change, not a predicate
+swap; it needs its own design.
+
+**K — methods invisible to the MOP (4 rows): NOT done, and wider than methods.**
+`delete obj.method` now returns `true` (not `false` as the plan recorded) but
+does not remove the property — and probe `q07-delete-method.js` shows the same
+for a plain DATA property on an open literal: `delete c.data` answers `true`
+while `hasOwnProperty("data")` stays `true`, for both the static `delete o.k`
+and the dynamic `delete o[k]` forms. So the plan's route (a) — route the literal
+to the open path — cannot work as written: the open path's delete is broken too,
+for every property kind, and that is the thing to fix first.
+
+### Step 8 — ToPrimitive hint + bare expression statements (cluster D, 3 rows): 0 → 2 pass
+
+Flipped: `addition/coerce-symbol-to-prim-invocation`,
+`equals/coerce-symbol-to-prim-invocation`.
+
+8.1 `symbolToPrimitive` (`object-runtime.ts`) passed local 1 — the INTERNAL
+hint slot, whose "default" encoding is `null` — straight to the user's
+`@@toPrimitive` method. §7.1.1.1 step 1 says an absent PreferredType IS the
+string `"default"`, and step 2.b passes that string. Now normalised: null →
+the interned `"default"`, otherwise the given `"number"` / `"string"`. Probe
+`p02` went from `LnullRnull` to `LdefaultRdefault`.
+
+8.2 A bare `left + right;` / `0 == y;` statement was DROPPED whole at module
+top level. `expressionRunsUserCode` (`module-init-collection.ts`) already had
+this exact argument for `in` / `instanceof` (#5140 — "METHOD-INVOKING
+relational operators, not inert comparisons"); the ToPrimitive-reaching
+operators (`+ - * / % **`, `== !=`, `< > <= >=`) belong to the same family,
+because any object operand runs `valueOf` / `toString` / `@@toPrimitive`.
+Added there, restricted to operands that are not SYNTACTICALLY primitive so
+`1 + 2;` keeps its previous drop. `compileExpressionStatement`
+(`statements.ts`) additionally compiles such a statement with an `externref`
+expectation: with no expected type the binary lowering picks a scalar carrier
+that unboxes each operand directly and skips ToPrimitive, which is why
+`var r = left + right` invoked both methods while `left + right;` invoked
+neither. Probes `p61`, `p62` flip.
+
+**Not done in step 8 (1 row):** `equals/coerce-symbol-to-prim-return-prim`
+needs the plan's item 3 — the §7.2.15 step 11/12 arm in `__any_eq`
+(`any-eq-helpers.ts`), where exactly one side is tag 6 (object) and the other a
+primitive. Probe `p62b` (`'str' == y`) still answers `false`. Deferred rather
+than guessed at: `__any_eq` operates on the `$AnyValue` tagged union, so the
+arm has to unbox the object side back to an externref, call `__to_primitive`,
+re-box the primitive result and re-enter with a bounded single retry — and it
+was not established in this pass that standalone `'str' == y` even routes
+through `__any_eq` rather than an `__extern_*` equality.
+
+**Separate pre-existing defect found while building the step-8 control, NOT
+fixed here:** `"x" + o` for an object with a user `valueOf` (or `toString`)
+answers `x[object Object]` in BOTH lanes on HEAD — string-concatenation `+`
+does not run OrdinaryToPrimitive on its object operand. It is not part of any
+row in this issue's 89, and it is a different seam from the `@@toPrimitive`
+GetMethod step 8.1 fixes.
