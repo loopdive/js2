@@ -738,6 +738,28 @@ export function resolveRuntimeHostCapabilityFuncFamilyRecord(
 }
 
 /**
+ * (#3526 F2-S8) Resolve one selected GLOBAL ID, fail-closed on both misses and
+ * kind — the exact twin of {@link resolveRuntimeHostCapabilityFuncRecord}.
+ *
+ * {@link resolveRuntimeHostCapabilityRecord} is deliberately kind-AGNOSTIC (the
+ * manifest freeze publishes records of every kind through it), so a consumer
+ * that wants a global — the string-literal storage seam is the first — needs
+ * its own guard rather than reusing the func one, whose whole job is to refuse
+ * exactly this kind. A global record carries a field SCHEME rather than a field
+ * name, because the field IS the literal.
+ */
+export function resolveRuntimeHostCapabilityGlobalRecord(
+  records: readonly RuntimeHostCapabilityRecord[],
+  capability: RuntimeHostCapabilityGlobalId,
+): RuntimeHostCapabilityGlobalRecord {
+  const found = resolveRuntimeHostCapabilityRecord(records, capability);
+  if (found.kind !== "global") {
+    throw new Error(`host capability ${capability} is not a global host capability`);
+  }
+  return found;
+}
+
+/**
  * Resolve one selected FUNC ID, fail-closed on both misses and kind. The
  * static parameter type already rejects a global id; the kind guard is its
  * runtime twin, for catalogues that arrive through an `unknown` boundary.

@@ -65,6 +65,7 @@ import {
   STRING_COMPARE_POLICY_DISABLED,
   STRING_CHAR_CODE_AT_POLICY_DISABLED,
   STRING_CONCAT_POLICY_DISABLED,
+  STRING_CONST_POLICY_DISABLED,
   STRING_CONCAT_MANY_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
   STRING_LEN_POLICY_DISABLED,
@@ -307,6 +308,8 @@ describe("#3526 F2-S3 provider policy", () => {
     // (#3526 F2-S6) NINE now: the batched many-arity pass policy is a
     // sibling of the concatenation policy, not a field on it.
     expect(frozen.policy.stringConcatMany).toEqual(STRING_CONCAT_MANY_POLICY_DISABLED);
+    // (#3526 F2-S8) …and family 2's last: the literal-storage seam.
+    expect(frozen.policy.stringConst).toEqual(STRING_CONST_POLICY_DISABLED);
   });
 
   it("resolves independently of the compare and of every family-1 arm", () => {
