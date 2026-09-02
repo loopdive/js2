@@ -1,0 +1,8 @@
+/*---
+description: let undefined at global is a SyntaxError (#5271 probe)
+negative:
+  phase: runtime
+  type: SyntaxError
+flags: [noStrict]
+---*/
+let undefined;

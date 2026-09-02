@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var context = null;
+var fn = function() { return function() { 'use strict'; context = this; }; };
+fn()`x`;
+assert.sameValue(context, undefined, 'this=' + String(context));

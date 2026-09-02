@@ -1,0 +1,7 @@
+/*---
+description: hoisted function reads module-level const before init (#5271 probe)
+flags: [noStrict]
+---*/
+function f() { return x + 1; }
+assert.throws(ReferenceError, function() { f(); });
+const x = 1;

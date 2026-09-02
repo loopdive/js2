@@ -1,0 +1,9 @@
+language/expressions/call/eval-spread.js
+language/expressions/call/eval-spread-empty.js
+language/expressions/call/eval-spread-empty-leading.js
+language/expressions/call/eval-spread-empty-trailing.js
+language/expressions/call/tco-non-eval-function-dynamic.js
+language/expressions/object/scope-meth-body-lex-distinct.js
+language/expressions/object/scope-gen-meth-body-lex-distinct.js
+language/expressions/object/scope-gen-meth-param-elem-var-open.js
+language/expressions/object/scope-gen-meth-param-elem-var-close.js

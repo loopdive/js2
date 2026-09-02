@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var proto = { m(x) { return 'P' + x; } };
+var object = { m(x) { return super.m(x); }, get g() { return 1; } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.m(1), 'P1', 'super call from an accessor-path literal method: ' + String(object.m(1)));

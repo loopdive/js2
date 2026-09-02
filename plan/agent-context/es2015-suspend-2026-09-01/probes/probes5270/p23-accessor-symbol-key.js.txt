@@ -1,0 +1,10 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var s = Symbol(); var calls = 0;
+var A = { get [s]() { return s; }, set [s](_) { calls++; } };
+assert.sameValue(A[s], s, 'getter on symbol key');
+A[s] = 1;
+assert.sameValue(calls, 1, 'setter on symbol key: ' + calls);

@@ -1,0 +1,9 @@
+/*---
+description: body binding named arguments + default reads arguments (#5271 probe)
+flags: [noStrict]
+---*/
+var args;
+function f(x = args = arguments) { function arguments() {} }
+f();
+assert.sameValue(typeof args, 'object');
+assert.sameValue(args.length, 0);

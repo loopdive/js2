@@ -1,0 +1,7 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var A = { get [1]() { return 1; } };
+assert.sameValue(A[1], 1, 'A[1]=' + String(A[1]));

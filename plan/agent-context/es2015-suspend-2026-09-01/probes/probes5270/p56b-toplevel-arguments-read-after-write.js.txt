@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var argument;
+arguments = 2;
+assert.sameValue(arguments, 2, 'arguments=' + String(arguments));
