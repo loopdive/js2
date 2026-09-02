@@ -8268,6 +8268,60 @@ export function fillExternIsArray(ctx: CodegenContext): void {
     }
   }
 
+  // (#5268 step 6) §7.2.2 step 3 — a Proxy exotic object. IsArray is defined
+  // ON the target: a revoked proxy throws a TypeError, and an unrevoked one
+  // recurses (a proxy-of-a-proxy is `toString/proxy-array.js`'s third
+  // assertion). Unwrapping BEFORE the carrier chain is what makes
+  // `Array.isArray(new Proxy([], {}))` true; without this arm a `$Proxy` — not
+  // a subtype of any vec carrier — silently answered `false`, and a REVOKED
+  // proxy answered `false` instead of throwing.
+  //
+  // Placed after the `$AnyValue` peel so a boxed proxy is unwrapped too, and
+  // bounded rather than looped for the same reason `PROTO_WALK_LIMIT` exists:
+  // a wrong answer is recoverable, a hung test262 shard is not.
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyTypeIdx !== undefined) {
+    const F_PTARGET = 1;
+    const F_REVOKED = 4;
+    const revokedMsg = "Cannot perform operation on a proxy that has been revoked";
+    addStringConstantGlobal(ctx, revokedMsg);
+    const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
+    if (typeErrorCtorIdx !== undefined) {
+      const exnTagIdx = ensureExnTag(ctx);
+      for (let depth = 0; depth < 4; depth += 1) {
+        body.push(
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx: proxyTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: proxyTypeIdx },
+              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // FRESH Instr array per use — a SHARED one is double-remapped
+                // by the finalize dead-code walk (object-runtime-proxy.ts says
+                // so at `throwRevoked`).
+                then: [
+                  ...stringConstantExternrefInstrs(ctx, revokedMsg),
+                  { op: "call", funcIdx: typeErrorCtorIdx },
+                  { op: "throw", tagIdx: exnTagIdx },
+                ],
+              },
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: proxyTypeIdx },
+              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+              { op: "local.set", index: anyLocal },
+            ],
+          },
+        );
+      }
+    }
+  }
+
   let chain: Instr[] = [{ op: "i32.const", value: 0 }];
   for (let i = carrierTypeIdxs.length - 1; i >= 0; i--) {
     const typeIdx = carrierTypeIdxs[i]!;

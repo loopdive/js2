@@ -153,3 +153,25 @@ describe("#5268 step 1 — Object.prototype.__proto__ accessor pair (standalone)
     expect(lines).toEqual(["obj=TypeError", "self=TypeError", "reflect=false"]);
   });
 });
+
+describe("#5268 step 6 — IsArray over a Proxy (§7.2.2 step 3, standalone)", () => {
+  it("unwraps a live proxy to its target and throws for a revoked one", async () => {
+    // RED on base: `Array.isArray(handle.proxy)` folded to the constant `true`
+    // from the TARGET's static type, so the revoked case never threw. The two
+    // `nested` / `nonarr` lines pin the unwrap itself — they take the runtime
+    // predicate because the provenance trace routes them there.
+    const lines = await runLines(`
+      var p = new Proxy([], {});
+      LOG("live=" + Array.isArray(p));
+      LOG("nested=" + Array.isArray(new Proxy(p, {})));
+      LOG("nonarr=" + Array.isArray(new Proxy({}, {})));
+      var handle = Proxy.revocable([], {});
+      LOG("before=" + Array.isArray(handle.proxy));
+      handle.revoke();
+      var verdict = "no-throw";
+      try { Array.isArray(handle.proxy); } catch (e) { verdict = e instanceof TypeError ? "TypeError" : "other"; }
+      LOG("revoked=" + verdict);
+    `);
+    expect(lines).toEqual(["live=true", "nested=true", "nonarr=false", "before=true", "revoked=TypeError"]);
+  });
+});

@@ -49,6 +49,7 @@ import {
   tryEmitStandaloneStructGopdKeyDispatch,
 } from "../builtin-static-gopd.js";
 import { tryEmitBuiltinProtoConstructorDescriptor } from "../builtin-proto-constructor.js";
+import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#5268 step 6)
 import {
   emitImmutablePrototypeStatusCorrection,
   tryEmitObjectProtoProtoAccessorGopd,
@@ -690,7 +691,15 @@ export function compileBuiltinStaticCall(
     //     `__extern_is_array` when a JS host is present.
     // We OR the two checks so neither case regresses; in standalone mode the
     // host predicate is simply absent and only the `ref.test` path runs.
-    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier) {
+    // (#5268 step 6) …and a value whose PROVENANCE is a Proxy, whatever the
+    // checker says its type is. TypeScript types `new Proxy(t, h)` and
+    // `Proxy.revocable(t, h).proxy` as the TARGET's type, so an array target
+    // folded this call to the constant `true` — skipping §7.2.2 step 3, whose
+    // revoked-proxy TypeError is the whole point of `isArray/proxy-revoked.js`.
+    // The runtime predicate answers correctly for a live proxy too (it unwraps
+    // to the target), so routing here is strictly closer to the spec.
+    const mayBeProxy = ctx.standalone && tracesToProxyValue(ctx, expr.arguments[0]!);
+    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier || mayBeProxy) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!retainArrayIsArrayExternrefCandidate(fctx, argType)) return { kind: "i32" };
       emitArrayIsArrayExternrefPredicate(ctx, fctx);
