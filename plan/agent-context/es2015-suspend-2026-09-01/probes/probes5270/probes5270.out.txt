@@ -1,0 +1,51 @@
+.tmp/es2015/probes5270/p01-meth-this-strict.js: fail Test262Error: strict method shorthand this: object null Expected SameValue(«null», «undefined») to be true | at L9: assert.sameValue(thisValue, undefined, 'strict method shorthand this: ' + typeof thisValue + ' ' + String(thisValue));
+.tmp/es2015/probes5270/p01b-fnprop-this-strict.js: pass 
+.tmp/es2015/probes5270/p02-toprim-add.js: fail Test262Error: log=LnullRnull r=3 Expected SameValue(«"LnullRnull"», «"LdefaultRdefault"») to be true | at L10: assert.sameValue(log, 'LdefaultRdefault', 'log=' + log + ' r=' + r);
+.tmp/es2015/probes5270/p02b-toprim-looseeq.js: pass 
+.tmp/es2015/probes5270/p02c-toprim-write-readback.js: pass 
+.tmp/es2015/probes5270/p03-tag-var-4params.js: pass 
+.tmp/es2015/probes5270/p04-yield-ident-key.js: fail Test262Error: keys= | at L8: assert(Object.prototype.hasOwnProperty.call(obj, 'propName'), 'keys=' + Object.getOwnPropertyNames(obj).join());
+.tmp/es2015/probes5270/p05-sym-call-key-data.js: fail Test262Error: sym2=undefined Expected SameValue(«undefined», «"D"») to be true | at L9: assert.sameValue(object[sym1], 'B', 'sym1=' + String(object[sym1]));
+.tmp/es2015/probes5270/p06-num-call-key-method.js: pass 
+.tmp/es2015/probes5270/p06b-sym-key-method.js: pass 
+.tmp/es2015/probes5270/p07-gpo-plain.js: fail Test262Error: gpo({a:1}) is Object.prototype: null Expected SameValue(«null», «[object Object]») to be true | at L7: assert.sameValue(Object.getPrototypeOf(o), Object.prototype, 'gpo({a:1}) is Object.prototype: ' + (Object.getPrototypeOf(o) === null ? 'null' : 'other'));
+.tmp/es2015/probes5270/p07b-gpo-empty-decl.js: pass 
+.tmp/es2015/probes5270/p07c-proto-colon-obj.js: fail Test262Error: colon __proto__ sets [[Prototype]] Expected SameValue(«[object Object]», «[object Object]») to be true | at L7: assert.sameValue(Object.getPrototypeOf(object), proto, 'colon __proto__ sets [[Prototype]]');
+.tmp/es2015/probes5270/p07d-proto-computed.js: pass 
+.tmp/es2015/probes5270/p08-super-builtin-body.js: fail Test262Error: super.toString=null Expected SameValue(«null», «function () { [native code] }») to be true | at L8: assert.sameValue(obj.method(), Object.prototype.toString, 'super.toString=' + String(obj.method()));
+.tmp/es2015/probes5270/p08b-super-call-method.js: fail Test262Error: super.method(42)=null Expected SameValue(«null», «"proto42"») to be true | at L9: assert.sameValue(object.method(42), 'proto42', 'super.method(42)=' + String(object.method(42)));
+.tmp/es2015/probes5270/p08c-super-getter.js: fail Test262Error: getter super.x=null Expected SameValue(«null», «"proto42"») to be true | at L9: assert.sameValue(object.x, 'proto42', 'getter super.x=' + String(object.x));
+.tmp/es2015/probes5270/p08d-super-param-default.js: fail Test262Error: param-default super.toString=null Expected SameValue(«null», «function () { [native code] }») to be true | at L8: assert.sameValue(obj.method(), Object.prototype.toString, 'param-default super.toString=' + String(obj.method()));
+.tmp/es2015/probes5270/p09-var-redecl-shape.js: fail TypeError: called value is not a function | at L8: assert.sameValue(obj.method(), 1, 'obj.method typeof=' + typeof obj.method);
+.tmp/es2015/probes5270/p09b-var-redecl-control.js: fail Test262Error: Expected SameValue(«null», «1») to be true | at L8: assert.sameValue(obj.method(), 1);
+.tmp/es2015/probes5270/p10-arrow-lexical-this-apply.js: pass 
+[test262-in-process] runtime-eval tier: QUICKJS (artifact 7511c866105d, adapter key d4799bda84cfed0d) — DEFAULT engine (#4242); JS2WASM_EVAL_ENGINE=interpreter selects the kept native bytecode engine; TEST262_FULL_RUNTIME_EVAL is ignored under this engine
+.tmp/es2015/probes5270/p11-arrow-no-prototype.js: fail Test262Error: prototype in arrow Expected SameValue(«true», «false») to be true | at L6: assert.sameValue('prototype' in (() => {}), false, 'prototype in arrow');
+.tmp/es2015/probes5270/p11b-arrow-restricted.js: fail Test262Error: get caller Expected a TypeError to be thrown but no exception was thrown at all | at L8: assert.throws(TypeError, function() { return arrowFn.caller; }, 'get caller');
+.tmp/es2015/probes5270/p12-instanceof-fnproto-poison.js: fail Test262Error: non-object prototype must throw Expected a TypeError to be thrown but no exception was thrown at all | at L7: assert.throws(TypeError, function() { [] instanceof Function.prototype; }, 'non-object prototype must throw');
+.tmp/es2015/probes5270/p12b-instanceof-fnproto-getter.js: fail Test262Error: walk reaches Array.prototype Expected SameValue(«false», «true») to be true | at L8: assert.sameValue([] instanceof Function.prototype, true, 'walk reaches Array.prototype');
+.tmp/es2015/probes5270/p13-instanceof-hasinstance-obj.js: fail Test262Error: @@hasInstance result Expected SameValue(«false», «true») to be true | at L8: assert.sameValue(0 instanceof F, true, '@@hasInstance result');
+.tmp/es2015/probes5270/p13b-instanceof-hasinstance-getter-throw.js: fail Test262Error: getter abrupt propagates Expected a Test262Error but got a TypeError | at L8: assert.throws(Test262Error, function() { 0 instanceof F; }, 'getter abrupt propagates');
+.tmp/es2015/probes5270/p14-tag-callexpr-this-strict.js: pass 
+.tmp/es2015/probes5270/p15-tag-member-this.js: fail Test262Error: member tag this Expected SameValue(«[object Object]», «[object Object]») to be true | at L8: assert.sameValue(context, obj, 'member tag this');
+.tmp/es2015/probes5270/p16-tag-zero-param-arguments.js: fail Test262Error: arguments.length=0 Expected SameValue(«0», «1») to be true | at L8: assert.sameValue(n, 1, 'arguments.length=' + n);
+.tmp/es2015/probes5270/p16b-tag-6-args.js: fail Test262Error: arguments.length=3 Expected SameValue(«3», «4») to be true | at L8: assert.sameValue(n, 4, 'arguments.length=' + n);
+.tmp/es2015/probes5270/p18-toplevel-arguments-target.js: pass 
+.tmp/es2015/probes5270/p19-template-frozen.js: fail Test262Error: frozen template object: true Expected SameValue(«true», «undefined») to be true | at L9: assert.sameValue(t.test262Prop, undefined, 'frozen template object: ' + String(t.test262Prop));
+.tmp/es2015/probes5270/p19b-template-frozen-strict.js: fail Test262Error: strict write throws Expected a TypeError to be thrown but no exception was thrown at all | at L9: assert.throws(TypeError, function() { 'use strict'; t.test262Prop = true; }, 'strict write throws');
+.tmp/es2015/probes5270/p20-new-tagged.js: fail TypeError: is not a constructor | at L10: assert(instance instanceof Constructor, 'instance');
+.tmp/es2015/probes5270/p21-tco-identity.js: pass 
+.tmp/es2015/probes5270/p21b-tco-comma.js: fail RangeError: Maximum call stack size exceeded in __closure_64() at source L310 (via __closure_64@L6 ← __closure_64@L6 ← __closure_64@L6) | at L8: assert.sameValue(callCount, 1);
+.tmp/es2015/probes5270/p21c-tco-getf.js: fail RangeError: Maximum call stack size exceeded in __closure_64() at source L310 (via __closure_64@L6 ← __closure_64@L6 ← __closure_64@L6) | at L8: assert.sameValue(callCount, 1);
+.tmp/es2015/probes5270/p21d-tco-externref-ret.js: fail RangeError: Maximum call stack size exceeded in __closure_64() at source L310 (via __closure_64@L6 ← __closure_64@L6 ← __closure_64@L6) | at L8: assert.sameValue(callCount, 1);
+.tmp/es2015/probes5270/p22-accessor-bool-key.js: fail Test262Error: obj.false=undefined Expected SameValue(«undefined», «"via get"») to be true | at L8: assert.sameValue(obj.false, 'via get', 'obj.false=' + String(obj.false));
+.tmp/es2015/probes5270/p23-accessor-symbol-key.js: fail Test262Error: getter on symbol key Expected SameValue(«undefined», «Symbol()») to be true | at L8: assert.sameValue(A[s], s, 'getter on symbol key');
+.tmp/es2015/probes5270/p23b-accessor-num-key.js: pass 
+.tmp/es2015/probes5270/p24-dstr-lref-first-close.js: fail Test262Error: next=1 Expected SameValue(«1», «0») to be true | at L8: var thrower = function() { throw new Test262Error(); };
+.tmp/es2015/probes5270/p24b-dstr-rest-member.js: fail Test262Error: rest member target written: undefined | at L10: assert(!!obj.ab, 'rest member target written: ' + String(obj.ab));
+.tmp/es2015/probes5270/p25-class-name-assign.js: fail Test262Error: descriptor value=__anonClass_cls_0 Expected SameValue(«"__anonClass_cls_0"», «"cls"») to be true | at L9: assert.sameValue(d && d.value, 'cls', 'descriptor value=' + String(d && d.value));
+.tmp/es2015/probes5270/p25b-class-name-objlit.js: fail Test262Error: descriptor value=undefined Expected SameValue(«undefined», «"id"») to be true | at L8: assert.sameValue(d && d.value, 'id', 'descriptor value=' + String(d && d.value));
+.tmp/es2015/probes5270/p31-delete-method.js: fail Test262Error: still own after delete Expected SameValue(«true», «false») to be true | at L7: assert.sameValue(delete obj.method, true);
+.tmp/es2015/probes5270/p32-gen-meth-this-strict.js: fail Test262Error: gen method this: null Expected SameValue(«null», «undefined») to be true | at L9: assert.sameValue(thisValue, undefined, 'gen method this: ' + String(thisValue));
+.tmp/es2015/probes5270/p33-with-unscopables-throw.js: fail Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all | at L6: var obj = { attr: null, get [Symbol.unscopables]() { throw new Test262Error(); } };
+probes exit=0

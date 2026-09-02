@@ -1,0 +1,14 @@
+language/statements/with/binding-blocked-by-unscopables.js
+language/statements/with/get-binding-value-call-with-proxy-env.js
+language/statements/with/get-binding-value-idref-with-proxy-env.js
+language/statements/with/has-binding-call-with-proxy-env.js
+language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables.js
+language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js
+language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables.js
+language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js
+language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain.js
+language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain-strict-mode.js
+language/statements/with/unscopables-get-err.js
+language/statements/with/unscopables-prop-get-err.js
+language/statements/variable/binding-resolution.js
+language/destructuring/binding/keyed-destructuring-property-reference-target-evaluation-order-with-bindings.js

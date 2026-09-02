@@ -1,0 +1,11 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var t = null;
+(function(p) { t = p; })``;
+t.test262Prop = true;
+assert.sameValue(t.test262Prop, undefined, 'frozen template object: ' + String(t.test262Prop));
+assert.notSameValue(t.raw, undefined, 'raw present');
+assert.sameValue(Object.isFrozen(t), true, 'isFrozen');

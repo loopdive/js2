@@ -1,0 +1,4 @@
+language/expressions/object/method-definition/name-property-desc.js
+language/expressions/object/method-definition/generator-property-desc.js
+language/expressions/object/method-definition/name-prop-name-yield-id.js
+language/expressions/object/method-definition/generator-prop-name-yield-id.js

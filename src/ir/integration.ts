@@ -322,6 +322,7 @@ import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-gl
 import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
+  preparedStringCharCodeAtProvider,
   preparedStringCompareProvider,
   preparedStringConcatProvider,
   preparedStringEqProvider,
@@ -349,6 +350,7 @@ import type {
   GeneratorNumberBoxPolicy,
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
+  StringCharCodeAtPolicy,
   StringComparePolicy,
   StringConcatPolicy,
   StringEqPolicy,
@@ -1045,6 +1047,70 @@ function irStringConcatDemand(fns: readonly IrFunction[]): { readonly immutable:
   return { immutable, owned };
 }
 
+/**
+ * (#3526 F2-S7) This caller's already-resolved guarded-`charCodeAt` policy.
+ *
+ * The EXACT fact the resolve-time table read directly off `ctx.nativeStrings`
+ * (the `IR_STRING_CHAR_CODE_AT_FN` arm's single ternary), consulted once, here,
+ * before freeze — and the same fact `stringMethodPlan` reads at PLAN time to
+ * bake the lane into the intrinsic symbol. Inside `compile()` the two cannot
+ * disagree, because this IS that expression; the resolve arms therefore VERIFY
+ * the plan-time symbol against the frozen row rather than re-deciding it.
+ * Same one-flag truth table as its four family-2 siblings, for the same reason:
+ * `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringCharCodeAtPolicy(ctx: CodegenContext): StringCharCodeAtPolicy {
+  return Object.freeze({ charCodeAt: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S7) True when any of `fns` performs a guarded `charCodeAt` read.
+ *
+ * TWO producers reach WasmGC codegen and BOTH are demand — this is the only
+ * scan in the family that is not a single instruction kind:
+ *
+ *  * a `string.char_code_at` instruction, minted by `from-ast` only with
+ *    receiver-encoding evidence; and
+ *  * an `intrinsic` `call` whose symbol is the plan-path pair
+ *    `__jsstr_charCodeAt` / `__str_charCodeAt` — the SAME enumeration the host
+ *    pre-registration scan performs further down, minus the trusted symbol.
+ *
+ * The proof-licensed symbols (`__jsstr_charCodeAt_trusted`, and the
+ * `__str_flatten` + `__str_flat_charCodeAt` preheader pair) are deliberately
+ * NOT demand: they are a different, plan-time-decided feature this slice does
+ * not govern, so a hoisted char-read loop freezes no row and its arms are
+ * untouched.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringCharCodeAtDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.char_code_at") {
+            found = true;
+            return;
+          }
+          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+          if (
+            instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
+            instr.target.binding.symbol === NATIVE_CHARCODEAT_FN
+          ) {
+            found = true;
+          }
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -1104,6 +1170,7 @@ function prepareBuiltFnRuntimeManifest(
       stringEq: integrationStringEqPolicy(ctx),
       stringLen: integrationStringLenPolicy(ctx),
       stringConcat: integrationStringConcatPolicy(ctx),
+      stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1126,6 +1193,10 @@ function prepareBuiltFnRuntimeManifest(
     // uses, or a concat-only module would carry an `owned-append` row nothing
     // ever calls (and an append-only one would be missing the row it needs).
     stringConcatDemand: irStringConcatDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S7) Same predicate the partition scan above runs, same reason
+    // again — and it must count BOTH producers, or the 35 plan-path cells would
+    // reach the verify arms with no frozen row to be checked against.
+    stringCharCodeAtDemand: irStringCharCodeAtDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3841,6 +3912,7 @@ export function compileIrPathFunctions(
   const stringEqPolicy = integrationStringEqPolicy(ctx);
   const stringLenPolicy = integrationStringLenPolicy(ctx);
   const stringConcatPolicy = integrationStringConcatPolicy(ctx);
+  const stringCharCodeAtPolicy = integrationStringCharCodeAtPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -3961,6 +4033,25 @@ export function compileIrPathFunctions(
           "resolve",
           "ir/integration: string concatenation has no provider under string-concat policy " +
             `concat=${stringConcatPolicy.concat}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S7) The guarded charCodeAt seam partitions on the same rule, in
+    // the same pass. Its demand spans two producers, so an owner whose policy
+    // cannot provide the seam is refused whichever producer minted the read —
+    // the policy refuses, it never re-lowers.
+    if (stringCharCodeAtPolicy.charCodeAt === "unsupported" && irStringCharCodeAtDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: charCodeAt has no provider under string-char-code-at policy " +
+            `charCodeAt=${stringCharCodeAtPolicy.charCodeAt}`,
         ),
         "resolve",
       );
@@ -6490,10 +6581,35 @@ function resolveAndObserveCallableProvider(
     const vecTypeIdx = Number(symbol.slice(VEC_NEW_SIZED_PREFIX.length));
     index = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
+    // (#3526 F2-S7) The PLAN path keeps its materializer — `stringMethodPlan`
+    // baked the lane into this symbol before the freeze, and re-deciding it here
+    // would be from-ast-side vocabulary (#2955). What the slice adds is a
+    // fail-closed VERIFY: the frozen row and the plan-time symbol are the same
+    // `ctx.nativeStrings` fact inside `compile()`, so a disagreement can only
+    // come from an adapter that passed a policy AND a demand, and that is an
+    // invariant violation, never a lane fact to re-decide locally.
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm || arm.symbol !== symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row",
+      );
+    }
     index = ensureHostCharCodeAtGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_SUBSTRING_FN) {
     index = ensureHostSubstringGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
+    // (#3526 F2-S7) The native half of the same plan-path verify — see the host
+    // arm above. Same materializer, same fail-closed check.
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm || arm.symbol !== symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row",
+      );
+    }
     index = ensureNativeCharCodeAtHelper(ctx);
   } else if (
     ref.binding.kind === "intrinsic" &&
@@ -6622,7 +6738,28 @@ function resolveAndObserveCallableProvider(
       index = exactCallableImportIndex(ctx, "env", "string_charAt");
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
-    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+    // (#3526 F2-S7) THE R6-shaped decision on this seam. The arm no longer reads
+    // `ctx.nativeStrings`: the frozen `stringCharCodeAt` policy already resolved
+    // which authority answers, and this only materializes it through the SAME
+    // two routines as before. Fail-closed: an owner whose policy cannot provide
+    // the seam is partitioned out before freeze, so a missing row here is an
+    // invariant, not a lane fact to re-decide locally.
+    //
+    // Both routines return `number | null`, and a `null` keeps its existing
+    // meaning exactly: it falls to the `unknown-function-ref` invariant below —
+    // a hard compile error — and never registers a late import, which would
+    // shift every defined funcidx. `funcMap.get(arm.symbol)` is never used
+    // either: these are DEFINED helpers a same-named user export shadows
+    // (#1072 / the #3520 pin).
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "charCodeAt has no frozen provider under the string-char-code-at policy",
+      );
+    }
+    index = arm.arm === "native" ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_ITERATOR_CHAR_AT_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -7069,9 +7206,14 @@ function makeResolver(
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
       }
-      const idx = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
-      if (idx === null) throw new Error("ir/integration: guarded charCodeAt helper unavailable");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S7) The seam's second un-governed lane read, RETIRED on a
+      // measurement: `string-support.ts` attaches the semantic provider to every
+      // `string.char_code_at` unconditionally, so this branch was reached zero
+      // times across the 65-cell byte matrix (which stayed byte-identical with a
+      // throw in its place) and across 39 suites / 604 passing tests. An
+      // unattached instruction is now a hard refusal rather than a private
+      // re-decision of the authority the manifest already resolved.
+      throw new Error("ir/integration: string.char_code_at has no prepared runtime provider");
     },
     // -------------------------------------------------------------------
     // Exception handling dispatch (slice 9 — #1169h).

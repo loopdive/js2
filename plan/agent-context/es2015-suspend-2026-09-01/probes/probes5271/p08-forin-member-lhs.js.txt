@@ -1,0 +1,9 @@
+/*---
+description: for (x.y in obj) writes the member (#5271 probe)
+flags: [noStrict]
+---*/
+var x = {};
+var n = 0;
+for (x.y in { attr: null }) { n++; }
+assert.sameValue(x.y, 'attr');
+assert.sameValue(n, 1);

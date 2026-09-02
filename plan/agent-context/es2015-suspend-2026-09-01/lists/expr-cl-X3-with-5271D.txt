@@ -1,0 +1,4 @@
+language/expressions/call/with-base-obj.js
+language/expressions/assignment/destructuring/keyed-destructuring-property-reference-target-evaluation-order-with-bindings.js
+language/expressions/arrow-function/arrow/capturing-closure-variables-2.js
+language/expressions/object/prop-def-id-eval-error.js

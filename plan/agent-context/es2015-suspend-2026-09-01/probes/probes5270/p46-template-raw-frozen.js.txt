@@ -1,0 +1,11 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var t = null;
+(function(p) { t = p; })`a${1}b`;
+assert.sameValue(Object.isFrozen(t), true, 'isFrozen(template)');
+assert.sameValue(Object.isFrozen(t.raw), true, 'isFrozen(raw)');
+assert.sameValue(t.raw[0], 'a');
+assert.sameValue(t.length, 2);

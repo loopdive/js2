@@ -1,0 +1,8 @@
+language/computed-property-names/basics/symbol.js
+language/computed-property-names/object/method/symbol.js
+language/computed-property-names/object/method/number.js
+language/computed-property-names/object/accessor/getter.js
+language/computed-property-names/object/accessor/setter.js
+language/expressions/object/accessor-name-computed-in.js
+language/expressions/object/fn-name-accessor-get.js
+language/expressions/object/fn-name-accessor-set.js

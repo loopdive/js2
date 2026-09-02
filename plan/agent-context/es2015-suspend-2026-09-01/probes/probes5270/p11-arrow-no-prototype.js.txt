@@ -1,0 +1,7 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+assert.sameValue('prototype' in (() => {}), false, 'prototype in arrow');
+assert.sameValue(Object.getPrototypeOf(() => {}), Function.prototype, 'gpo(arrow)');
