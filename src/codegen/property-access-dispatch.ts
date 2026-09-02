@@ -3228,12 +3228,37 @@ export function tryLengthAndNameReads(
     }
     // Check the actual local type (may differ from TS type, e.g. arguments vec struct)
     if (ts.isIdentifier(expr.expression)) {
-      const localIdx = fctx.localMap.get(expr.expression.text);
+      let localIdx = fctx.localMap.get(expr.expression.text);
+      let spilledGlobalType: ValType | undefined;
+      if (localIdx === undefined) {
+        // (#5150) …or a MODULE GLOBAL holding a `$__ta_view`. test262 declares
+        // its bindings at top level (`var ta = new Uint8Array(buffer, 0)`), and
+        // the locals-only lookup missed them: `ta.length` then fell to the
+        // checker-typed vec arm below, whose `ref.test` fails on the view struct
+        // and answers 0. Spill the global into a temp local so the existing
+        // effective-length lowering applies unchanged.
+        const globalIdx = ctx.moduleGlobals.get(expr.expression.text);
+        const globalType = globalIdx !== undefined ? ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type : undefined;
+        if (
+          (globalType?.kind === "ref" || globalType?.kind === "ref_null") &&
+          globalType.typeIdx !== undefined &&
+          isTaViewTypeIdx(ctx, globalType.typeIdx)
+        ) {
+          const compiled = compileExpression(ctx, fctx, expr.expression);
+          if (compiled) {
+            const tmp = allocLocal(fctx, `__tav_glob_${fctx.locals.length}`, globalType);
+            fctx.body.push({ op: "local.set", index: tmp });
+            localIdx = tmp;
+            spilledGlobalType = globalType;
+          }
+        }
+      }
       if (localIdx !== undefined) {
         const localType =
-          localIdx < fctx.params.length
+          spilledGlobalType ??
+          (localIdx < fctx.params.length
             ? fctx.params[localIdx]!.type
-            : fctx.locals[localIdx - fctx.params.length]?.type;
+            : fctx.locals[localIdx - fctx.params.length]?.type);
         // Vec struct ref local (e.g. `arguments` object) — struct.get field 0 (length)
         // Note: for externref locals (e.g. `obj: any` in filter callbacks), we fall through
         // to the generic externref path below (line ~1731) which uses multi-struct dispatch
