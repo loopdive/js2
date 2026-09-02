@@ -90,6 +90,17 @@ loc-budget-allow:
   # would leave the next reader with the reason the gate is NOT built on. The
   # executable change at the gate itself is one identifier.
   - src/codegen/declarations.ts
+  # 2026-09-02 (gap 6a, module-scope closure pre-lift + discovery-static pass-1
+  # skip): +49 lines in `src/codegen/declarations.ts`. The slice's own logic all
+  # lives in the NEW subsystem module
+  # `declarations/module-init-closure-prelift.ts` (~330 lines); what lands in
+  # `declarations.ts` is the wiring that cannot live anywhere else — the pass-1
+  # condition, the pre-lift branch that replaces it, the pass-2 disjunct, and the
+  # comment recording why `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2` now restores
+  # BOTH passes (it is the A/B baseline every pin in this family compares
+  # against). `compileDeclarations` is the only function that owns the two-pass
+  # sequence, so a slice that removes one of the passes has to edit it.
+  - src/codegen/declarations.ts
 func-budget-allow:
   # 2026-09-01 (gap 1b): the same +11 comment lines land inside
   # `compileDeclarations`, which is where the pass-2 gate lives; the gate cannot
