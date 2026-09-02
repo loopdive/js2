@@ -63,6 +63,7 @@ import {
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
+import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -152,7 +153,7 @@ import {
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
-import { compileExpression, compileStatement } from "./shared.js";
+import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
@@ -171,6 +172,13 @@ import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneo
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
+import {
+  applyModuleClosurePreLift,
+  DISCOVERY_STATIC_ENABLE_SEAM,
+  moduleInitDiscoveryIsStatic,
+  planModuleClosurePreLift,
+  PRELIFT_DISABLE_SEAM,
+} from "./declarations/module-init-closure-prelift.js";
 import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
@@ -2345,12 +2353,91 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
+ * (#5195 Step 9 H) A top-level `C.staticX = v` or `new C().x = v` whose target
+ * names a declared class ACCESSOR.
+ *
+ * Both shapes call a SETTER, which is observable work — but neither writes a
+ * named module global, so `shouldCollectTopLevelAssignment` dropped the whole
+ * statement from `__module_init` and the setter never ran. The same write
+ * inside a function body has always worked, which is what made the gap look
+ * like a lowering bug rather than a collection one.
+ *
+ * Deliberately narrow: a DECLARED accessor of a class this module compiled, and
+ * only the two receiver shapes that carry no other observable state (a class
+ * identifier, and a `new C(...)` temporary). Everything else keeps its
+ * historical collection decision, so no module without such a write changes.
+ * `isExactTopLevelClassAccessorWrite` above is the ELEMENT-access twin; it stays
+ * as it is because its own admission rules are narrower still.
+ */
+function isTopLevelClassAccessorPropertyWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.name)) return false;
+  const propName = target.name.text;
+  const receiver = skipTransparentExpressions(target.expression);
+  const classOf = (id: ts.Identifier): string | undefined => {
+    const name = ctx.classExprNameMap.get(id.text) ?? id.text;
+    return ctx.classSet.has(name) ? name : undefined;
+  };
+  if (ts.isIdentifier(receiver)) {
+    const className = classOf(receiver);
+    return className !== undefined && ctx.staticAccessorSet.has(`${className}_${propName}`);
+  }
+  if (ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
+    const className = classOf(receiver.expression);
+    if (className === undefined) return false;
+    const accessorKey = `${className}_${propName}`;
+    return ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey);
+  }
+  return false;
+}
+
+/**
  * Top-level class declarations are byte-inert unless computed-accessor or
  * runtime-heritage effects require source-ordered module initialization. The
  * statement emitter consults the final IR skip set.
  */
+/**
+ * (#5195 R2-3) True when this top-level class declaration INHERITS a
+ * runtime-keyed member — its own keys may all fold, but the prototype `$Object`
+ * that starts the chain walk to the inherited one still has to be built at
+ * ClassDefinitionEvaluation.
+ *
+ * Name-keyed, so it needs the class-collection pass to have run; it has, the
+ * same way `isExactTopLevelClassAccessorWrite` above relies on
+ * `ctx.classAccessorSet`. A class with runtime-keyed members of its OWN is
+ * covered by the syntactic check beside this one and does not reach here.
+ */
+function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.ClassDeclaration): boolean {
+  if (!ctx.standalone) return false;
+  const declaredName = statement.name?.text;
+  if (declaredName === undefined) return false;
+  const className = ctx.anonClassExprNames.get(statement) ?? declaredName;
+  return ctx.classSet.has(className) && classHierarchyHasDynamicMember(ctx, className);
+}
+
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
   if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
+    ctx.moduleInitStatements.push(statement);
+    return true;
+  }
+  // (#5195 Step 1) A class with a METHOD (or an accessor in a body this
+  // collector's accessor-only shape test declines) whose computed key does not
+  // fold has ClassDefinitionEvaluation work of its own: the key expression must
+  // run — once, in source order, in THIS frame — and its value must reach the
+  // prototype install. Collecting the declaration routes it through
+  // `compileNestedClassDeclaration`, which owns that emission. Byte-inert for
+  // every class whose keys fold.
+  // (#5195 R2-3) …and so does a DESCENDANT of such a class, even when its own
+  // keys all fold. Its prototype `$Object` is the start of the chain walk that
+  // reaches the inherited runtime-keyed member, so it must be built at
+  // ClassDefinitionEvaluation too. Without this, `class D extends C { n(){} }`
+  // answered `new D()[ID('n')]` as `undefined` until something happened to
+  // touch `D.prototype`, and correctly afterwards — an order-dependent wrong
+  // answer. (`shouldCollectTopLevelClassForRuntimeHeritage` above cannot cover
+  // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
+  if (
+    ts.isClassDeclaration(statement) &&
+    (classHasUnresolvedComputedMemberName(ctx, statement) || topLevelClassInheritsRuntimeKeys(ctx, statement))
+  ) {
     ctx.moduleInitStatements.push(statement);
     return true;
   }
@@ -2389,6 +2476,7 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
     // targets only; see top-level-assigned-function-names.ts.
     isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
+    (operator === ts.SyntaxKind.EqualsToken && isTopLevelClassAccessorPropertyWrite(ctx, target)) ||
     createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
   );
 }
@@ -6087,14 +6175,44 @@ export function compileDeclarations(
     !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
     moduleInitChunksRequired(orderedInitEntriesForChunking);
 
+  // (#3523 R4 gap-6a) The pass-1 skip is OPT-IN and OFF by default — see
+  // `declarations/module-init-closure-prelift.ts` for the mechanism, and the
+  // `gap-6a v2 repair record` in `plan/issues/3523-ir-r4-module-init-compile-once.md`
+  // for the six measured regression clusters that put it behind this seam. With
+  // the seam unset every expression below is `false`/`undefined` and this
+  // function takes exactly the two-pass path it took before the slice.
+  const discoveryStaticEnabled = process.env[DISCOVERY_STATIC_ENABLE_SEAM] === "1";
+  const preLift =
+    discoveryStaticEnabled && (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
+      ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
+      : undefined;
+  // `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` means "the unconditional two-pass
+  // build" — the A/B baseline every pin in this family compares against — so it
+  // restores pass 1 as well as pass 2, not just the recompile.
+  const discoveryStatic =
+    preLift !== undefined &&
+    process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
+    moduleInitDiscoveryIsStatic(preLift);
+
+  // (#4195) With pass 1 skipped the dedupe MARK is a program POSITION, not a
+  // pass-1 artifact: it records where the initializer's diagnostics start so the
+  // post-pass-2 reconcile never truncates what came before. Taken early ONLY on
+  // the opt-in route, so a discovery-static population still collapses the
+  // duplicate pair measured on `for-in/cptn-decl-itr.js`; the default route
+  // keeps the mark exactly where it has always been, inside the pass-1 branch.
+  if (discoveryStatic) pass1DiagnosticMark = ctx.errors.length;
+
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
-  // skipped only in `"skip"` mode, where an earlier source already ran it over
-  // the same complete statement list.
+  // skipped in `"skip"` mode, where an earlier source already ran it over the
+  // same complete statement list, and — under the opt-in seam only — for a
+  // discovery-static population, where the pre-lift already published what it
+  // would have discovered.
   if (
     (hasModuleInits || hasStaticInits) &&
     moduleInitMode !== "skip" &&
     moduleInitMode !== "prepared" &&
-    !skipModuleInitBody
+    !skipModuleInitBody &&
+    !discoveryStatic
   ) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
@@ -6102,6 +6220,17 @@ export function compileDeclarations(
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
+  } else if (discoveryStatic) {
+    profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    profileCount("module-init-discovery-static", 1);
+    // The test-only seam runs the GATE without the registrations, so the suite
+    // can MEASURE that the inventory is load-bearing (h1's body loses its
+    // `call_ref` and falls back to `__call_function_*`) instead of asserting it.
+    if (process.env[PRELIFT_DISABLE_SEAM] !== "1") {
+      profilePhase("module-init-prelift", () =>
+        applyModuleClosurePreLift(ctx, preLift!, createModuleInitFunctionContext()),
+      );
+    }
   }
 
   // (#3419) Last-wins for duplicate top-level function declarations — mirror
@@ -6301,6 +6430,9 @@ export function compileDeclarations(
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
+      // (#3523 R4 gap-6a) With pass 1 skipped this IS the only compile, so it
+      // always runs — the pass-2-stability question is about a SECOND compile.
+      discoveryStatic ||
       !moduleInitPopulationIsPass2Stable(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its

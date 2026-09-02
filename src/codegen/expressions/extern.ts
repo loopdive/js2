@@ -314,7 +314,19 @@ export function emitLazyProtoGet(ctx: CodegenContext, fctx: FunctionContext, cla
   // with a builtin parent, and every non-standalone target, which then take the
   // legacy defaulted-struct path below unchanged. See class-proto-object.ts for
   // why the descriptor-synthesis alternative was measured to be worth zero.
-  if (emitStandaloneClassProtoObject(ctx, fctx, className, ctx.protoGlobals.get(className)!, emitLazyClassObjectGet)) {
+  if (
+    emitStandaloneClassProtoObject(
+      ctx,
+      fctx,
+      className,
+      ctx.protoGlobals.get(className)!,
+      emitLazyClassObjectGet,
+      // (#5195 F1) The §15.7.14 step 6 parent link materializes the PARENT
+      // prototype through this same entry point, so a parent nobody has touched
+      // yet is built on demand.
+      emitLazyProtoGet,
+    )
+  ) {
     return true;
   }
 

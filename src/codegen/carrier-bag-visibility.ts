@@ -93,6 +93,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureExternStrictEqHelper } from "./any-helpers.js"; // (#5268 review R2-1) key de-dup
 
 /** #3468 closure-own-property side table (`closure-props.ts`). */
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
@@ -352,6 +353,92 @@ export function buildBuiltinFnSetRefusalArm(ctx: CodegenContext): Instr[] {
  * placeholders (the "nothing to add" answers) in place when a dependency is
  * missing.
  */
+/**
+ * (#5268 review R2-1) `if (<the key vector already holds `keyLocal`>) skip this
+ * entry` — emitted inside `__carrier_bag_push_keys`' key loop, immediately
+ * before the push.
+ *
+ * §10.1.11 OrdinaryOwnPropertyKeys produces a key LIST, and a list has no
+ * duplicates. The caller has already pushed the carrier's STATIC own keys, so a
+ * bag entry that merely re-describes one of them — which is what
+ * `Object.defineProperty(o, <existing key>, …)` records, because a closed
+ * struct field has no attribute slots of its own — must not be listed twice.
+ *
+ * Measured before this guard, on this tree AND on `origin/main`:
+ * `Reflect.defineProperty({a:1,b:2}, "a", d)` made `Reflect.ownKeys(o)` read
+ * `a,b,a` and `getOwnPropertyNames(o).length` 3. A SECOND define of the same
+ * key did not grow it again — which is what identifies the defect as this
+ * MERGE rather than the bag insert: the bag itself de-duplicates.
+ *
+ * Lives at module scope rather than inside the fill so `fillCarrierBagVisibility`
+ * stays under the #3400 function budget. Returns `[]` when any dependency is
+ * missing, so the loop keeps its previous shape rather than emitting a
+ * half-guard.
+ *
+ * Branch depths inside the emitted `if`: 0 = that `if`, 1 = the scan loop,
+ * 2 = the scan block, 3 = the marker `if` this is nested in, 4 = the key loop —
+ * so `br 4` is "continue the key loop", and the caller's index is stepped first.
+ */
+function buildBagKeyDedupeSkip(d: {
+  externLengthIdx: number | undefined;
+  externGetIdxIdx: number | undefined;
+  strictEqIdx: number | undefined;
+  vecParam: number;
+  keyLocal: number;
+  seenILocal: number;
+  seenNLocal: number;
+  outerIndexLocal: number;
+}): Instr[] {
+  const { externLengthIdx, externGetIdxIdx, strictEqIdx } = d;
+  if (externLengthIdx === undefined || externGetIdxIdx === undefined || strictEqIdx === undefined) return [];
+  return [
+    { op: "local.get", index: d.vecParam },
+    { op: "call", funcIdx: externLengthIdx },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: d.seenNLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: d.seenILocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: d.seenILocal },
+            { op: "local.get", index: d.seenNLocal },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: d.vecParam },
+            { op: "local.get", index: d.seenILocal },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: externGetIdxIdx },
+            { op: "local.get", index: d.keyLocal },
+            { op: "call", funcIdx: strictEqIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: d.outerIndexLocal },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: d.outerIndexLocal },
+                { op: "br", depth: 4 },
+              ],
+            },
+            { op: "local.get", index: d.seenILocal },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: d.seenILocal },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   const bagOfIdx = ctx.funcMap.get(CARRIER_BAG_OF);
   if (bagOfIdx === undefined) return;
@@ -372,6 +459,12 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
   ) {
     return;
   }
+  // (#5268 review R2-1) The de-dup pieces for the key push below. All three are
+  // optional: without them the loop keeps its previous (duplicating) shape
+  // rather than emitting a half-guard.
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const strictEqIdx = ensureExternStrictEqHelper(ctx);
 
   const setFn = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
     const idx = ctx.funcMap.get(name);
@@ -523,6 +616,9 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
     const I = 6;
     const E = 7;
     const V = 8; // (#4194) marker-test scratch
+    const KEY = 9; // (#5268 review R2-1) the bag key, held across the de-dup scan
+    const SEEN_I = 10;
+    const SEEN_N = 11;
     const orderedCall = (idx: number): Instr[] => [
       { op: "local.get", index: BAG },
       { op: "any.convert_extern" },
@@ -539,6 +635,9 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
         { name: "i", type: I32 },
         { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
         { name: "v", type: { kind: "anyref" } },
+        { name: "key", type: EXT },
+        { name: "seenI", type: I32 },
+        { name: "seenN", type: I32 },
       ],
       [
         ...loadBag(BAG, [{ op: "i32.const", value: 0 }, { op: "return" }]),
@@ -582,11 +681,38 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
-                    { op: "local.get", index: 1 }, // vec
                     { op: "local.get", index: E },
                     { op: "ref.as_non_null" },
                     { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                     { op: "extern.convert_any" },
+                    { op: "local.set", index: KEY },
+                    // (#5268 review R2-1) §10.1.11 OrdinaryOwnPropertyKeys is a
+                    // key LIST, and a list has no duplicates. The caller has
+                    // already pushed the carrier's STATIC own keys, so a bag
+                    // entry that merely re-describes one of them — which is what
+                    // `Object.defineProperty(o, <existing key>, …)` records,
+                    // because a closed struct field has no attribute slots —
+                    // must not be listed a second time.
+                    //
+                    // Measured before this guard, on this tree AND on
+                    // `origin/main`: `Reflect.defineProperty({a:1,b:2}, "a", d)`
+                    // made `Reflect.ownKeys(o)` read `a,b,a` and
+                    // `getOwnPropertyNames(o).length` 3. A second define of the
+                    // same key did NOT grow it again, which is what identifies
+                    // the defect as this MERGE rather than the bag insert (the
+                    // bag itself de-duplicates).
+                    ...buildBagKeyDedupeSkip({
+                      externLengthIdx,
+                      externGetIdxIdx,
+                      strictEqIdx,
+                      vecParam: 1,
+                      keyLocal: KEY,
+                      seenILocal: SEEN_I,
+                      seenNLocal: SEEN_N,
+                      outerIndexLocal: I,
+                    }),
+                    { op: "local.get", index: 1 }, // vec
+                    { op: "local.get", index: KEY },
                     { op: "call", funcIdx: objVecPushIdx },
                   ],
                 },

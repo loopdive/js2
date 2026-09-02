@@ -76,6 +76,7 @@ import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./store
 import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
+import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
@@ -86,6 +87,7 @@ import {
   compileConditionalCallee,
   compileFunctionBind,
   compileIIFE,
+  elemAccessReceiverClassName,
   elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
   emitBoundFunctionCall,
@@ -1458,6 +1460,18 @@ export function compileTailDispatch(
       // closure dispatch. The runtime
       // ref.test guards make this safe for a non-closure field value (the
       // default arm reproduces the historical `ref.null.extern`).
+      // (#5195 F1/F3) A class whose hierarchy carries a member installed under a
+      // RUNTIME key (`class C { [ID(2)]() {…} }`) takes the runtime member
+      // dispatch instead: that member has no source-spellable name, so nothing
+      // here can match it, and `__extern_method_call` is the only lowering that
+      // both resolves it through the prototype chain at runtime and binds the
+      // receiver. Placed BEFORE the field arm because a class with such a
+      // member may also have a closure-valued field, and the runtime dispatch
+      // serves that shape correctly too.
+      {
+        const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
+        if (classDyn !== undefined) return classDyn;
+      }
       if (elemAccessReceiverIsUserClass(ctx, elemAccess) && classInstanceHasField(ctx, elemAccess, methodName)) {
         const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
         if (dyn !== null) return dyn;
@@ -1528,6 +1542,12 @@ export function compileTailDispatch(
     // dropped. Route the read + ref.test-guarded dynamic closure dispatch, gated
     // on a user-class-instance receiver so primitive/array receivers keep their
     // historical behaviour. A non-closure read value hits the safe default arm.
+    // (#5195 F1/F3) The runtime-keyed twin of the resolved-key arm above — same
+    // reason, and it must precede the receiver-less dispatch below.
+    {
+      const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
+      if (classDyn !== undefined) return classDyn;
+    }
     if (elemAccessReceiverIsUserClass(ctx, elemAccess)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (dyn !== null) return dyn;
