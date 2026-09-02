@@ -604,9 +604,25 @@ export function compileNamespaceStaticCall(
       // returns its registration key (`ref_null $AnyString`, i.e. a native
       // string or undefined for an unregistered symbol). Zero host imports.
       if (usesNativeSymbolProvider(ctx)) {
+        // (#5269 A-6) §20.4.2.6 step 1: `If sym is not a Symbol, throw a
+        // TypeError`. Without it the argument was coerced to the i32 id lane —
+        // `Symbol.keyFor(null)` / `('')` / `({})` answered `undefined` instead
+        // of throwing. Only a STATICALLY-proven non-symbol throws; `"mixed"`
+        // (a union, a narrowed `any`) keeps the existing coercion, so nothing
+        // that works today changes.
+        const keyForArg = expr.arguments[0]!;
+        const argTag = ctx.oracle.staticJsTypeOf(keyForArg);
+        if (argTag !== "symbol" && argTag !== "mixed") {
+          // The argument still evaluates (its side effects are observable
+          // before the throw, §20.4.2.6 runs after ArgumentListEvaluation).
+          const evaluated = compileExpression(ctx, fctx, keyForArg);
+          if (evaluated) fctx.body.push({ op: "drop" });
+          emitThrowTypeError(ctx, fctx, "Symbol.keyFor requires that the argument be a symbol");
+          return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+        }
         ensureNativeSymbolBoundaryBridge(ctx);
         const { keyForIdx } = ensureSymbolRegistry(ctx);
-        const symType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "i32" });
+        const symType = compileExpression(ctx, fctx, keyForArg, { kind: "i32" });
         if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
         fctx.body.push({ op: "call", funcIdx: keyForIdx });
         return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };

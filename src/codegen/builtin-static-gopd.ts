@@ -77,6 +77,8 @@ import {
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
 } from "./property-access.js";
+import { getWellKnownSymbolId } from "./builtin-value-read.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 
@@ -350,13 +352,35 @@ export function tryEmitStandaloneBuiltinStaticGopd(
     return true;
   }
 
+  // ── Symbol well-known own data props — {w:false, e:false, c:false} ────────
+  // (#5269 A-2) §20.4.2: `Symbol.iterator` & co. are own data properties whose
+  // value is the INTERNED `$Symbol` carrier — the same object the syntactic
+  // `Symbol.iterator` value read boxes to, so `desc.value === Symbol.iterator`.
+  // Only these names are closed; every OTHER `Symbol` member keeps the refusal
+  // below, because `Symbol`'s own universe stays open (a user
+  // `Symbol.foo = …` is a legal write the tables here cannot model).
+  if (builtinName === "Symbol") {
+    const wellKnownId = getWellKnownSymbolId(member);
+    if (wellKnownId === undefined) return false;
+    const createIdx = resolveCreateDescriptor(ctx, fctx);
+    if (createIdx === undefined) return false;
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    if (boxSymbolIdx === undefined) return false;
+    fctx.body.push({ op: "i32.const", value: wellKnownId });
+    fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "call", funcIdx: createIdx });
+    return true;
+  }
+
   // ── Unknown member ─────────────────────────────────────────────────────────
-  // Symbol (own well-known-symbol data props: `Symbol.iterator`, …) and RegExp
-  // (annex-B legacy statics: `$1`…`$9`, `input`, …) have OPEN own-property
-  // universes the tables above do not close — refuse rather than fabricate a
-  // phantom `undefined`. Every other receiver's standard own STRING-keyed
-  // surface is fully covered above, so the member is genuinely absent.
-  if (builtinName === "Symbol" || builtinName === "RegExp") return false;
+  // RegExp's annex-B legacy statics (`$1`…`$9`, `input`, …) are an OPEN
+  // own-property universe the tables above do not close — refuse rather than
+  // fabricate a phantom `undefined`. Every other receiver's standard own
+  // STRING-keyed surface is fully covered above, so the member is genuinely
+  // absent.
+  if (builtinName === "RegExp") return false;
   // (#3319) Genuinely-absent member → `undefined` (singleton under the #2106
   // regime; legacy null.extern).
   if (!emitUndefinedExtern(ctx, fctx)) fctx.body.push({ op: "ref.null.extern" });
@@ -373,7 +397,7 @@ export function tryEmitStandaloneBuiltinStaticGopd(
  * resolver declines — out of scope for this slice. The CONCRETE TypedArray
  * ctors inherit @@species and do NOT own it, so they are correctly absent.)
  */
-const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
+export const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
   "Array",
   "ArrayBuffer",
   "SharedArrayBuffer",
