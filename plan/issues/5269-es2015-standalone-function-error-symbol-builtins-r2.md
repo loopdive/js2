@@ -1168,3 +1168,166 @@ reaped mid-run by the task supervisor, and the reap writes a pnpm `ELIFECYCLE`
 line into the log. That line is the KILL, not a gate failure, and the third
 attempt ran to completion with its verdict lost because the reaped wrapper owned
 the redirect.
+
+## 2026-09-02 adversarial-review fixes (Opus)
+
+An adversarial review (~230 probe cases, both trees x both lanes, node as oracle)
+put the branch on HOLD with three confirmed blockers. All three are fixed, each
+with a regression pin that was A/B'd against the defect it guards — a pin that
+does not fail on the regression is not a pin.
+
+| # | severity | what | fixed in |
+|---|---|---|---|
+| F1 | HIGH, standalone regression | a replacer knocked a primitive off the JSON primitive fold; `JSON.stringify(1, fn)` answered `"null"` | `1b482da376` |
+| F2 | HIGH, **host**-lane regression | a `[Symbol.toPrimitive]` literal was forced onto the host-object path; `${o}` answered `"[object Object]"` | `a6d3d56e76` |
+| F3 | MEDIUM, silent wrong output | a nested var-bound object dropped a key instead of refusing; `{"a":1}` for `{a:1,b:{c:2}}` | `1b482da376` |
+
+### F1 — the `replacerObservable` gate bought nothing and cost six answers
+
+Measured with the gate ON and OFF against the G cluster: **8 of 13 either way.**
+It was defensive reasoning with a real cost and no benefit, so it is gone rather
+than narrowed. Every value below is back to base and node.
+
+Still pre-existing and NOT claimed as fixed: for a primitive the replacer's
+RETURN is ignored (`JSON.stringify(1, (k,v) => "w:"+v)` answers `1`, node
+answers `"w:1"`). The pin asserts the regression cannot return — the replacer
+never sees a nulled value — rather than pinning a wish.
+
+### F2 — the H-1 predicates were never meant to run on the host lane
+
+Both are `ctx.standalone`-gated now. The host-lane repro output is
+BYTE-IDENTICAL to the reviewer's base tree, including its trailing
+"Cannot convert object to primitive value" throw.
+
+**The H-2 fixture's host half only ever passed because of the bug.** With the
+predicates gated, the host lane answers `called=0` — exactly as base does; node
+answers 1. Buying that call count back is what cost `${o}` its @@toPrimitive
+result. H-2 is standalone-only now, with a host-lane pin for the half that does
+hold there (the coerced VALUE still agrees).
+
+### F3 — a refusal beats a wrong answer
+
+`materializeStructAsDynamicObject` is a SHALLOW open-up, so a nested literal was
+copied across as a closed struct no codec arm recognises and the key was
+silently dropped. A nested shape now returns `undefined` from the route, before
+any operand is pushed, restoring the #1599 refusal that base produced. A FLAT
+shape still materializes and still answers correctly, so G-3's real gain is kept.
+
+One row moved as a direct result:
+`built-ins/JSON/stringify/replacer-wrong-type.js` **fail -> compile_error**. That
+is the intended trade — non-pass either way, and a refusal is honest where the
+answer was wrong.
+
+### Re-validation (post-merge, on the fixed tree)
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| `builtins-head.txt` (150) | **30** | 112 | 8 |
+| `builtins-controls.txt` (20) | **20** | 0 | 0 |
+
+The head pass SET is byte-identical to the pre-review run — the three fixes cost
+zero rows and gained zero rows (diffed as sets, not totals). Zero host-import
+leak compile_errors. Equivalence gate PASS (24 failing / 1718 passing, all 24 in
+the baseline, exit 0). Focused suite 54/54. Typecheck, biome lint, prettier and
+all five ratchet gates green.
+
+### F4 — a user-shadowed `Symbol` — DOCUMENTED, not fixed
+
+The A-1 seed gives the `Symbol` carrier 15 well-known own data properties with
+no user-shadow check, widening a leak base already had (`for`/`keyFor`).
+
+**Not fixed because the fix is not contained where the review assumed.** The
+`sourceShadowsGlobalName` helper the TypedArray lane added takes a
+`ts.SourceFile`; `pushBuiltinCtorOwnPropSeed` has no AST node and no SourceFile
+parameter, its two callers in `builtin-static-globals.ts` have none in scope, and
+`CodegenContext` exposes no entry source file (`callableSourceFiles` is optional
+and scoped to cross-module wrapper pre-registration). Threading one through
+touches shared globals-seeding code for a LOW finding.
+
+**And I could not reproduce an end-to-end difference.** Two probes on a
+`function Symbol(x){…}` program, base vs branch, standalone:
+
+- `Object.getOwnPropertyNames(Symbol)` — **both trees throw** `illegal cast`;
+- `typeof Symbol.iterator` / `typeof Symbol.for` / `Symbol(7)` — **both trees
+  throw** an identical WebAssembly.Exception.
+
+So the finding stands as a code-level widening of a pre-existing leak, with no
+measured behavioural delta in the shapes reachable today. Whoever fixes it needs
+the SourceFile plumbing first.
+
+### F7 — native SuppressedError's object model — DOCUMENTED, not fixed
+
+Measured on the branch (standalone), against the spec answer (this host's node
+has no `SuppressedError`, so there is no runtime oracle):
+
+| query | branch | spec |
+|---|---|---|
+| `getPrototypeOf(e) === SuppressedError.prototype` | **false** | true |
+| `getPrototypeOf(SuppressedError.prototype) === Error.prototype` | **false** | true |
+| `e instanceof Error` | true | true |
+| `e instanceof SuppressedError` | true | true |
+| `e.constructor === SuppressedError` | true | true |
+| `String(e)` | `SuppressedError: m` | same |
+| `typeof SuppressedError` | `function` | same |
+
+Five of seven already hold. The two that do not are both prototype identity, and
+they are NOT one fix:
+
+- the `.prototype`-parent half *looks* like adding `"SuppressedError"` to
+  `ES5_NATIVE_ERROR_CTORS` (`object-get-prototype-of.ts:57`) — but that set feeds
+  a second arm (`getPrototypeOf(<Ctor>)`, line 220) whose behaviour for this name
+  I did not measure;
+- the INSTANCE half needs a real brand + native-proto glue registration for
+  SuppressedError, the same substrate D-1 added for the stack accessor.
+
+Shipping only the first would leave a chain that is half-right and harder to
+reason about than one that is wholly absent, so neither was made.
+
+### F5 — module-size cost — MEASURED HERE, and the reviewer's figures are stale
+
+The review's numbers were taken against the older merge-base; main has advanced
+since. Re-measured by file-copy A/B on THIS tree (revert my hunk, compile, restore):
+
+| program | my change | delta |
+|---|---|---|
+| `(1234.5678).toFixed(2)` only | `needRadix` riding on `needFixed` | **+41 B** (reviewer: +3,286 B) |
+| `[] instanceof Array` only | A-5 species seed widened past Promise | **+3,728 B** (reviewer: +3,498 B) |
+
+The toFixed cost is now noise — main's advance made `number_toString_radix`
+reachable by other means. **The species one is real and worth recovering**: a
+program that never mentions `Symbol.species` pays 3.7 KB because the `Array`
+carrier seeds a species accessor unconditionally. The recovery is a demand gate
+mirroring the one the proto seeder already has (`ctx.protoMemberDirty`): set a
+`speciesDirty` flag in the pre-scan when a module actually reads a species key,
+and skip the seed otherwise. Not attempted here (LOW, and it is a new feature,
+not a one-liner).
+
+### F6 — narrowing the J-1 / B claims to the spellings actually measured
+
+| spelling | branch | base |
+|---|---|---|
+| `var tp = Number.prototype.toPrecision; tp.call(123.456, 4)` | `"123.5"` | (J-1's target) |
+| `Number.prototype.toPrecision.call(123.456, 4)` | `undefined` | **`undefined`** |
+
+The one-expression `X.prototype.m.call(...)` spelling is broken **identically on
+both trees** — pre-existing, untouched by J-1. So the J-1 and B claims hold for
+the VARIABLE-BOUND reflective spelling, which is exactly what the focused
+fixtures pin; they were never evidence about the direct spelling.
+
+### Reported but NOT reproduced: host-lane invalid wasm
+
+The review reports that host-lane `JSON.stringify(true, fn, 2)` / `(2, null, 4)`
+/ `(false, undefined, 4)` / `(3, {})` emit INVALID wasm on base and branch alike,
+and suggests it deserves its own issue. **I could not reproduce it.** Five shapes
+tried, each on BOTH trees, all `WebAssembly.validate === true`:
+
+1. `var s = JSON.stringify(...)` with `deferTopLevelInit`;
+2. the same without `deferTopLevelInit` (the reviewer's own host options);
+3. `console.log('r=' + JSON.stringify(...))`;
+4. the same without `deferTopLevelInit`;
+5. the probe wrapped in a `P(name, function(){ return ... })` callback, matching
+   the `p-json-prim-repl.js` harness shape.
+
+Filing it as confirmed would be inventing evidence, and dismissing it would be
+ignoring a reviewer who measured something. It needs the review's exact probe +
+epilogue to pin down; the shapes above are ruled out.

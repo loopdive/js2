@@ -546,6 +546,46 @@ describe("#5269 F2 — a [Symbol.toPrimitive] literal keeps host-lane semantics"
   );
 });
 
+describe("#5269 F2 — the host binary must not gain the open-object path", () => {
+  // The behavioural pins above say the ANSWER is right again. This one pins the
+  // SHAPE of the host binary, which is what actually regressed: forcing the
+  // literal onto the host-object path pulled the open-object/host-coercion
+  // helpers into every host compile of such a file. On the regressed tree the
+  // import list gained `__extern_toString`, `__make_getter_callback`,
+  // `__new_plain_object`, `__extern_get` and `__extern_is_object`; on base — and
+  // now — none of the five is present. This is the durable form of the
+  // "host output is byte-identical to base" check: a sha can only be compared
+  // against a base tree that is not available from inside the suite, whereas the
+  // marker set is exactly what the regression added and is stable across
+  // unrelated codegen churn.
+  const HOST_OPEN_OBJECT_MARKERS = [
+    "__extern_toString",
+    "__make_getter_callback",
+    "__new_plain_object",
+    "__extern_is_object",
+  ];
+
+  it("F2 a [Symbol.toPrimitive] literal does not drag in the host-object helpers — host", async () => {
+    const result = await compile(
+      `var o = { [Symbol.toPrimitive](h) { return "s-" + h; }, x: 1 };
+       var s = \`\${o}\`;`,
+      {
+        allowJs: true,
+        fileName: "issue-5269-f2-shape.js",
+        skipSemanticDiagnostics: true,
+        inferModuleStrictArguments: false,
+        deferTopLevelInit: true,
+        hostBridge: "always" as const,
+      } as Parameters<typeof compile>[1],
+    );
+    expect(result.success, JSON.stringify(result.errors?.slice(0, 3))).toBe(true);
+    const names = WebAssembly.Module.imports(new WebAssembly.Module(result.binary))
+      .filter((i) => i.module === "env")
+      .map((i) => i.name);
+    expect(names.filter((n) => HOST_OPEN_OBJECT_MARKERS.includes(n))).toEqual([]);
+  });
+});
+
 describe("#5269 F3 — never answer where the base compiler refused", () => {
   // The dynamic-replacer route opened a var-bound closed struct with
   // `materializeStructAsDynamicObject`, a SHALLOW open-up: a nested literal was
@@ -559,4 +599,28 @@ describe("#5269 F3 — never answer where the base compiler refused", () => {
     `var o = { a: 1, b: 2 };
      ${check("JSON.stringify(o, {})", '{"a":1,"b":2}')}`,
   );
+
+  // The regression itself was a NESTED shape compiling and answering `{"a":1}`.
+  // It cannot be pinned as an expected string, because the sanctioned outcome is
+  // a compile-time REFUSAL (what base did). So pin the invariant instead:
+  // refusing is fine, answering wrongly is not. This fails on the regressed tree
+  // — which compiled happily and dropped the `b` key — and passes now.
+  it("F3 s34 — a nested var-bound object refuses rather than dropping a key — standalone", async () => {
+    const src = `var o = { a: 1, b: { c: 2 } };
+       var r = JSON.stringify(o, {});
+       if (r !== '{"a":1,"b":{"c":2}}') { throw new Error("wrong: " + r); }`;
+    const result = await compile(src, {
+      allowJs: true,
+      fileName: "issue-5269-f3-nested.js",
+      skipSemanticDiagnostics: true,
+      inferModuleStrictArguments: false,
+      deferTopLevelInit: true,
+      hostBridge: "always" as const,
+      target: "standalone" as const,
+    } as Parameters<typeof compile>[1]);
+    // A refusal is the accepted outcome (#1599), and is what base produced.
+    if (!result.success) return;
+    // If it DOES compile, the answer must be right — no silent key drop.
+    expect(await runLane(src, "standalone")).toBeNull();
+  });
 });
