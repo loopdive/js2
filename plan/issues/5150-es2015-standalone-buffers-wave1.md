@@ -550,3 +550,89 @@ remaining half needs the per-kind TypedArray carrier work in #5194.
 Remaining work is unchanged from `## Suspended Work`: Step 2 (cluster B, the
 ctor/instance object model), Step 3.3 (slice species) and Step 5 (cluster E,
 #3371). `status` stays `in-review` — the PR author is not the merger.
+
+### 2026-09-02 review pass — four findings, three fixed
+
+Two independent reviewers audited the integration at `475d23f4c`. All four
+findings reproduced; the dispositions:
+
+**1 (blocking, FIXED) — the module-global `$__ta_view` pin swallowed a rebind.**
+`moduleGlobalWasmType` (declarations.ts) pinned `var t = new Uint8Array(buf)` to
+the view struct *unconditionally*, so a later `t = new Uint8Array(2)` — a plain
+`$Vec` — no longer fit the slot: the store dropped to null and the next read
+trapped. Standalone, `origin/main` vs `475d23f4c`:
+
+| probe | main | branch @475d23f4c | branch, fixed |
+| --- | --- | --- | --- |
+| `t = new Uint8Array(2)` then `t[0]` | `29` | THROW null-deref | `29` |
+| `t = new Uint8Array([7,8])` then `t[1]` | `28` | THROW null-deref | `28` |
+| `t2 = new Uint8Array(otherBuf)` | compiler crash | `29` | `29` |
+
+The middle column is a real pass→trap flip, i.e. a standalone regression against
+main, and the failure mode is a silent null store. The widening helpers the
+consult sits above (#4428 / #4204 / #4491) cannot catch it — both sides of the
+rebind are objects, so there is no JS-tag disagreement — so the fix is a
+dedicated guard, `taViewGlobalIsRebound` (declarations.ts): the pin survives
+only when every `t = …` in the file assigns a view of the same element type.
+Host/gc lane was byte-identical branch vs main on the same probes, so this was
+standalone-only.
+
+*The same defect exists for FUNCTION LOCALS and is NOT fixed here* — it predates
+this branch (`inferLetConstInitializerWasmType`, #4376, has the identical
+unconditional consult), and the local probe traps on `origin/main` too. Left for
+a follow-up rather than widened into this wave.
+
+**2 (should-fix, FIXED as documentation) — `explicitUndefinedExternTestInstrs`
+docstring.** It justified having no `undefinedSingletonActive` gate by calling
+`undefinedSingleton` "default-off". It is default **TRUE** (create-context.ts:430,
+`process.env.JS2WASM_UNDEF_SINGLETON !== "0"`; #2106 flip). Measured under
+`JS2WASM_UNDEF_SINGLETON=0`, standalone: `new DataView(b,4,undefined).byteLength`
+reads 0 instead of 4, and `dv.setFloat64(0)` with no value argument stops
+storing NaN — i.e. the clauses revert to the legacy answers, they do not
+degrade gracefully.
+No behaviour change was warranted (nothing in `.github` or `scripts/` sets the
+variable, and with the singleton off the helper's `ref.test` correctly answers
+0 by construction), so the comment now states the dependency instead of denying
+it.
+
+**3 (should-fix, RECORDED not fixed) — cluster F stops at the read site.**
+A module-global view passed to a *typed* `Uint8Array` parameter still traps:
+`taViewReceiverTypeIdx` and the `tryLengthAndNameReads` spill both key off the
+identifier at the read site, so the value falls back to the checker-typed vec at
+the call boundary and the parameter slot rejects it. The `any`-typed sibling
+works. **Not a regression** — the same program is a compiler crash on
+`origin/main` ("Cannot read properties of undefined (reading 'slice')"), so no
+row is lost. Cluster F should be read as "direct property/length reads on a
+module-global view", not "module-global views work"; the call-boundary half is
+remaining work alongside Step 2.
+
+**4 (should-fix, FIXED) — `emitArrayBufferSlice` boxed a statically-numeric
+`end`.** The explicit-`undefined` arm routed `args[1]` through externref
+unconditionally, so `ab.slice(2, 6)` dragged `__box_number` and the whole
+ToPrimitive chain into the module. Measured, standalone, same probe both sides:
+
+| | `ab.slice(2,6)` bytes | `__to_primitive` present | compile ms |
+| --- | --- | --- | --- |
+| `origin/main` | 51,101 | no | ~1,755 |
+| branch @`475d23f4c` | 122,604 | yes | ~2,450 |
+| branch, fixed | 51,125 | no | back on main's order |
+
+`ab.slice(2)` and the DataView arms were unaffected, so the whole +71.5 KB was
+that one line. Fixed with the gate the two sibling ToIndex sites already use
+(`ctx.oracle.staticJsTypeOf(arg) === "number"` → compile straight to f64,
+new-indexed.ts:196/499). A statically-numeric argument cannot BE `undefined`, so
+the spec arm is untouched for every other shape.
+
+#### Re-validation after the three fixes
+
+| Check | Result |
+| --- | --- |
+| 53-row buffers list, standalone, 120 s timeout | **16 pass / 32 fail / 5 compile_error** — row-for-row identical to the pre-fix run (`diff` of status+path: no differences) |
+| 20-row `built-ins/TypedArray/prototype/**` control sample, standalone | **20/20 pass** |
+| `npx vitest run tests/issue-5150-es2015-buffers.test.ts` | **14/14** |
+| `pnpm run typecheck` (TS7) | clean |
+| loc / func / coercion / oracle-ratchet / dead-exports | all exit 0 (oracle: "+0 getTypeAtLocation, +0 ctx.checker"; dead-exports: "25 known, 0 new") |
+| loc + func gates re-run with `LOC_GATE_BASE=origin/main` (CI's merge preview) | both exit 0 |
+| `pnpm run test:equivalence:gate` | 24 failing / 1718 passing / 24 known-failures — **no new regressions** |
+| `ab.slice(2,6)` standalone binary | 51,125 bytes, `result.imports` empty, no `__to_primitive` |
+| rebind probes A/B/C/E (standalone) | `29` / `29` / `28` / `10` — A and C back to main's answers, B and E keep the wave's improvement |

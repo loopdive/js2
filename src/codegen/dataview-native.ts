@@ -354,11 +354,21 @@ export function isViewRefTestInstrs(ctx: CodegenContext, anyLocalIdx: number): I
  * the whole buffer while `new DataView(buf, 0, null)` views zero bytes.
  *
  * Shaped after {@link nullishExternTestInstrs} (any-helpers.ts) — scratch-free,
- * detached instruction array — but deliberately NOT gated on the default-off
- * `undefinedSingleton` flag: the standalone lane reserves the singleton
- * unconditionally, and the padding this issue introduced relies on it. Answers
- * a constant 0 when `$AnyValue` is unavailable (the host lane), where the
- * callers' pre-existing NaN handling remains in charge.
+ * detached instruction array. Answers a constant 0 when `$AnyValue` is
+ * unavailable (the host lane), where the callers' pre-existing NaN handling
+ * remains in charge.
+ *
+ * There is no `undefinedSingletonActive` gate here because the test IS the
+ * gate: it answers "tag-1 `$AnyValue`", and only the singleton regime produces
+ * one. That regime is the standalone DEFAULT (`undefinedSingleton` is
+ * `process.env.JS2WASM_UNDEF_SINGLETON !== "0"`, create-context.ts — default
+ * TRUE since the #2106 flip), so the clauses work as written. Under the A/B
+ * kill switch `JS2WASM_UNDEF_SINGLETON=0` the missing-argument padding is
+ * `ref.null.extern` again, this test answers 0, and the clauses REVERT to the
+ * pre-#5150 behaviour rather than degrading gracefully: measured on that lever,
+ * `new DataView(b, 4, undefined).byteLength` reads 0 instead of 4. That is the
+ * legacy answer the flag exists to reproduce, not a separate bug — but do not
+ * read this helper as flag-independent.
  */
 export function explicitUndefinedExternTestInstrs(ctx: CodegenContext, externIdx: number): Instr[] {
   if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
@@ -487,25 +497,39 @@ export function emitArrayBufferSlice(
     // compiled argument as an externref so the singleton stays distinguishable,
     // derive the ordinary clamped index from it, then override with srcLen when
     // it WAS undefined. `null` deliberately still coerces to 0.
-    const endExtern = allocLocal(fctx, `__abs_endx_${fctx.locals.length}`, { kind: "externref" });
-    const endTy = compileExpr(args[1]!, { kind: "externref" });
-    if (endTy === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (endTy.kind !== "externref") coerceType(ctx, fctx, endTy, { kind: "externref" });
-    fctx.body.push({ op: "local.tee", index: endExtern });
-    coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    fctx.body.push({ op: "local.set", index: endLocal });
-    emitNormalizeIndex(fctx, endLocal, srcLenLocal);
-    fctx.body.push(...explicitUndefinedExternTestInstrs(ctx, endExtern));
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: srcLenLocal },
-        { op: "local.set", index: endLocal },
-      ],
-      else: [],
-    });
+    //
+    // A statically-numeric end cannot BE `undefined`, so it stays on the plain
+    // f64 path — same gate the sibling ToIndex sites use (new-indexed.ts). The
+    // externref detour is not free: routing `ab.slice(2, 6)` through
+    // `__box_number` + the ToPrimitive chokepoint pulled that whole chain into
+    // the module and took the standalone binary from 51,078 to 122,604 bytes
+    // (measured 2026-09-02, this file both sides).
+    if (ctx.oracle.staticJsTypeOf(args[1]!) === "number") {
+      compileExpr(args[1]!, { kind: "f64" });
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      fctx.body.push({ op: "local.set", index: endLocal });
+      emitNormalizeIndex(fctx, endLocal, srcLenLocal);
+    } else {
+      const endExtern = allocLocal(fctx, `__abs_endx_${fctx.locals.length}`, { kind: "externref" });
+      const endTy = compileExpr(args[1]!, { kind: "externref" });
+      if (endTy === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (endTy.kind !== "externref") coerceType(ctx, fctx, endTy, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: endExtern });
+      coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      fctx.body.push({ op: "local.set", index: endLocal });
+      emitNormalizeIndex(fctx, endLocal, srcLenLocal);
+      fctx.body.push(...explicitUndefinedExternTestInstrs(ctx, endExtern));
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: srcLenLocal },
+          { op: "local.set", index: endLocal },
+        ],
+        else: [],
+      });
+    }
   } else {
     fctx.body.push({ op: "local.get", index: srcLenLocal });
     fctx.body.push({ op: "local.set", index: endLocal });
