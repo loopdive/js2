@@ -31,6 +31,22 @@ import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-p
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 import type * as BodyRouteAudit from "./body-route-audit.js";
 
+/**
+ * (#5195 Step 1) One class element whose ComputedPropertyName does not fold to
+ * a compile-time key, carried under a synthetic member name so the ordinary
+ * method / accessor registration machinery can hold it.
+ */
+export interface ClassDynamicMember {
+  /** Index in `decl.members` — the stable half of the synthetic name. */
+  ordinal: number;
+  /** The declaration; its `name` is always a `ts.ComputedPropertyName`. */
+  member: ts.ClassElement;
+  kind: "method" | "get" | "set";
+  isStatic: boolean;
+  /** `__cmdyn$<ordinal>` — the name the member is registered under. */
+  syntheticName: string;
+}
+
 export interface CodegenError {
   message: string;
   line: number;
@@ -3834,6 +3850,29 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   protoGlobals: Map<string, number>;
   /** Map from class name → own method names (instance methods, for prototype allowlist; see #1047) */
   classMethodNames: Map<string, string[]>;
+  /**
+   * (#5195 Step 1) Class members whose ComputedPropertyName does NOT fold to a
+   * compile-time key (`[x || 1]`, `[ID('d')]`, `[sym]`). They are registered
+   * under the synthetic name `__cmdyn$<ordinal>` so the ordinary method /
+   * accessor machinery carries them, and installed on the prototype `$Object`
+   * with the RUNTIME key held in {@link classDynamicKeyGlobals}. Keyed by class
+   * name; the entries are in `decl.members` order. Standalone only — the host
+   * lane still drops these members.
+   */
+  classDynamicMembers: Map<string, ClassDynamicMember[]>;
+  /**
+   * (#5195 Step 1) `${className}:${ordinal}` → global index of the externref
+   * holding the ToPropertyKey'd value of that member's computed key. Written
+   * once at ClassDefinitionEvaluation, read by the prototype-`$Object` install.
+   */
+  classDynamicKeyGlobals: Map<string, number>;
+  /**
+   * (#5195 Step 2) Class name → global index of the STATIC sidecar `$Object`
+   * (`class-static-sidecar.ts`). The class object itself stays a `$ClassName`
+   * struct (#3976); this parallel object carries its static members so a
+   * runtime-keyed static (`C[x || 1]()`) is reachable at all.
+   */
+  classStaticSidecarGlobals: Map<string, number>;
   /** Map from class name → global idx of the method-name CSV string constant (see #1047) */
   classMethodsCsvGlobal: Map<string, number>;
   /** Map from class name → global index of the class-object externref singleton (#1395). Used so `C` resolves to a real object whose static-method descriptors are queryable. */

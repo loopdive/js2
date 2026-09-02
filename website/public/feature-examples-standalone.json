@@ -314,7 +314,7 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 347,
+      "passCount": 349,
       "totalCount": 357,
       "editionSpread": [
         {
@@ -324,7 +324,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 49,
+          "pass": 51,
           "total": 55
         },
         {
@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1091,
+      "passCount": 1092,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -433,7 +433,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 219,
+          "pass": 220,
           "total": 262
         },
         {
@@ -1031,7 +1031,7 @@
     {
       "name": "Computed property names",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 81,
+      "passCount": 90,
       "totalCount": 133
     },
     {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2112,
+      "passCount": 2115,
       "totalCount": 2486
     },
     {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 353,
+      "passCount": 356,
       "totalCount": 461
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1330,
+      "passCount": 1332,
       "totalCount": 1955
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 722,
+      "passCount": 723,
       "totalCount": 1072
     },
     {
@@ -1276,7 +1276,7 @@
     {
       "name": "Top-level await",
       "testCategories": ["language/module-code/top-level-await"],
-      "passCount": 183,
+      "passCount": 185,
       "totalCount": 257
     },
     {

@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9845,
-    "fail": 1465,
-    "ce": 394,
+    "pass": 9884,
+    "fail": 1427,
+    "ce": 393,
     "skip": 0,
     "total": 11704,
     "pct": 84,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2112,
-        "fail": 145,
+        "pass": 2115,
+        "fail": 142,
         "ce": 229,
         "skip": 0,
         "total": 2486,
@@ -94,16 +94,16 @@
       {
         "name": "Symbol.iterator",
         "pass": 571,
-        "fail": 120,
-        "ce": 104,
+        "fail": 119,
+        "ce": 105,
         "skip": 0,
         "total": 795,
         "pct": 72
       },
       {
         "name": "Symbol",
-        "pass": 461,
-        "fail": 142,
+        "pass": 463,
+        "fail": 140,
         "ce": 6,
         "skip": 0,
         "total": 609,
@@ -138,8 +138,8 @@
       },
       {
         "name": "class",
-        "pass": 319,
-        "fail": 67,
+        "pass": 320,
+        "fail": 66,
         "ce": 24,
         "skip": 0,
         "total": 410,
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 176,
-        "fail": 112,
+        "pass": 177,
+        "fail": 111,
         "ce": 42,
         "skip": 0,
         "total": 330,
-        "pct": 53
+        "pct": 54
       },
       {
         "name": "Symbol.species",
@@ -174,12 +174,12 @@
       },
       {
         "name": "computed-property-names",
-        "pass": 81,
-        "fail": 46,
+        "pass": 90,
+        "fail": 37,
         "ce": 6,
         "skip": 0,
         "total": 133,
-        "pct": 61
+        "pct": 68
       },
       {
         "name": "cross-realm",
@@ -426,12 +426,12 @@
       },
       {
         "name": "super",
-        "pass": 13,
-        "fail": 6,
+        "pass": 15,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 68
+        "pct": 79
       },
       {
         "name": "Symbol.unscopables",
@@ -1923,9 +1923,9 @@
   },
   {
     "edition": "ES2021",
-    "pass": 300,
-    "fail": 110,
-    "ce": 62,
+    "pass": 302,
+    "fail": 105,
+    "ce": 65,
     "skip": 0,
     "total": 472,
     "pct": 64,
@@ -1942,20 +1942,20 @@
       {
         "name": "Promise.any",
         "pass": 26,
-        "fail": 41,
-        "ce": 25,
+        "fail": 38,
+        "ce": 28,
         "skip": 0,
         "total": 92,
         "pct": 28
       },
       {
         "name": "logical-assignment-operators",
-        "pass": 55,
-        "fail": 17,
+        "pass": 57,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 72,
-        "pct": 76
+        "pct": 79
       },
       {
         "name": "BigInt",
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 13,
-        "fail": 16,
-        "ce": 11,
+        "fail": 13,
+        "ce": 14,
         "skip": 0,
         "total": 40,
         "pct": 33
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 4,
-        "fail": 29,
-        "ce": 6,
+        "fail": 26,
+        "ce": 9,
         "skip": 0,
         "total": 39,
         "pct": 10
@@ -2023,20 +2023,20 @@
       {
         "name": "Symbol.iterator",
         "pass": 1,
-        "fail": 26,
-        "ce": 3,
+        "fail": 23,
+        "ce": 6,
         "skip": 0,
         "total": 30,
         "pct": 3
       },
       {
         "name": "computed-property-names",
-        "pass": 7,
-        "fail": 20,
-        "ce": 0,
+        "pass": 9,
+        "fail": 15,
+        "ce": 3,
         "skip": 0,
         "total": 27,
-        "pct": 26
+        "pct": 33
       },
       {
         "name": "Reflect.construct",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4097,
-    "fail": 1191,
+    "pass": 4099,
+    "fail": 1189,
     "ce": 504,
     "skip": 0,
     "total": 5792,
@@ -2303,12 +2303,12 @@
       },
       {
         "name": "top-level-await",
-        "pass": 183,
-        "fail": 31,
+        "pass": 185,
+        "fail": 29,
         "ce": 43,
         "skip": 0,
         "total": 257,
-        "pct": 71
+        "pct": 72
       },
       {
         "name": "async-functions",
@@ -2321,12 +2321,12 @@
       },
       {
         "name": "computed-property-names",
-        "pass": 83,
-        "fail": 136,
+        "pass": 85,
+        "fail": 134,
         "ce": 12,
         "skip": 0,
         "total": 231,
-        "pct": 36
+        "pct": 37
       },
       {
         "name": "class-static-fields-public",
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4378,
-    "fail": 980,
-    "ce": 87,
+    "pass": 4382,
+    "fail": 975,
+    "ce": 88,
     "skip": 0,
     "total": 5445,
     "pct": 80
