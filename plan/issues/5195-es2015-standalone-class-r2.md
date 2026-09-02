@@ -754,3 +754,113 @@ Control list verification on HEAD `0d9bfedee` (2026-09-01):
 - **Traps**: the plan's out-of-scope table (generator carrier, decorators, eval
   tier, #3371, #5198, realm) — 38 rows — must not be chased. Merge, never
   rebase.
+
+## 2026-09-02 resumed implementation (Opus)
+
+Resumed from the suspension handoff (`git am` of `lane-5195.mbox`, 2 patches,
+onto `0f801557a`). Four commits on `worktree-agent-aa423580afa75b4c5`.
+
+**Whole-list, `class-head.txt` (209 rows), `--standalone`, in-process runner:**
+
+| point | pass | fail | compile_error |
+|---|---|---|---|
+| baseline (HEAD `0d9bfedee`, 2026-09-01) | 0 | 190 | 19 |
+| after the resumed patch (Step 3 + 9K) | 9 | 189 | 11 |
+| after Step 1 + 1.7 | 24 | 172 | 13 |
+| after Steps 1.6 / 9 H / 9 I / 11 E | 24 | 172 | 13 |
+| **after Step 2** | **28** | **170** | **11** |
+
+`class-controls.txt` re-run after every step: **22/22**, unchanged throughout.
+Every remaining `compile_error` was already one at baseline (decorators ×6,
+#3371 ×2, the `new Function` environment gap ×2, the comma-heritage
+`side-effects-in-extends.js`, `grammar-static-ctor-meth-valid.js`); no row moved
+from `fail` to a worse class, and the whole-list run contains zero illegal
+casts or traps.
+
+### Per step
+
+| Step | Sub-list before → after | Notes |
+|---|---|---|
+| 3 (D1) | 0/14 → 4/14 | one more than the plan's estimate of 3 |
+| 9 K | 0/3 → 3/3 | complete |
+| 1.3/1.4 (C) | 0/2 → 2/2 | complete |
+| 1 + 1.7 + 2 (A) | 0/48 → 12/48 | see residuals |
+| 1.6 | — | `getter-duplicates` + `setter-duplicates` (counted in A and H) |
+| 9 H | 0/5 → 3/5 | |
+| 9 I | 0/1 → 0/1 | mechanism lands, the row needs more (below) |
+| 11 E (cheap half) | 0/8 → 3/8 | the override half is not attempted |
+
+### What landed
+
+- **Step 3 / 9 K** (inherited from the suspension patch, re-validated):
+  the #2623 P-7 `typeof` unsound-fold guard now applies in every lane, the
+  module-GLOBAL twin of the `isExternObj` admission in
+  `finalizeStructAndDynamicMemberGet`, and a computed `['constructor']` key is
+  no longer treated as the constructor.
+- **Step 1.3/1.4**: `C.prototype.constructor` is installed FIRST (spec own-key
+  order) and every standalone class with a class object gets the real `$Object`
+  prototype, including a member-less one.
+- **Step 1**: a class element whose ComputedPropertyName does not fold is
+  registered under a synthetic `__cmdyn$<ordinal>` name
+  (`class-dynamic-keys.ts`), its key expression is evaluated once in source
+  order at ClassDefinitionEvaluation into a `__cmkey_` global (methods included
+  — they used to be dropped entirely, and a top-level class evaluated nothing
+  at all), and the install reads that global instead of an interned string.
+- **Step 1.7**: `class-proto-lookup.ts` — a finalize-minted
+  `__class_proto_lookup` maps a class-instance receiver to its prototype
+  `$Object`, with one prepended `__extern_get` arm guarded by
+  `__hasOwnProperty` so §7.3.2 own-shadowing holds regardless of arm order;
+  plus the element-CALL admission so `new C()[2]()` invokes rather than folding
+  to `ref.null.extern`.
+- **Step 2**: `class-static-sidecar.ts` — a parallel `$Object` holding the
+  static METHODS, reached through the same lookup by reference identity against
+  the class-object singleton, plus the `__extern_get_idx` arm that makes a
+  NUMERIC computed key (`[ID(2)]`) reachable at all.
+- **Step 1.6**: two accessors of the same kind and key are last-definition-wins.
+- **Step 9 H**: a top-level `new C().x = v` / `C.staticX = v` now reaches
+  `__module_init` (it wrote no named global, so the whole statement was
+  dropped), and `compilePropertyAssignment` gained the static-setter arm.
+- **Step 9 I**: the class body's own name is an immutable binding.
+- **Step 11 E**: the struct-result derived-ctor return arm (`return;` /
+  `return undefined` → `this`, `return null` → TypeError).
+
+### Residuals (measured, with the reason)
+
+- **A, 36 rows.** Two causes. (i) The ~20 `cpn-class-*-accessors-*` rows need
+  STATIC accessors on the sidecar; installing them as written traps (their
+  compiled half takes the class struct as `this`, the sidecar invokes with an
+  `$Object` receiver → illegal cast), so they need a per-half trampoline that
+  supplies the dummy struct receiver `emitGetterCallWithDummy` already builds.
+  That trampoline is the next slice of Step 2. (ii) `method/string.js` needs the
+  PropertyAccess twin of the Step-1.7 element-call admission (`new C().d()`
+  where `d` is a runtime key still folds to null). `accessor-name-*-computed-in`
+  and the `cpn-class-expr-*` rows additionally need the class-EXPRESSION
+  identity fix: two anonymous class expressions bound to the same name share one
+  identity, so the first one's prototype is unreachable after the second is
+  evaluated (reproduced standalone with two `for (C = class {…})` loops).
+- **9 I, 1 row.** All five source shapes the rule covers pass (pinned in
+  `tests/issue-5195-es2015-class-r2.test.ts`); `name-binding/const.js` declares
+  eight same-named classes across eight function scopes and one
+  `new (class C {…})` shape still does not throw — the same class-expression
+  identity gap as above.
+- **9 H, 2 rows.** `setter-duplicates.js` passes in isolation and only
+  compile-times-out under load; `setters-prop-desc.js` needs `gOPD` on a
+  prototype accessor.
+- **11 E, 5 rows.** The override half (`return {}` must REPLACE `this`) needs
+  the derived ctor to take the externref-result lane; not attempted.
+- **Steps 4, 5, 6, 7, 8, 10, 12 not attempted** (D2 11, D3 5, D4 6, F 10, G 6,
+  M 8, N 8, O 3, P 2, Q 13, R 7, T 4). Step 10 M was investigated and declined:
+  the plan's fix widens every unannotated defaulted parameter with a scalar
+  initializer to `externref`, which changes the slot type for typed code as
+  well, and the rows additionally need `C.prototype.method(...)` dispatch.
+
+### Gates
+
+Five ratchet gates green at every commit (`check-loc-budget`,
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`); allowances recorded in this file's frontmatter with
+dated rationales. `pnpm run typecheck` (TS7) clean;
+`pnpm run typecheck:ts5` reports only the pre-existing
+`linked-provider-runtime.ts` `WebAssembly.Tag` errors, which this branch does
+not touch. `tests/issue-5195-es2015-class-r2.test.ts` 38/38, host and
+standalone lanes, with a zero-host-import assertion on every standalone case.
