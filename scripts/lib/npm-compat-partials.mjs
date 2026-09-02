@@ -1,4 +1,5 @@
 import { correctnessRollup } from "./npm-compat-correctness.mjs";
+import { esEditionRollup } from "./npm-compat-es-edition.mjs";
 import { mergeNpmPerfHistory, npmPerfHistoryPoint, npmPerfRows } from "./npm-compat-perf.mjs";
 import { NPM_COMPAT_CATALOG_NAMES } from "../../tests/dogfood/npm-compat-catalog.mjs";
 
@@ -154,6 +155,12 @@ export function mergeNpmCompatPartials(
           }
         : null,
     correctness: correctnessRollup(sortedPackages),
+    // Rebuilt here, not copied from a partial: the sharded path assembles the
+    // shipped artifact from worker reports and constructs this summary itself,
+    // so a rollup added only to the single-process generator would be present
+    // locally and absent from every artifact CI actually publishes. The rows
+    // carry `esEdition`, so the corpus-level view is derivable from them.
+    esEditions: esEditionRollup(sortedPackages),
     note: firstMeta.note ?? "Only packages with a committed, reproducible tests/dogfood harness are listed.",
     popularity: firstMeta.popularity ?? null,
     performanceMethodology: firstMeta.performanceMethodology ?? null,

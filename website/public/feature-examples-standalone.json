@@ -423,12 +423,12 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1092,
+      "passCount": 1091,
       "totalCount": 1177,
       "editionSpread": [
         {
           "edition": "ES5",
-          "pass": 795,
+          "pass": 794,
           "total": 795
         },
         {

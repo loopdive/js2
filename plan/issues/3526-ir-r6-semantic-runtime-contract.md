@@ -375,6 +375,46 @@ loc-budget-allow:
   # corpus cells identical — bytes, sha256, ordered import lists with indices,
   # demotions, the linear IR report and full WAT text — with
   # `check:ir-fallbacks` output byte-identical to a base-tree run.
+  #
+  # 2026-09-02 F3-S1 (host callback maker under manifest policy — family 3's
+  # first slice; +440 net src LOC measured against origin/main 77ca8fba).
+  # Breakdown: the `hostCallbackWrap` policy, the `js.callback.wrap` feature,
+  # the NEW `native-dispatch` implementation kind with its validation rule, the
+  # two provider rows and the policy-driven selector (runtime-manifest.ts,
+  # +170 — the file is over the 1500-line god-file threshold, 2792 -> 2962, and
+  # carries an F1-S1 grant; as in F2-S3..F2-S8 the growth is one more
+  # independent policy field beside eleven existing ones plus one union arm,
+  # i.e. repetition of a settled pattern, and splitting the file is not this
+  # slice's work); the PAIR-shaped callback demand and
+  # `preparedHostCallbackWrapProvider`, which returns the maker's import module,
+  # field and ABI on the host arm and the dispatcher ROLE on the native one
+  # (intrinsic-support.ts, +66); the caller policy projection, the
+  # `closure.new`-shaped demand scan, the two-sided owner-local partition and
+  # the post-freeze `admitAttachedHostCallbackMaker` recognition
+  # (integration.ts, +164); the maker crossing built from the capability record
+  # instead of spelled by hand (from-ast.ts, +8); the module-scope
+  # `HOST_CALLBACK_WRAP_CAPABILITY_RECORD`, the seam between Phase-1's static
+  # authority and the post-freeze one (runtime-host-capabilities.ts, +16); the
+  # overlay's final-context ABI proof reading that record instead of a
+  # hand-written `(i32, externref) -> externref`
+  # (ir-overlay-finalize.ts, +12 — sub-B); the explicit disabled callback
+  # policies in the linear and self-hosted-stdlib adapters (+2 each).
+  #
+  # `native-dispatch` is a NEW implementation kind rather than a new
+  # `native-managed.service` value, and the reason is measured, not stylistic:
+  # `projectRuntimeBackendRequirements` treats every `native-managed` row as a
+  # member of the native ASYNC family — measured, it adds
+  # `["async.native.drive","async.native.number-boundary"]` to the frozen vector
+  # and throws `invalid-backend-requirement-projection` the moment such a row
+  # shares a manifest with a host async provider — which would have changed the
+  # frozen vector on exactly the lane this slice must keep byte-identical.
+  #
+  # Every cited path already carries an F1-S1..F2-S8 grant except
+  # `src/codegen/ir-overlay-finalize.ts`, which is added below. Byte-neutral:
+  # 21/21 measured matrix cells identical — bytes, sha256, ordered import lists,
+  # errors, IR outcomes and full WAT text — with `check:ir-fallbacks` OK and the
+  # linear baseline untouched.
+  - src/codegen/ir-overlay-finalize.ts
   - src/codegen/native-batched-concat.ts
   - src/ir/async-plan.ts
 func-budget-allow:
@@ -405,6 +445,18 @@ func-budget-allow:
   # existing ones. `resolveAndObserveCallableProvider` is UNTOUCHED by this
   # slice — `string.const` has no resolve arm at all, which is the whole reason
   # the attachment had to move behind the freeze instead.
+  #
+  # 2026-09-02 F3-S1: no NEW path crosses a threshold. Two already-granted
+  # functions grow: `integration.ts::compileIrPathFunctions` (3242 -> 3277),
+  # which is the owner-local callback partition block and the two freeze
+  # arguments, in the same pass as the ten existing ones; and
+  # `from-ast.ts::lowerMethodCall` (919 -> 926), which is the maker crossing
+  # now built from the capability record plus the comment that says why. A
+  # third, `integration.ts::preregisterDynamicSupport`, was measured at 330
+  # (> 300) on a first cut and is NOT granted: the maker recognition was
+  # extracted into `admitAttachedHostCallbackMaker` instead — the same shape
+  # F1-S4 gave `attachedExternIsUndefinedArm` — which leaves the function under
+  # the threshold with no grant needed.
   - src/ir/integration.ts::resolveAndObserveCallableProvider
 ---
 
@@ -9131,6 +9183,427 @@ the `src/codegen/declarations.ts` prelift seam (#3523 gap-6a v2, PR #5480),
 7. R2 lock (#3521 `:953-956`): confirm the R2 lane accepts the F1/F2-style
    line-scoped edits before claim — F3-S1 (`integration.ts:8463-8466` scan +
    projection), F3-S3 (`:6332-6337` arm), F3-S5 (`index.ts:6038-6056`), F3-S6.
+
+### 2026-09-02 F3-S1 checkpoint note — Opus lane
+
+Implemented from the `### F3-S1 — host callback maker under manifest policy
+(contract)` section of the family-3 census (docs branch
+`claude/docs-3526-f3-census`, `c246fb6ed`), on
+`claude/issue-3526-f3s1-host-callback-maker`, branched from `origin/main`
+`77ca8fba`. Base for every measurement below: `77ca8fba`. Slice claim
+`3526:f3s1`. Every probe was measured on this branch's own tree BEFORE the first
+source edit.
+
+Family 3's first slice, and the first in the whole issue whose two live arms are
+not two spellings of one crossing but **a crossing and its absence** — which is
+what forced the one deviation from the plan's own P1 menu (below).
+
+#### Settled before implementation (recorded per the dispatch brief)
+
+- **OQ1** — `src/codegen/ir-overlay-finalize.ts` is NOT on the R2 lock list
+  (#3521 `:952-955` locks `index.ts`, `declarations.ts`, `integration.ts`,
+  `prepare.ts`, `program.ts`). Sub-B stayed in F3-S1 and edited exactly
+  `hasExactHostVoidCallbackMakerImport` (`:270-275` at the base).
+- **OQ7** — line-scoped `src/ir/integration.ts` edits, exactly as F1/F2 did:
+  the policy projection `integrationHostCallbackWrapPolicy(ctx)` beside the
+  eleven `integration*Policy` siblings, the demand scan, the owner-local
+  partition arm, the two freeze arguments, and the attached-target recognition
+  reached from `preregisterDynamicSupport`. Nothing else in that file. The
+  concurrent R2 lane (`claude/issue-3521-r2-t1g1-telemetry-ci`) edits
+  `ir-prepared-free-functions.ts`, one spot in `codegen/index.ts`, a new
+  `src/ir/r2-withdrawal.ts` and tests — no overlap; `origin/main` was re-merged
+  before the PR.
+
+#### P1 — native-arm mechanism: NEITHER offered option; a new implementation kind, on a measurement
+
+The plan offered two: extend `native-managed.service` with a new value, or
+record the native arm as `unsupported`-for-import with the DOM plan as its own
+authority. **Both were rejected, and the first was rejected on a measurement
+rather than on taste.**
+
+`projectRuntimeBackendRequirements` (`runtime-manifest.ts:897-926`) treats EVERY
+`native-managed` row as a member of the native ASYNC family — the loop's only
+non-host arm is `kind !== "native-managed" continue`, after which it adds
+`async.native.drive` and `async.native.number-boundary` unconditionally, and
+throws `invalid-backend-requirement-projection` if the manifest also carries a
+host async provider. It is called at freeze over ALL selected providers
+(`:2337`), not over the async plan's, and its output is the frozen
+`backendRequirements` that `ir-async-runtime-adapters.ts` materializes from.
+Measured directly (`.tmp/f3s1/probe-freeze.mts`, and pinned in the new suite's
+section (e)):
+
+| the same provider row, typed as | `projectRuntimeBackendRequirements([row])` | with a host async provider |
+| --- | --- | --- |
+| `native-managed` (the plan's option A) | `["async.native.drive","async.native.number-boundary"]` | **throws** `mixes host and native async providers` |
+| `native-dispatch` (chosen) | `[]` | `[]` |
+
+So option A changes the frozen vector on exactly the lane this slice must keep
+byte-identical. Option B was rejected on the contract's own words: item 1 fixes
+the policy union as `{ wrap: "host" | "native-dispatch" | "unsupported" }` and
+item 3 requires the manifest to be "the authority that ADMITS" the standalone-DOM
+path, which an `unsupported` arm cannot be — under option B the owner-local
+partition would demote every DOM-authority owner, or the demand scan would have
+to exclude them and the manifest would govern nothing on that lane.
+
+The chosen mechanism is a **new `RuntimeProviderImplementation` kind**,
+`{ kind: "native-dispatch", service: "standalone-dom-callback-dispatch" }`. It
+is a *provider implementation* kind, not a *capability record* kind, so it
+satisfies the plan's hard constraint ("must NOT need any record kind from
+F3-S2") exactly: `runtime-host-capabilities.ts` keeps its three kinds
+(`func` / `func-family` / `global`) and gains no row. The precedent is F2-S8's
+own `native-global` — a native arm with no import, its own kind, invisible to
+the async projection.
+
+**The seam that reads the selected provider** is
+`preparedHostCallbackWrapProvider` (`intrinsic-support.ts`), the
+`preparedStringCompareProvider` analog. It is read post-freeze only, from
+`preregisterDynamicSupport`; from-ast reads the STATIC catalogue instead
+(`HOST_CALLBACK_WRAP_CAPABILITY_RECORD`, new module-scope const in
+`runtime-host-capabilities.ts`), because from-ast runs in Phase 1 at
+`integration.ts:2899` and the freeze is at `:4384`.
+
+**The host arm binds the SAME index.** Measured with
+`result.imports.map(name)` on the B2 fixture, before and after:
+
+```
+env.EventTarget_addEventListener, env.Element_set_textContent, env.number_toString,
+string_constants.install, string_constants.tick, string_constants.,
+env.__make_callback, env.__call_function_0
+```
+
+`__make_callback` is function-import index **3** on both sides (globals do not
+occupy the func index space); the 09 fixture's shorter list puts it at **2** on
+both sides. Both are pinned in the new suite. No `ensureLateImport`, no
+registration, no union materialization: `admitAttachedHostCallbackMaker` sets no
+flag and runs no materializer, by construction.
+
+#### P2 — the un-measured lane, measured
+
+The census names the exact standalone-DOM lane as having no cell. It does now:
+`website/playground/examples/dom/calendar.ts` at `{target:"standalone"}`, which
+is the fixture with `hasStandaloneDomDispatcher === true` (the #4577 suite's own
+compile options). Measured on the base tree before any edit:
+
+| field | value |
+| --- | --- |
+| success | `true` |
+| bytes | **69282** |
+| sha256 (12) | `232d3c9ec8af` |
+| imports (11, all `env` funcs, in order) | `__date_now, global_document, Document_createElement, CSSStyleDeclaration_set_cssText, HTMLElement_get_style, Element_set_innerHTML, Element_set_textContent, Node_appendChild, HTMLElement_addEventListener, CSSStyleDeclaration_set_background, Document_get_body` |
+| `__make_callback` | **absent** — the crossing has no maker on this lane |
+| dispatcher reserved | **yes** — `(type $$standalone_dom_callback_dispatch_type (func (param externref)))` is in the WAT |
+| `irCompiledFuncs` (17) | `<module-init>, dimOf, el, fdow, main, main__closure_0..3, mname, onDay, priceOf, renderCal, renderCal__closure_0..2, updFoot` |
+| `irOutcomes` | all ten terminals claimed, no reject reason |
+
+Every field is identical after the slice. The row this cell now freezes is
+`native.callback.dispatch`, measured live (instrumented run, byte-inert — all 21
+cells and all 21 WAT texts identical to the clean AFTER record):
+
+```
+F3S1-DEMAND {"host":false,"nativeDispatch":true}
+F3S1-ARM    {"arm":"native-dispatch","service":"standalone-dom-callback-dispatch"}
+```
+
+and on 09 / 09b gc-host:
+
+```
+F3S1-DEMAND {"host":true,"nativeDispatch":false}
+F3S1-ARM    {"arm":"host","module":"env","field":"__make_callback",
+             "params":["i32","externref"],"results":["externref"]}
+```
+
+Every other cell freezes no row at all (`F3S1-ARM undefined`). **That is the
+non-vacuity evidence a byte matrix structurally cannot give**, and it is why the
+demand is read off `closure.new` rather than off the maker `call`: on this lane
+there is no call to scan for.
+
+#### P3 — outcome-pin shift: ONE pin moves, and the divergence-4 class is EMPTY
+
+- **Moved: exactly one.** `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:436-449`
+  — the whole-shape frozen-policy pin gains `hostCallbackWrap: { wrap: "unsupported" }`.
+- **Did NOT move**, verified by running them: the
+  `tests/issue-3214-void-host-callback.test.ts` B2 pins (the binding KIND stays
+  `import`, so the maker's spelling, sentinel and import index are unchanged);
+  every `tests/issue-3520-callable-provider-abi.test.ts` binding pin;
+  `tests/issue-3526-ir-runtime-manifest.test.ts`; both async suites
+  (`issue-4103`, `issue-4104` apart from the one line above), whose
+  `async.callback.wrap` citer enumeration still sees `host.promise.react` — the
+  record is REUSED, not renamed, and gains a second citer rather than a twin.
+- **Divergence-4 class: EMPTY.** The maker is total under both live arms. On a
+  JS-host lane every certified arrow gets the maker; on the exact standalone-DOM
+  lane every certified arrow gets the dispatcher; everywhere else
+  `calendar-selection-support.ts:27-36` never certifies one, so there is no
+  population to demote. No `operand-coercion-unsupported`@build pin covers a
+  population this arm demotes, because this arm demotes none.
+
+#### P4 — census unmoved
+
+- `pnpm run check:ir-fallbacks`: **OK, no unintended/post-claim/module-level
+  increases**, run after the final edit. `scripts/ir-fallback-baseline.json` is
+  untouched in the diff (`git diff --stat scripts/` shows only the
+  kind-neutrality baseline).
+- `scripts/linear-ir-baseline.json`: **untouched**;
+  `tests/issue-4550-linear-ir-census.test.ts` green.
+- **One gate did move, as F2-S7 and F2-S8's did**: `check:ir-kind-neutrality`
+  reported four EVIDENCE line numbers shifted by my insertions, with no verdict
+  and no classification change —
+  `kinds.forof.string.evidence.1` `integration.ts` 7095 → 7213,
+  `kinds.string.len.evidence.1` `linear-integration.ts` 1638 → 1640,
+  `kinds.vec.new_fixed.evidence.0` `from-ast.ts` 4526 → 4527,
+  `kinds.vec.set.evidence.1` `from-ast.ts` 390 → 391.
+  Refreshed **surgically** (four one-line edits, the F2-S7 `c980a4b41`
+  precedent), not with `--update-on-decrease`, which rewrites the whole file's
+  JSON formatting.
+- `check:ir-layering`: **86 import lines across 15 files (baseline 86)**, before
+  and after. The three new cross-file imports
+  (`from-ast.ts` → `runtime-host-capabilities.js`,
+  `integration.ts` → `runtime-host-capabilities.js`,
+  `ir-overlay-finalize.ts` → `runtime-host-capabilities.js`) are invisible to
+  the gate BY CONSTRUCTION: it counts only specifiers resolving under
+  `src/codegen/`, and the third one points the other way (codegen → ir), which
+  the gate does not count either.
+
+#### Verification matrix
+
+**V-A — 21/21 cells byte-identical, WAT included.** Five fixtures × their lanes,
+compiled before and after on the same tree: 09 (the census's
+`addEventListener` shape), 09b (the pinned B2 source,
+`issue-3214-void-host-callback.test.ts:8-14`), 04 (a closure with no host
+callback — the control), CLEAN (a number-only control), each × gc-host `{}`,
+gc-strict-no-host `{strictNoHostImports:true}`, standalone
+`{target:"standalone"}`, wasi `{target:"wasi"}`, linear `{target:"linear"}`;
+plus CAL × exact standalone-DOM. Every cell matches on success, byte length,
+binary sha256, the ordered import list, the `result.imports` list, the error
+list, `irCompiledFuncs`, `irOutcomes` and WAT sha; a `diff -r` over all 21
+emitted WAT texts is **empty**. **0 differing fields.**
+
+| fixture | gc-host | gc-strict-no-host | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| 09 | 852 ✓ `f65b5d28809d` | 93598 ✓ `74623fd98ed4` | 33181 ✓ `cf9c5ac59002` | fail ✓ | fail ✓ |
+| 09b | 908 ✓ `2b0fa77dc7d5` | 93602 ✓ `b1f0131b3a1e` | 50422 ✓ `7f9a1ee3f80e` | fail ✓ | fail ✓ |
+| 04 | 2956 ✓ `95960a6599ac` | 32978 ✓ `777f88d8ad11` | 33001 ✓ `beabd4f0669e` | 33028 ✓ `75200ffae214` | fail ✓ |
+| CLEAN | 158 ✓ `73a8d1fa2a90` | 21994 ✓ `9b2e9228e465` | 22609 ✓ `a04eb66e7b6d` | 22636 ✓ `006f16ecfff8` | 4895 ✓ `15f2f81b5bcc` |
+| CAL (exact standalone-DOM, its own lane) | 69282 ✓ `232d3c9ec8af` | — | — | — | — |
+
+(✓ = bytes, sha256, imports, errors, outcomes and WAT all identical
+before/after. `fail` = the same hard failure on both sides: wasi
+`DOM global 'EventTarget' is not available in WASI target`, linear
+`Unsupported method call: .addEventListener()`.)
+
+**This slice produced NO WAT diff at all.**
+
+**V-B — import parity.** The exact ordered `result.imports` array for 09b/gc-host
+is pinned in the new suite (section (c), reproduced under P1), with
+`__make_callback` asserted at function-import index 3. The runtime oracle check
+instantiates the module, installs the callback through a fake `EventTarget`,
+fires it, asserts `sink.textContent === "42"`, asserts the wrapper returns
+`undefined` and asserts `Reflect.construct` on it throws `TypeError` — i.e. the
+one-shot sentinel's semantics, unchanged.
+
+**V-C — non-vacuity by revert: three reverts, each fails EXACTLY one named new
+pin, 34/35 otherwise green.**
+
+| revert | pin that fails |
+| --- | --- |
+| from-ast spells `irImportFuncRef("env", "__make_callback")` again | `leaves no maker string literal in from-ast — the crossing is built from the record` |
+| sub-B restores the hand-written `(i32, externref) -> externref` check | `leaves no maker string literal and no hand-written ABI in the overlay proof` |
+| the post-freeze admission arm is removed | `keeps the post-freeze admission keyed on the FROZEN provider, not on a name` |
+
+Every schema and policy pin stayed green in all three runs.
+
+**These three pins are grep-shaped, and that is a finding, not a convenience.**
+The capability record names *exactly* the spelling both seams used to hard-code,
+so restoring either hand-written form is byte-identical AND pin-identical to
+everything else in the file — I measured that too: with the record's field
+perturbed to `__make_callback_probe`, the slice and the revert produce the same
+504-byte module, because sub-B (which reads the record) refuses the drifted
+maker first and the whole module demotes before from-ast's spelling can matter.
+What the slice actually removes is the **second authority**, and the only way to
+pin the absence of a duplicated constant is to look for it. Precedent: the
+#2955 depolymorph grep gate.
+
+**V-D — fail-closed reachability.**
+- Typed refusal: `RuntimeManifestInvariantError` / `provider-target-unavailable`,
+  message `runtime feature js.callback.wrap is unavailable under
+  host-callback-wrap policy wrap=unsupported`. Pinned live in section (b).
+- Owner-local demote: pinned on the partition source slice, as F2-S8 pinned its
+  own unreachable arm. **Stated plainly: the disabled arm is unreachable on every
+  real lane** — the selection gate never certifies an arrow where the policy is
+  `unsupported`, which is the structural reason this slice is byte-neutral —
+  so a live per-owner demote with a clean co-owner cannot be produced from a
+  real compile without hand-building a policy the projections cannot emit. The
+  pin therefore asserts the block's shape: `late-preparation-unsupported`,
+  `markOwnerFailure(terminalOwnerOf(entry), …)`, the trailing `continue;` that
+  keeps a clean co-owner in `healthyForLower`, and **both** sides of the check
+  (an `unsupported` policy refuses either crossing; a policy that selected the
+  OTHER arm refuses too).
+- Sub-B ABI-drift refusal: four live pins — wrong param types, wrong arity,
+  wrong result type, empty results — plus wrong module and wrong field.
+
+**V-E — suites and gates.**
+- New: `tests/issue-3526-callable-boundary-callback.test.ts`, **38 tests, all
+  green**, with the per-slice anatomy (a) contract · (b) policy · (c)
+  end-to-end · (d) the overlay proof reads the record · (d2) the maker spelling
+  has ONE source · (e) validation + the P1 measurement · (f) the exact
+  standalone-DOM lane · (g) the demand scan, the partition and the projection ·
+  (h) deliberately out of scope · (i) adapters.
+- Controls, 27 files / 505 tests: all 15 `#3526` suites, both async suites,
+  four `#3520` callable/overlay suites, both `#3214` callback suites,
+  `issue-4550-linear-ir-census`, `issue-4576-standalone-dom-builtins`, and the
+  two `#4577` DOM/calendar suites. **19 failed | 486 passed on BOTH sides** —
+  the red set is identical name for name, measured on this branch's own tree
+  with the source edits reverted and re-applied (file-copy A/B, no `git stash`).
+  It is 6 files: `issue-4576-standalone-dom-builtins` (15),
+  `issue-4577-standalone-calendar-retirement` (2),
+  `issue-4577-dom-interaction-bridge` (1), `issue-3214-callable-abi` (1),
+  `issue-3214-void-host-callback` (1: `rejects non-void before the IR claim`),
+  `issue-3520-closure-host-bridge-abi` (1). **None is this slice's**, and the
+  B2 one was confirmed against a pristine `origin/main` checkout as well.
+- `tests/issue-3518-multi-prepared-string-leaf-planner.test.ts` was **not run**:
+  it OOMs the vitest worker on this 4-core box, as F2-S4…F2-S8 all recorded.
+  CI runs it with a larger heap.
+- Five ratchet gates, chained and bare, **and again under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`**: all green. `pnpm run typecheck`
+  and `pnpm run format:check` clean.
+
+#### What landed
+
+- **`src/ir/runtime-manifest.ts`** (+170) — `HostCallbackWrapPolicy`
+  (`wrap: "host" | "native-dispatch" | "unsupported"`), frozen
+  `HOST_CALLBACK_WRAP_POLICY_DISABLED`, the optional `hostCallbackWrap` field
+  canonicalized at construction and published resolved, ONE feature
+  (`js.callback.wrap`), ONE new implementation kind (`native-dispatch`) with its
+  no-host-capability validation rule, TWO provider rows, and the
+  `#selectProvider` branch whose unavailable arm is a typed
+  `provider-target-unavailable` naming `host-callback-wrap policy wrap=…`.
+- **`src/ir/intrinsic-support.ts`** (+66) — the PAIR-shaped
+  `hostCallbackWrapDemand` input and its place in the "freeze nothing at all"
+  conjunction, and `preparedHostCallbackWrapProvider`, which returns the maker's
+  import MODULE, FIELD and full ABI on the host arm and the dispatcher ROLE on
+  the native one — a target is impossible there, because the native arm's whole
+  content is that nothing is emitted.
+- **`src/ir/integration.ts`** (+164) — `integrationHostCallbackWrapPolicy` (the
+  two lane predicates, disjoint by construction: the DOM lane is
+  `environment: "none"`, so it can never be `ambient-js`), the
+  `closure.new`-shaped `irHostCallbackWrapDemand`, the two-sided owner-local
+  partition in the same pass as the ten existing ones, the freeze-time policy
+  and demand arguments, the prepared manifest threaded into
+  `preregisterDynamicAndForInSupport` / `preregisterDynamicSupport`, and
+  `admitAttachedHostCallbackMaker` — the attached-target recognition, extracted
+  as its own function in the shape F1-S4 gave `attachedExternIsUndefinedArm`.
+- **`src/ir/runtime-host-capabilities.ts`** (+16) —
+  `HOST_CALLBACK_WRAP_CAPABILITY_RECORD`, the catalogue record resolved once at
+  module scope. It is the seam between two authorities that must never drift:
+  the STATIC catalogue answers from-ast at build time, the FROZEN manifest
+  answers admission post-freeze, and both name this one object.
+- **`src/ir/from-ast.ts`** (+8) — the maker crossing built from that record
+  instead of spelled by hand. Binding kind stays `import`; the `-2` sentinel and
+  the exact standalone-DOM branch are untouched.
+- **`src/codegen/ir-overlay-finalize.ts`** (+12, sub-B) —
+  `hasExactHostVoidCallbackMakerImport` compares the physical import against the
+  record's `module` / `field` / `params` / `results` instead of a hand-written
+  copy. `callback-ctor-bridge.ts` is NOT touched; its record lands in F3-S2.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `HOST_CALLBACK_WRAP_POLICY_DISABLED` explicitly (+2 each). Neither
+  freeze passes a callback demand, so DISABLED refuses nothing.
+- **`tests/issue-3526-callable-boundary-callback.test.ts`** (new, 38 tests);
+  **`tests/issue-4104-…`** (+1 line, the whole-shape pin).
+
+`src/ir/lower.ts`, `src/ir/nodes.ts`, `src/ir/builder.ts`,
+`src/ir/closure-struct-registry.ts`,
+`src/codegen/standalone-dom-callback-authority.ts`,
+`src/codegen/declarations/import-collector.ts`, `src/codegen/closure-exports.ts`
+and every backend emitter needed **no edit**.
+
+#### Deviations from the plan
+
+1. **P1's answer is neither of the two options the plan offered** — a new
+   implementation kind, for the measured reason above. It honours the plan's one
+   hard constraint (no F3-S2 record kind) and its item-1 policy union verbatim.
+2. **The demand is scanned off `closure.new`, not off the maker `call`.** The
+   plan's items 3-4 describe the crossing in terms of the `call`, and the
+   `call`-on-`env`-import scan is where the ADMISSION lives, as specified — but
+   a call-shaped *demand* would freeze no row on the exact standalone-DOM lane
+   and the manifest would not be that lane's admitting authority (contract item
+   3). `hostOneShot` and `domCallbackAuthority` are set only by
+   `lowerHostVoidCallbackExpression`, one per arm, so reading them is the one
+   lane-free way to see both crossings. No `closure.new` flag was changed
+   (contract item 6) — they are read, not written.
+3. **The attached-target recognition is an extracted function, not an inline
+   arm.** Inline, `preregisterDynamicSupport` crossed the 300-LOC function
+   budget (330). Extracting `admitAttachedHostCallbackMaker` — the shape F1-S4
+   already gave this seam's sibling — leaves it under the threshold and needs no
+   grant.
+4. **The three V-C pins are grep-shaped rather than behavioural**, for the
+   reason measured under V-C above. The plan's V-C wording ("exactly the named
+   new pins fail") is satisfied; what the pins assert is the absence of a second
+   authority, which is what items 3 and 5 actually change.
+
+#### Left undone (out of this slice, by the contract)
+
+`callback.wrap.ctor` / `callback.wrap.getter` / `closure.apply` records, the
+`kind: "export"` host→module rows for `__call_fn_N` / `__closure_arity`, and the
+`func-family` rows for `__call_function_N` are F3-S2's. The `-2` / `-1` sentinel
+has no record field (deferred (d)) and gained none here. `plan.invocation`,
+`calendar-selection-support.ts`, the closure-environment subtype choice
+(F3-S4) and the unmatched-callee host fallback (F3-S6) are untouched.
+
+#### Re-measured after `git merge origin/main` (`4abfe80ea`)
+
+The merge brought in the family-2 close-out and the family-3 census sections of
+this file (kept in full, above, with this note appended after them — the docs PR
+landed while the slice was in review) plus 24 hours of unrelated `main`, and it
+moved **two absolute byte figures** in the V-A table: `09/gc-strict-no-host`
+93598 → **93766** and `09b/gc-strict-no-host` 93602 → **93770**, both +168.
+
+**That is `main`'s stdlib growth, not this slice's, and it was measured rather
+than assumed.** The whole 21-cell A/B was re-run on the MERGED tree — my eight
+source files replaced with `origin/main`'s, matrix recorded, files restored,
+matrix recorded again: **21/21 identical, 0 differing fields, `diff -r` over all
+21 WAT texts empty.** Every other cell's bytes and sha256 are unchanged from the
+pre-merge table, including both callback cells on gc-host (852 / 908) and the
+exact standalone-DOM cell (69282 / `232d3c9ec8af`). The two moved figures are
+the same on both sides of the merged base; only the pre-merge table's absolute
+numbers for those two cells are stale, and they are left as measured rather than
+retro-edited.
+
+All five ratchet gates, `check:ir-kind-neutrality`, `check:ir-layering`,
+`typecheck` and `format:check` were re-run on the merged tree: green, bare and
+under `LOC_GATE_BASE=$(git rev-parse origin/main)`. The kind-neutrality baseline
+needed no further edit — the four evidence lines this slice shifted are the same
+after the merge.
+
+#### 2026-09-02 review findings — three shape notes handed to F3-S2
+
+The Fable lane's adversarial review of PR #5487 reproduced every headline claim
+(V-A 21/21, the import-parity index, the "same red set" control) and found no
+blocker. Three minor findings, none of them live defects, are recorded here so
+F3-S2 inherits them rather than rediscovering them:
+
+1. **The post-freeze admission scans a narrower shape than the demand it
+   licenses.** `irHostCallbackWrapDemand` walks both `fn.blocks` and
+   `fn.asyncPlan?.states`, but `preregisterDynamicSupport`'s loop is
+   `for (const entry of fns) for (const block of entry.fn.blocks)` with no
+   `asyncPlan` arm, so `admitAttachedHostCallbackMaker` never visits a
+   `call env.__make_callback` that a lowering places in an async plan state
+   body. Bounded: the admission sets no flag and runs no materializer, so a
+   miss is a **missing refusal**, not a mislowering — and the same blind spot
+   already exists for the union-import and `__extern_is_undefined` arms beside
+   it. F3-S2 should close it for all three arms at once or document why not.
+2. **The admission's refusal is not owner-local.** The `IrInvariantError` it
+   throws propagates out of `preregisterDynamicSupport` into
+   `runGlobalPreparation`, whose catch calls `failEveryOwner` — a module-wide
+   demote, which is exactly the failure mode the slice's own partition exists
+   to prevent (the F1-S1 rationale beside `runGlobalPreparation`). Unreachable
+   in-tree today because the owner-local partition demotes first, so this is a
+   shape note, not a bug; a hand-built policy or an adapter that froze the
+   other arm would reach it.
+3. **The record's doc comment overclaimed its own scope** and has been scoped
+   in this PR: a `field` rename lands in one place *for the IR seam*, but
+   `declarations/import-collector.ts:2010`/`:2053` and `async-frame.ts:165`
+   still spell the maker by hand. Bringing them under the record is F3-S2's
+   `callback.wrap.*` sibling row.
+
 ## 2026-09-02 F3-S2 implementation plan — capability-record schema widening for callables (family 3, slice 2)
 
 Grounded on `origin/main` `fc5d03342e`; re-verified on `742fd6519c` (2026-09-02)

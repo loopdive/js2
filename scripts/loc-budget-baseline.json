@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-02",
   "threshold": 1500,
-  "totalCeiling": 814757,
+  "totalCeiling": 815051,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -18,7 +18,7 @@
     "src/codegen/closed-method-dispatch.ts": 2026,
     "src/codegen/closure-exports.ts": 2385,
     "src/codegen/closures.ts": 4678,
-    "src/codegen/context/types.ts": 4520,
+    "src/codegen/context/types.ts": 4536,
     "src/codegen/dataview-native.ts": 8672,
     "src/codegen/declarations.ts": 6628,
     "src/codegen/declarations/import-collector.ts": 2255,
@@ -47,8 +47,8 @@
     "src/codegen/generators-native-consumer.ts": 1594,
     "src/codegen/generators-native.ts": 5366,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 14593,
-    "src/codegen/ir-prepared-free-functions.ts": 2027,
+    "src/codegen/index.ts": 14623,
+    "src/codegen/ir-prepared-free-functions.ts": 2115,
     "src/codegen/iterator-native.ts": 5514,
     "src/codegen/json-codec-native.ts": 3885,
     "src/codegen/literals.ts": 6346,
