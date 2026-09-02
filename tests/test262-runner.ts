@@ -4419,6 +4419,23 @@ async function runOriginalHarnessVariant(
     }
 
     const wasm_sha = computeWasmSha(result.binary);
+
+    // (#5272) A standalone verdict must describe a binary that runs without the
+    // JS harness. `buildImports` below would satisfy a leaked `env::*` import
+    // from the host and turn the row into a pseudo-pass, which is exactly what
+    // the sharded worker refuses (`scripts/test262-worker.mjs`, #2961) — so the
+    // in-process runner scored the same row differently from the baseline.
+    // Ordering mirrors that worker: its compile-phase-negative arm returns
+    // FIRST, so a parse/early/resolution negative keeps its own verdict here
+    // too. A leak is never a valid negative outcome either, so it is likewise
+    // never routed through `negativeCompileErrorMatches`.
+    const compileNegative =
+      meta.negative?.phase === "parse" || meta.negative?.phase === "early" || meta.negative?.phase === "resolution";
+    const standaloneImportError = compileNegative ? undefined : standaloneHostImportError(target, result.imports);
+    if (standaloneImportError) {
+      return { pass: false, phase: "compile", detail: standaloneImportError, timing: timing(), wasm_sha };
+    }
+
     const output: string[] = [];
     const appendOutput = (line: string): void => {
       Reflect.defineProperty(output, output.length, {
