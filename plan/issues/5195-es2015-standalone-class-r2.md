@@ -931,6 +931,73 @@ evaluated at ClassDefinitionEvaluation there too. That is a FIX (§15.7.14
 requires the evaluation, and its side effects were previously dropped on both
 lanes), not an accident; classes whose keys all fold are unaffected.
 
+### Third-round review residuals R3-1 – R3-7 (2026-09-02)
+
+A third independent review (~95 probes across js / host / standalone, lane vs
+base; harness under `/home/user/js2/.tmp/rev3-5195/`) returned
+**ship-with-notes**: no regression against base, programs with no class are
+byte-identical, and every R2 fix verified. It found seven residual gaps. All
+seven are of the same shape — **the lane is wrong, but base is null / 0 / a
+throw** — so none is a regression; they are the next residual pass, deliberately
+NOT fixed in this branch.
+
+Skeptic review confirmed R3-1, R3-2 and R3-3 independently, and confirmed R3-4's
+mechanism.
+
+| # | Severity | Site | Probe | js | lane | base |
+|---|---|---|---|---|---|---|
+| R3-1 | medium | `class-dynamic-member-call.ts:107` | `s1b-static-noinst.js` | 12 | 10 | — |
+| R3-2 | medium | `declarations.ts:2431` | `c3-classexpr-child.js` | 123 | 20 | — |
+| R3-2 | medium | (same) | `s8c` class-expression parent | 11 | 10 | — |
+| R3-2 | medium | (same) | `k4b` top-level `var C = class { [K(1)](){} }` | key evaluated | key never evaluated | — |
+| R3-3 | medium | `class-dynamic-member-call.ts:188` | `s12-getter-receiver.js` | 7 | 1 | — |
+| R3-4 | medium | `call-tail-dispatch.ts:1413/1534` | `s9d` | 11 | TypeError | TypeError |
+| R3-5 | low | (root cause unconfirmed) | `g/s33d` | 17 | TypeError 1059 | — |
+| R3-6 | low | `call-tail-dispatch.ts:735` | `super['m']()` / `super[2]()` | member value | `undefined` | — |
+| R3-7 | low | `nested-declarations.ts:437` | function-local runtime-keyed hierarchy | 1256 | 5656 | 0 |
+
+**R3-1 — `super[k]()` inside a STATIC method is a silent no-call.** A static
+method has no `this` local, so the lane declines to `tryEmitInlineDynamicCall`
+with a null callee and the call is simply not made. Resolved-key `super.t()` in
+a static works, so this is specific to the computed-key form.
+
+**R3-2 — the force-build covers ClassDeclaration STATEMENTS only.** A top-level
+class EXPRESSION, as child or parent (`const D = class extends C {…}`), is
+neither key-evaluated nor prototype-built, so the R2-3 order-dependence persists
+for the expression form: `c3-classexpr-child.js` answers 20 against js's 123,
+and touching `D.prototype` first restores 123. `k4b` shows the same collector
+gap on a bare top-level `var C = class { [K(1)](){} }` — the computed key is
+never evaluated at all. This is the same boundary as the class-EXPRESSION
+inheritance shape already listed under "Residuals after F1–F5".
+
+**R3-3 — `super[k]` on an ACCESSOR uses the wrong receiver.** When the parent
+member is an accessor, the getter is invoked with the parent PROTOTYPE as
+receiver instead of `this`. §10.1.8.1 passes the original Receiver through the
+chain walk; `s12-getter-receiver.js` reads 1 where js reads 7.
+
+**R3-4 — a unique-symbol const key is claimed by the wrong lowering.**
+`super[s]()` where `s` is a `unique symbol` const is taken first by
+`compileCallableElementAccessCall`, which folds the read to `ref.null` and
+throws TypeError. `this[s]()` works. Base throws here too, so this is a
+long-standing gap the super lane simply does not rescue: `s9d` js 11, lane and
+base both TypeError.
+
+**R3-5 — `this` inside a RUNTIME-KEYED accessor body is not the real receiver.**
+The dynamic-call lanes reached from inside a runtime-keyed accessor get a wrong
+`this`; a NAMED getter is fine. `g/s33d` reads js 17, lane TypeError 1059. Root
+cause unconfirmed — a dummy-receiver trampoline is suspected but was not proven.
+
+**R3-6 — a LITERAL-key super call misses `__cmdyn$N`.** `super['m']()` and
+`super[2]()` against a runtime-keyed parent member take the resolved-key
+lowering, which looks for the literal name and never consults the synthetic
+`__cmdyn$<ordinal>` member, so the call answers `undefined`.
+
+**R3-7 — a function-local runtime-keyed hierarchy shares one prototype
+singleton.** Declared INSIDE a function, the hierarchy reuses a single prototype
+`$Object` across calls, so the second evaluation's install overwrites the
+first's: js 1256, lane 5656, base 0. Same mechanism as the same-name
+class-expression identity gap documented above.
+
 ### Residuals after F1–F5
 
 - **F4 write side.** `c[ID('s')] = 7` neither runs the runtime-keyed setter nor
