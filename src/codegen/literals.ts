@@ -1790,8 +1790,17 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
       _hasDisposalMethod(expr) ||
       _hasRuntimeComputedKey(ctx, expr) ||
-      _hasToPrimitiveComputedKey(expr) ||
-      _isToPrimitiveAssignmentTargetInitializer(expr) ||
+      // (#5269 H-1) STANDALONE ONLY. Both predicates exist for the #5102 probe:
+      // under the native provider a closed struct hides its `[Symbol.toPrimitive]`
+      // member from the runtime walker, so the literal has to become an open
+      // object. On the HOST lane it is not merely unnecessary, it is WRONG —
+      // forcing the host-object path routes the value through the host
+      // `__extern_toString`, which calls `v.toString()` and never consults
+      // @@toPrimitive: `${o}` and `String(o)` answered "[object Object]" instead
+      // of the @@toPrimitive result, `"" + o` got hint "string" rather than
+      // "default", and every host compile of such a file gained env imports.
+      // Host mode's own `_toPrimitive` already handles the closed-struct case.
+      (ctx.standalone && (_hasToPrimitiveComputedKey(expr) || _isToPrimitiveAssignmentTargetInitializer(expr))) ||
       // A colon-form `__proto__` property is not an own data property. It sets
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the
