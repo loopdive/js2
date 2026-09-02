@@ -1,0 +1,6 @@
+language/statements/let/dstr/ary-ptrn-elision.js
+language/statements/const/dstr/ary-ptrn-elision.js
+language/statements/variable/dstr/ary-ptrn-elision.js
+language/statements/for/dstr/const-ary-ptrn-elision.js
+language/statements/for/dstr/let-ary-ptrn-elision.js
+language/statements/for/dstr/var-ary-ptrn-elision.js

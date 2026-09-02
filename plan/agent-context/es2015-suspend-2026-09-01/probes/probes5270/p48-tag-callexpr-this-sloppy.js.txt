@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var context = null; var g = (function() { return this; })();
+var fn = function() { return function() { context = this; }; };
+fn()`x`;
+assert.sameValue(context, g, 'sloppy this is the global object: ' + String(context));

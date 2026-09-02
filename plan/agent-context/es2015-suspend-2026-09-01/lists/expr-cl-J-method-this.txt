@@ -1,0 +1,4 @@
+language/expressions/object/method-definition/name-invoke-fn-strict.js
+language/expressions/object/method-definition/name-invoke-fn-no-strict.js
+language/expressions/object/method-definition/generator-invoke-fn-strict.js
+language/expressions/object/method-definition/generator-invoke-fn-no-strict.js

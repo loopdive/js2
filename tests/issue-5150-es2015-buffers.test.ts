@@ -275,6 +275,36 @@ const STANDALONE_ROWS = [
   "built-ins/ArrayBuffer/prototype/slice/end-default-if-undefined.js",
 ] as const;
 
+/**
+ * HOST-LANE guards for the post-merge regression this wave caused on main (see
+ * the 2026-09-02 section of the issue file). Cluster F's module-global pin also
+ * consulted `inferTaViewType`'s JS-HOST answer, which is `externref` rather than
+ * the `$__ta_view` struct — so a top-level `const i32a = new Int32Array(buf)`
+ * silently became a REAL host TypedArray on a lane the wave never measured.
+ *
+ * These two rows went pass→fail: with a genuine host view over a genuine
+ * SharedArrayBuffer, `Atomics.wait/notify` no longer reach the TypeError the
+ * tests assert (the pre-wave native vec was not a valid Atomics receiver, which
+ * is what produced it).
+ */
+const HOST_ATOMICS_ROWS = [
+  "built-ins/Atomics/notify/null-bufferdata-throws.js",
+  "built-ins/Atomics/wait/cannot-suspend-throws.js",
+] as const;
+
+/**
+ * …and these two are representatives of the seven detached/resizable rows whose
+ * ordinary assertion failure became `RuntimeError: illegal cast in
+ * __module_init_chunk_*` — a downstream read cast the host view to the
+ * checker-typed vec. A trap is an uncatchable, unattributable failure mode that
+ * also grows the illegal_cast trap bucket (28→35 in the merge_group run), so it
+ * is guarded separately from the pass/fail verdict.
+ */
+const HOST_NO_TRAP_ROWS = [
+  "built-ins/TypedArray/out-of-bounds-behaves-like-detached.js",
+  "built-ins/TypedArray/prototype/subarray/result-byteOffset-from-out-of-bounds.js",
+] as const;
+
 describe("#5150 ES2015 standalone buffers wave 1", () => {
   it("module-level buffer views alias their backing buffer (standalone)", async () => {
     const outcome = await runControl(MODULE_GLOBAL_VIEW_SOURCE, "standalone");
@@ -340,6 +370,25 @@ describe("#5150 ES2015 standalone buffers wave 1", () => {
     it(`standalone: ${row}`, async () => {
       const outcome = await runRow(row, "standalone");
       expect(outcome.status, `${row}: ${JSON.stringify(outcome)}`).toBe("pass");
+    }, 240_000);
+  }
+
+  for (const row of HOST_ATOMICS_ROWS) {
+    it(`host: ${row}`, async () => {
+      const outcome = await runRow(row, "host");
+      expect(outcome.status, `${row}: ${JSON.stringify(outcome)}`).toBe("pass");
+    }, 240_000);
+  }
+
+  for (const row of HOST_NO_TRAP_ROWS) {
+    it(`host, no illegal cast: ${row}`, async () => {
+      const outcome = await runRow(row, "host");
+      const detail = `${(outcome as { reason?: string }).reason ?? ""} ${(outcome as { error?: string }).error ?? ""}`;
+      expect(detail, `${row}: ${JSON.stringify(outcome)}`).not.toMatch(/illegal cast/);
+      // These rows are ordinary assertion failures on both lanes; the guard is
+      // that they FAIL AN ASSERTION rather than trap. A future fix flipping one
+      // to `pass` is an improvement, so accept that too — only a trap fails.
+      expect(["pass", "fail"], `${row}: ${JSON.stringify(outcome)}`).toContain(outcome.status);
     }, 240_000);
   }
 });

@@ -54,6 +54,7 @@ import {
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
   STRING_COMPARE_POLICY_DISABLED,
+  STRING_CONCAT_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
   STRING_LEN_POLICY_DISABLED,
   STRING_COMPARE_RUNTIME_FEATURES,
@@ -266,6 +267,7 @@ describe("#3526 F2-S1 provider policy", () => {
     expect(frozen.policy.generatorNumberBox).toEqual(GENERATOR_NUMBER_BOX_POLICY_DISABLED);
     expect(frozen.policy.stringEq).toEqual(STRING_EQ_POLICY_DISABLED);
     expect(frozen.policy.stringLen).toEqual(STRING_LEN_POLICY_DISABLED);
+    expect(frozen.policy.stringConcat).toEqual(STRING_CONCAT_POLICY_DISABLED);
   });
 
   it("resolves independently of every family-1 arm", () => {

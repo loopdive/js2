@@ -1,0 +1,6 @@
+language/statements/let/block-local-use-before-initialization-in-prior-statement.js
+language/statements/const/block-local-use-before-initialization-in-prior-statement.js
+language/statements/let/block-local-closure-get-before-initialization.js
+language/statements/const/block-local-closure-get-before-initialization.js
+language/statements/let/block-local-closure-set-before-initialization.js
+language/statements/const/global-closure-get-before-initialization.js

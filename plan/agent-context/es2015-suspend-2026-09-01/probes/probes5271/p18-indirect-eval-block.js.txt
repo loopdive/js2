@@ -1,0 +1,8 @@
+/*---
+description: indirect eval in a shadowing block sees the global (#5271 probe)
+flags: [noStrict]
+---*/
+let x = 'outside';
+var r;
+{ let x = 'inside'; r = (0,eval)('x;'); }
+assert.sameValue(r, 'outside');

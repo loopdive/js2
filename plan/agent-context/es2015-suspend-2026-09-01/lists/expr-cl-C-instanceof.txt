@@ -1,0 +1,6 @@
+language/expressions/instanceof/primitive-prototype-with-object.js
+language/expressions/instanceof/prototype-getter-with-object.js
+language/expressions/instanceof/prototype-getter-with-object-throws.js
+language/expressions/instanceof/symbol-hasinstance-get-err.js
+language/expressions/instanceof/symbol-hasinstance-invocation.js
+language/expressions/instanceof/symbol-hasinstance-to-boolean.js

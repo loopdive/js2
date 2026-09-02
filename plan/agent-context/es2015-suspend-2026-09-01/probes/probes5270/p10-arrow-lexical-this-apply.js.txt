@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+function F() { this.af = _ => { return this; }; }
+var usurper = {}; var f = new F();
+assert.sameValue(f.af(), f, 'direct');
+assert.sameValue(f.af.apply(usurper), f, 'apply');

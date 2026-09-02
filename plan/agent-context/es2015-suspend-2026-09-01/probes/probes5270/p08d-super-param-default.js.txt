@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var obj = { method(x = super.toString) { return x; } };
+obj.toString = null;
+assert.sameValue(obj.method(), Object.prototype.toString, 'param-default super.toString=' + String(obj.method()));

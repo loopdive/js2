@@ -1,0 +1,10 @@
+/*---
+description: property get on primitive base through prototype (#5271 probe)
+flags: [noStrict]
+---*/
+Number.prototype.test262 = 'np';
+assert.sameValue(1..test262, 'np', 'number');
+Boolean.prototype.test262 = 'bp';
+assert.sameValue(true.test262, 'bp', 'boolean');
+Symbol.prototype.test262 = 'sp';
+assert.sameValue(Symbol().test262, 'sp', 'symbol');

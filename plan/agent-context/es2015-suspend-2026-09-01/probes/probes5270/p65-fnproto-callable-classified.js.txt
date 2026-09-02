@@ -1,0 +1,7 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+assert.sameValue(typeof Function.prototype, 'function', 'typeof Function.prototype=' + typeof Function.prototype);
+assert.sameValue(Function.prototype.hasOwnProperty('prototype'), false, 'no own prototype');
