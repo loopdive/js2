@@ -251,6 +251,42 @@ loc-budget-allow:
   # them and adds no new path. Byte-neutral: 65/65 measured matrix cells and
   # 104/104 corpus cells identical, WAT text included, the BATCHED many-arity
   # cells (F2-S6's seam) among them.
+  #
+  # 2026-09-02 F2-S7 (charCodeAt under manifest policy + the
+  # emitStringCharCodeAt fallback retirement, +351 net src LOC measured against
+  # this branch's own base — the F2-S5 tip 6d6425c8e3 merged with origin/main —
+  # against a plan estimate of +230. The overshoot is structural and named
+  # here: this is the family's first seam with TWO PRODUCERS, so the migration
+  # is not one arm but three (the instruction path's arm re-decides from the
+  # frozen row; the two plan-path arms keep their materializers and gain a
+  # fail-closed VERIFY against it), and the demand scan has to enumerate an
+  # instruction kind AND two intrinsic call symbols instead of a single
+  # `instr.kind` test. Breakdown: the `stringCharCodeAt` policy, the ONE feature
+  # and the TWO `runtime-callable` provider rows with their policy-driven
+  # selection (runtime-manifest.ts, +139 net — the file is over the 1500-line
+  # god-file threshold, 2131 -> 2270, and carries an F1-S1 grant; as in
+  # F2-S3/F2-S4/F2-S5 the growth is one more independent policy field beside
+  # eight existing ones, i.e. repetition of a settled pattern, and splitting the
+  # file is F2's own tail, not this slice's); the ONE new signature constant
+  # `EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE` (intrinsics.ts, +20 — 463 -> 483
+  # lines, far under the threshold), minted because the seam's SEMANTIC shape is
+  # the guarded `(externref, i32) -> f64` and no existing constant carries those
+  # params — deliberately NOT the `string.char_code_at` record's trapping
+  # `(externref, i32) -> i32` ABI, which is the first such divergence in the
+  # catalogue; the freeze-time demand flag and `preparedStringCharCodeAtProvider`,
+  # the family's first twin that discriminates on the provider ID rather than
+  # the implementation kind because BOTH arms are `runtime-callable` defined
+  # helpers rather than imports (intrinsic-support.ts, +46 net); the caller
+  # policy projection, the TWO-PRODUCER demand scan, the owner-local charCodeAt
+  # partition, the migrated instruction-path resolve arm, the two plan-path
+  # verify arms and the retired no-provider `ctx.nativeStrings` fallback in the
+  # WasmGC `emitStringCharCodeAt` adapter (integration.ts, +142 net); the
+  # explicit disabled charCodeAt policies in the linear and self-hosted-stdlib
+  # adapters (+2 each). Every cited path already carries an F1-S1..F2-S5 grant;
+  # this line records the F2-S7 rationale against them and adds no new path.
+  # Byte-neutral: 65/65 measured matrix cells and 104/104 corpus cells
+  # identical, WAT text included, the hoist/trusted LOOP and LOOPSUM cells —
+  # the fence proving the proof-licensed arms were not touched — among them.
   - src/ir/async-plan.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
@@ -260,6 +296,18 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::makeResolver
   - src/ir/passes/inline-small.ts::renameInstrOperands
+  # 2026-09-02 F2-S7: `resolveAndObserveCallableProvider` crosses the 300-LOC
+  # threshold (300 -> 330). The plan estimated only `loc-budget-allow` growth,
+  # so this grant is a recorded divergence rather than a planned one. The cause
+  # is the seam's TWO producers: unlike every family-2 predecessor the
+  # migration lands THREE arms in this one dispatcher — the instruction path's
+  # arm now materializes whichever authority the frozen `stringCharCodeAt` row
+  # names, and the two plan-path arms keep their materializers while gaining a
+  # fail-closed VERIFY that the plan-time symbol matches that row. Splitting the
+  # dispatcher is not this slice's work: it is one long `else if` chain over
+  # callable symbols whose arms are individually small, and every family-2 slice
+  # so far has added to it under the same discipline (#3399 tracks the split).
+  - src/ir/integration.ts::resolveAndObserveCallableProvider
 ---
 
 # #3526 — IR-only R6: typed semantic runtime contract and frozen feature manifest
