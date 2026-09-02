@@ -1,0 +1,56 @@
+def patch(path, old, new, count=1):
+    s = open(path, encoding="utf8").read()
+    n = s.count(old)
+    assert n == count, f"{path}: expected {count} of {old[:70]!r}, found {n}"
+    open(path, "w", encoding="utf8").write(s.replace(old, new))
+    print("patched", path)
+PUSH = '((globalThis as any).__f2s5 ??= []).push'
+# (a) resolve arm
+patch("src/ir/integration.ts",
+"""      const helper = symbol === IR_STRING_CONCAT_OWNED_FN ? "__str_concat_owned" : "__str_concat";
+      index = nativeStrHelperHandle(ctx, helper);
+    } else {
+      index = exactCallableImportIndex(ctx, "wasm:js-string", "concat");
+    }
+""",
+"""      const helper = symbol === IR_STRING_CONCAT_OWNED_FN ? "__str_concat_owned" : "__str_concat";
+      index = nativeStrHelperHandle(ctx, helper);
+      """ + PUSH + """({ site: "concat-arm", arm: "native", symbol, helper, index });
+    } else {
+      index = exactCallableImportIndex(ctx, "wasm:js-string", "concat");
+      """ + PUSH + """({ site: "concat-arm", arm: "host", symbol, index });
+    }
+""")
+# (b) adapter
+patch("src/ir/integration.ts",
+"""    emitStringConcat(_alloc, mode, provider): readonly Instr[] {
+      if (provider) {
+""",
+"""    emitStringConcat(_alloc, mode, provider): readonly Instr[] {
+      """ + PUSH + """({ site: "emitStringConcat", mode, branch: provider ? "provider" : ctx.nativeStrings ? (mode === "owned-append" && stringBackend.nativeHelpers.get("__str_concat_owned") !== undefined ? "fallback-native-owned" : "fallback-native") : "fallback-host" });
+      if (provider) {
+""")
+# (c) many-arity arm
+patch("src/ir/integration.ts",
+"""    const arity = parseIrStringConcatManyArity(symbol)!;
+    index = ctx.nativeStrings
+""",
+"""    const arity = parseIrStringConcatManyArity(symbol)!;
+    """ + PUSH + """({ site: "concat-many", arity, native: ctx.nativeStrings });
+    index = ctx.nativeStrings
+""")
+# (e) batch decision
+patch("src/ir/integration.ts",
+"""      const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
+""",
+"""      """ + PUSH + """({ site: "batch-decision", fn: fn.name, host: hostBatchedConcat, standalone: standaloneBatchedConcat, changed: batched !== hygienic });
+      const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
+""")
+# (f) linear adapter
+patch("src/ir/backend/linear-integration.ts",
+"""    emitStringConcat(alloc?: AllocSiteId, mode: IrStringConcatMode = "immutable"): readonly Instr[] {
+""",
+"""    emitStringConcat(alloc?: AllocSiteId, mode: IrStringConcatMode = "immutable"): readonly Instr[] {
+      """ + PUSH + """({ site: "linear-emitStringConcat", mode });
+""")
+print("done")

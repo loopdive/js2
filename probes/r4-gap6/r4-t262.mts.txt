@@ -1,0 +1,41 @@
+// R4 pass-1 inventory probe on a runner-faithful test262 sample (host lane, runner options).
+import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { compile } from "../src/index.js";
+import { parseMeta } from "../tests/test262-runner.js";
+import { assembleOriginalHarness } from "../tests/test262-original-harness.js";
+const ROOT = "/home/user/js2/test262/test";
+const files: string[] = [];
+(function walk(d: string) { for (const e of readdirSync(d)) { const p = join(d, e); const st = statSync(p); if (st.isDirectory()) { if (!/intl402|staging/.test(p)) walk(p); } else if (e.endsWith(".js") && !e.endsWith("_FIXTURE.js")) files.push(p); } })(ROOT);
+files.sort();
+const STEP = Number(process.env.STEP ?? 1100);
+const sample = files.filter((_, i) => i % STEP === 0);
+const g = globalThis as unknown as { __r4probe?: Array<{ site: string; changed: Record<string, any> }> };
+const agg = new Map<string, { n: number; lanes: Set<string> }>();
+const rows: any[] = [];
+let compiled = 0, failed = 0, p1 = 0, p2 = 0;
+for (const filePath of sample) {
+  const source = readFileSync(filePath, "utf8");
+  const meta = parseMeta(source);
+  if (meta.flags?.includes("module")) continue;
+  const assembly = assembleOriginalHarness(source, meta);
+  g.__r4probe = [];
+  let ok = true;
+  try {
+    const r = await compile(assembly.primary.source, { allowJs: true, fileName: filePath, sourceMap: true, emitWat: false, skipSemanticDiagnostics: true, inferModuleStrictArguments: false, deferTopLevelInit: true, hostBridge: "always" } as any);
+    ok = r.success;
+  } catch { ok = false; }
+  compiled++; if (!ok) { failed++; continue; }
+  const e1 = g.__r4probe.find((e) => e.site === "pass1"); const e2 = g.__r4probe.find((e) => e.site === "pass2");
+  if (e1) p1++; if (e2) p2++;
+  rows.push({ file: filePath.slice(ROOT.length + 1), pass1: Object.keys(e1?.changed ?? {}), pass2: Object.keys(e2?.changed ?? {}), closureMapAdded: e1?.changed?.closureMap?.added ?? [], frozen: e1?.changed?.frozenVars?.added ?? [], dpf: e1?.changed?.definedPropertyFlags?.added ?? [], captured: e1?.changed?.capturedGlobals?.added ?? [] });
+  for (const k of Object.keys(e1?.changed ?? {})) { const a = agg.get(k) ?? { n: 0, lanes: new Set() }; a.n++; agg.set(k, a); }
+}
+writeFileSync(".tmp/r4-t262.json", JSON.stringify(rows, null, 2));
+console.log(`sample=${sample.length} compiled=${compiled} failed=${failed} pass1-ran=${p1} pass2-ran=${p2}`);
+console.log("| ctx field mutated by pass 1 | files |");
+console.log("|---|---|");
+for (const [k, a] of [...agg.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, 45)) console.log(`| ${k} | ${a.n}/${p1} |`);
+const cm = rows.flatMap((r) => r.closureMapAdded); const cmSet = new Map<string, number>(); for (const k of cm) cmSet.set(k, (cmSet.get(k) ?? 0) + 1);
+console.log("closureMap keys added by pass 1 (top):", [...cmSet.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([k, n]) => `${k}×${n}`).join(", "));
+console.log("frozenVars added (files):", rows.filter((r) => r.frozen.length).length, "definedPropertyFlags added (files):", rows.filter((r) => r.dpf.length).length, "capturedGlobals added (files):", rows.filter((r) => r.captured.length).length);

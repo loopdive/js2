@@ -1,0 +1,218 @@
+
+## 2026-09-02 gap-6 design record — what pass 1 actually produces, and the slice that can retire it
+
+Written by the Fable planning lane against `origin/main` `a7edf000ee` (gap-1b
+merged). Every `file:line` below is from that tree. This answers the design
+item gap-1b left open ("closure pre-lift inventory ahead of bodies, measured
+against Seam B's failure set") with a census first, because the earlier probe
+measured pass 1's *removal* (6/89 async regressions) but never enumerated what
+pass 1 *writes*.
+
+### Census — every `ctx` collection pass 1 mutates
+
+Probe: `declarations.ts` instrumented to snapshot every Map/Set/array-valued
+`ctx` field (plus `mod.{types,functions,globals,imports,tags}` lengths) before
+and after pass 1 (`:6005-6007`) and pass 2 (`:6214-6224`), diffed per compile.
+Driver, instrumentation and raw JSON:
+`/tmp/claude-0/-home-user-js2/28d6498f-fc64-5f6d-952c-7075f472bc2f/scratchpad/r4-instrument.py`,
+`r4-shapes.mts` / `r4-shapes.json` (16 shapes × host-deferred + standalone),
+`r4-t262.mts` / `r4-t262.json` (every 1,100th official test262 file, harness
+assembled by `assembleOriginalHarness`, compiled with the runner's exact
+options; 45 sampled, 44 compiled, 39 ran both passes, 5 compile-fail = module
+goal / negative phase).
+
+**On the harness sample, pass 1 mutates 45+ collections in 39/39 files.** The
+ones that matter are the *discovery* families — name-keyed, decision-changing,
+read by the function bodies compiled between the passes. Everything else is a
+content-keyed cache that bodies re-mint on demand (order drift only):
+
+| family | fields (writer) | body-side consumers (files outside `declarations.ts`) | harness sample | shape census |
+| --- | --- | --- | --- | --- |
+| **closure bindings** | `closureMap`, `closureInfoByTypeIdx`, `closureMinimumArgumentCountByFuncTypeIdx`, `constructibleClosureTypeIdxs`, `closureCounter` (`closures/arrow-phases.ts:1283-1322` `registerClosureBindingInfo`, called once per compiled arrow/function expression) | 16 / 36 | **39/39** — keys `print` ×39 and `mkerr` ×39 (the harness prefix's `var print = function…`), then per-test `receiver`, `makeIterable`, `f`, `fn`… | every closure-bearing shape (c9, x2, x5, x6, h1, h2, v1) |
+| **integrity end-state** | `frozenVars`/`sealedVars`/`nonExtensibleVars` (`expressions/call-builtin-static.ts:1693-1700`, keyed by `integrityVarKey` → `o@6`), `definedPropertyFlags` (`object-ops.ts:1648` and 7 siblings, key `o@6:x`), `nonWritableExternKeys` (`:662`), `definePropertyReceiverKeys`, `sidecarDefinedPropertyKeys` | 8 files, 24 sites | `frozenVars` **0/39**, `definedPropertyFlags` **5/39** | f1-freeze, f2-defprop only |
+| **captured module lexicals** | `capturedGlobals` / `capturedGlobalsWidened` (`closures.ts:1106-1110`, promotes a module-init LOCAL `let/const` to a `__captured_<name>` global when a closure captures it) | 9 | **3/39** | x6 only |
+| function-value globals | `funcClosureGlobals`, `funcClosureSingletonKeyByFuncIdx` (`function Test262Error` used as a value) | 3 | 39/39 | h2 |
+| host dynamic dispatch surfaces | `hostDynamicClassMethodNames`, `hostDynamicClassAccessorReads`, `memberGet/SetDispatchNames`, `maxHostDynamicMethodCallArity` | 6 | 39/39 (`sameValue`…) | h2 |
+| on-demand caches (order drift only) | `funcMap` late imports (`__get_undefined`, `__typeof_*`), `funcTypeCache`, `stringLiteralMap`/`stringGlobalMap`/`nativeStrLiteralGlobals`, `structMap`/`structFields`/`anonTypeMap`/`refCellTypeMap`, `funcRefWrapperCache`, `fnInstanceMeta*`, `pendingMethodTrampolines`, `exnTagIdx`, `currentThisGlobalIdx`, `argcGlobalIdx`, `__funcValueWrapper*` | 351 (funcMap) … 1 | 39/39 | most shapes |
+
+**The classifier is the measured A/B, not this table.** gap-1b's `p2only` run
+(`g1-design.md` §1d: skip pass 1 in `full` mode, force pass 2) kept runtime
+parity on every shape and lane and on 83/89 runner-faithful test262 files; the
+6 failures are all one mechanism — `doneprintHandle.js`'s
+`var __consolePrintHandle__ = function (msg) { print(msg); }` compiles, without
+a `closureMap` entry for `print`, from a `call_ref` on the closure struct to a
+bare `call` through the dynamic `__call_function_*` boundary, `$DONE` inlines
+it, and the runner never observes completion. So on the sampled populations the
+on-demand caches, the function-value globals and the dispatch surfaces are
+re-seeded correctly by the bodies themselves (317/319 files change BYTES —
+index order — and 0 change status), and exactly one discovery family is
+load-bearing: **closure bindings**. Integrity and capture are load-bearing too
+(f1-freeze flips a TypeError to a silent write without pass 1) but they are
+rare on test262 (0/39 and 3/39) and can be *gated* rather than inventoried.
+
+### What that settles
+
+1. "Closure pre-lift inventory" is the right first slice, and it is sufficient
+   for the sampled harness populations — not because pass 1 writes little, but
+   because everything else it writes is either re-derivable on demand or rare
+   enough to keep pass 1 for.
+2. Byte identity is NOT an acceptance metric for pass-1 retirement. Compiling
+   the initializer once, after bodies, reorders every on-demand index; the
+   earlier probe measured 317/319 files drifting with zero status change. The
+   acceptance metrics are runtime parity, test262 status parity on the
+   runner-faithful sample, and the `p2only` failure set going to zero.
+3. There is a measurable *win* beyond compile time (pass 1 ≈ 13–15% of a
+   test262 compile): pass 2 today mints a dead re-lifted `$__closure_N` twin per
+   module-level closure (gap-1b census, "closure-bearing populations differ").
+   With no pass 1 there is no twin — `mod.functions` shrinks by one per
+   module-scope closure. That is pinnable.
+
+### Slice gap-6a — module-scope closure pre-lift + `discovery-static` pass-1 skip
+
+**Contract**
+
+1. **`src/codegen/declarations/module-init-closure-prelift.ts`** (new) —
+   `preLiftModuleClosures(ctx): ModuleClosurePreLift`. Walk
+   `ctx.moduleInitStatements` **top level only** (a closure nested inside a
+   top-level function body registers when THAT body compiles, between the
+   passes, exactly as today) for the two binding shapes
+   `registerClosureBindingInfo` registers (`arrow-phases.ts:1303-1322`):
+   `VariableDeclaration` (`var`/`let`/`const`) whose initializer is an
+   `ArrowFunction` or `FunctionExpression`, and an `ExpressionStatement`
+   `<ident> = <ArrowFunction|FunctionExpression>` whose target is a module
+   global (`ctx.moduleGlobals.has`). For each site run the DECLARE half of
+   `compileArrowAsClosure` and nothing else: `planClosureCaptures`
+   (`closures.ts:3559`), `mintClosureStructTypes` (`:3586-3603`, with the same
+   `constructible: callableHasConstructBehavior(arrow)`), the
+   `closureStructByNode` record (`:3606`), and `registerClosureBindingInfo`
+   with `inlineBody` undefined. Do NOT compile the body
+   (`compileLiftedClosureBody`, `:3614`), do NOT mint the lifted function
+   (`:3631`), do NOT emit construction (`arrow-phases.ts:1148`). The record
+   returned lists every pre-lifted site and every site REFUSED (see 3) with a
+   reason.
+2. **Idempotent re-mint.** When the initializer later compiles for real (pass
+   2), `compileArrowAsClosure` must REUSE the pre-minted struct/func types and
+   the registered `ClosureInfo` instead of minting a second struct: consult
+   `closureStructByNode` (`context/types.ts:3000`) before `:3586`. Capture-free
+   closures already share a signature-keyed wrapper (`funcRefWrapperCache`) so
+   they are idempotent today; capture-carrying closures mint per-closure
+   (`arrow-phases.ts:908`) and are not — probe P2 measures which shapes need
+   the node-cache short-circuit. The `ClosureInfo` registered by the pre-lift
+   and the one the real compile would register must be deep-equal except
+   `inlineBody`; pin that.
+3. **Refusals (fail-closed, each a named reason in the record):** a closure
+   whose `planClosureCaptures` result names a module-init LOCAL (a module-scope
+   `let`/`const` — the capture family, `closures.ts:1106`) — probe P3 says
+   whether the plan can even be computed without the module-init `fctx`;
+   generators/async closures (`isGenerator`/`isAsync` paths in
+   `compileLiftedClosureBody` carry their own state); a closure whose parent is
+   a `PropertyAssignment` (never registered, `:1324-1327`); anything the
+   population-level scan (4) refuses.
+4. **The gate** — `moduleInitDiscoveryIsStatic(ctx, preLift): boolean` in the
+   same file, fail-closed like `moduleInitPopulationIsPass2Stable`
+   (`declarations/module-init-pass2-stable.ts`): true iff (a) the pre-lift
+   refused nothing, (b) a full-subtree scan of the population finds NO
+   `Object.freeze/seal/preventExtensions/defineProperty/defineProperties` call
+   and no `Reflect.*` integrity call (the integrity family stays on pass 1),
+   (c) no `Decorator`, `AwaitExpression`, class static block, or class
+   expression (gap-1b's refusals, unchanged), (d) `moduleInitMode === "full"`
+   on a single-source graph — `"discover"` mode exists to run pass 1 for the
+   whole graph (`declarations.ts:4406-4415`) and is out of scope.
+5. **Wiring in `compileDeclarations`.** Pass 1 (`:6003-6013`) gains
+   `&& !discoveryStatic`; the pass-2 condition (`:6209-6213`) gains
+   `|| discoveryStatic` so the initializer compiles exactly once, after the
+   bodies. With no pass 1, `restorePropOrderState()` is a no-op by construction
+   (snapshot == live state) and `dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark)`
+   sees an empty pass-1 range (P4 confirms it is a no-op, not a truncation).
+   `ctx.pendingInitBody` stays `null` until pass 2 — P4 confirms every
+   `pendingInitBody` fixup (`registry/imports.ts:453-456, 742-744, 1058-1060`;
+   `expressions/late-imports.ts:245-247, 896-898`) is null-safe.
+6. A test-only env seam `JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT=1` that runs
+   the gate WITHOUT the pre-lift (registrations skipped, gate still true) so
+   the load-bearing pin in (d) below is a mutation, not an argument — the same
+   pattern gap-1b used for its closure refusal.
+7. Profile counters: `module-init-pass1` stays; add `module-init-prelift` and
+   `module-init-discovery-static` (`profileCount`) so the census reads
+   `pre-lift/p1/p2` per compile.
+
+**Required pre-implementation probes (answers in the checkpoint note)**
+
+- **P1** — where the production `registerClosureBindingInfo` call sits
+  (`grep -rn "registerClosureBindingInfo"`; only the DOM-callback authority
+  matched by that spelling on this tree, so the main call is spelled through a
+  phase helper) and whether any between-pass body consumer reads
+  `ClosureInfo.inlineBody` (expected: only the registry inliner INSIDE closure
+  bodies compiled during init, gap-1b P2 — so `undefined` at pre-lift time
+  costs nothing between the passes).
+- **P2** — the re-mint: compile x5 (`const add = (a, b) => a + b`), h1 and a
+  capture-carrying `const k = 3; const f = () => k` twice through the declare
+  half and check `mod.types` grows once; then find where `compileArrowAsClosure`
+  must consult `closureStructByNode` so the real compile reuses the pre-minted
+  `structTypeIdx` (the body's `ref.cast` and the init's `struct.new` must name
+  the SAME type index — that is the whole point).
+- **P3** — `planClosureCaptures` without a real module-init `fctx`: what it
+  reads from `fctx` (`localMap`, `boxedCaptures`, …) and whether a synthetic
+  frame that knows only module globals / function declarations / imports is
+  enough to (i) compute captures for the admitted shapes and (ii) DETECT a
+  module-lexical capture so the gate can refuse it. If not, the pre-lift admits
+  only closures whose free identifiers all resolve to `ctx.moduleGlobals`,
+  `ctx.funcMap` or imports — state the measured admission rate.
+- **P4** — no-pass-1 safety: `pendingInitBody` null in every fixup;
+  `dedupeDiagnosticsFrom` on an empty range; `fixupModuleGlobalIndices`;
+  multi-source `"skip"` mode never sees the gate true.
+- **P5 (the acceptance measurement, run BEFORE wiring the gate)** — re-run the
+  `p2only` A/B from gap-1b (`census-3523-gap1-ab.mts` + the seams in
+  `census-3523-gap1-seams.diff`, both in the scratchpad) with the pre-lift
+  installed: the 6 async regressions on the 89-file runner-faithful sample
+  must go to **0** with the pre-lift alone, h1's `read()` must contain
+  `call_ref` and no `__call_function_*` import, and x5 must not grow (gap-1b
+  measured 86 → 182 WAT lines without pass 1). If any regression survives,
+  the failing file names the next inventory family — record it, do not widen.
+
+**Tests** — new `tests/issue-3523-module-init-discovery-static.test.ts`:
+
+- (a) census — h1-print, h2-assert, v1-var-fnexpr, x5, x2, c9 × 4 lanes
+  (host-start, host-deferred, standalone, wasi) report `pre-lift=1 p1=0 p2=1`;
+  x6 (module-lexical capture), f1-freeze, f2-defprop, a `static {}` shape and a
+  `"discover"`-mode two-source graph report `p1=1` (refused, reason named).
+- (b) dispatch parity — for h1 and x5 the body's WAT contains `call_ref` and
+  no `__call_function_*` / `__call_fn_*` import; the `ref.cast` type index in
+  the body equals the `struct.new` type index in `__module_init`.
+- (c) runtime parity — every (a) shape on host + standalone, IR on and off.
+- (d) load-bearing — under `JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT=1` h1's
+  body loses `call_ref` (the gap-1b `p2only` signature) — the inventory is
+  measured, not assumed.
+- (e) the dead twin — for every admitted closure-bearing shape,
+  `mod.functions.length` is exactly one smaller than the forced two-pass build
+  (`JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` with the gate off) per
+  module-scope closure; `WebAssembly.validate` on all lanes.
+- (f) diagnostics — a population with a duplicate top-level diagnostic
+  (`for-in/cptn-decl-itr.js` shape) reports it exactly once with no pass 1.
+- Existing pins that MOVE (deliberately, named): the `1/1` controls in
+  `tests/issue-3523-module-init-single-pass.test.ts` for closure-bearing
+  shapes become `0/1`; the byte-identity-vs-forced pins do NOT apply to
+  discovery-static populations (bytes reorder by design) and must be scoped to
+  populations the gate refuses.
+
+**Verification** — V-A shapes × 4 lanes (census, WAT, runtime); V-B corpus
+`website/playground/examples/**` + `examples/**` host + standalone: zero
+success/error divergence, runtime parity where a `read`-style export exists;
+V-C the 319-file test262 compile sample: error-count divergence 0; V-D the
+89-file `runTest262File` sample: `pass 62 → 62`, and the six `p2only` files
+named individually (`Promise/allSettled/iter-assigned-undefined-reject.js` et
+al. — rebuild the list from the A/B); V-E `check:ir-fallbacks` byte-identical
+output, the five ratchets bare and under `LOC_GATE_BASE=origin/main`,
+typecheck/lint/prettier, the seven scar-family suites gap-1b lists (108 tests)
+plus this suite. LOC: new file ≈ 180, `declarations.ts` ≈ +25, `closures.ts`
+≈ +10 — grant in this file's frontmatter with a dated rationale.
+
+**Out of scope** — the integrity and capture families as *inventories*
+(gap-6b, only if the full-census admission rate after 6a says they are worth
+it: 0/39 and 3/39 on this sample say not yet); `"discover"`-mode multi-source
+graphs; IR-owned call-bearing admission (the R4 endgame, `select.ts` Gate 2
+against the real claimed set — still zero test262 yield until the selector
+admits harness-shaped populations); gap 5 (R3); byte identity across the
+pass-1 skip (reorders by design — say so in the checkpoint, do not pin it).
+
+**Sequencing** — dispatch after the F2-S4/F2-S5 lanes have landed (CPU), from
+`origin/main`; no dependency on #3526. Claim the sub-slice as `3523:gap6a`.

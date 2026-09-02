@@ -1,0 +1,1781 @@
+{
+  "grounding": "a7edf000ee3b89b1995eb12cbb94adca10c787fe",
+  "cells": [
+    {
+      "fixture": "CAT",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 153,
+      "sha256": "60eb285f94e63e4a4c955213745445872ae0f009b1f065ec531e515dff5e9d95",
+      "watFile": "CAT.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "global:string_constants.cat@0",
+        "global:string_constants.@1"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "host",
+            "symbol": "__ir_string_concat",
+            "index": 0
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22418,
+      "sha256": "8332885e95601c2a04ad5ea85db85cac0fc447cb82a1ce3a21cae12c973dbef3",
+      "watFile": "CAT.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22582,
+      "sha256": "711df4930f817fc8ca01f881c38d2d84cae9f1242d3e4f24cc8b50a16b48bc5e",
+      "watFile": "CAT.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22609,
+      "sha256": "d078e2ff720ccbaa953a97cde9d50d99c1d5701edbc5b4a4699804065108496f",
+      "watFile": "CAT.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4882,
+      "sha256": "99992a0595c10c0c47368c0afd55695742779e82bb508ebb6dbc15055f44ded8",
+      "watFile": "CAT.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 149,
+      "sha256": "4677a84a2dcd0cd40e32e3f9197090654073f890bc642cdf5da945e5af4b78cb",
+      "watFile": "CAT3.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat3@0",
+        "global:string_constants.@1",
+        "func:env.__concat_3#0"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 3,
+            "native": false
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "cat3",
+            "host": true,
+            "standalone": false,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22425,
+      "sha256": "0ef7932fe1c90c31936d1eb3e1a15158ea96e9b1118c400e2583690dba126cdf",
+      "watFile": "CAT3.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 2
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22931,
+      "sha256": "68190413f8971cf68ce6ad0560e9b95c60d81771223c3e8ac2ada44045022935",
+      "watFile": "CAT3.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 3,
+            "native": true
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "cat3",
+            "host": false,
+            "standalone": true,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22616,
+      "sha256": "3a982a7b069db88902a893ab136dc2e427104700e73c0564843d6b1fe1852901",
+      "watFile": "CAT3.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 2
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4889,
+      "sha256": "92c095bb61fb2b260ff1ba19fe4f731caa128f351330dbafbb7b15c33c14cf8e",
+      "watFile": "CAT3.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 152,
+      "sha256": "99609ea1357033e6c6029a2a0fd5cff8a311960f58e97dcda3253221f41e7a1b",
+      "watFile": "CAT4.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat4@0",
+        "global:string_constants.@1",
+        "func:env.__concat_4#0"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 4,
+            "native": false
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "cat4",
+            "host": true,
+            "standalone": false,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22429,
+      "sha256": "dc08350002cac5795b12d65b9bff6f2e550a6b98e82dc95a85b91f1c930d79af",
+      "watFile": "CAT4.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 3
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23013,
+      "sha256": "5a7dc70a6075e36d69770b34bfdb7859fe146549e7aef9187324ba007e91a6fd",
+      "watFile": "CAT4.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 4,
+            "native": true
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "cat4",
+            "host": false,
+            "standalone": true,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22620,
+      "sha256": "62180548a018240a3ae4fb2230ed9d5d2d1dca889f8e8d77531a141ef7935631",
+      "watFile": "CAT4.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 3
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4894,
+      "sha256": "65c63fef4d5c51fa181ff9412377e5bbe9cfcfe81a56c74b018a97a2f4014c67",
+      "watFile": "CAT4.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "TPL",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 173,
+      "sha256": "a6702c76db074746bde29e84377b173f31ab6970cf49c2a1788f939f5759156d",
+      "watFile": "TPL.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "global:string_constants.tpl@0",
+        "global:string_constants.@1",
+        "global:string_constants.!@2",
+        "func:env.__concat_3#0"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 3,
+            "native": false
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "tpl",
+            "host": true,
+            "standalone": false,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22460,
+      "sha256": "0d03cf2e8fd7fb04e756e05ec5ff49c2c2fb7eaee96dde0836b21cb7bb4ebb0d",
+      "watFile": "TPL.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 2
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23241,
+      "sha256": "2d34263e560c8b814b9a12548723868f0e14de65ddc1561329554f2757aa44fa",
+      "watFile": "TPL.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 3,
+            "native": true
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "tpl",
+            "host": false,
+            "standalone": true,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22651,
+      "sha256": "0ecc71122ba1e8120e893c9cafcf1296153ac6235859d5ab0469802e982d4fa4",
+      "watFile": "TPL.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 2
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4941,
+      "sha256": "fdf758a2ba73a4b9437ee546ece7e8fe7a6b4ef04b351e64074e4069b44b9f48",
+      "watFile": "TPL.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 187,
+      "sha256": "aa485d7226177b72fe128ec6e95e003d62461e3f39f66afb20cbd91b7431b8ed",
+      "watFile": "TPL3.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "global:string_constants.tpl3@0",
+        "global:string_constants.@1",
+        "global:string_constants.-@2",
+        "func:env.__concat_6#0"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 6,
+            "native": false
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "tpl3",
+            "host": true,
+            "standalone": false,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22477,
+      "sha256": "903ec35198e7d99cc1c6395456dcf90c4c92f7f8862cd60229f98c0f89abcd72",
+      "watFile": "TPL3.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 5
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23752,
+      "sha256": "8188a2360fdc78eeb4a51ec34a18723695f9d679cdbd09ee614690cbec483818",
+      "watFile": "TPL3.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 6,
+            "native": true
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "tpl3",
+            "host": false,
+            "standalone": true,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22668,
+      "sha256": "2bc4f4c9af7b3f99d745abe0ae184d7acefb7fcaa850196461a8ef9ef1600e11",
+      "watFile": "TPL3.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 5
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4975,
+      "sha256": "62b31aeb6fd812c69b51850a69056300307bd78dabccc071f34d57dab6e3aacd",
+      "watFile": "TPL3.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "APPEND",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 224,
+      "sha256": "209a8088f97688e7804bab14fc9555760ec657daf1e6b4c82e6cb610ceec63f5",
+      "watFile": "APPEND.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "global:string_constants.build@0",
+        "global:string_constants.@1",
+        "global:string_constants.x@2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "host",
+            "symbol": "__ir_string_concat_owned",
+            "index": 0
+          }
+        ],
+        "emit": {
+          "provider/owned-append": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPEND",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22695,
+      "sha256": "d50ec0140bb10f9315a397639cab868ac9fd72117b289652106c03143d25b3aa",
+      "watFile": "APPEND.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat_owned",
+            "helper": "__str_concat_owned",
+            "index": 2097156
+          }
+        ],
+        "emit": {
+          "provider/owned-append": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPEND",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22859,
+      "sha256": "e556f03917e8432b3faf608aa1cad7369802246d7380d1a068adf121f9351d75",
+      "watFile": "APPEND.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat_owned",
+            "helper": "__str_concat_owned",
+            "index": 2097156
+          }
+        ],
+        "emit": {
+          "provider/owned-append": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPEND",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22886,
+      "sha256": "fb9bce5bbcd9b022ef18cd578bdb8dc58065a9a4bbaa05ea814d5e6f20c60fa9",
+      "watFile": "APPEND.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat_owned",
+            "helper": "__str_concat_owned",
+            "index": 2097156
+          }
+        ],
+        "emit": {
+          "provider/owned-append": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPEND",
+      "lane": "linear",
+      "success": true,
+      "bytes": 5718,
+      "sha256": "8be2b4f947464f73ff2f90cabd4d446f60dcab092f9037fb775576b4066affc2",
+      "watFile": "APPEND.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "owned-append": 1
+        }
+      }
+    },
+    {
+      "fixture": "APPENDREAD",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 291,
+      "sha256": "98cdac314139805e5648cd5b888db74ac339f66ccf21460fc65cf079e75a0fdb",
+      "watFile": "APPENDREAD.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "func:wasm:js-string.length#1",
+        "global:string_constants.build2@0",
+        "global:string_constants.@1",
+        "global:string_constants.x@2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "host",
+            "symbol": "__ir_string_concat",
+            "index": 0
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDREAD",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22087,
+      "sha256": "4fdede6fdae411d05f70ef7f4f64277547ab81c32c8629ffc54ca14b4b84be68",
+      "watFile": "APPENDREAD.gc-native-strings.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDREAD",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22702,
+      "sha256": "caee1862796a250d59f9a9d8e97a574a69e75a84662bae80ae3df6abbfc09bdb",
+      "watFile": "APPENDREAD.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDREAD",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22729,
+      "sha256": "34ee14b4a8617220d1f7d593ad56e6fec9288a8c5b1837fc8d6f11ca0fda8b4c",
+      "watFile": "APPENDREAD.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDREAD",
+      "lane": "linear",
+      "success": true,
+      "bytes": 5753,
+      "sha256": "4f3476ce4144835a5724a97027597ad88e6ecb55af9cebfc51f87c63cda0dc57",
+      "watFile": "APPENDREAD.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "APPENDPLUS",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 1488,
+      "sha256": "9a4c9eb3d148c08429535991c4ea6440c9f7b93f9b84ff76d4513c3b1ed61d8b",
+      "watFile": "APPENDPLUS.gc-host.wat",
+      "errors": [
+        "IR path failed for build3: ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3) [IR-FALLBACK]"
+      ],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "global:string_constants.build3@0",
+        "global:string_constants.@1",
+        "global:string_constants.Cannot access property on null or undefined at 3:56@2",
+        "func:env.__new_TypeError#1",
+        "func:env.__unbox_number#2",
+        "func:env.__box_number#3"
+      ],
+      "demoted": [
+        {
+          "displayName": "build3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3)"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDPLUS",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 24215,
+      "sha256": "f6656e6d2baa0a6bc517534ba8c72230f43f8293df09227e0c1e6cbc06dc5da0",
+      "watFile": "APPENDPLUS.gc-native-strings.wat",
+      "errors": [
+        "IR path failed for build3: ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3) [IR-FALLBACK]"
+      ],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2",
+        "func:env.__new_TypeError#3",
+        "func:env.__unbox_number#4",
+        "func:env.__box_number#5"
+      ],
+      "demoted": [
+        {
+          "displayName": "build3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3)"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDPLUS",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 50460,
+      "sha256": "76c831caac34574066812a2c602157e957f66dd6f9a13963dcc7b62cad169ceb",
+      "watFile": "APPENDPLUS.standalone.wat",
+      "errors": [
+        "IR path failed for build3: ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3) [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "demoted": [
+        {
+          "displayName": "build3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3)"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDPLUS",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 50487,
+      "sha256": "ec78816354f5f499c6a5b7b57c5e74995ca802ce7ff0a28120bab9205f66b720",
+      "watFile": "APPENDPLUS.wasi.wat",
+      "errors": [
+        "IR path failed for build3: ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3) [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "demoted": [
+        {
+          "displayName": "build3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: mixed string/non-string operand for '+' is not in slice 1 (build3)"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "APPENDPLUS",
+      "lane": "linear",
+      "success": true,
+      "bytes": 5009,
+      "sha256": "56962e169eb5ea92d8d2ec69efbaae1bd5610467f5d5f5fd6d194d6edb8fa66b",
+      "watFile": "APPENDPLUS.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 246,
+      "sha256": "7e6dac42d3c72237750404fbf31044bee69f999598c4718a8ba108a2c14ec435",
+      "watFile": "TPLEQ.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.equals#0",
+        "global:string_constants.tpleq@0",
+        "global:string_constants.@1",
+        "global:string_constants.!@2",
+        "global:string_constants.hi!@3",
+        "func:env.__concat_3#1"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 3,
+            "native": false
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "tpleq",
+            "host": true,
+            "standalone": false,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22747,
+      "sha256": "140c5083c9fb98133bd979a556f2e2edbfe6398df353730050f8124f7226b90c",
+      "watFile": "TPLEQ.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 2
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23527,
+      "sha256": "def291da198e221bc9ae0a9a936e911bfaf8e94a27dd5c813d29c25172547515",
+      "watFile": "TPLEQ.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [
+          {
+            "site": "concat-many",
+            "arity": 3,
+            "native": true
+          }
+        ],
+        "batch": [
+          {
+            "site": "batch-decision",
+            "fn": "tpleq",
+            "host": false,
+            "standalone": true,
+            "changed": true
+          }
+        ],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22938,
+      "sha256": "17130c0d764ed10fba9c1d1c5b34f9568b6f74b22ff021cbab107406e18c9bc7",
+      "watFile": "TPLEQ.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 2
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4976,
+      "sha256": "4162ecbe7ed4df17b053e59f521acd80affd347c2ffb7e2941e59631d2cd8024",
+      "watFile": "TPLEQ.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "CATLEN",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 190,
+      "sha256": "180bb5a4f1422d4d67d5efc2b42ac935444feaadf151ef08323f4b2d4fb3d3cb",
+      "watFile": "CATLEN.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "func:wasm:js-string.length#1",
+        "global:string_constants.cl@0",
+        "global:string_constants.@1"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "host",
+            "symbol": "__ir_string_concat",
+            "index": 0
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATLEN",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22430,
+      "sha256": "50d3a056fb71f84d3ac2b6a30d5880b1014f053175f15053b7846cd78f25da21",
+      "watFile": "CATLEN.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATLEN",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22594,
+      "sha256": "9b8af558678bab7f2d55c3e523de346efdd09edc5aea31a289311a08f82761c1",
+      "watFile": "CATLEN.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATLEN",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22621,
+      "sha256": "b30f6d275c72d3cc4e3de9dfe691c12c94ef22470bf8b6da169a63573ea65294",
+      "watFile": "CATLEN.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [
+          {
+            "site": "concat-arm",
+            "arm": "native",
+            "symbol": "__ir_string_concat",
+            "helper": "__str_concat",
+            "index": 2097154
+          }
+        ],
+        "emit": {
+          "provider/immutable": 1
+        },
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATLEN",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4883,
+      "sha256": "d21f88992d3763b4c196135cd6ad96ec6ce1f9abccebf73aa24caf87669d3f55",
+      "watFile": "CATLEN.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {
+          "immutable": 1
+        }
+      }
+    },
+    {
+      "fixture": "CATNUM",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 196,
+      "sha256": "6e9bbc731fa0aef69eff5d50e7ba7c15e001306d60e0c7c0a1600f95cb9e5acb",
+      "watFile": "CATNUM.gc-host.wat",
+      "errors": [
+        "IR path failed for cn: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn [IR-FALLBACK]"
+      ],
+      "imports": [
+        "func:env.number_toString#0",
+        "func:wasm:js-string.concat#1",
+        "global:string_constants.cn@0",
+        "global:string_constants.@1"
+      ],
+      "demoted": [
+        {
+          "displayName": "cn",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATNUM",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 39593,
+      "sha256": "8019ba05bcea2c9be3fe9c0c5f4c4c5490206b0a72837af8a373e50b29f85751",
+      "watFile": "CATNUM.gc-native-strings.wat",
+      "errors": [
+        "IR path failed for cn: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn [IR-FALLBACK]"
+      ],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [
+        {
+          "displayName": "cn",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATNUM",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 40111,
+      "sha256": "1b9f8c2f1a4610ab032906906f0935b2a0ffadb23a5d7d110283352cfa0c8c48",
+      "watFile": "CATNUM.standalone.wat",
+      "errors": [
+        "IR path failed for cn: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "demoted": [
+        {
+          "displayName": "cn",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATNUM",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 40138,
+      "sha256": "44d8e6c1fc11482141aae139bd7fb2478644c3154e36479a5059f01e07ed12b4",
+      "watFile": "CATNUM.wasi.wat",
+      "errors": [
+        "IR path failed for cn: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "demoted": [
+        {
+          "displayName": "cn",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn"
+        }
+      ],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CATNUM",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4879,
+      "sha256": "174ffd40c4879fda0c023aae5af242a05b5864311ca6e076fcca4016d3b4de9f",
+      "watFile": "CATNUM.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "EQ",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 148,
+      "sha256": "017838d4fba4cf369a5a83e03b98e760f9bc459e3dfd490e46ee4080f3d66898",
+      "watFile": "EQ.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.equals#0",
+        "global:string_constants.eq@0",
+        "global:string_constants.@1"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "EQ",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22424,
+      "sha256": "dc3298e5dec98cba73203e87b56902e370dbc51fa2fddcad2a2e7b52573da1d1",
+      "watFile": "EQ.gc-native-strings.wat",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "EQ",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22588,
+      "sha256": "3e619655380be2de2d505663b1e475c865112f94329251cef16e171eecce35a3",
+      "watFile": "EQ.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "EQ",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22615,
+      "sha256": "3836ffaa923d4e2a2a2660c30cc2f5bbed536880d737e4aad582fe9ed7068a00",
+      "watFile": "EQ.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "EQ",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4873,
+      "sha256": "6738e2e7cf86351cf6a97a6b4d6f06eb1c13e3e2b65805a0dfb49c3a15a318c2",
+      "watFile": "EQ.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CLEAN",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 119,
+      "sha256": "a734964356e5eeed7328d4b7e56332384995300aaf0d09b8223a1ce2b313c014",
+      "watFile": "CLEAN.gc-host.wat",
+      "errors": [],
+      "imports": [
+        "global:string_constants.clean@0",
+        "global:string_constants.@1"
+      ],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CLEAN",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 21977,
+      "sha256": "07067e4c76dc3447bbac9453020e53b5b41c502b1ecd89956edb0eb0e8e73251",
+      "watFile": "CLEAN.gc-native-strings.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CLEAN",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22592,
+      "sha256": "23cc3ba48737fe5bfd886cb311949a2dbdc122cff65a0e2dce8447c34b6ba603",
+      "watFile": "CLEAN.standalone.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CLEAN",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22619,
+      "sha256": "c05c31ff8cfc950aed7a905808acfc3a8c5b313338912ecb7fb42e312f954644",
+      "watFile": "CLEAN.wasi.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    },
+    {
+      "fixture": "CLEAN",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4878,
+      "sha256": "eab66857b0becbd92afb00e4907839c06a9767d266a54dbf0a42a00886375051",
+      "watFile": "CLEAN.linear.wat",
+      "errors": [],
+      "imports": [],
+      "demoted": [],
+      "probe": {
+        "concatArm": [],
+        "emit": {},
+        "many": [],
+        "batch": [],
+        "linear": {}
+      }
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+// R4 pass-1 inventory probe: which ctx collections does pass 1 mutate, per shape × lane?
+import { writeFileSync } from "node:fs";
+import { compile } from "../src/index.js";
+const SHAPES: ReadonlyArray<{ id: string; src: string }> = [
+  { id: "c1-localcall", src: `function setup(){ return 1 }\nconst r = setup();\nexport function read(){ return r }\n` },
+  { id: "c2-map", src: `const m = new Map();\nm.set("a", 1);\nexport function read(){ return m.size }\n` },
+  { id: "c3-console", src: `console.log(1)\nexport function read(){ return 1 }\n` },
+  { id: "c6-objkeys", src: `const o = { v: 1 };\nconst k = Object.keys(o).length;\nexport function read(){ return k }\n` },
+  { id: "c9-arrow", src: `const fn = () => 1;\nconst v = fn();\nexport function read(){ return v }\n` },
+  { id: "c10-class", src: `class C { static x = 1 }\nconst cx = C.x;\nexport function read(){ return cx }\n` },
+  { id: "x2-arrow-calls-fn", src: `function h(): number { return 4; }\nconst f = (): number => h();\nexport function read(): number { return f(); }\n` },
+  { id: "x5-arrow-used-by-fn", src: `const add = (a: number, b: number): number => a + b;\nexport function read(): number { return add(1, 2); }\n` },
+  { id: "x6-closure-mutates-let", src: `let count = 0;\nconst inc = (): void => { count = count + 1; };\nexport function read(): number { inc(); inc(); return count; }\n` },
+  { id: "x9-obj-method", src: `const o = { v: 3, get(): number { return this.v; } };\nconst v = o.get();\nexport function read(): number { return v; }\n` },
+  { id: "x10-new-class", src: `class P { x: number = 7; }\nconst p = new P();\nexport function read(): number { return p.x; }\n` },
+  { id: "f1-freeze", src: `const o = { p: 1 };\nObject.freeze(o);\nexport function read(): number { o.p = 2; return o.p; }\n` },
+  { id: "f2-defprop", src: `const o: any = {};\nObject.defineProperty(o, "x", { value: 5, writable: false });\nexport function read(): number { return o.x; }\n` },
+  { id: "h1-harness-print", src: `var print = function (value: any) { console.log(value); };\nvar __consolePrintHandle__ = function (msg: any) { print(msg); };\nfunction $DONE(err?: any) { if (err) __consolePrintHandle__("Test262:AsyncTestFailure"); else __consolePrintHandle__("Test262:AsyncTestComplete"); }\nexport function read(): number { $DONE(); return 1; }\n` },
+  { id: "h2-harness-assert", src: `function Test262Error(this: any, message: string) { this.message = message; }\nvar assert: any = function (mustBeTrue: any, message?: string) { if (mustBeTrue !== true) throw new Test262Error(message ?? "x"); };\nassert.sameValue = function (a: any, b: any, m?: string) { if (a !== b) throw new Test262Error(m ?? "y"); };\nexport function read(): number { assert.sameValue(1, 1); return 1; }\n` },
+  { id: "v1-var-fnexpr", src: `var g = function (n: number): number { return n * 2; };\nexport function read(): number { return g(21); }\n` },
+];
+const LANES: Record<string, Record<string, unknown>> = {
+  "host-deferred": { target: "gc", deferTopLevelInit: true },
+  standalone: { target: "standalone" },
+};
+const g = globalThis as unknown as { __r4probe?: Array<{ site: string; changed: Record<string, any> }> };
+const rows: any[] = [];
+const agg = new Map<string, { shapes: Set<string>; lanes: Set<string>; samples: Set<string> }>();
+for (const shape of SHAPES) for (const [lane, opts] of Object.entries(LANES)) {
+  g.__r4probe = [];
+  let ok = true; let err = "";
+  try { const r = await compile(shape.src, { ...opts } as any); ok = r.success; if (!ok) err = r.errors.map((e: any) => e.message ?? String(e)).join(" | ").slice(0, 120); } catch (e) { ok = false; err = String(e).slice(0, 120); }
+  const p1 = g.__r4probe.find((e) => e.site === "pass1");
+  const p2 = g.__r4probe.find((e) => e.site === "pass2");
+  rows.push({ shape: shape.id, lane, ok, err, pass1: p1?.changed ?? null, pass2: p2?.changed ?? null });
+  for (const [k, v] of Object.entries(p1?.changed ?? {})) {
+    const a = agg.get(k) ?? { shapes: new Set(), lanes: new Set(), samples: new Set() };
+    a.shapes.add(shape.id); a.lanes.add(lane); for (const s of (v as any).added ?? []) a.samples.add(String(s));
+    agg.set(k, a);
+  }
+}
+writeFileSync(".tmp/r4-shapes.json", JSON.stringify(rows, null, 2));
+console.log("| ctx field mutated by pass 1 | shapes | lanes | sample added keys |");
+console.log("|---|---|---|---|");
+for (const [k, a] of [...agg.entries()].sort((x, y) => y[1].shapes.size - x[1].shapes.size)) {
+  console.log(`| ${k} | ${a.shapes.size}/${SHAPES.length} | ${[...a.lanes].join("+")} | ${[...a.samples].slice(0, 8).join(", ")} |`);
+}
+console.log("\nper-shape (host-deferred): fields changed in pass1 / pass2");
+for (const r of rows.filter((r) => r.lane === "host-deferred")) {
+  console.log(`- ${r.shape}${r.ok ? "" : " [FAIL " + r.err + "]"}: p1={${Object.keys(r.pass1 ?? {}).join(", ")}} p2={${Object.keys(r.pass2 ?? {}).join(", ")}}`);
+}

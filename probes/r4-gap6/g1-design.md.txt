@@ -1,0 +1,75 @@
+# #3523 gap 1 — design probe (probe3523g1-c)
+
+Grounding: `origin/main` = `3b8a9f92f194ff8a00b43b68bebdf48d667cfe56` (includes #5435 five merges back). All `file:line` cites are on that sha. Throwaway seam: `JS2WASM_PROBE_MODULE_INIT_PASSES=p1only|p2only` in `src/codegen/declarations.ts` (patch preserved at `/home/user/js2/.tmp/probe3523g1-c/probe-seam.patch`); base copy captured first, restored, `cmp`-verified, worktree removed, nothing committed. Probe scripts + raw outputs: `/home/user/js2/.tmp/probe3523g1-c/`.
+
+## 0. What the two passes actually are today
+
+| fact | cite |
+| --- | --- |
+| Pass 1 runs before any function body in `full`/`discover` mode "to seed closure/setup discovery"; its body is exposed as `ctx.pendingInitBody` and index-fixup-maintained | `declarations.ts:5998-6013`; fixups `registry/imports.ts:421-430, 713-717, 1022-1032` |
+| Pass 2 is gated: `FORCE_MODULE_INIT_PASS2 \|\| hasAsyncGraphInit \|\| moduleInitChunkingRequired \|\| !moduleInitPopulationIsCallFree(ctx)`; then `restorePropOrderState()` + `dedupeDiagnosticsFrom` | `declarations.ts:6185-6215`; chunk rule `:5989-5996`; `module-init-chunks.ts:23,26,92` (16 entries / 1024 AST nodes) |
+| **Pass 1 is never chunked**; a chunked population MUST take pass 2 ("only that final pass materializes the private chunk helpers") | `declarations.ts:5989-5991`, `:5944-5945` |
+| Stated reason for pass 2: "call sites … see the final inlinable-function registry" | `declarations.ts:6181-6183`; registry consumer `expressions/call-identifier.ts:3290-3296`; producer `function-body.ts:169-213` |
+| IR-emitted functions are **never** registered as inlinables (`bodyRoute.skip → continue` precedes `registerInlinableFunction`) | `declarations.ts:5033-5035`, `:6040-6061` |
+| closureMap is written only when a closure is compiled (`registerClosureBindingInfo`), keyed by variable-declaration name or assignment target that is a local/module global; property assignments (`assert.sameValue = function…`) are NOT registered | `closures/arrow-phases.ts:1269-1327` |
+| closureMap consumers = function bodies compiled between the passes | `call-identifier.ts:1542-1680` (esp. `:1676`), `identifiers.ts:2117-2118`, `closures.ts:4104`, `arrow-phases.ts:516`, `statements.ts:220-253` |
+| R2 identity inventory records `arrow-function` units, not binding→closure-signature facts; #4617 snapshot roles are only `named-import-specifier`/`reduction-local-variable`/`top-level-function` | `ir/identity.ts:83`, `ir/semantic-declaration-snapshot.ts:30-34` |
+
+## 1. Measured A/B (three modes: base = today, `p1only` = skip pass 2 unless chunk/async, `p2only` = skip pass 1 in `full` mode)
+
+### 1a. 18 call-bearing shapes × 4 lanes (host-start, host-deferred, standalone, wasi) — `g1-shapes.out`
+
+| family | shapes | `p1only` vs base | `p2only` vs base |
+| --- | --- | --- | --- |
+| direct calls, **no closure in population** (local fn call init/stmt, `console.log`, `new Map`+`m.set`, `Object.freeze`, inlinable local call, `new` local class, static-block call, string method, `a.push`, `parseInt`, legacy `h(a:any)`, `arguments` callee) | c1,c2,c3,c4,c7,c8,c11,c12,c13,c14,c17,c19,c20 | **byte-identical on all 4 lanes** (52/52 cells; sole exception c3 on wasi: base carries a duplicate `(data … "\0a")` segment that pass 2 re-registers, `p1only` is smaller, code identical) | runtime equal; bytes differ on standalone/wasi for string-constant/helper ordering only (c17: 16-line diff = `$__strlit_*` order) |
+| **closure in population** (arrow/fn-expr initializer, arrow calling local fn, `var g=function`, closure global reassigned in fn, legacy callee inside arrow body) | c9,c10,c15,c16,c18,c21 | bytes differ: base has a **dead re-lifted `$__closure_N` twin** per module-level closure (pass 2 lifts again, pass-1 lift stays dead — 5-line diff, elem/ref.func shift by one) and pass 2 gets registry-inlining *inside* closure bodies (c21 `__inline_` locals 1→0). Runtime equal | runtime equal, but bodies that call the module closure lose typed `call_ref`: c9 +1, c18 +2 host imports (`__call_function_*` dynamic path) |
+| IR-owned (c5 `new Map()`, c6 `Math.max`) | — | 0/0 untouched | 0/0 untouched |
+
+**The stated pass-2 reason is vacuous for direct init statements.** With `JS2WASM_IR_INLINE=0` the base (two-pass) `__module_init` for c1/c8 still emits `call 1`; zero `__inline_` locals in any base WAT. All inlining seen is the finalize-time `ir-inline.ts` (#4157, `index.ts:6690-6691`, `perf-flags.ts:27` default on), which runs after both passes over every function. The registry inliner fires only inside closure bodies compiled during init (c21).
+
+### 1b. Corpus (26 files × host/standalone = 52 compiles) — `g1-corpus.out`
+33 rows `0/0` (IR-owned/fn-only), 19 rows call-bearing. `p1only` byte-identical 50/52 (differs: `nm_js2wasm_wasi_p3.ts`, closure-bearing); `p2only` 50/52; zero error/success divergence.
+
+### 1c. test262 sample — 319 files/lane (every 150th runnable official file), harness assembled via `assembleOriginalHarness`, compiled with the fork-worker options — `g1-t262-compile.out/.json`
+
+| | host (deferred) | standalone (deferred) |
+| --- | --- | --- |
+| base census `1/1` | 318/319 | 316/319 |
+| population has closure + local call + other call + `new` | **319/319** (the harness: `assert.sameValue = function…`, `Test262Error`, `new`) | 319/319 |
+| pass 2 forced by chunking/async even under `p1only` | **165/319** | 122/319 (lane difference unexplained; chunk plan input differs per lane) |
+| `p1only` byte-identical | 167/319 — but only **2/154 non-chunked** | 126/319 (4/197 non-chunked) |
+| `p2only` byte-identical | 2/319 | 6/319 |
+| error-count divergence | 1 (`for-in/cptn-decl-itr.js`: base e1, p1only e2 — pass 1 alone emits a duplicate that today's dedupe collapses) | 0 |
+| mean compile ms base / p1only / p2only | 1302 / 1257 / **1133** (pass 1 ≈ 169 ms = 13%) | 2550 / 2407 / **2165** (≈ 385 ms = 15%) |
+| IR module-init outcome (81-file subsample, `g1-t262-outcomes.mts`) | **81/81 `unsupported:body-shape-rejected`** | — |
+
+### 1d. test262 runtime verdicts via `runTest262File` (honest runner) — `g1-t262-run600all.jsonl`, `g1-t262-run.jsonl`
+- host, 89 files: pass base 62 / `p1only` **62** / `p2only` **56**. `p1only`: zero status divergence (one reason-text flip on `Math/imul/name.js` is flake — base and `p1only` WAT are `cmp`-identical, chunked). `p2only`: **6 regressions, all async** ("async completion marker not observed").
+- 36-file 2-lane partial: host 28/28/28, standalone 22/22/22.
+- Mechanism of the `p2only` regressions (function-level normalized WAT diff, `g1-fdiff.mjs`): `doneprintHandle.js`'s `__consolePrintHandle__(msg){ print(msg) }` compiles, without pass-1 discovery, from a closure-cast body (`global.get`/`$__closure_cast_0`) to a bare `call N`; `$DONE` inlines it; the runner never observes completion. That is closureMap/closure-struct discovery being load-bearing for bodies compiled between the passes — exactly the risk the issue's gap taxonomy named.
+
+## 2. IR-side facts for candidate (ii)
+- `assessModuleInit` (`ir/select.ts:10588`): Gate 1 shape, Gate 2 call graph `:10656-10668` — `external-call` for any non-local call, `call-graph-closure` if a local callee ∉ `claimedFuncs`. On the production branch with no individually-claimed top-level function the assessment uses an **empty** claimed set (`select.ts:1046-1053`), so any local callee rejects.
+- Measured (`g1-variants.mts`): `let z = h()` / `h(a:number)` / `h();` with typed `h` → `call-graph-closure` + from-ast `direct call to "h" has no exact AST-site plan in <module-init>` (`ir/from-ast.ts:6516-6521`; plans built per population statement at `ir/integration.ts:3023`); `h(a:any)` init, `setup();` stmt, `console.log(1)`, `m.set` → **emitted overlay** (legacy=1, ir=1, census still 1/1); `Object.freeze`, arrow/fn-expr initializers → `body-shape-rejected`.
+- Prepared grammar `preparedExactLexicalModuleInit` (`index.ts:4262-4430`): single-declarator `let/const` with initializer or exact scalar assignment (`:4192`). The reachability scan `:4100-4117` refuses any initializer containing a function-like node **or an identifier resolving to a source function/class**; introduced by `d59b8693ad` (Calendar retirement) together with the component preflight `preparedLexicalComponentPreflightFailure` (`:4433-4475`: no `importedCalls`, exact env import manifest, host-callback-maker ABI, host-Date ABI) and `rejectPreparedLexicalComponentBeforeMutation` (`:4477-4499`). The refusal is **component closure for all callees**, not closures only: a Prepared body is sealed before legacy bodies compile, so any callee whose ABI/index the IR does not own would be linked unsealed. Admitting calls therefore needs (a) Gate 2 evaluated against the real claimed set, (b) `directCalls` plans for the population (exist), (c) grammar arms for call statements/initializers with R2-owned callees only, (d) builtins via the existing import-manifest preflight.
+
+## 3. Ranking (retired rows / blast radius)
+
+| candidate | rows retired (measured) | blast radius | invariants | pins that move |
+| --- | --- | --- | --- | --- |
+| **(i) pass-2-stable predicate** — skip pass 2 when the population contains no function-like/class-expression/decorator/await node (calls and `new` allowed); keep chunk/async forcing | closure-free call-bearing family: 13/13 shapes × 4 lanes byte-identical; corpus 7/9 call-bearing rows → `1/0`; **test262: 0 rows** (every population is closure-bearing, and 122–165/319 are chunked) | one predicate in `declarations/module-init-call-free.ts:52-63` (+ doc), no selector/prepared/adapter change | exactly-once, order, TDZ (`:5602` runs before pass 1), poison seam (`:5845`), WASI `__init_done` reservation (`:4996-5010`) all untouched; 0/0 rows untouched (gate sits inside the `full`-mode pass-2 block) | `tests/issue-3523-module-init-single-pass.test.ts:236-250` controls `call-in-initializer`, `new-in-initializer`, `call-in-static-block`, `tagged-template` → `1/0` (`call-in-initializer-arrow-body` stays `1/1`); `:373-384` inline-route pin `1/1`→`1/0` (byte identity vs forced still holds — measured c8) |
+| (ii) IR-owned call-bearing | overlay cells (`setup();`, `h(a:any)`, `console.log`, `m.set`) → Prepared 0/0; call-graph-closure cells need the claimed-set fix first; test262: 0 until the selector admits harness-shaped populations (81/81 body-shape-rejected) | large: `select.ts` Gate 2 branch, `index.ts` grammar + reachability + component preflight, `multi-prepared-program` seams, `check:ir-fallbacks` baseline | must prove callee ABI sealed at preparation; exactly-once via invocation policy | `issue-3523-ir-module-init-compile-once` census matrix, ir-fallback baseline |
+| (iii) retire pass 1 | would retire 318/319 test262 direct rows and ~13–15% compile time — **but unsound as measured**: 6/89 host test262 regressions (async harness), degraded closure dispatch (+1/+2 host imports), 317/319 byte changes | structural: needs a closure-fact inventory (struct/lifted type idx, arity, `needsCallSiteArity`) ahead of bodies that R2/#4617 do not carry | breaks the "bodies see pass-1 end integrity state" contract (`:5671-5674`) and closureMap discovery | everything |
+
+## 4. Recommendation — next slice = (i), with the test262 truth stated in the issue
+
+**Slice:** rename/extend `moduleInitPopulationIsCallFree` → `moduleInitPopulationIsPassTwoStable`: refuse on `ArrowFunction`, `FunctionExpression`, `ClassExpression`, `Decorator`, `AwaitExpression` (and keep `TaggedTemplateExpression`/`CallExpression`/`NewExpression` **admitted**); keep `hasAsyncGraphInit || moduleInitChunkingRequired` forcing; no other change. Rationale to record: the registry inliner never reaches a direct init statement (measured with `JS2WASM_IR_INLINE=0`), and IR-emitted callees never enter the registry (`declarations.ts:5033-5035`).
+
+**Acceptance signature:**
+1. Census: 13 closure-free call-bearing shapes `1/0` on gc/host-deferred/standalone/wasi; 6 closure-bearing shapes `1/1`; a 17-statement population `1/1` (chunk-forced); IR-owned `0/0`.
+2. Byte identity vs `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` for the closure-free family on gc/host-deferred/standalone; wasi: `WebAssembly.validate` + runtime parity + identical import surface (document the dead `"\n"` data segment as the only diff).
+3. Mutation: admitting `ArrowFunction` in the predicate must break the byte-identity pin on the c21 shape (`h(a:any)` called inside an arrow) — proves the closure refusal is load-bearing.
+4. Diagnostics parity: error count unchanged on the 319-file test262 compile sample (probe `g1-t262-compile.mts`, expected 0 divergence — all sampled files are closure-bearing and keep two passes); the `for-in/cptn-decl-itr.js` case pins that dedupe stays on the two-pass route.
+5. `check:ir-fallbacks` bare unchanged; poison seam still fails a gated shape; existing single-pass and compile-once suites green with the two pins above moved.
+
+**Say plainly in the issue:** gap 1 is **not conformance-visible through pass-count work**. On test262 every module-init population is closure-bearing (harness function expressions) and 38–52% are chunked, so pass 2 is the emitting pass there; the only route that retires those 318 rows is pass-1 replacement, which this probe shows requires a closure-fact discovery the IR inventory does not yet carry (6/89 async regressions when removed). The follow-up design item after (i) is therefore "closure pre-lift inventory ahead of bodies" (the facts `registerClosureBindingInfo` writes at `arrow-phases.ts:1291-1322`), measured against the `p2only` failure set (`Promise/allSettled/iter-assigned-undefined-reject.js` et al.) — not (ii), which has zero test262 yield until the selector admits harness-shaped populations.

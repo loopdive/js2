@@ -1,0 +1,173 @@
+// #3526 F2-S3 — BEFORE half of the string.eq byte matrix (measurement probe).
+// Grounded on origin/main 351f2bfc6bb7502ea3016393ba58dd3b41b650dd (PR #5440 merged).
+// Run from the worktree root: node_modules/.bin/tsx .tmp/f2s3-matrix-before.mts <outdir>
+// Requires the temporary instrumentation in .tmp/f2s3-instrument.py (pushes to globalThis.__f2s5).
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync, copyFileSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { compile, type CompileOptions, type CompileResult } from "../src/index.js";
+
+const OUT = process.argv[2] ?? ".tmp/f2s3-out";
+mkdirSync(join(OUT, "wat"), { recursive: true });
+
+const GROUNDING = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+
+// ---- fixtures ---------------------------------------------------------------
+// F2-S5 set (this slice's subject: the `a + b` string.concat seam, both modes, and the batched many-arity sibling).
+const FIXTURES: Record<string, string> = {
+  CAT: `export function cat(a: string, b: string): string { return a + b; }`,
+  CAT3: `export function cat3(a: string, b: string, c: string): string { return a + b + c; }`,
+  CAT4: `export function cat4(a: string, b: string, c: string, d: string): string { return a + b + c + d; }`,
+  TPL: `export function tpl(a: string): string { return \`\${a}!\`; }`,
+  TPL3: `export function tpl3(a: string, b: string, c: string): string { return \`\${a}-\${b}-\${c}\`; }`,
+  APPEND: `export function build(n: number): string {
+  let s = "";
+  for (let i = 0; i < n; i++) { s += "x"; }
+  return s;
+}`,
+  APPENDREAD: `export function build2(n: number): number {
+  let s = "";
+  let k = 0;
+  for (let i = 0; i < n; i++) { s += "x"; k = k + s.length; }
+  return k;
+}`,
+  APPENDPLUS: `export function build3(parts: string[]): string {
+  let out = "";
+  for (let i = 0; i < parts.length; i++) { out = out + parts[i]; }
+  return out;
+}`,
+  TPLEQ: `export function tpleq(a: string): boolean { return \`\${a}!\` === "hi!"; }`,
+  CATLEN: `export function cl(a: string, b: string): number { return (a + b).length; }`,
+  CATNUM: `export function cn(a: string, n: number): string { return a + n; }`,
+  EQ: `export function eq(a: string, b: string): boolean { return a === b; }`,
+  CLEAN: `export function clean(a: number, b: number): number { return a + b; }`,
+};
+
+// ---- lanes ------------------------------------------------------------------
+const LANES: Record<string, CompileOptions> = {
+  "gc-host": {},
+  "gc-native-strings": { nativeStrings: true },
+  standalone: { target: "standalone" },
+  wasi: { target: "wasi" },
+  linear: { target: "linear" },
+};
+
+// ---- wasm import-section parser (ordered, with func/global indices) ---------
+function leb(u8: Uint8Array, pos: number): [number, number] {
+  let result = 0, shift = 0, b: number;
+  do { b = u8[pos++]!; result |= (b & 0x7f) << shift; shift += 7; } while (b & 0x80);
+  return [result >>> 0, pos];
+}
+function skipLeb(u8: Uint8Array, pos: number): number { while (u8[pos++]! & 0x80); return pos; }
+function str(u8: Uint8Array, pos: number): [string, number] {
+  const [len, p] = leb(u8, pos);
+  return [Buffer.from(u8.subarray(p, p + len)).toString("utf8"), p + len];
+}
+function skipValType(u8: Uint8Array, pos: number): number {
+  const b = u8[pos++]!;
+  if (b === 0x63 || b === 0x64) pos = skipLeb(u8, pos); // (ref null? $t)
+  return pos;
+}
+function skipLimits(u8: Uint8Array, pos: number): number {
+  const flags = u8[pos++]!;
+  pos = skipLeb(u8, pos);
+  if (flags & 1) pos = skipLeb(u8, pos);
+  return pos;
+}
+interface ParsedImport { module: string; name: string; kind: string; index: number }
+function parseImports(bin: Uint8Array): ParsedImport[] {
+  const out: ParsedImport[] = [];
+  let pos = 8;
+  const counters = { func: 0, table: 0, memory: 0, global: 0, tag: 0 };
+  while (pos < bin.length) {
+    const id = bin[pos++]!;
+    const [size, p] = leb(bin, pos);
+    pos = p;
+    const end = pos + size;
+    if (id === 2) {
+      let q = pos;
+      const [count, p2] = leb(bin, q); q = p2;
+      for (let i = 0; i < count; i++) {
+        let module: string, name: string;
+        [module, q] = str(bin, q);
+        [name, q] = str(bin, q);
+        const kind = bin[q++]!;
+        let k: keyof typeof counters;
+        switch (kind) {
+          case 0: k = "func"; q = skipLeb(bin, q); break;
+          case 1: k = "table"; q = skipValType(bin, q); q = skipLimits(bin, q); break;
+          case 2: k = "memory"; q = skipLimits(bin, q); break;
+          case 3: k = "global"; q = skipValType(bin, q); q++; break;
+          case 4: k = "tag"; q++; q = skipLeb(bin, q); break;
+          default: throw new Error(`unknown import kind ${kind}`);
+        }
+        out.push({ module, name, kind: k, index: counters[k]++ });
+      }
+    }
+    pos = end;
+  }
+  return out;
+}
+function watImports(wat: string): string[] {
+  return wat.split("\n").map((l) => l.match(/^\s*\(import "([^"]*)" "([^"]*)" \((\w+)/)).filter(Boolean)
+    .map((m) => `${m![3]}:${m![1]}.${m![2]}`);
+}
+const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
+
+// ---- run --------------------------------------------------------------------
+interface Cell {
+  fixture: string; lane: string; success: boolean; bytes: number; sha256: string; watFile: string;
+  errors: string[]; imports: string[]; demoted: Array<Record<string, unknown>>;
+  probe: { concatArm: Array<Record<string, unknown>>; emit: Record<string, number>; many: Array<Record<string, unknown>>;
+    batch: Array<Record<string, unknown>>; linear: Record<string, number> };
+}
+const cells: Cell[] = [];
+const g = globalThis as unknown as { __f2s5?: unknown[] };
+for (const [fixture, source] of Object.entries(FIXTURES)) {
+  for (const [lane, options] of Object.entries(LANES)) {
+    g.__f2s5 = [];
+    let result: CompileResult;
+    try {
+      result = await compile(source, { ...options, trackIrOutcomes: true });
+    } catch (error) {
+      cells.push({ fixture, lane, success: false, bytes: -1, sha256: "", watFile: "", errors: [String(error)], imports: [], demoted: [],
+        probe: { concatArm: [], emit: {}, many: [], batch: [], linear: {} } });
+      continue;
+    }
+    const events = (g.__f2s5 ?? []) as Array<Record<string, unknown>>;
+    const parsed = result.binary.length ? parseImports(result.binary) : [];
+    const imports = parsed.map((i) => `${i.kind}:${i.module}.${i.name}${i.kind === "func" ? `#${i.index}` : i.kind === "global" ? `@${i.index}` : ""}`);
+    const watFile = `${fixture}.${lane}.wat`;
+    writeFileSync(join(OUT, "wat", watFile), result.wat);
+    const irOutcomes = (result.irOutcomes ?? []).map((o) => {
+      const r = o as unknown as Record<string, unknown>;
+      return { displayName: r.displayName, kind: r.kind, stage: r.stage, code: r.code, detail: r.detail };
+    });
+    const emit: Record<string, number> = {};
+    for (const e of events.filter((e) => e.site === "emitStringConcat")) { const k = `${e.branch}/${e.mode}`; emit[k] = (emit[k] ?? 0) + 1; }
+    const linear: Record<string, number> = {};
+    for (const e of events.filter((e) => e.site === "linear-emitStringConcat")) { const k = String(e.mode); linear[k] = (linear[k] ?? 0) + 1; }
+    cells.push({
+      fixture, lane, success: result.success, bytes: result.binary.length, sha256: sha(result.binary), watFile,
+      errors: result.errors.map((e) => String((e as { message?: string }).message ?? e)),
+      imports, demoted: irOutcomes.filter((o) => o.kind !== "emitted" && o.kind !== "non-executable"),
+      probe: {
+        concatArm: events.filter((e) => e.site === "concat-arm"),
+        emit, many: events.filter((e) => e.site === "concat-many"),
+        batch: events.filter((e) => e.site === "batch-decision" && e.changed),
+        linear,
+      },
+    });
+  }
+}
+writeFileSync(join(OUT, "matrix.json"), JSON.stringify({ grounding: GROUNDING, cells }, null, 2));
+const lines: string[] = ["| fixture | lane | ok | bytes | sha | concat imports | resolve arm | emitStringConcat | many-arity | batched | linear | demoted |", "|---|---|---|---|---|---|---|---|---|---|---|---|"];
+for (const c of cells) {
+  const arm = c.probe.concatArm.map((e) => `${e.arm}:${String(e.symbol).replace("__ir_string_", "")}${e.helper ? "→" + e.helper : ""}`).join(" ");
+  const many = c.probe.many.map((e) => `${e.native ? "native" : "host"}×${e.arity}`).join(" ");
+  const imps = c.imports.filter((i) => /concat/.test(i)).join(" ");
+  lines.push(`| ${c.fixture} | ${c.lane} | ${c.success ? "y" : "N"} | ${c.bytes} | ${c.sha256.slice(0, 12)} | ${imps || "-"} | ${arm || "-"} | ${Object.entries(c.probe.emit).map(([k, v]) => `${k}=${v}`).join(" ") || "-"} | ${many || "-"} | ${c.probe.batch.length} | ${Object.entries(c.probe.linear).map(([k, v]) => `${k}=${v}`).join(" ") || "-"} | ${c.demoted.map((d) => `${d.displayName}:${d.code ?? d.kind}`).join(" ") || "-"} |`);
+}
+writeFileSync(join(OUT, "matrix.md"), lines.join("\n") + "\n");
+console.log(lines.join("\n"));

@@ -1,0 +1,4407 @@
+[
+  {
+    "shape": "c1-localcall",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "asyncAssignScanCache": {
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c1-localcall",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "asyncAssignScanCache": {
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c2-map",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 61,
+        "after": 80,
+        "added": [
+          "__get_undefined",
+          "__typeof_number",
+          "__typeof_string",
+          "__typeof_boolean",
+          "__typeof_bigint",
+          "__typeof_undefined",
+          "__typeof_object",
+          "__typeof_function",
+          "__is_truthy",
+          "__unbox_number",
+          "__unbox_boolean",
+          "__box_number"
+        ],
+        "addedCount": 19,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 60,
+        "after": 79
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "funcTypeCache": {
+        "before": 21,
+        "after": 25,
+        "added": [
+          "f64|externref",
+          "i32|externref",
+          "i64|externref",
+          "externref|i64"
+        ],
+        "addedCount": 4,
+        "removedCount": 0
+      },
+      "mod.types": {
+        "before": 26,
+        "after": 30
+      },
+      "mod.imports": {
+        "before": 63,
+        "after": 82
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c2-map",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 42,
+        "added": [
+          "__str_to_number",
+          "__box_number",
+          "__unbox_number",
+          "__box_boolean",
+          "__box_bigint",
+          "__unbox_boolean",
+          "__new_TypeError",
+          "__to_bigint",
+          "__new_RangeError",
+          "__new_SyntaxError",
+          "__bigint_ctor",
+          "__is_truthy"
+        ],
+        "addedCount": 22,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 7,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode"
+        ],
+        "addedCount": 7,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 7,
+        "added": [
+          "__str_0",
+          "__str_1",
+          "__str_2",
+          "__str_3",
+          "__str_4",
+          "__str_5",
+          "__str_6"
+        ],
+        "addedCount": 7,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 7
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 10,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode"
+        ],
+        "addedCount": 7,
+        "removedCount": 0
+      },
+      "usesVecValue": {
+        "before": false,
+        "after": true
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 15,
+        "added": [
+          "u16:TypeError",
+          "u16:Cannot convert null or undefined to a BigInt",
+          "u16:Cannot convert value to a BigInt",
+          "u16:RangeError",
+          "u16:The number cannot be converted to a BigInt because it is not an integer",
+          "u16:SyntaxError",
+          "u16:Cannot convert string to a BigInt in standalone mode",
+          "u16:object",
+          "u16:undefined",
+          "u16:number",
+          "u16:boolean",
+          "u16:bigint"
+        ],
+        "addedCount": 14,
+        "removedCount": 0
+      },
+      "mapHelpers": {
+        "before": 0,
+        "after": 12,
+        "added": [
+          "__same_value_zero",
+          "__hash_anyref",
+          "__map_new",
+          "__map_lookup_idx",
+          "__map_get",
+          "__map_has",
+          "__map_size",
+          "__map_set",
+          "__map_delete",
+          "__map_clear",
+          "__map_iter_new",
+          "__map_iter_next"
+        ],
+        "addedCount": 12,
+        "removedCount": 0
+      },
+      "mapHelpersEmitted": {
+        "before": false,
+        "after": true
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 62
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 63
+      },
+      "nativeBoxNumberTypeIdx": {
+        "before": -1,
+        "after": 51
+      },
+      "nativeBoxBooleanTypeIdx": {
+        "before": -1,
+        "after": 52
+      },
+      "nativeBigIntTypeIdx": {
+        "before": -1,
+        "after": 53
+      },
+      "funcTypeCache": {
+        "before": 25,
+        "after": 44,
+        "added": [
+          "externref|i32",
+          "externref|f64",
+          "externref|i64:big",
+          "f64|externref",
+          "i32|externref",
+          "i64:big|externref",
+          "externref|externref",
+          "externref|",
+          "externref,externref|i32",
+          "anyref,anyref|i32",
+          "anyref|i32",
+          "i32|ref:48"
+        ],
+        "addedCount": 19,
+        "removedCount": 0
+      },
+      "pow10ArrTypeIdx": {
+        "after": 61
+      },
+      "pow10TableGlobalIdx": {
+        "after": 12
+      },
+      "undefinedGlobalIdx": {
+        "after": 13
+      },
+      "mod.types": {
+        "before": 51,
+        "after": 76
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 85
+      },
+      "mod.globals": {
+        "before": 12,
+        "after": 30
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c3-console",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {},
+    "pass2": null
+  },
+  {
+    "shape": "c3-console",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 2,
+        "added": [
+          "u16:\n"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "mod.globals": {
+        "before": 11,
+        "after": 12
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c6-objkeys",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "usesVecValue": {
+        "before": false,
+        "after": true
+      },
+      "structInsertionOrder": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c6-objkeys",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "usesVecValue": {
+        "before": false,
+        "after": true
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 2,
+        "added": [
+          "u16:v"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "structInsertionOrder": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "builtinBrandMap": {
+        "after": 2
+      },
+      "__nativeProtoGlue": {
+        "after": 2
+      },
+      "mod.globals": {
+        "before": 13,
+        "after": 14
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "c9-arrow",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 7,
+        "after": 9,
+        "added": [
+          "__closure_0",
+          "__new_TypeError"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 6,
+        "after": 7
+      },
+      "stringLiteralMap": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "__str_3"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 3,
+        "after": 4
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportGlobals": {
+        "before": 3,
+        "after": 4
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "fn"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#12"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "argcGlobalIdx": {
+        "before": -1,
+        "after": 8
+      },
+      "currentThisGlobalIdx": {
+        "before": 5,
+        "after": 6
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 7,
+        "after": 10,
+        "added": [
+          "ref:12|f64",
+          "externref|externref",
+          "externref|"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 12
+      },
+      "asyncAssignScanCache": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 12,
+        "after": 16
+      },
+      "mod.functions": {
+        "before": 1,
+        "after": 2
+      },
+      "mod.globals": {
+        "before": 4,
+        "after": 5
+      },
+      "mod.imports": {
+        "before": 9,
+        "after": 11
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 9,
+        "after": 10,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 2,
+        "after": 3
+      },
+      "sourceFunctionStrictness": {
+        "before": 2,
+        "after": 3,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 2,
+        "after": 3,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "mod.functions": {
+        "before": 2,
+        "after": 3
+      }
+    }
+  },
+  {
+    "shape": "c9-arrow",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 22,
+        "added": [
+          "__closure_0",
+          "__new_TypeError"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "TypeError",
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "__str_0",
+          "__str_1"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 5,
+        "added": [
+          "TypeError",
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "fn"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#47",
+          "#49"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "argcGlobalIdx": {
+        "before": -1,
+        "after": 18
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 4,
+        "added": [
+          "u16:fn",
+          "u16:TypeError",
+          "u16:Cannot access property on null or undefined"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 53
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 50
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 26,
+        "after": 29,
+        "added": [
+          "ref:47|f64",
+          "externref|externref",
+          "externref|"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 46
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 1
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 47
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 1
+      },
+      "undefinedGlobalIdx": {
+        "after": 17
+      },
+      "asyncAssignScanCache": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 46,
+        "after": 54
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 53
+      },
+      "mod.globals": {
+        "before": 13,
+        "after": 19
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 23,
+        "after": 24,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 2,
+        "after": 3
+      },
+      "sourceFunctionStrictness": {
+        "before": 2,
+        "after": 3,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 2,
+        "after": 3,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "mod.functions": {
+        "before": 54,
+        "after": 55
+      }
+    }
+  },
+  {
+    "shape": "c10-class",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {},
+    "pass2": null
+  },
+  {
+    "shape": "c10-class",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "receiverFlowByFile": {
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x2-arrow-calls-fn",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 8,
+        "after": 9,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#12"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "ref:12|f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 12
+      },
+      "asyncAssignScanCache": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 12,
+        "after": 14
+      },
+      "mod.functions": {
+        "before": 2,
+        "after": 3
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 10,
+        "after": 11,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 2,
+        "after": 3
+      },
+      "sourceFunctionStrictness": {
+        "before": 2,
+        "after": 3,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 2,
+        "after": 3,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "mod.functions": {
+        "before": 3,
+        "after": 4
+      }
+    }
+  },
+  {
+    "shape": "x2-arrow-calls-fn",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 21,
+        "after": 22,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#47",
+          "#49"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 2,
+        "added": [
+          "u16:f"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 26,
+        "after": 27,
+        "added": [
+          "ref:47|f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 46
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 1
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 47
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 1
+      },
+      "asyncAssignScanCache": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 46,
+        "after": 50
+      },
+      "mod.functions": {
+        "before": 52,
+        "after": 53
+      },
+      "mod.globals": {
+        "before": 12,
+        "after": 14
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 23,
+        "after": 24,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 2,
+        "after": 3
+      },
+      "sourceFunctionStrictness": {
+        "before": 2,
+        "after": 3,
+        "added": [
+          "__closure_2"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 2,
+        "after": 3,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "mod.functions": {
+        "before": 54,
+        "after": 55
+      }
+    }
+  },
+  {
+    "shape": "x5-arrow-used-by-fn",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "add"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#12"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f64,f64->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "ref:12,f64,f64|f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 12
+      },
+      "mod.types": {
+        "before": 12,
+        "after": 14
+      },
+      "mod.functions": {
+        "before": 1,
+        "after": 2
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x5-arrow-used-by-fn",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 21,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "add"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#47",
+          "#49"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 2,
+        "added": [
+          "u16:add"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f64,f64->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 26,
+        "after": 27,
+        "added": [
+          "ref:47,f64,f64|f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 46
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 1
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 47
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 46,
+        "after": 50
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 52
+      },
+      "mod.globals": {
+        "before": 12,
+        "after": 14
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x6-closure-mutates-let",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "inc"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#12"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "ref:12|"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 12
+      },
+      "mod.types": {
+        "before": 12,
+        "after": 14
+      },
+      "mod.functions": {
+        "before": 1,
+        "after": 2
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x6-closure-mutates-let",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 21,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "inc"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#47",
+          "#49"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 2,
+        "added": [
+          "u16:inc"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 26,
+        "after": 27,
+        "added": [
+          "ref:47|"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 46
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 1
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 47
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 46,
+        "after": 50
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 52
+      },
+      "mod.globals": {
+        "before": 14,
+        "after": 16
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x9-obj-method",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 7,
+        "after": 9,
+        "added": [
+          "__new_TypeError",
+          "__obj_meth_tramp___anon_0_get_1"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 5,
+        "after": 6
+      },
+      "anonTypeMap": {
+        "before": 1,
+        "after": 2,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "Cannot read properties of undefined (reading a class field)"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "__str_3"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 3,
+        "after": 4
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "Cannot read properties of undefined (reading a class field)"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportGlobals": {
+        "before": 3,
+        "after": 4
+      },
+      "classMethodSet": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0_get"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#13"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "objectLiteralMethodFuncIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "currentThisGlobalIdx": {
+        "before": 5,
+        "after": 6
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0_get"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "pendingMethodTrampolines": {
+        "before": 0,
+        "after": 1
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "structInsertionOrder": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 7,
+        "after": 10,
+        "added": [
+          "ref:13|f64",
+          "externref|externref",
+          "externref|"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "nullThisTypeErrorReady": {
+        "before": false,
+        "after": true
+      },
+      "ensureStructPending": {
+        "before": 1,
+        "after": 2,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 13
+      },
+      "mod.types": {
+        "before": 13,
+        "after": 17
+      },
+      "mod.functions": {
+        "before": 2,
+        "after": 3
+      },
+      "mod.imports": {
+        "before": 8,
+        "after": 10
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x9-obj-method",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 21,
+        "after": 23,
+        "added": [
+          "__new_TypeError",
+          "__obj_meth_tramp___anon_0_get_1"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "anonTypeMap": {
+        "before": 1,
+        "after": 2,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "TypeError",
+          "Cannot read properties of undefined (reading a class field)"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "__str_0",
+          "__str_1"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 5,
+        "added": [
+          "TypeError",
+          "Cannot read properties of undefined (reading a class field)"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "classMethodSet": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0_get"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 2
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#47",
+          "#53"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "objectLiteralMethodFuncIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0_get"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 3,
+        "added": [
+          "u16:TypeError",
+          "u16:get"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 49
+      },
+      "pendingMethodTrampolines": {
+        "before": 0,
+        "after": 1
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "structInsertionOrder": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 26,
+        "after": 29,
+        "added": [
+          "ref:47|f64",
+          "externref|externref",
+          "externref|"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "nullThisTypeErrorReady": {
+        "before": false,
+        "after": true
+      },
+      "ensureStructPending": {
+        "before": 1,
+        "after": 2,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 47
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 52
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 1
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 47,
+        "after": 54
+      },
+      "mod.functions": {
+        "before": 52,
+        "after": 54
+      },
+      "mod.globals": {
+        "before": 13,
+        "after": 16
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "x10-new-class",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {},
+    "pass2": null
+  },
+  {
+    "shape": "x10-new-class",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {},
+    "pass2": null
+  },
+  {
+    "shape": "f1-freeze",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 59,
+        "after": 60,
+        "added": [
+          "__object_freeze"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 58,
+        "after": 59
+      },
+      "structInsertionOrder": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "nonExtensibleVars": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "frozenVars": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sealedVars": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "mod.imports": {
+        "before": 60,
+        "after": 61
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "f1-freeze",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 247,
+        "added": [
+          "__num_fmt_finalize",
+          "__nfd_new",
+          "__nfd_get",
+          "__nfd_set",
+          "__num_fmt_trap",
+          "__nfd_fin",
+          "__sh_num_toString_radix",
+          "number_toString_radix",
+          "__ryu_mul_shift",
+          "__num_ryu_digits",
+          "__num_ryu_to_buf",
+          "number_toString"
+        ],
+        "addedCount": 227,
+        "removedCount": 0
+      },
+      "structMap": {
+        "before": 9,
+        "after": 10,
+        "added": [
+          "__proxy_revoker"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "typeIdxToStructName": {
+        "before": 9,
+        "after": 10,
+        "added": [
+          "#123"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "structFields": {
+        "before": 9,
+        "after": 10,
+        "added": [
+          "__proxy_revoker"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 55,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "[[PrimitiveValue]]",
+          "TypeError: Cannot assign to read only property",
+          "Cannot convert object to primitive value",
+          "toString",
+          "valueOf"
+        ],
+        "addedCount": 55,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 55,
+        "added": [
+          "__str_0",
+          "__str_1",
+          "__str_2",
+          "__str_3",
+          "__str_4",
+          "__str_5",
+          "__str_6",
+          "__str_7",
+          "__str_8",
+          "__str_9",
+          "__str_10",
+          "__str_11"
+        ],
+        "addedCount": 55,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 55
+      },
+      "stringGlobalMap": {
+        "before": 2,
+        "after": 57,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "[[PrimitiveValue]]",
+          "TypeError: Cannot assign to read only property",
+          "Cannot convert object to primitive value",
+          "toString",
+          "valueOf"
+        ],
+        "addedCount": 55,
+        "removedCount": 0
+      },
+      "hasStringImports": {
+        "before": false,
+        "after": true
+      },
+      "arrayTypeMap": {
+        "before": 6,
+        "after": 8,
+        "added": [
+          "__ryu_i64_arr",
+          "symref_73"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 103,
+        "added": [
+          "u16:TypeError",
+          "u16:Cannot convert null or undefined to a BigInt",
+          "u16:Cannot convert value to a BigInt",
+          "u16:RangeError",
+          "u16:The number cannot be converted to a BigInt because it is not an integer",
+          "u16:SyntaxError",
+          "u16:Cannot convert string to a BigInt in standalone mode",
+          "u16:object",
+          "u16:undefined",
+          "u16:number",
+          "u16:boolean",
+          "u16:bigint"
+        ],
+        "addedCount": 102,
+        "removedCount": 0
+      },
+      "symbolTypeIdx": {
+        "before": -1,
+        "after": 73
+      },
+      "nativeStrHelpers": {
+        "before": 41,
+        "after": 43,
+        "added": [
+          "__error_to_string",
+          "__any_to_string"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 69
+      },
+      "anyHelpers": {
+        "before": 0,
+        "after": 27,
+        "added": [
+          "__any_from_extern",
+          "__any_box_null",
+          "__any_box_undefined",
+          "__any_box_i32",
+          "__any_box_f64",
+          "__any_box_bool",
+          "__any_box_string",
+          "__any_box_extern_s1",
+          "__any_box_ref",
+          "__any_unbox_i32",
+          "__any_unbox_f64",
+          "__any_unbox_bool"
+        ],
+        "addedCount": 27,
+        "removedCount": 0
+      },
+      "anyHelpersEmitted": {
+        "before": false,
+        "after": true
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 70
+      },
+      "nativeBoxNumberTypeIdx": {
+        "before": -1,
+        "after": 61
+      },
+      "nativeBoxBooleanTypeIdx": {
+        "before": -1,
+        "after": 62
+      },
+      "nativeBigIntTypeIdx": {
+        "before": -1,
+        "after": 63
+      },
+      "structInsertionOrder": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__anon_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 25,
+        "after": 83,
+        "added": [
+          "ref:5,i32|externref",
+          "f64|ref_null:5",
+          "ref_null:5,f64|f64",
+          "ref_null:5,f64,f64|",
+          "|",
+          "ref_null:5,f64|ref:6",
+          "f64,f64|ref:6",
+          "f64,f64|externref",
+          "i64,i64,i64,i32|i64",
+          "f64|i64,i32",
+          "f64,i32,ref:5,i32|i32",
+          "f64|externref"
+        ],
+        "addedCount": 58,
+        "removedCount": 0
+      },
+      "nonExtensibleVars": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "frozenVars": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sealedVars": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "pow10ArrTypeIdx": {
+        "after": 60
+      },
+      "pow10TableGlobalIdx": {
+        "after": 14
+      },
+      "undefinedGlobalIdx": {
+        "after": 15
+      },
+      "closurePropEntryTypeIdx": {
+        "after": 82
+      },
+      "closurePropHeadGlobalIdx": {
+        "after": 32
+      },
+      "closurePropHelpersReserved": {
+        "after": true
+      },
+      "protoFnEntryTypeIdx": {
+        "after": 86
+      },
+      "protoFnObjectTypeIdx": {
+        "after": 77
+      },
+      "protoFnHeadGlobalIdx": {
+        "after": 33
+      },
+      "protoFunctionValueReserved": {
+        "after": true
+      },
+      "vecPropBaseTypeIdx": {
+        "after": 0
+      },
+      "vecPropEntryTypeIdx": {
+        "after": 87
+      },
+      "vecPropHeadGlobalIdx": {
+        "after": 34
+      },
+      "vecPropHelpersReserved": {
+        "after": true
+      },
+      "externIsArrayReserved": {
+        "after": true
+      },
+      "accessorGetDriverReserved": {
+        "after": true
+      },
+      "accessorSetDriverReserved": {
+        "after": true
+      },
+      "externSetResultGlobalIdx": {
+        "after": 38
+      },
+      "arrayToPrimitiveReserved": {
+        "after": true
+      },
+      "classToPrimitiveReserved": {
+        "after": true
+      },
+      "applyClosureReserved": {
+        "after": true
+      },
+      "externGetIdxReserved": {
+        "after": true
+      },
+      "vecOverlayReserved": {
+        "after": true
+      },
+      "proxyDispatchReserved": {
+        "after": true
+      },
+      "__nativeProtoPendingSeeds": {
+        "after": 0
+      },
+      "mod.types": {
+        "before": 46,
+        "after": 124
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 278
+      },
+      "mod.globals": {
+        "before": 12,
+        "after": 127
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "f2-defprop",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 59,
+        "after": 60,
+        "added": [
+          "__defineProperty_value"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 58,
+        "after": 59
+      },
+      "stringLiteralMap": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "TypeError: Object method called on null or undefined"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "__str_3"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 3,
+        "after": 4
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "TypeError: Object method called on null or undefined"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportGlobals": {
+        "before": 3,
+        "after": 4
+      },
+      "currentThisGlobalIdx": {
+        "before": 4,
+        "after": 5
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "funcTypeCache": {
+        "before": 21,
+        "after": 22,
+        "added": [
+          "externref,externref,externref,f64|externref"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "definedPropertyFlags": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6:x"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "nonWritableExternKeys": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6:x"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "definePropertyReceiverKeys": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o:x"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "mod.types": {
+        "before": 27,
+        "after": 28
+      },
+      "mod.imports": {
+        "before": 61,
+        "after": 63
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "f2-defprop",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 247,
+        "added": [
+          "__num_fmt_finalize",
+          "__nfd_new",
+          "__nfd_get",
+          "__nfd_set",
+          "__num_fmt_trap",
+          "__nfd_fin",
+          "__sh_num_toString_radix",
+          "number_toString_radix",
+          "__ryu_mul_shift",
+          "__num_ryu_digits",
+          "__num_ryu_to_buf",
+          "number_toString"
+        ],
+        "addedCount": 227,
+        "removedCount": 0
+      },
+      "structMap": {
+        "before": 8,
+        "after": 10,
+        "added": [
+          "__proxy_revoker",
+          "Hole"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "typeIdxToStructName": {
+        "before": 8,
+        "after": 10,
+        "added": [
+          "#122",
+          "#123"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "structFields": {
+        "before": 8,
+        "after": 10,
+        "added": [
+          "__proxy_revoker",
+          "Hole"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 57,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "[[PrimitiveValue]]",
+          "TypeError: Cannot assign to read only property",
+          "Cannot convert object to primitive value",
+          "toString",
+          "valueOf"
+        ],
+        "addedCount": 57,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 57,
+        "added": [
+          "__str_0",
+          "__str_1",
+          "__str_2",
+          "__str_3",
+          "__str_4",
+          "__str_5",
+          "__str_6",
+          "__str_7",
+          "__str_8",
+          "__str_9",
+          "__str_10",
+          "__str_11"
+        ],
+        "addedCount": 57,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 57
+      },
+      "stringGlobalMap": {
+        "before": 3,
+        "after": 60,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "[[PrimitiveValue]]",
+          "TypeError: Cannot assign to read only property",
+          "Cannot convert object to primitive value",
+          "toString",
+          "valueOf"
+        ],
+        "addedCount": 57,
+        "removedCount": 0
+      },
+      "hasStringImports": {
+        "before": false,
+        "after": true
+      },
+      "arrayTypeMap": {
+        "before": 6,
+        "after": 8,
+        "added": [
+          "__ryu_i64_arr",
+          "symref_72"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "holeTypeIdx": {
+        "before": -1,
+        "after": 123
+      },
+      "holeGlobalIdx": {
+        "after": 129
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 106,
+        "added": [
+          "u16:TypeError",
+          "u16:Cannot convert null or undefined to a BigInt",
+          "u16:Cannot convert value to a BigInt",
+          "u16:RangeError",
+          "u16:The number cannot be converted to a BigInt because it is not an integer",
+          "u16:SyntaxError",
+          "u16:Cannot convert string to a BigInt in standalone mode",
+          "u16:object",
+          "u16:undefined",
+          "u16:number",
+          "u16:boolean",
+          "u16:bigint"
+        ],
+        "addedCount": 105,
+        "removedCount": 0
+      },
+      "symbolTypeIdx": {
+        "before": -1,
+        "after": 72
+      },
+      "nativeStrHelpers": {
+        "before": 41,
+        "after": 43,
+        "added": [
+          "__error_to_string",
+          "__any_to_string"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 68
+      },
+      "anyHelpers": {
+        "before": 0,
+        "after": 27,
+        "added": [
+          "__any_from_extern",
+          "__any_box_null",
+          "__any_box_undefined",
+          "__any_box_i32",
+          "__any_box_f64",
+          "__any_box_bool",
+          "__any_box_string",
+          "__any_box_extern_s1",
+          "__any_box_ref",
+          "__any_unbox_i32",
+          "__any_unbox_f64",
+          "__any_unbox_bool"
+        ],
+        "addedCount": 27,
+        "removedCount": 0
+      },
+      "anyHelpersEmitted": {
+        "before": false,
+        "after": true
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 69
+      },
+      "nativeBoxNumberTypeIdx": {
+        "before": -1,
+        "after": 60
+      },
+      "nativeBoxBooleanTypeIdx": {
+        "before": -1,
+        "after": 61
+      },
+      "nativeBigIntTypeIdx": {
+        "before": -1,
+        "after": 62
+      },
+      "funcTypeCache": {
+        "before": 25,
+        "after": 83,
+        "added": [
+          "ref:5,i32|externref",
+          "f64|ref_null:5",
+          "ref_null:5,f64|f64",
+          "ref_null:5,f64,f64|",
+          "|",
+          "ref_null:5,f64|ref:6",
+          "f64,f64|ref:6",
+          "f64,f64|externref",
+          "i64,i64,i64,i32|i64",
+          "f64|i64,i32",
+          "f64,i32,ref:5,i32|i32",
+          "f64|externref"
+        ],
+        "addedCount": 58,
+        "removedCount": 0
+      },
+      "nonWritableExternKeys": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o@6:x"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sidecarDefinedPropertyKeys": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o:x"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "definePropertyReceiverKeys": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "o:x"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "pow10ArrTypeIdx": {
+        "after": 59
+      },
+      "pow10TableGlobalIdx": {
+        "after": 14
+      },
+      "undefinedGlobalIdx": {
+        "after": 15
+      },
+      "closurePropEntryTypeIdx": {
+        "after": 81
+      },
+      "closurePropHeadGlobalIdx": {
+        "after": 32
+      },
+      "closurePropHelpersReserved": {
+        "after": true
+      },
+      "protoFnEntryTypeIdx": {
+        "after": 85
+      },
+      "protoFnObjectTypeIdx": {
+        "after": 76
+      },
+      "protoFnHeadGlobalIdx": {
+        "after": 33
+      },
+      "protoFunctionValueReserved": {
+        "after": true
+      },
+      "vecPropBaseTypeIdx": {
+        "after": 0
+      },
+      "vecPropEntryTypeIdx": {
+        "after": 86
+      },
+      "vecPropHeadGlobalIdx": {
+        "after": 34
+      },
+      "vecPropHelpersReserved": {
+        "after": true
+      },
+      "externIsArrayReserved": {
+        "after": true
+      },
+      "accessorGetDriverReserved": {
+        "after": true
+      },
+      "accessorSetDriverReserved": {
+        "after": true
+      },
+      "externSetResultGlobalIdx": {
+        "after": 38
+      },
+      "arrayToPrimitiveReserved": {
+        "after": true
+      },
+      "classToPrimitiveReserved": {
+        "after": true
+      },
+      "applyClosureReserved": {
+        "after": true
+      },
+      "externGetIdxReserved": {
+        "after": true
+      },
+      "vecOverlayReserved": {
+        "after": true
+      },
+      "proxyDispatchReserved": {
+        "after": true
+      },
+      "__nativeProtoPendingSeeds": {
+        "after": 0
+      },
+      "mod.types": {
+        "before": 45,
+        "after": 124
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 278
+      },
+      "mod.globals": {
+        "before": 12,
+        "after": 131
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "h1-harness-print",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 9,
+        "after": 12,
+        "added": [
+          "__closure_0",
+          "__new_TypeError",
+          "__closure_3"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 7,
+        "after": 8
+      },
+      "stringLiteralMap": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "__str_7"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 7,
+        "after": 8
+      },
+      "stringGlobalMap": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportGlobals": {
+        "before": 7,
+        "after": 8
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 4
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "print",
+          "__consolePrintHandle__"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "#13",
+          "#15",
+          "#16"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "argcGlobalIdx": {
+        "before": -1,
+        "after": 11
+      },
+      "currentThisGlobalIdx": {
+        "before": 9,
+        "after": 10
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "__closure_0",
+          "__closure_3"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "externref->"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleFuncRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "externref->"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#15",
+          "#16"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 8,
+        "after": 10,
+        "added": [
+          "ref:13,externref|",
+          "externref|externref"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 13
+      },
+      "asyncAssignScanCache": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 13,
+        "after": 18
+      },
+      "mod.functions": {
+        "before": 2,
+        "after": 4
+      },
+      "mod.globals": {
+        "before": 3,
+        "after": 4
+      },
+      "mod.imports": {
+        "before": 14,
+        "after": 16
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 31,
+        "after": 33,
+        "added": [
+          "__closure_4",
+          "__closure_5"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 4,
+        "after": 6
+      },
+      "closureInfoByTypeIdx": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "#24"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 4,
+        "after": 6,
+        "added": [
+          "__closure_4",
+          "__closure_5"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 4,
+        "after": 6,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 2,
+        "after": 3,
+        "added": [
+          "#24"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "mod.types": {
+        "before": 24,
+        "after": 25
+      },
+      "mod.functions": {
+        "before": 4,
+        "after": 6
+      }
+    }
+  },
+  {
+    "shape": "h1-harness-print",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 22,
+        "after": 60,
+        "added": [
+          "__num_fmt_finalize",
+          "__nfd_new",
+          "__nfd_get",
+          "__nfd_set",
+          "__num_fmt_trap",
+          "__nfd_fin",
+          "__sh_num_toString_radix",
+          "number_toString_radix",
+          "__ryu_mul_shift",
+          "__num_ryu_digits",
+          "__num_ryu_to_buf",
+          "number_toString"
+        ],
+        "addedCount": 38,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 8,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 8,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 8,
+        "added": [
+          "__str_0",
+          "__str_1",
+          "__str_2",
+          "__str_3",
+          "__str_4",
+          "__str_5",
+          "__str_6",
+          "__str_7"
+        ],
+        "addedCount": 8,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 8
+      },
+      "stringGlobalMap": {
+        "before": 7,
+        "after": 15,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "Cannot access property on null or undefined"
+        ],
+        "addedCount": 8,
+        "removedCount": 0
+      },
+      "arrayTypeMap": {
+        "before": 6,
+        "after": 7,
+        "added": [
+          "__ryu_i64_arr"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 4
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "print",
+          "__consolePrintHandle__"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 4,
+        "added": [
+          "#50",
+          "#52",
+          "#53",
+          "#80"
+        ],
+        "addedCount": 4,
+        "removedCount": 0
+      },
+      "argcGlobalIdx": {
+        "before": -1,
+        "after": 44
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "__closure_0",
+          "__closure_3"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 24,
+        "added": [
+          "u16:print",
+          "u16:TypeError",
+          "u16:Cannot convert null or undefined to a BigInt",
+          "u16:Cannot convert value to a BigInt",
+          "u16:RangeError",
+          "u16:The number cannot be converted to a BigInt because it is not an integer",
+          "u16:SyntaxError",
+          "u16:Cannot convert string to a BigInt in standalone mode",
+          "u16:object",
+          "u16:undefined",
+          "u16:number",
+          "u16:boolean"
+        ],
+        "addedCount": 23,
+        "removedCount": 0
+      },
+      "nativeStrHelpers": {
+        "before": 41,
+        "after": 43,
+        "added": [
+          "__error_to_string",
+          "__any_to_string"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 48
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 77
+      },
+      "nativeBoxNumberTypeIdx": {
+        "before": -1,
+        "after": 67
+      },
+      "nativeBoxBooleanTypeIdx": {
+        "before": -1,
+        "after": 68
+      },
+      "nativeBigIntTypeIdx": {
+        "before": -1,
+        "after": 69
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "externref->"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleFuncRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "externref->"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "#52",
+          "#53",
+          "#80"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 28,
+        "after": 49,
+        "added": [
+          "ref:50,externref|",
+          "ref:5,i32|externref",
+          "f64|ref_null:5",
+          "ref_null:5,f64|f64",
+          "ref_null:5,f64,f64|",
+          "|",
+          "ref_null:5,f64|ref:6",
+          "f64,f64|ref:6",
+          "f64,f64|externref",
+          "i64,i64,i64,i32|i64",
+          "f64|i64,i32",
+          "f64,i32,ref:5,i32|i32"
+        ],
+        "addedCount": 21,
+        "removedCount": 0
+      },
+      "undefinedGlobalIdx": {
+        "after": 13
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 49
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 2
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 50
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 2
+      },
+      "pow10ArrTypeIdx": {
+        "after": 76
+      },
+      "pow10TableGlobalIdx": {
+        "after": 18
+      },
+      "typedThisWriteOnceKeyIndex": {
+        "after": 0
+      },
+      "asyncAssignScanCache": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 48,
+        "after": 81
+      },
+      "mod.functions": {
+        "before": 53,
+        "after": 91
+      },
+      "mod.globals": {
+        "before": 13,
+        "after": 45
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 60,
+        "after": 62,
+        "added": [
+          "__closure_4",
+          "__closure_5"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 4,
+        "after": 6
+      },
+      "closureInfoByTypeIdx": {
+        "before": 4,
+        "after": 5,
+        "added": [
+          "#81"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 4,
+        "after": 6,
+        "added": [
+          "__closure_4",
+          "__closure_5"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 4,
+        "after": 6,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 3,
+        "after": 4,
+        "added": [
+          "#81"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "fnInstanceMetaFamilies": {
+        "before": 2,
+        "after": 3,
+        "added": [
+          "#81"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "mod.types": {
+        "before": 81,
+        "after": 82
+      },
+      "mod.functions": {
+        "before": 91,
+        "after": 93
+      }
+    }
+  },
+  {
+    "shape": "h2-harness-assert",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 8,
+        "after": 34,
+        "added": [
+          "__typeof_number",
+          "__typeof_string",
+          "__typeof_boolean",
+          "__typeof_bigint",
+          "__typeof_undefined",
+          "__typeof_object",
+          "__typeof_function",
+          "__is_truthy",
+          "__unbox_number",
+          "__unbox_boolean",
+          "__box_number",
+          "__box_boolean"
+        ],
+        "addedCount": 26,
+        "removedCount": 0
+      },
+      "numImportFuncs": {
+        "before": 6,
+        "after": 28
+      },
+      "stringLiteralMap": {
+        "before": 6,
+        "after": 7,
+        "added": [
+          "sameValue"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 6,
+        "after": 7,
+        "added": [
+          "__str_6"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 6,
+        "after": 7
+      },
+      "stringGlobalMap": {
+        "before": 6,
+        "after": 7,
+        "added": [
+          "sameValue"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "numImportGlobals": {
+        "before": 6,
+        "after": 7
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 8
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "assert"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 6,
+        "added": [
+          "#13",
+          "#15",
+          "#24",
+          "#26",
+          "#27",
+          "#29"
+        ],
+        "addedCount": 6,
+        "removedCount": 0
+      },
+      "hostDynamicClassMethodNames": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "sameValue"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "currentThisGlobalIdx": {
+        "before": 7,
+        "after": 8
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "__closure_0",
+          "__closure_5"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "pendingMethodTrampolines": {
+        "before": 0,
+        "after": 1
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "externref,externref->",
+          "externref->",
+          "externref,externref,externref->"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "constructibleFuncRefWrapperCache": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "externref,externref->",
+          "externref->",
+          "externref,externref,externref->"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "#15",
+          "#26",
+          "#29"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 8,
+        "after": 20,
+        "added": [
+          "ref:13,externref,externref|",
+          "externref|f64",
+          "f64|externref",
+          "i32|externref",
+          "i64|externref",
+          "externref|i64",
+          "externref|externref",
+          "externref|",
+          "externref,externref|externref",
+          "ref:13,externref|",
+          "ref:13,externref,externref,externref|",
+          "externref,externref,externref|"
+        ],
+        "addedCount": 12,
+        "removedCount": 0
+      },
+      "funcClosureGlobals": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "Test262Error"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcClosureSingletonKeyByFuncIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#2097152"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 13
+      },
+      "memberSetDispatchNames": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 13,
+        "after": 31
+      },
+      "mod.functions": {
+        "before": 2,
+        "after": 6
+      },
+      "mod.globals": {
+        "before": 2,
+        "after": 3
+      },
+      "mod.imports": {
+        "before": 12,
+        "after": 35
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 36,
+        "after": 38,
+        "added": [
+          "__closure_8",
+          "__closure_9"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 8,
+        "after": 10
+      },
+      "sourceFunctionStrictness": {
+        "before": 4,
+        "after": 6,
+        "added": [
+          "__closure_8",
+          "__closure_9"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 4,
+        "after": 6,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "mod.functions": {
+        "before": 7,
+        "after": 9
+      }
+    }
+  },
+  {
+    "shape": "h2-harness-assert",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 21,
+        "after": 253,
+        "added": [
+          "__num_fmt_finalize",
+          "__nfd_new",
+          "__nfd_get",
+          "__nfd_set",
+          "__num_fmt_trap",
+          "__nfd_fin",
+          "__sh_num_toString_radix",
+          "number_toString_radix",
+          "__ryu_mul_shift",
+          "__num_ryu_digits",
+          "__num_ryu_to_buf",
+          "number_toString"
+        ],
+        "addedCount": 232,
+        "removedCount": 0
+      },
+      "structMap": {
+        "before": 10,
+        "after": 11,
+        "added": [
+          "__proxy_revoker"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "typeIdxToStructName": {
+        "before": 10,
+        "after": 11,
+        "added": [
+          "#130"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "structFields": {
+        "before": 9,
+        "after": 10,
+        "added": [
+          "__proxy_revoker"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "stringLiteralMap": {
+        "before": 0,
+        "after": 57,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "[[PrimitiveValue]]",
+          "TypeError: Cannot assign to read only property",
+          "Cannot convert object to primitive value",
+          "toString",
+          "valueOf"
+        ],
+        "addedCount": 57,
+        "removedCount": 0
+      },
+      "stringLiteralValues": {
+        "before": 0,
+        "after": 57,
+        "added": [
+          "__str_0",
+          "__str_1",
+          "__str_2",
+          "__str_3",
+          "__str_4",
+          "__str_5",
+          "__str_6",
+          "__str_7",
+          "__str_8",
+          "__str_9",
+          "__str_10",
+          "__str_11"
+        ],
+        "addedCount": 57,
+        "removedCount": 0
+      },
+      "stringLiteralCounter": {
+        "before": 0,
+        "after": 57
+      },
+      "stringGlobalMap": {
+        "before": 6,
+        "after": 63,
+        "added": [
+          "TypeError",
+          "Cannot convert null or undefined to a BigInt",
+          "Cannot convert value to a BigInt",
+          "RangeError",
+          "The number cannot be converted to a BigInt because it is not an integer",
+          "SyntaxError",
+          "Cannot convert string to a BigInt in standalone mode",
+          "[[PrimitiveValue]]",
+          "TypeError: Cannot assign to read only property",
+          "Cannot convert object to primitive value",
+          "toString",
+          "valueOf"
+        ],
+        "addedCount": 57,
+        "removedCount": 0
+      },
+      "hasStringImports": {
+        "before": false,
+        "after": true
+      },
+      "arrayTypeMap": {
+        "before": 6,
+        "after": 8,
+        "added": [
+          "__ryu_i64_arr",
+          "symref_81"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 8
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "assert"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 9,
+        "added": [
+          "#51",
+          "#53",
+          "#54",
+          "#132",
+          "#134",
+          "#135",
+          "#136",
+          "#138",
+          "#139"
+        ],
+        "addedCount": 9,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "__closure_0",
+          "__fnctor_Test262Error_new",
+          "__closure_5"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "exnTagIdx": {
+        "before": -1,
+        "after": 0
+      },
+      "hasUnionImports": {
+        "before": false,
+        "after": true
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 108,
+        "added": [
+          "u16:assert",
+          "u16:TypeError",
+          "u16:Cannot convert null or undefined to a BigInt",
+          "u16:Cannot convert value to a BigInt",
+          "u16:RangeError",
+          "u16:The number cannot be converted to a BigInt because it is not an integer",
+          "u16:SyntaxError",
+          "u16:Cannot convert string to a BigInt in standalone mode",
+          "u16:object",
+          "u16:undefined",
+          "u16:number",
+          "u16:boolean"
+        ],
+        "addedCount": 107,
+        "removedCount": 0
+      },
+      "symbolTypeIdx": {
+        "before": -1,
+        "after": 81
+      },
+      "nativeStrHelpers": {
+        "before": 41,
+        "after": 43,
+        "added": [
+          "__error_to_string",
+          "__any_to_string"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 49
+      },
+      "anyHelpers": {
+        "before": 0,
+        "after": 27,
+        "added": [
+          "__any_from_extern",
+          "__any_box_null",
+          "__any_box_undefined",
+          "__any_box_i32",
+          "__any_box_f64",
+          "__any_box_bool",
+          "__any_box_string",
+          "__any_box_extern_s1",
+          "__any_box_ref",
+          "__any_unbox_i32",
+          "__any_unbox_f64",
+          "__any_unbox_bool"
+        ],
+        "addedCount": 27,
+        "removedCount": 0
+      },
+      "anyHelpersEmitted": {
+        "before": false,
+        "after": true
+      },
+      "errorStructTypeIdx": {
+        "before": -1,
+        "after": 78
+      },
+      "pendingMethodTrampolines": {
+        "before": 0,
+        "after": 1
+      },
+      "nativeBoxNumberTypeIdx": {
+        "before": -1,
+        "after": 70
+      },
+      "nativeBoxBooleanTypeIdx": {
+        "before": -1,
+        "after": 71
+      },
+      "nativeBigIntTypeIdx": {
+        "before": -1,
+        "after": 72
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "externref,ref_null6->",
+          "ref6->",
+          "externref,externref,ref_null6->"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "constructibleFuncRefWrapperCache": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "externref,ref_null6->",
+          "ref6->",
+          "externref,externref,ref_null6->"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 0,
+        "after": 6,
+        "added": [
+          "#53",
+          "#54",
+          "#134",
+          "#135",
+          "#138",
+          "#139"
+        ],
+        "addedCount": 6,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 27,
+        "after": 88,
+        "added": [
+          "ref:51,externref,ref_null:6|",
+          "ref:5,i32|externref",
+          "f64|ref_null:5",
+          "ref_null:5,f64|f64",
+          "ref_null:5,f64,f64|",
+          "|",
+          "ref_null:5,f64|ref:6",
+          "f64,f64|ref:6",
+          "f64,f64|externref",
+          "i64,i64,i64,i32|i64",
+          "f64|i64,i32",
+          "f64,i32,ref:5,i32|i32"
+        ],
+        "addedCount": 61,
+        "removedCount": 0
+      },
+      "funcClosureGlobals": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "Test262Error"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcClosureSingletonKeyByFuncIdx": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#2097202"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcConstructorMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "Test262Error"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "undefinedGlobalIdx": {
+        "after": 11
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 50
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 3
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 51
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 3
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 3
+      },
+      "pow10ArrTypeIdx": {
+        "after": 69
+      },
+      "pow10TableGlobalIdx": {
+        "after": 16
+      },
+      "closurePropEntryTypeIdx": {
+        "after": 90
+      },
+      "closurePropHeadGlobalIdx": {
+        "after": 33
+      },
+      "closurePropHelpersReserved": {
+        "after": true
+      },
+      "protoFnEntryTypeIdx": {
+        "after": 94
+      },
+      "protoFnObjectTypeIdx": {
+        "after": 85
+      },
+      "protoFnHeadGlobalIdx": {
+        "after": 34
+      },
+      "protoFunctionValueReserved": {
+        "after": true
+      },
+      "vecPropBaseTypeIdx": {
+        "after": 0
+      },
+      "vecPropEntryTypeIdx": {
+        "after": 95
+      },
+      "vecPropHeadGlobalIdx": {
+        "after": 35
+      },
+      "vecPropHelpersReserved": {
+        "after": true
+      },
+      "externIsArrayReserved": {
+        "after": true
+      },
+      "accessorGetDriverReserved": {
+        "after": true
+      },
+      "accessorSetDriverReserved": {
+        "after": true
+      },
+      "arrayToPrimitiveReserved": {
+        "after": true
+      },
+      "classToPrimitiveReserved": {
+        "after": true
+      },
+      "applyClosureReserved": {
+        "after": true
+      },
+      "externGetIdxReserved": {
+        "after": true
+      },
+      "vecOverlayReserved": {
+        "after": true
+      },
+      "proxyDispatchReserved": {
+        "after": true
+      },
+      "__nativeProtoPendingSeeds": {
+        "after": 0
+      },
+      "exnRenderFnctorErrorNames": {
+        "after": 1
+      },
+      "typedThisWriteOnceKeyIndex": {
+        "after": 0
+      },
+      "memberSetDispatchNames": {
+        "after": 1
+      },
+      "mod.types": {
+        "before": 49,
+        "after": 140
+      },
+      "mod.functions": {
+        "before": 52,
+        "after": 284
+      },
+      "mod.globals": {
+        "before": 11,
+        "after": 134
+      },
+      "mod.tags": {
+        "before": 0,
+        "after": 1
+      }
+    },
+    "pass2": {
+      "funcMap": {
+        "before": 255,
+        "after": 257,
+        "added": [
+          "__closure_8",
+          "__closure_9"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 8,
+        "after": 10
+      },
+      "sourceFunctionStrictness": {
+        "before": 5,
+        "after": 7,
+        "added": [
+          "__closure_8",
+          "__closure_9"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 5,
+        "after": 7,
+        "added": [],
+        "addedCount": 0,
+        "removedCount": 0
+      },
+      "mod.functions": {
+        "before": 286,
+        "after": 288
+      }
+    }
+  },
+  {
+    "shape": "v1-var-fnexpr",
+    "lane": "host-deferred",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 3
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "g"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#12",
+          "#14"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f64->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleFuncRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f64->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "#14"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 7,
+        "after": 8,
+        "added": [
+          "ref:12,f64|f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 12
+      },
+      "mod.types": {
+        "before": 12,
+        "after": 15
+      },
+      "mod.functions": {
+        "before": 1,
+        "after": 2
+      }
+    },
+    "pass2": null
+  },
+  {
+    "shape": "v1-var-fnexpr",
+    "lane": "standalone",
+    "ok": true,
+    "err": "",
+    "pass1": {
+      "funcMap": {
+        "before": 20,
+        "after": 21,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureCounter": {
+        "before": 0,
+        "after": 3
+      },
+      "closureMap": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "g"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "closureInfoByTypeIdx": {
+        "before": 0,
+        "after": 3,
+        "added": [
+          "#48",
+          "#50",
+          "#51"
+        ],
+        "addedCount": 3,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictness": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "__closure_0"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "sourceFunctionStrictnessByBody": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "<obj>"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "nativeStrLiteralGlobals": {
+        "before": 1,
+        "after": 2,
+        "added": [
+          "u16:g"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "anyValueTypeIdx": {
+        "before": -1,
+        "after": 46
+      },
+      "funcRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f64->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleFuncRefWrapperCache": {
+        "before": 0,
+        "after": 1,
+        "added": [
+          "f64->f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "constructibleClosureTypeIdxs": {
+        "before": 0,
+        "after": 2,
+        "added": [
+          "#50",
+          "#51"
+        ],
+        "addedCount": 2,
+        "removedCount": 0
+      },
+      "funcTypeCache": {
+        "before": 26,
+        "after": 27,
+        "added": [
+          "ref:48,f64|f64"
+        ],
+        "addedCount": 1,
+        "removedCount": 0
+      },
+      "undefinedGlobalIdx": {
+        "after": 11
+      },
+      "fnInstanceMetaStructTypeIdx": {
+        "after": 47
+      },
+      "fnInstanceMetaGlobalByKey": {
+        "after": 1
+      },
+      "__funcRefWrapperRootTypeIdx": {
+        "after": 48
+      },
+      "fnInstanceMetaSubtypeByBase": {
+        "after": 1
+      },
+      "fnInstanceMetaFamilies": {
+        "after": 1
+      },
+      "typedThisWriteOnceKeyIndex": {
+        "after": 0
+      },
+      "mod.types": {
+        "before": 46,
+        "after": 52
+      },
+      "mod.functions": {
+        "before": 51,
+        "after": 52
+      },
+      "mod.globals": {
+        "before": 11,
+        "after": 14
+      }
+    },
+    "pass2": null
+  }
+]

@@ -1,0 +1,191 @@
+// #3523 R4 gap-1 A/B (probe3523g1-b): what does each pass actually contribute for call-bearing inits?
+// Requires the two throwaway env seams in the probe worktree's src/codegen/declarations.ts
+// (see census-3523-gap1-seams.diff): JS2WASM_PROBE_SKIP_PASS1=1 / JS2WASM_PROBE_SKIP_PASS2=1.
+// Modes:
+//   base  : as on origin/main e36225ee (call-free gate as landed)
+//   SKIP2 : pass 2 never runs → the emitted body is pass 1's (fixup-maintained) body
+//   SKIP1 : pass 1 never runs, pass 2 forced → the body compiles ONCE, after all function bodies
+// Per cell: success, p1/p2, bytes-equal-to-base, runtime read(), errors. Corpus section: playground examples.
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createHash } from "node:crypto";
+
+const WT = process.env.JS2WASM_PROBE_WT ?? process.cwd();
+const { compile } = await import(`${WT}/src/index.ts`);
+const { getCompileProfile, refreshCompileProfileConfig, resetCompileProfile } = await import(`${WT}/src/compile-profile.ts`);
+const { buildImports, instantiateWasm } = await import(`${WT}/src/runtime.ts`);
+await import(`${WT}/src/codegen/expressions.ts`);
+
+process.env.JS2WASM_COMPILE_PROFILE = "1";
+refreshCompileProfileConfig();
+const realWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean =>
+  typeof chunk === "string" && chunk.startsWith("[js2:profile]") ? true : (realWrite as any)(chunk, ...rest)) as any;
+
+const SHAPES: ReadonlyArray<{ id: string; src: string; expect: unknown }> = [
+  { id: "c1", src: `function setup(){ return 1 }\nconst r = setup();\nexport function read(){ return r }\n`, expect: 1 },
+  { id: "c2", src: `const m = new Map();\nm.set("a", 1);\nexport function read(){ return m.size }\n`, expect: 1 },
+  { id: "c3", src: `console.log(1)\nexport function read(){ return 1 }\n`, expect: 1 },
+  { id: "c4", src: `const arr = [3,1,2];\narr.sort();\nexport function read(){ return arr[0] }\n`, expect: 1 },
+  { id: "c5", src: `let n = 0;\nfunction bump(){ n = n + 1 }\nbump();\nexport function read(){ return n }\n`, expect: 1 },
+  { id: "c6", src: `const o = { v: 1 };\nconst k = Object.keys(o).length;\nexport function read(){ return k }\n`, expect: 1 },
+  { id: "c7", src: `const s = "ab".length;\nexport function read(){ return s }\n`, expect: 2 },
+  { id: "c8", src: `const t = Math.max(1, 2);\nexport function read(){ return t }\n`, expect: 2 },
+  { id: "c9", src: `const fn = () => 1;\nconst v = fn();\nexport function read(){ return v }\n`, expect: 1 },
+  { id: "c10", src: `class C { static x = 1 }\nconst cx = C.x;\nexport function read(){ return cx }\n`, expect: 1 },
+  { id: "c11", src: `const memo = new Map()\nexport function read(){ return memo.size }\n`, expect: 0 },
+  { id: "c12", src: `function h(){ return 2 }\nh();\nexport function read(){ return h() }\n`, expect: 2 },
+  // extra cells: the gap-1a plan's known pass-2-sensitive control + pass-1-discovery shapes
+  { id: "x1-inline", src: `function twice(x: number): number { return x * 2; }\nconst v = twice(21);\nexport function read(): number { return v; }\n`, expect: 42 },
+  { id: "x2-arrow-calls-fn", src: `function h(): number { return 4; }\nconst f = (): number => h();\nexport function read(): number { return f(); }\n`, expect: 4 },
+  { id: "x3-static-block-call", src: `function h(): number { return 4; }\nclass C { static n: number = 0; static { C.n = h(); } }\nexport function read(): number { return C.n; }\n`, expect: 4 },
+  { id: "x4-tagged", src: `function tag(parts: TemplateStringsArray): number { return parts.length; }\nconst t = tag\`abc\`;\nexport function read(): number { return t; }\n`, expect: 1 },
+  { id: "x5-arrow-used-by-fn", src: `const add = (a: number, b: number): number => a + b;\nexport function read(): number { return add(1, 2); }\n`, expect: 3 },
+  { id: "x6-closure-mutates-let", src: `let count = 0;\nconst inc = (): void => { count = count + 1; };\nexport function read(): number { inc(); inc(); return count; }\n`, expect: 2 },
+  { id: "x7-fn-calls-arrow-calls-fn", src: `function h(): number { return 5; }\nconst g = (): number => h() + 1;\nfunction k(): number { return g() * 2; }\nconst v = k();\nexport function read(): number { return v + k(); }\n`, expect: 24 },
+  { id: "x8-string-consts-and-calls", src: `const name = "wasm";\nfunction greet(n: string): string { return "hi " + n; }\nconst msg = greet(name);\nexport function read(): number { return msg.length; }\n`, expect: 7 },
+  { id: "x9-obj-method-call", src: `const o = { v: 3, get(): number { return this.v; } };\nconst v = o.get();\nexport function read(): number { return v; }\n`, expect: 3 },
+  { id: "x10-new-local-class", src: `class P { x: number = 7; }\nconst p = new P();\nexport function read(): number { return p.x; }\n`, expect: 7 },
+];
+
+const LANES = [
+  { name: "host-start", opts: { target: "gc" as const } },
+  { name: "host-deferred", opts: { target: "gc" as const, deferTopLevelInit: true } },
+  { name: "standalone", opts: { target: "standalone" as const } },
+  { name: "wasi", opts: { target: "wasi" as const } },
+];
+
+const MODES = [
+  { name: "base", env: {} },
+  { name: "SKIP2", env: { JS2WASM_PROBE_SKIP_PASS2: "1" } },
+  { name: "SKIP1", env: { JS2WASM_PROBE_SKIP_PASS1: "1", JS2WASM_TEST_FORCE_MODULE_INIT_PASS2: "1" } },
+];
+const ALL_ENV = ["JS2WASM_PROBE_SKIP_PASS1", "JS2WASM_PROBE_SKIP_PASS2", "JS2WASM_TEST_FORCE_MODULE_INIT_PASS2"];
+function setMode(env: Record<string, string>): void {
+  for (const k of ALL_ENV) Reflect.deleteProperty(process.env, k);
+  Object.assign(process.env, env);
+}
+
+function passCensus(): { p1: number; p2: number } {
+  const rows = getCompileProfile();
+  const calls = (suffix: string): number =>
+    rows.filter((r: any) => r.path === suffix || r.path.endsWith(`/${suffix}`)).reduce((s: number, r: any) => s + r.calls, 0);
+  return { p1: calls("module-init-pass1"), p2: calls("module-init-pass2") };
+}
+
+async function instantiate(result: any, lane: (typeof LANES)[number]): Promise<Record<string, any>> {
+  if (lane.opts.target === "standalone" || lane.opts.target === "wasi") {
+    const mod = await WebAssembly.compile(result.binary);
+    const imports: Record<string, Record<string, unknown>> = {};
+    for (const imp of WebAssembly.Module.imports(mod)) {
+      imports[imp.module] ??= {};
+      if (imp.kind === "function") imports[imp.module]![imp.name] = () => 0;
+      else if (imp.kind === "memory") imports[imp.module]![imp.name] = new WebAssembly.Memory({ initial: 1 });
+      else if (imp.kind === "global") imports[imp.module]![imp.name] = new WebAssembly.Global({ value: "i32", mutable: false }, 0);
+      else if (imp.kind === "table") imports[imp.module]![imp.name] = new WebAssembly.Table({ initial: 0, element: "anyfunc" });
+    }
+    const instance = await WebAssembly.instantiate(mod, imports);
+    return instance.exports as Record<string, any>;
+  }
+  const imports = buildImports(result.imports, {}, result.stringPool);
+  const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+  imports.setInstance?.(instance);
+  return instance.exports as Record<string, any>;
+}
+
+async function runCell(src: string, fileName: string, lane: (typeof LANES)[number], expect: unknown) {
+  resetCompileProfile();
+  const out: any = { success: false, p1: 0, p2: 0, sha: "", bytes: 0, runtime: "", errors: "", outcome: "" };
+  try {
+    const result: any = await compile(src, { fileName, ...lane.opts, skipSemanticDiagnostics: true, trackIrOutcomes: true, emitWat: false });
+    const c = passCensus(); out.p1 = c.p1; out.p2 = c.p2;
+    out.success = !!result.success;
+    const rows = (result.irOutcomes ?? []).filter((o: any) => o.unitKind === "module-init");
+    out.outcome = rows.length === 1 ? `${rows[0].kind}${rows[0].code ? "/" + rows[0].code : ""} L${rows[0].legacyBodyEmitted ? 1 : 0}I${rows[0].irBodyEmitted ? 1 : 0}` : `rows=${rows.length}`;
+    out.errors = (result.errors ?? []).map((e: any) => String(e.message).replace(/\s+/g, " ").slice(0, 110)).join(" || ");
+    if (result.success && result.binary) {
+      out.bytes = result.binary.length;
+      out.sha = createHash("sha1").update(Buffer.from(result.binary)).digest("hex").slice(0, 10);
+      out.valid = WebAssembly.validate(result.binary);
+      try {
+        const ex = await instantiate(result, lane);
+        if (lane.opts.deferTopLevelInit && typeof ex.__module_init === "function") ex.__module_init();
+        const v = ex.read?.();
+        out.runtime = `${String(v)}${v === expect ? " OK" : " MISMATCH"}`;
+      } catch (e: any) { out.runtime = `RUNFAIL:${String(e?.message ?? e).slice(0, 80)}`; }
+    }
+  } catch (e: any) { out.errors = `THROW:${String(e?.message ?? e).slice(0, 140)}`; }
+  return out;
+}
+
+const cells: any[] = [];
+for (const shape of SHAPES) {
+  for (const lane of LANES) {
+    const row: any = { shape: shape.id, lane: lane.name };
+    for (const mode of MODES) {
+      setMode(mode.env);
+      row[mode.name] = await runCell(shape.src, `ab-${shape.id}-${lane.name}.ts`, lane, shape.expect);
+    }
+    setMode({});
+    cells.push(row);
+  }
+}
+
+console.log("## A/B shape matrix (base vs SKIP2 vs SKIP1)");
+console.log("| shape | lane | base p1/p2 outcome runtime | SKIP2 p1/p2 bytes=base? runtime | SKIP1 p1/p2 bytes=base? runtime | SKIP2 errors | SKIP1 errors |");
+console.log("|---|---|---|---|---|---|---|");
+for (const r of cells) {
+  const b = r.base, s2 = r.SKIP2, s1 = r.SKIP1;
+  const eq = (m: any) => (m.success && b.success ? (m.sha === b.sha ? "=bytes" : `≠bytes(${m.bytes} vs ${b.bytes})`) : m.success ? "base-failed" : "FAIL");
+  console.log(`| ${r.shape} | ${r.lane} | ${b.p1}/${b.p2} ${b.outcome} ${b.runtime} | ${s2.p1}/${s2.p2} ${eq(s2)} ${s2.runtime} | ${s1.p1}/${s1.p2} ${eq(s1)} ${s1.runtime} | ${s2.errors} | ${s1.errors} |`);
+}
+
+// ---- corpus section: playground + examples, host-start and standalone
+function* walk(dir: string): Generator<string> {
+  if (!fs.existsSync(dir)) return;
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) yield* walk(p);
+    else if (ent.isFile() && /\.ts$/.test(ent.name) && !ent.name.endsWith(".d.ts")) yield p;
+  }
+}
+const corpusFiles = [...walk(path.join(WT, "website/playground/examples")), ...walk(path.join(WT, "examples"))];
+const corpus: any[] = [];
+for (const f of corpusFiles) {
+  const src = fs.readFileSync(f, "utf8");
+  for (const lane of LANES.filter((l) => l.name === "host-start" || l.name === "standalone")) {
+    const row: any = { file: path.relative(WT, f), lane: lane.name };
+    for (const mode of MODES) {
+      setMode(mode.env);
+      resetCompileProfile();
+      try {
+        const result: any = await compile(src, { fileName: path.basename(f), ...lane.opts, skipSemanticDiagnostics: true, emitWat: false });
+        const c = passCensus();
+        row[mode.name] = { success: !!result.success, p1: c.p1, p2: c.p2, sha: result.binary ? createHash("sha1").update(Buffer.from(result.binary)).digest("hex").slice(0, 10) : "", bytes: result.binary?.length ?? 0, errs: (result.errors ?? []).length, firstErr: (result.errors ?? [])[0]?.message?.replace(/\s+/g, " ").slice(0, 100) ?? "" };
+      } catch (e: any) { row[mode.name] = { success: false, p1: 0, p2: 0, sha: "", bytes: 0, errs: -1, firstErr: `THROW:${String(e?.message ?? e).slice(0, 100)}` }; }
+    }
+    setMode({});
+    corpus.push(row);
+  }
+}
+console.log("");
+console.log(`## Corpus A/B (${corpusFiles.length} sources × 2 lanes)`);
+let s2eq = 0, s2neq = 0, s2fail = 0, s1eq = 0, s1neq = 0, s1fail = 0, callBearingBase = 0, baseFail = 0;
+const s2diffs: string[] = [], s1diffs: string[] = [];
+for (const r of corpus) {
+  const b = r.base;
+  if (!b.success) { baseFail++; continue; }
+  if (b.p2 > 0) callBearingBase++;
+  if (!r.SKIP2.success) { s2fail++; s2diffs.push(`${r.file}@${r.lane}: SKIP2 FAIL ${r.SKIP2.firstErr}`); }
+  else if (r.SKIP2.sha === b.sha) s2eq++; else { s2neq++; s2diffs.push(`${r.file}@${r.lane}: SKIP2 ≠bytes (${r.SKIP2.bytes} vs ${b.bytes}) base p1/p2=${b.p1}/${b.p2}`); }
+  if (!r.SKIP1.success) { s1fail++; s1diffs.push(`${r.file}@${r.lane}: SKIP1 FAIL ${r.SKIP1.firstErr}`); }
+  else if (r.SKIP1.sha === b.sha) s1eq++; else { s1neq++; s1diffs.push(`${r.file}@${r.lane}: SKIP1 ≠bytes (${r.SKIP1.bytes} vs ${b.bytes}) base p1/p2=${b.p1}/${b.p2}`); }
+}
+console.log(`base failures (excluded): ${baseFail}; base cells with pass2>0 (call-bearing direct route): ${callBearingBase} of ${corpus.length - baseFail}`);
+console.log(`SKIP2 vs base: byte-identical ${s2eq}, differs ${s2neq}, compile-fail ${s2fail}`);
+console.log(`SKIP1 vs base: byte-identical ${s1eq}, differs ${s1neq}, compile-fail ${s1fail}`);
+for (const d of s2diffs) console.log("  " + d);
+for (const d of s1diffs) console.log("  " + d);
+console.log("JSON_START");
+console.log(JSON.stringify({ cells, corpus }, null, 1));
+console.log("JSON_END");

@@ -1,0 +1,74 @@
+def patch(path, old, new, count=1):
+    s = open(path, encoding="utf8").read()
+    n = s.count(old)
+    assert n == count, f"{path}: expected {count} of {old[:70]!r}, found {n}"
+    open(path, "w", encoding="utf8").write(s.replace(old, new))
+    print("patched", path)
+HELPERS = '''
+// ---- R4 pass-1 inventory probe (throwaway) ----
+function __r4Keys(v: unknown): Set<string> | undefined {
+  if (v instanceof Map) return new Set([...v.keys()].map((k) => (typeof k === "string" ? k : typeof k === "number" ? `#${k}` : "<obj>")));
+  if (v instanceof Set) return new Set([...v].map((k) => (typeof k === "string" ? k : typeof k === "number" ? `#${k}` : "<obj>")));
+  return undefined;
+}
+function __r4Snapshot(ctx: any): { sizes: Map<string, unknown>; keys: Map<string, Set<string>> } {
+  const sizes = new Map<string, unknown>();
+  const keys = new Map<string, Set<string>>();
+  for (const k of Object.keys(ctx)) {
+    const v = ctx[k];
+    if (v instanceof Map || v instanceof Set) { sizes.set(k, v.size); const ks = __r4Keys(v); if (ks) keys.set(k, ks); }
+    else if (Array.isArray(v)) sizes.set(k, v.length);
+    else if (typeof v === "number" || typeof v === "boolean") sizes.set(k, v);
+  }
+  const mod = ctx.mod;
+  for (const k of ["types", "functions", "globals", "imports", "elems", "datas", "tags", "exports"]) {
+    if (Array.isArray(mod?.[k])) sizes.set("mod." + k, mod[k].length);
+  }
+  return { sizes, keys };
+}
+function __r4Diff(ctx: any, before: ReturnType<typeof __r4Snapshot>, site: string): void {
+  const after = __r4Snapshot(ctx);
+  const changed: Record<string, unknown> = {};
+  for (const [k, v] of after.sizes) {
+    if (before.sizes.get(k) !== v) {
+      const bk = before.keys.get(k); const ak = after.keys.get(k);
+      const added = bk && ak ? [...ak].filter((x) => !bk.has(x)) : undefined;
+      const removed = bk && ak ? [...bk].filter((x) => !ak.has(x)) : undefined;
+      changed[k] = { before: before.sizes.get(k), after: v, added: added?.slice(0, 12), addedCount: added?.length, removedCount: removed?.length };
+    }
+  }
+  ((globalThis as any).__r4probe ??= []).push({ site, changed });
+}
+'''
+p = "src/codegen/declarations.ts"
+s = open(p, encoding="utf8").read()
+# insert helpers before the first "export function" or top-level function after imports: put right before 'function ' of compileDeclarations? simpler: append at end of file.
+s = s + HELPERS
+open(p, "w", encoding="utf8").write(s)
+patch(p,
+"""    pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
+    compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
+""",
+"""    pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
+    const __r4Before = __r4Snapshot(ctx);
+    compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
+    __r4Diff(ctx, __r4Before, "pass1");
+""")
+# also measure the between-pass body loop and pass 2 for context
+patch(p,
+"""      restorePropOrderState();
+      compiledInitFctx = profilePhase("module-init-pass2", () => {
+""",
+"""      restorePropOrderState();
+      const __r4Before2 = __r4Snapshot(ctx);
+      compiledInitFctx = profilePhase("module-init-pass2", () => {
+""")
+patch(p,
+"""      ctx.pendingInitBody = compiledInitFctx.body;
+      dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+""",
+"""      ctx.pendingInitBody = compiledInitFctx.body;
+      __r4Diff(ctx, __r4Before2, "pass2");
+      dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark); // (#4195) after pass 2, never before
+""")
+print("done")

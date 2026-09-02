@@ -1,0 +1,29 @@
+diff --git a/src/codegen/declarations.ts b/src/codegen/declarations.ts
+index a849069803..3967c4e38a 100644
+--- a/src/codegen/declarations.ts
++++ b/src/codegen/declarations.ts
+@@ -6002,7 +6002,8 @@ export function compileDeclarations(
+     (hasModuleInits || hasStaticInits) &&
+     moduleInitMode !== "skip" &&
+     moduleInitMode !== "prepared" &&
+-    !skipModuleInitBody
++    !skipModuleInitBody &&
++    process.env.JS2WASM_PROBE_SKIP_PASS1 !== "1" /* PROBE SEAM probe3523g1-b */
+   ) {
+     profileCount("module-init-statements", ctx.moduleInitStatements.length);
+     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
+@@ -6195,10 +6196,12 @@ export function compileDeclarations(
+     // than via the scan's AwaitExpression refusal. The env seam restores the
+     // unconditional recompile so tests can A/B against the two-pass body.
+     if (
+-      process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
++      /* PROBE SEAM probe3523g1-b: SKIP_PASS2=1 is the CANDIDATE gate — pass 2 only for its two pass-2-only lowerings */
+       hasAsyncGraphInit ||
+       moduleInitChunkingRequired ||
+-      !moduleInitPopulationIsCallFree(ctx)
++      (process.env.JS2WASM_PROBE_SKIP_PASS2 !== "1" && (
++        process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
++        !moduleInitPopulationIsCallFree(ctx)))
+     ) {
+       // (#2965) Reset the program-order-sensitive property state to its
+       // pre-pass-1 value so this recompile does not treat pass 1's own
