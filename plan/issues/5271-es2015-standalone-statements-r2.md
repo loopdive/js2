@@ -1002,5 +1002,14 @@ conflicts.
   `LOC_GATE_BASE=$(git rev-parse origin/main)` to simulate CI's merge preview —
   also 0, so no grant is stranded.
 - **Equivalence gate: green.** Run as 8 shards launched with `setsid nohup` (a
-  supervisor-reaped run prints `ELIFECYCLE` and is not a verdict): every shard
-  `✓ No new equivalence regressions`, 24 known-failure baseline entries, 0 new.
+  supervisor-reaped run prints `ELIFECYCLE` and is not a verdict): all 8 exited
+  0 with `✓ No new equivalence regressions`, 24 known-failure baseline entries,
+  0 new.
+- Neighbouring suites for the touched files pass: `issue-2663-with-rmw`,
+  `es5-standalone-with`, `issue-2572-standalone-forin`,
+  `ir-let-const-equivalence`, `issue-2169-destructure-native-generator` —
+  62/62.
+- The three known pre-existing failures (`issue-1387-with-diagnostic` ×2,
+  `issue-1128-dstr-tdz` ×1) were re-checked AFTER this merge by checking out
+  `origin/main`'s `src/` into the worktree: they fail identically there, so they
+  remain not-ours.
