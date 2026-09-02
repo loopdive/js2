@@ -1179,9 +1179,16 @@ the one sound widening direction, `ref $T` → `ref null $T`. Cluster A holds at
 **N2 (low, documented — measured systemic change).** `ir-inline.ts:603` refuses
 to inline any body containing `return_call`. With the standalone externref
 refusal gone, nearly every value-returning standalone function with a tail call
-is now non-inlinable. No size regression measured (the reviewer's 400-literal
-synthetic: lane 715,033 B vs base 716,940 B — the lane is SMALLER). Recorded as
-a known consequence of step 1, not a defect: an inliner that understood
+is now non-inlinable. No size regression. Two independent
+measurements agree: the reviewer's 400-literal synthetic (lane 715,033 B vs
+base 716,940 B — the lane SMALLER), and my own re-measurement on
+`.tmp/f1/n2-synth.ts` (400 object literals + reads, compiled standalone on this
+merged tree against `origin/main` versions of all twelve changed source files,
+2026-09-02): lane **525,833 B** vs base **525,696 B** — **+137 B, +0.026 %**,
+with both trees answering the same value (79800). The two synthetics disagree
+on the SIGN of a fraction of a percent, which is the point: the effect is
+noise-level either way. Recorded as a known consequence of step 1, not a
+defect: an inliner that understood
 `return_call` would recover the cases, and that belongs to the inliner's own
 issue rather than here.
 
@@ -1198,3 +1205,39 @@ divergent shape PLUS a same-named block `let` in the same function traps at
 runtime; `collectRedeclaredShapeDivergentObjects` does not cover that shape.
 The base compiler traps identically, so this is a pre-existing gap rather than a
 regression — noted because it sits on the exact surface step 3-M claims.
+
+#### Re-validation after the container restart (2026-09-02, merged to `origin/main` `da00bd9569`)
+
+The container restarted mid-validation; the branch was already committed at
+`c4a445126c`. Everything below was re-run on the merged tree, so no number here
+is inherited from the pre-restart session. The merge with `origin/main` — which
+had taken the Array/Object wave (#5494) and the #3521-r2 withdrawal work — was
+CLEAN, no conflicts.
+
+| check | result |
+|---|---|
+| `expr-head.txt` standalone (89 rows) | **17 pass / 71 fail / 1 CE** — byte-identical row set to the pre-restart run |
+| host-import leak CEs | **1**, the pre-existing `tagged-template/call-expression-argument-list-evaluation` (cluster B, step 7 not implemented) |
+| `expr-controls.txt` standalone (20 rows) | **20/20** |
+| `tests/issue-5270-es2015-expressions-r2.test.ts` | **29/29** |
+| F1 A/B on the pre-fix tree (`c4a445126c^`) | all **4** regression pins FAIL, fold-survival control stays green |
+| `in-operator-edge-cases` + `function-prototype-assignment-descriptor` | **10/10** |
+| TCO suites (`tail-call-optimization`, `822`, `1972`, `2554`) | **24/24** — the N1 tightening costs no promotion |
+| `pnpm run typecheck` | clean |
+| five ratchet gates | all green |
+| `pnpm run test:equivalence:gate` | **24 failing / 1718 passing / 24 known-failures in baseline — no new regressions** |
+
+F1 probe parity re-measured on the merged tree, lane vs `origin/main`'s
+`binary-ops-in.ts` by file-copy A/B:
+
+| probe | node | base | lane |
+|---|---:|---:|---:|
+| `a42` standalone / host | 1 | 1 | **1** |
+| `a44` standalone | 7 | 7 | **7** |
+| `a44` host | 7 | 3 | **3** |
+
+The lane matches base exactly everywhere and matches node on standalone. The
+host `a44` bit for `Object.assign(arrow, {prototype: 4})` still answers `3`
+rather than `7` on `origin/main` too — re-confirmed AFTER the Array/Object wave
+landed, so it is pre-existing and outside this issue. That is why its pin is
+standalone-only.
