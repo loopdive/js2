@@ -832,11 +832,15 @@ No work was done on `arguments`/rest (F, 7 rows) or the direct-eval seams (J,
 `stmt-head.txt` (the 68 in-scope rows), `--target standalone`, in-process
 runner (which applies CI's standalone host-import leak check since #5461):
 
-| | before | after |
-|---|---:|---:|
-| pass | **0** | **36** |
-| fail | 67 | 31 |
-| compile_error | 1 (D5, deferred by the plan) | 1 (same row) |
+| | before | after (wave) | after (review fixes + main) |
+|---|---:|---:|---:|
+| pass | **0** | **36** | **39** |
+| fail | 67 | 31 | 28 |
+| compile_error | 1 (D5, deferred by the plan) | 1 (same row) | 1 (same row) |
+
+The last column is the final state on `origin/main` `4abfe80ea1`; three of its
+39 arrived with main rather than from this branch (see the re-validation
+section at the end).
 
 `stmt-controls.txt`: **20/20 before and after.** No previously-passing row
 regressed, and every flip is a real `pass` (the runner's leak check makes a
@@ -976,13 +980,27 @@ merge-base tree on both lanes (`e2 strict block fn after: 1`,
 block function at SCRIPT top level no longer leaks its name", not as a general
 B.3.3 strictness change.
 
-### Re-validation after F1 + F2 (post `git merge origin/main` at `20439bf5d4`)
+### Re-validation after F1 + F2 (post `git merge origin/main` at `4abfe80ea1`)
 
-- `stmt-head.txt` (68 in-scope rows, standalone): **39 pass / 28 fail / 1 CE**
-  (up from 36 — the three extra flips came in with `origin/main`:
-  `eval-code/direct/super-prop-{dot,expr}-no-home` and
-  `function/arguments-with-arguments-fn`, not from these fixes). No row that
-  passed before now fails.
+Re-run in full after merging the Array/Object wave (#5494) — a clean merge, no
+conflicts.
+
+- `stmt-head.txt` (68 in-scope rows, standalone): **0 (honest base) → 39 pass**,
+  28 fail, 1 compile_error. The CE is the plan-deferred D5 row
+  `with/unscopables-inc-dec` — the #1387 loud refusal, unchanged, not a
+  host-import leak. **No row that passed before now fails.** Three of the 39
+  came in with `origin/main`, not from this branch
+  (`eval-code/direct/super-prop-{dot,expr}-no-home`,
+  `function/arguments-with-arguments-fn`); 36 are this branch's.
 - `stmt-controls.txt`: **20/20**.
-- `tests/issue-5271-es2015-statements-r2.test.ts`: **61/61**.
-- `pnpm run typecheck` clean; all five ratchet gates 0.
+- `tests/issue-5271-es2015-statements-r2.test.ts`: **61/61** (49 from the wave +
+  9 F1 regression pins + the F1 step-2 control + 3 F2 pins/controls).
+- Reviewer repros, both lanes, matching node: `r.js` → `5,4`; `r2.js` →
+  `3,8,four!,9,2,7`. `refute-st-F2/k.ts` byte-identical to the merge-base tree
+  on both lanes (host 463 lines, standalone 48847, empty diff).
+- `pnpm run typecheck` clean. All five ratchet gates 0, and re-run with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)` to simulate CI's merge preview —
+  also 0, so no grant is stranded.
+- **Equivalence gate: green.** Run as 8 shards launched with `setsid nohup` (a
+  supervisor-reaped run prints `ELIFECYCLE` and is not a verdict): every shard
+  `✓ No new equivalence regressions`, 24 known-failure baseline entries, 0 new.
