@@ -49,6 +49,7 @@ func-budget-allow:
   - src/codegen/typeof-delete.ts::compileTypeofExpression
   - src/codegen/typeof-delete.ts::compileTypeofComparison
   - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 ---
 
 # #5195 — class r2: cluster and fix the residual class-bucket failures
@@ -72,6 +73,14 @@ one more clause in the same disjunction that already admits externref LOCALS
 (#3033 Bug 2b); it admits the module-GLOBAL twin under the same
 slot-representation rule, restricted to receivers whose static type is purely
 `undefined`/`void` so no resolvable receiver changes lane.
+
+Growth allowance amendment (2026-09-02, resumed implementation pass):
+`call-builtin-static.ts::compileBuiltinStaticCall` (+3 now, more in Step 2.3) —
+Steps 1.3/1.4 make `<Class>.prototype` a real `$Object` for EVERY standalone
+class, so the `getOwnPropertyDescriptor` struct fast paths in that function must
+decline that receiver (the predicate itself is hoisted to a module-level helper
+`isStandaloneClassProtoObjectReceiver` to keep the growth to the two call sites);
+Step 2.3 adds the class-object sidecar redirect at the same two folds.
 
 ## Problem
 

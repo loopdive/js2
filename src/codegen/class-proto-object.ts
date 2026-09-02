@@ -146,7 +146,17 @@ export function standaloneClassProtoObjectApplies(ctx: CodegenContext, className
   // answered `undefined` — the R1 residual of #4440. The accessor members are
   // installed as REAL accessor properties (`class-proto-accessors.ts`), never
   // as data properties holding the function.
-  return installableMethodNames(ctx, className).length > 0 || installableClassAccessors(ctx, className).length > 0;
+  //
+  // (#5195 Step 1.4, cluster C) A MEMBER-LESS class qualifies as well.
+  // §15.7.14 creates `C.prototype.constructor` before any element, so it does
+  // not depend on there being an element at all: `class C {}` and
+  // `class C { constructor(){} }` must still answer
+  // `gOPD(C.prototype,'constructor')` with a `{writable:true,
+  // enumerable:false, configurable:true}` descriptor. Those classes kept the
+  // legacy defaulted `$ClassName` struct, where `constructor` resolved only by
+  // accident through `tryEmitConstructorViaTag`'s `__tag` route and the
+  // descriptor read `undefined` (`definition/constructor{,-property}.js`).
+  return true;
 }
 
 /**
@@ -196,7 +206,29 @@ export function emitStandaloneClassProtoObject(
   ctx.liveBodies.add(savedBody);
   let ok = true;
   try {
-    for (const name of methodNames) {
+    // §15.7.14 step 8/11: `C.prototype.constructor` is created BEFORE the class
+    // elements are defined, so it is the FIRST own key. Installing it last (as
+    // this did before #5195 Step 1.3) made
+    // `Object.getOwnPropertyNames(C.prototype)` answer `["a", "constructor"]`
+    // where the spec order is `["constructor", "a"]`. It carries the same §17
+    // attributes as a method, and it also replaces the accidental `__tag` route
+    // in `tryEmitConstructorViaTag`, which no longer fires now that the
+    // prototype is not a `$ClassName` struct.
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, "constructor");
+    for (const instr of stringConstantExternrefInstrs(ctx, "constructor")) fctx.body.push(instr);
+    if (emitClassObjectValue(ctx, fctx, className)) {
+      fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
+    } else {
+      // `standaloneClassProtoObjectApplies` already proved a class-object
+      // global exists, so this is unreachable in practice; bail rather than
+      // leave the key/receiver stranded on the stack.
+      ok = false;
+    }
+
+    for (const name of ok ? methodNames : []) {
       const fullName = `${className}_${name}`;
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName))!;
       fctx.body.push({ op: "local.get", index: objLocal });
@@ -222,26 +254,6 @@ export function emitStandaloneClassProtoObject(
     // express at all, having no accessor keys to order).
     if (ok && !emitClassProtoAccessorInstalls(ctx, fctx, className, objLocal, structTypeIdx, accessors)) {
       ok = false;
-    }
-
-    if (ok) {
-      // §15.7.14: `C.prototype.constructor` is an own property with the same
-      // §17 attributes. Required for correctness AND to replace the accidental
-      // `__tag` route in `tryEmitConstructorViaTag`, which no longer fires now
-      // that the prototype is not a `$ClassName` struct.
-      fctx.body.push({ op: "local.get", index: objLocal });
-      addStringConstantGlobal(ctx, "constructor");
-      for (const instr of stringConstantExternrefInstrs(ctx, "constructor")) fctx.body.push(instr);
-      if (emitClassObjectValue(ctx, fctx, className)) {
-        fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
-        fctx.body.push({ op: "call", funcIdx: defineIdx });
-        fctx.body.push({ op: "drop" });
-      } else {
-        // `standaloneClassProtoObjectApplies` already proved a class-object
-        // global exists, so this is unreachable in practice; bail rather than
-        // leave the key/receiver stranded on the stack.
-        ok = false;
-      }
     }
 
     if (ok) {
