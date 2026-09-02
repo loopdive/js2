@@ -73,6 +73,16 @@ loc-budget-allow:
   - src/codegen/number-proto-format.ts
   - src/codegen/error-stack-accessor.ts
   - src/codegen/symbol-proto-tostring.ts
+coercion-sites-allow:
+  # 2026-09-02 (Opus impl, Step J-1): the reflective
+  # `Number.prototype.toPrecision` body is §21.1.3.5 verbatim, and its two
+  # coercions are the SAME helpers the already-native DIRECT arm
+  # (`call-receiver-method.ts`) calls — `__unbox_number` for
+  # ToNumber(precision) and `number_toString` for the non-finite
+  # Number::toString(x) tail. Reusing that substrate is what keeps the two
+  # spellings from drifting; routing this one through a different engine
+  # would create the second implementation the gate exists to prevent.
+  - src/codegen/number-proto-format.ts
 func-budget-allow:
   # 2026-09-01: each is a kind-dispatch / arm-ladder function that gains one
   # more arm in the shape its existing arms already have (see the step that

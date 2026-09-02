@@ -328,3 +328,31 @@ describe("#5269 Step L — an Error instance's own `message`", () => {
      ${check("ho(err, 'message')", "false")}`,
   );
 });
+
+describe("#5269 Step J — reflective Number.prototype.toPrecision", () => {
+  // J-1. The DIRECT spelling has been native for a long time; the reflective
+  // VALUE had no body, so `makeGlue`'s ladder answered the refusal — a
+  // TypeError where §21.1.3.5 step 5 demands a RangeError. All three arguments
+  // below coerce to a precision outside 1-100 (a function and `{}` are NaN →
+  // ToIntegerOrInfinity 0).
+  standaloneOnly(
+    "J-1 an out-of-range precision is a RangeError, not the refusal TypeError",
+    `var toPrecision = Number.prototype.toPrecision;
+     var caught = 0;
+     try { toPrecision.call(1, function () {}); } catch (e) { if (e instanceof RangeError) caught++; }
+     try { toPrecision.call(1, NaN); } catch (e) { if (e instanceof RangeError) caught++; }
+     try { toPrecision.call(1, {}); } catch (e) { if (e instanceof RangeError) caught++; }
+     ${check("caught", "3")}`,
+  );
+
+  // …and the in-range answer is the SAME formatter the direct spelling calls.
+  standaloneOnly(
+    "J-1 an in-range precision formats, and an incompatible receiver throws",
+    `var toPrecision = Number.prototype.toPrecision;
+     ${check("toPrecision.call(123.456, 4)", "123.5")}
+     ${check("(123.456).toPrecision(4)", "123.5")}
+     var caught = "none";
+     try { toPrecision.call({}, 4); } catch (e) { caught = e.constructor.name; }
+     ${check("caught", "TypeError")}`,
+  );
+});

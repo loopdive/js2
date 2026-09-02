@@ -112,6 +112,7 @@ import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
 import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
+import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 import {
@@ -2323,6 +2324,11 @@ function makeGlue(
       // `thisSymbolValue(this)` regardless of the hint — literally `valueOf`'s
       // body, so it shares it rather than restating the two brand arms.
       (name === "Symbol" && member === "@@3" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
+      // (#5269 J-1) §21.1.3.5 `Number.prototype.toPrecision` as a reflective
+      // VALUE. Before this the `Number` brand answered only `valueOf` and
+      // everything else fell to `emitProtoMemberBodyRefusal`, whose TypeError
+      // masked the spec's RangeError for an out-of-range precision.
+      (name === "Number" ? emitNumberProtoFormatBody(c, fctx, member) : null) ??
       // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
       // builtin whose ToPrimitive prefers `toString` under the "default" hint.
       (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
