@@ -866,6 +866,51 @@ node throws), and an ordinary `__proto__` write on an extensible
 null-prototype object does not create the own `__proto__` data property node
 reports.
 
+### 2026-09-02 round-2 adversarial review — six findings
+
+A second skeptic re-reviewed the F1-F4 fixes with ~45 probes (node vs lane vs
+base, both lanes). Verdict: ship-with-notes, one confirmed new wrong
+observable. **Four items fixed, two documented** — the two documented ones are
+BASE PARITY, i.e. this change-set neither caused nor worsened them.
+
+| # | Item | Resolution |
+| --- | --- | --- |
+| **R2-1** (medium, must-fix) | `Object.freeze/seal(proxy)` whose `defineProperty` trap forwards via `Reflect.defineProperty` — the canonical and test262 shape — DOUBLED the closed-struct target's own-key list (`Reflect.ownKeys(t)` → `a,b,a,b`, length 4, gopd trap firing 4× on a later `isFrozen`). Lane-new: base fired no trap and so never reached it. | **Fixed at the primitive, not the arm.** `__carrier_bag_push_keys` pushed every live bag key without checking whether the caller had already listed it as a STATIC own key. §10.1.11 OrdinaryOwnPropertyKeys is a key LIST and a list has no duplicates. The skeptic's r4 CONTROL — `Reflect.defineProperty({a:1,b:2}, "a", d)` with no proxy at all — read `a,b,a` on **base too**, which is what identifies the defect as the merge rather than the arm; it now reads `a,b` and a genuinely new key still appends. |
+| **R2-2** (low) | The `-1` "not handled" sentinel returned BEFORE §7.3.17 step 1 `[[IsExtensible]]` and step 3 `[[OwnPropertyKeys]]`, so `isFrozen`/`isSealed` skipped two OBSERVABLE trap calls that can also throw. | **Fixed.** Both calls run first; the sentinel is decided after. node's `isext|ownKeys` sequence reproduced. |
+| **R2-3** (documented → **fixed**) | `isDirectProxyBinding` admitted the `Proxy.revocable(…).proxy` hop, which the alias-nulling defect nulls, so `Object.keys(proxy)` answered `[]`. | **Fixed rather than named.** Base answers `"a"`, so this was a lane-new SILENT wrong answer — the worst of the three outcomes. The predicate is now `new Proxy(…)` only (expression, or one identifier hop). `tracesToProxyValue` keeps the hop: its consumer is a runtime predicate correct for every value. |
+| **R2-4** (low) | The `Object.getOwnPropertySymbols` nullish ToObject guard was emitted on the JS-host lane too — same behaviour, different bytes. | **Fixed.** Standalone-gated, so the focused test's "every arm is standalone-gated" claim holds. Verified: the host-lane module for a gOPS program is now sha-IDENTICAL to base (`d6164f8790013a7f`, 3182 bytes). |
+| **R2-5** (documented) | Three F3 comments credited the #4032 carrier bag with holding a `$Proxy`'s integrity level. | **Comments corrected in place.** `__integrity_bag` answers null for a `$Proxy` (it covers the vec, closure and Error carriers only); the verdict comes from the COMPILE-TIME integrity fold at the call site (`frozenVars`/`sealedVars`/`nonExtensibleVars`), with the native's non-`$Object` terminal behind it. That is what base answered, which is why the fall-through preserves base's verdicts. |
+| **R2-6** (documented) | `hasExplicitNullObjectPrototype` proves null-prototype from the INITIALIZER only, so an object that is given a prototype later via `setPrototypeOf` and then made non-extensible swallows the §B.2.2.1 TypeError. | **Named, not fixed — base parity.** Probe `Object.create(null)` + `setPrototypeOf(o, Object.prototype)` + `preventExtensions(o)` + `o.__proto__ = {z:1}`: `no-throw` on this tree AND on `origin/main`; node throws. Proving the receiver's LIVE prototype needs flow analysis the syntactic proof does not have. |
+
+**Two gaps R2-1 surfaced that stay open, on BOTH trees** (so the r1/r2 pins
+deliberately assert the trap and key lines but NOT `Object.isFrozen(target)`):
+a closed-struct carrier does not let a bag entry SHADOW a static field's
+descriptor, so the forwarded define does not change what
+`getOwnPropertyDescriptor(target, k)` reports; and `Object.isExtensible` on a
+non-syntactic receiver answers from the compile-time fold, so the forwarded
+`[[PreventExtensions]]` is not visible either. Both are why `t.a = 99` still
+lands where node throws — measured identically on base.
+
+**Re-validated at the round-2 merge point** (`origin/main` 77ca8fbaae merged
+in as 1eafc91f99). Head list + controls, both sides run on the same merged
+tree: base 21 pass / 147 fail / 11 CE, branch 42 pass / 124 fail / 13 CE — 21
+rows flipped to pass, ZERO new non-pass rows, controls 20/20. Focused test
+23/23. Typecheck clean, five ratchet gates green, equivalence gate exit 0 (24
+failing / 1718 passing, all 24 in the baseline). The eight touched-area vitest
+suites were re-A/B'd at THIS merge point rather than reusing the earlier
+measurement: 9 failed / 73 passed on both sides, and the nine FAIL names are
+byte-identical (`#3403` host-lane defineProperty ×1, `#3661` ×2, `#4492
+wave-5` ×5, `#4492 builtin-as-value` ×1) — all standing red on `origin/main`.
+
+**A note on compile-timeout noise, again.** The final after-run reported 13
+`compile_error` rows against the base's 10; the three extra are all
+`compilation timeout` at load 11-12 on 4 shared cores
+(`filter/create-proto-from-ctor-realm-non-array` 29.5 s,
+`of/proto-from-ctor-realm` 15.9 s, `concat_spreadable-function` 18.0 s), all
+already non-pass, and all re-run alone to confirm. The other 10 are the same
+set on both trees: 5 cluster-G `env::toString` leaks (step 5 owns them), 4
+cluster-Q `flat`/`flatMap`, 1 out-of-scope `subclass-object-arg`.
+
 ### Steps 4, 5, 7, 8, 9, 10 — not started
 
 No work was done on clusters D, D2, F, G, H, J, L, M, N, O, P, Q, R, S. Three
