@@ -35,12 +35,14 @@ loc-budget-allow:
   - src/compiler/early-errors/node-checks.ts
   - src/compiler/early-errors/module-rules.ts
   - src/codegen/declarations.ts
+  - src/codegen/object-ops.ts
   - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/index.ts
 coercion-sites-allow:
   - src/codegen/class-proto-lookup.ts
 func-budget-allow:
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/statements/nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
@@ -119,6 +121,16 @@ delegating to `__extern_get` (#2551: the canonical decimal key, not a truncated
 one). The class-receiver arm added here delegates the same way and therefore
 calls the same helper for the same reason — reuse of the existing engine call,
 not a new hand-rolled ToString.
+
+Growth allowance amendment (2026-09-02, verification findings F1-F5):
+`object-ops.ts` (+26) / `::compilePropertyIntrospection` (+11) — F5. A class
+with a runtime-keyed member has an own-key set the CHECKER cannot enumerate, so
+that function's static `hasOwnProperty` / `propertyIsEnumerable` fold answered
+`false` for `C.prototype.hasOwnProperty('dyn')` while `gOPD(C.prototype,'dyn')`
+found the property: two answers about one object. The added arm is one
+predicate plus one clause on the existing "delegate to the runtime" condition
+the externref-receiver case already uses — the fold is declined, not
+reimplemented, and only for a prototype or constructor receiver of such a class.
 
 ## Problem
 
