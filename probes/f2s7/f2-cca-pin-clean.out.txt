@@ -1,0 +1,47 @@
+
+ RUN  v3.2.4 /home/user/js2/.claude/worktrees/census-charcodeat
+
+ ❯ tests/string-derived-length-fast-path.test.ts (19 tests | 1 failed | 18 skipped) 3632ms
+   ↓ native string derived-length fast paths > does not allocate ASCII case-conversion results used only for length
+   ↓ native string derived-length fast paths > keeps Unicode expansion and mutated tables on the full conversion path
+   ↓ native string derived-length fast paths > scalar-replaces non-escaping ASCII case results
+   ↓ native string derived-length fast paths > routes escaping proven-ASCII results through compact helpers
+   ↓ native string derived-length fast paths > keeps non-ASCII and mutable case receivers on Unicode helpers
+   ↓ native string derived-length fast paths > preserves ASCII case charCodeAt bounds and declines escaping results
+   ↓ native string derived-length fast paths > elides equal-literal replacement only without substitution tokens
+   ↓ native string derived-length fast paths > folds uniform split and trim lengths from immutable literal tables
+   ↓ native string derived-length fast paths > computes non-uniform trim lengths without allocating substring views
+   ↓ native string derived-length fast paths > counts a dynamic one-code-unit split without allocating the result array
+   ↓ native string derived-length fast paths > scalarizes split count and final-field length in one scan
+   ↓ native string derived-length fast paths > retains split arrays that escape or mutate
+   ↓ native string derived-length fast paths > folds uniform literal-table prefix and suffix predicates
+   ↓ native string derived-length fast paths > keeps non-uniform and mutated table results on native helpers
+   ↓ native string derived-length fast paths > reuses the flat descriptor of a const substring for charCodeAt
+   × native string derived-length fast paths > applies immutable derived-result proofs to host strings without crossing the JS boundary 3630ms
+     → illegal cast
+   ↓ native string derived-length fast paths > represents non-escaping host substrings as offset and length descriptors
+   ↓ native string derived-length fast paths > retains the outer split while scalarizing nested length-only splits
+   ↓ native string derived-length fast paths > retains both runtime splits when nested row widths are non-uniform
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/string-derived-length-fast-path.test.ts > native string derived-length fast paths > applies immutable derived-result proofs to host strings without crossing the JS boundary
+RuntimeError: illegal cast
+ ❯ null.<anonymous> wasm:/wasm/2bf70e0e:1:771
+ ❯ compileHostAndRun tests/string-derived-length-fast-path.test.ts:41:37
+     39|   const wat = result.wat ?? "";
+     40|   const runWat = wat.slice(wat.indexOf("(func $run"), wat.indexOf('(ex…
+     41|   return { value: (instance.exports.run as () => number)(), runWat, im…
+       |                                     ^
+     42| }
+     43| 
+ ❯ tests/string-derived-length-fast-path.test.ts:350:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 18 skipped (19)
+   Start at  06:39:08
+   Duration  31.03s (transform 19.83s, setup 0ms, collect 26.84s, tests 3.63s, environment 0ms, prepare 93ms)
+

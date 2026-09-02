@@ -1,0 +1,78 @@
+
+ RUN  v3.2.4 /home/user/js2/.claude/worktrees/census-charcodeat
+
+ ✓ tests/issue-3526-string-boundary-schema.test.ts (32 tests) 8775ms
+   ✓ #3526 F2-S2 each row's ABI equals its registration site > matches the emitted wasm:js-string func signatures exactly  4692ms
+   ✓ #3526 F2-S2 each row's ABI equals its registration site > matches the emitted string-constant GLOBAL descriptors and both field schemes  2440ms
+   ✓ #3526 F2-S2 each row's ABI equals its registration site > derives the surrogate field the way the row's scheme says  1419ms
+ ✓ tests/issue-3931.test.ts (19 tests) 48129ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > fires for fast+nativeStrings  5110ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > fires for nativeStrings  2043ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > fires for standalone  1791ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > fires for wasi  1725ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > fires for host  1512ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > hash results stay byte-faithful in every runnable configuration  3167ms
+   ✓ #3931 the char-read-loop hoist fires under the IR front-end > host mode: hash results stay byte-faithful  1485ms
+   ✓ #3931 the hoisted read stays byte-faithful on the hard receivers > a substring view (non-zero `.off`) reads the right code units  3115ms
+   ✓ #3931 the hoisted read stays byte-faithful on the hard receivers > nested loops over two receivers keep both proofs  3487ms
+   ✓ #3931 the hoisted read stays byte-faithful on the hard receivers > a `break` out of the loop does not observe a partial hoist  1295ms
+   ✓ #3931 the hoisted read stays byte-faithful on the hard receivers > a non-bitwise consumer takes the widened read and stays exact  1805ms
+   ✓ #3931 the hoisted read stays byte-faithful on the hard receivers > an `i += 3` step and a non-zero init stay correct  1592ms
+   ✓ #3931 standalone/wasi: the configurations the gap had been costing > standalone: the loop is IR-owned, hoisted, and byte-faithful  3514ms
+   ✓ #3931 standalone/wasi: the configurations the gap had been costing > wasi: the loop is IR-owned, hoisted, and byte-faithful  2722ms
+   ✓ #3931 non-matching shapes keep the guarded lowering > a `<=` bound admits `i === length` and is refused  3100ms
+   ✓ #3931 non-matching shapes keep the guarded lowering > a negative init is refused (the lower bound is what the proof needs)  3047ms
+   ✓ #3931 non-matching shapes keep the guarded lowering > a bound on a DIFFERENT receiver is refused  3223ms
+   ✓ #3931 non-matching shapes keep the guarded lowering > a non-induction index `charCodeAt(i + 1)` is refused  2762ms
+   ✓ #3931 non-matching shapes keep the guarded lowering > a nested function in the body is refused (it could capture and reassign)  1590ms
+ ✓ tests/issue-1105-charcodeat.test.ts (4 tests) 9444ms
+   ✓ #1105 nativeStrings charCodeAt > reads UTF-16 code units from a native string parameter without a host string_charCodeAt import  3711ms
+   ✓ #1105 nativeStrings charCodeAt > returns NaN for positions outside the native string code-unit range  1908ms
+   ✓ #1105 nativeStrings charCodeAt > applies ToIntegerOrInfinity before bounds checking  2500ms
+   ✓ #1105 nativeStrings charCodeAt > does not fold out-of-range charCodeAt into an i32-pure arithmetic leaf  1323ms
+ ❯ tests/string-derived-length-fast-path.test.ts (19 tests | 1 failed) 111997ms
+   ✓ native string derived-length fast paths > does not allocate ASCII case-conversion results used only for length  10228ms
+   ✓ native string derived-length fast paths > keeps Unicode expansion and mutated tables on the full conversion path  6605ms
+   ✓ native string derived-length fast paths > scalar-replaces non-escaping ASCII case results  11961ms
+   ✓ native string derived-length fast paths > routes escaping proven-ASCII results through compact helpers  6330ms
+   ✓ native string derived-length fast paths > keeps non-ASCII and mutable case receivers on Unicode helpers  6059ms
+   ✓ native string derived-length fast paths > preserves ASCII case charCodeAt bounds and declines escaping results  5363ms
+   ✓ native string derived-length fast paths > elides equal-literal replacement only without substitution tokens  5818ms
+   ✓ native string derived-length fast paths > folds uniform split and trim lengths from immutable literal tables  5124ms
+   ✓ native string derived-length fast paths > computes non-uniform trim lengths without allocating substring views  8646ms
+   ✓ native string derived-length fast paths > counts a dynamic one-code-unit split without allocating the result array  2251ms
+   ✓ native string derived-length fast paths > scalarizes split count and final-field length in one scan  11103ms
+   ✓ native string derived-length fast paths > retains split arrays that escape or mutate  10740ms
+   ✓ native string derived-length fast paths > folds uniform literal-table prefix and suffix predicates  4994ms
+   ✓ native string derived-length fast paths > keeps non-uniform and mutated table results on native helpers  5793ms
+   ✓ native string derived-length fast paths > reuses the flat descriptor of a const substring for charCodeAt  2410ms
+   × native string derived-length fast paths > applies immutable derived-result proofs to host strings without crossing the JS boundary 2037ms
+     → illegal cast
+   ✓ native string derived-length fast paths > represents non-escaping host substrings as offset and length descriptors  2240ms
+   ✓ native string derived-length fast paths > retains the outer split while scalarizing nested length-only splits  1892ms
+   ✓ native string derived-length fast paths > retains both runtime splits when nested row widths are non-uniform  2392ms
+ ✓ tests/issue-3520-callable-preregistration.test.ts (1 test) 2899ms
+   ✓ #3520 binding-aware callable preregistration > does not treat source-unit lookalikes as intrinsic or runtime providers  2897ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/string-derived-length-fast-path.test.ts > native string derived-length fast paths > applies immutable derived-result proofs to host strings without crossing the JS boundary
+RuntimeError: illegal cast
+ ❯ null.<anonymous> wasm:/wasm/2bf70e0e:1:771
+ ❯ compileHostAndRun tests/string-derived-length-fast-path.test.ts:41:37
+     39|   const wat = result.wat ?? "";
+     40|   const runWat = wat.slice(wat.indexOf("(func $run"), wat.indexOf('(ex…
+     41|   return { value: (instance.exports.run as () => number)(), runWat, im…
+       |                                     ^
+     42| }
+     43| 
+ ❯ tests/string-derived-length-fast-path.test.ts:350:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  1 failed | 74 passed (75)
+   Start at  06:35:59
+   Duration  156.36s (transform 27.55s, setup 0ms, collect 113.61s, tests 181.24s, environment 1ms, prepare 973ms)
+

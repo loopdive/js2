@@ -1,0 +1,121 @@
+| fixture | lane | ok | bytes | sha | concat-ish imports | reaches | demoted |
+|---|---|---|---|---|---|---|---|
+| CAT | gc-host | y | 153 | 60eb285f94e6 | wasm:js-string.concat#0 | - [batch-decision:unchanged(host)=1] | - |
+| CAT | gc-native-strings | y | 22418 | 8332885e9560 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| CAT | standalone | y | 22582 | 711df4930f81 | - | - [batch-decision:unchanged(standalone)=1] | - |
+| CAT | wasi | y | 22609 | d078e2ff720c | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT | linear | y | 4882 | 99992a0595c1 | - | - | - |
+| CAT | gc-strict | y | 21967 | 84eb4b5706bb | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT3 | gc-host | y | 149 | 4677a84a2dcd | env.__concat_3#0 | batch-root:many×3(leaves 3)=1; batch-decision:changed(host)=1; concat-many:host×3=1; late-import:__concat_3-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| CAT3 | gc-native-strings | y | 22425 | 0ef7932fe1c9 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| CAT3 | standalone | y | 22931 | 68190413f897 | - | batch-root:many×3(leaves 3)=1; batch-decision:changed(standalone)=1; concat-many:native×3=1; native-batched:3-mint=1 | - |
+| CAT3 | wasi | y | 22616 | 3a982a7b069d | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT3 | linear | y | 4889 | 92c095bb61fb | - | - | - |
+| CAT3 | gc-strict | y | 21974 | 193f59597292 | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT4 | gc-host | y | 152 | 99609ea13570 | env.__concat_4#0 | batch-root:many×4(leaves 4)=1; batch-decision:changed(host)=1; concat-many:host×4=1; late-import:__concat_4-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| CAT4 | gc-native-strings | y | 22429 | dc08350002ca | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| CAT4 | standalone | y | 23013 | 5a7dc70a6075 | - | batch-root:many×4(leaves 4)=1; batch-decision:changed(standalone)=1; concat-many:native×4=1; native-batched:4-mint=1 | - |
+| CAT4 | wasi | y | 22620 | 62180548a018 | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT4 | linear | y | 4894 | 65c63fef4d5c | - | - | - |
+| CAT4 | gc-strict | y | 21978 | 61da80ba98df | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT5 | gc-host | y | 155 | 7d12d6f80126 | env.__concat_5#0 | batch-root:many×5(leaves 5)=1; batch-decision:changed(host)=1; concat-many:host×5=1; late-import:__concat_5-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| CAT5 | gc-native-strings | y | 22448 | 4702b028c298 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| CAT5 | standalone | y | 23110 | a62aa9acab3f | - | batch-root:many×5(leaves 5)=1; batch-decision:changed(standalone)=1; concat-many:native×5=1; native-batched:5-mint=1 | - |
+| CAT5 | wasi | y | 22639 | 3658b52f305e | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT5 | linear | y | 4899 | 61c3221ccc89 | - | - | - |
+| CAT5 | gc-strict | y | 21997 | c0e87ab51cb0 | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT8 | gc-host | y | 164 | a52f3eadc503 | env.__concat_8#0 | batch-root:many×8(leaves 8)=1; batch-decision:changed(host)=1; concat-many:host×8=1; late-import:__concat_8-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| CAT8 | gc-native-strings | y | 22466 | 9639ec0ca212 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| CAT8 | standalone | y | 23362 | 275b3ff7c479 | - | batch-root:many×8(leaves 8)=1; batch-decision:changed(standalone)=1; concat-many:native×8=1; native-batched:8-mint=1 | - |
+| CAT8 | wasi | y | 22657 | a52ee5b0bac1 | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT8 | linear | y | 4914 | 4b6619ef3c96 | - | - | - |
+| CAT8 | gc-strict | y | 22015 | fc25664bc6cd | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT9 | gc-host | y | 167 | c11957fc8004 | env.__concat_9#0 | batch-root:many×9(leaves 9)=1; batch-decision:changed(host)=1; concat-many:host×9=1; late-import:__concat_9-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| CAT9 | gc-native-strings | y | 22472 | 5675bf18b197 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| CAT9 | standalone | y | 22636 | 16f88b2c0042 | - | batch-cap:9>8=1 [batch-decision:unchanged(standalone)=1] | - |
+| CAT9 | wasi | y | 22663 | 5ebd0d5f790b | - | - [batch-decision:unchanged(none)=1] | - |
+| CAT9 | linear | y | 4919 | b649037db886 | - | - | - |
+| CAT9 | gc-strict | y | 22021 | e1f776af6280 | - | - [batch-decision:unchanged(none)=1] | - |
+| TPL3 | gc-host | y | 187 | aa485d722617 | env.__concat_6#0 | batch-root:many×6(leaves 6)=1; batch-decision:changed(host)=1; concat-many:host×6=1; late-import:__concat_6-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| TPL3 | gc-native-strings | y | 22477 | 903ec35198e7 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| TPL3 | standalone | y | 23752 | 8188a2360fdc | - | batch-root:many×6(leaves 6)=1; batch-decision:changed(standalone)=1; concat-many:native×6=1; native-batched:6-mint=1 | - |
+| TPL3 | wasi | y | 22668 | 2bc4f4c9af7b | - | - [batch-decision:unchanged(none)=1] | - |
+| TPL3 | linear | y | 4975 | 62b31aeb6fd8 | - | - | - |
+| TPL3 | gc-strict | y | 22026 | 49e90a03a2e6 | - | - [batch-decision:unchanged(none)=1] | - |
+| TPL6 | gc-host | y | 235 | 1d7f766908cf | env.__concat_7#0 | batch-root:many×7(leaves 7)=1; batch-decision:changed(host)=1; concat-many:host×7=1; late-import:__concat_7-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| TPL6 | gc-native-strings | y | 22546 | a5b33bddda3c | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| TPL6 | standalone | y | 23980 | 36ada661215f | - | batch-root:many×7(leaves 7)=1; batch-decision:changed(standalone)=1; concat-many:native×7=1; native-batched:7-mint=1 | - |
+| TPL6 | wasi | y | 22737 | 97b7efd7c97c | - | - [batch-decision:unchanged(none)=1] | - |
+| TPL6 | linear | y | 5004 | 59b7cf1aa8dc | - | - | - |
+| TPL6 | gc-strict | y | 22095 | 45353bb49365 | - | - [batch-decision:unchanged(none)=1] | - |
+| TPLEQ | gc-host | y | 246 | 7e6dac42d3c7 | env.__concat_3#1 | batch-root:many×3(leaves 3)=1; batch-decision:changed(host)=1; concat-many:host×3=1; late-import:__concat_3-new@imp5=1; flush:+1@5(defined 1)=1 | - |
+| TPLEQ | gc-native-strings | y | 22747 | 140c5083c9fb | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| TPLEQ | standalone | y | 23527 | def291da198e | - | batch-root:many×3(leaves 3)=1; batch-decision:changed(standalone)=1; concat-many:native×3=1; native-batched:3-mint=1 | - |
+| TPLEQ | wasi | y | 22938 | 17130c0d764e | - | - [batch-decision:unchanged(none)=1] | - |
+| TPLEQ | linear | y | 4976 | 4162ecbe7ed4 | - | - | - |
+| TPLEQ | gc-strict | y | 22296 | b6c6595f5863 | - | - [batch-decision:unchanged(none)=1] | - |
+| LITRUN | gc-host | y | 229 | 71f6382e0f6c | wasm:js-string.concat#0 | - [batch-decision:unchanged(host)=1] | - |
+| LITRUN | gc-native-strings | y | 22463 | 867edc1e47e0 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| LITRUN | standalone | y | 22627 | c5cdc1e16b6e | - | - [batch-decision:unchanged(standalone)=1] | - |
+| LITRUN | wasi | y | 22654 | d5f3f37af8ea | - | - [batch-decision:unchanged(none)=1] | - |
+| LITRUN | linear | y | 4948 | be7f95167e96 | - | - | - |
+| LITRUN | gc-strict | y | 22012 | c0f7127b9e16 | - | - [batch-decision:unchanged(none)=1] | - |
+| MULTIUSE | gc-host | y | 172 | 7d0cf5671a7a | wasm:js-string.concat#0 | - [batch-decision:unchanged(host)=1] | - |
+| MULTIUSE | gc-native-strings | y | 22436 | 5824fcc88870 | - | flush:+3@0(defined 51)=1 [batch-decision:unchanged(none)=1] | - |
+| MULTIUSE | standalone | y | 22600 | 2676ed12b3f7 | - | - [batch-decision:unchanged(standalone)=1] | - |
+| MULTIUSE | wasi | y | 22627 | 4ca5e592ab27 | - | - [batch-decision:unchanged(none)=1] | - |
+| MULTIUSE | linear | y | 4901 | 715a0aae1f50 | - | - | - |
+| MULTIUSE | gc-strict | y | 21985 | aaada3d3a104 | - | - [batch-decision:unchanged(none)=1] | - |
+| CATNUM3 | gc-host | y | 199 | a4af808e0009 | env.__concat_3#1 | late-import:__concat_3-new@imp6=1; legacy-batched:3=1; flush:+1@6(defined 1)=1 | cn3:operand-coercion-unsupported |
+| CATNUM3 | gc-native-strings | y | 39600 | a8b9836607dd | - | flush:+3@0(defined 63)=1 | cn3:operand-coercion-unsupported |
+| CATNUM3 | standalone | y | 40461 | 544be0440bb0 | - | native-batched:3-mint=1; legacy-native-batched:3=1 | cn3:operand-coercion-unsupported |
+| CATNUM3 | wasi | y | 40488 | a3b6bfe8908a | - | native-batched:3-mint=1; legacy-native-batched:3=1 | cn3:operand-coercion-unsupported |
+| CATNUM3 | linear | y | 4886 | d1d18d4369e9 | - | - | - |
+| CATNUM3 | gc-strict | y | 39149 | 951766587c70 | - | - | cn3:operand-coercion-unsupported |
+| ASYNC | gc-host | y | 10021 | 3c072b5822b4 | env.__concat_5#21 | flush:+2@71(defined 6)=1; flush:+6@74(defined 6)=1; concat-async5:host×5=1; late-import:__concat_5-new@imp97-batchOpen=1; flush:+2@96(defined 8)=1; flush:+1@98(defined 39)=1; flush:+1@99(defined 40)=1; flush:+1@100(defined 41)=1; flush:+1@101(defined 42)=1; flush:+1@102(defined 43)=1 [batch-decision:unchanged(host)=19] | - |
+| ASYNC | gc-native-strings | y | 53921 | 73a1355f04fb | - | flush:+3@83(defined 68)=1; flush:+1@86(defined 68)=1; flush:+2@87(defined 73)=1; flush:+1@89(defined 73)=1; flush:+5@90(defined 73)=1; flush:+3@95(defined 76)=1; flush:+1@98(defined 78)=1; flush:+1@99(defined 112)=1; flush:+1@100(defined 113)=1; flush:+1@101(defined 114)=1; flush:+1@102(defined 115)=1; flush:+1@103(defined 116)=1 [batch-decision:unchanged(none)=1] | delay:body-shape-rejected fetchUser:call-graph-closure fetchAllSequential:call-graph-closure fetchAllParallel:call-graph-closure main:call-graph-closure |
+| ASYNC | standalone | y | 140892 | 2d063f76ce31 | - | concat-async5:native×5=1; native-batched:5-mint=1 [batch-decision:unchanged(standalone)=18] | - |
+| ASYNC | wasi | y | 120698 | 1395c854c66d | - | native-batched:5-mint=1; legacy-native-batched:5=2; native-batched:5-cached=1 | delay:body-shape-rejected fetchUser:async-function fetchAllSequential:async-function fetchAllParallel:async-function main:async-function |
+| ASYNC | linear | N | 0 | e3b0c44298fc | - | - | - |
+| ASYNC | gc-strict | N | 0 | e3b0c44298fc | - | flush:+1@1(defined 90)=1 | setTimeout:late-preparation-unsupported delay:body-shape-rejected fetchUser:call-graph-closure fetchAllSequential:call-graph-closure fetchAllParallel:call-graph-closure main:host-surface-unavailable |
+| EVALFN | gc-host | y | 2546 | 15cd9f41cf31 | - | flush:+1@57(defined 2)=1; flush:+1@76(defined 3)=1; flush:+1@77(defined 4)=1; flush:+1@78(defined 5)=1 | mk:constructor-resolution-unsupported |
+| EVALFN | gc-native-strings | y | 24470 | b7c6df8c0aab | - | flush:+1@52(defined 52)=1; flush:+1@71(defined 53)=1; flush:+1@72(defined 54)=1; flush:+1@73(defined 55)=1 | mk:constructor-resolution-unsupported |
+| EVALFN | standalone | y | 192791 | 3f56f1c2a58e | - | - | mk:constructor-resolution-unsupported |
+| EVALFN | wasi | y | 104996 | 14b0e963c63a | - | - | mk:constructor-resolution-unsupported |
+| EVALFN | linear | N | 0 | e3b0c44298fc | - | - | - |
+| EVALFN | gc-strict | y | 97736 | a61ffa36edd8 | - | - | mk:constructor-resolution-unsupported |
+
+## full ordered func-import lists, gc-host and gc-strict
+CAT/gc-host: wasm:js-string.concat#0
+CAT/gc-strict: (none)
+CAT3/gc-host: env.__concat_3#0
+CAT3/gc-strict: (none)
+CAT4/gc-host: env.__concat_4#0
+CAT4/gc-strict: (none)
+CAT5/gc-host: env.__concat_5#0
+CAT5/gc-strict: (none)
+CAT8/gc-host: env.__concat_8#0
+CAT8/gc-strict: (none)
+CAT9/gc-host: env.__concat_9#0
+CAT9/gc-strict: (none)
+TPL3/gc-host: env.__concat_6#0
+TPL3/gc-strict: (none)
+TPL6/gc-host: env.__concat_7#0
+TPL6/gc-strict: (none)
+TPLEQ/gc-host: wasm:js-string.equals#0 env.__concat_3#1
+TPLEQ/gc-strict: (none)
+LITRUN/gc-host: wasm:js-string.concat#0
+LITRUN/gc-strict: (none)
+MULTIUSE/gc-host: wasm:js-string.concat#0
+MULTIUSE/gc-strict: (none)
+CATNUM3/gc-host: env.number_toString#0 env.__concat_3#1
+CATNUM3/gc-strict: (none)
+ASYNC/gc-host: env.__timer_set_timeout#0 env.console_log_string#1 env.number_toString#2 env.Promise_all#3 env.Promise_new#4 env.__make_callback#5 env.Promise_resolve#6 env.Promise_then2#7 env.Promise_new_pending#8 env.Promise_settle_resolve#9 env.Promise_settle_reject#10 env.__box_number#11 env.__call_1_f64#12 env.__get_undefined#13 env.__extern_is_undefined#14 env.__copy_wasm_struct_sidecar#15 env.__extern_length#16 env.__extern_get#17 env.__unbox_number#18 env.__array_from_iter#19 env.__date_now#20 env.__concat_5#21 env.__call_function_0#22 env.__call_function_1#23 env.__call_function_2#24 env.__call_function_3#25 env.__call_function_4#26
+ASYNC/gc-strict: (none)
+EVALFN/gc-host: env.__host_add#0 env.__call_function_2#1 env.__call_function_3#2 env.__call_function_4#3
+EVALFN/gc-strict: (none)
+
+## errors
+ASYNC/linear: Codegen error: Unsupported constructor: Promise | Codegen error: Unsupported expression in linear backend: AwaitExpression | Codegen error: Unsupported expression in linear backend: AwaitExpression | Codegen error: Unsupported expression in linear backend: AwaitExpression | Codegen error: Unsupporte
+ASYNC/gc-strict: Host import "env.__timer_set_timeout" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPOR
+EVALFN/linear: Codegen error: Unsupported constructor: Function

@@ -1,0 +1,22 @@
+// Probe: (a) raw irOutcomes for linear non-ASCII cells; (b) module-init fixture variants on the WasmGC lanes.
+import { compile, type CompileOptions } from "../src/index.js";
+const g = globalThis as unknown as { __sc?: Array<Record<string, unknown>> };
+const LANES: Record<string, CompileOptions> = { "gc-host": {}, standalone: { target: "standalone" }, linear: { target: "linear" } };
+const outcomes = (r: any) => (r.irOutcomes ?? []).map((o: any) => `${o.displayName}:${o.kind}${o.code ? "/" + o.code : ""}${o.stage ? "@" + o.stage : ""}`).join(" ");
+const reaches = () => { const c: Record<string, number> = {}; for (const e of g.__sc ?? []) { if (/^(prepare-scan|legacy-finalize|intern|nativeLit)$/.test(String(e.site))) continue; const k = [e.site, e.arm ?? e.branch ?? ""].filter(Boolean).join("/"); c[k] = (c[k] ?? 0) + 1; } return Object.entries(c).map(([k, v]) => `${k}=${v}`).join(" "); };
+async function run(name: string, src: string, lanes: string[]) {
+  for (const lane of lanes) {
+    g.__sc = [];
+    const r = await compile(src, { ...LANES[lane]!, trackIrOutcomes: true });
+    const imports = (r.wat.match(/\(import "[^"]*" "[^"]*" \(\w+/g) ?? []).map((s: string) => s.replace(/^\(import /, "")).join(", ");
+    console.log(`${name}/${lane}: ok=${r.success} outcomes=[${outcomes(r)}] reaches=[${reaches()}] imports=[${imports.slice(0, 200)}]`);
+  }
+}
+await run("BMP", `export function f(): string { return "grüße→ä"; }`, ["linear"]);
+await run("PAIR", `export function f(): string { return "a😀b"; }`, ["linear"]);
+await run("LONE", `export function f(): string { return "x\\uD800y"; }`, ["linear"]);
+await run("INIT-A const", `export const greeting: string = "hi";\nexport function f(): string { return greeting; }`, ["gc-host"]);
+await run("INIT-B let", `let greeting: string = "hi";\nexport function f(): string { return greeting; }`, ["gc-host", "standalone"]);
+await run("INIT-C call", `export function f(): string { return "hi"; }\nf();`, ["gc-host", "standalone"]);
+await run("INIT-D console", `console.log("boot");\nexport function f(): number { return 1; }`, ["gc-host", "standalone"]);
+await run("INIT-E let-num+str", `let n: number = 0;\nlet s: string = "hi";\nexport function f(): string { n = n + 1; return s; }`, ["gc-host", "standalone"]);

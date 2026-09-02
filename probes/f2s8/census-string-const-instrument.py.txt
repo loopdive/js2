@@ -1,0 +1,207 @@
+
+# #3526 string.const census — TEMPORARY instrumentation (scratch worktree only).
+# Every patch asserts an exact occurrence count so a drifted anchor fails loudly.
+def patch(path, old, new, count=1):
+    s = open(path, encoding="utf8").read()
+    n = s.count(old)
+    assert n == count, f"{path}: expected {count} of {old[:80]!r}, found {n}"
+    open(path, "w", encoding="utf8").write(s.replace(old, new))
+    print("patched", path, old[:50].replace("\n", "\\n"))
+
+PUSH = '((globalThis as any).__sc ??= []).push'
+FRAMES = '(new Error().stack ?? "").split("\\n").slice(2, 6).map((l: string) => l.replace(/^\\s+at\\s+/, "").replace(/\\(.*\\/src\\//, "(src/").replace(/file:\\/\\/.*\\/src\\//, "src/")).join(" < ")'
+
+INTEG = "src/ir/integration.ts"
+# (1) prepareStrings literal scan result
+patch(INTEG,
+"""  if (usesStringOp && !ctx.nativeStrings) {
+    // Host-string backend: ensure all five `wasm:js-string` imports exist.
+""",
+"""  """ + PUSH + """({ site: "prepare-scan", literals: [...literals].map((v) => v.length > 24 ? `${v.slice(0, 12)}…(${v.length})` : v), usesStringOp, native: ctx.nativeStrings, fns: fns.map((e) => e.fn.name) });
+  if (usesStringOp && !ctx.nativeStrings) {
+    // Host-string backend: ensure all five `wasm:js-string` imports exist.
+""")
+# (2) host branch: per-literal pre-registration
+patch(INTEG,
+"""    for (const value of literals) {
+      addStringConstantGlobal(ctx, value);
+    }
+""",
+"""    for (const value of literals) {
+      """ + PUSH + """({ site: "prepare-host-global", value: value.length > 24 ? `${value.slice(0, 12)}…(${value.length})` : value, already: ctx.stringGlobalMap.has(value) });
+      addStringConstantGlobal(ctx, value);
+    }
+""")
+# (3) nativeMaterializationFor
+patch(INTEG,
+"""    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
+    nativeMaterializations.set(instr, materialization);
+""",
+"""    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
+    """ + PUSH + """({ site: "native-materialize", len: instr.value.length, encoding: encoding ?? null, kind: materialization.kind, idx: materialization.kind === "global" ? materialization.globalIdx : materialization.funcIdx, utf8Storage: ctx.utf8Storage });
+    nativeMaterializations.set(instr, materialization);
+""")
+# (4) storageForConst arms
+patch(INTEG,
+"""    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
+    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    if (!materialization || materialization.kind !== "global") return undefined;
+""",
+"""    if (!ctx.nativeStrings) {
+      const hostRef = programAbiStringConstantRef(ctx, instr.value);
+      """ + PUSH + """({ site: "storageForConst", arm: "host-abi-ref", len: instr.value.length, hit: !!hostRef, binding: hostRef ? `${(hostRef.binding as any).module}.${String((hostRef.binding as any).field).slice(0, 12)}` : null });
+      return hostRef;
+    }
+    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) {
+      """ + PUSH + """({ site: "storageForConst", arm: "native-no-abi", len: instr.value.length });
+      return undefined;
+    }
+    const materialization = nativeMaterializationFor(instr);
+    if (!materialization || materialization.kind !== "global") {
+      """ + PUSH + """({ site: "storageForConst", arm: "native-not-global", len: instr.value.length, kind: materialization?.kind ?? null });
+      return undefined;
+    }
+    """ + PUSH + """({ site: "storageForConst", arm: "native-global", len: instr.value.length, globalIdx: materialization.globalIdx });
+""")
+# (5) materializerForConst
+patch(INTEG,
+"""    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
+    const existing = materializerRefs.get(materialization.funcIdx);
+""",
+"""    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
+    """ + PUSH + """({ site: "materializerForConst", len: instr.value.length, funcIdx: materialization.funcIdx, reused: materializerRefs.has(materialization.funcIdx) });
+    const existing = materializerRefs.get(materialization.funcIdx);
+""")
+# (6) emitResolvedStringConst branches
+patch(INTEG,
+"""  if (storage) return [{ op: "global.get", index: resolver.resolveGlobal(storage) }];
+  if (materializer) return [{ op: "call", funcIdx: resolver.resolveFunc(materializer) }];
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+""",
+"""  if (storage) { const gi = resolver.resolveGlobal(storage); """ + PUSH + """({ site: "emitStringConst", branch: "storage", len: value.length, index: gi }); return [{ op: "global.get", index: gi }]; }
+  if (materializer) { const fi = resolver.resolveFunc(materializer); """ + PUSH + """({ site: "emitStringConst", branch: "materializer", len: value.length, funcIdx: fi }); return [{ op: "call", funcIdx: fi }]; }
+  """ + PUSH + """({ site: "emitStringConst", branch: ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 ? "native-inline" : "host-map", len: value.length, mapIdx: ctx.stringGlobalMap.get(value) ?? null });
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+""")
+
+IMP = "src/codegen/registry/imports.ts"
+# (7) addStringConstantGlobals native sentinel arm
+patch(IMP,
+"""      // Sentinel: no host import, materialize inline at use sites.
+      ctx.stringGlobalMap.set(value, -1);
+""",
+"""      // Sentinel: no host import, materialize inline at use sites.
+      """ + PUSH + """({ site: "addStringConstantGlobal", arm: "native-sentinel", value: value.length > 24 ? `${value.slice(0, 12)}…(${value.length})` : value, caller: """ + FRAMES + """ });
+      ctx.stringGlobalMap.set(value, -1);
+""")
+# (8) host import arm (4-space indent = addStringConstantGlobals; addHost… is 2-space)
+patch(IMP,
+"""    const stableOrdinal = ctx.stringLiteralCounter;
+    const importValue = addImport(ctx, importModule, importName, {
+""",
+"""    const stableOrdinal = ctx.stringLiteralCounter;
+    """ + PUSH + """({ site: "addStringConstantGlobal", arm: "host-import", value: value.length > 24 ? `${value.slice(0, 12)}…(${value.length})` : value, ns: importModule, field: importName.length > 24 ? `${importName.slice(0, 12)}…(${importName.length})` : importName, globalIdx, hasModuleGlobals, modFuncs: ctx.mod.functions.length, modGlobals: ctx.mod.globals.length, importFuncs: ctx.numImportFuncs, caller: """ + FRAMES + """ });
+    const importValue = addImport(ctx, importModule, importName, {
+""")
+# (9) fixup
+patch(IMP,
+"""  if (hasModuleGlobals && addedImportGlobals > 0) {
+    fixupModuleGlobalIndices(ctx, oldNumImportGlobals, addedImportGlobals);
+""",
+"""  if (hasModuleGlobals && addedImportGlobals > 0) {
+    """ + PUSH + """({ site: "fixupGlobals", threshold: oldNumImportGlobals, delta: addedImportGlobals, pendingInit: !!ctx.pendingInitBody, funcStack: ctx.funcStack.length, liveBodies: (ctx.liveBodies as any).size ?? (ctx.liveBodies as any).length ?? -1 });
+    fixupModuleGlobalIndices(ctx, oldNumImportGlobals, addedImportGlobals);
+""")
+# (10) addHostStringConstantGlobal lane read
+patch(IMP,
+"""  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+  if (!ctx.nativeStrings) {
+    addStringConstantGlobal(ctx, value);
+""",
+"""  """ + PUSH + """({ site: "addHostStringConstantGlobal", refused: !!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports), native: ctx.nativeStrings, value: value.slice(0, 16) });
+  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+  if (!ctx.nativeStrings) {
+    addStringConstantGlobal(ctx, value);
+""")
+
+NSL = "src/codegen/native-string-literals.ts"
+# (11) wrap nativeStringLiteralMaterialization
+patch(NSL,
+"""export function nativeStringLiteralMaterialization(
+  ctx: CodegenContext,
+  value: string,
+  encoding?: StringEncoding,
+): NativeStringLiteralMaterialization {
+  if (nativeLiteralUsesUtf8(ctx, encoding)) {
+""",
+"""export function nativeStringLiteralMaterialization(
+  ctx: CodegenContext,
+  value: string,
+  encoding?: StringEncoding,
+): NativeStringLiteralMaterialization {
+  const r = nativeStringLiteralMaterializationImpl(ctx, value, encoding);
+  """ + PUSH + """({ site: "nativeLit", len: value.length, encoding: encoding ?? null, utf8: nativeLiteralUsesUtf8(ctx, encoding), kind: r.kind, idx: r.kind === "global" ? r.globalIdx : r.funcIdx });
+  return r;
+}
+function nativeStringLiteralMaterializationImpl(
+  ctx: CodegenContext,
+  value: string,
+  encoding?: StringEncoding,
+): NativeStringLiteralMaterialization {
+  if (nativeLiteralUsesUtf8(ctx, encoding)) {
+""")
+# (12) intern
+patch(NSL,
+"""  const existing = ctx.nativeStrLiteralGlobals.get(key);
+  if (existing !== undefined) return existing;
+  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+""",
+"""  const existing = ctx.nativeStrLiteralGlobals.get(key);
+  """ + PUSH + """({ site: "intern", key: key.slice(0, 16), len: key.length - 4, fresh: existing === undefined, globalIdx: existing ?? ctx.numImportGlobals + ctx.mod.globals.length });
+  if (existing !== undefined) return existing;
+  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+""")
+# (13) oversized helper
+patch(NSL,
+"""  const chunks = splitOversizedNativeLiteral(value);
+""",
+"""  const chunks = splitOversizedNativeLiteral(value);
+  """ + PUSH + """({ site: "oversized", len: value.length, chunks: chunks.length });
+""")
+
+COLL = "src/codegen/declarations/import-collector.ts"
+# (14) legacy pre-pass finalize
+patch(COLL,
+"""  if (state.stringLiterals.size > 0) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+""",
+"""  """ + PUSH + """({ site: "legacy-finalize", native: ctx.nativeStrings, literals: [...state.stringLiterals].map((v) => v.length > 24 ? `${v.slice(0, 12)}…(${v.length})` : v) });
+  if (state.stringLiterals.size > 0) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+""")
+
+LIN = "src/ir/backend/linear-integration.ts"
+# (15) linear twin
+patch(LIN,
+"""      const segment = plan.requireDataSegment(allocation.dataSegmentId);
+      return linearStringLiteralInstrs(ctx, value, resolveLinearRuntimeOperation(ctx, operation), segment.bytes);
+""",
+"""      const segment = plan.requireDataSegment(allocation.dataSegmentId);
+      """ + PUSH + """({ site: "linear-emitStringConst", len: value.length, segmentBytes: segment.bytes.length });
+      return linearStringLiteralInstrs(ctx, value, resolveLinearRuntimeOperation(ctx, operation), segment.bytes);
+""")
+
+SUP = "src/ir/string-support.ts"
+# (16) attach pass
+patch(SUP,
+"""      const storage = providers.storageForConst(nested);
+      const materializer = providers.materializerForConst?.(nested);
+""",
+"""      const storage = providers.storageForConst(nested);
+      const materializer = providers.materializerForConst?.(nested);
+      """ + PUSH + """({ site: "attach", len: nested.value.length, storage: !!storage, materializer: !!materializer });
+""")
+print("done")

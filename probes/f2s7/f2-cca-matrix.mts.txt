@@ -1,0 +1,156 @@
+// #3526 family-2 charCodeAt census — byte/reach matrix (measurement probe, no source change).
+// Run from the worktree root: node_modules/.bin/tsx .tmp/cca-matrix.mts <outdir>
+// Requires the temporary instrumentation in .tmp/cca-instrument.py (pushes to globalThis.__cca).
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { compile, type CompileOptions, type CompileResult } from "../src/index.js";
+
+const OUT = process.argv[2] ?? ".tmp/cca-out";
+mkdirSync(join(OUT, "wat"), { recursive: true });
+const GROUNDING = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+
+const FIXTURES: Record<string, string> = {
+  LOOP: `export function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
+}`,
+  LOOPSUM: `export function sum(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) { n = n + s.charCodeAt(i); }
+  return n;
+}`,
+  LOOPNC: `export function sumnc(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length - 1; i++) { n = n + s.charCodeAt(i); }
+  return n;
+}`,
+  READ: `export function read(s: string, i: number): number { return s.charCodeAt(i); }`,
+  CONST: `export function first(s: string): number { return s.charCodeAt(0); }`,
+  NEG: `export function neg(s: string): number { return s.charCodeAt(-1); }`,
+  OOB: `export function oob(): number { return "abc".charCodeAt(10); }`,
+  OMIT: `export function omit(s: string): number { return s.charCodeAt(); }`,
+  TPL: `export function tpl(a: string): number { return \`\${a}!\`.charCodeAt(0); }`,
+  FOROF: `export function forof(s: string): number {
+  let n = 0;
+  for (const c of s) { n = n + c.charCodeAt(0); }
+  return n;
+}`,
+  CHAIN: `export function chain(s: string): number { return s.trim().charCodeAt(0); }`,
+  SUBCONST: `export function sub(s: string): number { const t = s.substring(1, 3); return t.charCodeAt(0); }`,
+  CLEAN: `export function clean(a: number, b: number): number { return a + b; }`,
+};
+
+const LANES: Record<string, CompileOptions> = {
+  "gc-host": {},
+  "gc-native-strings": { nativeStrings: true },
+  standalone: { target: "standalone" },
+  wasi: { target: "wasi" },
+  linear: { target: "linear" },
+};
+
+function leb(u8: Uint8Array, pos: number): [number, number] {
+  let result = 0, shift = 0, b: number;
+  do { b = u8[pos++]!; result |= (b & 0x7f) << shift; shift += 7; } while (b & 0x80);
+  return [result >>> 0, pos];
+}
+function skipLeb(u8: Uint8Array, pos: number): number { while (u8[pos++]! & 0x80); return pos; }
+function str(u8: Uint8Array, pos: number): [string, number] {
+  const [len, p] = leb(u8, pos);
+  return [Buffer.from(u8.subarray(p, p + len)).toString("utf8"), p + len];
+}
+function skipValType(u8: Uint8Array, pos: number): number {
+  const b = u8[pos++]!;
+  if (b === 0x63 || b === 0x64) pos = skipLeb(u8, pos);
+  return pos;
+}
+function skipLimits(u8: Uint8Array, pos: number): number {
+  const flags = u8[pos++]!;
+  pos = skipLeb(u8, pos);
+  if (flags & 1) pos = skipLeb(u8, pos);
+  return pos;
+}
+interface ParsedImport { module: string; name: string; kind: string; index: number }
+function parseImports(bin: Uint8Array): ParsedImport[] {
+  const out: ParsedImport[] = [];
+  let pos = 8;
+  const counters = { func: 0, table: 0, memory: 0, global: 0, tag: 0 };
+  while (pos < bin.length) {
+    const id = bin[pos++]!;
+    const [size, p] = leb(bin, pos);
+    pos = p;
+    const end = pos + size;
+    if (id === 2) {
+      let q = pos;
+      const [count, p2] = leb(bin, q); q = p2;
+      for (let i = 0; i < count; i++) {
+        let module: string, name: string;
+        [module, q] = str(bin, q);
+        [name, q] = str(bin, q);
+        const kind = bin[q++]!;
+        let k: keyof typeof counters;
+        switch (kind) {
+          case 0: k = "func"; q = skipLeb(bin, q); break;
+          case 1: k = "table"; q = skipValType(bin, q); q = skipLimits(bin, q); break;
+          case 2: k = "memory"; q = skipLimits(bin, q); break;
+          case 3: k = "global"; q = skipValType(bin, q); q++; break;
+          case 4: k = "tag"; q++; q = skipLeb(bin, q); break;
+          default: throw new Error(`unknown import kind ${kind}`);
+        }
+        out.push({ module, name, kind: k, index: counters[k]++ });
+      }
+    }
+    pos = end;
+  }
+  return out;
+}
+const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
+const HELPERS = ["__jsstr_charCodeAt", "__jsstr_charCodeAt_trusted", "__str_charCodeAt", "__str_flat_charCodeAt", "__str_flatten"];
+
+interface Cell {
+  fixture: string; lane: string; success: boolean; bytes: number; sha256: string;
+  errors: string[]; imports: string[]; demoted: Array<Record<string, unknown>>;
+  reach: Record<string, number>; helpersInWat: string[];
+}
+const cells: Cell[] = [];
+const g = globalThis as unknown as { __cca?: unknown[] };
+for (const [fixture, source] of Object.entries(FIXTURES)) {
+  for (const [lane, options] of Object.entries(LANES)) {
+    g.__cca = [];
+    let result: CompileResult;
+    try {
+      result = await compile(source, { ...options, trackIrOutcomes: true, emitWat: true });
+    } catch (error) {
+      cells.push({ fixture, lane, success: false, bytes: -1, sha256: "", errors: [String(error)], imports: [], demoted: [], reach: {}, helpersInWat: [] });
+      continue;
+    }
+    const events = (g.__cca ?? []) as Array<Record<string, unknown>>;
+    const parsed = result.binary.length ? parseImports(result.binary) : [];
+    const imports = parsed.map((i) => `${i.kind}:${i.module}.${i.name}${i.kind === "func" ? `#${i.index}` : i.kind === "global" ? `@${i.index}` : ""}`);
+    writeFileSync(join(OUT, "wat", `${fixture}.${lane}.wat`), result.wat ?? "");
+    const irOutcomes = (result.irOutcomes ?? []).map((o) => {
+      const r = o as unknown as Record<string, unknown>;
+      return { displayName: r.displayName, kind: r.kind, stage: r.stage, code: r.code, detail: r.detail };
+    });
+    const reach: Record<string, number> = {};
+    for (const e of events) { const k = `${e.site}/${e.arm}`; reach[k] = (reach[k] ?? 0) + 1; }
+    const wat = result.wat ?? "";
+    cells.push({
+      fixture, lane, success: result.success, bytes: result.binary.length, sha256: sha(result.binary),
+      errors: result.errors.map((e) => String((e as { message?: string }).message ?? e)),
+      imports, demoted: irOutcomes.filter((o) => o.kind !== "emitted" && o.kind !== "non-executable"),
+      reach, helpersInWat: HELPERS.filter((h) => wat.includes(`(func $${h} `) || wat.includes(`(func $${h}\n`)),
+    });
+  }
+}
+writeFileSync(join(OUT, "matrix.json"), JSON.stringify({ grounding: GROUNDING, cells }, null, 2));
+const lines: string[] = ["| fixture | lane | ok | bytes | sha12 | charCodeAt/length imports | reaches | helpers in wat | demoted |", "|---|---|---|---|---|---|---|---|---|"];
+for (const c of cells) {
+  const imps = c.imports.filter((i) => /charCodeAt|length|string_/.test(i)).join(" ");
+  const reaches = Object.entries(c.reach).map(([k, v]) => `${k}=${v}`).join(" ");
+  lines.push(`| ${c.fixture} | ${c.lane} | ${c.success ? "y" : "N"} | ${c.bytes} | ${c.sha256.slice(0, 12)} | ${imps || "-"} | ${reaches || "-"} | ${c.helpersInWat.join(" ") || "-"} | ${c.demoted.map((d) => `${d.displayName}:${d.code ?? d.kind}`).join(" ") || (c.success ? "-" : "COMPILE-FAIL: " + c.errors.join(";").slice(0, 80))} |`);
+}
+writeFileSync(join(OUT, "matrix.md"), lines.join("\n") + "\n");
+console.log(lines.join("\n"));

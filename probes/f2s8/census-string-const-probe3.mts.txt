@@ -1,0 +1,14 @@
+// Probe 3: IR-only literals minted by prepareStrings itself (BOOLTPL) — does the mint shift anything?
+import { compile } from "../src/index.js";
+const g = globalThis as unknown as { __sc?: Array<Record<string, unknown>> };
+for (const [name, src] of Object.entries({
+  BOOLTPL: "export function f(b: boolean): string { return `${b}`; }",
+  BOOLTPL2: "export function f(b: boolean): string { return `${b}`; }\nexport function g(): number { return 2; }",
+})) {
+  g.__sc = [];
+  const r = await compile(src, { trackIrOutcomes: true });
+  const ev = g.__sc ?? [];
+  const imports = (r.wat.match(/\(import "[^"]*" "[^"]*" \(\w+/g) ?? []).map((s: string) => s.replace(/^\(import /, "").replace(/ \((\w+)$/, ":$1")).join(", ");
+  console.log(`${name}/gc-host ok=${r.success} imports=[${imports}]`);
+  for (const e of ev) if (/addStringConstantGlobal|fixupGlobals|prepare-host-global|storageForConst|emitStringConst/.test(String(e.site))) console.log("  ", JSON.stringify({ ...e, caller: String(e.caller ?? "").split(" < ").slice(1, 3).map((s) => s.replace(/ \(.*/, "")).join("<") }).slice(0, 260));
+}

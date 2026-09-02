@@ -1,0 +1,17 @@
+import { compile } from "../src/index.js";
+const g = globalThis as any;
+const FX: Record<string,string> = {
+  LOOP: `export function hashStr(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }`,
+  READ: `export function read(s: string, i: number): number { return s.charCodeAt(i); }`,
+  OOB: `export function oob(): number { return "abc".charCodeAt(10); }`,
+};
+for (const [name, src] of Object.entries(FX)) {
+  for (const [lane, opts] of Object.entries({ "strict-no-host": { strictNoHostImports: true }, "strict+native": { strictNoHostImports: true, nativeStrings: true } })) {
+    g.__cca = [];
+    const r = await compile(src, { ...(opts as any), trackIrOutcomes: true, emitWat: true });
+    const reach: Record<string, number> = {};
+    for (const e of g.__cca) { const k = `${e.site}/${e.arm}`; reach[k] = (reach[k] ?? 0) + 1; }
+    const imps = r.imports.map((i: any) => `${i.module}.${i.name}`).filter((s: string) => /charCodeAt|length/.test(s));
+    console.log(name, lane, r.success ? "ok" : "FAIL", r.binary.length, JSON.stringify(reach), JSON.stringify(imps), JSON.stringify((r.irOutcomes ?? []).filter((o: any) => o.kind !== "emitted").map((o: any) => `${o.displayName}:${o.code}`)), r.errors.map((e: any) => e.message).join(";").slice(0, 120));
+  }
+}

@@ -1,0 +1,35 @@
+
+ RUN  v3.2.4 /home/user/js2
+
+ ✓ tests/issue-320.test.ts (8 tests) 13868ms
+   ✓ Dead import and type elimination (#320) > removes unused wasm:js-string imports when only concat is used  3712ms
+   ✓ Dead import and type elimination (#320) > keeps wasm:js-string imports that are actually called  2174ms
+   ✓ Dead import and type elimination (#320) > eliminates unused func types alongside dead imports  1551ms
+   ✓ Dead import and type elimination (#320) > does not eliminate types referenced by struct fields  1342ms
+   ✓ Dead import and type elimination (#320) > produces valid wasm binary after elimination  1268ms
+   ✓ Dead import and type elimination (#320) > handles programs with no dead imports (no-op)  1178ms
+   ✓ Dead import and type elimination (#320) > correctly remaps function indices after import removal  1433ms
+   ✓ Dead import and type elimination (#320) > reduces binary size compared to baseline  1200ms
+ ✓ tests/imported-string-constants.test.ts (21 tests) 21466ms
+   ✓ importedStringConstants > WAT output structure > string literals become global imports from string_constants namespace  3441ms
+   ✓ importedStringConstants > WAT output structure > multiple distinct string literals produce multiple global imports  1986ms
+   ✓ importedStringConstants > WAT output structure > duplicate string literals share the same global import  1119ms
+   ✓ importedStringConstants > WAT output structure > no string_constants section when source has no string literals  1010ms
+   ✓ importedStringConstants > string pool > stringPool contains all unique string literals  1091ms
+   ✓ importedStringConstants > string pool > stringPool contains template literal parts  1252ms
+   ✓ importedStringConstants > string pool > stringPool contains string enum values  1329ms
+   ✓ importedStringConstants > end-to-end execution > returns a string literal  1328ms
+   ✓ importedStringConstants > end-to-end execution > compares string with literal using ===  2111ms
+   ✓ importedStringConstants > end-to-end execution > concatenates string literal with parameter  1033ms
+   ✓ importedStringConstants > end-to-end execution > multiple string literals in one function  982ms
+   ✓ importedStringConstants > end-to-end execution > string enum value is accessible at runtime  1001ms
+   ✓ importedStringConstants > end-to-end execution > string array literal access works  1064ms
+   ✓ importedStringConstants > end-to-end execution > binary validates with WebAssembly.validate  896ms
+   ✓ importedStringConstants > end-to-end execution > module with no strings needs no string_constants import  833ms
+   ✓ importedStringConstants > end-to-end execution > module globals coexist with string constant globals  981ms
+
+ Test Files  2 passed (2)
+      Tests  29 passed (29)
+   Start at  07:38:38
+   Duration  54.63s (transform 24.25s, setup 0ms, collect 64.70s, tests 35.33s, environment 1ms, prepare 352ms)
+

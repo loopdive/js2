@@ -1,0 +1,103 @@
+import sys
+ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
+def patch(rel, old, new, count=1):
+    path = f"{ROOT}/{rel}"
+    s = open(path, encoding="utf8").read()
+    n = s.count(old)
+    assert n == count, f"{rel}: expected {count} of {old[:80]!r}, found {n}"
+    open(path, "w", encoding="utf8").write(s.replace(old, new))
+    print("patched", rel)
+PUSH = '((globalThis as any).__f2s6 ??= []).push'
+
+# (a) pass selection — integration.ts
+patch("src/ir/integration.ts",
+"""      const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
+""",
+"""      """ + PUSH + """({ site: "batch-decision", fn: fn.name, host: hostBatchedConcat, standalone: standaloneBatchedConcat, changed: batched !== hygienic, nativeStrings: ctx.nativeStrings, standaloneFlag: ctx.standalone, wasi: ctx.wasi, strict: ctx.strictNoHostImports });
+      const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
+""")
+# (b) many-arity arm
+patch("src/ir/integration.ts",
+"""    const arity = parseIrStringConcatManyArity(symbol)!;
+    index = ctx.nativeStrings
+""",
+"""    const arity = parseIrStringConcatManyArity(symbol)!;
+    """ + PUSH + """({ site: "concat-many", arity, native: ctx.nativeStrings, numImportFuncs: ctx.numImportFuncs, frozen: ctx.indexSpaceFrozen, batchOpen: ctx.pendingLateImportShift !== null });
+    index = ctx.nativeStrings
+""")
+# (c) async 5 arm
+patch("src/ir/integration.ts",
+"""symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+    index = ctx.nativeStrings
+""",
+"""symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+    """ + PUSH + """({ site: "concat-async5", arity: 5, native: ctx.nativeStrings, numImportFuncs: ctx.numImportFuncs, frozen: ctx.indexSpaceFrozen, batchOpen: ctx.pendingLateImportShift !== null });
+    index = ctx.nativeStrings
+""")
+# (d) pass internals
+patch("src/ir/passes/batch-string-concat.ts",
+"""        if (args.length > maxArity) return;
+""",
+"""        if (args.length > maxArity) { """ + PUSH + """({ site: "batch-cap", arity: args.length, maxArity }); return; }
+""")
+patch("src/ir/passes/batch-string-concat.ts",
+"""        for (const run of runs) aliasLiteralRun(run.members, run.members[0]!, run.value);
+        rootRewrites.set(
+""",
+"""        for (const run of runs) aliasLiteralRun(run.members, run.members[0]!, run.value);
+        """ + PUSH + """({ site: "batch-root", arity: args.length, leaves: flatArgs.length, kind: args.length === 2 ? "concat" : "many" });
+        rootRewrites.set(
+""")
+# (e) native helper
+patch("src/codegen/native-batched-concat.ts",
+"""  if (arity < MIN_BATCHED_CONCAT_ARITY || arity > MAX_BATCHED_CONCAT_ARITY) return undefined;
+""",
+"""  """ + PUSH + """({ site: "native-batched", arity, declined: arity < MIN_BATCHED_CONCAT_ARITY || arity > MAX_BATCHED_CONCAT_ARITY, cached: ctx.nativeStrHelpers.get(`__str_concat_${arity}`) !== undefined });
+  if (arity < MIN_BATCHED_CONCAT_ARITY || arity > MAX_BATCHED_CONCAT_ARITY) return undefined;
+""")
+# (f) legacy twins
+patch("src/codegen/string-ops.ts",
+"""  const importName = `__concat_${arity}`;
+  const paramTypes: ValType[] = Array.from({ length: arity }, () => ({ kind: "externref" }) as ValType);
+  const funcIdx = ensureLateImport(ctx, importName, paramTypes, [{ kind: "externref" }]);
+""",
+"""  const importName = `__concat_${arity}`;
+  const paramTypes: ValType[] = Array.from({ length: arity }, () => ({ kind: "externref" }) as ValType);
+  const funcIdx = ensureLateImport(ctx, importName, paramTypes, [{ kind: "externref" }]);
+  """ + PUSH + """({ site: "legacy-batched", arity, funcIdx });
+""")
+patch("src/codegen/string-ops.ts",
+"""    const batchedIdx = ensureNativeBatchedConcat(ctx, folded.length);
+    if (batchedIdx !== undefined) {
+""",
+"""    const batchedIdx = ensureNativeBatchedConcat(ctx, folded.length);
+    """ + PUSH + """({ site: "legacy-native-batched", arity: folded.length, got: batchedIdx !== undefined });
+    if (batchedIdx !== undefined) {
+""")
+# (g) late import registration + flush
+patch("src/codegen/expressions/late-imports.ts",
+"""  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  // #1984 — freeze-point discipline.""",
+"""  const existing = ctx.funcMap.get(name);
+  if (name.startsWith("__concat_")) """ + PUSH + """({ site: "late-import", name, hit: existing !== undefined, numImportFuncs: ctx.numImportFuncs, frozen: ctx.indexSpaceFrozen, batchOpen: ctx.pendingLateImportShift !== null, definedFuncs: ctx.mod.funcs.length });
+  if (existing !== undefined) return existing;
+  // #1984 — freeze-point discipline.""")
+patch("src/codegen/expressions/late-imports.ts",
+"""  const added = ctx.numImportFuncs - pending.importsBefore;
+  ctx.pendingLateImportShift = null;
+  if (added <= 0) return;
+""",
+"""  const added = ctx.numImportFuncs - pending.importsBefore;
+  ctx.pendingLateImportShift = null;
+  if (added <= 0) return;
+  """ + PUSH + """({ site: "flush", importsBefore: pending.importsBefore, added, definedFuncs: ctx.mod.funcs.length });
+""")
+# (h) eval-inline
+patch("src/codegen/expressions/eval-inline.ts",
+"""    const concatIdx = ensureLateImport(ctx, `__concat_${pieces}`, concatParams, [{ kind: "externref" }]);
+""",
+"""    const concatIdx = ensureLateImport(ctx, `__concat_${pieces}`, concatParams, [{ kind: "externref" }]);
+    """ + PUSH + """({ site: "eval-concat", pieces });
+""")
+print("done")

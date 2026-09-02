@@ -1,0 +1,67 @@
+| fixture | lane | ok | bytes | sha12 | charCodeAt/length imports | reaches | helpers in wat | demoted |
+|---|---|---|---|---|---|---|---|---|
+| LOOP | gc-host | y | 313 | d05f4670b197 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.hashStr@0 global:string_constants.@1 | plan:charReadPlan/host-trusted=1 fromast:provenRead-i32pure/trusted=1 resolve:6437/host-trusted=1 | __jsstr_charCodeAt_trusted | - |
+| LOOP | gc-native-strings | y | 22601 | cbda921b0e74 | - | plan:charReadPlan/native-hoist=1 fromast:provenRead-i32pure/hoist=1 resolve:6425/native-flatten=1 resolve:6425/native-flat=1 | __str_flat_charCodeAt __str_flatten | - |
+| LOOP | standalone | y | 22765 | 346ffb3ec606 | - | plan:charReadPlan/native-hoist=1 fromast:provenRead-i32pure/hoist=1 resolve:6425/native-flatten=1 resolve:6425/native-flat=1 | __str_flat_charCodeAt __str_flatten | - |
+| LOOP | wasi | y | 22792 | 8d4b1f93715b | - | plan:charReadPlan/native-hoist=1 fromast:provenRead-i32pure/hoist=1 resolve:6425/native-flatten=1 resolve:6425/native-flat=1 | __str_flat_charCodeAt __str_flatten | - |
+| LOOP | linear | N | 0 | e3b0c44298fc | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | COMPILE-FAIL: Codegen error: Unsupported method call: .charCodeAt() |
+| LOOPSUM | gc-host | y | 309 | df45ced9493b | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.sum@0 global:string_constants.@1 | plan:charReadPlan/host-trusted=1 fromast:provenRead/trusted=1 resolve:6437/host-trusted=1 | __jsstr_charCodeAt_trusted | - |
+| LOOPSUM | gc-native-strings | y | 22601 | 454cd76972de | - | plan:charReadPlan/native-hoist=1 fromast:provenRead/hoist=1 resolve:6425/native-flatten=1 resolve:6425/native-flat=1 | __str_flat_charCodeAt __str_flatten | - |
+| LOOPSUM | standalone | y | 22765 | 343462d0d0ba | - | plan:charReadPlan/native-hoist=1 fromast:provenRead/hoist=1 resolve:6425/native-flatten=1 resolve:6425/native-flat=1 | __str_flat_charCodeAt __str_flatten | - |
+| LOOPSUM | wasi | y | 22792 | 3d55a511e5e8 | - | plan:charReadPlan/native-hoist=1 fromast:provenRead/hoist=1 resolve:6425/native-flatten=1 resolve:6425/native-flat=1 | __str_flat_charCodeAt __str_flatten | - |
+| LOOPSUM | linear | N | 0 | e3b0c44298fc | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | COMPILE-FAIL: Codegen error: Unsupported method call: .charCodeAt() |
+| LOOPNC | gc-host | y | 377 | c9c4c55f80b5 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.sumnc@0 global:string_constants.@1 | plan:charReadPlan/host-trusted=1 plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| LOOPNC | gc-native-strings | y | 22682 | 953996eb95be | - | plan:charReadPlan/native-hoist=1 plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| LOOPNC | standalone | y | 22846 | 1d5550e114dd | - | plan:charReadPlan/native-hoist=1 plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| LOOPNC | wasi | y | 22873 | 3d1637923b3a | - | plan:charReadPlan/native-hoist=1 plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| LOOPNC | linear | N | 0 | e3b0c44298fc | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | COMPILE-FAIL: Codegen error: Unsupported method call: .charCodeAt() |
+| READ | gc-host | y | 264 | fd53a89b1672 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.read@0 global:string_constants.@1 | plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| READ | gc-native-strings | y | 22529 | 40541defedcb | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| READ | standalone | y | 22693 | dea8c631c182 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| READ | wasi | y | 22720 | 9e6fc9f350e5 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| READ | linear | y | 5621 | 5aed38e456dd | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | - |
+| CONST | gc-host | y | 307 | 8a5e851b1ffd | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.first@0 global:string_constants.@1 | plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| CONST | gc-native-strings | y | 22610 | 75a73a3e60af | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| CONST | standalone | y | 22774 | 207ed9ee5571 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| CONST | wasi | y | 22801 | 1579e26c7393 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| CONST | linear | y | 5629 | 3981de70d06d | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | - |
+| NEG | gc-host | y | 301 | e4d2a64e74e1 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.neg@0 global:string_constants.@1 | plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| NEG | gc-native-strings | y | 22606 | b4df8ee2cf16 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| NEG | standalone | y | 22770 | a2e4743ee4fa | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| NEG | wasi | y | 22797 | 107f3394fff8 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| NEG | linear | y | 5626 | b8b135115d3a | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | - |
+| OOB | gc-host | y | 324 | bf9d0060e0b9 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.oob@0 global:string_constants.abc@1 global:string_constants.@2 | fromast:emitStringCharCodeAt/ir-instr=1 resolve:6527/ir-host-guarded=1 emit:adapter/provider=1 | __jsstr_charCodeAt | - |
+| OOB | gc-native-strings | y | 22191 | 414ad53b55ba | - | fromast:emitStringCharCodeAt/ir-instr=1 resolve:6527/ir-native-guarded=1 emit:adapter/provider=1 | __str_charCodeAt __str_flatten | - |
+| OOB | standalone | y | 22806 | f8648808d5a0 | - | fromast:emitStringCharCodeAt/ir-instr=1 resolve:6527/ir-native-guarded=1 emit:adapter/provider=1 | __str_charCodeAt __str_flatten | - |
+| OOB | wasi | y | 22833 | 8d088efc3433 | - | fromast:emitStringCharCodeAt/ir-instr=1 resolve:6527/ir-native-guarded=1 emit:adapter/provider=1 | __str_charCodeAt __str_flatten | - |
+| OOB | linear | y | 5659 | 4dfc57f9da66 | - | fromast:emitStringCharCodeAt/ir-instr=1 linear:emit/linear-runtime=1 | - | - |
+| OMIT | gc-host | y | 304 | 94943e2f2e66 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.omit@0 global:string_constants.@1 | plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| OMIT | gc-native-strings | y | 22608 | 8d5be65ec9f2 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| OMIT | standalone | y | 22772 | f1bb8d9dab77 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| OMIT | wasi | y | 22799 | 763010600fae | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| OMIT | linear | y | 5618 | 008d5a4ae250 | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | - |
+| TPL | gc-host | y | 366 | c98938c569dd | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.tpl@0 global:string_constants.@1 global:string_constants.!@2 | plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| TPL | gc-native-strings | y | 22651 | 81c41cbd8d0d | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| TPL | standalone | y | 23432 | 72be3e23af7d | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| TPL | wasi | y | 22842 | 96a420b5341a | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| TPL | linear | N | 0 | e3b0c44298fc | - | linear:plan/linear-runtime=1 fromast:planCall/__linear_ir_str_char_code_at=1 | - | COMPILE-FAIL: Codegen error: Unsupported method call: .charCodeAt() |
+| FOROF | gc-host | y | 1574 | fe6aefefc3e2 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.forof@0 global:string_constants.@1 global:string_constants.Cannot convert undefined or null to object@2 | - | - | forof:method-call-unsupported |
+| FOROF | gc-native-strings | y | 22849 | 1ca184a4a6af | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| FOROF | standalone | y | 49299 | e25320b97c23 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| FOROF | wasi | y | 49326 | b0d5e125349f | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| FOROF | linear | N | 0 | e3b0c44298fc | - | - | - | COMPILE-FAIL: Codegen error: Unsupported method call: .charCodeAt() |
+| CHAIN | gc-host | y | 345 | 94f7a78f834e | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.chain@0 global:string_constants.@1 func:env.string_trim#2 | plan:stringMethodPlan/host=1 fromast:planCall/__jsstr_charCodeAt=1 resolve:6417/host-guarded=1 | __jsstr_charCodeAt | - |
+| CHAIN | gc-native-strings | y | 22668 | 3820370b75d3 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| CHAIN | standalone | y | 22832 | d919a455b0d4 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| CHAIN | wasi | y | 22859 | eda341491031 | - | plan:stringMethodPlan/native=1 fromast:planCall/__str_charCodeAt=1 resolve:6421/native-guarded=1 | __str_charCodeAt __str_flatten | - |
+| CHAIN | linear | N | 0 | e3b0c44298fc | - | - | - | COMPILE-FAIL: Codegen error: Unsupported method call: .charCodeAt() |
+| SUBCONST | gc-host | y | 319 | 430379a78449 | func:wasm:js-string.length#0 func:wasm:js-string.charCodeAt#1 global:string_constants.sub@0 global:string_constants.@1 func:env.string_substring#2 | plan:preferLegacyFlatSubstring/true=2 fromast:preferLegacy-null/demote-legacy=2 | - | sub:method-call-unsupported |
+| SUBCONST | gc-native-strings | y | 22586 | 031a6f575094 | - | plan:preferLegacyFlatSubstring/true=2 fromast:preferLegacy-null/demote-legacy=2 | __str_flatten | sub:method-call-unsupported |
+| SUBCONST | standalone | y | 22750 | dbc3db32001b | - | plan:preferLegacyFlatSubstring/true=2 fromast:preferLegacy-null/demote-legacy=2 | __str_flatten | sub:method-call-unsupported |
+| SUBCONST | wasi | y | 22777 | a01f3ae38bbe | - | plan:preferLegacyFlatSubstring/true=2 fromast:preferLegacy-null/demote-legacy=2 | __str_flatten | sub:method-call-unsupported |
+| SUBCONST | linear | N | 0 | e3b0c44298fc | - | - | - | COMPILE-FAIL: Codegen error: Unsupported method call: .substring();Codegen error: Unsupported  |
+| CLEAN | gc-host | y | 119 | a734964356e5 | global:string_constants.clean@0 global:string_constants.@1 | - | - | - |
+| CLEAN | gc-native-strings | y | 21977 | 07067e4c76dc | - | - | __str_flatten | - |
+| CLEAN | standalone | y | 22592 | 23cc3ba48737 | - | - | __str_flatten | - |
+| CLEAN | wasi | y | 22619 | c05c31ff8cfc | - | - | __str_flatten | - |
+| CLEAN | linear | y | 4878 | eab66857b0be | - | - | - | - |

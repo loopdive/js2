@@ -1,0 +1,3832 @@
+{
+  "grounding": "a07f65319f1d31b4ec8e528651c5afbb6d66a320",
+  "cells": [
+    {
+      "fixture": "CAT",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 153,
+      "sha256": "60eb285f94e63e4a4c955213745445872ae0f009b1f065ec531e515dff5e9d95",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "global:string_constants.cat@0",
+        "global:string_constants.@1"
+      ],
+      "funcImports": [
+        "wasm:js-string.concat#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(host)": 1
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22418,
+      "sha256": "8332885e95601c2a04ad5ea85db85cac0fc447cb82a1ce3a21cae12c973dbef3",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22582,
+      "sha256": "711df4930f817fc8ca01f881c38d2d84cae9f1242d3e4f24cc8b50a16b48bc5e",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(standalone)": 1
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22609,
+      "sha256": "d078e2ff720ccbaa953a97cde9d50d99c1d5701edbc5b4a4699804065108496f",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4882,
+      "sha256": "99992a0595c10c0c47368c0afd55695742779e82bb508ebb6dbc15055f44ded8",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CAT",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 21967,
+      "sha256": "84eb4b5706bb9105b52b8d2cf247a4f5ddbf52a9598686a11ab46b3c7c4ff33d",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 149,
+      "sha256": "4677a84a2dcd0cd40e32e3f9197090654073f890bc642cdf5da945e5af4b78cb",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat3@0",
+        "global:string_constants.@1",
+        "func:env.__concat_3#0"
+      ],
+      "funcImports": [
+        "env.__concat_3#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 3,
+          "leaves": 3,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat3",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 3,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_3",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×3(leaves 3)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×3": 1,
+        "late-import:__concat_3-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22425,
+      "sha256": "0ef7932fe1c90c31936d1eb3e1a15158ea96e9b1118c400e2583690dba126cdf",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat3",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22931,
+      "sha256": "68190413f8971cf68ce6ad0560e9b95c60d81771223c3e8ac2ada44045022935",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 3,
+          "leaves": 3,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat3",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 3,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 3,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×3(leaves 3)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×3": 1,
+        "native-batched:3-mint": 1
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22616,
+      "sha256": "3a982a7b069db88902a893ab136dc2e427104700e73c0564843d6b1fe1852901",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat3",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4889,
+      "sha256": "92c095bb61fb2b260ff1ba19fe4f731caa128f351330dbafbb7b15c33c14cf8e",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CAT3",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 21974,
+      "sha256": "193f59597292a62a78f959b6014e7718974b679e8aac6af3e0949ffb9925bb0d",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat3",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 152,
+      "sha256": "99609ea1357033e6c6029a2a0fd5cff8a311960f58e97dcda3253221f41e7a1b",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat4@0",
+        "global:string_constants.@1",
+        "func:env.__concat_4#0"
+      ],
+      "funcImports": [
+        "env.__concat_4#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 4,
+          "leaves": 4,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat4",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 4,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_4",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×4(leaves 4)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×4": 1,
+        "late-import:__concat_4-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22429,
+      "sha256": "dc08350002cac5795b12d65b9bff6f2e550a6b98e82dc95a85b91f1c930d79af",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat4",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23013,
+      "sha256": "5a7dc70a6075e36d69770b34bfdb7859fe146549e7aef9187324ba007e91a6fd",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 4,
+          "leaves": 4,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat4",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 4,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 4,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×4(leaves 4)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×4": 1,
+        "native-batched:4-mint": 1
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22620,
+      "sha256": "62180548a018240a3ae4fb2230ed9d5d2d1dca889f8e8d77531a141ef7935631",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat4",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4894,
+      "sha256": "65c63fef4d5c51fa181ff9412377e5bbe9cfcfe81a56c74b018a97a2f4014c67",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CAT4",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 21978,
+      "sha256": "61da80ba98dffe3d94df06763540abcc021bb9ea90df177b3563536043b2f538",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat4",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT5",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 155,
+      "sha256": "7d12d6f80126ed2fa7890c1a7163b5a6c04cc03feb2da7acb802a3aba074e697",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat5@0",
+        "global:string_constants.@1",
+        "func:env.__concat_5#0"
+      ],
+      "funcImports": [
+        "env.__concat_5#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 5,
+          "leaves": 5,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat5",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 5,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_5",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×5(leaves 5)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×5": 1,
+        "late-import:__concat_5-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "CAT5",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22448,
+      "sha256": "4702b028c298444e0b07f723376a59098b49a715439a88c7d06f178bc01e5c4c",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat5",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT5",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23110,
+      "sha256": "a62aa9acab3f5771dd10bac50748b173e2b4e9d366d23a178c7dacad15f44a91",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 5,
+          "leaves": 5,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat5",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 5,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 5,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×5(leaves 5)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×5": 1,
+        "native-batched:5-mint": 1
+      }
+    },
+    {
+      "fixture": "CAT5",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22639,
+      "sha256": "3658b52f305ec224b724f863fb535f82cf4fb7d2d9a25aea090b3a4549341930",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat5",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT5",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4899,
+      "sha256": "61c3221ccc89fef32a352bd78706ce64938feb0fbfaeb907428a9f31b43fa267",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CAT5",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 21997,
+      "sha256": "c0e87ab51cb0092ad0270fff38a596f1a88ad23fc5a26b2cdd8d9750b43a6fd2",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat5",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT8",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 164,
+      "sha256": "a52f3eadc503c946b804869844be9dfdd153bcdd07254bea4f5d22b96897b88b",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat8@0",
+        "global:string_constants.@1",
+        "func:env.__concat_8#0"
+      ],
+      "funcImports": [
+        "env.__concat_8#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 8,
+          "leaves": 8,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat8",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 8,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_8",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×8(leaves 8)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×8": 1,
+        "late-import:__concat_8-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "CAT8",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22466,
+      "sha256": "9639ec0ca212d4fc641d1e7655676f089f98a8f75ee21a70d3de703f03b0bb26",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat8",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT8",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23362,
+      "sha256": "275b3ff7c4793c0da6f9cfb146d13fe5bf5afd23e5cbb4480defbc22b298305f",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 8,
+          "leaves": 8,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat8",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 8,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 8,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×8(leaves 8)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×8": 1,
+        "native-batched:8-mint": 1
+      }
+    },
+    {
+      "fixture": "CAT8",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22657,
+      "sha256": "a52ee5b0bac1cf205a9f1d6f43579c8b59b45c7c904af9957c5a9312aa478b71",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat8",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT8",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4914,
+      "sha256": "4b6619ef3c96169e06826cef54371278d1152dc8bcd119f35816f3d27b6109f3",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CAT8",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 22015,
+      "sha256": "fc25664bc6cd3ee38e6807d33524c3b87abeaac83b48721612e0de502c41157b",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat8",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT9",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 167,
+      "sha256": "c11957fc8004834ecce46eac823019609974084dc837f948c5dc495ed57a9fe1",
+      "errors": [],
+      "imports": [
+        "global:string_constants.cat9@0",
+        "global:string_constants.@1",
+        "func:env.__concat_9#0"
+      ],
+      "funcImports": [
+        "env.__concat_9#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 9,
+          "leaves": 9,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat9",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 9,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_9",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×9(leaves 9)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×9": 1,
+        "late-import:__concat_9-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "CAT9",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22472,
+      "sha256": "5675bf18b19783ae9547b9c376f3d24d1fbc9036067f8644b8625a7287b0a61b",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat9",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT9",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22636,
+      "sha256": "16f88b2c0042ef67a23bb8912e309d6ee161376e44d065ae94dc2e1fc8489201",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-cap",
+          "arity": 9,
+          "maxArity": 8
+        },
+        {
+          "site": "batch-decision",
+          "fn": "cat9",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-cap:9>8": 1,
+        "batch-decision:unchanged(standalone)": 1
+      }
+    },
+    {
+      "fixture": "CAT9",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22663,
+      "sha256": "5ebd0d5f790b320bdba067f263c9bd925cb14812c9355bd5d1f7f6794fa3f9e3",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat9",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CAT9",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4919,
+      "sha256": "b649037db88690673e7e33ef718c5fa21fe331eda5609cecc01c5e4590ccb2bf",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CAT9",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 22021,
+      "sha256": "e1f776af628009dcdf0c7b98cbd4b85b404e4f12a5b070c79cfc45d81a67122a",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "cat9",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 187,
+      "sha256": "aa485d7226177b72fe128ec6e95e003d62461e3f39f66afb20cbd91b7431b8ed",
+      "errors": [],
+      "imports": [
+        "global:string_constants.tpl3@0",
+        "global:string_constants.@1",
+        "global:string_constants.-@2",
+        "func:env.__concat_6#0"
+      ],
+      "funcImports": [
+        "env.__concat_6#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 6,
+          "leaves": 6,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpl3",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 6,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_6",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×6(leaves 6)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×6": 1,
+        "late-import:__concat_6-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22477,
+      "sha256": "903ec35198e7d99cc1c6395456dcf90c4c92f7f8862cd60229f98c0f89abcd72",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpl3",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23752,
+      "sha256": "8188a2360fdc78eeb4a51ec34a18723695f9d679cdbd09ee614690cbec483818",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 6,
+          "leaves": 6,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpl3",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 6,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 6,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×6(leaves 6)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×6": 1,
+        "native-batched:6-mint": 1
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22668,
+      "sha256": "2bc4f4c9af7b3f99d745abe0ae184d7acefb7fcaa850196461a8ef9ef1600e11",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "tpl3",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4975,
+      "sha256": "62b31aeb6fd812c69b51850a69056300307bd78dabccc071f34d57dab6e3aacd",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "TPL3",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 22026,
+      "sha256": "49e90a03a2e6c8da78cf38d509d7b550befc1852d0a175f446183abd33bcfb9e",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "tpl3",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPL6",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 235,
+      "sha256": "1d7f766908cf40d3f144b715e8ff2262a46b376a07e61c8b62d8e9a4c8054a08",
+      "errors": [],
+      "imports": [
+        "global:string_constants.tpl6@0",
+        "global:string_constants.x@1",
+        "global:string_constants.-@2",
+        "global:string_constants.!@3",
+        "global:string_constants.@4",
+        "func:env.__concat_7#0"
+      ],
+      "funcImports": [
+        "env.__concat_7#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 7,
+          "leaves": 7,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpl6",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 7,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_7",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×7(leaves 7)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×7": 1,
+        "late-import:__concat_7-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "TPL6",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22546,
+      "sha256": "a5b33bddda3c680d9e6534d89ed27b95ecab96554a1f9f20cc20ad9f1e47f57e",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpl6",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPL6",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23980,
+      "sha256": "36ada661215fb2d0b003f29abc9394e19ad15f1cd5cba99b441791c57f4b8927",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 7,
+          "leaves": 7,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpl6",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 7,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 7,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×7(leaves 7)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×7": 1,
+        "native-batched:7-mint": 1
+      }
+    },
+    {
+      "fixture": "TPL6",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22737,
+      "sha256": "97b7efd7c97c39cb267325949860c1685814406fccf95efbb8931165e9c87833",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "tpl6",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPL6",
+      "lane": "linear",
+      "success": true,
+      "bytes": 5004,
+      "sha256": "59b7cf1aa8dc8e310558f05c1badfd429fe710c15b85e22469bb90c7ab440850",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "TPL6",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 22095,
+      "sha256": "45353bb49365547e17f1de11c10496e1f980d1fa9035b6453967959a310bc918",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "tpl6",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 246,
+      "sha256": "7e6dac42d3c72237750404fbf31044bee69f999598c4718a8ba108a2c14ec435",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.equals#0",
+        "global:string_constants.tpleq@0",
+        "global:string_constants.@1",
+        "global:string_constants.!@2",
+        "global:string_constants.hi!@3",
+        "func:env.__concat_3#1"
+      ],
+      "funcImports": [
+        "wasm:js-string.equals#0",
+        "env.__concat_3#1"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 3,
+          "leaves": 3,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpleq",
+          "host": true,
+          "standalone": false,
+          "changed": true,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 3,
+          "native": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_3",
+          "hit": false,
+          "numImportFuncs": 5,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "flush",
+          "importsBefore": 5,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "batch-root:many×3(leaves 3)": 1,
+        "batch-decision:changed(host)": 1,
+        "concat-many:host×3": 1,
+        "late-import:__concat_3-new@imp5": 1,
+        "flush:+1@5(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22747,
+      "sha256": "140c5083c9fb98133bd979a556f2e2edbfe6398df353730050f8124f7226b90c",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpleq",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 23527,
+      "sha256": "def291da198e221bc9ae0a9a936e911bfaf8e94a27dd5c813d29c25172547515",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-root",
+          "arity": 3,
+          "leaves": 3,
+          "kind": "many"
+        },
+        {
+          "site": "batch-decision",
+          "fn": "tpleq",
+          "host": false,
+          "standalone": true,
+          "changed": true,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-many",
+          "arity": 3,
+          "native": true,
+          "numImportFuncs": 0,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 3,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-root:many×3(leaves 3)": 1,
+        "batch-decision:changed(standalone)": 1,
+        "concat-many:native×3": 1,
+        "native-batched:3-mint": 1
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22938,
+      "sha256": "17130c0d764ed10fba9c1d1c5b34f9568b6f74b22ff021cbab107406e18c9bc7",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "tpleq",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4976,
+      "sha256": "4162ecbe7ed4df17b053e59f521acd80affd347c2ffb7e2941e59631d2cd8024",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "TPLEQ",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 22296,
+      "sha256": "b6c6595f586314cfb634a45b1d74cfccc27a2b7d26f0139ed9b884b395f46668",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "tpleq",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "LITRUN",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 229,
+      "sha256": "71f6382e0f6c961c317d50b5889836232d305b2e0ed919900f896d0d151318a1",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "global:string_constants.litrun@0",
+        "global:string_constants.a@1",
+        "global:string_constants.b@2",
+        "global:string_constants.@3",
+        "global:string_constants.ab@4"
+      ],
+      "funcImports": [
+        "wasm:js-string.concat#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "litrun",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(host)": 1
+      }
+    },
+    {
+      "fixture": "LITRUN",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22463,
+      "sha256": "867edc1e47e025248831cd1273822f94689525db7f2c1969fb4abb89532b5043",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "litrun",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "LITRUN",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22627,
+      "sha256": "c5cdc1e16b6e0f4d2374ce494677f3ac48fdb8983899902fb51143fdcaa668be",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "litrun",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(standalone)": 1
+      }
+    },
+    {
+      "fixture": "LITRUN",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22654,
+      "sha256": "d5f3f37af8ea7ccde039dcd8d127c017ade22f8a0532d5adc1fa0619a79c0da8",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "litrun",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "LITRUN",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4948,
+      "sha256": "be7f95167e9690caba487f6a523ce9e791b5e881ab72f095faa53999ccbf84c5",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "LITRUN",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 22012,
+      "sha256": "c0f7127b9e162cc093e40107fac33e6af05b26834e5f9ea8fb937c099bd5d7ec",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "litrun",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "MULTIUSE",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 172,
+      "sha256": "7d0cf5671a7abf1a65365542854f3172a576a45b4d927209572c31f6b62dc433",
+      "errors": [],
+      "imports": [
+        "func:wasm:js-string.concat#0",
+        "global:string_constants.multi@0",
+        "global:string_constants.@1"
+      ],
+      "funcImports": [
+        "wasm:js-string.concat#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "multi",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(host)": 1
+      }
+    },
+    {
+      "fixture": "MULTIUSE",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 22436,
+      "sha256": "5824fcc888706d0a297f31c4be7deb2734d4fc7233b57903fb548dadc02aab20",
+      "errors": [],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 51
+        },
+        {
+          "site": "batch-decision",
+          "fn": "multi",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 51)": 1,
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "MULTIUSE",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 22600,
+      "sha256": "2676ed12b3f702199c2cc86305eba8fd7a7cc81d0e119519617f240e03a420ac",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "multi",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(standalone)": 1
+      }
+    },
+    {
+      "fixture": "MULTIUSE",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 22627,
+      "sha256": "4ca5e592ab27641462105397ae40c11a2a1cbf6852fc171b80ccbe84de40d86b",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "multi",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": true,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "MULTIUSE",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4901,
+      "sha256": "715a0aae1f50e30fc846eeda4c1475a4d30978ba507e340bec4fd2287a68394a",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "MULTIUSE",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 21985,
+      "sha256": "aaada3d3a104521aa7ba335a54b5b765c8168373da9936343125742f85e3d45a",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "multi",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": true
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1
+      }
+    },
+    {
+      "fixture": "CATNUM3",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 199,
+      "sha256": "a4af808e0009f41450a3161731aeffb98c5522c02d3882f6bad245ca128cb3b7",
+      "errors": [
+        "IR path failed for cn3: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3 [IR-FALLBACK]"
+      ],
+      "imports": [
+        "func:env.number_toString#0",
+        "global:string_constants.cn3@0",
+        "global:string_constants.@1",
+        "func:env.__concat_3#1"
+      ],
+      "funcImports": [
+        "env.number_toString#0",
+        "env.__concat_3#1"
+      ],
+      "demoted": [
+        {
+          "displayName": "cn3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3"
+        }
+      ],
+      "events": [
+        {
+          "site": "late-import",
+          "name": "__concat_3",
+          "hit": false,
+          "numImportFuncs": 6,
+          "frozen": false,
+          "batchOpen": false,
+          "definedFuncs": 1
+        },
+        {
+          "site": "legacy-batched",
+          "arity": 3,
+          "funcIdx": 6
+        },
+        {
+          "site": "flush",
+          "importsBefore": 6,
+          "added": 1,
+          "definedFuncs": 1
+        }
+      ],
+      "counts": {
+        "late-import:__concat_3-new@imp6": 1,
+        "legacy-batched:3": 1,
+        "flush:+1@6(defined 1)": 1
+      }
+    },
+    {
+      "fixture": "CATNUM3",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 39600,
+      "sha256": "a8b9836607dd424617f13918c0e3bfb178e756fb692f68028b9300a2cbd7b2c8",
+      "errors": [
+        "IR path failed for cn3: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3 [IR-FALLBACK]"
+      ],
+      "imports": [
+        "func:env.__str_from_mem#0",
+        "func:env.__str_to_mem#1",
+        "func:env.__str_extern_len#2"
+      ],
+      "funcImports": [
+        "env.__str_from_mem#0",
+        "env.__str_to_mem#1",
+        "env.__str_extern_len#2"
+      ],
+      "demoted": [
+        {
+          "displayName": "cn3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3"
+        }
+      ],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 0,
+          "added": 3,
+          "definedFuncs": 63
+        }
+      ],
+      "counts": {
+        "flush:+3@0(defined 63)": 1
+      }
+    },
+    {
+      "fixture": "CATNUM3",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 40461,
+      "sha256": "544be0440bb0f0777df55ab70c44fa6b465cbb3cfbea674099636630c9bcb1c8",
+      "errors": [
+        "IR path failed for cn3: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3 [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "cn3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3"
+        }
+      ],
+      "events": [
+        {
+          "site": "native-batched",
+          "arity": 3,
+          "declined": false,
+          "cached": false
+        },
+        {
+          "site": "legacy-native-batched",
+          "arity": 3,
+          "got": true
+        }
+      ],
+      "counts": {
+        "native-batched:3-mint": 1,
+        "legacy-native-batched:3": 1
+      }
+    },
+    {
+      "fixture": "CATNUM3",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 40488,
+      "sha256": "a3b6bfe8908a5116946494b4e03a5c9f75b70a21fec52dd0b92c372d7fb8bc65",
+      "errors": [
+        "IR path failed for cn3: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3 [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "cn3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3"
+        }
+      ],
+      "events": [
+        {
+          "site": "native-batched",
+          "arity": 3,
+          "declined": false,
+          "cached": false
+        },
+        {
+          "site": "legacy-native-batched",
+          "arity": 3,
+          "got": true
+        }
+      ],
+      "counts": {
+        "native-batched:3-mint": 1,
+        "legacy-native-batched:3": 1
+      }
+    },
+    {
+      "fixture": "CATNUM3",
+      "lane": "linear",
+      "success": true,
+      "bytes": 4886,
+      "sha256": "d1d18d4369e9ab99b5d7b0e3c7ae5d654c9c899bde9053d7ca6f1f65078987a5",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "CATNUM3",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 39149,
+      "sha256": "951766587c70bd4f3c3bc4059ff5cb4faa4580f239212522c2c5b40233ee552f",
+      "errors": [
+        "IR path failed for cn3: ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3 [IR-FALLBACK]"
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "cn3",
+          "kind": "unsupported",
+          "stage": "build",
+          "code": "operand-coercion-unsupported",
+          "detail": "ir/from-ast: '+' operands not provably both-number or both-string (string/number) — the unboxed numeric-add / string-concat fast path is unsound here; demote to the SAFE dynamic '+' (emitAnyAdd) in cn3"
+        }
+      ],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "ASYNC",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 10021,
+      "sha256": "3c072b5822b4a6590aaa6a88bc26cbe8ab79d9fcb2da0408886b5e4cbeca8c85",
+      "errors": [],
+      "imports": [
+        "func:env.__timer_set_timeout#0",
+        "func:env.console_log_string#1",
+        "func:env.number_toString#2",
+        "global:string_constants.__timer_set_timeout@0",
+        "global:string_constants.setTimeout@1",
+        "global:string_constants.delay@2",
+        "global:string_constants.fetchUser@3",
+        "global:string_constants.fetchAllSequential@4",
+        "global:string_constants.fetchAllParallel@5",
+        "global:string_constants.main@6",
+        "global:string_constants.async/await demo@7",
+        "global:string_constants.sequential sum = @8",
+        "global:string_constants. (took ~@9",
+        "global:string_constants.ms)@10",
+        "global:string_constants.parallel  sum = @11",
+        "global:string_constants.done@12",
+        "global:string_constants.@13",
+        "func:env.Promise_all#3",
+        "func:env.Promise_new#4",
+        "func:env.__make_callback#5",
+        "func:env.Promise_resolve#6",
+        "func:env.Promise_then2#7",
+        "func:env.Promise_new_pending#8",
+        "func:env.Promise_settle_resolve#9",
+        "func:env.Promise_settle_reject#10",
+        "func:env.__box_number#11",
+        "func:env.__call_1_f64#12",
+        "func:env.__get_undefined#13",
+        "func:env.__extern_is_undefined#14",
+        "func:env.__copy_wasm_struct_sidecar#15",
+        "func:env.__extern_length#16",
+        "func:env.__extern_get#17",
+        "func:env.__unbox_number#18",
+        "func:env.__array_from_iter#19",
+        "func:env.__date_now#20",
+        "func:env.__concat_5#21",
+        "func:env.__call_function_0#22",
+        "func:env.__call_function_1#23",
+        "func:env.__call_function_2#24",
+        "func:env.__call_function_3#25",
+        "func:env.__call_function_4#26"
+      ],
+      "funcImports": [
+        "env.__timer_set_timeout#0",
+        "env.console_log_string#1",
+        "env.number_toString#2",
+        "env.Promise_all#3",
+        "env.Promise_new#4",
+        "env.__make_callback#5",
+        "env.Promise_resolve#6",
+        "env.Promise_then2#7",
+        "env.Promise_new_pending#8",
+        "env.Promise_settle_resolve#9",
+        "env.Promise_settle_reject#10",
+        "env.__box_number#11",
+        "env.__call_1_f64#12",
+        "env.__get_undefined#13",
+        "env.__extern_is_undefined#14",
+        "env.__copy_wasm_struct_sidecar#15",
+        "env.__extern_length#16",
+        "env.__extern_get#17",
+        "env.__unbox_number#18",
+        "env.__array_from_iter#19",
+        "env.__date_now#20",
+        "env.__concat_5#21",
+        "env.__call_function_0#22",
+        "env.__call_function_1#23",
+        "env.__call_function_2#24",
+        "env.__call_function_3#25",
+        "env.__call_function_4#26"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 71,
+          "added": 2,
+          "definedFuncs": 6
+        },
+        {
+          "site": "batch-decision",
+          "fn": "setTimeout",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "delay",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "delay__closure_0__closure_1",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "delay__closure_0",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchUser",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchUser__ir_async_state_0",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_0",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_1",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_2",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_3",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_4",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllParallel",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllParallel__ir_async_state_0",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllParallel__ir_async_state_1",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main__ir_async_state_0",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main__ir_async_state_1",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main__ir_async_state_2",
+          "host": true,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": false,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "flush",
+          "importsBefore": 74,
+          "added": 6,
+          "definedFuncs": 6
+        },
+        {
+          "site": "concat-async5",
+          "arity": 5,
+          "native": false,
+          "numImportFuncs": 97,
+          "frozen": false,
+          "batchOpen": true
+        },
+        {
+          "site": "late-import",
+          "name": "__concat_5",
+          "hit": false,
+          "numImportFuncs": 97,
+          "frozen": false,
+          "batchOpen": true,
+          "definedFuncs": 8
+        },
+        {
+          "site": "flush",
+          "importsBefore": 96,
+          "added": 2,
+          "definedFuncs": 8
+        },
+        {
+          "site": "flush",
+          "importsBefore": 98,
+          "added": 1,
+          "definedFuncs": 39
+        },
+        {
+          "site": "flush",
+          "importsBefore": 99,
+          "added": 1,
+          "definedFuncs": 40
+        },
+        {
+          "site": "flush",
+          "importsBefore": 100,
+          "added": 1,
+          "definedFuncs": 41
+        },
+        {
+          "site": "flush",
+          "importsBefore": 101,
+          "added": 1,
+          "definedFuncs": 42
+        },
+        {
+          "site": "flush",
+          "importsBefore": 102,
+          "added": 1,
+          "definedFuncs": 43
+        }
+      ],
+      "counts": {
+        "flush:+2@71(defined 6)": 1,
+        "batch-decision:unchanged(host)": 19,
+        "flush:+6@74(defined 6)": 1,
+        "concat-async5:host×5": 1,
+        "late-import:__concat_5-new@imp97-batchOpen": 1,
+        "flush:+2@96(defined 8)": 1,
+        "flush:+1@98(defined 39)": 1,
+        "flush:+1@99(defined 40)": 1,
+        "flush:+1@100(defined 41)": 1,
+        "flush:+1@101(defined 42)": 1,
+        "flush:+1@102(defined 43)": 1
+      }
+    },
+    {
+      "fixture": "ASYNC",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 53921,
+      "sha256": "73a1355f04fb7a6c2dff74e7b63d282f957f9a3b276958547e7197d7b50feca8",
+      "errors": [],
+      "imports": [
+        "func:env.__timer_set_timeout#0",
+        "func:env.console_log_string#1",
+        "func:env.Promise_all#2",
+        "func:env.Promise_new#3",
+        "func:env.__make_callback#4",
+        "func:env.Promise_resolve#5",
+        "func:env.Promise_then2#6",
+        "func:env.Promise_new_pending#7",
+        "func:env.Promise_settle_resolve#8",
+        "func:env.Promise_settle_reject#9",
+        "func:env.__unbox_number#10",
+        "func:env.__box_number#11",
+        "func:env.__js_array_new#12",
+        "func:env.__js_array_push#13",
+        "func:env.__call_function#14",
+        "func:env.__new_TypeError#15",
+        "func:env.Promise_reject#16",
+        "func:env.__get_caught_exception#17",
+        "func:env.__make_iterable#18",
+        "func:env.__extern_is_undefined#19",
+        "func:env.__copy_wasm_struct_sidecar#20",
+        "func:env.__extern_length#21",
+        "func:env.__extern_get#22",
+        "func:env.__array_from_iter#23",
+        "func:env.__str_from_mem#24",
+        "func:env.__str_to_mem#25",
+        "func:env.__str_extern_len#26",
+        "func:env.__date_now#27",
+        "func:env.__call_function_0#28",
+        "func:env.__call_function_1#29",
+        "func:env.__call_function_2#30",
+        "func:env.__call_function_3#31",
+        "func:env.__call_function_4#32"
+      ],
+      "funcImports": [
+        "env.__timer_set_timeout#0",
+        "env.console_log_string#1",
+        "env.Promise_all#2",
+        "env.Promise_new#3",
+        "env.__make_callback#4",
+        "env.Promise_resolve#5",
+        "env.Promise_then2#6",
+        "env.Promise_new_pending#7",
+        "env.Promise_settle_resolve#8",
+        "env.Promise_settle_reject#9",
+        "env.__unbox_number#10",
+        "env.__box_number#11",
+        "env.__js_array_new#12",
+        "env.__js_array_push#13",
+        "env.__call_function#14",
+        "env.__new_TypeError#15",
+        "env.Promise_reject#16",
+        "env.__get_caught_exception#17",
+        "env.__make_iterable#18",
+        "env.__extern_is_undefined#19",
+        "env.__copy_wasm_struct_sidecar#20",
+        "env.__extern_length#21",
+        "env.__extern_get#22",
+        "env.__array_from_iter#23",
+        "env.__str_from_mem#24",
+        "env.__str_to_mem#25",
+        "env.__str_extern_len#26",
+        "env.__date_now#27",
+        "env.__call_function_0#28",
+        "env.__call_function_1#29",
+        "env.__call_function_2#30",
+        "env.__call_function_3#31",
+        "env.__call_function_4#32"
+      ],
+      "demoted": [
+        {
+          "displayName": "delay",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "body-shape-rejected",
+          "detail": "delay rejected by IR selection (body-shape-rejected)"
+        },
+        {
+          "displayName": "fetchUser",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "fetchUser rejected by IR selection (call-graph-closure)"
+        },
+        {
+          "displayName": "fetchAllSequential",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "fetchAllSequential rejected by IR selection (call-graph-closure)"
+        },
+        {
+          "displayName": "fetchAllParallel",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "fetchAllParallel rejected by IR selection (call-graph-closure)"
+        },
+        {
+          "displayName": "main",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "main rejected by IR selection (call-graph-closure)"
+        }
+      ],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "setTimeout",
+          "host": false,
+          "standalone": false,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": false,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "flush",
+          "importsBefore": 83,
+          "added": 3,
+          "definedFuncs": 68
+        },
+        {
+          "site": "flush",
+          "importsBefore": 86,
+          "added": 1,
+          "definedFuncs": 68
+        },
+        {
+          "site": "flush",
+          "importsBefore": 87,
+          "added": 2,
+          "definedFuncs": 73
+        },
+        {
+          "site": "flush",
+          "importsBefore": 89,
+          "added": 1,
+          "definedFuncs": 73
+        },
+        {
+          "site": "flush",
+          "importsBefore": 90,
+          "added": 5,
+          "definedFuncs": 73
+        },
+        {
+          "site": "flush",
+          "importsBefore": 95,
+          "added": 3,
+          "definedFuncs": 76
+        },
+        {
+          "site": "flush",
+          "importsBefore": 98,
+          "added": 1,
+          "definedFuncs": 78
+        },
+        {
+          "site": "flush",
+          "importsBefore": 99,
+          "added": 1,
+          "definedFuncs": 112
+        },
+        {
+          "site": "flush",
+          "importsBefore": 100,
+          "added": 1,
+          "definedFuncs": 113
+        },
+        {
+          "site": "flush",
+          "importsBefore": 101,
+          "added": 1,
+          "definedFuncs": 114
+        },
+        {
+          "site": "flush",
+          "importsBefore": 102,
+          "added": 1,
+          "definedFuncs": 115
+        },
+        {
+          "site": "flush",
+          "importsBefore": 103,
+          "added": 1,
+          "definedFuncs": 116
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(none)": 1,
+        "flush:+3@83(defined 68)": 1,
+        "flush:+1@86(defined 68)": 1,
+        "flush:+2@87(defined 73)": 1,
+        "flush:+1@89(defined 73)": 1,
+        "flush:+5@90(defined 73)": 1,
+        "flush:+3@95(defined 76)": 1,
+        "flush:+1@98(defined 78)": 1,
+        "flush:+1@99(defined 112)": 1,
+        "flush:+1@100(defined 113)": 1,
+        "flush:+1@101(defined 114)": 1,
+        "flush:+1@102(defined 115)": 1,
+        "flush:+1@103(defined 116)": 1
+      }
+    },
+    {
+      "fixture": "ASYNC",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 140892,
+      "sha256": "2d063f76ce31fb09810bb9e74c4849a361ee9857c9995595fb5a994115502e9f",
+      "errors": [],
+      "imports": [
+        "func:env.__timer_set_timeout#0"
+      ],
+      "funcImports": [
+        "env.__timer_set_timeout#0"
+      ],
+      "demoted": [],
+      "events": [
+        {
+          "site": "batch-decision",
+          "fn": "setTimeout",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "delay",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchUser",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchUser__ir_async_state_0",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchUser__ir_async_state_1",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_0",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_1",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_2",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_3",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllSequential__ir_async_state_4",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllParallel",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllParallel__ir_async_state_0",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "fetchAllParallel__ir_async_state_1",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main__ir_async_state_0",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main__ir_async_state_1",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "batch-decision",
+          "fn": "main__ir_async_state_2",
+          "host": false,
+          "standalone": true,
+          "changed": false,
+          "nativeStrings": true,
+          "standaloneFlag": true,
+          "wasi": false,
+          "strict": false
+        },
+        {
+          "site": "concat-async5",
+          "arity": 5,
+          "native": true,
+          "numImportFuncs": 1,
+          "frozen": false,
+          "batchOpen": false
+        },
+        {
+          "site": "native-batched",
+          "arity": 5,
+          "declined": false,
+          "cached": false
+        }
+      ],
+      "counts": {
+        "batch-decision:unchanged(standalone)": 18,
+        "concat-async5:native×5": 1,
+        "native-batched:5-mint": 1
+      }
+    },
+    {
+      "fixture": "ASYNC",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 120698,
+      "sha256": "1395c854c66d7615e6a1b1ecca102e775f62a17777adb2d87446207fbf24c953",
+      "errors": [
+        "Host import \"env.setTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description."
+      ],
+      "imports": [
+        "func:wasi_snapshot_preview1.fd_write#0",
+        "func:wasi_snapshot_preview1.poll_oneoff#1",
+        "func:wasi_snapshot_preview1.clock_time_get#2"
+      ],
+      "funcImports": [
+        "wasi_snapshot_preview1.fd_write#0",
+        "wasi_snapshot_preview1.poll_oneoff#1",
+        "wasi_snapshot_preview1.clock_time_get#2"
+      ],
+      "demoted": [
+        {
+          "displayName": "delay",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "body-shape-rejected",
+          "detail": "delay rejected by IR selection (body-shape-rejected)"
+        },
+        {
+          "displayName": "fetchUser",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "async-function",
+          "detail": "fetchUser rejected by IR selection (async-function)"
+        },
+        {
+          "displayName": "fetchAllSequential",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "async-function",
+          "detail": "fetchAllSequential rejected by IR selection (async-function)"
+        },
+        {
+          "displayName": "fetchAllParallel",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "async-function",
+          "detail": "fetchAllParallel rejected by IR selection (async-function)"
+        },
+        {
+          "displayName": "main",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "async-function",
+          "detail": "main rejected by IR selection (async-function)"
+        }
+      ],
+      "events": [
+        {
+          "site": "native-batched",
+          "arity": 5,
+          "declined": false,
+          "cached": false
+        },
+        {
+          "site": "legacy-native-batched",
+          "arity": 5,
+          "got": true
+        },
+        {
+          "site": "native-batched",
+          "arity": 5,
+          "declined": false,
+          "cached": true
+        },
+        {
+          "site": "legacy-native-batched",
+          "arity": 5,
+          "got": true
+        }
+      ],
+      "counts": {
+        "native-batched:5-mint": 1,
+        "legacy-native-batched:5": 2,
+        "native-batched:5-cached": 1
+      }
+    },
+    {
+      "fixture": "ASYNC",
+      "lane": "linear",
+      "success": false,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "errors": [
+        "Codegen error: Unsupported constructor: Promise",
+        "Codegen error: Unsupported expression in linear backend: AwaitExpression",
+        "Codegen error: Unsupported expression in linear backend: AwaitExpression",
+        "Codegen error: Unsupported expression in linear backend: AwaitExpression",
+        "Codegen error: Unsupported method call: .log()",
+        "Codegen error: Unsupported method call: .now()",
+        "Codegen error: Unsupported expression in linear backend: AwaitExpression",
+        "Codegen error: Unsupported method call: .now()",
+        "Codegen error: Unsupported method call: .log()",
+        "Codegen error: Unsupported method call: .now()",
+        "Codegen error: Unsupported expression in linear backend: AwaitExpression",
+        "Codegen error: Unsupported method call: .now()",
+        "Codegen error: Unsupported method call: .log()",
+        "Codegen error: Unsupported method call: .log()"
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "ASYNC",
+      "lane": "gc-strict",
+      "success": false,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "errors": [
+        "Host import \"env.__timer_set_timeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.eval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.isNaN\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.isFinite\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.alert\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.blur\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.cancelIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.captureEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.close\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.confirm\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.focus\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.getComputedStyle\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.getSelection\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.matchMedia\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.moveBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.moveTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.open\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.print\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.prompt\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.releaseEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.requestIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.resizeBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.resizeTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.stop\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.toString\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.dispatchEvent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.cancelAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.requestAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.atob\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.btoa\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.clearInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.clearTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.fetch\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.queueMicrotask\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.reportError\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.setInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.setTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.structuredClone\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__str_from_mem\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__str_to_mem\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__str_extern_len\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__date_now\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__date_now\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__date_now\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.__date_now\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Codegen error: absoluteFuncIndex: unresolved call target (funcIdx=undefined) baked into a compiled function body — the call has no resolvable function index. Under --no-host-imports / standalone strict mode the strict gate dropped these host import(s), one of which was baked into a compiled helper body rather than degrading cleanly: env.__timer_set_timeout, env.eval, env.isNaN, env.isFinite, env.alert, env.blur, env.cancelIdleCallback, env.captureEvents, env.close, env.confirm, env.focus, env.getComputedStyle, env.getSelection, env.matchMedia, env.moveBy, env.moveTo, env.open, env.postMessage, env.print, env.prompt, env.releaseEvents, env.requestIdleCallback, env.resizeBy, env.resizeTo, env.scroll, env.scrollBy, env.scrollTo, env.stop, env.toString, env.dispatchEvent, env.cancelAnimationFrame, env.requestAnimationFrame, env.atob, env.btoa, env.clearInterval, env.clearTimeout, env.createImageBitmap, env.fetch, env.queueMicrotask, env.reportError, env.setInterval, env.setTimeout, env.structuredClone, env.addEventListener, env.removeEventListener, env.__js_array_new, env.__js_array_push, env.__str_from_mem, env.__str_to_mem, env.__str_extern_len, env.__date_now. This feature has no Wasm-native standalone path yet — provide one, or keep the feature off the strict path (see the preceding host-import degrade diagnostics; #2961/#3009)."
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "setTimeout",
+          "kind": "unsupported",
+          "stage": "resolve",
+          "code": "late-preparation-unsupported",
+          "detail": "the exact compiler timer capability is absent from the final env import manifest"
+        },
+        {
+          "displayName": "delay",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "body-shape-rejected",
+          "detail": "delay rejected by IR selection (body-shape-rejected)"
+        },
+        {
+          "displayName": "fetchUser",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "fetchUser rejected by IR selection (call-graph-closure)"
+        },
+        {
+          "displayName": "fetchAllSequential",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "fetchAllSequential rejected by IR selection (call-graph-closure)"
+        },
+        {
+          "displayName": "fetchAllParallel",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "call-graph-closure",
+          "detail": "fetchAllParallel rejected by IR selection (call-graph-closure)"
+        },
+        {
+          "displayName": "main",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "host-surface-unavailable",
+          "detail": "main rejected by IR selection (host-surface-unavailable)"
+        }
+      ],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 1,
+          "added": 1,
+          "definedFuncs": 90
+        }
+      ],
+      "counts": {
+        "flush:+1@1(defined 90)": 1
+      }
+    },
+    {
+      "fixture": "EVALFN",
+      "lane": "gc-host",
+      "success": true,
+      "bytes": 2546,
+      "sha256": "15cd9f41cf319967f07dddaf2e859642006789c79e0bb2f6ffe7b8f0e3928902",
+      "errors": [],
+      "imports": [
+        "global:string_constants.mk@0",
+        "global:string_constants.a@1",
+        "global:string_constants.b@2",
+        "global:string_constants.return a + b@3",
+        "global:string_constants.@4",
+        "func:env.__host_add#0",
+        "func:env.__call_function_2#1",
+        "func:env.__call_function_3#2",
+        "func:env.__call_function_4#3"
+      ],
+      "funcImports": [
+        "env.__host_add#0",
+        "env.__call_function_2#1",
+        "env.__call_function_3#2",
+        "env.__call_function_4#3"
+      ],
+      "demoted": [
+        {
+          "displayName": "mk",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "constructor-resolution-unsupported",
+          "detail": "mk rejected by IR selection (constructor-resolution-unsupported)"
+        }
+      ],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 57,
+          "added": 1,
+          "definedFuncs": 2
+        },
+        {
+          "site": "flush",
+          "importsBefore": 76,
+          "added": 1,
+          "definedFuncs": 3
+        },
+        {
+          "site": "flush",
+          "importsBefore": 77,
+          "added": 1,
+          "definedFuncs": 4
+        },
+        {
+          "site": "flush",
+          "importsBefore": 78,
+          "added": 1,
+          "definedFuncs": 5
+        }
+      ],
+      "counts": {
+        "flush:+1@57(defined 2)": 1,
+        "flush:+1@76(defined 3)": 1,
+        "flush:+1@77(defined 4)": 1,
+        "flush:+1@78(defined 5)": 1
+      }
+    },
+    {
+      "fixture": "EVALFN",
+      "lane": "gc-native-strings",
+      "success": true,
+      "bytes": 24470,
+      "sha256": "b7c6df8c0aab3ff23ab2955068519b480ffa888be4e9f5815f4ad534cd895436",
+      "errors": [],
+      "imports": [
+        "func:env.__host_add#0",
+        "func:env.__call_function_2#1",
+        "func:env.__call_function_3#2",
+        "func:env.__call_function_4#3"
+      ],
+      "funcImports": [
+        "env.__host_add#0",
+        "env.__call_function_2#1",
+        "env.__call_function_3#2",
+        "env.__call_function_4#3"
+      ],
+      "demoted": [
+        {
+          "displayName": "mk",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "constructor-resolution-unsupported",
+          "detail": "mk rejected by IR selection (constructor-resolution-unsupported)"
+        }
+      ],
+      "events": [
+        {
+          "site": "flush",
+          "importsBefore": 52,
+          "added": 1,
+          "definedFuncs": 52
+        },
+        {
+          "site": "flush",
+          "importsBefore": 71,
+          "added": 1,
+          "definedFuncs": 53
+        },
+        {
+          "site": "flush",
+          "importsBefore": 72,
+          "added": 1,
+          "definedFuncs": 54
+        },
+        {
+          "site": "flush",
+          "importsBefore": 73,
+          "added": 1,
+          "definedFuncs": 55
+        }
+      ],
+      "counts": {
+        "flush:+1@52(defined 52)": 1,
+        "flush:+1@71(defined 53)": 1,
+        "flush:+1@72(defined 54)": 1,
+        "flush:+1@73(defined 55)": 1
+      }
+    },
+    {
+      "fixture": "EVALFN",
+      "lane": "standalone",
+      "success": true,
+      "bytes": 192791,
+      "sha256": "3f56f1c2a58e99ff6a8b98aca0267555acc5504bf7bae3add377bb99971c5a0e",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "mk",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "constructor-resolution-unsupported",
+          "detail": "mk rejected by IR selection (constructor-resolution-unsupported)"
+        }
+      ],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "EVALFN",
+      "lane": "wasi",
+      "success": true,
+      "bytes": 104996,
+      "sha256": "14b0e963c63aafa4e6be1d0f10f02b10b93101d978e47d60141339c02489725b",
+      "errors": [],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "mk",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "constructor-resolution-unsupported",
+          "detail": "mk rejected by IR selection (constructor-resolution-unsupported)"
+        }
+      ],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "EVALFN",
+      "lane": "linear",
+      "success": false,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "errors": [
+        "Codegen error: Unsupported constructor: Function"
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [],
+      "events": [],
+      "counts": {}
+    },
+    {
+      "fixture": "EVALFN",
+      "lane": "gc-strict",
+      "success": true,
+      "bytes": 97736,
+      "sha256": "a61ffa36edd89e26d0e547fbf6a29681b224ca1691d9704a189a50d1ea0ae5a6",
+      "errors": [
+        "Host import \"env.eval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.isNaN\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.isFinite\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.alert\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.blur\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.cancelIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.captureEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.close\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.confirm\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.focus\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.getComputedStyle\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.getSelection\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.matchMedia\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.moveBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.moveTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.open\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.print\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.prompt\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.releaseEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.requestIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.resizeBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.resizeTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.stop\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.toString\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.dispatchEvent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.cancelAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.requestAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.atob\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.btoa\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.clearInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.clearTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.fetch\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.queueMicrotask\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.reportError\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.setInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.setTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.structuredClone\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description.",
+        "Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Either add a Wasm-native fallback for this feature or, if you need a transitional host import, add an entry to HOST_IMPORT_ALLOWLIST citing the tracking issue and include \"[allowlist-grow]\" in your PR description."
+      ],
+      "imports": [],
+      "funcImports": [],
+      "demoted": [
+        {
+          "displayName": "mk",
+          "kind": "unsupported",
+          "stage": "select",
+          "code": "constructor-resolution-unsupported",
+          "detail": "mk rejected by IR selection (constructor-resolution-unsupported)"
+        }
+      ],
+      "events": [],
+      "counts": {}
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+import { compile } from "/home/user/js2/.claude/worktrees/verify-string-const/src/index.ts";
+const r: any = await compile('export function f(b: boolean): string { return `${b}`; }', {});
+console.log("ok", r.success, r.binary.length, (r.wat.match(/^\s*\(import "[^"]*" "[^"]*" \((global|func)/gm) ?? []).join(" | "));

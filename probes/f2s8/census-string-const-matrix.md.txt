@@ -1,0 +1,81 @@
+grounding a07f65319f1d31b4ec8e528651c5afbb6d66a320
+| fixture | lane | ok | bytes | sha12 | import shape (ordered) | string_constants | string_constants16 | seam reaches | demoted |
+|---|---|---|---|---|---|---|---|---|---|
+| ASCII | gc-host | y | 128 | ec288e5a80c2 | global:string_constants×3 | "f"@0 "hello"@1 ""@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| ASCII | gc-native-strings | y | 22460 | 39fa2bc1a208 | func:env×3 | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| ASCII | standalone | y | 22624 | 5f61b896ff9f | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| ASCII | wasi | y | 22651 | 541551c6c8eb | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| ASCII | linear | y | 4908 | 3597575831d7 | (none) | - | - | linear-emitStringConst=1 | - |
+| ASCII | standalone+utf8 | y | 24016 | 2df1188d9f4c | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| BMP | gc-host | y | 135 | d43376fd9ddf | global:string_constants×3 | "f"@0 "grüße→ä"@1 ""@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| BMP | gc-native-strings | y | 22467 | 31ded8f9970f | func:env×3 | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| BMP | standalone | y | 22631 | 0c23cd17e584 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| BMP | wasi | y | 22658 | 00ab6653aa54 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| BMP | linear | y | 4916 | 69f541d2057b | (none) | - | - | - | - |
+| BMP | standalone+utf8 | y | 24037 | 44ce90fb325a | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| PAIR | gc-host | y | 129 | 78efa46dcdd7 | global:string_constants×3 | "f"@0 "a😀b"@1 ""@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| PAIR | gc-native-strings | y | 22459 | 7b25b25c97ed | func:env×3 | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| PAIR | standalone | y | 22623 | 2d612455af30 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| PAIR | wasi | y | 22650 | 1f52956c1daa | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| PAIR | linear | y | 4910 | 203a0f368a08 | (none) | - | - | - | - |
+| PAIR | standalone+utf8 | y | 24019 | 55aca1e9655f | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONE | gc-host | y | 137 | d28c83d05e5a | global:string_constants×1 → global:string_constants16×1 → global:string_constants×1 | "f"@0 ""@2 | 0078d8000079@1 | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| LONE | gc-native-strings | y | 22455 | a581a5577c10 | func:env×3 | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| LONE | standalone | y | 22619 | 0260f1bf3cb4 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONE | wasi | y | 22646 | 517f96cb0f67 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONE | linear | y | 4909 | 07192a2ce977 | (none) | - | - | - | - |
+| LONE | standalone+utf8 | y | 24023 | 44d4d5f06dcb | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONG2000 | gc-host | y | 2125 | 759d72be7b2c | global:string_constants×3 | "f"@0 xxxxxxxxxx…(2000)@1 ""@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| LONG2000 | gc-native-strings | y | 28447 | 969a66ef783a | func:env×3 | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| LONG2000 | standalone | y | 28611 | 60485f088132 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONG2000 | wasi | y | 28638 | 9ab14816c521 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONG2000 | linear | y | 6906 | 0d3d65da56ce | (none) | - | - | linear-emitStringConst=1 | - |
+| LONG2000 | standalone+utf8 | y | 30004 | 476ee7eedb9e | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONG12000 | gc-host | y | 12125 | 9c3faa4bcf61 | global:string_constants×3 | "f"@0 yyyyyyyyyy…(12000)@1 ""@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| LONG12000 | gc-native-strings | y | 58551 | b40530190445 | func:env×3 | - | - | intern=3 nativeLit/global=3 oversized=1 nativeLit/callable=1 native-materialize/callable=1 storageForConst/native-not-global=1 materializerForConst=1 attach=1 emitStringConst/materializer=1 | - |
+| LONG12000 | standalone | y | 58715 | 020913bb2498 | (none) | - | - | intern=3 nativeLit/global=3 oversized=1 nativeLit/callable=1 native-materialize/callable=1 storageForConst/native-not-global=1 materializerForConst=1 attach=1 emitStringConst/materializer=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONG12000 | wasi | y | 58742 | e2788aa2118c | (none) | - | - | intern=3 nativeLit/global=3 oversized=1 nativeLit/callable=1 native-materialize/callable=1 storageForConst/native-not-global=1 materializerForConst=1 attach=1 emitStringConst/materializer=1 addStringConstantGlobal/native-sentinel=1 | - |
+| LONG12000 | linear | y | 16908 | c1ff0efd79ac | (none) | - | - | linear-emitStringConst=1 | - |
+| LONG12000 | standalone+utf8 | y | 60119 | 13cb6748e207 | (none) | - | - | intern=3 nativeLit/global=3 oversized=1 nativeLit/callable=1 native-materialize/callable=1 storageForConst/native-not-global=1 materializerForConst=1 attach=1 emitStringConst/materializer=1 addStringConstantGlobal/native-sentinel=1 | - |
+| DUP | gc-host | y | 163 | d3f6fc8bb219 | global:string_constants×4 | "f"@0 "same"@1 "g"@2 ""@3 | - | addStringConstantGlobal/host-import=4 prepare-host-global=1 storageForConst/host-abi-ref=2 attach=2 emitStringConst/storage=2 | - |
+| DUP | gc-native-strings | y | 22471 | 8e10e1a212ea | func:env×3 | - | - | intern=3 nativeLit/global=3 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 | - |
+| DUP | standalone | y | 22635 | ecc16fc97e90 | (none) | - | - | intern=3 nativeLit/global=3 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 addStringConstantGlobal/native-sentinel=1 | - |
+| DUP | wasi | y | 22662 | 1237316119bd | (none) | - | - | intern=3 nativeLit/global=3 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 addStringConstantGlobal/native-sentinel=1 | - |
+| DUP | linear | y | 4939 | 892d1170e218 | (none) | - | - | linear-emitStringConst=2 | - |
+| DUP | standalone+utf8 | y | 24027 | ff7b7a68f946 | (none) | - | - | intern=3 nativeLit/global=3 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 addStringConstantGlobal/native-sentinel=1 | - |
+| TPLONLY | gc-host | y | 173 | 6f1864a432ac | global:string_constants×3 → func:env×1 | "f"@0 ""@1 "-suffix"@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=2 storageForConst/host-abi-ref=2 attach=2 emitStringConst/storage=2 | - |
+| TPLONLY | gc-native-strings | y | 22474 | 7036b096261a | func:env×3 | - | - | intern=3 nativeLit/global=3 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 | - |
+| TPLONLY | standalone | y | 23255 | c9ad6e119de4 | (none) | - | - | intern=6 nativeLit/global=6 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 addStringConstantGlobal/native-sentinel=1 | - |
+| TPLONLY | wasi | y | 22665 | 0e3da7fa0abc | (none) | - | - | intern=3 nativeLit/global=3 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 addStringConstantGlobal/native-sentinel=1 | - |
+| TPLONLY | linear | y | 4943 | 7d1754d100f2 | (none) | - | - | linear-emitStringConst=1 | - |
+| TPLONLY | standalone+utf8 | y | 24664 | 2b17e9323e64 | (none) | - | - | intern=6 nativeLit/global=6 native-materialize/global=2 storageForConst/native-global=2 attach=2 emitStringConst/storage=2 addStringConstantGlobal/native-sentinel=1 | - |
+| EMPTY | gc-host | y | 102 | 23057a8b5cd4 | global:string_constants×2 | "f"@0 ""@1 | - | addStringConstantGlobal/host-import=2 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| EMPTY | gc-native-strings | y | 22416 | 08879742f6a3 | func:env×3 | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| EMPTY | standalone | y | 22580 | 187d045fc709 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| EMPTY | wasi | y | 22607 | ad42a2e2d9be | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| EMPTY | linear | y | 4903 | c8fc8bf17174 | (none) | - | - | linear-emitStringConst=1 | - |
+| EMPTY | standalone+utf8 | y | 24001 | bfd03fdc0b52 | (none) | - | - | intern=2 nativeLit/global=2 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 addStringConstantGlobal/native-sentinel=1 | - |
+| INIT | gc-host | y | 212 | 217d940c4d7b | func:env×1 → global:string_constants×3 | "boot"@0 "f"@1 ""@2 | - | addStringConstantGlobal/host-import=3 prepare-host-global=1 storageForConst/host-abi-ref=1 attach=1 emitStringConst/storage=1 | - |
+| INIT | gc-native-strings | y | 22558 | d19d3fb25fb8 | func:env×4 | - | - | intern=2 nativeLit/global=2 | <module-init>:operand-coercion-unsupported |
+| INIT | standalone | y | 49242 | 9f838a6152cf | (none) | - | - | intern=34 nativeLit/global=34 addStringConstantGlobal/native-sentinel=8 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| INIT | wasi | y | 22829 | 4676e4fd7f97 | func:wasi_snapshot_preview1×1 | - | - | intern=1 nativeLit/global=1 addStringConstantGlobal/native-sentinel=1 | <module-init>:host-surface-unavailable |
+| INIT | linear | y | 4878 | 38a5f0736921 | (none) | - | - | - | - |
+| INIT | standalone+utf8 | y | 50634 | e6ab2dd35c75 | (none) | - | - | intern=34 nativeLit/global=34 addStringConstantGlobal/native-sentinel=8 native-materialize/global=1 storageForConst/native-global=1 attach=1 emitStringConst/storage=1 | - |
+| INITCONST | gc-host | y | 203 | 95d775e22568 | global:string_constants×3 | "hi"@0 "f"@1 ""@2 | - | addStringConstantGlobal/host-import=3 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| INITCONST | gc-native-strings | y | 22531 | 1016f0b78e63 | func:env×3 | - | - | intern=2 nativeLit/global=2 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| INITCONST | standalone | y | 49203 | da5d7958b052 | (none) | - | - | intern=34 nativeLit/global=34 addStringConstantGlobal/native-sentinel=10 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| INITCONST | wasi | y | 49281 | abfc168baf8e | (none) | - | - | intern=34 nativeLit/global=34 addStringConstantGlobal/native-sentinel=10 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| INITCONST | linear | y | 4877 | 048315f9aaa2 | (none) | - | - | - | - |
+| INITCONST | standalone+utf8 | y | 50643 | abb7759ec377 | (none) | - | - | intern=34 nativeLit/global=34 addStringConstantGlobal/native-sentinel=10 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| LATEGLOBAL | gc-host | y | 367 | 2beb2b4290ba | global:string_constants×3 → func:env×1 → global:string_constants×1 | "hi"@0 "f"@1 ""@2 "n is not defined"@3 | - | addStringConstantGlobal/host-import=4 fixupGlobals=1 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| LATEGLOBAL | gc-native-strings | y | 22695 | f3779c576dd1 | func:env×4 → global:string_constants×1 | "n is not defined"@0 | - | intern=2 nativeLit/global=2 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| LATEGLOBAL | standalone | y | 49334 | d36c56d48c11 | (none) | - | - | intern=36 nativeLit/global=36 addStringConstantGlobal/native-sentinel=11 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| LATEGLOBAL | wasi | y | 49412 | 3cd3e9caabf3 | (none) | - | - | intern=36 nativeLit/global=36 addStringConstantGlobal/native-sentinel=11 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| LATEGLOBAL | linear | y | 4906 | 3a39f9907505 | (none) | - | - | - | - |
+| LATEGLOBAL | standalone+utf8 | y | 50774 | 8e7a0882797a | (none) | - | - | intern=36 nativeLit/global=36 addStringConstantGlobal/native-sentinel=11 | f:body-shape-rejected <module-init>:body-shape-rejected |
+| CLEAN | gc-host | y | 113 | 8ef3e1e32716 | global:string_constants×2 | "add"@0 ""@1 | - | addStringConstantGlobal/host-import=2 | - |
+| CLEAN | gc-native-strings | y | 21973 | da0851f60370 | (none) | - | - | intern=1 nativeLit/global=1 | - |
+| CLEAN | standalone | y | 22588 | 3107a0dc0e8b | (none) | - | - | intern=1 nativeLit/global=1 addStringConstantGlobal/native-sentinel=1 | - |
+| CLEAN | wasi | y | 22615 | 5aa30d0719d9 | (none) | - | - | intern=1 nativeLit/global=1 addStringConstantGlobal/native-sentinel=1 | - |
+| CLEAN | linear | y | 4874 | 7774cffab5c6 | (none) | - | - | - | - |
+| CLEAN | standalone+utf8 | y | 23992 | 4f9bfd7f1706 | (none) | - | - | intern=1 nativeLit/global=1 addStringConstantGlobal/native-sentinel=1 | - |

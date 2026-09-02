@@ -1,0 +1,23 @@
+import { readFileSync } from "node:fs";
+import { compile } from "../src/index.js";
+const g = globalThis as unknown as { __f2s6?: Array<Record<string, unknown>> };
+const fx: Record<string, string> = {
+  CAT3: `export function cat3(a: string, b: string, c: string): string { return a + b + c; }`,
+  TPLEQ: `export function tpleq(a: string): boolean { return \`\${a}!\` === "hi!"; }`,
+  CATNUM3: `export function cn3(a: string, n: number, b: string): string { return a + n + b; }`,
+  ASYNC: readFileSync("website/playground/examples/js/async.ts", "utf8"),
+};
+for (const [name, source] of Object.entries(fx)) {
+  g.__f2s6 = [];
+  const r = await compile(source, { trackIrOutcomes: true, fileName: name === "ASYNC" ? "website/playground/examples/js/async.ts" : `${name}.ts` });
+  const ev = g.__f2s6 ?? [];
+  const li = ev.findIndex((e) => e.site === "late-import" && String(e.name).startsWith("__concat_"));
+  const fl = ev.findIndex((e, i) => i > li && e.site === "flush");
+  const between = ev.slice(li, fl + 1);
+  const refs = between.filter((e) => e.site === "shift-ref").map((e) => e.from);
+  const maps = between.filter((e) => e.site === "shift-map").map((e) => `${e.name}@${e.from}`);
+  const flush = ev[fl];
+  console.log(`${name}: ok=${r.success} lateImport=${JSON.stringify(ev[li])} flush=${JSON.stringify(flush)} shiftedRefs=${refs.length} [${refs.slice(0, 12).join(",")}] shiftedMap=${maps.length} [${maps.slice(0, 8).join(",")}]`);
+  const stable = ev.filter((e) => e.site === "shift-ref").length;
+  console.log(`   total shift-ref events in whole compile: ${stable}; total flushes: ${ev.filter((e) => e.site === "flush").length}`);
+}

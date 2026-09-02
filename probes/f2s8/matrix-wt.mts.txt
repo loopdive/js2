@@ -1,0 +1,52 @@
+import { createHash } from "node:crypto";
+import { compile } from "/home/user/js2/.claude/worktrees/verify-string-const/src/index.ts";
+import { getLastLinearIrReport } from "/home/user/js2/.claude/worktrees/verify-string-const/src/ir/backend/linear-integration.ts";
+const fixtures: Record<string,string> = {
+  ASCII: 'export function f(): string { return "hello"; }',
+  LONE: 'export function f(): string { return "x\\uD800y"; }',
+  LONG12000: `export function f(): string { return "${"y".repeat(12000)}"; }`,
+  DUP: 'export function f(): string { return "same"; }\nexport function g(): string { return "same"; }',
+  TPLONLY: 'export function f(a: string): string { return `${a}-suffix`; }',
+  CLEAN: 'export function add(a: number, b: number): number { return a + b; }',
+  LATEGLOBAL: 'let n: number = 0;\nlet s: string = "hi";\nexport function f(): string { n = n + 1; return s; }',
+  BMP: 'export function f(): string { return "grüße→ä"; }',
+  PAIR: 'export function f(): string { return "a😀b"; }',
+  EMPTY: 'export function f(): string { return ""; }',
+  LONG2000: `export function f(): string { return "${"x".repeat(2000)}"; }`,
+  INITCONST: 'export const greeting: string = "hi";\nexport function f(): string { return greeting; }',
+  INIT: 'console.log("boot");\nexport function f(): number { return 1; }',
+};
+const T = { trackIrOutcomes: true };
+const lanes: Record<string, any> = {
+  "gc-host": { ...T },
+  "gc-native-strings": { nativeStrings: true, ...T },
+  standalone: { target: "standalone", ...T },
+  wasi: { target: "wasi", ...T },
+  linear: { target: "linear", ...T },
+  "standalone+utf8": { target: "standalone", utf8Storage: true, ...T },
+};
+const only = process.argv[2]?.split(",");
+const reach: string[] = []; const origErr = console.error; console.error = (...a: any[]) => { const s = a.join(" "); if (s.startsWith("REACH")) reach.push(s.slice(6)); else origErr(...a); };
+for (const [fid, src] of Object.entries(fixtures)) {
+  if (only && !only.includes(fid)) continue;
+  for (const [lid, opts] of Object.entries(lanes)) {
+    try {
+      reach.length = 0;
+      const r: any = await compile(src, opts);
+      const bin: Uint8Array = r.binary;
+      const sha256 = createHash("sha256").update(bin).digest("hex").slice(0,12);
+      const sha1 = createHash("sha1").update(bin).digest("hex").slice(0,12);
+      const imps = (r.wat.match(/^\s*\(import "[^"]*" "[^"]*" \((global|func)/gm) ?? []).map((l: string) => { const m = l.match(/\(import "([^"]*)" "([^"]*)" \((global|func)/)!; const n = m[2].length>16? m[2].slice(0,6)+"…("+m[2].length+")": m[2]; return `${m[3]}:${m[1]}.${JSON.stringify(n)}`; });
+      const strlit = (r.wat.match(/\$__strlit_\w+|\$__str_concat_\w+/g) ?? []).filter((v: string, i: number, a: string[]) => a.indexOf(v)===i);
+      const outcomes = (r.irOutcomes ?? []).map((o: any) => `${o.owner ?? o.name ?? o.fn ?? "?"}:${o.outcome ?? o.kind ?? ""}:${o.reason ?? ""}`);
+      const lin = lid === "linear" ? getLastLinearIrReport() : undefined;
+      const linSummary = lin ? JSON.stringify(lin).slice(0, 300) : "";
+      const counts = new Map<string, number>(); for (const l of reach) { const k = l.split(" ")[0]; counts.set(k, (counts.get(k) ?? 0) + 1); }
+      console.log(`\t\tREACH ` + [...counts].map(([k,v]) => k + "=" + v).join(" "));
+      for (const l of reach) if (/host-import|fixupGlobals|prepare-scan|prepare-host-global|addHost|storageForConst|materializ|oversized|intern/.test(l)) console.log("      " + l);
+      console.log(`\t\toutcomes=` + JSON.stringify((r.irOutcomes ?? []).map((o: any) => ({ n: o.displayName, k: o.kind, r: o.reason ?? o.demotionReason ?? o.fallbackReason, ir: o.irBodyEmitted }))));
+      console.log(`${fid}\t${lid}\tok=${r.success}\tbytes=${bin.length}\tsha256=${sha256}\tsha1=${sha1}\timports=[${imps.join(" | ")}]\tstrlit=[${strlit.join(",")}]\tirOutcomes=[${outcomes.join(";")}]${linSummary?"\tlinear="+linSummary:""}`);
+      if (!r.success) console.log("   errors:", JSON.stringify(r.errors).slice(0,300));
+    } catch (e: any) { console.log(`${fid}\t${lid}\tTHREW ${String(e?.message ?? e).slice(0,200)}`); }
+  }
+}

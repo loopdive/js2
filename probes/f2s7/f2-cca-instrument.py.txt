@@ -1,0 +1,148 @@
+import re
+def patch(path, old, new, count=1):
+    s = open(path, encoding="utf8").read()
+    n = s.count(old)
+    assert n == count, f"{path}: expected {count} of {old[:70]!r}, found {n}"
+    open(path, "w", encoding="utf8").write(s.replace(old, new))
+    print("patched", path, old[:50].replace("\n", " "))
+PUSH = '((globalThis as any).__cca ??= []).push'
+I = "src/ir/integration.ts"
+L = "src/ir/backend/linear-integration.ts"
+F = "src/ir/from-ast.ts"
+
+# --- integration.ts: plan-time (resolver callbacks) ---
+patch(I, """      if (method === "charCodeAt") {
+        return {
+          funcName: native ? "__str_charCodeAt" : "__jsstr_charCodeAt",
+""", """      if (method === "charCodeAt") {
+        """ + PUSH + """({ site: "plan:stringMethodPlan", arm: native ? "native" : "host" });
+        return {
+          funcName: native ? "__str_charCodeAt" : "__jsstr_charCodeAt",
+""")
+patch(I, """    charReadPlan() {
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0) return null;
+        return {
+          hoist: { flattenFuncName: NATIVE_FLATTEN_FN, readFuncName: NATIVE_FLAT_CHARCODEAT_FN },
+          trustedFuncName: null,
+        };
+      }
+      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
+      return { hoist: null, trustedFuncName: JSSTR_CHARCODEAT_TRUSTED_FN };
+""", """    charReadPlan() {
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0) { """ + PUSH + """({ site: "plan:charReadPlan", arm: "native-decline" }); return null; }
+        """ + PUSH + """({ site: "plan:charReadPlan", arm: "native-hoist" });
+        return {
+          hoist: { flattenFuncName: NATIVE_FLATTEN_FN, readFuncName: NATIVE_FLAT_CHARCODEAT_FN },
+          trustedFuncName: null,
+        };
+      }
+      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) { """ + PUSH + """({ site: "plan:charReadPlan", arm: "host-decline" }); return null; }
+      """ + PUSH + """({ site: "plan:charReadPlan", arm: "host-trusted" });
+      return { hoist: null, trustedFuncName: JSSTR_CHARCODEAT_TRUSTED_FN };
+""")
+patch(I, """      return (
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isPropertyAccessExpression(declaration.initializer.expression) &&
+        declaration.initializer.expression.name.text === "substring"
+      );
+    },
+""", """      const __pref = (
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isPropertyAccessExpression(declaration.initializer.expression) &&
+        declaration.initializer.expression.name.text === "substring"
+      );
+      """ + PUSH + """({ site: "plan:preferLegacyFlatSubstring", arm: __pref ? "true" : "false" });
+      return __pref;
+    },
+""")
+# --- integration.ts: resolve arms ---
+patch(I, """  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
+    index = ensureHostCharCodeAtGuarded(ctx);
+""", """  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
+    index = ensureHostCharCodeAtGuarded(ctx);
+    """ + PUSH + """({ site: "resolve:6417", arm: "host-guarded", symbol, index });
+""")
+patch(I, """  } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
+    index = ensureNativeCharCodeAtHelper(ctx);
+""", """  } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
+    index = ensureNativeCharCodeAtHelper(ctx);
+    """ + PUSH + """({ site: "resolve:6421", arm: "native-guarded", symbol, index });
+""")
+patch(I, """    index =
+      symbol === NATIVE_FLATTEN_FN
+        ? nativeStrHelperHandle(ctx, NATIVE_FLATTEN_FN)
+        : ensureNativeFlatCharCodeAtHelper(ctx);
+""", """    index =
+      symbol === NATIVE_FLATTEN_FN
+        ? nativeStrHelperHandle(ctx, NATIVE_FLATTEN_FN)
+        : ensureNativeFlatCharCodeAtHelper(ctx);
+    """ + PUSH + """({ site: "resolve:6425", arm: symbol === NATIVE_FLATTEN_FN ? "native-flatten" : "native-flat", symbol, index });
+""")
+patch(I, """  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_TRUSTED_FN) {
+    index = ensureHostCharCodeAtTrusted(ctx);
+""", """  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_TRUSTED_FN) {
+    index = ensureHostCharCodeAtTrusted(ctx);
+    """ + PUSH + """({ site: "resolve:6437", arm: "host-trusted", symbol, index });
+""")
+patch(I, """  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
+    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+""", """  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
+    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+    """ + PUSH + """({ site: "resolve:6527", arm: ctx.nativeStrings ? "ir-native-guarded" : "ir-host-guarded", symbol, index });
+""")
+# --- integration.ts: adapter ---
+patch(I, """    emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
+      if (provider) {
+""", """    emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
+      """ + PUSH + """({ site: "emit:adapter", arm: provider ? "provider" : ctx.nativeStrings ? "fallback-native" : "fallback-host" });
+      if (provider) {
+""")
+# --- linear ---
+patch(L, """    stringMethodPlan(method: string) {
+      if (method === "charCodeAt") {
+""", """    stringMethodPlan(method: string) {
+      if (method === "charCodeAt") {
+        """ + PUSH + """({ site: "linear:plan", arm: "linear-runtime" });
+""")
+patch(L, """    emitStringCharCodeAt(inputEncoding?: IrStringEncoding): readonly Instr[] {
+      if (!memoryPlan) throw new Error("linear-ir: string charCodeAt has no completed memory plan");
+""", """    emitStringCharCodeAt(inputEncoding?: IrStringEncoding): readonly Instr[] {
+      """ + PUSH + """({ site: "linear:emit", arm: "linear-runtime" });
+      if (!memoryPlan) throw new Error("linear-ir: string charCodeAt has no completed memory plan");
+""")
+# --- from-ast producers ---
+patch(F, """  if (methodName === "charCodeAt" && cx.resolver?.preferLegacyFlatSubstringCharCodeAt?.(receiverExpr) === true) {
+    return null;
+  }
+""", """  if (methodName === "charCodeAt" && cx.resolver?.preferLegacyFlatSubstringCharCodeAt?.(receiverExpr) === true) {
+    """ + PUSH + """({ site: "fromast:preferLegacy-null", arm: "demote-legacy" });
+    return null;
+  }
+""")
+patch(F, """      return cx.builder.emitStringCharCodeAt(recv, index, evidence.receiverEncoding);
+""", """      """ + PUSH + """({ site: "fromast:emitStringCharCodeAt", arm: "ir-instr", enc: evidence.receiverEncoding });
+      return cx.builder.emitStringCharCodeAt(recv, index, evidence.receiverEncoding);
+""")
+patch(F, """  const plan = cx.resolver?.stringMethodPlan?.(methodName, args.length, receiverEncoding) ?? null;
+  if (plan === null) return null;
+  const funcName = plan.funcName;
+""", """  const plan = cx.resolver?.stringMethodPlan?.(methodName, args.length, receiverEncoding) ?? null;
+  if (methodName === "charCodeAt") """ + PUSH + """({ site: "fromast:planCall", arm: plan ? plan.funcName : "null-plan", enc: receiverEncoding ?? "none" });
+  if (plan === null) return null;
+  const funcName = plan.funcName;
+""")
+patch(F, """  const provenCharRead = matchProvenCharRead(expr, cx.provenCharReads);
+  if (provenCharRead !== null) {
+    return cx.builder.emitUnary("f64.convert_i32_s", emitProvenCharReadI32(expr, provenCharRead, cx), IR_F64);
+""", """  const provenCharRead = matchProvenCharRead(expr, cx.provenCharReads);
+  if (provenCharRead !== null) {
+    """ + PUSH + """({ site: "fromast:provenRead", arm: provenCharRead.hoist ? "hoist" : "trusted" });
+    return cx.builder.emitUnary("f64.convert_i32_s", emitProvenCharReadI32(expr, provenCharRead, cx), IR_F64);
+""")
+patch(F, """  const provenCharRead = matchProvenCharRead(inner, cx.provenCharReads);
+""", """  const provenCharRead = matchProvenCharRead(inner, cx.provenCharReads);
+  if (provenCharRead !== null) """ + PUSH + """({ site: "fromast:provenRead-i32pure", arm: provenCharRead.hoist ? "hoist" : "trusted" });
+""")
+print("done")

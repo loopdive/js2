@@ -1,0 +1,27 @@
+// Probe 2: (a) linear lane — irOutcomes surface + last linear IR report for ASCII vs non-ASCII literals;
+// (b) IR-only literals (boolean brand / regex flags): does prepareStrings ever mint a host global the legacy pre-pass did not?
+import { compile, type CompileOptions } from "../src/index.js";
+import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
+const g = globalThis as unknown as { __sc?: Array<Record<string, unknown>> };
+const LANES: Record<string, CompileOptions> = { "gc-host": {}, standalone: { target: "standalone" }, linear: { target: "linear" } };
+const outcomes = (r: any) => (r.irOutcomes ?? []).map((o: any) => `${o.displayName}:${o.kind}${o.code ? "/" + o.code : ""}`).join(" ");
+async function run(name: string, src: string, lanes: string[]) {
+  for (const lane of lanes) {
+    g.__sc = [];
+    const r = await compile(src, { ...LANES[lane]!, trackIrOutcomes: true });
+    const ev = g.__sc ?? [];
+    const prep = ev.filter((e) => e.site === "prepare-host-global").map((e) => `${JSON.stringify(e.value)}:${e.already ? "already" : "NEW"}`).join(",");
+    const scan = ev.filter((e) => e.site === "prepare-scan").map((e) => `${(e.fns as string[]).join("+")}=[${(e.literals as string[]).map((s) => JSON.stringify(s)).join(",")}]`).join(" ");
+    const legacy = ev.filter((e) => e.site === "legacy-finalize").map((e) => `[${(e.literals as string[]).map((s) => JSON.stringify(s)).join(",")}]`).join(" ");
+    const lin = ev.filter((e) => e.site === "linear-emitStringConst").length;
+    const rep = lane === "linear" ? getLastLinearIrReport() : undefined;
+    const repStr = rep ? JSON.stringify(rep).slice(0, 400) : "";
+    console.log(`${name}/${lane}: ok=${r.success} irOutcomes=${(r.irOutcomes ?? []).length} [${outcomes(r)}] scan=${scan} legacy=${legacy} prepare-host-global=${prep || "-"} linear-emit=${lin} ${repStr}`);
+  }
+}
+await run("ASCII", `export function f(): string { return "hello"; }`, ["linear"]);
+await run("BMP", `export function f(): string { return "grüße→ä"; }`, ["linear"]);
+await run("BOOLBRAND", `export function f(b: boolean): string { return "" + b; }`, ["gc-host", "standalone"]);
+await run("BOOLTPL", "export function f(b: boolean): string { return `${b}`; }", ["gc-host", "standalone"]);
+await run("REGEX", `export function f(s: string): boolean { return /ab+c/i.test(s); }`, ["gc-host", "standalone"]);
+await run("TYPEOF", `export function f(x: unknown): string { return typeof x; }`, ["gc-host", "standalone"]);

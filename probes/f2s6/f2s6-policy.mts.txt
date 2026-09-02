@@ -1,0 +1,28 @@
+// Which check:host-import-policy probes emit env.__concat_* today, per lane the gate runs.
+import { readFileSync } from "node:fs";
+import { compile } from "../src/index.js";
+const src = readFileSync("scripts/check-host-import-policy.ts", "utf8");
+const start = src.indexOf("const probes = {");
+const end = src.indexOf("} as const;", start);
+const probes: Record<string, string> = new Function(`return ${src.slice(start + "const probes = ".length, end + 1)};`)();
+const g = globalThis as unknown as { __f2s6?: Array<Record<string, unknown>> };
+let compatConcat = 0, nativeConcat = 0;
+for (const [name, source] of Object.entries(probes)) {
+  for (const lane of ["native-first", "compat"] as const) {
+    g.__f2s6 = [];
+    const result = await compile(source, {
+      fileName: `host-import-policy-${lane}-${name}.ts`,
+      ...(lane === "native-first" ? { semanticProviders: "native-first" as const } : {}),
+    });
+    const inv = (result.hostImportInventory ?? []).filter((e) => e.name.startsWith("__concat_"));
+    const reaches = (g.__f2s6 ?? []).filter((e) => e.site === "late-import" || e.site === "legacy-batched" || e.site === "concat-many" || e.site === "concat-async5" || e.site === "legacy-native-batched" || e.site === "eval-concat");
+    if (inv.length || reaches.length) {
+      console.log(`${lane}/${name}: ok=${result.success} inventory=${inv.map((e) => `${e.module}.${e.name}:${e.classification}/${e.family}`).join(",") || "-"} reaches=${reaches.map((e) => `${e.site}:${e.name ?? e.arity}`).join(",")}`);
+    }
+    if (lane === "compat") compatConcat += inv.length; else nativeConcat += inv.length;
+  }
+}
+const compat = await compile(probes.core!, { fileName: "host-import-policy-compatibility.ts" });
+console.log("compat core legacy-semantic total:", compat.hostImportSummary?.byClassification["legacy-semantic"], "families:", JSON.stringify(compat.hostImportSummary?.byFamily));
+console.log("compat core inventory:", (compat.hostImportInventory ?? []).map((e) => `${e.name}:${e.classification}`).join(" "));
+console.log(`__concat_* entries — compat lane (all probes): ${compatConcat}; native-first lane (all probes): ${nativeConcat}`);

@@ -1,0 +1,162 @@
+// #3526 string.const census — fixture × lane byte matrix with seam-branch reach counts.
+// Run from the worktree root: node_modules/.bin/tsx .tmp/sc-matrix.mts <outdir>
+// Requires .tmp/sc-instrument.py applied (pushes to globalThis.__sc).
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { compile, type CompileOptions, type CompileResult } from "../src/index.js";
+
+const OUT = process.argv[2] ?? ".tmp/sc-out";
+mkdirSync(join(OUT, "wat"), { recursive: true });
+const GROUNDING = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+
+const X2000 = "x".repeat(2000);
+const X12000 = "y".repeat(12000);
+const FIXTURES: Record<string, string> = {
+  ASCII: `export function f(): string { return "hello"; }`,
+  BMP: `export function f(): string { return "grüße→ä"; }`,
+  PAIR: `export function f(): string { return "a😀b"; }`,
+  LONE: `export function f(): string { return "x\\uD800y"; }`,
+  LONG2000: `export function f(): string { return "${X2000}"; }`,
+  LONG12000: `export function f(): string { return "${X12000}"; }`,
+  DUP: `export function f(): string { return "same"; }\nexport function g(): string { return "same"; }`,
+  TPLONLY: "export function f(a: string): string { return `${a}-suffix`; }",
+  EMPTY: `export function f(): string { return ""; }`,
+  INIT: `console.log("boot");\nexport function f(): number { return 1; }`,
+  INITCONST: `export const greeting: string = "hi";\nexport function f(): string { return greeting; }`,
+  LATEGLOBAL: `let n: number = 0;\nlet s: string = "hi";\nexport function f(): string { n = n + 1; return s; }`,
+  CLEAN: `export function add(a: number, b: number): number { return a + b; }`,
+};
+
+const LANES: Record<string, CompileOptions> = {
+  "gc-host": {},
+  "gc-native-strings": { nativeStrings: true },
+  standalone: { target: "standalone" },
+  wasi: { target: "wasi" },
+  linear: { target: "linear" },
+  // extra (beyond the 5 required lanes): the only way to reach the `u8:` intern arm
+  "standalone+utf8": { target: "standalone", utf8Storage: true },
+};
+
+function leb(u8: Uint8Array, pos: number): [number, number] {
+  let result = 0, shift = 0, b: number;
+  do { b = u8[pos++]!; result |= (b & 0x7f) << shift; shift += 7; } while (b & 0x80);
+  return [result >>> 0, pos];
+}
+function skipLeb(u8: Uint8Array, pos: number): number { while (u8[pos++]! & 0x80); return pos; }
+function str(u8: Uint8Array, pos: number): [string, number] {
+  const [len, p] = leb(u8, pos);
+  return [Buffer.from(u8.subarray(p, p + len)).toString("utf8"), p + len];
+}
+function skipValType(u8: Uint8Array, pos: number): number {
+  const b = u8[pos++]!;
+  if (b === 0x63 || b === 0x64) pos = skipLeb(u8, pos);
+  return pos;
+}
+function skipLimits(u8: Uint8Array, pos: number): number {
+  const flags = u8[pos++]!;
+  pos = skipLeb(u8, pos);
+  if (flags & 1) pos = skipLeb(u8, pos);
+  return pos;
+}
+interface ParsedImport { module: string; name: string; kind: string; index: number }
+function parseImports(bin: Uint8Array): ParsedImport[] {
+  const out: ParsedImport[] = [];
+  let pos = 8;
+  const counters = { func: 0, table: 0, memory: 0, global: 0, tag: 0 };
+  while (pos < bin.length) {
+    const id = bin[pos++]!;
+    const [size, p] = leb(bin, pos);
+    pos = p;
+    const end = pos + size;
+    if (id === 2) {
+      let q = pos;
+      const [count, p2] = leb(bin, q); q = p2;
+      for (let i = 0; i < count; i++) {
+        let module: string, name: string;
+        [module, q] = str(bin, q);
+        [name, q] = str(bin, q);
+        const kind = bin[q++]!;
+        let k: keyof typeof counters;
+        switch (kind) {
+          case 0: k = "func"; q = skipLeb(bin, q); break;
+          case 1: k = "table"; q = skipValType(bin, q); q = skipLimits(bin, q); break;
+          case 2: k = "memory"; q = skipLimits(bin, q); break;
+          case 3: k = "global"; q = skipValType(bin, q); q++; break;
+          case 4: k = "tag"; q++; q = skipLeb(bin, q); break;
+          default: throw new Error(`unknown import kind ${kind}`);
+        }
+        out.push({ module, name, kind: k, index: counters[k]++ });
+      }
+    }
+    pos = end;
+  }
+  return out;
+}
+const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
+const short = (s: string) => (s.length > 20 ? `${s.slice(0, 10)}…(${s.length})` : JSON.stringify(s));
+
+// run-length summary of the ordered import section by (kind, module)
+function importShape(imports: ParsedImport[]): string {
+  const runs: Array<{ key: string; n: number }> = [];
+  for (const i of imports) {
+    const key = `${i.kind}:${i.module}`;
+    const last = runs[runs.length - 1];
+    if (last && last.key === key) last.n++; else runs.push({ key, n: 1 });
+  }
+  return runs.map((r) => `${r.key}×${r.n}`).join(" → ") || "(none)";
+}
+
+interface Cell {
+  fixture: string; lane: string; ok: boolean; bytes: number; sha256: string; errors: string[];
+  imports: string[]; shape: string; scGlobals: string[]; sc16Globals: string[];
+  demoted: Array<Record<string, unknown>>; counts: Record<string, number>; events: Array<Record<string, unknown>>;
+}
+const cells: Cell[] = [];
+const g = globalThis as unknown as { __sc?: Array<Record<string, unknown>> };
+for (const [fixture, source] of Object.entries(FIXTURES)) {
+  for (const [lane, options] of Object.entries(LANES)) {
+    g.__sc = [];
+    let result: CompileResult;
+    try {
+      result = await compile(source, { ...options, trackIrOutcomes: true });
+    } catch (error) {
+      cells.push({ fixture, lane, ok: false, bytes: -1, sha256: "", errors: [String(error)], imports: [], shape: "", scGlobals: [], sc16Globals: [], demoted: [], counts: {}, events: g.__sc ?? [] });
+      continue;
+    }
+    const events = g.__sc ?? [];
+    const parsed = result.binary.length ? parseImports(result.binary) : [];
+    const imports = parsed.map((i) => `${i.kind}:${i.module}.${short(i.name)}${i.kind === "func" ? `#${i.index}` : i.kind === "global" ? `@${i.index}` : ""}`);
+    writeFileSync(join(OUT, "wat", `${fixture}.${lane}.wat`), result.wat);
+    const demoted = (result.irOutcomes ?? []).map((o) => {
+      const r = o as unknown as Record<string, unknown>;
+      return { displayName: r.displayName, kind: r.kind, stage: r.stage, code: r.code, detail: r.detail };
+    }).filter((o) => o.kind !== "emitted" && o.kind !== "non-executable");
+    const counts: Record<string, number> = {};
+    for (const e of events) {
+      const k = [e.site, e.arm ?? e.branch ?? e.kind ?? ""].filter(Boolean).join("/");
+      counts[k] = (counts[k] ?? 0) + 1;
+    }
+    cells.push({
+      fixture, lane, ok: result.success, bytes: result.binary.length, sha256: sha(result.binary),
+      errors: result.errors.map((e) => String((e as { message?: string }).message ?? e)).slice(0, 3),
+      imports, shape: importShape(parsed),
+      scGlobals: parsed.filter((i) => i.module === "string_constants").map((i) => `${short(i.name)}@${i.index}`),
+      sc16Globals: parsed.filter((i) => i.module === "string_constants16").map((i) => `${i.name}@${i.index}`),
+      demoted, counts, events,
+    });
+  }
+}
+writeFileSync(join(OUT, "matrix.json"), JSON.stringify({ grounding: GROUNDING, cells }, null, 2));
+const lines: string[] = [
+  `grounding ${GROUNDING}`,
+  "| fixture | lane | ok | bytes | sha12 | import shape (ordered) | string_constants | string_constants16 | seam reaches | demoted |",
+  "|---|---|---|---|---|---|---|---|---|---|",
+];
+for (const c of cells) {
+  const reaches = Object.entries(c.counts).filter(([k]) => !/^prepare-scan|^legacy-finalize|^addHostStringConstantGlobal/.test(k)).map(([k, v]) => `${k}=${v}`).join(" ");
+  lines.push(`| ${c.fixture} | ${c.lane} | ${c.ok ? "y" : "N"} | ${c.bytes} | ${c.sha256.slice(0, 12)} | ${c.shape} | ${c.scGlobals.join(" ") || "-"} | ${c.sc16Globals.join(" ") || "-"} | ${reaches || "-"} | ${c.demoted.map((d) => `${d.displayName}:${d.code ?? d.kind}`).join(" ") || "-"} |`);
+}
+writeFileSync(join(OUT, "matrix.md"), lines.join("\n") + "\n");
+console.log(lines.join("\n"));

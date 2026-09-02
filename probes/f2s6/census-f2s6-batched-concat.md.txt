@@ -1,0 +1,281 @@
+# census: f2s6-batched-concat
+grounding: a07f65319f1d31b4ec8e528651c5afbb6d66a320 (origin/main; the scratch worktree /home/user/js2/.claude/worktrees/census-f2s6 was created detached at it and removed after). The /home/user/js2 checkout HEAD is 9e4fc20aff (branch claude/ir-migration-plan-nqb6pz) which differs from origin/main in 12 src/tests files, NONE of them seam files — every file:line below was verified identical on both. Driver, instrumentation and records preserved at /tmp/claude-0/-home-user-js2/28d6498f-fc64-5f6d-952c-7075f472bc2f/scratchpad/f2s6/ (f2s6-matrix.mts, f2s6-instrument.py, f2s6-policy.mts, f2s6-shift.mts, matrix.md, matrix.json, matrix.out).
+## verdict
+- verifiedSites: 36  confidence: high — every measured number (114 cells across two runs, import orders, shift events, gate totals, compat families) reproduced exactly and every test pin was read; the wrong items are line drift plus three reasoning claims (`!ctx.wasi` liveness, which schema pin moves, live-regime presence) that I falsified by direct probe.
+### wrongSites
+- src/ir/passes/batch-string-concat.ts:19 — the immutableConcat predicate `instr?.kind === "string.concat" && … provider === undefined` is at :21 (line 19 is `function immutableConcat(`). Same on origin/main.
+- src/ir/passes/batch-string-concat.ts:194 — `if (args.length > maxArity) return;` is at :198 (194-196 is the comment block above it).
+- src/ir/passes/batch-string-concat.ts:195 — `if (!changedArgs && flatArgs.length < 3) return;` is at :199.
+- src/ir/passes/batch-string-concat.ts:264 — `target: irIntrinsicFuncRef(irStringConcatManySymbol(plan.args.length))` is at :266 (:264 is `return {`, :265 `kind: "call"`).
+- src/codegen/string-ops.ts:1763 — `if (noJsHost(ctx) && process.env.JS2WASM_NATIVE_BATCHED_CONCAT !== "0")` is at :1762; the `:1765 ensureNativeBatchedConcat` sub-cite is correct.
+- src/codegen/native-batched-concat.ts:62 ("mintDefinedFunc(ctx); (:62, stable handle)") — `const funcIdx = mintDefinedFunc(ctx);` is at :65. The :20-21 MIN/MAX and :37 export lines are correct.
+- src/codegen/expressions/late-imports.ts:539 / :543 — `ctx.pendingLateImportShift = { importsBefore: ctx.numImportFuncs };` is at :551 and `addImport(ctx, module, name, { kind: "func", typeIdx });` at :554 (536-545 is a #2936 comment). :400/:407-408/:415/:686 are correct.
+- src/host-import-policy.ts:148 — the `policy("legacy-semantic", "ecmascript-runtime", 4397, false, "implicit JavaScript semantic fallback")` consumer of LEGACY_SEMANTIC_BUILTIN_PREFIXES is at :151-152; :148 is a different `policy(… 4397, true, "explicit exceptional host engine…")` call. :76 `"__concat_"` is correct.
+- src/ir/runtime-host-capabilities.ts:173 (RuntimeHostCapabilityFuncRecord) — the interface opens at :165; `readonly field: string;` is :171 (census says :176) and `readonly params: readonly Value[];` is :173 (census says :177).
+- src/ir/runtime-host-capabilities.ts:136 (RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES) — the const is at :147 (:136-145 is the doc comment / KINDS block). The substantive claim (schemes exist only on the GLOBAL arm; func `field` is a plain string, exact-matched by assertRuntimeHostCapabilityRecord at :393-397 with fixed-length params via assertValueTypes) is confirmed.
+### numberChecks
+- 30 matrix cells re-run uninstrumented at HEAD 9e4fc20aff (CAT3, CAT9, TPL3, TPLEQ, CATNUM3, ASYNC × gc-host, gc-native-strings, standalone, wasi, gc-strict): all 30 bytes and sha12 match the census exactly (e.g. CAT3 gc-host 149/4677a84a2dcd, CAT9 standalone 22636/16f88b2c0042, ASYNC gc-host 10021/3c072b5822b4, ASYNC wasi 120698/1395c854c66d, ASYNC gc-strict 0/e3b0c44298fc).
+- Full 84-cell census driver (f2s6-matrix.mts + f2s6-instrument.py) re-run in a scratch worktree at a07f65319f: matrix.out and matrix.md are line-identical to the census's preserved copies except for my two added shift-event fields → every bytes/sha/import/reach count in the census reproduces.
+- Ordered gc-host func-import lists: CAT3 `env.__concat_3#0`; TPLEQ `wasm:js-string.equals#0 env.__concat_3#1`; CATNUM3 `env.number_toString#0 env.__concat_3#1`; ASYNC 27 env imports with `__concat_5#21` between `__date_now#20` and `__call_function_0#22` → all match.
+- WAT call resolution (numeric indices → names): CAT3 gc-host cat3 → 1× __concat_3_import; CAT9 gc-host → 1× __concat_9_import; CAT9 standalone cat9 → 8× __str_concat, no __str_concat_9 defined; CAT3 standalone cat3 → 1× __str_concat_3; TPL3 standalone → __str_concat_6; CATNUM3 gc-host cn3 → __concat_3_import; CATNUM3 standalone/wasi cn3 → __str_concat_3; CATNUM3 gc-native-strings cn3 → 2× pairwise __str_concat; ASYNC gc-host main family → __concat_5 ×2; ASYNC standalone main family → __str_concat_5 ×2; ASYNC wasi legacy __async_resume_fmain → __str_concat_5 ×2 → all match answers (1).
+- Shift probe re-instrumented (census's preserved instrument.py has no shift-ref/shift-map patch, and its `ctx.mod.funcs.length` throws — fixed to `ctx.mod.functions.length`): CAT3 late-import __concat_3 new@imp5 batchOpen=false → flush +1@5 (defined 1), 0 refs / 0 map moved; TPLEQ same; CATNUM3 new@imp6 → +1@6, 0/0; ASYNC __concat_5 new@imp97 batchOpen=true → flush +2@96 (defined 8), 0/0, 8 flushes total → matches census exactly.
+- batch-decision flag tuples (nativeStrings, standalone, wasi, strict) from events: gc-host (F,F,F,F)→host; gc-native-strings (T,F,F,F)→none; standalone (T,T,F,F)→standalone; wasi (T,F,T,T)→none; gc-strict (T,F,F,T)→none → matches laneReads. Derivation confirmed: create-context.ts:73 `strictNoHostImports = targetProfile.strictEnvImportGate`, :81 `nativeStrings = options?.nativeStrings ?? !!(fast || nativeStringsRequiredByPolicy || utf8Storage)`.
+- addStringImports (registry/imports.ts): exactly 5 `addImport(ctx, "wasm:js-string", …)` calls — concat, length, equals, substring, charCodeAt → matches the numImportFuncs=5 claim.
+- check:host-import-policy re-run bare on HEAD (exit 0): nativeFirst probes 33, imports 395, legacySemantic 0, unknown 0; compatibilityLegacySemanticImports 23; runtimeTsLines 19051, resolveImportLines 7569, resolveImportCases 15, ownedAdapterLines 819, explicitCapabilityLines 1194 → all match. Baseline ceilings confirmed: maximumImports 395, compat maximumLegacySemanticImports 23.
+- Policy probe (f2s6-policy.mts, instrumented worktree): only compat/errors emits `env.__concat_3:legacy-semantic/ecmascript-runtime` via late-import + legacy-batched:3; compat core legacy-semantic 23 with families builtin:TypeError 1, dynamic-values 2, ecmascript-runtime 9, strings 13, unclassified 2; __concat_* entries compat 1 / native-first 0 → matches answer (6).
+- Test pins: every cited line exists with the stated assertion (958:41/50/59; 3523-calendar:471-472; 3523-algorithms:347-349/432-433; 4124:750 and :761 `callCount(nonFusedConcat)` 0; 3522:395; 1470:21 in BANNED_IMPORTS; 1342:98 comment with :105 toBe("TypeError"); passes:489 with describe at :454 (suite actually ends :783, next describe :784); 4566:295-297 and :419-421 (8× __str_concat, no _9); 4574:444; native-batched:48/57/60 with build(true) setting JS2WASM_NATIVE_BATCHED_CONCAT=0; 2710:22 comment). RUNTIME_HOST_CAPABILITY_IDS length pinned at 18 (schema test :137).
+- Edge cell `{target:"wasi", nativeStrings:false, strictNoHostImports:false}` CAT3: compiles ok, 1000 bytes, imports wasm:js-string.concat, NO __concat_3 → hostBatchedConcat is false there only because of `!ctx.wasi` (nativeStrings=F, standalone=F, strict=F).
+### corrections
+- `!ctx.wasi` in the HOST selector (integration.ts:3678) is NOT dead. The census (laneReads #1, risk #7) says it is redundant with `!ctx.nativeStrings` because "wasi always has nativeStrings=true", but `nativeStrings:false` is an accepted override on target wasi (create-context.ts:81 `options?.nativeStrings ?? …`; target-profile.ts:82 only rejects it with explicit semanticProviders:"native-first"). With `strictNoHostImports:false` too, the module compiles (CAT3: 1000 bytes, wasm:js-string.concat, pairwise) and only `!ctx.wasi` keeps the pass off. A policy derived as `nativeStrings ? … : strictNoHostImports ? off : {host,∞}` would start emitting env.__concat_N on that wasi cell — the derivation must keep a wasi term. The standalone selector's `!ctx.wasi` IS unreachable (the compile API rejects a `wasi` boolean outright; target-profile.ts:68-69 throws on wasi∧standalone).
+- Schema fence (pin #12): adding a `string.concat.many` capability id would NOT move the :91/:378 still-unprovided fence — `STILL_UNPROVIDED_IDS` is filtered from the fixed local `NEW_IDS` list (:75-82, six string ids), so :378 `toHaveLength(4)` is unaffected by a new id. What moves is the id-list pin at :137 `expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(18)` and :138 exact sorted list, plus :173/:409 (records must cover every id). The correct assertion line for the unprovided fence is :378 (PROVIDED_IDS :93), not :92/:376.
+- Risk #8 / unmeasured #3 ("a fixture with live-regime bodies could differ, and none was in this set"): wrong — this fixture set DOES contain live-regime shifts: ASYNC gc-strict flush +1@1 moved 26 instruction refs and 18 funcMap entries; ASYNC gc-native-strings moved 75 funcMap entries. None of those flushes is a __concat_N registration (those lanes never mint it), so the census's "0 refs moved at every __concat_N registration" stands, but the blanket "no live-regime fixture in the set" does not.
+- The preserved instrumentation does not reproduce the shift numbers as-is: f2s6-instrument.py has no shift-ref/shift-map patch (those events came from an unpreserved patch), and its `definedFuncs: ctx.mod.funcs.length` throws (`ctx.mod.functions`), making every cell `ok=false`. I re-created the shift patch and fixed the field; results then match.
+- Line-number drift on 10 cited sites (see wrongSites): batch-string-concat.ts 19/194/195/264 → 21/198/199/266; string-ops.ts 1763 → 1762; native-batched-concat.ts 62 → 65; late-imports.ts 539/543 → 551/554; host-import-policy.ts 148 → 152; runtime-host-capabilities.ts 173/176/177/136 → 165/171/173/147. Quotes and roles are otherwise right; the string-runtime.ts:67 quote elides the `arity < 3` RangeError guard.
+- The `imports` column is filtered to concat-ish names, so "-" is not "no imports": gc-native-strings cells carry env.__str_from_mem/__str_to_mem/__str_extern_len (3 func imports), ASYNC standalone carries env.__timer_set_timeout#0, ASYNC wasi carries wasi_snapshot_preview1.{fd_write,poll_oneoff,clock_time_get}, ASYNC gc-native-strings has 33 env imports. Byte-identity claims are unaffected.
+- sliceScope's "wired into the freeze exactly like F2-S5's `stringConcat`" is a forward reference: no `stringConcat`/`StringConcatPolicy` exists in src/ir/runtime-manifest.ts on this tree; F2-S5 is an implementation plan (plan/issues/3526-ir-r6-semantic-runtime-contract.md:4592, dated 2026-09-02), not landed. The `*_POLICY_DISABLED` adapter pattern itself does exist (src/ir/backend/linear-integration.ts, src/codegen/stdlib-selfhost.ts).
+- Minor: the gate re-run was on HEAD 9e4fc20aff (12 non-seam files differ from a07f65319f) and produced identical totals; the passes.test.ts suite spans :454-783, not 454-780.
+
+## answers
+(1) Which lanes batch, at what cap — measured (batch-decision / batch-root / concat-many / native-batched events per cell): gc-host batches every single-use immutable tree of ≥3 leaves with NO cap: CAT3→env.__concat_3, CAT4→_4, CAT5→_5, CAT8→_8, CAT9→_9, TPL3 (6 leaves)→_6, TPL6 (7 leaves)→_7, TPLEQ→_3. standalone batches 3..8 to the defined helper __str_concat_N (CAT3/4/5/8, TPL3→_6, TPL6→_7, TPLEQ→_3) and declines 9 (CAT9: batch-cap 9>8 → 8 pairwise __str_concat calls, bytes 22636 vs CAT8 23362). gc-native-strings, wasi, gc-strict and linear NEVER batch in the IR pass (batch-decision host=false, standalone=false on every cell; flag tuples in laneReads). Non-fusing shapes on every lane: CAT (2 leaves), LITRUN ("a"+"b"+c folds to 2 leaves upstream), MULTIUSE (t used twice → three pairwise concats). Demoted functions take the legacy twins: CATNUM3 gc-host → compileBatchedConcat → env.__concat_3 (#1 after number_toString#0); standalone/wasi → legacy native → __str_concat_3 (minted); gc-native-strings/gc-strict → pairwise (noJsHost false). ASYNC: gc-host async5 arm ×1 → env.__concat_5#21; standalone async5 → __str_concat_5; wasi demotes all async functions → legacy native batched ×2 (one mint, one cache hit); gc-native-strings demotes (call-graph-closure) and does not batch. The 5 F2-S5 rows CAT3/CAT4/TPL3/TPLEQ/CAT reproduce sha-for-sha (4677a84a2dcd, 99609ea13570, aa485d722617, 7e6dac42d3c7, 60eb285f94e6) — F2-S4 and this probe are byte-neutral on them.
+
+(2) Ordered gc-host import lists (parsed from the binary import section): CAT3/4/5/8/9, TPL3, TPL6 → a single func import `env.__concat_N#0`; TPLEQ → `wasm:js-string.equals#0, env.__concat_3#1`; CATNUM3 → `env.number_toString#0, env.__concat_3#1`; ASYNC → 27 env imports with `__concat_5#21` between `__date_now#20` and `__call_function_0#22`. Mechanism: the 5-import `wasm:js-string` block (concat, length, equals, substring, charCodeAt — registry/imports.ts addStringImports) is registered pre-Phase-3, so the IR arm's ensureLateImport sees numImportFuncs=5 and mints __concat_N at import index 5, AFTER the block (CATNUM3: index 6, after number_toString; ASYNC: index 97 inside an already-open batch, flushed +2@96); dead-import elimination then drops the unused wasm:js-string imports, which is why __concat_N ends at #0 in the small fixtures. indexSpaceFrozen was false at every registration. Shifting: pendingLateImportShift opened and flushLateImportShifts ran (+1@5 with 1 defined function present; ASYNC +2@96 with 8) but shiftLateImportIndices moved 0 instruction refs and 0 funcMap entries in all four measured host cells (CAT3, TPLEQ, CATNUM3, ASYNC — 0 shift-ref events over the whole compile), because defined functions are on stable handles (mintDefinedFunc, STABLE_FUNC_BASE=1<<21, excluded by inLiveShiftRange). So ensureLateImport's observable effect on this seam is import ORDER/position, not defined funcidx.
+
+(3) A variadic env capability record needs: a func FIELD scheme (F2-S2 has schemes only on global records: `RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES = [literal, literal-utf16-hex]`, :136; func `field` is `string`, :176) — e.g. `{scheme:"arity-suffix", prefix:"__concat_"}`; a PARAMS scheme (`params: readonly Value[]` is fixed, :177) — `{repeat:"externref", min:3, max:null}` with fixed `results:["externref"]`; an arity RANGE as a provider fact (host 3..∞, native 3..8) so integration.ts:3683's literal 8 is derived from native-batched-concat.ts:21 rather than copied; `host-callable-family` / `runtime-callable-family` implementation kinds (today one capability / one symbol per row, runtime-manifest.ts:485-495); and a decision about IntrinsicSignature, which is fixed-arity (intrinsics.ts:184-188) while `string.concat$arityN` / `async.string.concat$arity5` are free-form intrinsic symbols, not IntrinsicIds. Full list in manifestNeeds.
+
+(4) Yes — a pass policy is needed separately from the provider policy, because the truth tables differ by lane: the NATIVE provider exists on gc-native-strings and wasi (ensureNativeBatchedConcat minted __str_concat_3/_5 on wasi via the legacy twin: CATNUM3, ASYNC) yet the IR pass never batches there (standaloneBatchedConcat requires ctx.standalone); the HOST provider exists for every N (runtime.ts prefix match) and the pass is unbounded there; on standalone the pass cap 8 is the provider's max. No measured case batched without a provider (the cap prevents it on standalone; gc-strict has neither). So the manifest needs `{batch: host|native|off, maxArity}` frozen from the lane BEFORE the pass (the pass creates the demand), and the provider row supplies the range.
+
+(5) Pins on __concat_N: tests/issue-958-concat-chain.test.ts:41/50/59; tests/issue-3523-ir-calendar-retirement.test.ts:471-472 (__concat_7 ×1, __concat_8 ×0); tests/issue-3523-ir-algorithms-retirement.test.ts:347-349, 432-433; tests/issue-4124-ir-final-async.test.ts:750/760 (__concat_5 ×2); tests/issue-3522-ir-builtins-retirement.test.ts:395 (IR = direct = [concat, concat, __concat_3]); tests/issue-1470-standalone-string-imports.test.ts:21 (banned on standalone); tests/issue-1342.test.ts:98 (runtime Symbol TypeError). Native twins: tests/issue-4566-standalone-algorithms-module-init.test.ts:295-297, 420-421 (arity-cap fence); tests/issue-4574-standalone-native-async-family.test.ts:444; tests/native-batched-string-concat.test.ts:48-60 (legacy env kill-switch). Pass unit: tests/ir/passes.test.ts:454-780 (:489 maxArity=2). scripts/check-host-import-policy.mjs does not exist; the gate is scripts/check-host-import-policy.ts + plan/audit/host-import-policy-baseline.json, with no __concat allowlist; src/codegen/host-import-allowlist.ts has no __concat_ entry. Would move: passes.test.ts:489 if the number becomes a policy object; native-batched-string-concat if the legacy env gate moves; the schema suite's unprovided-capability fence and the frozen-policy default pins (compare/eq/len/runtime-manifest suites) gain the new key.
+
+(6) check:host-import-policy today (run bare on the unpatched a07f65319f worktree, exit 0): nativeFirst probes 33, imports 395 (ceiling 395), legacySemantic 0, unknown 0; compat core legacy-semantic 23 (ceiling 23; families builtin:TypeError 1, dynamic-values 2, ecmascript-runtime 9, strings 13, unclassified 2); runtimeTsLines 19051, resolveImportLines 7569, resolveImportCases 15, ownedAdapterLines 819, explicitCapabilityLines 1194. `__concat_*` in the ratcheted numbers: ZERO — the compat core inventory has no __concat_ entry and the native-first lane emits 0 across all 33 probes (nativeStrings ⇒ host batching off). The only __concat_ the gate's probes ever produce is `env.__concat_3` on the `errors` probe in the COMPAT lane (classified legacy-semantic / ecmascript-runtime via the builtin-fallthrough intent, reached through the LEGACY twin because `error.name + ":" + error.message` demotes) and that inventory is not ratcheted. A migration that only re-routes the IR arms or re-classifies __concat_N changes 0 ratcheted counts; a migration that made a native-first lane emit env.__concat_N would trip the zero-debt gate, and any design that adds even one import in the 33 probes trips the exact 395 ceiling — not re-run on a modified tree, so this is inferred from the measured inventories.
+
+## laneReads
+- src/ir/integration.ts:3678 — reads ctx.nativeStrings, ctx.standalone, ctx.wasi, ctx.strictNoHostImports; decides hostBatchedConcat (the unbounded host pass). Measured flag tuples: gc-host (F,F,F,F)→host; gc-native-strings (T,F,F,F)→none; standalone (T,T,F,F)→standalone; wasi (T,F,T,T)→none; gc-strict (T,F,F,T)→none. `!ctx.wasi` is redundant with `!ctx.nativeStrings` (wasi always has nativeStrings=true) and `!ctx.strictNoHostImports` is redundant on wasi but load-bearing on gc-strict.
+- src/ir/integration.ts:3679 — reads ctx.nativeStrings, ctx.standalone, ctx.wasi; decides standaloneBatchedConcat (pass with maxArity 8). `!ctx.wasi` is unreachable-redundant: target-profile.ts:69 throws when wasi and standalone are both set.
+- src/ir/integration.ts:3680-3684 — consumer: passes 8 (a copy of MAX_BATCHED_CONCAT_ARITY from native-batched-concat.ts:21) or infinity to the pass; measured: CAT9 standalone → batch-cap 9>8 → stays pairwise (8 __str_concat calls); CAT9 gc-host → __concat_9.
+- src/ir/integration.ts:6360-6368 — async5 arm reads ctx.nativeStrings; decides ensureNativeBatchedConcat(ctx,5) vs ensureLateImport('__concat_5'). Reached 1× on ASYNC gc-host (host) and 1× on ASYNC standalone (native); 0× elsewhere.
+- src/ir/integration.ts:6369-6377 — many-arity arm reads ctx.nativeStrings; decides native helper vs late env import. Reached exactly once per fused root: gc-host ×{3,4,5,8,9,6,7,3} and standalone ×{3,4,5,8,6,7,3}; never on gc-native-strings / wasi / gc-strict / linear (pass never fused there). indexSpaceFrozen=false and pendingLateImportShift closed (batchOpen=false) at every IR-arm registration except ASYNC (batchOpen=true, folded into an open +2 batch).
+- src/codegen/string-ops.ts:1763 — legacy native twin reads noJsHost(ctx) (= ctx.wasi || ctx.standalone, js-errors.ts:29) and env JS2WASM_NATIVE_BATCHED_CONCAT; decides whether a demoted function's `+` chain uses __str_concat_N. Reached on CATNUM3 standalone/wasi (3-mint) and ASYNC wasi (5-mint ×1, 5-cached ×1); NOT on gc-native-strings / gc-strict (noJsHost false → pairwise __str_concat).
+- src/codegen/string-ops.ts:1835-1862 compileBatchedConcat — no lane read; it is the host-string legacy path (reached only when the function demoted: CATNUM3 gc-host → late-import __concat_3 at numImportFuncs=6, and the policy gate's `errors` probe in the compat lane).
+- src/codegen/expressions/late-imports.ts:400-544 ensureLateImport — reads ctx.targetProfile.semanticProviders / ctx.standalone / ctx.wasi for OTHER names only; `__concat_N` falls through every native route to the raw addImport (env). Measured: each IR-arm registration opened pendingLateImportShift at importsBefore=5 (the 5 wasm:js-string base imports) and flushed +1; the flush moved 0 instruction refs and 0 funcMap entries in every host cell (CAT3, TPLEQ, CATNUM3, ASYNC: shift-ref=0, shift-map=0 over the whole compile) — every defined function on these fixtures is on a stable handle (STABLE_FUNC_BASE), so the shift is mechanism-true but a measured no-op; the only observable effect is IMPORT ORDER (see answer 2).
+
+## manifestNeeds
+Vocabulary the runtime manifest lacks today, each tied to a measured fact:
+
+1. A FUNC capability record whose import FIELD is a scheme, not a name. `RuntimeHostCapabilityFuncRecord.field` is `string` (runtime-host-capabilities.ts:176); the F2-S2 scheme precedent (`{scheme: "literal" | "literal-utf16-hex"}`, :136-142) exists only on the GLOBAL arm. Needed: a func field scheme such as `{ scheme: "arity-suffix", prefix: "__concat_" }` — the physical field is derived from the arity at resolve time (measured host fields: __concat_3/4/5/6/7/8/9; the JS provider runtime.ts:11416 accepts any N by prefix).
+
+2. PARAMS as a scheme. `params: readonly Value[]` is fixed-length (:177); the family is `externref × arity -> externref`. Needed: `{ repeat: "externref", min: 3, max: null }` on the host record, with `results: ["externref"]` fixed. The value union already has `externref` — no new value type.
+
+3. An ARITY RANGE that is a provider fact, read by the pass. Host: min 3 (IR pass), unbounded max (measured __concat_9). Native: min 3, max 8 (native-batched-concat.ts:20-21), copied by hand into integration.ts:3683 as the literal `8`. The record should carry the range so the pass cap is derived, not duplicated; the `joinNine` fence (tests/issue-4566:420) pins the native max.
+
+4. RuntimeProviderImplementation family kinds. `host-callable` names exactly one `RuntimeHostCapabilityFuncId` and `runtime-callable` exactly one `symbol` (runtime-manifest.ts:485-495). Needed: `host-callable-family { capability: "string.concat.many" }` (field derived per arity from the record scheme) and `runtime-callable-family { symbolPrefix: "__str_concat_", min: 3, max: 8 }` (nativeStrHelpers cache key at native-batched-concat.ts:40). Two provider rows under one feature `js.string.concat.many`, selected by a policy.
+
+5. IntrinsicSignature cannot say variadic (`params: readonly IrType[]`, intrinsics.ts:184-188), and the symbols `string.concat$arityN` / `async.string.concat$arity5` are NOT closed IntrinsicIds (0 hits in intrinsics.ts; they are free-form `irIntrinsicFuncRef` symbols, string-runtime.ts:44/67, async-semantic-runtime.ts:7). Either (a) add a signature FAMILY (`paramsScheme`) and register the family once, validating arity per use, or (b) keep the symbols outside INTRINSIC_DEFINITIONS and let the provider row's arity range be the only check — (b) is byte-neutral and smaller; (a) is what the R6 "closed contract" wants. Also fold `async.string.concat$arity5` into the same family (today it is a second symbol and a second arm for the identical lowering).
+
+6. A PASS policy, distinct from the provider policy (see answer 4): `StringConcatManyPolicy { batch: "host" | "native" | "off"; maxArity: number | null }`, frozen from the lane like the F2-S5 `stringConcat` policy: `nativeStrings ? (standalone ? {native, 8} : {off}) : strictNoHostImports ? {off} : {host, null}`. The freeze must happen BEFORE the pass (the pass creates the demand, so no demand scan can gate the provider rows; the policy itself is the demand signal).
+
+7. Classification: `__concat_N` reaches hostImportInventory through the `builtin` fallthrough intent (import-manifest.ts:323) → `legacy-semantic / ecmascript-runtime` (host-import-policy.ts:76,148). A typed intent (e.g. `string_method`-like → family `strings`) would be the manifest-era spelling; it changes no ratcheted count (answer 6).
+
+## sliceScope
+IN (one slice, byte-neutral by V-A on this matrix's 70 measured WasmGC cells): (1) `StringConcatManyPolicy { batch, maxArity }` in src/ir/runtime-manifest.ts + DISABLED default, wired into the freeze exactly like F2-S5's `stringConcat`; adapters (linear-integration, stdlib-selfhost) declare DISABLED. (2) One feature `js.string.concat.many`, two provider rows (host family row over a new func capability `string.concat.many` with an arity-suffix field scheme and repeat-params; native family row `__str_concat_` 3..8) — the schema widening in src/ir/runtime-host-capabilities.ts (func field scheme + params scheme) is the F2-S2-style prerequisite and can be its own sub-slice S6a if the LOC budget demands. (3) src/ir/integration.ts:3678-3684 reads the frozen policy (`batch === "off"` → no pass; `maxArity`) instead of four ctx flags. (4) The two resolve arms :6360-6377 read `preparedStringConcatManyProvider(prepared, arity)` — host → the SAME `ensureLateImport(ctx, field(arity), …)` call (keep late minting: pre-registering would change import order and break byte identity — ASYNC shows __concat_5 at #21 among 27 late imports), native → `ensureNativeBatchedConcat`; no `ctx.nativeStrings` in either arm; unify the async5 arm onto the family arm (same lowering, measured identical registration). (5) Tests: new suite pinning (a)-(e) as F2-S5 does, plus the arity fences above by sha. OUT: the pass internals (batch-string-concat.ts) except reading maxArity; the legacy twins compileBatchedConcat (string-ops.ts:1835, incl. the folded-arity-2 branch :2055) and the legacy native twin (:1763, env kill-switch) — both still mint outside the manifest on demoted functions (CATNUM3, the policy gate's `errors` probe); eval-inline.ts:2372; runtime.ts:11416 host provider and generate-size-benchmarks shim; host-import-policy classification of __concat_N; the `operand-coercion-unsupported` demotions; wasi's legacy-only batching (ASYNC wasi) — a policy value `off` for wasi documents, does not change, that divergence.
+
+## pins
+- tests/issue-958-concat-chain.test.ts:41/50/59 — WAT contains __concat_3 / __concat_6, and no __concat_ for 2 operands; runtime through buildRuntimeImports (host provider). Stays if the host arm keeps minting env.__concat_N; would MOVE only if the import were pre-registered under a different spelling.
+- tests/issue-3523-ir-calendar-retirement.test.ts:471-472 — renderCal __concat_7 ×1, __concat_8 ×0 (host, unbounded arity). Fence: must not move.
+- tests/issue-3523-ir-algorithms-retirement.test.ts:347-349, 432-433 — main __concat_6 ×1 / __concat_3 ×3 / __concat_4 ×0; shared __concat_3 ×1, no __concat_5. Fence.
+- tests/issue-4124-ir-final-async.test.ts:750/760 — main family __concat_5 ×2 and no non-fused concat (the async5 arm). Fence; would move only if the async5 symbol is unified AND the count of resolve-arm registrations changes (it should not — same import).
+- tests/issue-3522-ir-builtins-retirement.test.ts:395 — IR and direct backends both end with `__concat_3_import` for the `"[" + arrStr + "]"` chain. Fence across IR arm AND legacy twin — a policy that only migrates the IR arm must keep the legacy twin's spelling.
+- tests/issue-1470-standalone-string-imports.test.ts:21 — `/^env::__concat_\d+$/` banned on standalone. Fence for the native row.
+- tests/issue-1342.test.ts:98 — Symbol operand → TypeError via the host __concat_* provider at runtime. Behavioural, must not move.
+- tests/ir/passes.test.ts:454-780 (#3523 batchStringConcat unit suite); :489 `batchStringConcat(fn, undefined, 2)` returns fn — WOULD MOVE if the numeric maxArity parameter becomes a policy object (keep the number, pass `policy.maxArity ?? Infinity`).
+- tests/issue-4566-standalone-algorithms-module-init.test.ts:295-297 — __str_concat_3 ×7, __str_concat ×6, `(func $__str_concat_7`; :420-421 joinNine stays pairwise (8× __str_concat, no __str_concat_9). The native arity-cap fence — must not move.
+- tests/issue-4574-standalone-native-async-family.test.ts:444 — __str_concat_5 ×2 (native async5 arm). Fence.
+- tests/native-batched-string-concat.test.ts:48-60 — LEGACY native twin: __str_concat_4 present, absent under JS2WASM_NATIVE_BATCHED_CONCAT=0. Pins the env kill-switch on the legacy path; WOULD MOVE if the legacy twin were retired or its gate moved to the policy.
+- tests/issue-3526-string-boundary-schema.test.ts:91 comment — the still-unprovided-capability fence 'holds them for F2-S5 and later'; adding a `string.concat.many` capability id WOULD MOVE that fence (exact assertion lines not re-verified on this tree — the F2-S5 plan cites :92/:376).
+- Frozen-policy default pins in tests/issue-3526-string-boundary-{compare,eq,len}.test.ts and the whole-shape policy equality in tests/issue-3526-ir-runtime-manifest.test.ts — WOULD MOVE (gain the new policy key), same pattern F2-S5 lists.
+- tests/issue-2710-late-bind.test.ts:22 — comment only; no assertion.
+- scripts/check-host-import-policy.ts + plan/audit/host-import-policy-baseline.json — no __concat allowlist; ratchets at exact ceilings (nativeFirst imports 395/395, compat legacy 23/23). tests/host-import-allowlist-*.test.ts and src/codegen/host-import-allowlist.ts contain no __concat_ entry (measured: gc-strict never requests it because the pass is off there).
+
+## risks
+- Both host-import ratchets sit AT their ceilings today (nativeFirst imports 395 = max 395; compat core legacy-semantic 23 = max 23, measured on the unpatched tree). Any slice that adds one import anywhere in the 33 probes fails `quality`; a manifest row that PRE-registers env.__concat_N (instead of late-minting on demand) would add imports only where they are used, and dead-import elimination removes unused ones — but this was not measured, so a pre-registering design must run the gate before claiming neutrality.
+- Byte identity depends on IMPORT ORDER, not on funcidx shifting: the flush moved 0 refs in every host cell (stable handles), but __concat_N's index is 'after every earlier import in this compile' (5 → #0 after dead-elim on the small fixtures; #21 of 27 on ASYNC; #1 after number_toString on CATNUM3). Moving registration to freeze time or to the base string block changes bytes in every batching cell — the F2-S5 V-A style 'byte-identical' fence would fail by design, and #3522:395 pins host and legacy twins to the same spelling.
+- The pass CREATES the demand it needs a provider for — there is no pre-pass demand scan possible (unlike eq/len/concat-pair). The policy must be frozen from the lane before the pass; a design that tries to 'request the feature on demand' inside the pass would be a late request after the manifest freeze.
+- Two producers stay outside the manifest after the slice: compileBatchedConcat (legacy host twin, reached on every demoted gc-host function with a 3+ chain, e.g. CATNUM3 and the gate's `errors` probe) and the legacy native twin (standalone/wasi demoted functions, ASYNC wasi ×2). A policy that says 'wasi: off' is then true for the IR pass but false for the module — must be stated, not hidden.
+- The native max-arity 8 lives in two places (native-batched-concat.ts:21 and the literal 8 at integration.ts:3683); the CAT9 standalone cell (batch-cap 9>8, pairwise) and tests/issue-4566:420 are the only fences. If the record carries the range, delete the literal, do not add a third copy.
+- `async.string.concat$arity5` is a second symbol for the same thing with a separate resolve arm and separate producer (async-ir-planning.ts:849); unifying it is byte-neutral in principle (same ensureLateImport/ensureNativeBatchedConcat call) but touches #4124/#4574 pins — do it inside this slice or explicitly defer, not accidentally.
+- The `!ctx.wasi` terms in both selectors are dead (wasi ⇒ nativeStrings; wasi ∧ standalone throws at target-profile.ts:69); `!ctx.strictNoHostImports` is live only for gc-strict. A policy derivation must keep gc-strict at `off` (measured: no batching, no env request, no allowlist entry) or the strict allowlist gate fires.
+- F2-S5's text 'a late registration here shifts every defined funcidx' is not what this tree measures (0 refs, 0 map entries moved across 4 host cells); a fixture with live-regime bodies could differ, and none was in this set — do not cite the shift as a reason to change registration timing without measuring on such a fixture.
+
+## unmeasured
+- eval-inline.ts:2372 (`new Function` body join → __concat_${pieces}): 0 reaches — the EVALFN fixture demoted with `constructor-resolution-unsupported` and never took that path; which source shape reaches it was not found.
+- The legacy host twin's folded-arity-2 branch (string-ops.ts:2055-2058, compileBatchedConcat with 2 operands → env.__concat_2): no fixture exercised it; whether __concat_2 ever appears in the corpus is unknown.
+- Whether ensureLateImport's flush moves anything on a fixture whose defined functions are in the LIVE regime: every measured host cell had only stable-handle functions (0 shift-ref / 0 shift-map). Not measured on a mixed legacy-heavy module.
+- Corpus-wide counts (playground/examples, test262, npm-compat) of __concat_N / __str_concat_N by arity — not measured; only the 14 fixtures and the 33 policy-gate probes were compiled.
+- The exact assertion lines of the schema suite's still-unprovided fence (F2-S5 cites tests/issue-3526-string-boundary-schema.test.ts:92/:376) were not re-verified; only the :91 comment was.
+- Runtime behaviour: no cell was instantiated or executed; the matrix is compile-only (bytes, sha, imports, reach counts).
+- A pre-registering (freeze-time) host row's effect on the two at-ceiling ratchets and on dead-import elimination was not measured — only the current late-minting behaviour was.
+- check:host-import-policy was run once on the unpatched worktree (exit 0, JSON totals above); it was NOT re-run on any modified tree, so 'a migration changes it by 0' is an inference from the measured inventories (no __concat_* in any ratcheted count), not a re-run.
+
+## consumers
+- src/ir/integration.ts:3680-3684 (pass selection → batchStringConcat)
+- src/ir/integration.ts:6360-6368 (async.string.concat$arity5 resolve arm)
+- src/ir/integration.ts:6369-6377 (string.concat$arityN resolve arm)
+- src/codegen/async-ir-planning.ts:849-850 (producer of the async5 intrinsic ref, final-main async shape only)
+- src/codegen/string-ops.ts:1835-1862 compileBatchedConcat (legacy host twin; also arity-2-after-folding at :2055-2058)
+- src/codegen/string-ops.ts:1763-1775 (legacy native twin → ensureNativeBatchedConcat)
+- src/codegen/expressions/eval-inline.ts:2372 (new Function body join → __concat_${pieces}; 0 reaches in this matrix)
+- src/codegen/native-batched-concat.ts:37 ensureNativeBatchedConcat (shared by IR arms and legacy native twin; nativeStrHelpers cache keyed `__str_concat_${arity}`)
+- src/runtime.ts:11416 (JS host provider — variadic by name prefix, any N)
+- scripts/generate-size-benchmarks.ts:136 (benchmark host shim, prefix match)
+- src/host-import-policy.ts:76 + src/compiler/import-manifest.ts:323 (classification: builtin fallthrough intent → legacy-semantic / ecmascript-runtime)
+
+## sites
+- src/ir/integration.ts:3678 [lane-read] const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+- src/ir/integration.ts:3679 [lane-read] const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
+- src/ir/integration.ts:3680 [consumer] const batched = hostBatchedConcat ? batchStringConcat(hygienic, allocRegistry) : standaloneBatchedConcat ? batchStringConcat(hygienic, allocRegistry, 8) : hygienic;
+- src/ir/integration.ts:6360 [lane-read] } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) { index = ctx.nativeStrings ? ensureNativeBatchedConcat(ctx, 5) : ensureLateImport(
+- src/ir/integration.ts:6369 [lane-read] } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) { const arity = …; index = ctx.nativeStrings ? ensureNativeBatchedConcat(ctx
+- src/ir/passes/batch-string-concat.ts:19 [producer] instr?.kind === "string.concat" && (instr.concatMode ?? "immutable") === "immutable" && instr.provider === undefined
+- src/ir/passes/batch-string-concat.ts:77 [producer] export function batchStringConcat(fn: IrFunction, registry?: AllocSiteRegistry, maxArity = Number.POSITIVE_INFINITY): IrFunction
+- src/ir/passes/batch-string-concat.ts:194 [producer] if (args.length > maxArity) return;
+- src/ir/passes/batch-string-concat.ts:195 [producer] if (!changedArgs && flatArgs.length < 3) return;
+- src/ir/passes/batch-string-concat.ts:264 [producer] return { kind: "call", target: irIntrinsicFuncRef(irStringConcatManySymbol(plan.args.length)), args: plan.args, …
+- src/ir/string-runtime.ts:44 [record] export const IR_STRING_CONCAT_MANY_PREFIX = "string.concat$arity";
+- src/ir/string-runtime.ts:67 [helper] export function irStringConcatManySymbol(arity: number): string { return `${IR_STRING_CONCAT_MANY_PREFIX}${arity}`; }  /  :74 parseIrStringConcatManyArity(symbol)
+- src/ir/async-semantic-runtime.ts:7 [record] export const IR_ASYNC_STRING_CONCAT_5_FN = "async.string.concat$arity5";  (different prefix — parseIrStringConcatManyArity does NOT match it, hence the separate arm)
+- src/codegen/async-ir-planning.ts:849 [producer] preparedAsyncConcatFiveTarget: (expression) => isPreparedIrAsyncConcat(ctx, expression) ? irIntrinsicFuncRef(IR_ASYNC_STRING_CONCAT_5_FN) : null,
+- src/codegen/native-batched-concat.ts:20 [record] const MIN_BATCHED_CONCAT_ARITY = 3; const MAX_BATCHED_CONCAT_ARITY = 8;
+- src/codegen/native-batched-concat.ts:37 [helper] export function ensureNativeBatchedConcat(ctx, arity): number | undefined { if (arity < MIN_BATCHED_CONCAT_ARITY || arity > MAX_BATCHED_CONCAT_ARITY) return undefined; co
+- src/codegen/string-ops.ts:1763 [lane-read] if (noJsHost(ctx) && process.env.JS2WASM_NATIVE_BATCHED_CONCAT !== "0") { … const batchedIdx = ensureNativeBatchedConcat(ctx, folded.length); (:1765)
+- src/codegen/js-errors.ts:29 [lane-read] export function noJsHost(ctx: CodegenContext): boolean { return ctx.wasi || ctx.standalone; }
+- src/codegen/string-ops.ts:1835 [consumer] function compileBatchedConcat(ctx, fctx, operands): ValType { … const importName = `__concat_${arity}`; … const funcIdx = ensureLateImport(ctx, importName, paramTypes, [{
+- src/codegen/string-ops.ts:2048 [consumer] if (folded.length >= 3) { return compileBatchedConcat(ctx, fctx, folded); } … if (folded.length === 2 && folded.length < operands.length) { return compileBatchedConcat(ct
+- src/codegen/expressions/eval-inline.ts:2372 [consumer] const concatIdx = ensureLateImport(ctx, `__concat_${pieces}`, concatParams, [{ kind: "externref" }]);
+- src/codegen/expressions/late-imports.ts:400 [helper] export function ensureLateImport(ctx, name, paramTypes, resultTypes, module = "env"): number | undefined { const existing = ctx.funcMap.get(name); if (existing !== undefi
+- src/codegen/expressions/late-imports.ts:686 [helper] export function flushLateImportShifts(ctx, fctx) { … const added = ctx.numImportFuncs - pending.importsBefore; … shiftLateImportIndices(ctx, fctx, pending.importsBefore, 
+- src/emit/resolve-layout.ts:91 [helper] export function inLiveShiftRange(idx, importsBefore) { return idx >= importsBefore && idx < STABLE_FUNC_BASE; }  (STABLE_FUNC_BASE = 1 << 21, :80)
+- src/codegen/registry/imports.ts:629 [record] addImport(ctx, "wasm:js-string", "concat" … (addStringImports: 5 addImport calls — concat, length, equals, substring, charCodeAt — the pre-Phase-3 block; numImportFuncs i
+- src/runtime.ts:11415 [adapter] // Batched string concat: __concat_3, __concat_4, ... (#958)  if (name.startsWith("__concat_")) { return (...args: any[]) => {
+- scripts/generate-size-benchmarks.ts:136 [adapter] if (intent.name?.startsWith("__concat_")) return (...parts) => parts.join("");
+- src/compiler/import-manifest.ts:323 [record] return { type: "builtin", name };  (fallthrough — __concat_N has no typed intent)
+- src/host-import-policy.ts:76 [record] "__concat_",  (in LEGACY_SEMANTIC_BUILTIN_PREFIXES → :148 policy("legacy-semantic", "ecmascript-runtime", 4397, false, …))
+- src/ir/runtime-host-capabilities.ts:173 [record] export interface RuntimeHostCapabilityFuncRecord { readonly capability; readonly module; readonly field: string; readonly kind: "func"; readonly params: readonly Value[];
+- src/ir/runtime-host-capabilities.ts:136 [record] export const RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES = Object.freeze(["literal", "literal-utf16-hex"] as const);  (F2-S2 field-scheme precedent — GLOBAL records only)
+- src/ir/intrinsics.ts:184 [record] export interface IntrinsicSignature { readonly version; readonly params: readonly IrType[]; readonly result: IrType; }  (fixed-arity; `string.concat$arityN` is NOT an Int
+- src/ir/runtime-manifest.ts:485 [record] readonly kind: "host-callable"; readonly capability: RuntimeHostCapabilityFuncId;  /  :493 readonly kind: "runtime-callable"; readonly symbol: string;  (one capability / 
+- src/codegen/context/types.ts:149 [record] `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /  (doc comment; also :3869)
+- tests/issue-958-concat-chain.test.ts:41 [test] expect(result.wat).toContain("__concat_3");  (:50 __concat_6; :59 not.toContain("__concat_") for 2 operands; runtime via buildRuntimeImports)
+- tests/issue-3523-ir-calendar-retirement.test.ts:471 [test] expect(targetCount(result, "renderCal", "__concat_7")).toBe(1); expect(targetCount(result, "renderCal", "__concat_8")).toBe(0);
+- tests/issue-3523-ir-algorithms-retirement.test.ts:347 [test] expectTargetCount(mainTargets, "__concat_6", 1); expectTargetCount(mainTargets, "__concat_3", 3); expectTargetCount(mainTargets, "__concat_4", 0);  (:432-433 shared: __co
+- tests/issue-4124-ir-final-async.test.ts:750 [test] expect(callsToMatching(result.wat, family, /__concat_5/, "five-part concat")).toBe(2);  (:760 no non-fused concat)
+- tests/issue-3522-ir-builtins-retirement.test.ts:395 [test] const expected = ["concat_import", "concat_import", "__concat_3_import"];  (IR and direct backends must agree)
+- tests/issue-1470-standalone-string-imports.test.ts:21 [test] /^env::__concat_\d+$/,  (BANNED on --target standalone)
+- tests/issue-1342.test.ts:98 [test] // Force the runtime __concat_* batched path (3+ operands).  (Symbol → TypeError through the host provider)
+- tests/ir/passes.test.ts:489 [test] expect(batchStringConcat(fn, undefined, 2)).toBe(fn);  (the maxArity parameter; suite :454-780)
+- tests/issue-4566-standalone-algorithms-module-init.test.ts:295 [test] expect(count(mainTargets, "__str_concat_3")).toBe(7); … expect(ir.wat).toContain("(func $__str_concat_7");  (:420-421 joinNine: 8× __str_concat, no __str_concat_9 — the a
+- tests/issue-4574-standalone-native-async-family.test.ts:444 [test] expect(callsToMatching(result.wat, mainFamily, /__str_concat_5/, "native five-part concat")).toBe(2);
+- tests/native-batched-string-concat.test.ts:48 [test] emitWatOnlyFunctions: ["run", "__str_concat_4"], … JS2WASM_NATIVE_BATCHED_CONCAT=0 control must NOT contain __str_concat_4 (:57-60) — pins the LEGACY native twin's kill-s
+- tests/issue-2710-late-bind.test.ts:22 [test] //      `__extern_to_string_default`, `__concat_5`...), state s's finished  (comment only)
+
+## fixtures
+- CAT: `export function cat(a: string, b: string): string { return a + b; }`
+- CAT3: `export function cat3(a: string, b: string, c: string): string { return a + b + c; }`
+- CAT4: `export function cat4(a: string, b: string, c: string, d: string): string { return a + b + c + d; }`
+- CAT5: `export function cat5(a: string, b: string, c: string, d: string, e: string): string { return a + b + c + d + e; }`
+- CAT8: `export function cat8(a…h: string): string { return a + b + c + d + e + f + g + h; }`
+- CAT9: `export function cat9(a…i: string): string { return a + b + c + d + e + f + g + h + i; }`
+- TPL3: `export function tpl3(a: string, b: string, c: string): string { return `${a}-${b}-${c}`; }   // 6 leaves: "", a, "-", b, "-", c`
+- TPL6: `export function tpl6(a: string, b: string, c: string): string { return `x${a}-${b}-${c}!`; }   // 7 leaves`
+- TPLEQ: `export function tpleq(a: string): boolean { return `${a}!` === "hi!"; }`
+- LITRUN: `export function litrun(c: string): string { return "a" + "b" + c; }`
+- MULTIUSE: `export function multi(a: string, b: string, c: string): string { const t = a + b + c; return t + t; }`
+- CATNUM3: `export function cn3(a: string, n: number, b: string): string { return a + n + b; }   // demotes → legacy twins`
+- ASYNC: `website/playground/examples/js/async.ts (the #4124 final-main async shape; two 5-part concats in main)`
+- EVALFN: `export function mk(): any { return new Function("a", "b", "return a + b"); }`
+
+## matrix
+| fixture | lane | ok | bytes | sha | imports | reaches | demoted |
+|---|---|---|---|---|---|---|---|
+| CAT | gc-host | y | 153 | 60eb285f94e6 | wasm:js-string.concat#0 | batch-decision unchanged(host)=1 | - |
+| CAT | gc-native-strings | y | 22418 | 8332885e9560 | - | batch-decision unchanged(none)=1 | - |
+| CAT | standalone | y | 22582 | 711df4930f81 | - | batch-decision unchanged(standalone)=1 | - |
+| CAT | wasi | y | 22609 | d078e2ff720c | - | batch-decision unchanged(none)=1 | - |
+| CAT | linear | y | 4882 | 99992a0595c1 | - | - | - |
+| CAT | gc-strict (suppl.) | y | 21967 | 84eb4b5706bb | - | batch-decision unchanged(none)=1 | - |
+| CAT3 | gc-host | y | 149 | 4677a84a2dcd | env.__concat_3#0 (full list) | batch-root many×3=1; batch-decision changed(host)=1; concat-many host×3=1; late-import __c | - |
+| CAT3 | gc-native-strings | y | 22425 | 0ef7932fe1c9 | - | batch-decision unchanged(none)=1 | - |
+| CAT3 | standalone | y | 22931 | 68190413f897 | - | batch-root many×3=1; batch-decision changed(standalone)=1; concat-many native×3=1; native- | - |
+| CAT3 | wasi | y | 22616 | 3a982a7b069d | - | batch-decision unchanged(none)=1 | - |
+| CAT3 | linear | y | 4889 | 92c095bb61fb | - | - | - |
+| CAT3 | gc-strict (suppl.) | y | 21974 | 193f59597292 | - | batch-decision unchanged(none)=1 | - |
+| CAT4 | gc-host | y | 152 | 99609ea13570 | env.__concat_4#0 (full list) | batch-root many×4=1; changed(host)=1; concat-many host×4=1; late-import __concat_4 new@imp | - |
+| CAT4 | gc-native-strings | y | 22429 | dc08350002ca | - | batch-decision unchanged(none)=1 | - |
+| CAT4 | standalone | y | 23013 | 5a7dc70a6075 | - | batch-root many×4=1; changed(standalone)=1; concat-many native×4=1; native-batched 4-mint= | - |
+| CAT4 | wasi | y | 22620 | 62180548a018 | - | batch-decision unchanged(none)=1 | - |
+| CAT4 | linear | y | 4894 | 65c63fef4d5c | - | - | - |
+| CAT4 | gc-strict (suppl.) | y | 21978 | 61da80ba98df | - | batch-decision unchanged(none)=1 | - |
+| CAT5 | gc-host | y | 155 | 7d12d6f80126 | env.__concat_5#0 (full list) | batch-root many×5=1; changed(host)=1; concat-many host×5=1; late-import __concat_5 new@imp | - |
+| CAT5 | gc-native-strings | y | 22448 | 4702b028c298 | - | batch-decision unchanged(none)=1 | - |
+| CAT5 | standalone | y | 23110 | a62aa9acab3f | - | batch-root many×5=1; changed(standalone)=1; concat-many native×5=1; native-batched 5-mint= | - |
+| CAT5 | wasi | y | 22639 | 3658b52f305e | - | batch-decision unchanged(none)=1 | - |
+| CAT5 | linear | y | 4899 | 61c3221ccc89 | - | - | - |
+| CAT5 | gc-strict (suppl.) | y | 21997 | c0e87ab51cb0 | - | batch-decision unchanged(none)=1 | - |
+| CAT8 | gc-host | y | 164 | a52f3eadc503 | env.__concat_8#0 (full list) | batch-root many×8=1; changed(host)=1; concat-many host×8=1; late-import __concat_8 new@imp | - |
+| CAT8 | gc-native-strings | y | 22466 | 9639ec0ca212 | - | batch-decision unchanged(none)=1 | - |
+| CAT8 | standalone | y | 23362 | 275b3ff7c479 | - | batch-root many×8=1; changed(standalone)=1; concat-many native×8=1; native-batched 8-mint= | - |
+| CAT8 | wasi | y | 22657 | a52ee5b0bac1 | - | batch-decision unchanged(none)=1 | - |
+| CAT8 | linear | y | 4914 | 4b6619ef3c96 | - | - | - |
+| CAT8 | gc-strict (suppl.) | y | 22015 | fc25664bc6cd | - | batch-decision unchanged(none)=1 | - |
+| CAT9 | gc-host | y | 167 | c11957fc8004 | env.__concat_9#0 (full list) | batch-root many×9=1; changed(host)=1; concat-many host×9=1; late-import __concat_9 new@imp | - |
+| CAT9 | gc-native-strings | y | 22472 | 5675bf18b197 | - | batch-decision unchanged(none)=1 | - |
+| CAT9 | standalone | y | 22636 | 16f88b2c0042 | - | batch-cap 9>8=1; batch-decision unchanged(standalone)=1 (stays pairwise) | - |
+| CAT9 | wasi | y | 22663 | 5ebd0d5f790b | - | batch-decision unchanged(none)=1 | - |
+| CAT9 | linear | y | 4919 | b649037db886 | - | - | - |
+| CAT9 | gc-strict (suppl.) | y | 22021 | e1f776af6280 | - | batch-decision unchanged(none)=1 | - |
+| TPL3 | gc-host | y | 187 | aa485d722617 | env.__concat_6#0 (full list) | batch-root many×6 (6 leaves)=1; changed(host)=1; concat-many host×6=1; late-import __conca | - |
+| TPL3 | gc-native-strings | y | 22477 | 903ec35198e7 | - | batch-decision unchanged(none)=1 | - |
+| TPL3 | standalone | y | 23752 | 8188a2360fdc | - | batch-root many×6=1; changed(standalone)=1; concat-many native×6=1; native-batched 6-mint= | - |
+| TPL3 | wasi | y | 22668 | 2bc4f4c9af7b | - | batch-decision unchanged(none)=1 | - |
+| TPL3 | linear | y | 4975 | 62b31aeb6fd8 | - | - | - |
+| TPL3 | gc-strict (suppl.) | y | 22026 | 49e90a03a2e6 | - | batch-decision unchanged(none)=1 | - |
+| TPL6 | gc-host | y | 235 | 1d7f766908cf | env.__concat_7#0 (full list) | batch-root many×7 (7 leaves)=1; changed(host)=1; concat-many host×7=1; late-import __conca | - |
+| TPL6 | gc-native-strings | y | 22546 | a5b33bddda3c | - | batch-decision unchanged(none)=1 | - |
+| TPL6 | standalone | y | 23980 | 36ada661215f | - | batch-root many×7=1; changed(standalone)=1; concat-many native×7=1; native-batched 7-mint= | - |
+| TPL6 | wasi | y | 22737 | 97b7efd7c97c | - | batch-decision unchanged(none)=1 | - |
+| TPL6 | linear | y | 5004 | 59b7cf1aa8dc | - | - | - |
+| TPL6 | gc-strict (suppl.) | y | 22095 | 45353bb49365 | - | batch-decision unchanged(none)=1 | - |
+| TPLEQ | gc-host | y | 246 | 7e6dac42d3c7 | wasm:js-string.equals#0 env.__concat_3#1 (full list) | batch-root many×3=1; changed(host)=1; concat-many host×3=1; late-import __concat_3 new@imp | - |
+| TPLEQ | gc-native-strings | y | 22747 | 140c5083c9fb | - | batch-decision unchanged(none)=1 | - |
+| TPLEQ | standalone | y | 23527 | def291da198e | - | batch-root many×3=1; changed(standalone)=1; concat-many native×3=1; native-batched 3-mint= | - |
+| TPLEQ | wasi | y | 22938 | 17130c0d764e | - | batch-decision unchanged(none)=1 | - |
+| TPLEQ | linear | y | 4976 | 4162ecbe7ed4 | - | - | - |
+| TPLEQ | gc-strict (suppl.) | y | 22296 | b6c6595f5863 | - | batch-decision unchanged(none)=1 | - |
+| LITRUN | gc-host | y | 229 | 71f6382e0f6c | wasm:js-string.concat#0 | batch-decision unchanged(host)=1 (literal run folded upstream; 2 leaves reach the pass) | - |
+| LITRUN | gc-native-strings | y | 22463 | 867edc1e47e0 | - | batch-decision unchanged(none)=1 | - |
+| LITRUN | standalone | y | 22627 | c5cdc1e16b6e | - | batch-decision unchanged(standalone)=1 | - |
+| LITRUN | wasi | y | 22654 | d5f3f37af8ea | - | batch-decision unchanged(none)=1 | - |
+| LITRUN | linear | y | 4948 | be7f95167e96 | - | - | - |
+| LITRUN | gc-strict (suppl.) | y | 22012 | c0f7127b9e16 | - | batch-decision unchanged(none)=1 | - |
+| MULTIUSE | gc-host | y | 172 | 7d0cf5671a7a | wasm:js-string.concat#0 | batch-decision unchanged(host)=1 (t used twice → no fusion, 3 pairwise concats) | - |
+| MULTIUSE | gc-native-strings | y | 22436 | 5824fcc88870 | - | batch-decision unchanged(none)=1 | - |
+| MULTIUSE | standalone | y | 22600 | 2676ed12b3f7 | - | batch-decision unchanged(standalone)=1 | - |
+| MULTIUSE | wasi | y | 22627 | 4ca5e592ab27 | - | batch-decision unchanged(none)=1 | - |
+| MULTIUSE | linear | y | 4901 | 715a0aae1f50 | - | - | - |
+| MULTIUSE | gc-strict (suppl.) | y | 21985 | aaada3d3a104 | - | batch-decision unchanged(none)=1 | - |
+| CATNUM3 | gc-host | y | 199 | a4af808e0009 | env.number_toString#0 env.__concat_3#1 (full list) | legacy-batched 3=1; late-import __concat_3 new@imp6; flush +1@6 (0 refs moved); no IR pass | cn3:operand-coercion-unsupported |
+| CATNUM3 | gc-native-strings | y | 39600 | a8b9836607dd | - | none (legacy pairwise __str_concat; noJsHost=false) | cn3:operand-coercion-unsupported |
+| CATNUM3 | standalone | y | 40461 | 544be0440bb0 | - | legacy-native-batched 3=1; native-batched 3-mint=1 | cn3:operand-coercion-unsupported |
+| CATNUM3 | wasi | y | 40488 | a3b6bfe8908a | - | legacy-native-batched 3=1; native-batched 3-mint=1 | cn3:operand-coercion-unsupported |
+| CATNUM3 | linear | y | 4886 | d1d18d4369e9 | - | - | - |
+| CATNUM3 | gc-strict (suppl.) | y | 39149 | 951766587c70 | - | none (legacy pairwise; noJsHost=false) | cn3:operand-coercion-unsupported |
+| ASYNC | gc-host | y | 10021 | 3c072b5822b4 | env.__timer_set_timeout#0 console_log_string#1 number_toString#2 Promise_all#3 Promise_new | concat-async5 host×5=1; late-import __concat_5 new@imp97 batchOpen; flush +2@96 (0 refs mo | - |
+| ASYNC | gc-native-strings | y | 53921 | 73a1355f04fb | - | no concat reach; batch-decision unchanged(none)=1 | delay:body-shape-rejected fetchUser/fetc |
+| ASYNC | standalone | y | 140892 | 2d063f76ce31 | - | concat-async5 native×5=1; native-batched 5-mint=1; batch-decision unchanged(standalone)=18 | - |
+| ASYNC | wasi | y | 120698 | 1395c854c66d | - | legacy-native-batched 5=2; native-batched 5-mint=1, 5-cached=1 (batched by the LEGACY twin | delay:body-shape-rejected fetchUser/fetc |
+| ASYNC | linear | N | 0 | e3b0c44298fc | - | - | compile error: Unsupported constructor P |
+| ASYNC | gc-strict (suppl.) | N | 0 | e3b0c44298fc | - | none | env.__timer_set_timeout refused under -- |
+| EVALFN | gc-host | y | 2546 | 15cd9f41cf31 | env.__host_add#0 __call_function_2#1 __call_function_3#2 __call_function_4#3 | none — eval-inline.ts:2372 NOT reached | mk:constructor-resolution-unsupported |
+| EVALFN | gc-native-strings | y | 24470 | b7c6df8c0aab | - | none | mk:constructor-resolution-unsupported |
+| EVALFN | standalone | y | 192791 | 3f56f1c2a58e | - | none | mk:constructor-resolution-unsupported |
+| EVALFN | wasi | y | 104996 | 14b0e963c63a | - | none | mk:constructor-resolution-unsupported |
+| EVALFN | linear | N | 0 | e3b0c44298fc | - | - | compile error: Unsupported constructor F |
+| EVALFN | gc-strict (suppl.) | y | 97736 | a61ffa36edd8 | - | none | mk:constructor-resolution-unsupported |
