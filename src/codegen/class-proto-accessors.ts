@@ -56,6 +56,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
+import { dynamicClassKeyGlobalKey, dynamicClassMemberOrdinal } from "./class-dynamic-keys.js"; // (#5195 Step 1)
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
 const PRIVATE_NAME_PREFIX = "__priv_";
@@ -125,6 +126,36 @@ export function installableClassAccessors(ctx: CodegenContext, className: string
  * with a half-written member — the stack is left unbalanced on that path, which
  * is exactly why the caller discards the body wholesale on `false`.
  */
+/**
+ * (#5195 Step 1) Push the spec-visible property KEY for `memberName` onto the
+ * stack as an externref.
+ *
+ * For an ordinary member that is the interned string constant. For a member
+ * registered under a synthetic `__cmdyn$<ordinal>` name the key is only known at
+ * runtime, and ClassDefinitionEvaluation has already stored the ToPropertyKey'd
+ * value in the member's `__cmkey_` global — read that instead. Returns `false`
+ * when a synthetic name has no global (nothing is pushed), which makes the
+ * caller abandon the whole prototype rather than install the bookkeeping name
+ * as if it were a property key.
+ */
+export function emitClassMemberKeyOperand(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+  memberName: string,
+): boolean {
+  const ordinal = dynamicClassMemberOrdinal(memberName);
+  if (ordinal === undefined) {
+    addStringConstantGlobal(ctx, memberName);
+    for (const instr of stringConstantExternrefInstrs(ctx, memberName)) fctx.body.push(instr);
+    return true;
+  }
+  const keyGlobalIdx = ctx.classDynamicKeyGlobals.get(dynamicClassKeyGlobalKey(className, ordinal));
+  if (keyGlobalIdx === undefined) return false;
+  fctx.body.push({ op: "global.get", index: keyGlobalIdx });
+  return true;
+}
+
 export function emitClassProtoAccessorInstalls(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -140,8 +171,7 @@ export function emitClassProtoAccessorInstalls(
   for (const accessor of accessors) {
     // Stack: [obj, key, getter | null, setter | null, flags]
     fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, accessor.name);
-    for (const instr of stringConstantExternrefInstrs(ctx, accessor.name)) fctx.body.push(instr);
+    if (!emitClassMemberKeyOperand(ctx, fctx, className, accessor.name)) return false;
 
     if (accessor.getterFuncIdx !== undefined) {
       if (

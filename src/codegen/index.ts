@@ -274,6 +274,7 @@ import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
+import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import {
   hoistedVarRetypesToConcreteRef,
@@ -499,6 +500,7 @@ import {
   collectDeclaredFuncRefs,
   compileClassBodies,
   resolveClassMemberName,
+  resolveInstallableClassMemberName,
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
@@ -689,6 +691,7 @@ export {
   collectEnumDeclarations,
   collectClassDeclaration,
   compileClassBodies,
+  resolveInstallableClassMemberName,
   destructureParamArray,
   destructureParamObject,
   destructureParamObjectExternref,
@@ -6490,6 +6493,17 @@ export function generateModule(
     // funcs only (no import shifts). No-op unless standalone AND the
     // scanForDynamicProto prescan marked a class hierarchy — byte-identical
     // otherwise.
+    // (#5195 Step 1.7 / Step 2) Mint `__class_proto_lookup` and prepend its
+    // delegating arms into `__extern_get` / `__extern_get_idx`. Runs HERE, with
+    // the other late prependers, for two reasons: `fillExternGetIdxVecArms`
+    // locates its splice point by `__extern_get_idx`'s 3-instruction preamble
+    // shape, so prepending before it would silently drop every typed-vec arm;
+    // and #802's dynamic-proto arm must keep the front slot of `__extern_get`,
+    // because a class whose instance prototype was mutated at runtime has to
+    // answer through the mutated link, not through this pass's compile-time
+    // prototype singleton. No-op unless the module has a class with a
+    // runtime-keyed member.
+    fillClassProtoLookupArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -11008,6 +11022,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // layouts/prototype globals exist. The runtime-eval callable carrier is the
     // last __extern_get fill so its owner-module delegation keeps front
     // precedence over every graph-local receiver arm.
+    // (#5195 Step 1.7 / Step 2) Same position and the same two reasons as the
+    // twin site above: after `fillExternGetIdxVecArms`' preamble-shape probe,
+    // before #802's dynamic-proto arm takes the front slot of `__extern_get`.
+    profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));

@@ -435,7 +435,6 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   if (
     (fctx.isConstructor || fctx.isFnctorConstructor) &&
-    !fctx.isDerivedConstructor &&
     fctx.returnType &&
     fctx.returnType.kind === "ref" &&
     fctx.localMap.has("this")
@@ -444,6 +443,13 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     const structTypeIdx = fctx.returnType.typeIdx;
     if (!stmt.expression) {
       // Bare `return;` → return `this` (the guard-clause idiom). #2018
+      // (#5195 Step 11 E) …including in a DERIVED constructor with a nominal
+      // struct result, which this arm used to decline outright: the statement
+      // fell to the generic value-return below, which pushes `ref.null
+      // <struct>`, and `new Derived()` then trapped "dereferencing a null
+      // pointer". §10.2.1.3 step 13 makes `undefined` the ordinary case, not an
+      // error — the TypeError is reserved for a non-Object, non-undefined
+      // value.
       fctx.body.push({ op: "local.get", index: selfIdx });
     } else {
       const tsType = ctx.checker.getTypeAtLocation(stmt.expression);
@@ -461,6 +467,22 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
       // for a primitive / foreign object) before we can apply the §10.2.1.3
       // override/discard logic. Let it yield its natural type instead.
       const exprType = compileExpression(ctx, fctx, stmt.expression, undefined);
+      if (
+        fctx.isDerivedConstructor &&
+        (tsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Never | ts.TypeFlags.Unknown)) !== 0 &&
+        (tsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0
+      ) {
+        // (#5195 Step 11 E) §10.2.1.3 step 12: a DERIVED constructor may return
+        // only an Object or `undefined`. `null` has typeof "object" but is not
+        // an Object, so it is the one value the base-class discard rule above
+        // gets wrong for a derived ctor. The operand is already evaluated (spec:
+        // GetValue precedes the check); discard it, then throw. The other
+        // primitives are caught statically further up (#825); `undefined`/`void`
+        // stay on the discard-and-return-`this` path.
+        if (exprType) fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "Derived constructors may only return an object or undefined");
+        return;
+      }
       if (tsType.flags & primitiveFlags) {
         // Statically a primitive / null / undefined → discard, return `this`.
         if (exprType) fctx.body.push({ op: "drop" });

@@ -5,6 +5,7 @@
  *
  * Extracted from expressions.ts (#688 step 6).
  */
+import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";
@@ -4560,6 +4561,27 @@ function emitRuntimePropertyIntrospection(
  * Static resolution (string literal arg): constant fold to i32.const 0/1.
  * Dynamic resolution: runtime string comparison against known field names.
  */
+/**
+ * (#5195 F5) True when `recvExpr` names a `<Class>.prototype` or a class
+ * CONSTRUCTOR whose hierarchy declares a member under a key only known at
+ * runtime — i.e. an object whose own-key set the checker cannot enumerate.
+ */
+function introspectionReceiverHasRuntimeKeys(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  // (#5195 R2-2) PROTOTYPE receivers ONLY. The first cut also accepted a bare
+  // class identifier, which sent CONSTRUCTOR receivers to the runtime
+  // `__hasOwnProperty` — and that native has no arm for a `$ClassName`
+  // class-object's statics, so `C.hasOwnProperty('sm')` / `('sf')` flipped
+  // true → false against base. The class object's static surface is exactly
+  // what the fold below already knows and the runtime does not; only
+  // `C.prototype` is the object whose own-key set moved to a `$Object` the
+  // checker cannot enumerate.
+  if (!ts.isPropertyAccessExpression(recvExpr) || recvExpr.name.text !== "prototype") return false;
+  const identifier = recvExpr.expression;
+  if (!ts.isIdentifier(identifier)) return false;
+  const className = ctx.classExprNameMap.get(identifier.text) ?? identifier.text;
+  return ctx.classSet.has(className) && classHierarchyHasDynamicMember(ctx, className);
+}
+
 export function compilePropertyIntrospection(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4581,9 +4603,20 @@ export function compilePropertyIntrospection(
   let recvExpr: ts.Expression = propAccess.expression;
   while (ts.isParenthesizedExpression(recvExpr)) recvExpr = recvExpr.expression;
 
+  // (#5195 F5) A class with a RUNTIME-KEYED member (`class C { [ID('dyn')]()
+  // {} }`) has an own-key set the checker cannot know: TypeScript sees no
+  // member named `dyn`, so the fold below answers `false` for
+  // `C.prototype.hasOwnProperty('dyn')` while `gOPD(C.prototype, 'dyn')` finds
+  // the property — the two disagreeing about the same object. The runtime
+  // `$Object` IS the authority here, so decline the fold and delegate, exactly
+  // as an externref receiver does. Only PROTOTYPE and CONSTRUCTOR receivers are
+  // affected: on an INSTANCE the answer is `false` either way, since a
+  // runtime-keyed member lives on the prototype.
+  const runtimeKeyedOwnKeys = introspectionReceiverHasRuntimeKeys(ctx, recvExpr);
+
   // For externref/any receivers (e.g. Object.create result), delegate to runtime
   // since we can't statically know their properties
-  if (receiverWasm.kind === "externref") {
+  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys) {
     const isHOP = propAccess.name.text === "hasOwnProperty";
     const importName = isHOP ? "__hasOwnProperty" : "__propertyIsEnumerable";
     const hopIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
