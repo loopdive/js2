@@ -85,6 +85,13 @@ func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsClosure
   - src/codegen/declarations/object-shape-widening.ts::collectRedeclaredObjectIdentityLiterals
   - src/codegen/function-poison-pill-access.ts::tryCompileFunctionPoisonRead
+  # 2026-09-02 (Opus implementation, step 2): the reserve-then-fill
+  # `__object_proto_singleton` needs one `fillObjectProtoSingleton(ctx)` call in
+  # EACH finalize driver, mirroring the `fillClassObjectNameArms` placement that
+  # sits two lines above it in both. Wiring only — the mechanism itself lives in
+  # `object-runtime-prototype.ts`.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #5270 — ES2015 standalone: expressions, r2 residual pass
@@ -823,3 +830,50 @@ static async private method via this (sub-pattern 2: type mismatch)` fails on
 HEAD `77ca8fbaae` with both touched files reverted to their base content —
 `C_getDollar failed: call[0] expected type f64, found block of type externref`.
 Verified by A/B file copy.
+
+### Step 2 — `[[Prototype]]` of ordinary literals + colon `__proto__` (cluster I, 5 rows): 0 → 4 pass
+
+`expr-cl-I-proto-literal.txt` before **0 pass / 5 fail**, after **4 pass /
+1 fail**. Flipped: `object/__proto__-value-obj`, `__proto__-value-null`,
+`__proto__-value-non-object`, `__proto__-duplicate-computed`.
+
+2.1 `__getPrototypeOf` (`object-runtime-prototype.ts`) now resolves a null
+`$proto`: with `OBJ_FLAG_NULL_PROTO` set it stays JS `null`, otherwise it
+answers the canonical `%Object.prototype%` carrier. The carrier comes from a
+reserved helper `__object_proto_singleton`, minted with the pre-change answer
+(`ref.null.extern`) during `ensureObjectRuntime` and FILLED at finalize by
+`fillObjectProtoSingleton` with `buildLazyNativeProtoGetInstrs(ctx,
+BUILTIN_BRAND_TABLE.Object)` — the `Object` brand's lazy `$NativeProto` global
+does not exist yet at registration time. Wired into BOTH finalize drivers
+(`generateModule`, `generateMultiModule`), beside `fillClassObjectNameArms`.
+A module whose `Object` brand glue was never registered keeps the old answer
+rather than pulling the glue in.
+
+2.2 The `Object.getPrototypeOf(<object literal>)` static folds (direct and
+through a variable initializer, plus `hasProvablyNonNullOrdinaryPrototype`)
+decline when the literal carries a colon-form `__proto__`, via a shared
+`objectLiteralHasColonProto` extracted from `objectLiteralForcesHostPath`.
+
+2.3 `compileObjectLiteralWithAccessors` routes a NON-computed `__proto__:` key
+to `__object_setPrototypeOf(obj, v); drop` instead of `__extern_set`, so
+§B.3.1 holds: [[Prototype]] is set for an Object or Null value, a primitive
+value is silently ignored, and no own property is created. Gated on that
+native's presence, so the JS-host lane keeps its `__extern_set` route
+byte-for-byte.
+
+**Not done in step 2 (1 row), with the measured reason:**
+
+- `object/computed-__proto__` — advanced from failing assertion 1 (prototype)
+  to assertion 9 (`obj.__proto__` for `{ ['__proto__']: undefined }`). Root
+  cause is neither `__proto__` nor the literal representation: the STATIC
+  member-read fold answers a property whose only checker type is `undefined`
+  with an f64 `0`. Measured with `.tmp/es2015/probes/q06-read-fold.js`:
+  `var c = { ['x']: undefined }` gives `String(c.x) === "0"` for the static
+  read but `"undefined"` for the dynamic `c[k]` read, and adding ANY second
+  property (`y: 1`, or an accessor) makes the static read correct too. The
+  broken value still answers `c.x === undefined` and `typeof c.x` correctly —
+  it fails test262's `assert._isSameValue`, which falls through to
+  `1/a === 1/b` because `a !== 0` is false. Routing `__proto__`-keyed literals
+  to the open path was tried and REVERTED: it changes routing without fixing
+  the fold, and the fold is a member-access/type-lowering defect outside every
+  cluster this issue names.

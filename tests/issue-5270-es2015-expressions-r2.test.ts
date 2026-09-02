@@ -181,3 +181,99 @@ describe("#5270 step 1 — tail calls in return position", () => {
     expect(lines).toEqual(["caught"]);
   });
 });
+
+describe("#5270 step 2 — [[Prototype]] of ordinary literals and colon __proto__", () => {
+  // Cluster I(a): `$Object.$proto === null` means BOTH "explicitly null" and
+  // "ordinary object, implicit %Object.prototype% terminal". `__getPrototypeOf`
+  // returned the raw field, so a NON-empty literal answered null while an empty
+  // one answered Object.prototype (the latter folded statically).
+  it("answers %Object.prototype% for an ordinary literal, through a runtime read", async () => {
+    const lines = await runStandaloneLines(`
+      var o; o = { a: 1 };
+      var empty; empty = {};
+      LOG("a=" + (Object.getPrototypeOf(o) === Object.prototype) +
+          " b=" + (Object.getPrototypeOf(empty) === Object.prototype) +
+          " c=" + (Object.getPrototypeOf(o) === Object.getPrototypeOf(empty)));
+    `);
+    expect(lines).toEqual(["a=true b=true c=true"]);
+  });
+
+  it("keeps an explicit null prototype null", async () => {
+    const lines = await runStandaloneLines(`
+      var o; o = Object.create(null);
+      LOG("created=" + (Object.getPrototypeOf(o) === null));
+    `);
+    expect(lines).toEqual(["created=true"]);
+  });
+
+  // Cluster I(b), §B.3.1: a NON-computed `__proto__:` key sets [[Prototype]]
+  // and creates NO own property.
+  it("sets [[Prototype]] from a colon __proto__ and defines no own property", async () => {
+    const lines = await runStandaloneLines(`
+      var proto = {};
+      var object = { __proto__: proto };
+      LOG("proto=" + (Object.getPrototypeOf(object) === proto) +
+          " notObjectProto=" + (Object.getPrototypeOf(object) !== Object.prototype) +
+          " desc=" + (Object.getOwnPropertyDescriptor(object, "__proto__") === undefined));
+    `);
+    expect(lines).toEqual(["proto=true notObjectProto=true desc=true"]);
+  });
+
+  it("honours { __proto__: null } and ignores a non-object __proto__ value", async () => {
+    const lines = await runStandaloneLines(`
+      var nulled = { __proto__: null };
+      var num = { __proto__: 1 };
+      var str = { __proto__: "s" };
+      var bool = { __proto__: true };
+      LOG("null=" + (Object.getPrototypeOf(nulled) === null) +
+          " nullDesc=" + (Object.getOwnPropertyDescriptor(nulled, "__proto__") === undefined) +
+          " num=" + (Object.getPrototypeOf(num) === Object.prototype) +
+          " str=" + (Object.getPrototypeOf(str) === Object.prototype) +
+          " bool=" + (Object.getPrototypeOf(bool) === Object.prototype));
+    `);
+    expect(lines).toEqual(["null=true nullDesc=true num=true str=true bool=true"]);
+  });
+
+  // ── Controls for the COMMON case of the mechanisms this step touches ──
+
+  it("keeps a COMPUTED ['__proto__'] key an ordinary own property", async () => {
+    const lines = await runStandaloneLines(`
+      var proto = {};
+      var own = {};
+      var obj = { __proto__: proto, ["__proto__"]: own };
+      LOG("proto=" + (Object.getPrototypeOf(obj) === proto) +
+          " hasOwn=" + Object.prototype.hasOwnProperty.call(obj, "__proto__") +
+          " value=" + (obj.__proto__ === own));
+    `);
+    expect(lines).toEqual(["proto=true hasOwn=true value=true"]);
+  });
+
+  it("leaves an ordinary literal's own properties and prototype reads unchanged", async () => {
+    const body = `
+      var o = { a: 1, b: "two" };
+      LOG("a=" + o.a + " b=" + o.b +
+          " keys=" + Object.keys(o).join(",") +
+          " hasA=" + o.hasOwnProperty("a") +
+          " toString=" + (typeof o.toString));
+    `;
+    const expected = ["a=1 b=two keys=a,b hasA=true toString=function"];
+    expect(await runStandaloneLines(body)).toEqual(expected);
+    // The JS-host lane is untouched by this step and answers identically.
+    expect(await runHostLines(body)).toEqual(expected);
+  });
+
+  // A runtime `Object.setPrototypeOf(o, null)` must still be visible to
+  // `__getPrototypeOf` — the new arm reads OBJ_FLAG_NULL_PROTO, which is what
+  // that write sets. (`var o;` rather than `var o = {}` on purpose: an
+  // identifier whose INITIALIZER is a literal is folded statically by
+  // `object-get-prototype-of.ts`, and that fold predates this step.)
+  it("keeps Object.setPrototypeOf(o, null) answering null", async () => {
+    const lines = await runStandaloneLines(`
+      var o; o = { a: 1 };
+      LOG("before=" + (Object.getPrototypeOf(o) === Object.prototype));
+      Object.setPrototypeOf(o, null);
+      LOG("nulled=" + (Object.getPrototypeOf(o) === null));
+    `);
+    expect(lines).toEqual(["before=true", "nulled=true"]);
+  });
+});
