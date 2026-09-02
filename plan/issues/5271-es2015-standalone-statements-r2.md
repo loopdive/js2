@@ -849,3 +849,20 @@ Two rows outside the step lists flipped as a side effect of step 2
 is recorded per step above; the four largest remaining groups are cluster F
 (7 rows, untouched), cluster J (4, untouched), cluster D's D2-D4 (10, three
 independent blockers measured), and G3 (3, sequenced last by the plan itself).
+
+### Validation (post `git merge origin/main`, 2026-09-02)
+
+- `pnpm run typecheck` (TS7): clean.
+- Ratchet gates, run bare: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports` — all 0.
+- `tests/issue-5271-es2015-statements-r2.test.ts`: **49/49**. Every mechanism has
+  a positive pin (verified RED on the branch base where a base run was possible)
+  AND a CONTROL for its ordinary case.
+- **Equivalence gate: green.** Run as 8 shards (the box was carrying four
+  concurrent gates and a single full run was evicted twice): every shard reports
+  `✓ No new equivalence regressions`, 24 known-failure baseline entries and 0
+  new ones.
+- Pre-existing failures confirmed NOT caused by this branch, by checking out
+  `origin/main`'s `src/` into this worktree and re-running:
+  `tests/issue-1387-with-diagnostic.test.ts` (2) and
+  `tests/issue-1128-dstr-tdz.test.ts` (1) fail identically on `origin/main`.
