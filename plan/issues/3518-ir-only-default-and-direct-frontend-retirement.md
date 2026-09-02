@@ -2209,3 +2209,48 @@ the playground, not merely on the current gate staying green.
 full standalone denominator, and #4522's `retire-at-R9` table has not been
 cross-checked against either. Both numbers above are floors on the work, not the
 total.
+
+#### Correction to the section above: the blocker is module-init (R4), not class coverage (R3)
+
+The table above attributed the wider-corpus gap to "body shape (~58%) and class
+coverage — R3 (#3522)". **The class half of that is wrong, and the body-shape
+half was true but uninformative.** Splitting `body-shape-rejected` by unit kind:
+
+| | count |
+| --- | --- |
+| `body-shape-rejected` on `<module-init>` | **17** |
+| `body-shape-rejected` on ordinary functions | 2 (`exportedFn`, `Ctor`) |
+
+So the largest bucket is not scattered function-body shapes at all. It is one
+unit kind, once per file. Grouping every dogfood rejection by unit kind makes
+the split plain:
+
+| lane | module-init units | of those, unsupported | non-module-init unsupported |
+| --- | --- | --- | --- |
+| single-host | 20 | **19** (17 body-shape, 1 static-class-init, 1 operand-coercion) | 14 |
+| standalone | 20 | **16** (14 body-shape, 1 static-class-init, 1 operand-coercion) | 14 |
+
+**Module-init adoption on this corpus is zero of twenty executable units, on
+both lanes.** That is R4 (#3523, module-init compile-once), not R3. The class
+family accounts for 7 of 33 single-host rejections, real but a third the size.
+
+**And this explains why the gate is green rather than merely narrow.** Its five
+entries hold five module-init units: 2 emitted, **3 non-executable**, 0
+unsupported. A non-executable module-init has no body by construction, so the
+gate exercises module-init on exactly two files. The corpus is not just small —
+it is unrepresentative in precisely the dimension that dominates everywhere
+else.
+
+**Revised consequence for the ladder.** R9's coverage-closure dependency is
+first and foremost **R4**. Widening the corpus without module-init compile-once
+converts ~58% of the single-host gap and ~45% of the standalone gap into
+permanent red. The class family is the second dependency, not the first.
+
+**Method note, since this is the second time in one session the same mistake
+shape appeared.** The previous section read a reason histogram and named an
+owner from the reason label alone. `body-shape-rejected` is emitted from ~20
+sites in `src/ir/from-ast.ts` spanning entirely different constructs, so the
+label identifies a *demote path*, not a *feature area*. Grouping by
+`unitKind` — one extra field already present in the telemetry — moved the
+conclusion from the wrong lane to the right one. Any future census over these
+outcomes should group by `unitKind` before assigning an owner.
