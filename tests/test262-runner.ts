@@ -4429,6 +4429,10 @@ async function runOriginalHarnessVariant(
     // FIRST, so a parse/early/resolution negative keeps its own verdict here
     // too. A leak is never a valid negative outcome either, so it is likewise
     // never routed through `negativeCompileErrorMatches`.
+    // oracle-version-exempt: flips ZERO baseline rows — the sharded worker that
+    // produces the published baseline already scores every leaked-import row
+    // as compile_error/host_import_leak (scripts/test262-worker.mjs, #2961);
+    // this only brings the in-process probe lane into agreement (#5272).
     const compileNegative =
       meta.negative?.phase === "parse" || meta.negative?.phase === "early" || meta.negative?.phase === "resolution";
     const standaloneImportError = compileNegative ? undefined : standaloneHostImportError(target, result.imports);
