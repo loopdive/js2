@@ -1035,3 +1035,84 @@ measured row movement.
 plan's `p56` note (a script-level `var eval` declaration drags the compile to
 ~17.6 s, which is over the runner's 15 s budget) still needs measuring before
 the rows can be judged cheap.
+
+### Wave result — 89 in-scope rows: 0 → 17 pass
+
+Measured with the CI-equivalent runner and budget
+(`npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-head.txt --standalone`,
+15 s per row) in this worktree, before and after:
+
+| | before | after |
+|---|---:|---:|
+| pass | 0 | **17** |
+| fail | 88 | 71 |
+| compile_error | 1 | 1 |
+
+The 17 flipped rows, all real `pass` (the runner applies CI's standalone
+host-import leak check, so each is host-import-free):
+
+```
+expressions/addition/coerce-symbol-to-prim-invocation.js
+expressions/arrow-function/ArrowFunction_restricted-properties.js
+expressions/arrow-function/prototype-rules.js
+expressions/call/tco-call-args.js
+expressions/comma/tco-final.js
+expressions/conditional/tco-cond.js
+expressions/conditional/tco-pos.js
+expressions/equals/coerce-symbol-to-prim-invocation.js
+expressions/logical-and/tco-right.js
+expressions/logical-or/tco-right.js
+expressions/object/__proto__-duplicate-computed.js
+expressions/object/__proto__-value-non-object.js
+expressions/object/__proto__-value-null.js
+expressions/object/__proto__-value-obj.js
+expressions/object/dstr/meth-dflt-obj-ptrn-empty.js
+expressions/tagged-template/tco-call.js
+expressions/tagged-template/tco-member.js
+```
+
+No previously-passing row regressed: the base was 0 pass, and the 20-row
+control list (`lists/expr-controls.txt`) is **20/20** after every step and at
+the end. The 39 out-of-scope rows keep their signature: 36 fail + 3
+compile_error, the same three CE paths as the baseline 128-row run
+(`capturing-closure-variables-2`, `concise-generator`,
+`generator-prop-name-yield-expr`) — no new CE and no CE→wrong-answer demotion.
+
+**This is below the plan's target (≥66) and below its floor (45).** Steps
+1, 2, 8, 10-N and the M half of step 3 landed. Steps 4 (H), 5 (L), 6 (C),
+7 (B), 9 (E) and 11 (O/X5) were not started; J, K, G and F were measured and
+are recorded above with what actually blocks each. Three of those measurements
+change what the next pass should do, because the plan's stated root cause is
+falsified: **J** (the method never reaches `compileArrowAsClosure`), **K** (the
+open-path `delete` is broken for plain data properties too), **G** (the `.name`
+VALUE and descriptor FLAGS are already right; the blocker is `verifyProperty`'s
+delete of a synthetic MOP view).
+
+Two defects found in passing that are outside every cluster this issue names,
+recorded so they are not re-derived:
+
+- A static member read of a property whose only checker type is `undefined`
+  answers an f64 `0` (`.tmp/es2015/probes/q06-read-fold.js`). The dynamic read
+  of the same property is correct, and adding any second property to the
+  literal fixes the static one. This is what still fails
+  `object/computed-__proto__`.
+- `"x" + o` for an object with a user `valueOf` / `toString` answers
+  `x[object Object]` in BOTH lanes — string-concatenation `+` does not run
+  OrdinaryToPrimitive on its object operand.
+
+Pre-existing red on `origin/main`, verified by reverting all twelve changed
+source files to `origin/main` and re-running: `tests/issue-839.test.ts`
+(sub-pattern 2), `tests/issue-1472-es5-getprototypeof.test.ts` (the standalone
+intrinsic-identity case), `tests/issue-4429-string-hint-toprimitive-this.test.ts`
+(2 of 5), `tests/issue-4492-builtin-as-value.test.ts` (the `$NativeProto`
+receiver case), `tests/issue-3017-function-poison-pill.test.ts` (4 of 16),
+`tests/issue-2800-toplevel-new-objlit-init-read.test.ts` (the delete-tombstone
+case).
+
+One committed pin was UPDATED rather than kept, because this wave makes its
+subject correct: `tests/issue-3037-cs1c-getprototypeof-carrier.test.ts` pinned
+`Object.getPrototypeOf([1]) === null` and `Object.getPrototypeOf({z:1}) ===
+null` as a regression lock on the standalone prototype surface. Both now answer
+`Array.prototype` and `Object.prototype`; the lock is re-pointed at those
+values, and the identity/carrier findings the rest of that suite records are
+untouched.
