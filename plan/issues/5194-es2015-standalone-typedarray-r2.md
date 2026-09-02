@@ -1201,3 +1201,29 @@ Commit 2 — Step 2 rest (part), Step 3 (part), Step 4 (part):
 6. Measurement cost on a shared box is the binding constraint: the 300-row
    head list took **48 minutes** in-process at load 10–22. Budget for that, or
    measure per-cluster only.
+
+### Validation
+
+- Five ratchet gates green (`check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`), run
+  bare with `$?` captured, before each commit.
+- `pnpm run typecheck` (TS7) green. `pnpm run typecheck:ts5` fails on
+  `src/linked-provider-runtime.ts` (`WebAssembly.Tag` missing from the ambient
+  lib) — **pre-existing on `main`, untouched by this branch.**
+- `tests/issue-5194-es2015-typedarray-r2.test.ts` 4/4.
+- `pnpm run test:equivalence:gate`: **24 failing / 1718 passing, all 24 in the
+  baseline — no new regressions.**
+- Neighbour vitest files, one at a time with
+  `NODE_OPTIONS=--max-old-space-size=3072`:
+  `issue-2872-ta-dynview-reduce-includes` 9/9, `issue-4449-species-controls`
+  5/5. Two files fail, and **both fail identically with `src/` reverted to
+  `main` (`git checkout 0f801557a -- src/`), so they are pre-existing, not
+  this branch**: `issue-2872.test.ts` "non-TA dynamic callee still constructs
+  through the class dispatch" (expected NaN to be 7), and three rows across
+  `issue-3177.test.ts` / `issue-3177-fromof.test.ts` (ctor cross-check,
+  `[[Delete]]` MOP, `from(iterable Set)`).
+- Method note: run the A/B revert **serially**. Doing it while an equivalence
+  gate was in flight put ~6 minutes of that run on `main`'s compiler (vitest
+  isolates the module graph per file), so that run was repeated end-to-end on
+  a quiet tree — the 24/1718/no-regressions figure above is the CLEAN re-run,
+  and the contaminated run agreed with it.
