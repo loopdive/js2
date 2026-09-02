@@ -169,7 +169,19 @@ interface Shape {
   readonly name: string;
   readonly source: string;
   readonly read: number;
+  /**
+   * (#3523 gap-6a) This population's closure discovery is reproducible from the
+   * AST, so pass 1 is replaced by the pre-lift and the single compile runs in
+   * the pass-2 slot: `1/0` becomes `0/1`. Gap-1b's own predicate — "does a
+   * SECOND compile differ?" — is not consulted for these, which is why each
+   * group below keeps at least one shape gap-6a refuses.
+   */
+  readonly discoveryStatic?: true;
 }
+
+/** The census a shape must read, given whether gap-6a admits its population. */
+const expectedCensus = (shape: Shape): DirectPassCensus =>
+  shape.discoveryStatic ? { pass1: 0, pass2: 1 } : { pass1: 1, pass2: 0 };
 
 /** gap-1a: call-free populations (some of them closure-BEARING). */
 const CALL_FREE_SHAPES: readonly Shape[] = [
@@ -180,10 +192,20 @@ const CALL_FREE_SHAPES: readonly Shape[] = [
   },
   { name: "top-level-var", source: `var w = 5;\nexport function read(): number { return w; }\n`, read: 5 },
   {
-    // Closure-bearing but call-free: pass 2 has nothing to inline, so this
-    // stays on the one-pass route it reached in gap-1a.
+    // Closure-bearing but call-free: pass 2 has nothing to inline, so gap-1a
+    // put it on the one-pass route. (#3523 gap-6a) Its discovery is also static,
+    // so the single compile now runs AFTER the bodies instead of before them.
     name: "arrow-initializer",
     source: `const f = (x: number): number => x * 2;\nexport function read(): number { return f(3); }\n`,
+    read: 6,
+    discoveryStatic: true,
+  },
+  {
+    // The same claim on a population gap-6a REFUSES (a named function
+    // expression takes the private-lifted-func-type arm), so gap-1a's
+    // closure-bearing-but-call-free half keeps a `1/0` witness.
+    name: "named-fn-expression-initializer",
+    source: `const f = function double(x: number): number { return x * 2; };\nexport function read(): number { return f(3); }\n`,
     read: 6,
   },
   {
@@ -275,32 +297,52 @@ const TAGGED_TEMPLATE: Shape = {
   read: 1,
 };
 
-/** Both ingredients present: these keep today's two passes. */
+/**
+ * Both ingredients present, so gap-1b's predicate refuses the pass-2 skip.
+ *
+ * (#3523 gap-6a) The first four are ALSO discovery-static, so their single
+ * compile moved from the pass-1 slot to the pass-2 slot — `1/1` became `0/1`.
+ * `named-fn-expression-calls-local` is the witness that keeps gap-1b's own
+ * `1/1` verdict under test: gap-6a refuses a named function expression, so both
+ * passes still run and the predicate is still the thing being measured.
+ */
 const CLOSURE_PLUS_CALL_SHAPES: readonly Shape[] = [
   {
     name: "arrow-body-calls-local",
     source: `function h(): number { return 4; }\nconst f = (): number => h();\nexport function read(): number { return f(); }\n`,
     read: 4,
+    discoveryStatic: true,
   },
   {
     name: "fn-expression-calls-local",
     source: `function h(): number { return 4; }\nconst g = function (): number { return h(); };\nexport function read(): number { return g(); }\n`,
     read: 4,
+    discoveryStatic: true,
   },
   {
     name: "var-fn-expression",
     source: `function h(): number { return 5; }\nvar g = function (): number { return h(); };\nexport function read(): number { return g(); }\n`,
     read: 5,
+    discoveryStatic: true,
   },
   {
     name: "legacy-callee-inside-arrow",
     source: `function h(a: any): number { return a + 1; }\nconst f = (): number => h(41);\nexport function read(): number { return f(); }\n`,
     read: 42,
+    discoveryStatic: true,
+  },
+  {
+    name: "named-fn-expression-calls-local",
+    source: `function h(a: any): number { return a + 1; }\nconst f = function inc(): number { return h(41); };\nexport function read(): number { return f(); }\n`,
+    read: 42,
   },
 ];
 
+/** The gap-6a-refused member of the group above — gap-1b's live `1/1` witness. */
+const CLOSURE_PLUS_CALL_TWO_PASS = CLOSURE_PLUS_CALL_SHAPES[4]!;
+
 describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles the direct body once", () => {
-  it("reads pass1=1, pass2=0 for every pass-2-stable shape in both lanes", async () => {
+  it("compiles the direct body ONCE for every pass-2-stable shape in both lanes", async () => {
     for (const shape of [...CALL_FREE_SHAPES, ...CALL_BEARING_SHAPES, TAGGED_TEMPLATE]) {
       for (const lane of LANES) {
         const { result, census } = await compileWithCensus(
@@ -314,8 +356,7 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
         expect({ shape: shape.name, lane: lane.name, ...census }).toEqual({
           shape: shape.name,
           lane: lane.name,
-          pass1: 1,
-          pass2: 0,
+          ...expectedCensus(shape),
         });
       }
     }
@@ -326,7 +367,7 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
       for (const lane of LANES) {
         const single = await compileWithCensus(shape.source, lane, `gap1b-ab-${shape.name}-${lane.name}.ts`);
         const twoPass = await compileWithCensus(shape.source, lane, `gap1b-ab-${shape.name}-${lane.name}.ts`, true);
-        expect(single.census).toEqual({ pass1: 1, pass2: 0 });
+        expect(single.census).toEqual(expectedCensus(shape));
         expect(twoPass.census).toEqual({ pass1: 1, pass2: 1 });
 
         const singleSurface = await observableSurface(single.result, lane);
@@ -392,7 +433,11 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
     );
   }, 120_000);
 
-  it("keeps pass1=1, pass2=1 and unchanged behavior when a population carries BOTH ingredients", async () => {
+  it("never skips the emitting compile when a population carries BOTH ingredients", async () => {
+    // gap-1b's verdict is "pass 2 runs", and it still does for all five. What
+    // (#3523 gap-6a) changed is which SLOT the discovery-static four compile in:
+    // `1/1` for the shape gap-6a refuses, `0/1` for the four it admits — never
+    // `x/0`, which is the claim this control exists to make.
     for (const shape of CLOSURE_PLUS_CALL_SHAPES) {
       for (const lane of LANES) {
         const gated = await compileWithCensus(shape.source, lane, `gap1b-control-${shape.name}-${lane.name}.ts`);
@@ -400,7 +445,7 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
         expect({ shape: shape.name, lane: lane.name, ...gated.census }).toEqual({
           shape: shape.name,
           lane: lane.name,
-          pass1: 1,
+          pass1: shape.discoveryStatic ? 0 : 1,
           pass2: 1,
         });
         expect((await observableSurface(gated.result, lane)).read, `${shape.name}/${lane.name}`).toBe(shape.read);
@@ -422,11 +467,12 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
   }, 120_000);
 
   it("the closure refusal is load-bearing — admitting closures breaks byte identity", async () => {
-    // P4 mutation. `legacy-callee-inside-arrow` is `1/1` under the shipped
-    // predicate. Widen the predicate through the test-only seam and the same
-    // population goes `1/0` AND stops matching its two-pass build byte for
+    // P4 mutation, on the one closure+call shape (#3523 gap-6a) refuses (a NAMED
+    // function expression), so pass 1 still runs and the shipped verdict is
+    // still `1/1`. Widen gap-1b's predicate through the test-only seam and the
+    // same population goes `1/0` AND stops matching its two-pass build byte for
     // byte — which is exactly the divergence the refusal exists to avoid.
-    const shape = CLOSURE_PLUS_CALL_SHAPES[3]!;
+    const shape = CLOSURE_PLUS_CALL_TWO_PASS;
     for (const lane of LANES) {
       const shipped = await compileWithCensus(shape.source, lane, `gap1b-mut-${lane.name}.ts`);
       expect(shipped.census, `shipped/${lane.name}`).toEqual({ pass1: 1, pass2: 1 });
@@ -539,9 +585,13 @@ const nn: number = z;
 const [p, q] = nn as unknown as number[];
 export function read(): number { return p + q; }
 `;
-    // Both ingredients: still two passes, so the dedupe path is under test.
+    // Both ingredients AND (#3523 gap-6a)-refused (named function expression):
+    // pass 1 still runs, so the post-pass-2 dedupe path is what is under test
+    // here. The gap-6a-ADMITTED twin of this shape is pinned in
+    // `issue-3523-module-init-discovery-static.test.ts` — where the refusal it
+    // loses is a measured, named difference, not a silent one.
     const closurePlusCall = `function h(): number { return 1; }
-const f = (): number => h();
+const f = function inc(): number { return h(); };
 const nn: number = f();
 const [p, q] = nn as unknown as number[];
 export function read(): number { return p + q; }
@@ -572,11 +622,13 @@ export function read(): number { return p + q; }
 
   it("keeps test262 diagnostic counts identical through the runner harness", async () => {
     // (#3523 gap-1b P2) `cptn-decl-itr.js` is the file where an unconditional
-    // pass-2 skip doubled a diagnostic: its harness population is
-    // closure-bearing AND call-bearing, so pass 1 alone emits the pair that
-    // only the post-pass-2 dedupe collapses. Under the shipped predicate it
-    // keeps two passes and reports once — this pin is what would catch a future
-    // widening that admits closures.
+    // pass-2 skip doubled a diagnostic: pass 1 alone emits the pair that only
+    // the post-pass-2 dedupe collapses.
+    //
+    // (#3523 gap-6a) Its harness population is discovery-static, so it now reads
+    // `0/1` — and the dedupe still runs, because its mark is a program POSITION
+    // taken whether or not pass 1 does. Measured: without that, this file
+    // reported 2 errors where the two-pass build reports 1.
     const file = "test262/test/language/statements/for-in/cptn-decl-itr.js";
     if (!existsSync(file)) return; // submodule not present in this job
     const raw = readFileSync(file, "utf-8");
@@ -598,7 +650,7 @@ export function read(): number { return p + q; }
       return { result, census: censusFromProfile() };
     });
     const errorCount = (result: CompileResult) => result.errors.filter((e) => e.severity === "error").length;
-    expect(single.census).toEqual({ pass1: 1, pass2: 1 });
+    expect(single.census).toEqual({ pass1: 0, pass2: 1 });
     expect(errorCount(single.result)).toBe(errorCount(forced.result));
   }, 120_000);
 
