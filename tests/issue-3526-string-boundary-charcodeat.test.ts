@@ -84,6 +84,7 @@ import {
   STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS,
   STRING_COMPARE_POLICY_DISABLED,
   STRING_CONCAT_POLICY_DISABLED,
+  STRING_CONST_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
   STRING_LEN_POLICY_DISABLED,
   type RuntimeManifestPolicy,
@@ -371,6 +372,8 @@ describe("#3526 F2-S7 provider policy", () => {
     expect(frozen.policy.stringEq).toEqual(STRING_EQ_POLICY_DISABLED);
     expect(frozen.policy.stringLen).toEqual(STRING_LEN_POLICY_DISABLED);
     expect(frozen.policy.stringConcat).toEqual(STRING_CONCAT_POLICY_DISABLED);
+    // (#3526 F2-S8) …and family 2's last: the literal-storage seam.
+    expect(frozen.policy.stringConst).toEqual(STRING_CONST_POLICY_DISABLED);
   });
 
   it("resolves independently of compare, eq, len, concat and every family-1 arm", () => {

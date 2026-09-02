@@ -1763,7 +1763,7 @@ export const STANDALONE_TA_MAPFILTER_PACKED_VIEWS: ReadonlySet<string> = new Set
  *   - `Object.getPrototypeOf(Int8Array.prototype).constructor` (the test262-runner
  *     injected shim for the abstract intrinsic — test262-runner.ts ~1823)
  */
-function isTypedArrayIntrinsicCtorExpr(ctx: CodegenContext, expr: ts.Expression): boolean {
+export function isTypedArrayIntrinsicCtorExpr(ctx: CodegenContext, expr: ts.Expression): boolean {
   const e = unwrapTransparent(expr);
   // Object.getPrototypeOf(<wired view ctor>)
   const gpoArg = getProtoOfCallArg(e);

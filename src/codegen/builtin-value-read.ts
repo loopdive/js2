@@ -96,6 +96,7 @@ import {
 } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
+import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -760,18 +761,34 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   if (inner.name.text !== "prototype" || !ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const glue = getNativeProtoBuiltinGlue(ctx, brand);
-  if (!glue) return undefined;
+  const ownGlue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!ownGlue) return undefined;
 
   const member = memberAccess.name.text;
   // Only fold for members the glue actually advertises (so a typo / unknown
   // member still routes through the normal path rather than fabricating a 0).
-  if (!glue.memberCsv.split(",").includes(member)) return undefined;
+  // (#5194 step 1) A glue with a declared PARENT owns no methods of its own
+  // (`Uint8Array.prototype.map.length`), so consult the parent level too — the
+  // same one-level walk `resolveStandaloneProtoMemberValueClosure` performs.
+  const glue = ownGlue.memberCsv.split(",").includes(member)
+    ? ownGlue
+    : ownGlue.parentBrand !== undefined && ownGlue.parentBrand !== brand
+      ? getNativeProtoBuiltinGlue(ctx, ownGlue.parentBrand)
+      : undefined;
+  if (!glue || !glue.memberCsv.split(",").includes(member)) return undefined;
 
   if (metaProp === "length") {
     const arity = glue.memberKind(member) === "getter" ? 0 : glue.memberLength(member);
@@ -798,7 +815,15 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   if (!ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
@@ -825,6 +850,13 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   // `$NativeProto` struct trapped with "illegal cast in __module_init".
   const dataProp = getNativeProtoBuiltinGlue(ctx, brand)?.dataProps?.find(([key]) => key === member);
   if (dataProp) {
+    // (#5194 step 1) A NUMERIC own data property is a prototype CONSTANT —
+    // `<View>.prototype.BYTES_PER_ELEMENT` (§23.2.7.1) — folded to its f64
+    // constant, the same value the seeded companion entry carries.
+    if (typeof dataProp[1] === "number") {
+      fctx.body.push({ op: "f64.const", value: dataProp[1] });
+      return { kind: "f64" };
+    }
     const literal = compileStringLiteral(ctx, fctx, dataProp[1]);
     if (literal) return literal;
   }

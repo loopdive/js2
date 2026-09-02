@@ -144,6 +144,7 @@ import {
   compileObjectAssignArg,
   compileProtoArg,
   isGlobalBuiltinIdentifier,
+  isTypedArrayIntrinsicCtorExpr,
   staticToBoolean,
   tracesToTypedArrayIntrinsicProto,
 } from "./calls.js";
@@ -3184,7 +3185,16 @@ export function compileBuiltinStaticCall(
     // side-effect-free (builtin/alias identifier + `Symbol.species` fold),
     // so neither is compiled — same discipline as the Phase-3 literal arm.
     if (ctx.standalone && propLiteral === undefined && isSymbolSpeciesKeyExpression(fctx, arg1)) {
-      const builtinRecv = resolveBuiltinReceiverName(fctx, arg0, BUILTIN_CLASS_NAMES);
+      // (#5194 step 2) `%TypedArray%` reaches this arm only through the
+      // harness's `var TypedArray = Object.getPrototypeOf(Int8Array)` binding,
+      // which `resolveBuiltinReceiverName` cannot name (it is not a global
+      // identifier). The same static tracer the #2901 gOPD-proto arm uses
+      // recovers it, so `gOPD(TypedArray, Symbol.species)` synthesizes from the
+      // canonical getter singleton instead of falling to the `__get_builtin`
+      // refusal.
+      const builtinRecv =
+        resolveBuiltinReceiverName(fctx, arg0, BUILTIN_CLASS_NAMES) ??
+        (isTypedArrayIntrinsicCtorExpr(ctx, arg0) ? "%TypedArray%" : undefined);
       if (builtinRecv !== undefined && tryEmitStandaloneBuiltinSpeciesGopd(ctx, fctx, builtinRecv)) {
         return { kind: "externref" };
       }

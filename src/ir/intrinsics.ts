@@ -336,6 +336,27 @@ export const EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Obje
   result: F64_TYPE,
 });
 
+/**
+ * `() -> externref` — the seam shape of a string LITERAL's storage.
+ *
+ * (#3526 F2-S8) The catalogue's first and only signature with NO parameters,
+ * and the one place the family's callable-shaped `IntrinsicSignature` is bent
+ * to describe a VALUE rather than a call: a `string.const` is answered by a
+ * global (an imported `string_constants.<literal>` externref on the host lane,
+ * an interned `__strlit_N` defined global natively), never by a function.
+ *
+ * Nominal, exactly as `native.js.string.len` reuses
+ * {@link EXTERNREF_TO_I32_INTRINSIC_SIGNATURE} for a `struct.get`: the rows it
+ * carries state "one string comes out, nothing goes in". The alternative — a
+ * `valueType` field on `RuntimeProvider` — would have changed every projection
+ * in the catalogue for one seam, and was rejected in the plan for that reason.
+ */
+export const EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([] as readonly IrType[]),
+  result: EXTERNREF_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),

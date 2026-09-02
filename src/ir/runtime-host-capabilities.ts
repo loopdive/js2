@@ -68,21 +68,51 @@ export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
   "string.len",
 ] as const);
 
+/**
+ * (#3526 F2-S6) The FAMILY half of the func side: one id standing for an
+ * unbounded SET of physical imports that differ only in arity.
+ *
+ * `env.__concat_3` … `env.__concat_9` (and, on the host lane, any N — the JS
+ * provider matches by prefix) are one semantic crossing whose field name is
+ * DERIVED from the operand count, so a closed catalogue cannot enumerate them
+ * any more than it could enumerate `string_constants.<literal>`. The record
+ * therefore fixes the derivation rule, not a name.
+ *
+ * This is a THIRD list rather than a member of
+ * {@link RUNTIME_HOST_CAPABILITY_FUNC_IDS}, and that separation is the whole
+ * point: a family id in the func list would make `RuntimeHostCapabilityFuncId`
+ * admit it, so a plain `host-callable { capability: "string.concat.many" }`
+ * would type-check and be caught only by the runtime throw in
+ * {@link asCallableRuntimeHostCapabilityRecord} at module init — exactly the
+ * typed-half hole F2-S2 closed for globals. With the third list the family id
+ * is spellable only where a family is expected.
+ */
+export const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS = Object.freeze(["string.concat.many"] as const);
+
 export const RUNTIME_HOST_CAPABILITY_GLOBAL_IDS = Object.freeze(["string.const", "string.const.utf16"] as const);
 
 export type RuntimeHostCapabilityFuncId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_IDS)[number];
+export type RuntimeHostCapabilityFuncFamilyId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS)[number];
 export type RuntimeHostCapabilityGlobalId = (typeof RUNTIME_HOST_CAPABILITY_GLOBAL_IDS)[number];
-export type RuntimeHostCapabilityId = RuntimeHostCapabilityFuncId | RuntimeHostCapabilityGlobalId;
+export type RuntimeHostCapabilityId =
+  | RuntimeHostCapabilityFuncId
+  | RuntimeHostCapabilityFuncFamilyId
+  | RuntimeHostCapabilityGlobalId;
 
 /** Every id, sorted — the completeness axis the catalogue is checked against. */
 export const RUNTIME_HOST_CAPABILITY_IDS: readonly RuntimeHostCapabilityId[] = Object.freeze(
-  [...RUNTIME_HOST_CAPABILITY_FUNC_IDS, ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS].sort((left, right) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  ),
+  [
+    ...RUNTIME_HOST_CAPABILITY_FUNC_IDS,
+    ...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
+    ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS,
+  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
 );
 
 const RUNTIME_HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);
 const RUNTIME_HOST_CAPABILITY_FUNC_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FUNC_IDS);
+const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_ID_SET: ReadonlySet<string> = new Set(
+  RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
+);
 const RUNTIME_HOST_CAPABILITY_GLOBAL_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_IDS);
 
 export function isRuntimeHostCapabilityId(value: string): value is RuntimeHostCapabilityId {
@@ -92,6 +122,11 @@ export function isRuntimeHostCapabilityId(value: string): value is RuntimeHostCa
 /** Runtime twin of the func half of the id union (the `host-callable` domain). */
 export function isRuntimeHostCapabilityFuncId(value: string): value is RuntimeHostCapabilityFuncId {
   return RUNTIME_HOST_CAPABILITY_FUNC_ID_SET.has(value);
+}
+
+/** Runtime twin of the FAMILY half of the id union (the `host-callable-family` domain). */
+export function isRuntimeHostCapabilityFuncFamilyId(value: string): value is RuntimeHostCapabilityFuncFamilyId {
+  return RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_ID_SET.has(value);
 }
 
 /** Runtime twin of the global half of the id union. */
@@ -131,7 +166,7 @@ export type RuntimeHostCapabilityGlobalModule = (typeof RUNTIME_HOST_CAPABILITY_
 const RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FUNC_MODULES);
 const RUNTIME_HOST_CAPABILITY_GLOBAL_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES);
 
-export const RUNTIME_HOST_CAPABILITY_KINDS = Object.freeze(["func", "global"] as const);
+export const RUNTIME_HOST_CAPABILITY_KINDS = Object.freeze(["func", "func-family", "global"] as const);
 export type RuntimeHostCapabilityKind = (typeof RUNTIME_HOST_CAPABILITY_KINDS)[number];
 const RUNTIME_HOST_CAPABILITY_KIND_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_KINDS);
 
@@ -150,6 +185,49 @@ const RUNTIME_HOST_CAPABILITY_FIELD_SCHEME_SET: ReadonlySet<string> = new Set(RU
 
 export interface RuntimeHostCapabilityGlobalField {
   readonly scheme: RuntimeHostCapabilityFieldScheme;
+}
+
+/**
+ * (#3526 F2-S6) How a func FAMILY's import field is derived from the arity.
+ *
+ * `arity-suffix` — the field is `prefix + arity`: `env.__concat_3`,
+ * `env.__concat_9`. Deliberately its OWN list rather than a member of
+ * {@link RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES}: a global's schemes derive a
+ * field from a string LITERAL, a family's from a NUMBER, and nothing may read
+ * one where the other is meant.
+ */
+export const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES = Object.freeze(["arity-suffix"] as const);
+export type RuntimeHostCapabilityFuncFamilyFieldScheme =
+  (typeof RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES)[number];
+const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEME_SET: ReadonlySet<string> = new Set(
+  RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES,
+);
+
+/**
+ * The smallest arity any capability family may admit. The batched-concat
+ * producer never fuses fewer than three leaves, so a row below this describes
+ * an import no lane can request.
+ */
+const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY = 3;
+
+export interface RuntimeHostCapabilityFuncFamilyField {
+  readonly scheme: RuntimeHostCapabilityFuncFamilyFieldScheme;
+  /** Literal prefix the arity is appended to; `__concat_` for the concat family. */
+  readonly prefix: string;
+}
+
+/**
+ * A family's parameter list as a SCHEME: `repeat` × arity, bounded by
+ * `[min, max]`. `max: null` is unbounded — the measured host fact (the JS
+ * provider matches `__concat_` by prefix and answers any N; the census
+ * observed `__concat_9`).
+ */
+export interface RuntimeHostCapabilityFuncFamilyParams<
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly repeat: Value;
+  readonly min: number;
+  readonly max: number | null;
 }
 
 /**
@@ -188,11 +266,35 @@ export interface RuntimeHostCapabilityGlobalRecord<
   readonly mutable: boolean;
 }
 
+/**
+ * (#3526 F2-S6) Exact FAMILY capability record — a rule for deriving an
+ * unbounded set of concrete func rows, not a concrete row itself.
+ *
+ * Deliberately a separate kind rather than a widening of
+ * {@link RuntimeHostCapabilityFuncRecord}'s `field: string` /
+ * `params: readonly Value[]`: widening those would make every existing
+ * `resolveRuntimeHostCapabilityFuncRecord` consumer handle a scheme it can
+ * never receive. {@link resolveRuntimeHostCapabilityFuncFamilyRecord} is the
+ * one place a concrete row is synthesized, and it takes the arity.
+ */
+export interface RuntimeHostCapabilityFuncFamilyRecord<
+  Id extends RuntimeHostCapabilityFuncFamilyId = RuntimeHostCapabilityFuncFamilyId,
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly capability: Id;
+  readonly module: RuntimeHostCapabilityFuncModule;
+  readonly field: RuntimeHostCapabilityFuncFamilyField;
+  readonly kind: "func-family";
+  readonly params: RuntimeHostCapabilityFuncFamilyParams<Value>;
+  readonly results: readonly Value[];
+}
+
 export type RuntimeHostCapabilityRecord<
   Id extends RuntimeHostCapabilityId = RuntimeHostCapabilityId,
   Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
 > =
   | RuntimeHostCapabilityFuncRecord<Extract<Id, RuntimeHostCapabilityFuncId>, Value>
+  | RuntimeHostCapabilityFuncFamilyRecord<Extract<Id, RuntimeHostCapabilityFuncFamilyId>, Value>
   | RuntimeHostCapabilityGlobalRecord<Extract<Id, RuntimeHostCapabilityGlobalId>, Value>;
 
 function funcRecord(
@@ -227,6 +329,23 @@ function record(
   exceptionPolicy?: HostCallbackExceptionPolicy,
 ): RuntimeHostCapabilityFuncRecord {
   return funcRecord(capability, "env", field, params, results, exceptionPolicy);
+}
+
+function funcFamilyRecord(
+  capability: RuntimeHostCapabilityFuncFamilyId,
+  module: RuntimeHostCapabilityFuncModule,
+  field: RuntimeHostCapabilityFuncFamilyField,
+  params: RuntimeHostCapabilityFuncFamilyParams,
+  results: readonly RuntimeHostCapabilityValueType[],
+): RuntimeHostCapabilityFuncFamilyRecord {
+  return Object.freeze({
+    capability,
+    module,
+    field: Object.freeze({ scheme: field.scheme, prefix: field.prefix }),
+    kind: "func-family" as const,
+    params: Object.freeze({ repeat: params.repeat, min: params.min, max: params.max }),
+    results: Object.freeze([...results]),
+  });
 }
 
 function globalRecord(
@@ -293,6 +412,23 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   // the resolve arm looks the field up in `ctx.funcMap` and never mints it.
   record("string.compare", "string_compare", ["externref", "externref"], ["i32"]),
   funcRecord("string.concat", "wasm:js-string", "concat", ["externref", "externref"], ["ref_extern"]),
+  // (#3526 F2-S6) The BATCHED many-arity concat family. The IR
+  // `batchStringConcat` pass fuses a single-use immutable `+` tree of three or
+  // more leaves into one call, and the host lane answers it with
+  // `env.__concat_<arity>` — one import per observed arity, minted late, on
+  // demand. `min: 3` is the pass's own floor (`batch-string-concat.ts`'s
+  // three-leaf guard and `irStringConcatManySymbol`'s RangeError); `max: null`
+  // is the measured host fact — `src/runtime.ts` matches the `__concat_`
+  // prefix and answers any N, and the census observed `__concat_9`. The NATIVE
+  // arm's 3..8 bound is a provider fact, not a capability one, and lives on
+  // that provider row.
+  funcFamilyRecord(
+    "string.concat.many",
+    "env",
+    { scheme: "arity-suffix", prefix: "__concat_" },
+    { repeat: "externref", min: 3, max: null },
+    ["externref"],
+  ),
   // (#3526 F2-S2) The two string-literal GLOBAL namespaces. The import field
   // is DERIVED from the literal, so the row can only fix the derivation rule:
   // `addStringConstantGlobal` uses the literal itself, or `hexCodeUnits` in
@@ -381,6 +517,10 @@ export function assertRuntimeHostCapabilityRecord(value: unknown): asserts value
     assertGlobalCapabilityRecord(candidate, id, expected);
     return;
   }
+  if (expected.kind === "func-family") {
+    assertFuncFamilyCapabilityRecord(candidate, id, expected);
+    return;
+  }
   const keys = ["capability", "field", "kind", "module", "params", "results"];
   if (expected.exceptionPolicy !== undefined) keys.push("exceptionPolicy");
   assertExactKeys(candidate, keys);
@@ -400,6 +540,66 @@ export function assertRuntimeHostCapabilityRecord(value: unknown): asserts value
       `host capability ${id} exception policy ${String(candidate.exceptionPolicy)} does not match ${String(expected.exceptionPolicy)}`,
     );
   }
+}
+
+/**
+ * (#3526 F2-S6) The family arm. It checks the DERIVATION RULE, because that is
+ * all a family row states: which scheme derives the field, from which prefix,
+ * and over which arity range.
+ *
+ * `min >= 3` is not decoration — it is the measured floor of the producer
+ * (`batchStringConcat` only fuses three or more leaves, and
+ * `irStringConcatManySymbol` throws below three), so a row admitting arity 2
+ * would describe an import no lane can ever request.
+ */
+function assertFuncFamilyCapabilityRecord(
+  candidate: Record<string, unknown>,
+  id: RuntimeHostCapabilityId,
+  expected: RuntimeHostCapabilityFuncFamilyRecord,
+): void {
+  assertExactKeys(candidate, ["capability", "field", "kind", "module", "params", "results"]);
+  if (typeof candidate.module !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET.has(candidate.module)) {
+    throw new Error(`unknown host capability ${id} module ${String(candidate.module)}`);
+  }
+  if (candidate.module !== expected.module) {
+    throw new Error(`host capability ${id} module ${String(candidate.module)} does not match ${expected.module}`);
+  }
+  const field = candidate.field;
+  if (field === null || typeof field !== "object" || Array.isArray(field)) {
+    throw new Error(`host capability ${id} field ${String(field)} does not match a family field scheme`);
+  }
+  assertExactKeys(field as Record<string, unknown>, ["prefix", "scheme"]);
+  const { scheme, prefix } = field as { scheme?: unknown; prefix?: unknown };
+  if (typeof scheme !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEME_SET.has(scheme)) {
+    throw new Error(`unknown host capability ${id} field scheme ${String(scheme)}`);
+  }
+  if (scheme !== expected.field.scheme) {
+    throw new Error(`host capability ${id} field scheme ${scheme} does not match ${expected.field.scheme}`);
+  }
+  if (typeof prefix !== "string" || prefix.length === 0 || prefix !== expected.field.prefix) {
+    throw new Error(`host capability ${id} field prefix ${String(prefix)} does not match ${expected.field.prefix}`);
+  }
+  const params = candidate.params;
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new Error(`host capability ${id} params ${String(params)} do not match a family params scheme`);
+  }
+  assertExactKeys(params as Record<string, unknown>, ["max", "min", "repeat"]);
+  const { repeat, min, max } = params as { repeat?: unknown; min?: unknown; max?: unknown };
+  assertValueTypes([repeat], [expected.params.repeat], "params", id);
+  if (!Number.isSafeInteger(min) || (min as number) < RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY) {
+    throw new Error(
+      `host capability ${id} params min ${String(min)} is below the ${RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY}-operand floor`,
+    );
+  }
+  if (max !== null && (!Number.isSafeInteger(max) || (max as number) < (min as number))) {
+    throw new Error(`host capability ${id} params max ${String(max)} does not cover min ${String(min)}`);
+  }
+  if (min !== expected.params.min || max !== expected.params.max) {
+    throw new Error(
+      `host capability ${id} params range ${String(min)}..${String(max)} does not match ${String(expected.params.min)}..${String(expected.params.max)}`,
+    );
+  }
+  assertValueTypes(candidate.results, expected.results, "results", id);
 }
 
 function assertGlobalCapabilityRecord(
@@ -487,6 +687,75 @@ export function resolveRuntimeHostCapabilityRecord(
   const found = records.find((candidate) => candidate.capability === capability);
   if (!found) throw new Error(`host capability catalog does not define ${capability}`);
   assertCanonicalRuntimeHostCapabilityRecord(found);
+  return found;
+}
+
+/**
+ * (#3526 F2-S6) One CONCRETE row synthesized from a family record and an arity.
+ *
+ * Structurally the `module` / `field` / `params` / `results` a caller would
+ * have gotten from a plain func record — deliberately NOT a
+ * {@link RuntimeHostCapabilityFuncRecord}, because it is not a catalogue
+ * object: `assertCanonicalRuntimeHostCapabilityRecord` would (correctly)
+ * refuse it, and nothing may pass a synthesized row where a canonical one is
+ * required.
+ */
+export interface ResolvedRuntimeHostCapabilityFuncFamilyRow<
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly module: RuntimeHostCapabilityFuncModule;
+  readonly field: string;
+  readonly params: readonly Value[];
+  readonly results: readonly Value[];
+}
+
+/**
+ * Resolve one selected FAMILY id at one arity, fail-closed on misses, kind and
+ * range. This is the ONLY place a family's physical field name is derived; no
+ * consumer may rebuild `prefix + arity` itself.
+ */
+export function resolveRuntimeHostCapabilityFuncFamilyRecord(
+  records: readonly RuntimeHostCapabilityRecord[],
+  capability: RuntimeHostCapabilityFuncFamilyId,
+  arity: number,
+): ResolvedRuntimeHostCapabilityFuncFamilyRow {
+  const found = resolveRuntimeHostCapabilityRecord(records, capability);
+  if (found.kind !== "func-family") {
+    throw new Error(`host capability ${capability} is not a host capability family`);
+  }
+  const { min, max, repeat } = found.params;
+  if (!Number.isSafeInteger(arity) || arity < min || (max !== null && arity > max)) {
+    throw new Error(
+      `host capability family ${capability} does not cover arity ${String(arity)} (${min}..${max ?? "unbounded"})`,
+    );
+  }
+  return Object.freeze({
+    module: found.module,
+    field: `${found.field.prefix}${arity}`,
+    params: Object.freeze(Array.from({ length: arity }, () => repeat)),
+    results: found.results,
+  });
+}
+
+/**
+ * (#3526 F2-S8) Resolve one selected GLOBAL ID, fail-closed on both misses and
+ * kind — the exact twin of {@link resolveRuntimeHostCapabilityFuncRecord}.
+ *
+ * {@link resolveRuntimeHostCapabilityRecord} is deliberately kind-AGNOSTIC (the
+ * manifest freeze publishes records of every kind through it), so a consumer
+ * that wants a global — the string-literal storage seam is the first — needs
+ * its own guard rather than reusing the func one, whose whole job is to refuse
+ * exactly this kind. A global record carries a field SCHEME rather than a field
+ * name, because the field IS the literal.
+ */
+export function resolveRuntimeHostCapabilityGlobalRecord(
+  records: readonly RuntimeHostCapabilityRecord[],
+  capability: RuntimeHostCapabilityGlobalId,
+): RuntimeHostCapabilityGlobalRecord {
+  const found = resolveRuntimeHostCapabilityRecord(records, capability);
+  if (found.kind !== "global") {
+    throw new Error(`host capability ${capability} is not a global host capability`);
+  }
   return found;
 }
 

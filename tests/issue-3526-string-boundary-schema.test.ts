@@ -17,12 +17,17 @@
 //    (`string_constants16."d800"`, #2880). A closed catalogue cannot enumerate
 //    per-literal field names, so a global row fixes the field SCHEME instead.
 //
-// Byte identity holds BY CONSTRUCTION, not by luck: `freeze()` derives
-// `hostCapabilityRecords` from the capabilities that selected PROVIDERS
-// request, and no provider names any of the six new rows. The pins below
-// assert that construction directly (section d), so a future slice that wires
-// a provider up cannot do it silently under cover of "the schema already
-// allowed it".
+// (#3526 F2-S8) The original wording of this paragraph — "no provider names
+// any of the six new rows" — is now HISTORY, and deliberately rewritten rather
+// than quietly deleted. Every one of the six is provided: `string.eq` in F2-S3,
+// `string.len` in F2-S4, `string.concat` in F2-S5, `string.char_code_at` in
+// F2-S7, and both `string.const*` rows in F2-S8, which is the slice that
+// finally gives a GLOBAL capability a provider. Section (d) is therefore
+// inverted: it asserts that every new id IS named, and that the global ids are
+// named by `host-global` rows rather than by the `host-callable` kind the
+// schema still refuses. Section (g)'s fail-closed guards are UNCHANGED — a
+// func-assuming consumer must still refuse a global row, and now there is a
+// real provider to prove it against.
 //
 // What each section is for:
 //   (a) the kind-discriminated schema itself — closed unions, both id halves
@@ -53,11 +58,14 @@ import {
 import {
   asCallableRuntimeHostCapabilityRecord,
   canonicalizeRuntimeHostCapabilityCatalog,
+  isRuntimeHostCapabilityFuncFamilyId,
   isRuntimeHostCapabilityFuncId,
   isRuntimeHostCapabilityGlobalId,
   resolveRuntimeHostCapabilityFuncRecord,
   resolveRuntimeHostCapabilityRecord,
   RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES,
+  RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES,
+  RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
   RUNTIME_HOST_CAPABILITY_FUNC_IDS,
   RUNTIME_HOST_CAPABILITY_FUNC_MODULES,
   RUNTIME_HOST_CAPABILITY_GLOBAL_IDS,
@@ -84,20 +92,35 @@ const NEW_IDS = [
 const NEW_ID_SET: ReadonlySet<string> = new Set(NEW_IDS);
 
 /**
- * (#3526 F2-S7) The TWO of those six that STILL have no provider row.
- *
- * `string.eq` left this set in F2-S3, `string.len` in F2-S4, `string.concat` in
- * F2-S5 and `string.char_code_at` in F2-S7, each when its seam moved under
- * manifest authority; the two `string.const*` ids are untouched and the fence
- * below still holds them for F2-S8.
- *
- * `string.char_code_at` arrives differently from the three before it: no
- * provider names it as a `host-callable` CAPABILITY. It is named by the
- * `hostCapabilities` list of a `runtime-callable` row — `__jsstr_charCodeAt` is
- * a defined helper that CLOSES OVER the builtin, not the builtin itself — which
- * is why the scan below reads both halves.
+ * (#3526 F2-S6) Ids added AFTER this suite's own slice. They are not part of
+ * the F2-S2 six and must not join {@link NEW_IDS} — `STILL_UNPROVIDED_IDS`
+ * derives from that list and is a fence of its own. They are named here only
+ * so the "twelve pre-existing rows" pin below keeps meaning *pre-F2-S2*
+ * rather than drifting into "everything that is not new today".
  */
-const PROVIDED_IDS = ["string.char_code_at", "string.concat", "string.eq", "string.len"] as const;
+const LATER_SLICE_IDS = ["string.concat.many"] as const;
+const LATER_SLICE_ID_SET: ReadonlySet<string> = new Set(LATER_SLICE_IDS);
+
+/**
+ * (#3526 F2-S8) All SIX now have a provider row, so this list is the whole of
+ * {@link NEW_IDS} and `STILL_UNPROVIDED_IDS` is empty.
+ *
+ * `string.eq` left the unprovided set in F2-S3, `string.len` in F2-S4,
+ * `string.concat` in F2-S5, `string.char_code_at` in F2-S7, and the two
+ * `string.const*` ids in F2-S8. Shrinking the fence by the id that landed was
+ * the correct edit each time; now that it is empty the fence is INVERTED rather
+ * than deleted — section (d) asserts that every new id is named, and by which
+ * implementation kind.
+ *
+ * Two ids arrive differently from the four callable ones.
+ * `string.char_code_at` is named by the `hostCapabilities` list of a
+ * `runtime-callable` row (`__jsstr_charCodeAt` is a defined helper that CLOSES
+ * OVER the builtin, not the builtin itself), and the two `string.const*` ids
+ * are named by `host-global` rows — the kind F2-S8 added precisely because a
+ * global capability has no callable spelling and `host-callable` must keep
+ * refusing one.
+ */
+const PROVIDED_IDS = NEW_IDS;
 const STILL_UNPROVIDED_IDS = NEW_IDS.filter((id) => !(PROVIDED_IDS as readonly string[]).includes(id));
 
 function row(capability: RuntimeHostCapabilityId): RuntimeHostCapabilityRecord {
@@ -137,11 +160,25 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
       expect(isRuntimeHostCapabilityGlobalId(id)).toBe(true);
       expect(isRuntimeHostCapabilityFuncId(id)).toBe(false);
     }
+    // (#3526 F2-S6) A THIRD half: the func FAMILY ids. Disjoint from both the
+    // plain func half and the global half, so `host-callable` cannot name one.
+    expect([...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS]).toEqual(["string.concat.many"]);
+    for (const id of RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS) {
+      expect(RUNTIME_HOST_CAPABILITY_FUNC_IDS as readonly string[]).not.toContain(id);
+      expect(RUNTIME_HOST_CAPABILITY_GLOBAL_IDS as readonly string[]).not.toContain(id);
+      expect(isRuntimeHostCapabilityFuncFamilyId(id)).toBe(true);
+      expect(isRuntimeHostCapabilityFuncId(id)).toBe(false);
+      expect(isRuntimeHostCapabilityGlobalId(id)).toBe(false);
+    }
     // Total, and sorted — the completeness axis `canonicalize` checks against.
     expect([...RUNTIME_HOST_CAPABILITY_IDS]).toEqual(
-      [...RUNTIME_HOST_CAPABILITY_FUNC_IDS, ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS].sort(),
+      [
+        ...RUNTIME_HOST_CAPABILITY_FUNC_IDS,
+        ...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
+        ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS,
+      ].sort(),
     );
-    expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(18);
+    expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(19);
     expect([...RUNTIME_HOST_CAPABILITY_IDS]).toEqual([
       "async.callback.wrap",
       "async.promise.capability.create",
@@ -157,6 +194,7 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
       "string.char_code_at",
       "string.compare",
       "string.concat",
+      "string.concat.many",
       "string.const",
       "string.const.utf16",
       "string.eq",
@@ -167,8 +205,15 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
   it("closes the module namespaces PER KIND, so env.<global> is unrepresentable", () => {
     expect([...RUNTIME_HOST_CAPABILITY_FUNC_MODULES]).toEqual(["env", "wasm:js-string"]);
     expect([...RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES]).toEqual(["string_constants", "string_constants16"]);
-    expect([...RUNTIME_HOST_CAPABILITY_KINDS]).toEqual(["func", "global"]);
+    expect([...RUNTIME_HOST_CAPABILITY_KINDS]).toEqual(["func", "func-family", "global"]);
     expect([...RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES]).toEqual(["literal", "literal-utf16-hex"]);
+    // (#3526 F2-S6) The family field schemes are their OWN list: a global's
+    // scheme derives a field from a string literal, a family's from a number,
+    // and nothing may read one where the other is meant.
+    expect([...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES]).toEqual(["arity-suffix"]);
+    for (const scheme of RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES) {
+      expect(RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES as readonly string[]).not.toContain(scheme);
+    }
     // No overlap between the two module namespaces: the kind arm decides which
     // set applies, so no record can sit in both.
     for (const module of RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES) {
@@ -183,6 +228,14 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
         expect(isRuntimeHostCapabilityFuncId(record.capability)).toBe(true);
         expect(RUNTIME_HOST_CAPABILITY_FUNC_MODULES as readonly string[]).toContain(record.module);
         expect(typeof record.field).toBe("string");
+      } else if (record.kind === "func-family") {
+        // (#3526 F2-S6) A family row lives on the FUNC module axis but carries
+        // a derivation rule where a plain row carries a name.
+        expect(isRuntimeHostCapabilityFuncFamilyId(record.capability)).toBe(true);
+        expect(RUNTIME_HOST_CAPABILITY_FUNC_MODULES as readonly string[]).toContain(record.module);
+        expect(RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES as readonly string[]).toContain(record.field.scheme);
+        expect(record.field.prefix.length).toBeGreaterThan(0);
+        expect(record.params.min).toBeGreaterThanOrEqual(3);
       } else {
         expect(isRuntimeHostCapabilityGlobalId(record.capability)).toBe(true);
         expect(RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES as readonly string[]).toContain(record.module);
@@ -273,7 +326,9 @@ describe("#3526 F2-S2 the six new rows", () => {
   });
 
   it("leaves the twelve pre-existing rows untouched, env and func to a row", () => {
-    const old = RUNTIME_HOST_CAPABILITY_RECORDS.filter((record) => !NEW_ID_SET.has(record.capability));
+    const old = RUNTIME_HOST_CAPABILITY_RECORDS.filter(
+      (record) => !NEW_ID_SET.has(record.capability) && !LATER_SLICE_ID_SET.has(record.capability),
+    );
     expect(old).toHaveLength(12);
     for (const record of old) {
       expect(record.kind).toBe("func");
@@ -370,20 +425,19 @@ describe("#3526 F2-S2 each row's ABI equals its registration site", () => {
 // (d) nothing selects them — this is what makes the slice byte-neutral
 // --------------------------------------------------------------------------
 
-describe("#3526 F2-S2 no provider selects a new row", () => {
-  it("has no provider naming either of the two STILL-unprovided capabilities", () => {
-    // (#3526 F2-S7) Narrowed again, from three to two: `string.char_code_at` now
-    // HAS a provider, which is exactly what this slice moved. The pin is the
-    // regression fence for the NEXT slice, so the correct edit is to shrink it
-    // by the id that landed — not to delete it. The two `string.const*` ids are
-    // still un-provided and this keeps saying so.
+describe("#3526 F2-S8 every new row is now selected, and by the right KIND", () => {
+  it("names all six new capabilities, leaving none unprovided", () => {
+    // (#3526 F2-S8) The fence reached zero and is INVERTED rather than deleted.
+    // It shrank by the id that landed in F2-S3, F2-S4, F2-S5 and F2-S7; F2-S8
+    // takes the last two. What it now fences is the opposite direction: an id
+    // that quietly LOSES its provider.
     const named = new Set<string>();
     for (const provider of RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]) {
       if (provider.implementation.kind === "host-callable") named.add(provider.implementation.capability);
+      if (provider.implementation.kind === "host-global") named.add(provider.implementation.capability);
       for (const capability of provider.hostCapabilities) named.add(capability);
     }
-    expect(STILL_UNPROVIDED_IDS).toHaveLength(2);
-    for (const id of STILL_UNPROVIDED_IDS) expect([...named]).not.toContain(id);
+    expect(STILL_UNPROVIDED_IDS).toHaveLength(0);
     for (const id of PROVIDED_IDS) expect([...named]).toContain(id);
     // Positively: `string.char_code_at` is reached through a `runtime-callable`
     // row's capability list, NOT through a `host-callable` capability — the
@@ -397,6 +451,18 @@ describe("#3526 F2-S2 no provider selects a new row", () => {
         provider.hostCapabilities.includes("string.char_code_at"),
       ).length,
     ).toBe(1);
+    // (#3526 F2-S8) …and the two GLOBAL ids are reached through `host-global`
+    // rows, never `host-callable`. The schema's refusal of a global capability
+    // in the callable position is not weakened by giving one a provider — it is
+    // exactly why a second kind had to exist.
+    for (const id of ["string.const", "string.const.utf16"] as const) {
+      expect(hostCallableCapabilities).not.toContain(id);
+      const globalRows = (RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]).filter(
+        (provider) => provider.implementation.kind === "host-global" && provider.implementation.capability === id,
+      );
+      expect(globalRows).toHaveLength(1);
+      expect(globalRows[0]!.hostCapabilities).toEqual([id]);
+    }
   });
 
   it("keeps Math-only, async-only and compare-only manifests free of every new row", () => {
@@ -629,6 +695,20 @@ describe("#3526 F2-S2 every func-assuming consumer fails closed on a global row"
     );
   });
 
+  it("ADMITS a host-global provider naming a global capability — the twin of the refusal above", () => {
+    // (#3526 F2-S8) The refusal above must stay a KIND refusal, not a
+    // capability one. A `host-global` row naming exactly the same
+    // `string.const` id freezes cleanly, so what `#indexProviders` rejects is
+    // "a callable row pointing at a global", not "a global capability".
+    const builder = new RuntimeManifestBuilder({ target: "host", backend: "wasmgc", stringConst: { storage: "host" } });
+    builder.requestFeature("js.string.const");
+    const frozen = builder.freeze();
+    expect(frozen.providers.map((provider) => provider.id)).toEqual(["host.js.string.const"]);
+    expect(frozen.hostCapabilities).toEqual(["string.const"]);
+    expect(frozen.hostCapabilityRecords.map((record) => record.capability)).toEqual(["string.const"]);
+    expect(frozen.hostCapabilityRecords[0]!.kind).toBe("global");
+  });
+
   it("routes every func-assuming src/ir consumer through a guard", () => {
     // Source pins, not behaviour pins, for the two sites whose reachable
     // failure needs a whole async attachment to construct. The #2955 grep-gate
@@ -677,9 +757,25 @@ describe("#3526 F2-S2 the un-migrated arms still read the lane", () => {
   // `prepareStrings` no longer names a length provider at all and that the new
   // site reads neither `ctx.nativeStrings` nor `ctx.anyStrTypeIdx`.
 
-  it("adds no string-literal storage authority — storageForConst still reads the lane", () => {
-    const slice = integrationSlice("const storageForConst = (instr: IrInstrStringConst)", "\n  const materializerRefs");
-    expect(slice).toContain("ctx.nativeStrings");
-    expect(slice).toContain("programAbiStringConstantRef(ctx, instr.value)");
+  // (#3526 F2-S8) The `string.const` twin of the two notes above is GONE, not
+  // shrunk — the same deletion-with-inversion F2-S4 made for the length pin.
+  // It fenced `prepareStrings`'s `storageForConst`, which read
+  // `ctx.nativeStrings` directly; F2-S8 moved that whole decision behind the
+  // freeze into `prepareStringConst`, so there is no remaining half to
+  // re-scope. The assertion is INVERTED into
+  // `issue-3526-string-boundary-const.test.ts`, which pins that the new site
+  // names no lane discriminator, consults the frozen provider, and that
+  // `prepareStrings`'s own source no longer contains `const storageForConst`.
+  it("still has every un-migrated string seam OUT of this file's scope", () => {
+    // The section is kept rather than deleted: it is where the NEXT
+    // un-migrated seam's fence goes. Family 2 is closed, so what it pins today
+    // is only that the three migrations really did leave `prepareStrings`.
+    const prepareStringsSource = integrationSlice(
+      "function prepareStrings(ctx: CodegenContext",
+      "\nfunction prepareVectors(",
+    );
+    expect(prepareStringsSource).not.toContain("const storageForConst");
+    expect(prepareStringsSource).not.toContain("providerForLength: (instr");
+    expect(prepareStringsSource).not.toContain("programAbiStringConstantRef");
   });
 });
