@@ -98,7 +98,17 @@ done and only needs harvesting into issue files.
    `96690aa5e0efb4ff`, parked three unrelated PRs today (#5479, #5480, #5486).
    Lane dispatched. Until it lands, expect roughly one park per few merges, and
    the sanctioned response is exactly one diagnosed re-admission.
-3. **R9's denominator is the real gate, not `check:ir-only`'s verdict.**
+3. **R9's denominator is the real gate, and part of it is now measured.**
+   Before suspending I measured the eight playground entries the gate does not
+   run (the gate's own lane observers take an entries override). They carry
+   **8 unsupported / 10 legacy bodies on single-host and 14 / 14 on
+   standalone**, against 0 and 0 on the gate's five — so widening the corpus
+   flips READY to NOT READY. Full table, the two compile-once violations, and
+   a probe trap that produced a wrong reading are recorded in
+   `plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`. What
+   remains open is the denominator beyond `website/playground/examples/`.
+
+4. **The original framing of that gate, for context.**
    `pnpm run check:ir-only` reports **READY** on main — both lanes, 41 terminal
    units, 38 emitted, 0 unsupported, 0 invariants, 0 legacy body emitted. That
    is genuine but **narrow**: `scripts/check-ir-only.ts:14-20` runs a **five-file**
@@ -106,7 +116,7 @@ done and only needs harvesting into issue files.
    separate R9/R10 requirement. Do not read READY as "the migration is done";
    the goal's completion criterion needs the denominator census
    (`session_01VDoJL5WxevynhetPFVFWGE`) first.
-4. **#3523 gap-6b** — record verified and shipped. Verdict: the recommendation
+5. **#3523 gap-6b** — record verified and shipped. Verdict: the recommendation
    ("retire pass 2, not pass 1") **holds only as a gated slice choice**. The
    direction is measured; acceptance is not, because every corpus row was
    measured under the route being rejected. P1, P4 and #5276 are hard
