@@ -1,0 +1,10 @@
+#!/bin/bash
+# Wait until the 1-min load average is <= 9, then exec the given command.
+# Usage: run-when-quiet.sh <cmd...>
+while :; do
+  l=$(cut -d' ' -f1 /proc/loadavg | cut -d. -f1)
+  if [ "$l" -le 9 ]; then break; fi
+  echo "[run-when-quiet] load $l > 9, sleeping 120s" >&2
+  sleep 120
+done
+exec "$@"

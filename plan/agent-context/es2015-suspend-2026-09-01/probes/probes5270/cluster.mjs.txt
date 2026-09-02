@@ -1,0 +1,134 @@
+// #5270 cluster partition of the 128 in-scope-candidate rows (HEAD 2026-09-02).
+// Writes .tmp/es2015/expr-cl-<X>-<slug>.txt (test/-stripped), expr-head.txt
+// (the in-scope rows), expr-clusters.tsv, and prints the count table.
+import { readFileSync, writeFileSync } from "node:fs";
+const rows = readFileSync(".tmp/es2015/expr-list.txt", "utf-8").split("\n").filter(Boolean);
+const E = "language/expressions/";
+const CPN = "language/computed-property-names/";
+const C = {
+  "A-tco": [
+    `${E}call/tco-call-args.js`, `${E}call/tco-non-eval-function.js`, `${E}call/tco-non-eval-global.js`,
+    `${E}call/tco-non-eval-with.js`, `${E}conditional/tco-cond.js`, `${E}conditional/tco-pos.js`,
+    `${E}comma/tco-final.js`, `${E}logical-and/tco-right.js`, `${E}logical-or/tco-right.js`,
+    `${E}tagged-template/tco-call.js`, `${E}tagged-template/tco-member.js`,
+  ],
+  "B-tagged-template": [
+    `${E}tagged-template/constructor-invocation.js`, `${E}tagged-template/template-object-frozen-non-strict.js`,
+    `${E}tagged-template/template-object-frozen-strict.js`, `${E}tagged-template/member-expression-argument-list-evaluation.js`,
+    `${E}tagged-template/member-expression-context.js`, `${E}tagged-template/call-expression-context-strict.js`,
+    `${E}tagged-template/call-expression-argument-list-evaluation.js`, `${E}template-literal/evaluation-order.js`,
+  ],
+  "C-instanceof": [
+    `${E}instanceof/primitive-prototype-with-object.js`, `${E}instanceof/prototype-getter-with-object.js`,
+    `${E}instanceof/prototype-getter-with-object-throws.js`, `${E}instanceof/symbol-hasinstance-get-err.js`,
+    `${E}instanceof/symbol-hasinstance-invocation.js`, `${E}instanceof/symbol-hasinstance-to-boolean.js`,
+  ],
+  "D-toprimitive": [
+    `${E}addition/coerce-symbol-to-prim-invocation.js`, `${E}equals/coerce-symbol-to-prim-invocation.js`,
+    `${E}equals/coerce-symbol-to-prim-return-prim.js`,
+  ],
+  "E-dstr-assign-drive": [
+    `${E}assignment/dstr/array-elem-iter-thrw-close.js`, `${E}assignment/dstr/array-elem-iter-thrw-close-err.js`,
+    `${E}assignment/dstr/array-elem-trlg-iter-list-thrw-close.js`, `${E}assignment/dstr/array-elem-trlg-iter-list-thrw-close-err.js`,
+    `${E}assignment/dstr/array-elem-trlg-iter-rest-thrw-close.js`, `${E}assignment/dstr/array-elem-trlg-iter-rest-thrw-close-err.js`,
+    `${E}assignment/dstr/array-rest-iter-thrw-close.js`, `${E}assignment/dstr/array-rest-iter-thrw-close-err.js`,
+    `${E}assignment/dstr/array-rest-lref.js`, `${E}assignment/dstr/array-rest-lref-err.js`,
+    `${E}assignment/dstr/array-rest-nested-array-iter-thrw-close-skip.js`,
+    `${E}assignment/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js`,
+    `${E}assignment/destructuring/iterator-destructuring-property-reference-target-evaluation-order.js`,
+    `${E}assignment/dstr/obj-prop-elem-target-obj-literal-prop-ref-init.js`,
+    `${E}assignment/dstr/obj-prop-elem-target-obj-literal-prop-ref-init-active.js`,
+  ],
+  "F-sloppy-arguments-eval-targets": [
+    `${E}assignment/dstr/array-elem-target-simple-no-strict.js`, `${E}assignment/dstr/array-elem-init-simple-no-strict.js`,
+  ],
+  "G-class-named-evaluation": [
+    `${E}object/fn-name-class.js`, `${E}assignment/fn-name-class.js`, `${E}assignment/dstr/obj-id-init-fn-name-class.js`,
+    `${E}assignment/dstr/obj-prop-elem-init-fn-name-class.js`, `${E}assignment/dstr/array-elem-init-fn-name-class.js`,
+  ],
+  "H-objlit-super": [
+    `${E}object/method.js`, `${E}object/getter-super-prop.js`, `${E}object/setter-super-prop.js`,
+    `${E}object/method-definition/name-super-prop-body.js`, `${E}object/method-definition/name-super-prop-param.js`,
+    `${E}object/method-definition/generator-super-prop-param.js`, `${CPN}object/method/super.js`,
+    `${CPN}object/accessor/getter-super.js`, `${CPN}object/accessor/setter-super.js`,
+  ],
+  "I-proto-literal": [
+    `${E}object/__proto__-value-obj.js`, `${E}object/__proto__-value-null.js`, `${E}object/__proto__-value-non-object.js`,
+    `${E}object/__proto__-duplicate-computed.js`, `${E}object/computed-__proto__.js`,
+  ],
+  "J-method-this": [
+    `${E}object/method-definition/name-invoke-fn-strict.js`, `${E}object/method-definition/name-invoke-fn-no-strict.js`,
+    `${E}object/method-definition/generator-invoke-fn-strict.js`, `${E}object/method-definition/generator-invoke-fn-no-strict.js`,
+  ],
+  "K-method-mop-visibility": [
+    `${E}object/method-definition/name-property-desc.js`, `${E}object/method-definition/generator-property-desc.js`,
+    `${E}object/method-definition/name-prop-name-yield-id.js`, `${E}object/method-definition/generator-prop-name-yield-id.js`,
+  ],
+  "L-computed-keys": [
+    `${CPN}basics/symbol.js`, `${CPN}object/method/symbol.js`, `${CPN}object/method/number.js`,
+    `${CPN}object/accessor/getter.js`, `${CPN}object/accessor/setter.js`, `${E}object/accessor-name-computed-in.js`,
+    `${E}object/fn-name-accessor-get.js`, `${E}object/fn-name-accessor-set.js`,
+  ],
+  "M-var-redecl-shape": [
+    `${E}object/dstr/meth-dflt-obj-ptrn-empty.js`, `${E}object/dstr/gen-meth-dflt-obj-ptrn-empty.js`,
+  ],
+  "N-arrow": [
+    `${E}arrow-function/lexical-this.js`, `${E}arrow-function/prototype-rules.js`,
+    `${E}arrow-function/ArrowFunction_restricted-properties.js`,
+  ],
+  "O-arrow-lexical-super": [
+    `${E}arrow-function/lexical-super-property.js`, `${E}arrow-function/lexical-super-property-from-within-constructor.js`,
+    `${E}arrow-function/lexical-super-call-from-within-constructor.js`,
+    `${E}arrow-function/lexical-supercall-from-immediately-invoked-arrow.js`,
+  ],
+  "X1-realm": [`${E}tagged-template/cache-realm.js`, `${E}call/eval-realm-indirect.js`],
+  "X2-eval-lane": [
+    `${E}call/eval-spread.js`, `${E}call/eval-spread-empty.js`, `${E}call/eval-spread-empty-leading.js`,
+    `${E}call/eval-spread-empty-trailing.js`, `${E}call/tco-non-eval-function-dynamic.js`,
+    `${E}object/scope-meth-body-lex-distinct.js`, `${E}object/scope-gen-meth-body-lex-distinct.js`,
+    `${E}object/scope-gen-meth-param-elem-var-open.js`, `${E}object/scope-gen-meth-param-elem-var-close.js`,
+  ],
+  "X3-with-5271D": [
+    `${E}call/with-base-obj.js`,
+    `${E}assignment/destructuring/keyed-destructuring-property-reference-target-evaluation-order-with-bindings.js`,
+    `${E}arrow-function/arrow/capturing-closure-variables-2.js`, `${E}object/prop-def-id-eval-error.js`,
+  ],
+  "X4-generators-680": [
+    `${E}object/concise-generator.js`, `${E}object/method-definition/gen-yield-spread-arr-single.js`,
+    `${E}object/method-definition/gen-yield-spread-arr-multiple.js`, `${E}object/method-definition/yield-as-yield-operand.js`,
+    `${E}object/method-definition/gen-yield-identifier-non-strict.js`, `${E}object/method-definition/generator-prototype-prop.js`,
+    `${E}object/method-definition/generator-invoke-ctor.js`, `${E}object/method-definition/generator-prop-name-yield-expr.js`,
+    `${E}object/method-definition/name-prop-name-yield-expr.js`,
+  ],
+  "X5-5271-F2F3G3-twins": [
+    `${E}function/params-dflt-ref-arguments.js`, `${E}object/method-definition/params-dflt-meth-ref-arguments.js`,
+    `${E}object/method-definition/params-dflt-gen-meth-ref-arguments.js`,
+    `${E}function/arguments-with-arguments-fn.js`, `${E}function/arguments-with-arguments-lex.js`,
+    `${E}function/dflt-params-arg-val-not-undefined.js`, `${E}arrow-function/dflt-params-arg-val-not-undefined.js`,
+    `${E}object/method-definition/meth-dflt-params-arg-val-not-undefined.js`,
+    `${E}object/method-definition/gen-meth-dflt-params-arg-val-not-undefined.js`,
+    `${E}function/dstr/ary-ptrn-elem-ary-rest-init.js`, `${E}arrow-function/dstr/ary-ptrn-elem-ary-rest-init.js`,
+    `${E}object/dstr/meth-ary-ptrn-elem-ary-rest-init.js`, `${E}object/dstr/gen-meth-ary-ptrn-elem-ary-rest-init.js`,
+    `${E}object/dstr/gen-meth-ary-ptrn-elem-ary-empty-init.js`, `${E}object/dstr/gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js`,
+  ],
+};
+const all = new Map();
+for (const [k, list] of Object.entries(C)) for (const p of list) {
+  if (all.has(p)) throw new Error(`dup ${p} in ${k} and ${all.get(p)}`);
+  all.set(p, k);
+}
+const set = new Set(rows.map((r) => r.replace(/^test\//, "")));
+for (const p of all.keys()) if (!set.has(p)) throw new Error(`not in expr-list: ${p}`);
+for (const p of set) if (!all.has(p)) throw new Error(`unassigned: ${p}`);
+let inScope = 0, out = 0;
+const tsv = [];
+for (const [k, list] of Object.entries(C)) {
+  writeFileSync(`.tmp/es2015/expr-cl-${k}.txt`, list.join("\n") + "\n");
+  for (const p of list) tsv.push(`${p}\t${k}`);
+  if (k.startsWith("X")) out += list.length; else inScope += list.length;
+  console.log(`${k.padEnd(28)} ${list.length}`);
+}
+writeFileSync(".tmp/es2015/expr-clusters.tsv", tsv.sort().join("\n") + "\n");
+const head = [...all.entries()].filter(([, k]) => !k.startsWith("X")).map(([p]) => p).sort();
+writeFileSync(".tmp/es2015/expr-head.txt", head.join("\n") + "\n");
+console.log(`in-scope ${inScope} + out-of-scope ${out} = ${inScope + out} (rows ${rows.length})`);

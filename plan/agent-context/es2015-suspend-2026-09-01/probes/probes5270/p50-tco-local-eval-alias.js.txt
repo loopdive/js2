@@ -1,0 +1,12 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var callCount = 0;
+(function() {
+  function f(n) { 'use strict'; if (n === 0) { callCount += 1; return; } return eval(n - 1); }
+  var eval = f;
+  f(100000);
+})();
+assert.sameValue(callCount, 1);

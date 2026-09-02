@@ -1,0 +1,5 @@
+language/expressions/object/fn-name-class.js
+language/expressions/assignment/fn-name-class.js
+language/expressions/assignment/dstr/obj-id-init-fn-name-class.js
+language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-class.js
+language/expressions/assignment/dstr/array-elem-init-fn-name-class.js

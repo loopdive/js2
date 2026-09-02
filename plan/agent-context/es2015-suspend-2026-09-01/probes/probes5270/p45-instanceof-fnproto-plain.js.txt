@@ -1,0 +1,6 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+assert.throws(TypeError, function() { [] instanceof Function.prototype; }, 'Function.prototype has no prototype → TypeError');

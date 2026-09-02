@@ -1,0 +1,10 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var y = {}; var retVal = 'str';
+y[Symbol.toPrimitive] = function() { return retVal; };
+assert.sameValue('str' == y, true, 'string == object via ToPrimitive');
+retVal = Symbol.toPrimitive;
+assert.sameValue(Symbol.toPrimitive == y, true, 'symbol == object via ToPrimitive');

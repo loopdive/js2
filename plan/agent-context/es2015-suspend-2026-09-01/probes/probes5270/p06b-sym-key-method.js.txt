@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var s = Symbol();
+var object = { a() { return 'A'; }, [s]() { return 'B'; } };
+assert.sameValue(object[s](), 'B');
+assert.sameValue(Object.getOwnPropertyNames(object).join(), 'a', 'names=' + Object.getOwnPropertyNames(object).join());

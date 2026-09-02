@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var proto = { m() { return 'P'; } };
+var object = { m() { return 'o' + super.m(); }, get [Symbol.toStringTag]() { return 'x'; } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.m(), 'oP', 'super.m() on an accessor-path literal: ' + String(object.m()));

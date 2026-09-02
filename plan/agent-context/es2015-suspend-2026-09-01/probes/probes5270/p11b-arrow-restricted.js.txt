@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var arrowFn = () => {};
+assert.sameValue(arrowFn.hasOwnProperty('caller'), false, 'own caller');
+assert.throws(TypeError, function() { return arrowFn.caller; }, 'get caller');

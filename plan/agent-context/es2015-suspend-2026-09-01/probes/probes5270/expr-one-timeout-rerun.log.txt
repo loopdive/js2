@@ -1,0 +1,8 @@
+
+=== counts ===
+{ compile_error: 1 }
+
+=== 1 non-pass (excluding skip) ===
+compile_error  test/language/expressions/instanceof/primitive-prototype-with-object.js
+                 compilation timeout (25263.02ms)
+one exit=0
