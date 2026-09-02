@@ -14,11 +14,14 @@
 //
 // (#3521 R2-T1) `tests/ir/*.test.ts` had the same gap and it cost the same way:
 // `cb733cde37` reddened `tests/ir/fnctor-producer.test.ts` and `0f42c1fde4`
-// reddened `tests/ir/counted-string-append-provenance.test.ts`, both unseen,
-// because no selector mode matched the directory. Admitting the whole directory
-// to the ADVISORY (changed) step makes a file visible the moment a PR touches
-// it; only the six R2-named files are pinned (fatal), which is 44.8 s of wall
-// clock against 140.8 s for all 19 green ones.
+// reddened `tests/ir/counted-string-append-provenance.test.ts`, both unseen.
+// Note what each half of this change does and does not catch: BOTH of those
+// commits are src-only, so the directory regex below — which matches changed
+// TEST paths — would not have selected either. What catches a src-driven red
+// is the PIN; the regex catches the case where a PR touches a tests/ir file
+// itself. Only the six R2-named files are pinned (fatal), 44.8 s of wall clock
+// against 140.8 s for all 19 green ones, so the 13 unpinned green files stay
+// invisible to a src-only PR — that residue is deliberate, not closed.
 //
 // Deliberately NOT a required check — see docs/ci-policy.md §7. A changed issue
 // test may be red for reasons the PR is not responsible for (the suite is not

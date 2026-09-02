@@ -100,5 +100,5 @@ describe("#3521 R2 withdrawal telemetry — (c) neutrality", () => {
         expect(on, `${label}/${lane} is not byte-identical with outcome tracking on`).toBe(off);
       }
     }
-  });
+  }, 120_000);
 });

@@ -49,7 +49,7 @@ loc-budget-allow:
   # late-feature-preparation default, the ir-first-disabled default and the
   # multi-source default (+30 in index.ts, of which +4 land in `generateModule`,
   # already granted below), and the reason's attachment to the compile-twice row
-  # (+15 in ir-overlay-outcomes.ts). The vocabulary, validator and row
+  # (+25 in ir-overlay-outcomes.ts, as the gate measures it). The vocabulary, validator and row
   # projection are NOT added to any of these: they are a new R2-owned
   # `src/ir/r2-withdrawal.ts` (135 lines, far under the 1,500 threshold), which
   # is also why #3520's `src/ir/outcomes.ts` is +0. Zero conformance change by
@@ -3973,7 +3973,10 @@ failed)** — the plan's expectation reproduced exactly, and **no third red**.
   `tests/cross-backend-diff.test.ts` **29/29**, and
   `node scripts/equivalence-gate.mjs` **exit 0 — 24 failing, 1,718 passing,
   24 known-failures in baseline; no new equivalence regressions**.
-- **V-B (pins) — PASS.** New suites 22/22 under CI's exact flags
+- **V-B (pins) — PASS.** New suites 23/23 under CI's exact flags (22 when this
+  line was first written; the (d) precedence pin was added afterwards, and the
+  byte-matrix `it` now carries an explicit 120 s timeout because the 35 s global
+  budget left it only ~1.6x margin and it timed out under machine contention)
   (`--pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism`);
   the six pinned files + `issue-3529-selector-preclaim` **199/199**;
   `tests/ir/fnctor-producer` **21/21**; routing suite **46/46**;
@@ -4068,10 +4071,17 @@ failed)** — the plan's expectation reproduced exactly, and **no third red**.
    > under `## Required completion evidence`.
 6. **A V-B expectation corrected by measurement: the linked-parser suite's
    `(1,1,1)` rows carry `multi-source-driver`, not `ir-first-disabled`.** The
-   plan's V-B line expected `ir-first-disabled` there. That route is BOTH — it
-   is `compileMulti` AND it sets `JS2WASM_IR_FIRST=0` — and the multi default
-   is written later, at the multi overlay entry in `generateMultiModule`'s
-   tail, so it wins. Measured by instrumenting the real suite
+   plan's V-B line expected `ir-first-disabled` there. The route is BOTH by
+   configuration — it is `compileMulti` AND it sets `JS2WASM_IR_FIRST=0` — but
+   only one default is ever WRITTEN on it, and the first draft of this note
+   explained that with the wrong mechanism ("the multi default is written
+   later, so it wins"). Corrected on review: `src/compiler.ts:1102-1103`
+   chooses `generateMultiModule` XOR `generateModule`, and nothing inside
+   `generateMultiModule` calls `generateModule`, so the `ir-first-disabled`
+   default at `index.ts:5652` — which lives inside `generateModule` — is never
+   reached on the multi route at all. `multi-source-driver` wins because it is
+   the only writer, not because it is the later one. The observable outcome is
+   unchanged. Measured by instrumenting the real suite
    (`tests/probe-lp.test.ts`, gitignored, removed after the run): `readNumber`
    and `stringToNumber` both read `not-attempted:multi-source-driver`; the
    suite is 4/4 either way, since every `(1,1,1)` assertion under `tests/` is
