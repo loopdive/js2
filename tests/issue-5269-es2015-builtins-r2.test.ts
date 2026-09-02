@@ -19,6 +19,11 @@
 // arm), because a change there can regress host mode with no standalone row
 // noticing.
 import { describe, expect, it } from "vitest";
+// (#3613) The ONE wasm-exception renderer — the same module `test262-runner.ts`
+// and `test262-worker.mjs` use. Without it a standalone failure reports the
+// opaque "[object WebAssembly.Exception]" instead of the assertion text: the
+// thrown payload is a WasmGC struct that `String()` cannot touch.
+import { renderHarnessThrownText } from "../scripts/lib/wasm-exn-render.mjs";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
@@ -31,7 +36,15 @@ async function runLane(body: string, lane: Lane): Promise<string | null> {
     skipSemanticDiagnostics: true,
     inferModuleStrictArguments: false,
     deferTopLevelInit: true,
-    ...(lane === "standalone" ? { target: "standalone" as const } : { hostBridge: "always" as const }),
+    // `hostBridge: "always"` on BOTH lanes, exactly as `test262-runner.ts`
+    // compiles them (#4035). Standalone defaults to `hostBridge: "off"`, which
+    // drops the `__exn_render_*` exports (#2962) — and without those a native
+    // throw arrives here as an unreadable WasmGC struct, so every standalone
+    // failure would report the opaque "non-stringifiable payload" label instead
+    // of the assertion text. It adds EXPORTS, not imports, so the zero-`env`
+    // assertion above still means what it says.
+    hostBridge: "always" as const,
+    ...(lane === "standalone" ? { target: "standalone" as const } : {}),
   } as Parameters<typeof compile>[1]);
   expect(result.success, JSON.stringify(result.errors?.slice(0, 3))).toBe(true);
   expect(WebAssembly.validate(result.binary), "module must be valid Wasm").toBe(true);
@@ -58,7 +71,7 @@ async function runLane(body: string, lane: Lane): Promise<string | null> {
     (instance.exports as Record<string, () => void>).__module_init?.();
     return null;
   } catch (error) {
-    return String((error as { message?: unknown })?.message ?? error);
+    return renderHarnessThrownText(error, instance);
   }
 }
 
@@ -350,10 +363,13 @@ describe("#5269 Step J — reflective Number.prototype.toPrecision", () => {
   // a NON-null singleton, so a bare `ref.is_null` would miss it and step 3
   // would coerce it to NaN → 0 → RangeError.
   standaloneOnly(
-    "J-1 an absent precision is ToString(x), not a RangeError",
+    "J-1 an absent precision is ToString(x), not a RangeError — reflective",
     `var toPrecision = Number.prototype.toPrecision;
-     ${check("toPrecision.call(1)", "1")}
-     ${check("(123.456).toPrecision()", "123.456")}`,
+     ${check("toPrecision.call(1)", "1")}`,
+  );
+  standaloneOnly(
+    "J-1 an absent precision is ToString(x), not a RangeError — direct",
+    `${check("(123.456).toPrecision()", "123.456")}`,
   );
 
   // …and the in-range answer is the SAME formatter the direct spelling calls.

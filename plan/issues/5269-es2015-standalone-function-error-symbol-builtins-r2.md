@@ -73,6 +73,14 @@ loc-budget-allow:
   - src/codegen/number-proto-format.ts
   - src/codegen/error-stack-accessor.ts
   - src/codegen/symbol-proto-tostring.ts
+  # 2026-09-02 (Opus impl, Step J-1 follow-up): +20 lines in the native number
+  # formatter, all of them the §21.1.3.5-step-2 no-arg branch and the two
+  # dependency-closure comments that explain why it is reachable at all. It
+  # REPLACES an admitted approximation ("close enough for no-arg output") with
+  # the operation the spec names; the file is a god-file only by length, and the
+  # alternative — a second toPrecision emitter elsewhere — is exactly the drift
+  # this change removes.
+  - src/codegen/number-format-native.ts
 coercion-sites-allow:
   # 2026-09-02 (Opus impl, Step J-1): the reflective
   # `Number.prototype.toPrecision` body is §21.1.3.5 verbatim, and its two
@@ -83,6 +91,15 @@ coercion-sites-allow:
   # spellings from drifting; routing this one through a different engine
   # would create the second implementation the gate exists to prevent.
   - src/codegen/number-proto-format.ts
+  # 2026-09-02 (Opus impl, Step J-1 follow-up): +1 `number_toString` reference,
+  # and it REMOVES a coercion rather than adding one. §21.1.3.5 step 2 defines an
+  # absent precision as `! ToString(x)`; the no-arg branch used to approximate it
+  # with `toExponential(value, NaN)`, which rendered `(123.456).toPrecision()` as
+  # "1.234560e+2". Calling `number_toString` IS routing through the single
+  # Number::toString this lane already owns — the same helper the reflective body
+  # above calls for the identical case — so the two spellings cannot drift. No
+  # new ToString/ToNumber matrix is hand-rolled here.
+  - src/codegen/number-format-native.ts
 func-budget-allow:
   # 2026-09-01: each is a kind-dispatch / arm-ladder function that gains one
   # more arm in the shape its existing arms already have (see the step that
