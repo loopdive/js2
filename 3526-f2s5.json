@@ -2,10 +2,11 @@
   "id": "3526",
   "slice": "f2s5",
   "assignee": "ttraenkler/fable-ir-takeover",
-  "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3526-f2s5-string-concat",
   "claimed_at": "2026-09-02T03:07:49Z",
-  "updated_at": "2026-09-02T03:07:49Z",
-  "write_id": "13073-rhwqd1h5"
+  "updated_at": "2026-09-02T09:40:05Z",
+  "write_id": "1750-wbfntypa",
+  "released_at": "2026-09-02T09:40:05Z"
 }
