@@ -96,6 +96,7 @@ import {
 } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
+import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -760,7 +761,15 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   if (inner.name.text !== "prototype" || !ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
@@ -806,7 +815,15 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   if (!ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);

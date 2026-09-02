@@ -154,10 +154,90 @@ const INTRINSIC_SURFACE_SOURCE = `
   }
 `;
 
+/**
+ * Review finding F1 — a USER class named like a builtin view. Both TypedArray
+ * arms in `object-get-prototype-of.ts` keyed on the NAME only (the instance arm
+ * on `ctx.oracle.declaredNameOf`, which reports `Uint8Array` for a user class
+ * too), so `Object.getPrototypeOf(new Uint8Array(3))` answered the BUILTIN glue
+ * instead of the user class's prototype — and the whole TypedArray proto graph
+ * was minted into such a program (405,180 -> 478,540 bytes). Base answered
+ * correctly, so this is the regression guard for the name-only test.
+ */
+const USER_CLASS_SHADOW_SOURCE = `
+  class Uint8Array { n: number; constructor(n: number) { this.n = n; } }
+  export function test(): number {
+    const x = new Uint8Array(3);
+    if (Object.getPrototypeOf(x) !== Uint8Array.prototype) return 1;
+    if (x.n !== 3) return 2;
+    return 0;
+  }
+`;
+
+/**
+ * Review finding F2 — the same class of defect one level down.
+ * `hasBuiltinProtoConstructorCarrier` became true for all 11 view names by NAME,
+ * while the reader's only shadow check looked at `fctx.localMap` /
+ * `boxedCaptures` — FUNCTION-scope facts that by construction cannot see a
+ * MODULE-level `class Int16Array`. `<UserClass>.prototype.constructor` then
+ * resolved to the builtin `$__ta_ctor` singleton.
+ */
+const USER_CLASS_CONSTRUCTOR_SOURCE = `
+  class Int16Array { n: number; constructor(n: number) { this.n = n; } }
+  export function test(): number {
+    if (Int16Array.prototype.constructor !== Int16Array) return 1;
+    if (new Int16Array(7).n !== 7) return 2;
+    return 0;
+  }
+`;
+
+/**
+ * Review finding F3 — the HOST lane answers §23.2.5.6 correctly for a subclass
+ * instance held in a base-typed binding, so this is the reference behaviour.
+ */
+const SUBCLASS_PROTOTYPE_SOURCE = `
+  class Bytes extends Uint8Array {}
+  export function test(): number {
+    const b: Uint8Array = new Bytes(2) as unknown as Uint8Array;
+    // 23.2.5.6 via OrdinaryCreateFromConstructor: the SUBCLASS's prototype.
+    return Object.getPrototypeOf(b) === Uint8Array.prototype ? 1 : 0;
+  }
+`;
+
+/**
+ * Review finding F3, standalone — a CHARACTERIZATION test that pins the known
+ * divergence rather than hiding it. The compile-time fold in
+ * `object-get-prototype-of.ts` answers the DECLARED type's prototype, so the
+ * subclass instance reports `Uint8Array.prototype` (spec: `Bytes.prototype`)
+ * and this control returns 1, not 0.
+ *
+ * It is asserted, not skipped, for two reasons: the divergence is measured
+ * rather than assumed, and whoever fixes it gets a RED test at the moment the
+ * behaviour changes instead of a silent flip. Declining the fold per FILE was
+ * tried and reverted — it made the ordinary non-subclass read in the same file
+ * wrong as well (see the comment at the fold). The fix needs a per-binding
+ * subclass fact.
+ */
+const SUBCLASS_FOLD_RESIDUAL_SOURCE = `
+  class Bytes extends Uint8Array {}
+  export function test(): number {
+    const b: Uint8Array = new Bytes(2) as unknown as Uint8Array;
+    // 1 == folded to the base prototype (today). 0 would mean F3 got fixed.
+    const folded = Object.getPrototypeOf(b) === Uint8Array.prototype ? 1 : 0;
+    // The ordinary, non-subclass read must stay correct either way.
+    if (Object.getPrototypeOf(new Uint8Array(1)) !== Uint8Array.prototype) return 9;
+    return folded;
+  }
+`;
+
 const CONTROL_CASES = [
   { name: "per-kind prototype graph identity and inherited members", source: PROTO_GRAPH_SOURCE },
   { name: "prototype own-property descriptors", source: PROTO_DESCRIPTOR_SOURCE },
   { name: "%TypedArray% intrinsic own surface", source: INTRINSIC_SURFACE_SOURCE },
+  { name: "review F1 — a user class named like a view keeps its own prototype", source: USER_CLASS_SHADOW_SOURCE },
+  {
+    name: "review F2 — a user class named like a view owns its own prototype.constructor",
+    source: USER_CLASS_CONSTRUCTOR_SOURCE,
+  },
 ] as const;
 
 describe("#5194 ES2015 standalone TypedArray r2 — prototype graph + intrinsic surface", () => {
@@ -174,4 +254,29 @@ describe("#5194 ES2015 standalone TypedArray r2 — prototype graph + intrinsic 
   it("host control: per-kind prototype graph identity", { timeout: CONTROL_TIMEOUT }, async () => {
     expect(await runControl(PROTO_GRAPH_SOURCE, "host")).toBe(0);
   });
+
+  // The three review findings are shadow/subclass questions the HOST lane
+  // answers through its own runtime, so they must hold on both lanes — that is
+  // what makes "base answered correctly" checkable here rather than only in a
+  // standalone probe.
+  for (const { name, source } of [
+    { name: "review F1 — user class named like a view", source: USER_CLASS_SHADOW_SOURCE },
+    { name: "review F2 — user class prototype.constructor", source: USER_CLASS_CONSTRUCTOR_SOURCE },
+    { name: "review F3 — subclass instance prototype", source: SUBCLASS_PROTOTYPE_SOURCE },
+  ] as const) {
+    it(`host control: ${name}`, { timeout: CONTROL_TIMEOUT }, async () => {
+      expect(await runControl(source, "host")).toBe(0);
+    });
+  }
+
+  // Documented residual, pinned so a future fix is visible: see
+  // SUBCLASS_FOLD_RESIDUAL_SOURCE. `1` is the compile-time fold's answer;
+  // the spec answer is `0`.
+  it(
+    "standalone residual (F3): the subclass instance folds to the BASE prototype",
+    { timeout: CONTROL_TIMEOUT },
+    async () => {
+      expect(await runControl(SUBCLASS_FOLD_RESIDUAL_SOURCE, "standalone")).toBe(1);
+    },
+  );
 });
