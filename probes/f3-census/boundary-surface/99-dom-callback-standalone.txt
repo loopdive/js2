@@ -1,0 +1,58 @@
+=== ir-prepared-free-functions.ts 1268-1290
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overridesByUnitId: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
+  readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  readonly timerShimUnitIds?: ReadonlySet<IrUnitId>;
+  /**
+   * (#4508) Storage terminals this transaction actually prepares — today the
+   * module-init unit, and only when `preparedExactLexicalModuleInit` admitted
+   * it. Empty on every lane that refuses a prepared module-init.
+   */
+  readonly preparedStorageTerminalUnitIds: ReadonlySet<IrUnitId>;
+}): {
+  readonly freeFunctionNames: ReadonlySet<string>;
+  readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
+} {
+  const freeFunctionCandidates = new Set<IrUnitId>();
+  const baseline = new Set<IrUnitId>();
+  const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
+  const directCallerActivationTargets = collectDirectCallerActivationTargetUnitIds(
+    input.ctx,
+
+=== dom-capability.ts 1005-1020
+            reject(node);
+            return;
+          }
+          const operation = Object.freeze({
+            kind: "member-call" as const,
+            importName: "HTMLElement_addEventListener" as const,
+            call,
+            access: node,
+            receiverClass: "HTMLElement" as const,
+            resultClass: null,
+            argumentBoundaries: Object.freeze(["native-string", "native-callback-zero-void", "nullish"] as const),
+          });
+          register([node, call], operation);
+        } else if (receiverClass === "HTMLElement" && member === "appendChild") {
+          const call = exactCall(node);
+          if (
+
+=== standalone-dom-callback-authority.ts exports + header
+41:export function standaloneDomCallbackAuthorityKey(authority: IrDomCallbackAuthority): string {
+92:export function reserveStandaloneDomCallbackDispatch(
+153:export function hasReservedStandaloneDomCallbackDispatch(
+167:export function standaloneDomCallbackAuthorityForNode(
+300:export function resolveStandaloneDomCallbackClosureSubtype(
+322:export function resolveStandaloneDomCallbackDirectCarrier(
+351:export function registerStandaloneDomCallbackDirectClosure(
+388:export function materializeStandaloneDomCallbackDispatch(ctx: CodegenContext): WasmFunction {
+
+=== domCallbackAuthorityGlobalIdx usage
+src/ir/backend/handles.ts:138:  readonly domCallbackAuthorityGlobalIdx?: () => number;
+src/ir/backend/wasmgc-emitter.ts:372:    const authorityGlobalIdx = layout.domCallbackAuthorityGlobalIdx?.();
+src/codegen/standalone-dom-callback-authority.ts:269:    domCallbackAuthorityGlobalIdx: () => standaloneDomCallbackAuthorityGlobalIdx(ctx, authorityBrandGlobal),
+src/codegen/standalone-dom-callback-authority.ts:382:      { op: "global.get", index: carrier.domCallbackAuthorityGlobalIdx!() },

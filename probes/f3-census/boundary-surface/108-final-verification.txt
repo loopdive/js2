@@ -1,0 +1,96 @@
+=== nodes.ts extern.* interfaces + provider fields
+sed: -e expression #1, char 1: unknown command: `,'
+
+=== callable-bindings.ts 53-112
+export function irImportFuncRef(module: string, field: string, adapterName?: string): IrFuncRef {
+  const checkedModule = requireNonEmpty(module, "import module");
+  const checkedField = requireNonEmpty(field, "import field");
+  const name = compatibilityName(adapterName, checkedField, "import compatibility name");
+  return funcRef(name, { kind: "import", module: checkedModule, field: checkedField });
+}
+export function irCapabilityImportFuncRef(
+  module: string,
+  field: string,
+  capabilityId: string,
+  providerId: string,
+  adapterName?: string,
+): IrFuncRef {
+  const checkedModule = requireNonEmpty(module, "capability import module");
+  const checkedField = requireNonEmpty(field, "capability import field");
+  const checkedCapability = requireNonEmpty(capabilityId, "capability import capability");
+  const checkedProvider = requireNonEmpty(providerId, "capability import provider");
+  const name = compatibilityName(adapterName, checkedField, "capability import compatibility name");
+  return funcRef(name, {
+    kind: "import",
+    module: checkedModule,
+    field: checkedField,
+    capabilityId: checkedCapability,
+    providerId: checkedProvider,
+  });
+}
+export function irRuntimeFuncRef(symbol: string, adapterName?: string): IrFuncRef {
+  const checkedSymbol = requireNonEmpty(symbol, "runtime symbol");
+  const name = compatibilityName(adapterName, checkedSymbol, "runtime compatibility name");
+  return funcRef(name, { kind: "runtime", symbol: checkedSymbol });
+}
+export function irIntrinsicFuncRef(symbol: string, adapterName?: string): IrFuncRef {
+  const checkedSymbol = requireNonEmpty(symbol, "intrinsic symbol");
+  const name = compatibilityName(adapterName, checkedSymbol, "intrinsic compatibility name");
+  return funcRef(name, { kind: "intrinsic", symbol: checkedSymbol });
+}
+export function irSupportFuncRef(
+  ownerId: IrCallableBindingOwnerId,
+  role: string,
+  adapterName: string,
+  ordinal?: number,
+): IrFuncRef {
+  const checkedOwnerId = requireNonEmpty(ownerId, "support owner identity") as IrCallableBindingOwnerId;
+  const checkedRole = requireNonEmpty(role, "support role");
+  const name = requireNonEmpty(adapterName, "support compatibility name");
+  return funcRef(name, {
+    kind: "support",
+    bindingId: createIrBindingId({ ownerId: checkedOwnerId, domain: "support", role: checkedRole, ordinal }),
+  });
+}
+
+=== from-ast 6307-6316 + 6516-6530 (imported call plan use)
+  plan: IrImportedCallLoweringPlan,
+  cx: LowerCtx,
+  statementPosition: boolean,
+): IrValueId | null {
+  requireMatchingLoweringPlanOwner("imported call", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  requireValidImportedCallTarget(plan);
+  if (expr.arguments.length > plan.params.length || expr.arguments.some(ts.isSpreadElement)) {
+    throw new Error(`ir/from-ast: imported call shape diverged after certification (${cx.funcName})`);
+  }
+  const args: IrValueId[] = [];
+  const imported = cx.importedCalls?.get(expr);
+  if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
+
+  const direct = cx.directCalls?.get(expr);
+  if (!direct) {
+    demoteToLegacy(
+      "call-graph-closure",
+      `ir/from-ast: direct call to "${calleeName}" has no exact AST-site plan in ${cx.funcName}`,
+    );
+  }
+  requireMatchingLoweringPlanOwner("direct call", direct.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  const calleeSig = direct.signature;
+  const fnctorBoundary = cx.fnctorNativeStringBoundaries?.get(expr);
+  if (
+    fnctorBoundary &&
+
+=== from-ast emitCall by binding constructor (counts)
+irImportFuncRef: 7
+irRuntimeFuncRef: 29
+irIntrinsicFuncRef: 15
+irUnitFuncRef: 2
+irSupportFuncRef: 0
+irCapabilityImportFuncRef: 0
+irFnctorConstructorFuncRef: 0
+
+=== tests for manifest/capabilities/intrinsics
+fnctor-abi.test.ts
+fnctor-admission.test.ts
+fnctor-argument-projection.test.ts
+fnctor-producer.test.ts

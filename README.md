@@ -371,3 +371,7 @@ The foundational design choices behind `js2wasm` — why WasmGC instead of linea
 ## Trademark disclaimer
 
 JavaScript is a trademark or registered trademark of Oracle in the United States and other countries. This project is independent from Oracle and is not endorsed by, sponsored by, or affiliated with Oracle.
+
+## f3-census (2026-09-02)
+
+R6 family-3 census probes cited by `plan/issues/3526-ir-r6-semantic-runtime-contract.md` § "2026-09-02 Family 3 census": `boundary-surface/`, `ungoverned-dispatch/`, `lane-measurement/` (14-shape × 4-lane corpus, `results.json`), plus the adversarial critique and the final re-anchoring verification (`critique.json`, `final-verification.json`). Grounded on origin/main 33ea8606aa, re-anchored to de72c54996.

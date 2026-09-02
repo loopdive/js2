@@ -1,0 +1,219 @@
+##### src/codegen/closures.ts
+src/codegen/closures.ts:1657 [emitArrowParamDefaults]         (ctx.standalone || ctx.wasi) &&
+src/codegen/closures.ts:2999 [compileLiftedClosureBody]   if (ts.isBlock(body) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+src/codegen/closures.ts:3047 [compileLiftedClosureBody]     (ctx.standalone || ctx.wasi) &&
+src/codegen/closures.ts:3164 [compileLiftedClosureBody]     if ((ctx.standalone || ctx.wasi) && !ctx.funcMap.has("__gen_create_buffer")) {
+src/codegen/closures.ts:3437 [captureOwningDirectEvalState]     !(ctx.standalone || ctx.wasi) ||
+src/codegen/closures.ts:3854 [compileArrowAsClosure]     !ctx.standalone &&
+src/codegen/closures.ts:3855 [compileArrowAsClosure]     !ctx.wasi &&
+src/codegen/closures.ts:4201 [compileArrowAsCallback]       !ctx.standalone &&
+src/codegen/closures.ts:4202 [compileArrowAsCallback]       !ctx.wasi &&
+src/codegen/closures.ts:4523 [compileArrowAsCallback]     if (ctx.standalone || ctx.wasi) {
+##### src/codegen/closure-exports.ts
+src/codegen/closure-exports.ts:871 [emitClosureCallExportN]     !ctx.standalone &&
+src/codegen/closure-exports.ts:872 [emitClosureCallExportN]     !ctx.wasi &&
+src/codegen/closure-exports.ts:1282 [hostCallableFallbackTerminal]     ctx.standalone ||
+src/codegen/closure-exports.ts:1283 [hostCallableFallbackTerminal]     ctx.wasi ||
+src/codegen/closure-exports.ts:1437 [emitClosureMethodCallExportN]     !ctx.standalone &&
+src/codegen/closure-exports.ts:1438 [emitClosureMethodCallExportN]     !ctx.wasi &&
+##### src/codegen/closures/callback-classification.ts
+src/codegen/closures/callback-classification.ts:310 [isHostCallbackArgument]       if (ctx.standalone && (methodName === "call" || methodName === "apply")) {
+src/codegen/closures/callback-classification.ts:350 [isHostCallbackArgument]         if (ctx.nativeStrings && recName === "DisposableStack" && (methodName === "defer" || methodName === "adopt")) {
+src/codegen/closures/callback-classification.ts:400 [isHostCallbackArgument]           ctx.standalone &&
+##### src/codegen/standalone-dom-callback-authority.ts
+src/codegen/standalone-dom-callback-authority.ts:99 [reserveStandaloneDomCallbackDispatch]     !ctx.standalone ||
+src/codegen/standalone-dom-callback-authority.ts:100 [reserveStandaloneDomCallbackDispatch]     ctx.wasi ||
+src/codegen/standalone-dom-callback-authority.ts:101 [reserveStandaloneDomCallbackDispatch]     !ctx.nativeStrings ||
+##### src/codegen/expressions/calls-closures.ts
+src/codegen/expressions/calls-closures.ts:137 [callablePropertyRefBridge]   if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/calls-closures.ts:1427 [compileCallablePropertyCall]   if (!ctx.wasi && !ts.isPrivateIdentifier(propAccess.name)) {
+src/codegen/expressions/calls-closures.ts:1439 [compileCallablePropertyCall]       ctx.standalone &&
+src/codegen/expressions/calls-closures.ts:1442 [compileCallablePropertyCall]     if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
+src/codegen/expressions/calls-closures.ts:1443 [compileCallablePropertyCall]       if (ctx.standalone) {
+src/codegen/expressions/calls-closures.ts:1614 [compileCallablePropertyCall]     (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/calls-closures.ts:2072 [compileCallableElementAccessCall]     ctx.standalone &&
+src/codegen/expressions/calls-closures.ts:2315 [tryExternClassMethodOnAny]   if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+src/codegen/expressions/calls-closures.ts:2494 [tryExternClassMethodOnAny]     (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/calls-closures.ts:2572 [tryExternClassMethodOnAny]   if (ctx.nativeStrings && ctx.externClasses.get("DisposableStack")?.methods.has(methodName)) {
+##### src/codegen/bound-fn-meta.ts
+src/codegen/bound-fn-meta.ts:102 [seedBoundFunctionMetaOnStack]   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureNativeStringHelpers(ctx);
+src/codegen/bound-fn-meta.ts:233 [seedBoundFunctionName]   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return;
+##### src/codegen/callback-ctor-bridge.ts
+src/codegen/callback-ctor-bridge.ts:52 [resolveCallbackMakerName]   if (ctx.standalone || ctx.wasi) return "__make_callback";
+##### src/codegen/analysis/host-callable-initializer.ts
+src/codegen/analysis/host-callable-initializer.ts:82 [initializerMayProduceHostCallable]   if (ctx.standalone || ctx.wasi) return false;
+##### src/codegen/ir-fnctor-admission.ts
+src/codegen/ir-fnctor-admission.ts:49 [irFnctorArgumentProjectionRouteIsActive]     ctx.standalone === true &&
+src/codegen/ir-fnctor-admission.ts:50 [irFnctorArgumentProjectionRouteIsActive]     ctx.nativeStrings === true &&
+src/codegen/ir-fnctor-admission.ts:51 [irFnctorArgumentProjectionRouteIsActive]     ctx.wasi === false &&
+src/codegen/ir-fnctor-admission.ts:52 [irFnctorArgumentProjectionRouteIsActive]     ctx.fast === false &&
+##### src/codegen/expressions/spread-arguments-call.ts
+src/codegen/expressions/spread-arguments-call.ts:107 [compileSpreadCallArgsWithArguments]   if (noJsHost(ctx) && !ctx.standalone) return false;
+##### src/codegen/expressions/calls-optional.ts
+src/codegen/expressions/calls-optional.ts:176 [compileOptionalCallExpression]     if (ctx.fast && ctx.nativeStrTypeIdx >= 0) {
+##### src/codegen/expressions/late-imports.ts
+src/codegen/expressions/late-imports.ts:100 [refuseStandaloneObjectImport]   if (!ctx.standalone || !STANDALONE_REFUSED_IMPORT(name)) return false;
+src/codegen/expressions/late-imports.ts:140 [refuseStandaloneToPrimitive]   if (!ctx.standalone || name !== "__to_primitive") return false;
+src/codegen/expressions/late-imports.ts:494 [ensureLateImport]   if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/late-imports.ts:739 [ensureGetUndefined]   if (ctx.nativeStrings) return undefined;
+##### src/codegen/registry/imports.ts
+src/codegen/registry/imports.ts:67 [addImport]   if (ctx.strictNoHostImports) {
+src/codegen/registry/imports.ts:154 [addStringConstantGlobals]   if (ctx.nativeStrings) {
+src/codegen/registry/imports.ts:207 [addHostStringConstantGlobal]   if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+src/codegen/registry/imports.ts:208 [addHostStringConstantGlobal]   if (!ctx.nativeStrings) {
+src/codegen/registry/imports.ts:1219 [addUnionImportsAsNativeFuncs]   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && !ctx.funcMap.has("__str_to_number")) {
+src/codegen/registry/imports.ts:1946 [addUnionImportsAsNativeFuncs]   if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/registry/imports.ts:2284 [addGeneratorImports]   if ((ctx.standalone || ctx.wasi) && !options?.allowNoJsHost) return;
+src/codegen/registry/imports.ts:2357 [collectUsedExternImports]   const useNativeEncodingApi = ctx.wasi || ctx.standalone || ctx.strictNoHostImports;
+src/codegen/registry/imports.ts:2598 [collectUsedExternImports]           if (!(ctx.standalone || ctx.wasi)) {
+##### src/codegen/expressions/call-tail-dispatch.ts
+src/codegen/expressions/call-tail-dispatch.ts:763 [compileTailDispatch]         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+src/codegen/expressions/call-tail-dispatch.ts:783 [compileTailDispatch]           (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-tail-dispatch.ts:867 [compileTailDispatch]             if (ctx.wasi && methodName === "@@replace" && expr.arguments.length === 2) {
+src/codegen/expressions/call-tail-dispatch.ts:1211 [compileTailDispatch]         if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/expressions/call-tail-dispatch.ts:1443 [compileTailDispatch]           (ctx.standalone || externrefArrayElement) &&
+src/codegen/expressions/call-tail-dispatch.ts:1762 [compileTailDispatch]       if (!ctx.standalone && !noJsHost(ctx) && ts.isPropertyAccessExpression(bindCall.expression)) {
+##### src/codegen/expressions/calls-guards.ts
+src/codegen/expressions/calls-guards.ts:93 [runtimeEvalMayReplaceCallee]   if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
+src/codegen/expressions/calls-guards.ts:763 [emitObjectCoercion]     const hostBigInt = !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first";
+##### src/codegen/expressions/calls.ts
+src/codegen/expressions/calls.ts:154 [emitBareCallReceiverReset]     restoreOnException && (ctx.standalone || ctx.wasi)
+src/codegen/expressions/calls.ts:688 [compileObjectAssignArg]     (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone) &&
+src/codegen/expressions/calls.ts:736 [compileProtoArg]     ctx.standalone &&
+src/codegen/expressions/calls.ts:786 [tryEmitArrayToStringNative]   if (!(ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0)) return undefined;
+src/codegen/expressions/calls.ts:915 [isNumberMethodReceiver]   return isNumberType(receiverType) || (ctx.standalone && isNumberWrapperType(receiverType));
+src/codegen/expressions/calls.ts:1081 [emitNumberMethodReceiverF64]   if (ctx.standalone && isNumberWrapperType(receiverType)) {
+src/codegen/expressions/calls.ts:1189 [tryEmitNativeProtoReflectiveCall]   if (!ctx.standalone) return undefined;
+src/codegen/expressions/calls.ts:1600 [tryEmitGeneratorProtoReflectiveCall]   if (!(ctx.standalone || ctx.wasi)) return undefined;
+src/codegen/expressions/calls.ts:1872 [tryEmitNativeProtoDescriptorAccessorCall]   if (!ctx.standalone) return undefined;
+src/codegen/expressions/calls.ts:2016 [tryEmitJsonStringifyPrimitive]     const nativeStringArms = ctx.nativeStrings && ctx.anyStrTypeIdx >= 0;
+src/codegen/expressions/calls.ts:2059 [tryEmitJsonStringifyPrimitive]   if ((ctx.standalone || ctx.wasi) && flags & ts.TypeFlags.StringLike) {
+src/codegen/expressions/calls.ts:2100 [tryEmitJsonParsePrimitive]   if (!(ctx.standalone || ctx.wasi)) return undefined;
+src/codegen/expressions/calls.ts:2614 [calleeMayBeHostCallable]     return !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:2627 [calleeMayBeHostCallable]     return !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:2645 [calleeMayBeHostCallable]         return !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:2874 [emitDynamicSpreadCall]   if (ctx.standalone || ctx.wasi || !expr.arguments.some((arg) => ts.isSpreadElement(arg))) return null;
+src/codegen/expressions/calls.ts:3172 [emitWrapperDynamicMethodCall]   const arrNewIdx = ctx.standalone
+src/codegen/expressions/calls.ts:3178 [emitWrapperDynamicMethodCall]   const wantArgs = callExpr !== undefined && callExpr.arguments.length > 0 && !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:3674 [tryEvalAsRegExpPeephole]   if (ctx.standalone) {
+src/codegen/expressions/calls.ts:4525 [tryEmitInlineDynamicCall]     (ctx.standalone === true || ctx.targetProfile.semanticProviders === "native-first") &&
+src/codegen/expressions/calls.ts:4539 [tryEmitInlineDynamicCall]     (ctx.standalone === true || ctx.wasi === true) &&
+src/codegen/expressions/calls.ts:4541 [tryEmitInlineDynamicCall]   const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+src/codegen/expressions/calls.ts:4623 [tryEmitInlineDynamicCall]   if (needsProvidedUndefinedCheck || (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback)) {
+src/codegen/expressions/calls.ts:4626 [tryEmitInlineDynamicCall]   if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+src/codegen/expressions/calls.ts:4656 [tryEmitInlineDynamicCall]     (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback);
+src/codegen/expressions/calls.ts:4729 [tryEmitInlineDynamicCall]   const variadicArm = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+src/codegen/expressions/calls.ts:4854 [tryEmitInlineDynamicCall]   if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+src/codegen/expressions/calls.ts:5318 [standaloneDynamicFunctionCtorArgs]   if (!ctx.standalone) return undefined;
+src/codegen/expressions/calls.ts:5471 [compileStandalonePromiseThenCallback]       if (opts?.allowDynamic === true && (ctx.standalone === true || ctx.wasi === true) && type !== null) {
+src/codegen/expressions/calls.ts:5604 [tryEmitAsyncGenReturnThrowDispatch]   if (ctx.standalone !== true && ctx.wasi !== true) return null;
+src/codegen/expressions/calls.ts:5731 [standaloneThenMissArmCanBeNative]   if (ctx.standalone !== true || ctx.wasi === true) return false;
+src/codegen/expressions/calls.ts:5793 [emitStandaloneThenWithNativeFallback]       if (ctx.standalone === true && ctx.wasi !== true && method === "then") {
+src/codegen/expressions/calls.ts:6276 [tryWasiTimerCall]   if (!ctx.wasi) return undefined;
+src/codegen/expressions/calls.ts:6501 [tryIteratorStaticsIntrinsicCall]   if (!ctx.standalone && !ctx.wasi) return undefined;
+src/codegen/expressions/calls.ts:6572 [tryRuntimeIsProxyIntrinsic]     (!ctx.standalone && !ctx.wasi) ||
+src/codegen/expressions/calls.ts:6607 [tryRuntimeEvalApplyCallableIntrinsic]     (!ctx.standalone && !ctx.wasi) ||
+src/codegen/expressions/calls.ts:7004 [tryRuntimeEvalInterpretedBoundaryIntrinsic]     (!ctx.standalone && !ctx.wasi) ||
+src/codegen/expressions/calls.ts:7391 [compileCallExpression]     if (ctx.standalone && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
+src/codegen/expressions/calls.ts:7404 [compileCallExpression]   if (!noJsHost(ctx) && !ctx.nativeStrings && immediateFunctionCtor) {
+src/codegen/expressions/calls.ts:7486 [compileCallExpression]     ctx.standalone &&
+src/codegen/expressions/calls.ts:7498 [compileCallExpression]     ctx.standalone &&
+src/codegen/expressions/calls.ts:7538 [compileCallExpression]               : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
+src/codegen/expressions/calls.ts:7625 [compileCallExpression]     if (ctx.standalone) {
+src/codegen/expressions/calls.ts:7937 [compileCallExpression]         (ctx.standalone &&
+src/codegen/expressions/calls.ts:8828 [compileCallExpression]           !ctx.standalone &&
+src/codegen/expressions/calls.ts:8829 [compileCallExpression]           !ctx.wasi &&
+src/codegen/expressions/calls.ts:8898 [compileCallExpression]               if (ctx.standalone && proof.unprovenDefault && receiverExpr !== undefined) {
+src/codegen/expressions/calls.ts:8937 [compileCallExpression]             if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/calls.ts:9002 [compileCallExpression]           if (ctx.standalone && expr.arguments.length >= 1 && !isBuiltinRegExpPrototype) {
+src/codegen/expressions/calls.ts:9338 [compileCallExpression]     if (!ctx.wasi && ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "process") {
+src/codegen/expressions/calls.ts:9443 [compileCallExpression]       ctx.wasi &&
+src/codegen/expressions/calls.ts:9563 [emitFnctorSubclassDynamicMethodCall]   if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
+src/codegen/expressions/calls.ts:9566 [emitFnctorSubclassDynamicMethodCall]   const arrNewName = ctx.standalone ? "__objvec_new" : "__js_array_new";
+src/codegen/expressions/calls.ts:9567 [emitFnctorSubclassDynamicMethodCall]   const arrPushName = ctx.standalone ? "__objvec_push" : "__js_array_push";
+src/codegen/expressions/calls.ts:9568 [emitFnctorSubclassDynamicMethodCall]   if (ctx.standalone) {
+src/codegen/expressions/calls.ts:10385 [isDynamicCombinatorArgEligible]   if (ctx.nativeStrings !== true && isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
+src/codegen/expressions/calls.ts:10400 [isDynamicCombinatorArgEligible]         return ctx.nativeStrings === true;
+##### src/codegen/expressions/call-identifier.ts
+src/codegen/expressions/call-identifier.ts:247 [emitStringBuiltinNumberResult]   if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0 && usesNativeNumberFormat(ctx)) {
+src/codegen/expressions/call-identifier.ts:360 [tryCompileStoredStandaloneCarrierCall]   if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+src/codegen/expressions/call-identifier.ts:535 [compileIdentifierCall]     (ctx.standalone || ctx.wasi || expr.arguments.length <= 8)
+src/codegen/expressions/call-identifier.ts:539 [compileIdentifierCall]     if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-identifier.ts:599 [compileIdentifierCall]     !ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:669 [compileIdentifierCall]     ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:761 [compileIdentifierCall]     ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:848 [compileIdentifierCall]         const nativeParse = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi;
+src/codegen/expressions/call-identifier.ts:883 [compileIdentifierCall]           ctx.nativeStrings &&
+src/codegen/expressions/call-identifier.ts:1018 [compileIdentifierCall]         if (ctx.nativeStrings && elemType !== undefined && !elemIsNever && resolveArrayInfo(ctx, arg0TsType)) {
+src/codegen/expressions/call-identifier.ts:1040 [compileIdentifierCall]           ctx.nativeStrings &&
+src/codegen/expressions/call-identifier.ts:1138 [compileIdentifierCall]         op: ctx.fast ? "i32.const" : "f64.const",
+src/codegen/expressions/call-identifier.ts:1141 [compileIdentifierCall]       return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+src/codegen/expressions/call-identifier.ts:1187 [compileIdentifierCall]       if (ctx.nativeStrings && ctx.oracle.staticJsTypeOf(strArg0) === "symbol") {
+src/codegen/expressions/call-identifier.ts:1198 [compileIdentifierCall]       if (!ctx.nativeStrings && ctx.oracle.staticJsTypeOf(strArg0) === "symbol") {
+src/codegen/expressions/call-identifier.ts:1314 [compileIdentifierCall]         if (ctx.nativeStrings) {
+src/codegen/expressions/call-identifier.ts:1371 [compileIdentifierCall]         ctx.nativeStrings &&
+src/codegen/expressions/call-identifier.ts:1415 [compileIdentifierCall]         const useNativeTruthy = ctx.standalone;
+src/codegen/expressions/call-identifier.ts:1582 [compileIdentifierCall]     if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+src/codegen/expressions/call-identifier.ts:1775 [compileIdentifierCall]         ctx.standalone &&
+src/codegen/expressions/call-identifier.ts:1789 [compileIdentifierCall]       if (isKnownVariable && !ctx.standalone && !noJsHost(ctx) && calleeIsCapabilityCtorParam(ctx, expr.expression)) {
+src/codegen/expressions/call-identifier.ts:1828 [compileIdentifierCall]           ctx.standalone || ctx.wasi
+src/codegen/expressions/call-identifier.ts:2156 [compileIdentifierCall]             if (ctx.standalone || ctx.wasi) return null;
+src/codegen/expressions/call-identifier.ts:2640 [compileIdentifierCall]             !ctx.standalone &&
+src/codegen/expressions/call-identifier.ts:2641 [compileIdentifierCall]             !ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:2666 [compileIdentifierCall]             (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-identifier.ts:2771 [compileIdentifierCall]             (ctx.standalone || ctx.wasi) && innerResultType?.kind === "externref"
+src/codegen/expressions/call-identifier.ts:3154 [compileIdentifierCall]         (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+src/codegen/expressions/call-identifier.ts:3185 [compileIdentifierCall]         !ctx.standalone &&
+src/codegen/expressions/call-identifier.ts:3186 [compileIdentifierCall]         !ctx.wasi &&
+##### src/codegen/expressions/call-receiver-method.ts
+src/codegen/expressions/call-receiver-method.ts:476 [tryCompileLateFnctorPrototypeMethodCall]   if (ctx.standalone) {
+src/codegen/expressions/call-receiver-method.ts:484 [tryCompileLateFnctorPrototypeMethodCall]     if (ctx.wasi || !pinnedFnctor) return undefined;
+src/codegen/expressions/call-receiver-method.ts:508 [tryCompileLateFnctorPrototypeMethodCall]   if (!ctx.standalone && !ctx.wasi && dispatchArgs.length > 8) return undefined;
+src/codegen/expressions/call-receiver-method.ts:511 [tryCompileLateFnctorPrototypeMethodCall]   const dispatchIdx = ctx.standalone
+src/codegen/expressions/call-receiver-method.ts:515 [tryCompileLateFnctorPrototypeMethodCall]     ctx.standalone || ctx.wasi
+src/codegen/expressions/call-receiver-method.ts:523 [tryCompileLateFnctorPrototypeMethodCall]   if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:532 [tryCompileLateFnctorPrototypeMethodCall]   if (!ctx.standalone && !ctx.wasi) addStringConstantGlobal(ctx, methodName);
+src/codegen/expressions/call-receiver-method.ts:550 [tryCompileLateFnctorPrototypeMethodCall]   if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:599 [tryCompileStandaloneFnctorLazyMethodMiss]   if (!ctx.standalone || fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
+src/codegen/expressions/call-receiver-method.ts:698 [declinesToOwnOrInheritedSlot]   if (!ctx.standalone) return false;
+src/codegen/expressions/call-receiver-method.ts:716 [tryCompileDerivedHostSubstringCharCodeAt]   if (ctx.nativeStrings || method !== "charCodeAt" || !ts.isIdentifier(propAccess.expression)) return null;
+src/codegen/expressions/call-receiver-method.ts:806 [compileReceiverMethodCall]   if (ctx.standalone && propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
+src/codegen/expressions/call-receiver-method.ts:848 [compileReceiverMethodCall]   if ((noJsHost(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings) {
+src/codegen/expressions/call-receiver-method.ts:1142 [compileReceiverMethodCall]       (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+src/codegen/expressions/call-receiver-method.ts:1168 [compileReceiverMethodCall]       (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+src/codegen/expressions/call-receiver-method.ts:1221 [compileReceiverMethodCall]             nullMiss: ctx.wasi === true || nativeFirstPromise,
+src/codegen/expressions/call-receiver-method.ts:1232 [compileReceiverMethodCall]           { nullMiss: ctx.wasi === true || nativeFirstPromise },
+src/codegen/expressions/call-receiver-method.ts:1266 [compileReceiverMethodCall]           } else if (ctx.wasi === true || nativeFirstPromise) {
+src/codegen/expressions/call-receiver-method.ts:1315 [compileReceiverMethodCall]           } else if (ctx.wasi === true || nativeFirstPromise) {
+src/codegen/expressions/call-receiver-method.ts:1355 [compileReceiverMethodCall]           } else if (ctx.wasi === true || nativeFirstPromise) {
+src/codegen/expressions/call-receiver-method.ts:1503 [compileReceiverMethodCall]     if (ctx.standalone && isWrapperValueAccessor) {
+src/codegen/expressions/call-receiver-method.ts:1570 [compileReceiverMethodCall]   if (!ctx.standalone && !ctx.wasi && receiverType.isUnion() && !ts.isPrivateIdentifier(propAccess.name)) {
+src/codegen/expressions/call-receiver-method.ts:2213 [compileReceiverMethodCall]             (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+src/codegen/expressions/call-receiver-method.ts:2471 [compileReceiverMethodCall]     ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:2532 [compileReceiverMethodCall]   if (ctx.standalone && STANDALONE_TA_SCALAR_HOFS.has(propAccess.name.text)) {
+src/codegen/expressions/call-receiver-method.ts:2584 [compileReceiverMethodCall]     (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-receiver-method.ts:2609 [compileReceiverMethodCall]     ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:2706 [compileReceiverMethodCall]     const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && usesNativeNumberFormat(ctx);
+src/codegen/expressions/call-receiver-method.ts:2740 [compileReceiverMethodCall]     (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-receiver-method.ts:2750 [compileReceiverMethodCall]       const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && (ctx.standalone || ctx.wasi);
+src/codegen/expressions/call-receiver-method.ts:2833 [compileReceiverMethodCall]     if (method === "toString" && expr.arguments.length === 0 && ctx.nativeStrings) {
+src/codegen/expressions/call-receiver-method.ts:2846 [compileReceiverMethodCall]     if (method === "toString" && expr.arguments.length === 0 && !ctx.nativeStrings) {
+src/codegen/expressions/call-receiver-method.ts:3123 [compileReceiverMethodCall]     ctx.nativeStrings &&
+src/codegen/expressions/call-receiver-method.ts:3186 [compileReceiverMethodCall]     if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/expressions/call-receiver-method.ts:3203 [compileReceiverMethodCall]       if (ctx.standalone && isStringWrapperType(receiverType) && method !== "toString" && method !== "valueOf") {
+src/codegen/expressions/call-receiver-method.ts:3592 [compileReceiverMethodCall]     const toLSName = ctx.standalone || ctx.wasi ? "__extern_toString" : "__extern_toLocaleString";
+src/codegen/expressions/call-receiver-method.ts:3615 [compileReceiverMethodCall]     ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:3631 [compileReceiverMethodCall]     ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:3661 [compileReceiverMethodCall]     !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx))
+src/codegen/expressions/call-receiver-method.ts:3848 [compileReceiverMethodCall]         const builtinNamespace = ctx.standalone
+src/codegen/expressions/call-receiver-method.ts:3866 [compileReceiverMethodCall]       if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:3993 [compileReceiverMethodCall]       if (needsRuntimeUserMethodDispatch && !ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:3997 [compileReceiverMethodCall]         (ctx.standalone || ctx.wasi || needsRuntimeUserMethodDispatch) &&
+src/codegen/expressions/call-receiver-method.ts:4005 [compileReceiverMethodCall]         if (ctx.standalone && methodName === "test" && arity === 1) {
+src/codegen/expressions/call-receiver-method.ts:4189 [compileReceiverMethodCall]             ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:4225 [compileReceiverMethodCall]         (ctx.standalone || (!ctx.wasi && needsRuntimeUserMethodName)) &&
+src/codegen/expressions/call-receiver-method.ts:4234 [compileReceiverMethodCall]         if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
+src/codegen/expressions/call-receiver-method.ts:4276 [compileReceiverMethodCall]         ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:4390 [compileReceiverMethodCall]         !ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:4499 [compileReceiverMethodCall]         if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
+src/codegen/expressions/call-receiver-method.ts:4614 [compileReceiverMethodCall]   if (!ctx.standalone && !ctx.wasi) {

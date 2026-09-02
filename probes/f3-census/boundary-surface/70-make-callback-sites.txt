@@ -1,0 +1,87 @@
+=== __make_callback across src (file:line)
+src/index.ts:54:  // `constructible` marks the #4394 sibling bridge (`__make_callback_ctor`),
+src/ir/promise-delay-lowering.ts:62:  /** Exact inline host callback consumed once by `__make_callback(-2, ...)`. */
+src/ir/runtime-host-capabilities.ts:375:  record("async.callback.wrap", "__make_callback", ["i32", "externref"], ["externref"], HOST_CALLBACK_EXCEPTION_POLICY),
+src/codegen/promise-executor.ts:227: * `__make_callback` host leak for `function make(ex){ return new Promise(ex); }`
+src/codegen/ta-hof-map-filter.ts:12:// the same host-free `__apply_closure` bridge R4 uses (NO `env.__make_callback`).
+src/codegen/hof-native.ts:27: * `env.__make_callback` host bridge — the #2 leaked host import by file count
+src/codegen/iterator-native.ts:1846: * fell to the host `env.__array_from` + `env.__make_callback` bridge, both
+src/codegen/closed-method-dispatch.ts:376:  // the callback through `__apply_closure` — retiring the `env.__make_callback`
+src/codegen/closed-method-dispatch.ts:1488:    // callback via `__apply_closure` — no `env.__make_callback` host bridge.
+src/codegen/expressions/call-builtin-static.ts:1411:    // below, which compiles the mapFn to externref via the `__make_callback`
+src/codegen/expressions/call-builtin-static.ts:3699:  // no `__make_callback` env import leaks) but returns a `ref $Map`.
+src/codegen/expressions/call-builtin-static.ts:3771:      // host import would insert `__make_callback`, leaking an env import into
+src/codegen/expressions/calls.ts:4214:  //  2. A callback that instead takes the `__make_callback` host path (passed
+src/codegen/expressions/calls.ts:4220:  //     behavior change for `__make_callback` callbacks, only the harness /
+src/codegen/expressions/calls.ts:5725: * `Promise_then*`/`__make_callback` imports that kept ~626 otherwise-passing
+src/codegen/expressions/calls.ts:5748:  // forbids registering `Promise_then*`/`__make_callback` and a host arm could
+src/codegen/expressions/calls.ts:5827:          // source of the `Promise_then*`/`__make_callback` leak in ~626
+src/codegen/expressions/late-imports.ts:528:    // `__make_callback` in finalizeUnifiedCollector) leave every defined-func
+src/codegen/expressions/late-imports.ts:544:    // pulls the host gen-suite batch right after the raw `__make_callback`).
+src/codegen/expressions/new-builtin-globals.ts:806:    // `Promise_new` + `__make_callback` leak for `make(ex)=>new Promise(ex)`.
+src/codegen/expressions/call-namespace-static.ts:2682:                // (compileArrowAsClosure), NOT __make_callback — the host
+src/codegen/expressions/call-namespace-static.ts:2768:              // `__make_callback` bridge (an `env::` import that breaks
+src/codegen/expressions/call-receiver-method.ts:1297:        // provider lanes don't leak the `Promise_catch` / `__make_callback`
+src/codegen/expressions/call-receiver-method.ts:2462:  // arm is the same `__make_callback` no-op stub the R4 scalar HOFs hit). The
+src/codegen/expressions/call-receiver-method.ts:2493:        // Callback (arg0) → WasmGC closure struct (not __make_callback).
+src/codegen/expressions/call-receiver-method.ts:2522:  // `compileArrayMethodCall` is a `__make_callback` no-op STUB (banked at
+src/codegen/expressions/call-receiver-method.ts:2523:  // array-methods.ts ~"BANKED … the callback methods … → env.__make_callback"
+src/codegen/expressions/call-receiver-method.ts:2524:  // as "a separate follow-up") — it leaks `env.__make_callback` (breaking
+src/codegen/expressions/call-receiver-method.ts:2555:      // `__make_callback` bridge — so the dispatcher's HOF arm can drive it via
+src/codegen/expressions/call-receiver-method.ts:4179:          // externref), NOT via the `__make_callback` host bridge that
+src/codegen/iter-lazy-native.ts:30: * and `for…of` drive it natively. No `env.__make_callback` host bridge, no host
+src/codegen/async-frame.ts:111: * `__make_callback`) are unavailable, so a genuinely-suspending async function
+src/codegen/async-frame.ts:138:  /** `__make_callback(cbId, caps) -> jsFunction` — dispatches `exports.__cb_<id>`. */
+src/codegen/async-frame.ts:165:  const makeCbIdx = ctx.funcMap.get("__make_callback");
+src/codegen/async-frame.ts:194: * `Promise_resolve`/`__make_callback`/`Promise_then2`, settle via
+src/codegen/async-frame.ts:356:   * `__make_callback`-wrapped step adapters (exported `__cb_<id>`), settle =
+src/codegen/async-frame.ts:1680:  // invokes through `__make_callback`, whose runtime dispatch is BY EXPORT NAME
+src/codegen/async-frame.ts:1734:  // Host backend: the `__make_callback` host bridge dispatches by the exported
+src/codegen/async-frame.ts:2135:            // __make_callback(fulfillId, frame), __make_callback(rejectId,
+src/codegen/init-class-dispatch-helpers.ts:154: * `__make_callback(id, caps)` hands the host a JS function whose body is
+
+=== runtime.ts __make_callback impl
+      // the identity-CACHED dynamic bridge (`_wasmClosureDynamicWrapperCache`),
+      // so `on(h)` and `off(h)` receive the SAME wrapper and removeListener
+      // identity-matches. Direct arrow args already crossed via
+      // `__make_callback`; this covers variable-held closures.
+      if (
+        intent.className === "EventEmitter" &&
+        (m === "on" ||
+          m === "once" ||
+          m === "off" ||
+          m === "addListener" ||
+          m === "removeListener" ||
+          m === "prependListener" ||
+          m === "prependOnceListener")
+      ) {
+        return (self: any, ...args: any[]) => {
+          if (self == null) return undefined;
+          const wrappedArgs = args.map((a) => _maybeWrapCallableUnknownArity(a, callbackState));
+          const fn = self[m] ?? _sidecarGet(self, m);
+          if (typeof fn === "function") return fn.call(self, ...wrappedArgs);
+          return undefined;
+        };
+      }
+      // (#4150) The generic method shim is the DOM lane's hot path — 5,000 of
+      // `dom/set-attributes`'s 7,000 crossings land here — and its rest
+      // parameter allocated a fresh args array on every one of them. #3903
+      // removed the inner spread but left the rest param and the `.apply`.
+      // The wasm import signature fixes the argument count exactly
+      // (`paramCount` counts `self` plus the method's own parameters), so build
+      // a fixed-signature closure for the common arities and route the args
+      // through the SAME body. `genericMethodCall` below is that shared body,
+      // unchanged in behaviour: null check, sidecar fallback, wasm-struct arg
+      // wrapping, the #3903 arity switch, and the #1333 legacy-RegExp hook.
+      const invokeMethod = (self: any, args: any[]): any => {
+        if (self == null) return undefined;
+        // Method call — check sidecar if direct method missing
+        let fn = self[m] ?? _sidecarGet(self, m);
+        // (#4618) The any-receiver first-match binding (tryExternClassMethodOnAny)
+        // routes WasmGC-STRUCT receivers here under a colliding ambient method
+        // name (react's `element.type()` bound `CSSNumericValue_type`). An
+        // opaque `self[m]` read and the sidecar both miss the struct's typed
+        // FIELDS, and a stored raw closure struct is not yet callable — so the
+        // call silently answered undefined. Resolve through the same
+        // struct-aware field reader __extern_method_call uses, then wrap.
+        if (typeof fn !== "function") {

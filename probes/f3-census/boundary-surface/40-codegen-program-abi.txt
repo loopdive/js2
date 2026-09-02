@@ -1,0 +1,193 @@
+src/codegen/ir-prepared-free-functions.ts
+src/codegen/program-abi-callable-planning.ts
+src/codegen/program-abi-callable-roles.ts
+src/codegen/program-abi-class-callable-planning.ts
+src/codegen/program-abi-declared-globals.ts
+src/codegen/program-abi-export-planning.ts
+src/codegen/program-abi-finalization.ts
+src/codegen/program-abi-fnctor-planning.ts
+src/codegen/program-abi-fnctor-producer.ts
+src/codegen/program-abi-global-planning.ts
+src/codegen/program-abi-import-planning.ts
+src/codegen/program-abi-intent-equality.ts
+src/codegen/program-abi-module-callable-alias-planning.ts
+src/codegen/program-abi-module-init-planning.ts
+src/codegen/program-abi-planning.ts
+src/codegen/program-abi-prepared-scope-commit.ts
+src/codegen/program-abi-prepared-scope-lookup.ts
+src/codegen/program-abi-prepared-transaction.ts
+src/codegen/program-abi-provider-planning.ts
+src/codegen/program-abi-session.ts
+src/codegen/program-abi-signatures.ts
+src/codegen/program-abi-source-callable-planning.ts
+src/codegen/program-abi-type-planning.ts
+src/ir/fnctor-abi.ts
+src/ir/program-abi.ts
+
+=== src/codegen/program-abi-callable-planning.ts (242 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-callable-roles.ts (36 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ * Shared structural role ordinals for compiler-authored callable bindings.
+ * This leaf intentionally has no codegen dependencies so provider planning can
+ * consume the provider ordinal without re-entering the general planner.
+ */
+=== src/codegen/program-abi-class-callable-planning.ts (1020 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-declared-globals.ts (126 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-export-planning.ts (484 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-finalization.ts (46 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ * Settle allocator layout, then publish every retained Program ABI population.
+ *
+ * Ordering is intentional: DCE establishes final function/type layouts;
+ * imported callables and semantic providers claim their exact objects first;
+ * retained class bodies/helpers recover their exact source/class owners before
+ * generic callable population; total callable/global owners then exist before
+ * exports alias them; type cells publish last from the same compacted layout.
+ *
+ * (#3520 C34) The per-field host accessor family is observed here, after DCE
+ * has settled the layout and before the generic `retained-module-function`
+ * fallback runs — so an accessor the module no longer contains is simply absent
+ * rather than claiming a slot that is gone.
+ *
+ * (#3520 C35) The remaining compiler-support families (closure argc wrappers,
+ * async frame machinery, vec-from-extern materializers, self-hosted Math
+ * helpers) plan at the same seam but LAST, after every semantic registry has
+ * claimed what it owns — so "already owned" is exactly decided and a helper an
+ * intrinsic provider owns is never re-claimed.
+ */
+=== src/codegen/program-abi-fnctor-planning.ts (515 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ * Source/unit-qualified sidecar for synthesized function-style constructors.
+ *
+ * The legacy constructor maps are intentionally name-keyed and therefore are
+ * not a resolver authority. This registry is an additive observation seam:
+ * until the AST producer records an exact support binding, `resolve()` returns
+ * null and the IR lowerer remains fail-closed.
+ */
+=== src/codegen/program-abi-fnctor-producer.ts (347 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+ * The bounded AST producer for the Program-ABI fnctor sidecar.
+ *
+ * This module records no IR instruction and does not alter the legacy
+ * constructor body or call site.  It only observes a constructor after the
+ * existing AST compiler has built its reserved struct/function pair.  The
+ * The host lane observes one unconditional `input: string` field with no
+ * captures/TDZ cells. The bounded standalone lane observes only the exact
+ * post-legacy `input/$constructor/$bag` layout certified by the shared
+ * logical-to-physical contract; unsupported layouts remain legacy-owned.
+ */
+=== src/codegen/program-abi-global-planning.ts (279 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-import-planning.ts (1028 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-intent-equality.ts (42 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-module-callable-alias-planning.ts (522 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-module-init-planning.ts (795 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-planning.ts (485 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-prepared-scope-commit.ts (930 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-prepared-scope-lookup.ts (338 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-prepared-transaction.ts (1335 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-provider-planning.ts (1036 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// (#4033) Sourced from the shared role table, NOT a local literal. This was
+// `= 5`, which silently duplicated `PROGRAM_ABI_CALLABLE_ROLE.moduleInit`.
+=== src/codegen/program-abi-session.ts (3562 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-signatures.ts (125 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-source-callable-planning.ts (622 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+=== src/codegen/program-abi-type-planning.ts (1429 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+// (#4241) The closure header layout is defined ONCE, in a leaf module both
+// this validator and the mint sites can import — see closure-header-layout.ts.
+=== src/codegen/ir-prepared-free-functions.ts (2027 lines)
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+import {
+  irDirectCallLoweringPlanEquals,
+  type IrDirectCallLoweringPlan,
+  type IrHostVoidCallbackLoweringPlan,
+  type IrIntegrationLoweringPlans,
+} from "../ir/ast-lowering-plans.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
+import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
+import { irPreparedNestedOrdinaryClass } from "../ir/identity.js";
+import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
+import type { IrClassId, IrUnitId } from "../ir/identity.js";
+import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
+import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
+import { IrInvariantError } from "../ir/outcomes.js";
+import {
+  buildIrLegacyUnitProjection,
+  type IrLegacyUnitProjection,
+  type IrPlanningIdentityContext,
+} from "../ir/planning-identity.js";
+import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
+import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/select.js";
+import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
+import type { ValType, WasmFunction } from "../ir/types.js";
+import { ts } from "../ts-api.js";
+import { withSelectedTopLevelAccessorUnitIds } from "../ir/module-bindings.js";
+import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+import type { CodegenContext } from "./context/types.js";
+import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
+import { preparedIrAsyncSourceCanSuspend, preparedIrAsyncSourceShape } from "./async-ir-planning.js";
+import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
+import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
+import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { timerShimOutsideCaller } from "./ir-timer-shim-planning.js";
+import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
+import { applyIrFinalContextFunctionUnitIds, type IrOverlayPreparationPlan } from "./ir-overlay-preparation.js";
+import {
+  buildIrRequestedFunctionSkipProjection,
+  computeIrFirstSkipUnitIds,
+---callable grep---
+6:  type IrHostVoidCallbackLoweringPlan,
+76:  // IR override is compared with the allocated callable slot before ownership
+375:  // #3522 returned-closure ownership — an exact callable source boundary is
+378:  // the sealed component instead of relying on a direct-body closure slot.
+379:  if (type.kind === "callable") return true;
+396: * syntax can allocate derived callable identities during that attempt, and the
+424:    if (!ctx.programAbiClassCallables) {
+428:        `prepared class constructor ${shape.classId} has no class-callable ABI registry`,
+431:    ctx.programAbiClassCallables.prepareSupport(target.binding.bindingId);
+442:  // whole generic closure surface alive in an otherwise tiny optimized module.
+549: * hand-off is a source-wide call contract: preparing a different callable in
+574:/** Exact top-level source callables materialized as runtime values anywhere in this source. */
+670:  if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
+701: * but it must not change that slot's already allocated callable ABI. The
+711:  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+800: * callable slot.
+850: * scalars (one interned vec type). Deliberately EXCLUDES `callable`, `extern`
+867: * (#4514) Keep a prepared owner beside an outside caller only when its callable
+879: * from the select-stage caller-direction closure. It is intentionally narrower
+884: * untouched — the callee edge (a prepared body needs a callable plan for what
+932: * The certified Promise-delay owner is the first R3 closure component whose
+950:  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+969:/** Exact numeric fulfillment ABI projected onto a Promise callable slot. */
+984:  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+1258: * direct discovery and remain on the post-direct overlay. Nested callable
+1274:  readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+1331:        input.hostVoidCallbacks,
+1349:  // source call without a callable plan or retain a legacy caller.
+1405:        // SECOND closure was measured instead and is UNSOUND: it leaves a direct
+1408:        // (`callable provider … discovered after prepared provider planning`).
+1514:    const allocated = input.ctx.programAbiClassCallables?.functionForUnit(unitId);
+1531:        `selected top-level accessor setter ${unitId} has no exact dynamic descriptor / callable ABI`,
+1537:  // Validate the complete selected population before changing any callable.
+1539:  // failure from leaving only a prefix of the callable population retyped.
+1650:      !input.ctx.programAbiClassCallables
+1658:    const newFuncIdx = input.ctx.programAbiClassCallables.prepareSupport(newTarget.binding.bindingId);
+1659:    const initFuncIdx = input.ctx.programAbiClassCallables.handleForUnit(unitId);

@@ -1,0 +1,114 @@
+##### targetProfile-style reads in IR callable files + backend + program-abi
+src/ir/backend/legality.ts:24:  | "standalone-function-prototype-call"
+src/ir/backend/legality.ts:25:  | "standalone-native-regexp-test-carrier"
+src/ir/backend/legality.ts:26:  | "standalone-wrapper-instanceof"
+src/ir/backend/legality.ts:38:  readonly target: "gc" | "linear" | "standalone" | "wasi";
+src/ir/backend/legality.ts:39:  readonly allowHostImports: boolean;
+src/ir/backend/legality.ts:40:  /** Legacy fast-array storage has a distinct ABI not yet represented in IR. */
+src/ir/backend/legality.ts:41:  readonly fast?: boolean;
+src/ir/backend/legality.ts:50:export function projectIrBackendTargetProfile(
+src/ir/backend/legality.ts:52:  options: { readonly fast?: boolean } = {},
+src/ir/backend/legality.ts:57:    allowHostImports: profile.environment === "javascript" && profile.capabilityPolicy === "ambient-js",
+src/ir/backend/legality.ts:58:    fast: options.fast,
+src/ir/backend/legality.ts:70:export function supportsIrBackendTargetCapability(
+src/ir/backend/legality.ts:76:      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+src/ir/backend/legality.ts:78:      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+src/ir/backend/legality.ts:80:      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+src/ir/backend/legality.ts:81:    case "standalone-function-prototype-call":
+src/ir/backend/legality.ts:82:      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
+src/ir/backend/legality.ts:83:    case "standalone-native-regexp-test-carrier":
+src/ir/backend/legality.ts:84:      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
+src/ir/backend/legality.ts:85:    case "standalone-wrapper-instanceof":
+src/ir/backend/legality.ts:91:        profile.target === "standalone" &&
+src/ir/backend/legality.ts:92:        !profile.allowHostImports &&
+src/ir/backend/legality.ts:93:        profile.fast === true
+src/ir/backend/legality.ts:104:        profile.fast !== true &&
+src/ir/backend/legality.ts:105:        (profile.allowHostImports || profile.target === "standalone" || profile.target === "wasi")
+src/ir/backend/legality.ts:108:      return profile.backend === "wasmgc" && profile.fast !== true;
+src/ir/closure-struct-registry.ts:11:import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
+src/ir/fnctor-abi.ts:67:  /** True only for the standalone/WASI foreign-return constructor ABI. */
+src/ir/from-ast.ts:60:import { remainderFastPathPlan } from "./analysis/remainder-fast-path.js";
+src/ir/from-ast.ts:83:import { emitNumberRemainder } from "./remainder-fast-path.js";
+src/ir/from-ast.ts:397:  standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
+src/ir/from-ast.ts:478:  standaloneConsoleSinkAvailable?(): boolean;
+src/ir/from-ast.ts:579:  standaloneDomOperation?(node: ts.Node): IrStandaloneDomOperation | undefined;
+src/ir/from-ast.ts:750:  standaloneRegExpTestPlan?(
+src/ir/from-ast.ts:4184:      const standaloneDomGlobal = cx.resolver?.standaloneDomOperation?.(expr);
+src/ir/from-ast.ts:4186:      if (standaloneDomGlobal?.kind === "global-get" && !hg) {
+src/ir/from-ast.ts:4195:          standaloneDomGlobal?.kind === "global-get" &&
+src/ir/from-ast.ts:4196:          standaloneDomGlobal.identifier === expr &&
+src/ir/from-ast.ts:4197:          standaloneDomGlobal.importName === hg.importName;
+src/ir/from-ast.ts:4636:        `(any[]/unknown[]/union element) — the packed vec.new_fixed fast path is ` +
+src/ir/from-ast.ts:5338:    const standaloneDomRead = cx.resolver?.standaloneDomOperation?.(expr);
+src/ir/from-ast.ts:5339:    const exactStandaloneDomRead = standaloneDomRead?.kind === "member-get" && standaloneDomRead.access === expr;
+src/ir/from-ast.ts:5347:      if (exactStandaloneDomRead && `${resolved.importPrefix}_get_${propName}` !== standaloneDomRead.importName) {
+src/ir/from-ast.ts:7604:    const plan = cx.resolver?.standaloneRegExpTestPlan?.(expr.expression.expression) ?? null;
+src/ir/from-ast.ts:7608:        throw new Error(`ir/from-ast: unexpected standalone RegExp test helper ${plan.funcName}`);
+src/ir/from-ast.ts:7616:          `ir/from-ast: standalone RegExp.test subject is not a proven string (${cx.funcName})`,
+src/ir/from-ast.ts:7627:        throw new Error(`ir/from-ast: standalone RegExp.test helper returned void (${cx.funcName})`);
+src/ir/from-ast.ts:7838:    const hostFreeSink = cx.resolver?.standaloneConsoleSinkAvailable?.() === true;
+src/ir/from-ast.ts:8251:    const standaloneDomCall = cx.resolver?.standaloneDomOperation?.(expr);
+src/ir/from-ast.ts:8252:    const exactStandaloneDomCall = standaloneDomCall?.kind === "member-call" && standaloneDomCall.call === expr;
+src/ir/from-ast.ts:8269:    if (exactStandaloneDomCall && `${definingClass}_${methodName}` !== standaloneDomCall.importName) {
+src/ir/from-ast.ts:8303:        if (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") {
+src/ir/from-ast.ts:8326:        exactStandaloneDomCall ? standaloneDomCall : undefined,
+src/ir/from-ast.ts:8761:        `ir/from-ast: String.${methodName} optional arg ${i} omitted in nativeStrings mode not in slice 13c (${cx.funcName})`,
+src/ir/from-ast.ts:8914:    const standaloneDomSet = cx.resolver?.standaloneDomOperation?.(expr) ?? cx.resolver?.standaloneDomOperation?.(lhs);
+src/ir/from-ast.ts:8916:      standaloneDomSet?.kind === "member-set" &&
+src/ir/from-ast.ts:8917:      standaloneDomSet.assignment === expr &&
+src/ir/from-ast.ts:8918:      standaloneDomSet.access === lhs;
+src/ir/from-ast.ts:8931:    if (exactStandaloneDomSet && `${resolved.importPrefix}_set_${fieldName}` !== standaloneDomSet.importName) {
+src/ir/from-ast.ts:8944:      exactStandaloneDomSet ? standaloneDomSet.valueBoundary : undefined,
+src/ir/from-ast.ts:12755:  const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
+src/ir/from-ast.ts:13071:            `(${lProof}/${rProof}) — the unboxed numeric-add / string-concat fast ` +
+src/ir/from-ast.ts:14489:    plan.standaloneDomReusable === true
+src/ir/intrinsic-support.ts:111:/** Project the semantic standalone clock intent without adding a helper call. */
+src/ir/intrinsic-support.ts:127:    throw new Error("standalone async clock snapshot has a malformed semantic call");
+src/ir/intrinsic-support.ts:810:          kind: "standalone-native-wasmgc",
+src/codegen/multi-prepared-array-leaf.ts:370:    !ctx.standalone ||
+src/codegen/multi-prepared-array-leaf.ts:371:    ctx.fast ||
+src/codegen/multi-prepared-array-leaf.ts:372:    ctx.wasi ||
+src/codegen/multi-prepared-callable-orchestration.ts:157:    ctx.standalone &&
+src/codegen/multi-prepared-callable-orchestration.ts:158:    !ctx.wasi &&
+src/codegen/multi-prepared-callable-orchestration.ts:159:    !ctx.fast &&
+src/codegen/multi-prepared-callable-orchestration.ts:160:    ctx.nativeStrings &&
+src/codegen/multi-prepared-callable-orchestration.ts:1265:    input.ctx.standalone &&
+src/codegen/multi-prepared-callable-orchestration.ts:1266:    !input.ctx.wasi &&
+src/codegen/multi-prepared-callable-orchestration.ts:1267:    !input.ctx.fast &&
+src/codegen/multi-prepared-callable-publication.ts:316:    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+src/codegen/multi-prepared-fibonacci-pair.ts:334:  if (!ctx.standalone || ctx.fast || ctx.wasi) return rejectRequired("target lane");
+src/codegen/multi-prepared-module-init.ts:141:    ctx.fast ||
+src/codegen/multi-prepared-module-init.ts:142:    ctx.wasi ||
+src/codegen/multi-prepared-module-init.ts:143:    ctx.strictNoHostImports ||
+src/codegen/multi-prepared-module-init.ts:181:      target: input.ctx.wasi ? "wasi" : input.ctx.standalone ? "standalone" : "host",
+src/codegen/multi-prepared-program.ts:396:    overlayEnabled: !!options?.experimentalIR && !ctx.fast,
+src/codegen/multi-prepared-program.ts:1187:    const wasiStartExport = this.#ctx.wasi === true;
+src/codegen/multi-prepared-program.ts:1659:      const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+src/codegen/multi-prepared-scalar-leaf.ts:664:    !ctx.standalone ||
+src/codegen/multi-prepared-scalar-leaf.ts:665:    ctx.fast ||
+src/codegen/multi-prepared-scalar-leaf.ts:666:    ctx.wasi ||
+src/codegen/multi-prepared-scalar-leaf.ts:727:  if (!ctx.standalone) return reject("not standalone");
+src/codegen/multi-prepared-scalar-leaf.ts:728:  if (ctx.fast) return reject("fast");
+src/codegen/multi-prepared-scalar-leaf.ts:729:  if (ctx.wasi) return reject("WASI");
+src/codegen/multi-prepared-string-leaf.ts:654:    !ctx.standalone ||
+src/codegen/multi-prepared-string-leaf.ts:655:    ctx.fast ||
+src/codegen/multi-prepared-string-leaf.ts:656:    ctx.wasi ||
+src/codegen/program-abi-fnctor-planning.ts:99:  if (!ctx.nativeStrings) return physical.kind === "externref";
+src/codegen/program-abi-fnctor-planning.ts:138:        !ctx.nativeStrings ||
+src/codegen/program-abi-fnctor-planning.ts:192:  if (!ctx.standalone || ctx.wasi) return;
+src/codegen/program-abi-fnctor-planning.ts:348:    if (observation.hiddenIdentity !== !this.ctx.wasi) {
+src/codegen/program-abi-fnctor-planning.ts:351:    if (observation.resultIsExternref && !(this.ctx.standalone || this.ctx.wasi)) {
+src/codegen/program-abi-fnctor-producer.ts:80:  if (ctx.standalone || ctx.wasi || input.resultIsExternref) return false;
+src/codegen/program-abi-fnctor-producer.ts:134:  const hiddenIdentity = !input.ctx.wasi;
+src/codegen/program-abi-fnctor-producer.ts:198:    !ctx.standalone ||
+src/codegen/program-abi-fnctor-producer.ts:199:    ctx.wasi ||
+src/codegen/program-abi-fnctor-producer.ts:200:    !ctx.nativeStrings ||
+src/codegen/program-abi-fnctor-producer.ts:201:    ctx.fast ||
+src/codegen/program-abi-fnctor-producer.ts:291:    ctx.standalone &&
+src/codegen/program-abi-fnctor-producer.ts:292:    !ctx.wasi &&
+src/codegen/program-abi-fnctor-producer.ts:293:    ctx.nativeStrings &&
+src/codegen/program-abi-fnctor-producer.ts:294:    !ctx.fast &&
+src/codegen/program-abi-fnctor-producer.ts:295:    ctx.targetProfile.semanticProviders === "native-first"
+src/codegen/program-abi-module-init-planning.ts:26:  if (ctx.wasi) return "wasi-start-export";
+src/codegen/program-abi-type-planning.ts:450:      this.ctx.nativeStrings && this.ctx.anyStrTypeIdx >= 0 ? this.ctx.mod.types[this.ctx.anyStrTypeIdx] : undefined;
+src/codegen/program-abi-type-planning.ts:451:    if (this.ctx.nativeStrings && this.ctx.anyStrTypeIdx >= 0 && !nativeType) {

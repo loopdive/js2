@@ -1,0 +1,42 @@
+54: * (#3526 F1-S1) The synchronous number boundary — the f64⇄externref carrier
+55: * pair the front-end used to emit as a direct named call to
+57: * The IDs name meaning only; which provider (host import vs union-native
+60:export const NUMBER_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+62:export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];
+65: * (#3526 F1-S2) The synchronous BOOLEAN boundary — the branded-i32→externref
+66: * carrier the front-end used to emit as a direct named call to
+67: * `__box_boolean` after reading the `hasHostBooleanBox` resolver predicate.
+74:export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box"] as const);
+76:export type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];
+81: * used to pick between the `env.__extern_is_undefined` host import and the
+82: * host-free lanes' real Wasm function IN THE FRONT-END, by reading the
+87: * TWO-armed at the provider level, unlike `js.boolean.box` — both a host
+89: * same three-valued shape the number boundary's unbox arm does.
+91:export const EXTERN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.extern.is_undefined"] as const);
+93:export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[number];
+97:  ...NUMBER_BOUNDARY_INTRINSIC_IDS,
+98:  ...BOOLEAN_BOUNDARY_INTRINSIC_IDS,
+99:  ...EXTERN_BOUNDARY_INTRINSIC_IDS,
+148:/** Feature rows mirror the number-boundary intrinsic IDs 1:1. */
+149:export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+151:/** (#3526 F1-S2) The boolean-boundary feature row, 1:1 with its one ID. */
+152:export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"] as const);
+155:export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);
+159:  ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
+160:  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+161:  ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
+167:export type NumberBoundaryRuntimeFeature = (typeof NUMBER_BOUNDARY_RUNTIME_FEATURES)[number];
+168:export type BooleanBoundaryRuntimeFeature = (typeof BOOLEAN_BOUNDARY_RUNTIME_FEATURES)[number];
+169:export type ExternBoundaryRuntimeFeature = (typeof EXTERN_BOUNDARY_RUNTIME_FEATURES)[number];
+173: * The certified deterministic Math slice is host-free by construction.
+174: * Its exhaustive host-capability vocabulary is therefore empty. A later R6
+178:export const PURE_MATH_HOST_CAPABILITIES = Object.freeze([] as const);
+179:export type HostCapability = (typeof PURE_MATH_HOST_CAPABILITIES)[number];
+272: * shared by its host import and its host-free Wasm function (#4461 registered
+283: * compare helper, shared by the `env.string_compare` host import and the
+284: * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
+296: * distinction the host-capability catalogue's value union had to grow for in
+307: * the host-free `__str_concat` / `__str_concat_owned` Wasm helpers. The two
+308: * native helpers physically take and return `ref $AnyString`; the signature
+329: * The native helper physically takes `(ref $AnyString, i32)`; the signature
+417:  private constructor(instruction: IrInstr) {

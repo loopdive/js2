@@ -1,0 +1,47 @@
+124:  /** Exact post-call carrier adaptation for a provider with a legacy ABI. */
+296:  emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
+297:  /** Full-semantics `(string, f64) -> string` repeat provider call. */
+301:    provider?: IrFuncRef,
+305:  emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
+311:  emitStringLen?(inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider): readonly Instr[];
+313:  emitStringCharAt?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
+314:  emitStringCharCodeAt?(inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
+407:  if (!instr.provider) {
+411:      `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
+414:  if (instr.provider.kind === "backend-op") {
+415:    emitter.emitUnary(instr.provider.opcode, out);
+418:  if (instr.provider.kind === "backend-sequence") {
+419:    switch (instr.provider.sequence) {
+425:    const sequence: never = instr.provider.sequence;
+432:  if (instr.provider.kind === "backend-composite") {
+433:    emitComposite(instr.provider.operation, out);
+436:  emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
+518: * `attachIrGeneratorSupport` attaches `provider` UNCONDITIONALLY for all four
+524: * and its totality proof covers all four `provider` fields). Failing closed
+527:function requirePreparedGeneratorProvider(provider: IrFuncRef | undefined, kind: string, funcName: string): IrFuncRef {
+528:  if (!provider) {
+529:    throw new Error(`ir/lower: ${kind} has no prepared runtime provider (${funcName})`);
+531:  return provider;
+539:function requirePreparedStringProvider(provider: IrFuncRef | undefined, kind: string, funcName: string): IrFuncRef {
+540:  if (!provider) {
+541:    throw new Error(`ir/lower: ${kind} has no prepared runtime provider (${funcName})`);
+543:  return provider;
+2260:        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
+2270:          instr.provider,
+2278:        emitter.emitStringEquals(instr.negate, out, instr.provider);
+2283:        emitter.emitStringLength(instr.inputEncoding, out, instr.provider);
+2289:        emitter.emitStringCharAt(instr.alloc, instr.inputEncoding, out, instr.provider);
+2295:        emitter.emitStringCharCodeAt(instr.inputEncoding, out, instr.provider);
+2756:        // #2951 — prefer the sealed provider so lowering consumes exactly the
+2758:        const fnIdx = resolver.resolveFunc(requirePreparedGeneratorProvider(instr.provider, "gen.push", func.name));
+2776:        const fnIdx = resolver.resolveFunc(requirePreparedGeneratorProvider(instr.provider, "gen.epilogue", func.name));
+2797:          requirePreparedGeneratorProvider(instr.provider, "gen.yieldStar", func.name),
+2826:          requirePreparedGeneratorProvider(instr.provider, "gen.setReturn", func.name),
+2841:            throw new Error(`ir/lower: gen.setReturn numeric stash has no prepared boxing provider (${func.name})`);
+3388:        // `attachIrStringSupport` attaches this provider UNCONDITIONALLY for
+3390:        // provider-attaching branch and `irStringCallableProviderRef` never
+3398:          requirePreparedStringProvider(instr.provider, "forof.string", func.name),
+3522:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3529:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3537:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3544:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));

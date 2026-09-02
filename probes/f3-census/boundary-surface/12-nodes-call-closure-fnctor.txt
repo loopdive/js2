@@ -1,0 +1,264 @@
+//                                `passes/tagged-union-types.ts`). Each member
+//                                IrType is unwrapped to its ValType
+//                                (`asVal`) at the resolver boundary.
+//   { kind: "boxed", inner }   → ref to a single-field struct with the
+//                                inner IrType's ValType as its `$val`
+//                                (unwrapped via `asVal` at the resolver
+//                                boundary).
+//   { kind: "closure", signature }
+//                              → ref to the canonical `__fn_wrap_*` ROOT.
+//                                Construction still allocates the signature
+//                                wrapper or a declared captured subtype.
+//   { kind: "callable", signature }
+//                              → externref boundary carrier for that canonical
+//                                wrapper family (#3214 B0).
+//   { kind: "dynamic", tag? }  → `resolver.resolveDynamic()` — the module's
+//                                canonical boxed-any carrier (#2949/#1852:
+//                                `ref_null $AnyValue` in fast/standalone,
+//                                `externref` in host mode). The `tag`
+//                                refinement never changes the carrier.
+
+/**
+ * A canonical object shape — a sorted list of named fields with their IR
+ * types. Equal shapes (same names, same types in the same canonical order)
+ * resolve to the same WasmGC struct via the lowerer's resolver. Carrying
+ * the field types as `IrType` (not `ValType`) lets a struct-of-string or
+ * struct-of-object compose cleanly: the resolver recursively materializes
+ * field types when registering the WasmGC struct.
+ *
+ * Names must be unique. The constructor in `from-ast.ts` sorts by name
+ * before constructing the IrType so structurally-identical shapes compare
+ * equal regardless of source order.
+ */
+export interface IrObjectShape {
+  readonly fields: readonly { readonly name: string; readonly type: IrType }[];
+}
+
+/**
+ * Slice 3 (#1169c) — a closure's caller-visible signature. Used both as
+ * the IR-level type discriminator for closure values and as the resolver
+ * lookup key for the signature allocation wrapper + exact lifted func type.
+ * The implicit canonical-root `__self` param at index 0 of the lifted body is
+ * NOT present in `params` — the resolver adds it to the func type.
+ */
+export interface IrClosureSignature {
+  readonly params: readonly IrType[];
+  /**
+   * First caller-visible parameter with an expression default. The physical
+   * closure ABI still carries every entry in `params`; callers pad an omitted
+   * numeric suffix with the reserved legacy missing-argument sentinel.
+   */
+  readonly defaultParamStart?: number;
+  // the closure-construction site, not a type-system property. This type is
+  // compiler-owned and lowers to the canonical wrapper ROOT carrier. A
+  // closure.new site still allocates the signature wrapper (or its captured
+  // subtype), both of which are valid root subtypes.
+  | { readonly kind: "closure"; readonly signature: IrClosureSignature }
+  // #3214 B0 — callable values crossing a source-function boundary. Legacy
+  // already exposes callbacks as externref-wrapped `__fn_wrap_*` values, so
+  // IR parameters must use the same ABI rather than leaking the internal
+  // closure struct reference. `callable<S>` is deliberately distinct from
+  // `closure<S>`: only an explicit closure→callable pack may cross the
+  // boundary, while callable→callable forwards without representation churn.
+  | { readonly kind: "callable"; readonly signature: IrClosureSignature }
+  // Slice 4 (#1169d) — symbolic class instance reference. The Wasm-level
+  // value type is `(ref $ClassStruct)` where the struct is registered by
+  // the legacy `collectClassDeclaration` pass; the resolver maps
+export interface IrInstrBase {
+  /** SSA def produced by this instr. `null` for void instrs. */
+  readonly result: IrValueId | null;
+  /** Static type of the result, if any. Redundant w/ `result`'s type but kept local for verifier speed. */
+  readonly resultType: IrType | null;
+  /** Source location for diagnostics. Optional in Phase 1. */
+  readonly site?: IrSiteId;
+  /**
+   * Stable allocation-site identity (#1586). Present iff this instr is a
+   * value-creating (allocation) site — see {@link AllocKind} and the audit
+   * table in docs/adr/0013-ir-allocation-sites.md. Distinct from `result`
+   * (an `IrValueId`, which inlining/monomorphize renumber). Inert at
+   * lowering, so the emitted Wasm is byte-identical whether or not it is set.
+   */
+  readonly alloc?: AllocSiteId;
+}
+
+/** Materialize a constant into an SSA value. */
+export interface IrInstrConst extends IrInstrBase {
+  readonly kind: "const";
+  readonly value: IrConst;
+}
+
+/** Call a function by symbolic reference. Return value (if any) is `result`. */
+export interface IrInstrCall extends IrInstrBase {
+  readonly kind: "call";
+  readonly target: IrFuncRef;
+  readonly args: readonly IrValueId[];
+}
+
+/** Backend primitive choices available to the first semantic-intrinsic family. */
+export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
+
+/** Closed multi-op backend expansions available to semantic intrinsics. */
+export type IrIntrinsicBackendSequence = "f64.fround";
+
+/** Closed backend-neutral composite scalar semantics with backend-owned scratch. */
+export type IrIntrinsicBackendComposite = "math.clz32" | "math.imul" | "math.max" | "math.min" | "to-uint32";
+
+/**
+ * Provider attachment selected after middle-end transforms and manifest
+ * freeze. Source/type lowering emits no provider; preparation attaches a
+ * backend primitive, closed composite expansion, or exact symbolic callable.
+ */
+export type IrIntrinsicProvider =
+  | { readonly kind: "backend-op"; readonly opcode: IrIntrinsicBackendOp }
+  | { readonly kind: "backend-sequence"; readonly sequence: IrIntrinsicBackendSequence }
+  | { readonly kind: "backend-composite"; readonly operation: IrIntrinsicBackendComposite }
+  | { readonly kind: "callable"; readonly target: IrFuncRef };
+
+/**
+ * Versioned semantic intrinsic. Unlike `call`, this names source meaning, not
+ * a concrete runtime helper. The optional provider is a preparation artifact
+ * and must be present before backend lowering.
+ */
+export interface IrInstrIntrinsic extends IrInstrBase {
+  readonly kind: "intrinsic";
+  readonly id: IntrinsicId;
+  readonly version: IntrinsicSignatureVersion;
+  readonly args: readonly IrValueId[];
+  readonly provider?: IrIntrinsicProvider;
+}
+
+/** Read a global by symbolic reference. */
+  /** Exact backend provider selected during final program preparation. */
+  readonly provider?: IrStringLengthProvider;
+}
+
+/** Backend-selected dependency for the representation-neutral `string.len`. */
+export type IrStringLengthProvider =
+  | {
+      readonly kind: "callable";
+      /** Host `wasm:js-string.length` import. */
+      readonly target: IrFuncRef;
+    }
+  | {
+      readonly kind: "struct-field";
+      /** Native `$AnyString` layout; field 0 is the UTF-16 code-unit length. */
+      readonly ownerType: IrTypeRef;
+      readonly fieldIndex: number;
+    };
+
+// ---------------------------------------------------------------------------
+// Function-style constructor operations (#3521)
+// ---------------------------------------------------------------------------
+
+/**
+ * Materialize one source-qualified function-style constructor instance.
+ * `captureArgs` is the flattened legacy capture ABI: all capture values in
+ * capture order, followed by all paired TDZ flags in capture order;
+ * `args` is the user-visible constructor ABI. The hidden
+ * constructor identity is explicit so standalone lowering can preserve the
+ * exact trailing parameter without recovering it from a display name.
+ *
+ * This checkpoint only defines and verifies the contract. Lowering remains
+ * fail-closed until a backend resolves the nominal shape.
+ */
+export interface IrInstrFnctorNew extends IrInstrBase {
+  readonly kind: "fnctor.new";
+  readonly shape: IrFnctorShape;
+  readonly captureArgs: readonly IrValueId[];
+  readonly args: readonly IrValueId[];
+  readonly constructorIdentity: IrValueId | null;
+}
+
+/** Read one field from a nominal function-style constructor instance. */
+export interface IrInstrFnctorGet extends IrInstrBase {
+  readonly kind: "fnctor.get";
+  readonly shape: IrFnctorShape;
+  readonly value: IrValueId;
+  readonly fieldName: string;
+}
+
+// ---------------------------------------------------------------------------
+// Object operations (#1169b — IR Phase 4 Slice 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Materialize an object literal as a WasmGC struct. `shape` declares the
+ * struct's field layout (already canonically sorted by name); `values` is
+ * parallel to `shape.fields` and must have the same length. Lowering emits
+ * each value in canonical order followed by `struct.new $obj_<shape>`.
+ *
+ * Result type: `{ kind: "object", shape }`.
+ */
+ *   ref.func $lifted
+ *   <push each capture>
+ *   struct.new $closure_<signature>_<captureSig>
+ *
+ * Result type: `{ kind: "closure"; signature }`. The Wasm-level SSA carrier is
+ * the canonical wrapper root; construction still creates the signature
+ * wrapper or a captured subtype beneath it.
+ */
+export interface IrInstrClosureNew extends IrInstrBase {
+  readonly kind: "closure.new";
+  readonly liftedFunc: IrFuncRef;
+  readonly signature: IrClosureSignature;
+  /** Capture-field IrTypes in struct field order (post-funcref). */
+  readonly captureFieldTypes: readonly IrType[];
+  /** SSA values populating the capture fields, parallel to captureFieldTypes. */
+  readonly captures: readonly IrValueId[];
+  /** Checker-certified immediate one-shot host-boundary consumption. */
+  readonly hostOneShot?: boolean;
+  /** Exact reusable DOM callback authority. */
+  readonly domCallbackAuthority?: IrDomCallbackAuthority;
+}
+
+/**
+ * Read a capture field from the implicit `__self` closure struct. Only
+ * valid inside a lifted closure body whose IrFunction carries
+ * `closureSubtype` metadata. `index` is the 0-based capture position
+ * (post-funcref).
+ *
+ * Lowering emits:
+ *   <self>
+ *   ref.cast $self_subtype
+ *   struct.get $self_subtype (index+1)
+ */
+export interface IrInstrClosureCap extends IrInstrBase {
+  readonly kind: "closure.cap";
+  /** SSA value of the closure-typed __self param (the lifted func's param 0). */
+  readonly self: IrValueId;
+  readonly index: number;
+}
+
+/**
+ * Invoke a compiler-owned closure or a boundary callable. `args` must match
+ * the callee signature's params arity and types.
+ *
+ * Lowering emits:
+ *   <emit/unpack callee>   ;; pushes canonical-root self
+ *   <emit args>
+ *   <emit/unpack callee>   ;; pushes self again — second use forces a Wasm local
+ *   struct.get $wrapper_root $func
+ *   ref.cast $lifted_func_type
+ *   call_ref $lifted_func_type
+ *
+ * A `callable<S>` unpack converts externref→anyref and casts once to the
+ * canonical wrapper root. The typed funcref cast performs the exact signature
+ * check; `call_ref` receives that field-0 funcref, never the wrapper itself.
+ *
+ * Result type: `signature.returnType`, or null for a void call in statement
+ * position.
+ */
+export interface IrInstrClosureCall extends IrInstrBase {
+  readonly kind: "closure.call";
+  readonly callee: IrValueId;
+  readonly args: readonly IrValueId[];
+}
+
+/**
+ * Wrap a primitive value in a fresh ref cell. Lowering:
+ *   <emit value>
+ *   struct.new $refcell_<inner>
+ *
+ * Result type: `{ kind: "boxed"; inner: <ValType of value> }`.
+ */
+export interface IrInstrRefCellNew extends IrInstrBase {

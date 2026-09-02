@@ -1,0 +1,70 @@
+=== legality.ts 240-280
+        default:
+          // null/ref/string/undefined consts are representation-divergent.
+          return `linear backend does not support const '${instr.value.kind}'`;
+      }
+    case "intrinsic":
+      switch (instr.id) {
+        case "js.to_uint32":
+        case "math.abs":
+        case "math.ceil":
+        case "math.clz32":
+        case "math.floor":
+        case "math.fround":
+        case "math.imul":
+        case "math.max":
+        case "math.min":
+        case "math.sqrt":
+        case "math.trunc":
+          return null;
+        default:
+          return `linear backend does not support semantic intrinsic '${instr.id}' without a native backend operation`;
+      }
+    case "string.repeat":
+      return instr.encodingEvidence === "ascii"
+        ? null
+        : `linear backend requires authenticated ASCII evidence for string.repeat, got '${instr.encodingEvidence}'`;
+    case "binary":
+    case "unary":
+    case "select":
+    case "if":
+    case "call":
+    // #2956 L3: strings use the direct linear backend's canonical i32 arena
+    // pointer and existing UTF-8 runtime helpers.
+    case "string.const":
+    case "string.concat":
+    case "string.eq":
+    case "string.len":
+    case "string.char_at":
+    case "string.char_code_at":
+    // #2956 L2: aggregates and primitive ref-cells use i32 arena pointers,
+    // with field access emitted as typed linear-memory loads/stores.
+    case "object.new":
+=== legality.ts 335-345
+    case "binary":
+      return bytecodeBinopLegal(instr.op) ? null : `bytecode backend does not support binary op '${instr.op}'`;
+    case "unary":
+      return instr.op === "f64.neg" ? null : `bytecode backend does not support unary op '${instr.op}'`;
+    case "intrinsic":
+      return `bytecode backend does not support semantic intrinsic '${instr.id}'`;
+    case "call":
+    case "global.get":
+    case "global.set":
+    case "select":
+    case "if":
+=== legality.ts 398-412
+        ? null
+        : `porffor backend does not support binary op '${instr.op}' before typed composite-op lowering`;
+    case "unary":
+      return instr.op === "ref.is_null" ? `porffor backend does not support unary op '${instr.op}'` : null;
+    case "intrinsic":
+      return `porffor backend does not support semantic intrinsic '${instr.id}'`;
+    case "call":
+    case "global.get":
+    case "global.set":
+    case "object.new":
+    case "object.get":
+    case "object.set":
+    case "slot.read":
+    case "slot.write":
+    case "vec.new_fixed":

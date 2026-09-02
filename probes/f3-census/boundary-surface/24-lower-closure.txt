@@ -1,0 +1,142 @@
+      case "closure.new": {
+        const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
+        const sub = resolver.resolveClosureSubtype?.(
+          instr.signature,
+          instr.captureFieldTypes,
+          instr.hostOneShot === true,
+          instr.domCallbackAuthority,
+          liftedIdx,
+        );
+        if (!sub) {
+          throw new Error(`ir/lower: resolver cannot lower closure subtype (${func.name})`);
+        }
+        // ref.func $lifted, (#3673) $arity, push captures, struct.new <subtype>.
+        emitter.emitFuncRef(liftedIdx, out);
+        emitter.emitClosureArityOperand?.(instr.signature.defaultParamStart ?? instr.signature.params.length, out);
+        for (const cap of instr.captures) emitValue(cap, out);
+        emitter.emitClosureNew(sub, instr.captures.length, out);
+        return;
+      }
+      case "closure.cap": {
+        // The lifted body knows its own subtype via the IrFunction's
+        // closureSubtype metadata (set at lift time). Read that to find
+        // the cast target and field index.
+        const subMeta = func.closureSubtype;
+        if (!subMeta) {
+          throw new Error(`ir/lower: closure.cap requires func.closureSubtype metadata (${func.name})`);
+        }
+        const sub = resolver.resolveClosureSubtype?.(
+          subMeta.signature,
+          subMeta.captureFieldTypes,
+          subMeta.hostOneShot === true,
+          subMeta.domCallbackAuthority,
+        );
+        if (!sub) {
+          throw new Error(`ir/lower: resolver cannot resolve closure subtype for ${func.name}`);
+        }
+        emitValue(instr.self, out);
+        emitter.emitDowncast({ typeIdx: sub.structTypeIdx }, out);
+        emitter.emitCaptureGet(sub, instr.index, out);
+        return;
+      }
+      case "closure.call": {
+        const calleeT = typeOf(instr.callee);
+        if (calleeT.kind !== "closure" && calleeT.kind !== "callable") {
+          throw new Error(
+            `ir/lower: closure.call callee must be closure/callable IrType, got ${calleeT.kind} (${func.name})`,
+          );
+        }
+        const cl = resolver.resolveClosure?.(calleeT.signature);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower closure for call (${func.name})`);
+        }
+        // The wrapper ROOT is the only cross-module-stable struct identity:
+        // per-signature wrappers depend on which signature a module happened
+        // to register first. It is therefore both the lifted `self` carrier and
+        // the type used for field-0 extraction. The funcref cast below performs
+        // the exact signature check without narrowing the struct itself.
+        // Resolving `cl` first creates the root when necessary.
+        const rootTypeIdx = resolver.resolveClosureRoot?.() ?? null;
+        if (rootTypeIdx === null) {
+          throw new Error(`ir/lower: resolver cannot lower closure wrapper root (${func.name})`);
+        }
+        const emitRootSelf = (): void => {
+          emitValue(instr.callee, out);
+          if (calleeT.kind === "callable") {
+            emitter.emitFromExternref({ typeIdx: rootTypeIdx }, out);
+          }
+        };
+
+        // Push root __self, then user args, then the callee value AGAIN to
+        // extract field 0. The double-emit is the reason
+        // `collectIrUses` returns `callee` twice — it forces the SSA value
+        // into a Wasm local instead of re-emitting its producing tree.
+        emitRootSelf();
+        for (const a of instr.args) emitValue(a, out);
+        emitRootSelf();
+        emitter.emitClosureFuncGet({ ...cl, structTypeIdx: rootTypeIdx }, out);
+        // The struct's `func` field is typed as the abstract `funcref`
+        // (matches the legacy `getOrCreateFuncRefWrapperTypes` pattern,
+        // which avoids a circular type reference between the struct and
+        // its lifted func type). `call_ref` requires a typed funcref, so
+        // we emit `ref.cast` to convert.
+        // The function-field read routes through the closure-family hook and
+        // the narrowing cast through the ref-coercion hook. The terminal
+        // call_ref is the (a1) call family → typed emitCallRef
+        // (byte-identical {op:"call_ref"} on WasmGC, OP.CALL_REF on bytecode).
+        emitter.emitDowncast({ typeIdx: cl.funcTypeIdx }, out);
+        emitter.emitCallRef(cl.funcTypeIdx, out);
+        return;
+      }
+      case "refcell.new": {
+        const valueIrType = typeOf(instr.value);
+        const inner = asVal(valueIrType);
+        if (!inner) {
+          throw new Error(`ir/lower: refcell.new value must be a val-kind IrType (${func.name})`);
+        }
+        const cell = resolver.resolveRefCell?.(inner, instr.alloc);
+        if (!cell) {
+          throw new Error(`ir/lower: resolver cannot lower refcell<${inner.kind}> (${func.name})`);
+        }
+        emitValue(instr.value, out);
+        // (a5) ref-cell family (#2953): route through emitRefCellNew —
+        // byte-identical {op:"struct.new"} on WasmGC.
+        emitter.emitRefCellNew(cell, out);
+        return;
+      }
+      case "refcell.get": {
+        const cellT = typeOf(instr.cell);
+        if (cellT.kind !== "boxed") {
+          throw new Error(`ir/lower: refcell.get cell must be boxed, got ${cellT.kind} (${func.name})`);
+        }
+        // #1926 — unwrap the inner IrType to its backend ValType.
+        const getInner = memberValType(cellT.inner, func.name);
+        const cell = resolver.resolveRefCell?.(getInner);
+        if (!cell) {
+          throw new Error(`ir/lower: resolver cannot lower refcell<${getInner.kind}> (${func.name})`);
+        }
+        emitValue(instr.cell, out);
+        // (a5) ref-cell family (#2953): route through emitRefCellGet —
+        // byte-identical {op:"struct.get"} on WasmGC.
+        emitter.emitRefCellGet(cell, out);
+        return;
+      }
+      case "refcell.set": {
+        const cellT = typeOf(instr.cell);
+        if (cellT.kind !== "boxed") {
+          throw new Error(`ir/lower: refcell.set cell must be boxed, got ${cellT.kind} (${func.name})`);
+        }
+        // #1926 — unwrap the inner IrType to its backend ValType.
+        const setInner = memberValType(cellT.inner, func.name);
+        const cell = resolver.resolveRefCell?.(setInner);
+        if (!cell) {
+          throw new Error(`ir/lower: resolver cannot lower refcell<${setInner.kind}> (${func.name})`);
+        }
+        emitValue(instr.cell, out);
+        emitValue(instr.value, out);
+        // (a5) ref-cell family (#2953): route through emitRefCellSet —
+        // byte-identical {op:"struct.set"} on WasmGC.
+        emitter.emitRefCellSet(cell, out);
+        return;
+      }
+      // Slice 4 (#1169d): class ops.

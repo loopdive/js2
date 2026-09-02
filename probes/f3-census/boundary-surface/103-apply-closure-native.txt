@@ -1,0 +1,42 @@
+=== object-runtime.ts 7290-7330 __apply_closure
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * (#1888 Slice 1) Reserve the `__apply_closure(externref fn, externref recv,
+ * externref args) -> externref` arity-bridge funcIdx with a placeholder
+ * `unreachable` body, registered in `funcMap`. The real body (an arity switch
+ * on `__extern_length(args)` dispatching to `__call_fn_method_0..4`) is filled
+ * by `fillApplyClosure` at FINALIZE, because the `__call_fn_method_N` exports
+ * it calls are only emitted there (after `closureInfoByTypeIdx` is complete).
+ * Mirrors the `reserveProtoIteratorDriver`/`fillProtoIteratorDriver` pattern
+ * (#1719). Idempotent. Sets `ctx.applyClosureReserved`.
+ */
+export function reserveApplyClosure(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get("__apply_closure");
+  if (existing !== undefined) return existing;
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$apply_closure_type",
+  );
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__apply_closure",
+    typeIdx,
+    locals: [],
+    // Placeholder; filled by fillApplyClosure. A bare `unreachable` keeps the
+    // stub valid (externref result) if the fill is ever skipped.
+    body: [{ op: "unreachable" }],
+    exported: false,
+  });
+  ctx.funcMap.set("__apply_closure", funcIdx);
+  ctx.applyClosureReserved = true;
+  return funcIdx;
+}
+
+interface VariadicNativeApplyState {
+  entries: TransferredNativeReceiverEntry[];

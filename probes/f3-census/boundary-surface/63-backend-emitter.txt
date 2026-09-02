@@ -1,0 +1,58 @@
+=== backend/emitter.ts call/closure/funcref methods
+201:  emitToExternref(out: S): void;
+203:  emitDowncast(target: { typeIdx: number } | IrType, out: S): void;
+205:  emitFromExternref(target: { typeIdx: number } | IrType, out: S): void;
+213:  emitFuncRef(funcIdx: number, out: S): void;
+237:  emitClosureNew(layout: IrClosureLowering, captureCount: number, out: S): void;
+243:  emitClosureArityOperand?(arity: number, out: S): void;
+245:  emitClosureFuncGet(layout: IrClosureLowering, out: S): void;
+247:  emitCaptureGet(layout: IrClosureLowering, index: number, out: S): void;
+255:  emitCall(funcIdx: number, out: S): void;
+257:  emitCallRef(funcTypeIdx: number, out: S): void;
+302:  emitRefCellNew(layout: IrRefCellLowering, out: S): void;
+304:  emitRefCellGet(layout: IrRefCellLowering, out: S): void;
+306:  emitRefCellSet(layout: IrRefCellLowering, out: S): void;
+=== handles.ts closure handles
+115: * Slice 3 / #3214 B0: WasmGC allocation/type info for a closure:
+117: *     shared with the legacy `__fn_wrap_*` registry. A no-capture closure
+122: * `funcTypeIdx` is the exact lifted function signature
+127:export interface IrClosureLowering {
+132:  readonly funcTypeIdx: number;
+159:  /** Exact non-null result of the synthesized constructor callable. */
+=== legality.ts 655-690
+    case "box":
+      checkType(instr.toType, block, "box target");
+      return;
+    case "object.new":
+      checkType({ kind: "object", shape: instr.shape }, block, "object.new shape");
+      return;
+    case "closure.new":
+      for (let i = 0; i < instr.captureFieldTypes.length; i++) {
+        checkType(instr.captureFieldTypes[i]!, block, `closure.new capture ${i}`);
+      }
+      return;
+    case "class.new":
+      checkType({ kind: "class", shape: instr.shape }, block, "class.new shape");
+      return;
+    case "forof.vec":
+      checkType(instr.elementType, block, "forof.vec element");
+      return;
+    case "vec.new_fixed":
+      checkType(instr.elementType, block, "vec.new_fixed element");
+      return;
+    case "fnctor.new":
+      checkType({ kind: "fnctor", shape: instr.shape }, block, "fnctor.new shape");
+      return;
+    case "fnctor.get":
+      checkType({ kind: "fnctor", shape: instr.shape }, block, "fnctor.get shape");
+      return;
+    default:
+      return;
+  }
+}
+
+function nestedInstrBuffers(instr: IrInstr): readonly (readonly IrInstr[])[] {
+  switch (instr.kind) {
+    case "if":
+      return [instr.then, instr.else];
+    case "forof.vec":

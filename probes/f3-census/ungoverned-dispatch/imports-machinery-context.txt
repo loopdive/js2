@@ -1,0 +1,130 @@
+##### H. registry/imports.ts functional reads ±3
+--- 67
+        `this producer must register its import before the freeze point or refuse loudly`,
+    );
+  }
+  if (ctx.strictNoHostImports) {
+    // #2783 — pass `ctx.linkedNamespaces` so an arbitrary `--link`'d namespace's
+    // import is actually REGISTERED (left as a link-time import for a preloaded
+    // provider) rather than dropped-and-degraded here. Dropping it would leave a
+--- 154
+  }
+  if (pending.length === 0) return;
+
+  if (ctx.nativeStrings) {
+    for (const value of pending) {
+      // Sentinel: no host import, materialize inline at use sites.
+      ctx.stringGlobalMap.set(value, -1);
+--- 207
+ * source text can retain its native carrier everywhere else.
+ */
+export function addHostStringConstantGlobal(ctx: CodegenContext, value: string): number | undefined {
+  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+  if (!ctx.nativeStrings) {
+    addStringConstantGlobal(ctx, value);
+    const globalIdx = ctx.stringGlobalMap.get(value);
+--- 208
+ */
+export function addHostStringConstantGlobal(ctx: CodegenContext, value: string): number | undefined {
+  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+  if (!ctx.nativeStrings) {
+    addStringConstantGlobal(ctx, value);
+    const globalIdx = ctx.stringGlobalMap.get(value);
+    return globalIdx !== undefined && globalIdx >= 0 ? globalIdx : undefined;
+--- 1219
+  const i64ToExternref = addFuncType(ctx, [{ kind: "i64", bigint: true }], [{ kind: "externref" }]);
+  const externrefToExternref = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && !ctx.funcMap.has("__str_to_number")) {
+    emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
+  }
+  const strToNumberIdx = ctx.funcMap.get("__str_to_number");
+--- 1946
+  //     the late-import finalize shift cannot desync this body). Falls back to
+  //     the old stub only when no native-string type is registered (then no
+  //     string content could be represented anyway).
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    const typeofTagArm = (test: Instr[], tag: string): Instr[] => [
+      ...test,
+      {
+--- 2284
+ *   - `__get_caught_exception` () → externref  (for the body's try/catch wrapper)
+ */
+export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHost?: boolean }): void {
+  if ((ctx.standalone || ctx.wasi) && !options?.allowNoJsHost) return;
+  // Guard: only register once
+  if (ctx.funcMap.has("__gen_create_buffer")) return;
+
+--- 2357
+/** Scan user code and register only the extern class imports actually used */
+export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  const registered = new Set<string>();
+  const useNativeEncodingApi = ctx.wasi || ctx.standalone || ctx.strictNoHostImports;
+  const isNativeEncodingClass = (className: string | undefined): boolean =>
+    useNativeEncodingApi && (className === "TextEncoder" || className === "TextDecoder");
+
+--- 2598
+          // class, harness `verifyProperty`/`obj[name]` drives it into ~4.5k
+          // tests). Skipping the pre-registration lets the native routing win;
+          // host/gc mode is unchanged (still eagerly seeds the host import).
+          if (!(ctx.standalone || ctx.wasi)) {
+            register("__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+          }
+        }
+##### I. late-imports.ts functional reads ±6
+--- 100
+ * spam the error list. Returns true if the import was refused (caller should
+ * still proceed so codegen doesn't crash; the queued error — prefixed with
+ * "Codegen error:" — forces `success: false` and an empty module in
+ * compiler.ts).
+ */
+function refuseStandaloneObjectImport(ctx: CodegenContext, name: string): boolean {
+  if (!ctx.standalone || !STANDALONE_REFUSED_IMPORT(name)) return false;
+  if (!ctx.standaloneRefusedImports) ctx.standaloneRefusedImports = new Set<string>();
+  if (ctx.standaloneRefusedImports.has(name)) return true;
+  ctx.standaloneRefusedImports.add(name);
+  // Prefix with "Codegen error:" so compiler.ts treats this as a hard failure
+  // (success: false, empty module) rather than a warning that leaves a
+  // half-working module with a leaked host import (#1472 acceptance criteria:
+--- 140
+ * compile_error rather than a stray runtime_error.
+ *
+ * Deduplicated per import name via the shared `standaloneRefusedImports` set so
+ * a single source construct queues at most one error. Returns true if refused.
+ */
+function refuseStandaloneToPrimitive(ctx: CodegenContext, name: string): boolean {
+  if (!ctx.standalone || name !== "__to_primitive") return false;
+  if (!ctx.standaloneRefusedImports) ctx.standaloneRefusedImports = new Set<string>();
+  if (ctx.standaloneRefusedImports.has(name)) return true;
+  ctx.standaloneRefusedImports.add(name);
+  reportErrorNoNode(
+    ctx,
+    `Codegen error: __toPrimitive (Symbol.toPrimitive / valueOf coercion) is not ` +
+--- 494
+  // (e.g. `[a, b] = <any>` leaked `env::__array_from_iter_n`, the 60-row
+  // assignment/dstr cluster of the standalone JSONL; rest patterns leaked
+  // `env::__extern_slice`), breaking zero-import instantiation. MUST run
+  // BEFORE `refuseStandaloneObjectImport` — `__extern_slice` matches its
+  // `__extern_` refusal prefix. Registration is append-only (defined funcs,
+  // no import-index shift), the same invariant as the routes above.
+  if (ctx.standalone || ctx.wasi) {
+    if (name === "__array_from_iter_n") {
+      ensureNativeArrayFromIterN(ctx);
+      return ctx.funcMap.get(name);
+    }
+    if (name === "__extern_slice") {
+      ensureNativeExternSlice(ctx);
+--- 739
+ * (b) avoids adding a late import *after* the native-string helpers were emitted
+ * — that post-helper import otherwise drives `reconcileNativeStrFinalizeShift`
+ * an extra time and off-by-ones the baked `__str_flatten`→`__str_copy_tree`
+ * call (#329: `let g: any; g = function(){…}; g()` invalid wasm).
+ */
+export function ensureGetUndefined(ctx: CodegenContext): number | undefined {
+  if (ctx.nativeStrings) return undefined;
+  return ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+}
+
+/**
+ * Emit instructions that push the JS `undefined` value onto the stack.
+ * Uses the __get_undefined host import when available; falls back to

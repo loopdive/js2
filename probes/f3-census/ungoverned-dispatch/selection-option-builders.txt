@@ -1,0 +1,46 @@
+##### selection option builders in codegen/index.ts + ir-*.ts
+33ea8606aa:src/codegen/index.ts:2357:  readonly hostVoidCallbacks: Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+33ea8606aa:src/codegen/index.ts:2840:  const jsHostExterns = irTargetProfile.allowHostImports;
+33ea8606aa:src/codegen/index.ts:2846:    jsHostExterns,
+33ea8606aa:src/codegen/index.ts:2865:            allowHostExterns: jsHostExterns && !ctx.nativeStrings,
+33ea8606aa:src/codegen/index.ts:2866:            allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+33ea8606aa:src/codegen/index.ts:2882:    jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
+33ea8606aa:src/codegen/index.ts:2883:  const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
+33ea8606aa:src/codegen/index.ts:3046:      jsHostExterns,
+33ea8606aa:src/codegen/index.ts:3064:      ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
+33ea8606aa:src/codegen/index.ts:3075:      supportsHoleyArrayFilter: ctx.standalone,
+33ea8606aa:src/codegen/index.ts:3116:      supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
+33ea8606aa:src/codegen/index.ts:3117:      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+33ea8606aa:src/codegen/index.ts:3119:      ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
+33ea8606aa:src/codegen/index.ts:3367:    ...(jsHostExterns && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+33ea8606aa:src/codegen/index.ts:3555:    if (ts.isArrowFunction(node) && plan.hostVoidCallbacks.has(node)) {
+33ea8606aa:src/codegen/index.ts:3877:    ...[...plan.hostVoidCallbacks.values()].map((candidate) => candidate.ownerUnitId),
+33ea8606aa:src/codegen/index.ts:3923:      plan.hostVoidCallbacks,
+33ea8606aa:src/codegen/index.ts:4448:    reserveStandaloneDomCallbackDispatch(ctx, plan.hostVoidCallbacks, retainedFunctionUnitIds) &&
+33ea8606aa:src/codegen/index.ts:4449:    hasReservedStandaloneDomCallbackDispatch(ctx, plan.hostVoidCallbacks, retainedFunctionUnitIds);
+33ea8606aa:src/codegen/index.ts:4451:    plan.hostVoidCallbacks.size > 0 &&
+33ea8606aa:src/codegen/index.ts:4589:      ...[...plan.hostVoidCallbacks.values()].map((callback) => callback.ownerUnitId),
+33ea8606aa:src/codegen/index.ts:4635:        hostVoidCallbacks: plan.hostVoidCallbacks,
+33ea8606aa:src/codegen/ir-legacy-caller-abi.ts:14: * (`jsHostExterns !== true`), so widening it cannot move a JS-host claim.
+33ea8606aa:src/codegen/ir-overlay-identity.ts:335:    "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
+33ea8606aa:src/codegen/ir-overlay-identity.ts:472:    hostVoidCallbacks: plan.hostVoidCallbacks,
+33ea8606aa:src/codegen/ir-overlay-preparation.ts:27:  readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+33ea8606aa:src/codegen/ir-overlay-preparation.ts:135:      plan.hostVoidCallbacks,
+33ea8606aa:src/codegen/ir-prepared-free-functions.ts:1274:  readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+33ea8606aa:src/codegen/ir-prepared-free-functions.ts:1331:        input.hostVoidCallbacks,
+33ea8606aa:src/codegen/ir-prepared-nested-executable-syntax.ts:23:  hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>,
+33ea8606aa:src/codegen/ir-prepared-nested-executable-syntax.ts:28:  const ownerPlans = [...hostVoidCallbacks.entries()].filter(([, plan]) => plan.ownerUnitId === ownerUnitId);
+33ea8606aa:src/codegen/ir-prepared-nested-executable-syntax.ts:35:      const plan = hostVoidCallbacks.get(node);
+33ea8606aa:src/codegen/ir-timer-shim-planning.ts:34:  readonly hostVoidCallbacks: { readonly size: number };
+33ea8606aa:src/codegen/ir-timer-shim-planning.ts:230:    plan.hostVoidCallbacks.size > 0 ||
+33ea8606aa:src/codegen/multi-prepared-callable-components.ts:167:      hostVoidCallbacks: new Map(),
+33ea8606aa:src/codegen/multi-prepared-callable-orchestration.ts:287:    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+33ea8606aa:src/codegen/multi-prepared-callable-orchestration.ts:390:    [...plan.hostVoidCallbacks.values()].some((candidate) => candidate.ownerUnitId === unitId) ||
+33ea8606aa:src/codegen/multi-prepared-module-init.ts:238:        plan.hostVoidCallbacks.size !== 0 ||
+33ea8606aa:src/codegen/multi-prepared-module-init.ts:262:    overlayPlan.hostVoidCallbacks.size !== 0 ||
+##### programAbi construction
+33ea8606aa:src/codegen/context/create-context.ts:495:    ctx.programAbiCallableProviders = new ProgramAbiCallableProviderRegistry(programAbiSession, ctx);
+33ea8606aa:src/codegen/context/create-context.ts:505:      ctx.programAbiFnctors = new ProgramAbiFnctorRegistry(programAbiSession, ctx, irPlanningIdentityContext);
+33ea8606aa:src/codegen/index.ts:5026:  const programAbiSession = irPlanningIdentityContext
+33ea8606aa:src/codegen/index.ts:10205:  const programAbiSession = irPlanningIdentityContext
+33ea8606aa:src/codegen/multi-prepared-program.ts:445:    this.#programAbiSession = input.programAbiSession;

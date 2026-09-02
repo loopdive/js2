@@ -1,0 +1,74 @@
+=== from-ast 6755-6778 closure call
+  const defaultParamStart = signature.defaultParamStart ?? signature.params.length;
+  if (expandedArgExprs.length < defaultParamStart || expandedArgExprs.length > signature.params.length) {
+    demoteToLegacy("call-arity-unsupported", `ir/from-ast: closure call arity mismatch in ${cx.funcName}`);
+  }
+  const args: IrValueId[] = [];
+  for (let i = 0; i < signature.params.length; i++) {
+    const expected = signature.params[i]!;
+    const argument = expandedArgExprs[i];
+    const argVal =
+      i >= defaultParamStart && (argument === undefined || isUnshadowedUndefinedExpression(argument, cx))
+        ? emitExpressionDefaultMissingF64(expected, cx)
+        : lowerExpr(argument!, cx, expected);
+    if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
+      demoteToLegacy(
+        "call-resolution-unsupported",
+        `ir/from-ast: closure arg ${i} type mismatch (expected ${describeIrType(expected)}, got ${describeIrType(cx.builder.typeOf(argVal))}) in ${cx.funcName}`,
+      );
+    }
+    args.push(argVal);
+  }
+  return cx.builder.emitClosureCall(callee, args, signature.returnType);
+}
+
+/**
+=== from-ast 6318-6330
+    const expected = plan.params[i]!;
+    let value: IrValueId;
+    if (i < expr.arguments.length) {
+      value = lowerExpr(expr.arguments[i]!, cx, expected);
+      let actual = cx.builder.typeOf(value);
+      if (
+        actual.kind === "closure" &&
+        expected.kind === "callable" &&
+        closureSignatureEquals(actual.signature, expected.signature)
+      ) {
+        value = cx.builder.emitCallablePack(value, expected.signature);
+        actual = cx.builder.typeOf(value);
+      }
+=== from-ast 6565-6575
+    // literals remain compiler-owned root-carrier refs. Cross that boundary
+    // only for an exact signature match. Already-packed callables forward
+    // unchanged; reverse or covariant conversions remain rejected below.
+    if (
+      argType.kind === "closure" &&
+      expected.kind === "callable" &&
+      closureSignatureEquals(argType.signature, expected.signature)
+    ) {
+      argVal = cx.builder.emitCallablePack(argVal, expected.signature);
+      argType = cx.builder.typeOf(argVal);
+    }
+=== from-ast 9465-9475
+ * declared results) pass through unchanged.
+ */
+function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts.Expression): IrValueId {
+  const declared = cx.returnType;
+  if (declared?.kind === "callable") {
+    const actual = cx.builder.typeOf(value);
+    if (actual.kind === "callable" && closureSignatureEquals(actual.signature, declared.signature)) return value;
+    if (actual.kind === "closure" && closureSignatureEquals(actual.signature, declared.signature)) {
+      return cx.builder.emitCallablePack(value, declared.signature);
+    }
+    return value;
+=== from-ast 4125-4134
+    const closure = lowerClosureExpression(expr, cx);
+    const closureType = cx.builder.typeOf(closure);
+    if (
+      hint.kind === "callable" &&
+      closureType.kind === "closure" &&
+      closureSignatureEquals(closureType.signature, hint.signature)
+    ) {
+      return cx.builder.emitCallablePack(closure, hint.signature);
+    }
+    return closure;

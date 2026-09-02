@@ -1,0 +1,81 @@
+##### index.ts contexts
+--- src/codegen/index.ts:2690
+      return { kind: "bool", type: irVal(inferred) };
+    }
+    if (
+      inferred?.kind === "ref" &&
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0 &&
+      inferred.typeIdx === ctx.anyStrTypeIdx
+    ) {
+      return { kind: "string", type: { kind: "string" } };
+--- src/codegen/index.ts:3298
+  // registered while module-init writes are compiled, after legacy function
+  // signatures but before the IR overlay is installed; mixing the two paths
+  // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
+  // on one backend until the typed IR owns this carrier explicitly.
+  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
+    const failure: IrPreparationFailure = {
+      kind: "unsupported",
+      code: "late-preparation-unsupported",
+      stage: "resolve",
+--- src/codegen/index.ts:3646
+    if (!retained.has(unitId)) blocked.add(unitId);
+  }
+  const moduleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  if (moduleInitUnitId) blocked.add(moduleInitUnitId);
+  const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
+
+  for (const [call, callPlan] of plan.importedCalls) {
+    requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
+    if (
+--- src/codegen/index.ts:4594
+      ...plan.hostDateImportsByOwnerUnitId.keys(),
+      ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
+      ...plan.suspendingAsyncUnitIds,
+    ]),
+    generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    fast: ctx.fast,
+  };
+  const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
+  const hasLateFeaturePreparation = timerRouting.hasOtherLateFeaturePreparation;
+--- src/codegen/index.ts:4996
+ * across the shared store.
+ */
+function emitSharedRuntimeProviderExports(ctx: CodegenContext): void {
+  if (!ctx.runtimeProvider) return;
+  if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+    throw new Error("the js2wasm:runtime provider requires standalone/WASI native strings");
+  }
+
+  emitNativeNumberFormat(ctx, new Set(SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS));
+--- src/codegen/index.ts:9435
+  runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
+): void {
+  const reassigned = new Set<string>();
+  const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
+  const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
+  const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
+  const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
+  const varEnvironment = (node: ts.Node): ts.Node => {
+    for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+--- src/codegen/index.ts:9894
+      const type = ctx.checker.getTypeAtLocation(localId);
+      const signature = ctx.checker.getSignaturesOfType(type, ts.SignatureKind.Call)[0];
+      if (signature) {
+        const params = signature.parameters.map((parameter) =>
+          mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(parameter, localId), ctx.checker, ctx.fast),
+        );
+        const returnType = ctx.checker.getReturnTypeOfSignature(signature);
+        const results = isVoidType(returnType) ? [] : [mapTsTypeToWasm(returnType, ctx.checker, ctx.fast)];
+        const typeIdx = addFuncType(ctx, params, results, `${targetName ?? localName}_linked_type`);
+--- src/codegen/index.ts:10167
+  // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
+  // ABI cannot safely be replaced by the current f64 IR ABI.
+  if (!options?.experimentalIR || ctx.fast || !authority) return;
+  const { identityContext, resolver } = authority;
+  const hostImportedFunctions = ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? undefined : resolver;
+  const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
+  profilePhase("ir-overlay", () => {
+    for (const sourceFile of multiAst.sourceFiles) {
+      profilePhase(sourceFile.fileName, () => {

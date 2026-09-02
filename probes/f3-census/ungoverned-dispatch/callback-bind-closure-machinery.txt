@@ -1,0 +1,84 @@
+##### src/ir/backend listing
+src/ir/backend/README.md
+src/ir/backend/bytecode-emitter.ts
+src/ir/backend/bytecode-vm.ts
+src/ir/backend/contract-conformance.ts
+src/ir/backend/contract.ts
+src/ir/backend/emitter.ts
+src/ir/backend/handles.ts
+src/ir/backend/legality.ts
+src/ir/backend/linear-emitter.ts
+src/ir/backend/linear-integration.ts
+src/ir/backend/linear-ir-coverage.ts
+src/ir/backend/porffor/assembler.ts
+src/ir/backend/porffor/compat.ts
+src/ir/backend/porffor/integration.ts
+src/ir/backend/porffor/loader.ts
+src/ir/backend/porffor/sink.ts
+src/ir/backend/porffor/type-converter.ts
+src/ir/backend/string-contract.ts
+src/ir/backend/wasm-int32-coercion.ts
+src/ir/backend/wasm-math-minmax.ts
+src/ir/backend/wasmgc-emitter.ts
+##### closureResolver / DeferredClosureResolver in integration.ts
+4606:    // `resolveObject` / `resolveClosure`), and the resolver delegates
+4613:    const deferredCl: DeferredClosureResolver = {
+5641:interface DeferredClosureResolver {
+7017:  closureResolver: DeferredClosureResolver,
+7131:    resolveClosure(sig: IrClosureSignature): IrClosureLowering | null {
+7132:      return closureResolver.resolveBase(sig);
+7134:    resolveClosureRoot(): number | null {
+7137:    resolveClosureSubtype: (...args) => closureResolver.resolveSubtype(...args),
+##### bind/bound in IR
+33ea8606aa:src/ir/from-ast.ts:803:   * `__self` parameter as its FIRST parameter, and `this` is bound in
+33ea8606aa:src/ir/from-ast.ts:1170:  // bound in scope to this SSA value; subsequent `this.field` /
+33ea8606aa:src/ir/from-ast.ts:1189:      // scope — leaf names will be bound below by lowerBindingPattern.
+33ea8606aa:src/ir/from-ast.ts:2199: *     `slot.read`; writes emit `slot.write`. Once a name is bound as a
+33ea8606aa:src/ir/from-ast.ts:2394:   * (#2972) Locals bound once to a string literal and never reassigned
+33ea8606aa:src/ir/from-ast.ts:2774: * that match are bound as `slot` ScopeBindings so the cross-iteration
+33ea8606aa:src/ir/from-ast.ts:2775: * write semantics inside for-of loops work correctly. Const-bound names
+33ea8606aa:src/ir/from-ast.ts:2979:/** `cx`-bound "is this name an i32-promoted slot right now?" predicate. */
+33ea8606aa:src/ir/from-ast.ts:3412:    // top-level IR function and bound in scope as an IrType.closure
+33ea8606aa:src/ir/from-ast.ts:3531:    // bound representation here (an `annotated` mismatch already threw above),
+33ea8606aa:src/ir/from-ast.ts:3551:        `ir/from-ast: local '${name}' is bound as an unboxed ${boundKind} but its TS type is not ` +
+33ea8606aa:src/ir/from-ast.ts:4216:    // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
+33ea8606aa:src/ir/from-ast.ts:4427:  readonly bound: ts.Expression;
+33ea8606aa:src/ir/from-ast.ts:4433:  // reserving the loop bound as backing capacity and publishing that bound as
+33ea8606aa:src/ir/from-ast.ts:4503:  return { arrayName, indexName, bound: condition.right, loop };
+33ea8606aa:src/ir/from-ast.ts:4597:      const bound = lowerExpr(denseFill.bound, cx, irVal({ kind: "f64" }));
+33ea8606aa:src/ir/from-ast.ts:4600:        [bound],
+33ea8606aa:src/ir/from-ast.ts:6121:  // rejected). Proof = receiver is a never-reassigned local bound to a
+33ea8606aa:src/ir/from-ast.ts:6213: * in a ctor, or the `__self` param in a method). Throws if `this` isn't bound —
+33ea8606aa:src/ir/from-ast.ts:9335:// instr, with the loop variable bound as a `slot` ScopeBinding inside
+33ea8606aa:src/ir/from-ast.ts:9795: * the body reassigns as slot-bound, so cross-iteration writes go
+33ea8606aa:src/ir/from-ast.ts:9991: * counted-loop in-bounds proof's lower-bound half. Conservative: anything that
+33ea8606aa:src/ir/from-ast.ts:10006: * bound. We therefore additionally require a non-negative-literal init and a
+33ea8606aa:src/ir/from-ast.ts:10041:  // Lower bound: i starts >= 0 and strictly increases.
+33ea8606aa:src/ir/from-ast.ts:10053: * integer-literal `let`/`var` bound to a slot.
+33ea8606aa:src/ir/from-ast.ts:10477:  // (#3786) Reduction unroll: an i32-wrapping accumulator loop is latency-bound
+33ea8606aa:src/ir/from-ast.ts:10635:  // The loop variable is bound as a slot of `(ref $AnyString)`. In
+33ea8606aa:src/ir/from-ast.ts:11245: * guarantees the name is bound by an enclosing claimed labeled loop.
+33ea8606aa:src/ir/from-ast.ts:11489: * Lower `<id> = <expr>` where `<id>` is a slot-bound identifier.
+33ea8606aa:src/ir/from-ast.ts:15148: * variable, when present, is bound as a slot of `(externref)` — the
+##### host callback import names in family-3 codegen
+33ea8606aa:src/codegen/bound-fn-meta.ts:103:  const boundLocal = allocLocal(fctx, `__bindfn_val_${fctx.locals.length}`, { kind: "externref" });
+33ea8606aa:src/codegen/bound-fn-meta.ts:139:  const lenTmp = allocLocal(fctx, `__bindfn_len_${fctx.locals.length}`, { kind: "externref" });
+33ea8606aa:src/codegen/bound-fn-meta.ts:140:  const numTmp = allocLocal(fctx, `__bindfn_lnum_${fctx.locals.length}`, { kind: "f64" });
+33ea8606aa:src/codegen/bound-fn-meta.ts:246:  const nameTmp = allocLocal(fctx, `__bindfn_name_${fctx.locals.length}`, { kind: "externref" });
+33ea8606aa:src/codegen/callback-ctor-bridge.ts:40: * existing contract), `__make_callback_ctor` when the callable is constructible
+33ea8606aa:src/codegen/callback-ctor-bridge.ts:56:    "__make_callback_ctor",
+33ea8606aa:src/codegen/callback-ctor-bridge.ts:62:  return "__make_callback_ctor";
+33ea8606aa:src/codegen/closure-exports.ts:1277:  // (`__boundary_callback_call_N`, see planHostCallFallback); an implicit
+33ea8606aa:src/codegen/closure-exports.ts:2038: * call bridge `__apply_closure`. Leaves an `i32` on the stack: the DECLARED
+33ea8606aa:src/codegen/closure-exports.ts:2127: * (#3592) Build `__apply_closure`'s UNDER-APPLICATION widening: replace the
+33ea8606aa:src/codegen/closure-exports.ts:2262:  // Native in-module callers (notably `__apply_closure`) need the same
+33ea8606aa:src/codegen/closures.ts:4521:    // the #3098 substrate (`__apply_closure`/`__call_fn_N`) invokes it host-free
+33ea8606aa:src/codegen/construct-bound.ts:9: * `__apply_closure` front-guard unwraps one bound layer per hop, prepends
+33ea8606aa:src/codegen/construct-bound.ts:30: *     result = __apply_closure(cur, self, extra)            ;; call target with this=self
+33ea8606aa:src/codegen/construct-bound.ts:37: *    one place the construct path must NOT reuse `__apply_closure`'s front
+33ea8606aa:src/codegen/construct-bound.ts:41: *    with `self`. Handing the still-bound carrier to `__apply_closure` would
+33ea8606aa:src/codegen/construct-bound.ts:52: * The driver calls `__apply_closure`, whose own body is filled at FINALIZE over
+33ea8606aa:src/codegen/construct-bound.ts:98: * call — the typed `compileFunctionBind` route or the dynamic `__bind_dyn` one
+33ea8606aa:src/codegen/construct-bound.ts:249: * Fill the reserved driver once `__apply_closure` and the object-model helpers
+33ea8606aa:src/codegen/construct-bound.ts:263:  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+33ea8606aa:src/codegen/construct-bound.ts:272:  // `__apply_closure` can only invoke the target with an explicit receiver via

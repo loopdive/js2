@@ -1,0 +1,254 @@
+        (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true));
+    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
+      if (ctx.standalone) {
+        const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+        if (dyn !== undefined) return dyn;
+      } else {
+--- src/codegen/expressions/calls-closures.ts:1443
+      ctx.standalone &&
+      (ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
+        (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true));
+    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
+      if (ctx.standalone) {
+        const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+        if (dyn !== undefined) return dyn;
+      } else {
+        const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+--- src/codegen/expressions/calls-closures.ts:1614
+  // and fixed argument lists. Ordinary closed structs retain the typed
+  // call_ref path, while a dynamic spread stays on the existing fallback until
+  // it has a value-preserving ObjVec concat.
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
+    expr.arguments.length <= REALM_DYNAMIC_CALL_MAX_ARITY &&
+    expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
+  ) {
+--- src/codegen/expressions/calls-closures.ts:2072
+  // calling a null funcref). Bind the receiver explicitly and call the native
+  // closure ABI directly; this is deliberately limited to the statically
+  // resolvable Function-prototype symbol and standalone mode.
+  if (
+    ctx.standalone &&
+    resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
+  ) {
+    const receiver = elemAccess.expression;
+    const fact = ctx.oracle.typeFactOf(receiver);
+--- src/codegen/expressions/calls-closures.ts:2315
+  // (`host_import_leak: env::RegExp_exec`, the 15.10.6.2_A2_* battery). The
+  // arity guard is dropped for both members: `exec()` / `test()` with ZERO
+  // args is the §22.2.6.2 step-3 `ToString(undefined)` case, and it must reach
+  // the brand-checking native closure just as the one-arg form does.
+  if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+    return null;
+  }
+
+  if (methodName === "isPrototypeOf") {
+--- src/codegen/expressions/calls-closures.ts:2494
+  // names keep their arms; open-`$Object` receivers keep the
+  // `__extern_method_call` bottom arm. JS-host mode is untouched (the generic
+  // WeakMap_* host bridge is satisfiable and correct there).
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    (methodName === "get" ||
+      methodName === "set" ||
+      methodName === "has" ||
+      methodName === "add" ||
+--- src/codegen/expressions/calls-closures.ts:2572
+  // runtime dispatch to the native driver instead (miss → clean TypeError, never
+  // the import). The helper handles `dispose` (Slice 1) + `defer`/`adopt`/`use`
+  // (Slice 2); other methods fall through to the loop unchanged. Host lane
+  // (`!nativeStrings`) is untouched.
+  if (ctx.nativeStrings && ctx.externClasses.get("DisposableStack")?.methods.has(methodName)) {
+    const dsAny = tryCompileNativeDisposableStackAnyMethodCall(ctx, fctx, propAccess, expr, methodName);
+    if (dsAny !== undefined) return dsAny;
+  }
+
+########## src/codegen/bound-fn-meta.ts
+--- src/codegen/bound-fn-meta.ts:102
+  if (!noJsHost(ctx)) return;
+  // Settle the string helpers BEFORE either seed snapshots a funcMap index —
+  // registering them mid-seed would bake indices taken across a shift.
+  ensureObjectRuntime(ctx);
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureNativeStringHelpers(ctx);
+  const boundLocal = allocLocal(fctx, `__bindfn_val_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: boundLocal });
+  fctx.body.push({ op: "drop" });
+  seedBoundFunctionLength(ctx, fctx, boundLocal, targetLocal, boundArgCount);
+--- src/codegen/bound-fn-meta.ts:233
+  boundLocal: number,
+  targetLocal: number,
+): void {
+  if (!noJsHost(ctx)) return;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return;
+  ensureObjectRuntime(ctx);
+  ensureNativeStringHelpers(ctx);
+  const getIdx = ctx.funcMap.get("__extern_get");
+  const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+########## src/codegen/callback-ctor-bridge.ts
+--- src/codegen/callback-ctor-bridge.ts:52
+  node: ts.ArrowFunction | ts.FunctionExpression,
+  needsThis: boolean,
+): string {
+  if (needsThis) return "__make_getter_callback";
+  if (ctx.standalone || ctx.wasi) return "__make_callback";
+  if (!callableHasConstructBehavior(node)) return "__make_callback";
+  const idx = ensureLateImport(
+    ctx,
+    "__make_callback_ctor",
+########## src/codegen/analysis/host-callable-initializer.ts
+--- src/codegen/analysis/host-callable-initializer.ts:82
+}
+
+/** True when `expression` can evaluate to a genuine host function. */
+export function initializerMayProduceHostCallable(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (ctx.standalone || ctx.wasi) return false;
+  const current = unwrap(expression);
+
+  if (
+    ts.isNewExpression(current) &&
+########## src/codegen/ir-fnctor-admission.ts
+--- src/codegen/ir-fnctor-admission.ts:49
+  return (
+    route.experimentalIR &&
+    route.postLegacyPhysicalReservation &&
+    route.irFirstEnvironment === "0" &&
+    ctx.standalone === true &&
+    ctx.nativeStrings === true &&
+    ctx.wasi === false &&
+    ctx.fast === false &&
+    ctx.targetProfile.semanticProviders === "native-first"
+--- src/codegen/ir-fnctor-admission.ts:50
+    route.experimentalIR &&
+    route.postLegacyPhysicalReservation &&
+    route.irFirstEnvironment === "0" &&
+    ctx.standalone === true &&
+    ctx.nativeStrings === true &&
+    ctx.wasi === false &&
+    ctx.fast === false &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  );
+--- src/codegen/ir-fnctor-admission.ts:51
+    route.postLegacyPhysicalReservation &&
+    route.irFirstEnvironment === "0" &&
+    ctx.standalone === true &&
+    ctx.nativeStrings === true &&
+    ctx.wasi === false &&
+    ctx.fast === false &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  );
+}
+--- src/codegen/ir-fnctor-admission.ts:52
+    route.irFirstEnvironment === "0" &&
+    ctx.standalone === true &&
+    ctx.nativeStrings === true &&
+    ctx.wasi === false &&
+    ctx.fast === false &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  );
+}
+
+########## src/codegen/expressions/call-tail-dispatch.ts
+--- src/codegen/expressions/call-tail-dispatch.ts:763
+        // conformance cluster). The `.values()`/`.keys()`/`.entries()` forms are
+        // already native; this closes the `[Symbol.iterator]()` gap. Host/gc mode
+        // keeps the existing `__iterator` bridge (byte-inert). Async iterator and
+        // non-array receivers fall through unchanged.
+        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+          // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
+          // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
+          // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
+          // and is NOT a drop-in — the array-iterator prototype/metadata rows
+--- src/codegen/expressions/call-tail-dispatch.ts:783
+        // empty native string. This exact pristine-realm shape is used by
+        // Deno to discover `%StringIteratorPrototype%` during bootstrap.
+        const recvType =
+          methodName === "@@iterator" &&
+          (ctx.standalone || ctx.wasi) &&
+          isPristineStringPrototypeExpression(fctx, elemAccess.expression)
+            ? compileStringLiteral(ctx, fctx, "")
+            : compileExpression(ctx, fctx, elemAccess.expression);
+        if (recvType) {
+--- src/codegen/expressions/call-tail-dispatch.ts:867
+            // #3567 — WASI shares the fail-loud function-replacer contract
+            // without opting its supported symbol-method forms into the
+            // standalone native engine. A string replacer returns undefined
+            // here and preserves the existing WASI dispatch.
+            if (ctx.wasi && methodName === "@@replace" && expr.arguments.length === 2) {
+              const wasiReplaceRefusal = tryCompileStandaloneRegExpSymbolCall(
+                ctx,
+                fctx,
+                expr,
+--- src/codegen/expressions/call-tail-dispatch.ts:1211
+        // wrapper `__to_primitive` unwrap) earlier in this same function;
+        // recompile this call as the equivalent dot form (same receiver, same
+        // method, same arguments) so it takes that exact path instead of
+        // duplicating the logic here.
+        if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+          const syntheticProp = ts.factory.createPropertyAccessExpression(elemAccess.expression, methodName);
+          ts.setTextRange(syntheticProp, elemAccess);
+          (syntheticProp as unknown as { parent: ts.Node }).parent = expr;
+          const syntheticCall = ts.factory.createCallExpression(syntheticProp, expr.typeArguments, expr.arguments);
+--- src/codegen/expressions/call-tail-dispatch.ts:1443
+        const shapelessObjectExternrefElement =
+          elementFact.kind === "object" && elementFact.shape === undefined && externrefArrayElement;
+        if (
+          (elementIsUnresolved || undefinedExternrefElement || shapelessObjectExternrefElement) &&
+          (ctx.standalone || externrefArrayElement) &&
+          receiverArrayInfo
+        ) {
+          const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+          if (dyn !== null) return dyn;
+--- src/codegen/expressions/call-tail-dispatch.ts:1762
+      // above. In JS-host mode `.bind()` therefore produces a real host bound
+      // function, not a Wasm closure struct. Invoke that externref through the
+      // host callable seam instead of letting the generic call-of-call path
+      // ref.test it as a closure and dereference the resulting null.
+      if (!ctx.standalone && !noJsHost(ctx) && ts.isPropertyAccessExpression(bindCall.expression)) {
+        const boundType = compileFunctionBind(ctx, fctx, bindCall, bindCall.expression);
+        if (boundType !== undefined) {
+          const called = emitBoundFunctionCall(ctx, fctx, expr, true);
+          if (called !== null) return called;
+########## src/codegen/expressions/calls-guards.ts
+--- src/codegen/expressions/calls-guards.ts:93
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callee: ts.Expression,
+): boolean {
+  if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
+  const name = callee.text;
+  if (fctx.localMap.has(name)) return false;
+  return (ctx.globalObjectVarBindings?.has(name) ?? false) || (ctx.globalLexicalBindings?.has(name) ?? false);
+}
+--- src/codegen/expressions/calls-guards.ts:763
+    // A JS-host BigInt must stay an externref here: forcing a wide value through
+    // the standalone i64 carrier truncates it before Object(v) can preserve the
+    // primitive in the wrapper's [[BigIntData]] slot. Native-first/host-free
+    // targets keep the established i64 ABI and native `$BigInt` wrapper.
+    const hostBigInt = !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first";
+    const bigIntCarrier: ValType = hostBigInt ? { kind: "externref" } : { kind: "i64", bigint: true };
+    compileExpression(ctx, fctx, args[0]!, bigIntCarrier);
+    const newBigIntIdx = ensureLateImport(ctx, "__new_BigInt", [bigIntCarrier], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+########## src/codegen/expressions/spread-arguments-call.ts
+--- src/codegen/expressions/spread-arguments-call.ts:107
+  // WASI without the standalone object runtime has neither the host readers nor
+  // the native materializer, so `emitSetExtrasArgv` degrades to a static path
+  // that does NOT flatten spreads. Binding formals off that list would be worse
+  // than the status quo; leave those targets on the existing lowering.
+  if (noJsHost(ctx) && !ctx.standalone) return false;
+
+  const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, extrasVecTypeIdx);
+  if (arrTypeIdx < 0) return false;
+########## src/codegen/expressions/calls-optional.ts
+--- src/codegen/expressions/calls-optional.ts:176
+    }
+  }
+
+  if (!methodResolved && isStringType(tsReceiverType)) {
+    if (ctx.fast && ctx.nativeStrTypeIdx >= 0) {
+      const nativeResult = compileNativeStringMethodCall(ctx, fctx, expr, propAccess, methodName);
+      if (nativeResult !== null) {
+        resultType = nativeResult;
+        methodResolved = true;

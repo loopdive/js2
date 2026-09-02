@@ -1,0 +1,29 @@
+=== nodes.ts extern.* kinds
+2689:    case "extern.new":
+2690:    case "extern.call":
+2691:    case "extern.prop":
+2692:    case "extern.propSet":
+2858:    case "extern.new":
+2859:    case "extern.call":
+2860:    case "extern.prop":
+2861:    case "extern.propSet":
+3027:    case "extern.new":
+3029:    case "extern.call":
+
+=== irCapabilityImportFuncRef users
+src/codegen/calendar-codegen-planning.ts:454:              ? irCapabilityImportFuncRef("env", "__date_now", "clock", "embedder")
+src/codegen/program-abi-import-planning.ts:195:      ? irCapabilityImportFuncRef(value.module, value.name, provenance.capabilityId, provenance.providerId, value.name)
+
+=== manifest/capability tests
+dom-capability-adapter.test.ts
+issue-1772-capability-map-extend.test.ts
+issue-2634-node-capability-map.test.ts
+issue-2671-promise-capability.test.ts
+issue-3526-boolean-boundary-intrinsic.test.ts
+issue-3526-ir-linear-math-intrinsics.test.ts
+issue-3526-ir-math-intrinsic-integration.test.ts
+issue-3526-ir-runtime-manifest.test.ts
+issue-3526-number-boundary-intrinsics.test.ts
+issue-3776-es5-isfrozen-intrinsics.test.ts
+issue-4398-capability-registry.test.ts
+issue-4577-standalone-clock-capability.test.ts

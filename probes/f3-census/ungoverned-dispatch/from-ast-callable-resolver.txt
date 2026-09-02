@@ -1,0 +1,3 @@
+##### IrFromAstResolver interface location
+33ea8606aa:src/ir/from-ast.ts:382:export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+##### from-ast callable-ish resolver calls

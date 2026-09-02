@@ -1,0 +1,97 @@
+=== from-ast 385-395 (resolver: Function.prototype call provider)
+  /** Exact pre-scanned sparse constructor sites. */
+  isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
+  /** Exact direct filter consumers of those sparse constructors. */
+  isHoleyArrayFilterCall?(expr: ts.CallExpression): boolean;
+  /** Exact element writes whose receiver is the same sparse carrier binding. */
+  isHoleyArrayElementStore?(expr: ts.ElementAccessExpression): boolean;
+  /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
+  functionPrototypeCallTarget?(): IrFuncRef | null;
+  /**
+   * Resolve the fast-standalone predicate for an exact ambient primitive
+   * wrapper constructor. Null keeps the operation on direct codegen.
+
+=== from-ast 7533-7566
+  // #4385 — ES5 §15.3.4. `%Function.prototype%` is a callable intrinsic
+  // object. Evaluate arguments left-to-right for effects, discard them, then
+  // call the symbolic zero-arg provider which returns the lane's real
+  // undefined carrier. Intercept before receiver lowering: ambient Function
+  // has no general IR value representation, and treating `prototype` as an
+  // instance method is the original category error.
+  if (
+    receiverIdentifier?.text === "Function" &&
+    methodName === "prototype" &&
+    !receiverIsDirectModuleBinding &&
+    cx.scope.get("Function") === undefined &&
+    cx.resolver?.isAmbientBinding?.(receiverIdentifier) !== false
+  ) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype spread call is not supported (${cx.funcName})`,
+      );
+    }
+    const target = cx.resolver?.functionPrototypeCallTarget?.();
+    if (!target) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype call provider unavailable (${cx.funcName})`,
+      );
+    }
+    for (const argument of expr.arguments) lowerDiscardedExpression(argument, cx);
+    const result = cx.builder.emitCall(target, [], irVal({ kind: "externref" }));
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    if (result === null) throw new Error(`ir/from-ast: Function.prototype helper returned void (${cx.funcName})`);
+    return result;
+  }
+
+=== from-ast 2575-2598 (functionValueTrampoline)
+  requireMatchingLoweringPlanOwner("top-level function value", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  if (plan.target.binding.kind !== "unit") {
+    // invariant (producer-promise): identity resolution promised an exact unit — #4502.
+    throw new Error(`ir/from-ast: top-level function value target ${plan.target.name} is not an exact unit`);
+  }
+  if (plan.trampoline.binding.kind !== "support") {
+    // invariant (producer-promise): the prepared trampoline plan promised a compiler-support binding — #4502.
+    throw new Error(`ir/from-ast: function-value trampoline ${plan.trampoline.name} is not compiler support`);
+  }
+  const cache = plan.cacheGlobal;
+  const cached = cx.builder.emitGlobalGet(cache, irVal({ kind: "externref" }));
+  const isNull = cx.builder.emitRefIsNull(cached);
+  const thenBody = cx.builder.collectBodyInstrs(() => {
+    const closure = cx.builder.emitClosureNew(plan.trampoline, plan.signature, [], []);
+    const external = cx.builder.emitCoerceToExternref(closure);
+    cx.builder.emitGlobalSet(cache, external);
+  });
+  cx.builder.emitIfStmt({ cond: isNull, then: thenBody, else: [] });
+  // `callable<S>` is the source boundary type and lowers to the exact same
+  // externref global carrier. Retagging the final read avoids an unsound
+  // externref→closure cast while preserving singleton identity.
+  return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
+}
+
+
+=== from-ast 8270-8290 (hostCallbackPlan source)
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified DOM method call resolved to the wrong import (${cx.funcName})`,
+      );
+    }
+    // params[0] is the receiver — userParams = params.slice(1).
+    const userParams = method.params.slice(1);
+    if (expr.arguments.length > userParams.length) {
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: method ${definingClass}.${methodName} has ${expr.arguments.length} args, max ${userParams.length} in ${cx.funcName}`,
+      );
+    }
+    const args: IrValueId[] = [];
+    for (let i = 0; i < expr.arguments.length; i++) {
+      const expected = userParams[i]!;
+      const argument = expr.arguments[i]!;
+      const hostCallbackArrow = ts.isArrowFunction(argument) ? argument : undefined;
+      const hostCallbackPlan = hostCallbackArrow ? cx.hostVoidCallbacks?.get(hostCallbackArrow) : undefined;
+      if (hostCallbackPlan && hostCallbackArrow) {

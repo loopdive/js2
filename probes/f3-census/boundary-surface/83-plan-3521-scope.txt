@@ -1,0 +1,42 @@
+=== #3521 :1045-1056
+## Out of scope
+
+- Class declarations/members, constructors, class expressions, object methods,
+  or nested closure ownership (#3522).
+- Module-init preparation, static field/block execution, TDZ/start semantics,
+  or removal of the two direct init passes (#3523).
+- `generateMultiModule` whole-program ownership (R5), new runtime semantic
+  intrinsics (R6), async ownership (R7), or shared linear consumption (R8).
+- Removing public/env escape hatches (R9) or deleting direct handlers
+  (#3090/R10).
+
+## Required completion evidence
+
+=== #3521 :1130-1140
+first retirement-ready vector decision; four performance-attribution rows
+remain open.
+
+This slice does not claim the whole six-function Algorithms fixture. Its
+remaining component blockers are source-global storage, TDZ, and module-init
+ownership in #3523, plus throw/exception, `extern.call`, box/unbox, undefined,
+numeric, string, and console support providers in #3526. Those are independent
+of vector layout and remain the next prepared-ownership work.
+
+## 2026-08-09 uncovered provider-transaction violation
+
+
+=== #3521 :951-964 file ownership
+## File ownership and locks
+
+Lock `src/codegen/index.ts`, `src/codegen/declarations.ts`,
+`src/ir/integration.ts`, `src/ir/prepare.ts`, and `src/ir/program.ts` to one R2
+developer. The split crosses the ownership boundary and cannot be safely
+implemented as independent edits to those files.
+
+Changes to `class-bodies.ts`, module-init body construction, multi-source
+`generateMultiModule`, `src/codegen-linear/`, runtime/builtin providers, or
+async frame code are out of scope. If preparation exposes one of those as a
+required follow-up, record a typed Unsupported outcome and update its assigned
+R3–R8 issue instead of absorbing it.
+
+## Anti-vacuity tests

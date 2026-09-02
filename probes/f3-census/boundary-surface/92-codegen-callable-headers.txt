@@ -1,0 +1,123 @@
+=== src/codegen/function-bind-apply.ts (100 lines)
+ * Compile `Function.prototype.bind.apply(target, argArray)`. The argument
+ * array is preserved as a runtime `$ObjVec`, including the static-literal
+ * spelling used by the ES5 rows. Extra arguments are evaluated for effects,
+ * as required by the ordinary `apply` call semantics.
+ */
+=== src/codegen/construct-bound.ts (530 lines)
+ * #4196 slice 1 — `[[Construct]]` through a bound function in `--target
+ * standalone` / WASI (ECMA-262 §10.4.1.2).
+ *
+ * ## The gap
+ * #3140 gave standalone a native bound-function carrier — `$__bound_fn
+ * {target, thisArg, boundArgs}` — and wired its **[[Call]]** side: the
+ * `__apply_closure` front-guard unwraps one bound layer per hop, prepends
+ * `boundArgs`, and recurses with `[[BoundThis]]` as the receiver.
+ *
+ * Its **[[Construct]]** side was never wired. There is no `$__bound_fn` arm in
+ * the `new` lowering at all, so `new (f.bind(o, …))()` reached the terminal
+ * unknown-constructor fallthrough in `compileNewExpression`, which — with no
+=== src/codegen/bound-fn-meta.ts (278 lines)
+ * (#4555 follow-up) §20.2.3.2 steps 5-8 — the `length` own property of a bound
+ * function, for `--target standalone`.
+ *
+ * #3140 gave standalone a native bound-function carrier (`$__bound_fn`) and
+ * wired its [[Call]]; #4196 wired [[Construct]]. Neither seeded the own
+ * properties `Function.prototype.bind` is specified to create, so on this lane
+ * a bound function had no `length` at all:
+ *
+ *     function bar(x, y) {}
+ *     bar.bind(null).length      // was NaN, want 2
+ *     bar.bind(null, 1).length   // was NaN, want 1
+ *     Object.getOwnPropertyDescriptor(bar.bind(null), "length")  // was undefined
+=== src/codegen/callback-ctor-bridge.ts (63 lines)
+//
+// (#4394) Pick the host callback-maker import for a callable crossing to the
+// JS host, honouring whether the source callable has [[Construct]].
+//
+// `__make_callback`'s runtime bridge is an ARROW, and an arrow has no
+// [[Construct]] — so every compiled callable handed to a host API was rejected
+// by `Reflect.construct` / `new`, whatever it was written as. That silently
+// inverted the test262 harness's `isConstructor` (its probe's own TARGET is an
+// inline function expression, so it threw before ever inspecting the argument)
+// for all 644 files that include `isConstructor.js`.
+//
+// Only an ordinary function definition has [[Construct]] (§15.2.4). Arrows,
+=== src/codegen/apply-closure-args.ts (26 lines)
+=== src/codegen/standalone-dom-callback-authority.ts (439 lines)
+=== src/codegen/closure-exports.ts (2385 lines)
+//
+// closure-exports.ts — the `__call_fn_<N>` / `__call_fn_method_<N>` host-dispatch
+// exports plus the is-closure / closure-arity / is-data-struct / standalone
+// `typeof`-classification exports (#3272, extracted verbatim from index.ts).
+// One cohesive subsystem: it lets a JS host invoke and classify WasmGC closures
+// via ref.test/ref.cast shape dispatch. Called only by the compile driver
+// (generateModule), which imports these back.
+=== src/codegen/closures/funcref-wrapper-types.ts (251 lines)
+ * Funcref-wrapper struct / func-type registry for js2wasm closures.
+ *
+ * Extracted verbatim from `closures.ts` (issue #3270) — the small, foundational
+ * wrapper-struct / lifted-func-type registry that the method-trampoline and
+ * funcref-as-closure subsystems both build on. Isolates the isorecursive
+ * root-wrapper canonicalization logic (#2873) in one place.
+ */
+ * (#3673/#4241) Closure representation constants and header field factories.
+ *
+ * These now live in the LEAF module `closure-header-layout.ts` and are
+ * re-exported here so the ~10 existing importers are unaffected. The move was
+ * forced by a real failure: this module imports the codegen barrel
+=== funcref-wrapper-types.ts 60-100, 230-245
+): { params: ValType[]; results: ValType[] } | null {
+  // #1916 S2 — funcSignatureOf is the positional-read chokepoint (func-space.ts).
+  const sig = funcSignatureOf(ctx, funcIdx);
+  return sig ? { params: sig.params, results: sig.results } : null;
+}
+/**
+ * Get or create the closure struct type and lifted func type for wrapping
+ * plain functions with a given signature. Struct type and func type are shared
+ * across all functions with the same signature, but each function gets its own
+ * trampoline.
+ */
+export function getOrCreateFuncRefWrapperTypes(
+  ctx: CodegenContext,
+  userParams: ValType[],
+  resultTypes: ValType[],
+  allocationMode: ClosureAllocationMode = "ordinary",
+): {
+  structTypeIdx: number;
+  liftedFuncTypeIdx: number;
+  liftedSelfTypeIdx: number;
+  closureInfo: ClosureInfo;
+} | null {
+  // Build cache key from param types and result types
+  const sigKey = `${userParams.map((p) => p.kind + ((p as any).typeIdx ?? "")).join(",")}->${resultTypes.map((r) => r.kind + ((r as any).typeIdx ?? "")).join(",")}`;
+  const cached = ctx.funcRefWrapperCache.get(sigKey);
+  if (cached) {
+    const observedMinimum = ctx.closureMinimumArgumentCountByFuncTypeIdx.get(cached.funcTypeIdx);
+    if (observedMinimum !== undefined) {
+      const current = cached.minimumArgumentCount ?? cached.paramTypes.length;
+      cached.minimumArgumentCount = Math.min(current, observedMinimum);
+    }
+    observeAllocation(cached, allocationMode);
+    return {
+      structTypeIdx: cached.structTypeIdx,
+      liftedFuncTypeIdx: cached.funcTypeIdx,
+      liftedSelfTypeIdx: getFuncRefWrapperRootTypeIdx(ctx) ?? cached.structTypeIdx,
+      closureInfo: cached,
+    };
+  }
+ * to the void wrapper) — unless creation ORDER happened to make the declared
+ * wrapper the root. Cast/read/pass `self` through the root instead and
+ * discriminate only on the funcref's exact type (which encodes the true
+ * signature).
+ */
+export function getFuncRefWrapperRootTypeIdx(ctx: CodegenContext): number | undefined {
+  return (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;
+}
+/**
+ * Return the concrete struct type used by a closure funcref's leading `self`
+ * parameter. Shared wrapper funcs return the canonical root; private/named
+ * function-expression funcs return their concrete nullable struct. Dispatch
+ * sites use this distinction to avoid foreign per-signature wrapper casts
+ * without breaking private closure types.
+ */

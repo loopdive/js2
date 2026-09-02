@@ -1,0 +1,6 @@
+29:  IrInstrExternCall,
+30:  IrInstrExternNew,
+31:  IrInstrExternProp,
+32:  IrInstrExternPropSet,
+2255:  IrInstrExternNew,
+2256:  IrInstrExternCall,

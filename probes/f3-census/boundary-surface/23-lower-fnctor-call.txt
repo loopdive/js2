@@ -1,0 +1,157 @@
+      case "fnctor.new": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (
+          !lowering ||
+          !lowering.supportsConstruction ||
+          lowering.resultIsExternref ||
+          lowering.constructorResultType.kind !== "ref"
+        ) {
+          throw new Error(
+            `ir/lower: fnctor.new ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        if (lowering.hiddenIdentity !== (instr.constructorIdentity !== null)) {
+          throw new Error(`ir/lower: fnctor.new hidden identity disagrees with resolved ABI (${func.name})`);
+        }
+        for (const value of instr.captureArgs) emitValue(value, out);
+        for (const value of instr.args) emitValue(value, out);
+        if (instr.constructorIdentity !== null) emitValue(instr.constructorIdentity, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.new backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // The validated WasmGC fnctor constructor handle is lowered as a plain call;
+        // non-Wasm backends are rejected above.
+        emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(lowering.constructorFunc) }); // pushraw-ok(#3521): validated fnctor constructor call
+        return;
+      }
+      case "fnctor.get": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (
+          !lowering ||
+          !lowering.supportsFieldGet ||
+          lowering.structTypeIdx === undefined ||
+          lowering.instanceCarrierType.kind === "externref"
+        ) {
+          throw new Error(
+            `ir/lower: fnctor.get ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.get backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // struct.get follows the validated nominal layout/field handle and
+        // WasmGC backend checks above.
+        // pushraw-ok(#3521): validated fnctor struct field read
+        const field = lowering.field(instr.fieldName);
+        emitter.pushRaw(out, {
+          op: "struct.get",
+          typeIdx: lowering.structTypeIdx,
+          fieldIdx: field.fieldIdx,
+        });
+        if (field.refinement === "nullable-native-string") {
+          if (field.logicalType.kind !== "string" || field.physicalType.kind !== "ref_null") {
+            throw new Error(`ir/lower: fnctor.get ${instr.fieldName} has an invalid field refinement (${func.name})`);
+          }
+          emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#3521): exact nullable native-string field refinement
+        }
+        return;
+      }
+      case "call": {
+      case "call": {
+        const dateGetter =
+        const dateGetter =
+          instr.target.binding.kind === "intrinsic"
+            ? parseIrDateSnapshotGetter(instr.target.binding.symbol)
+            : undefined;
+        if (dateGetter !== undefined) {
+          if (instr.args.length !== 1) {
+            throw new Error(`ir/lower: ${dateGetter} snapshot getter expects one timestamp (${func.name})`);
+          }
+          emitValue(instr.args[0]!, out);
+          const wasmOut = requireInstrSink(out);
+          const scratch = ensureDateSnapshotScratch();
+          const civilIdx = resolver.resolveFunc(instr.target);
+          wasmOut.push(
+            { op: "i64.trunc_sat_f64_s" },
+            { op: "local.set", index: scratch.timestamp },
+            { op: "local.get", index: scratch.timestamp },
+            { op: "i64.const", value: 0n },
+            { op: "i64.ge_s" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i64" } },
+              then: [
+                { op: "local.get", index: scratch.timestamp },
+                { op: "i64.const", value: 86400000n },
+                { op: "i64.div_s" },
+              ],
+              else: [
+                { op: "local.get", index: scratch.timestamp },
+                { op: "i64.const", value: 86399999n },
+                { op: "i64.sub" },
+                { op: "i64.const", value: 86400000n },
+                { op: "i64.div_s" },
+              ],
+            },
+            { op: "call", funcIdx: civilIdx },
+            { op: "local.tee", index: scratch.packed },
+            { op: "i64.const", value: 10000n },
+            { op: "i64.div_s" },
+            { op: "local.get", index: scratch.packed },
+            { op: "i64.const", value: 10000n },
+            { op: "i64.rem_s" },
+            { op: "i64.const", value: 0n },
+            { op: "i64.ne" },
+            { op: "local.get", index: scratch.packed },
+            { op: "i64.const", value: 0n },
+            { op: "i64.lt_s" },
+            { op: "i32.and" },
+            { op: "i64.extend_i32_s" },
+            { op: "i64.sub" },
+          );
+          if (dateGetter === "getFullYear") {
+            wasmOut.push({ op: "f64.convert_i64_s" });
+            return;
+          }
+          wasmOut.push(
+            { op: "local.set", index: scratch.year },
+            { op: "local.get", index: scratch.packed },
+            { op: "local.get", index: scratch.year },
+            { op: "i64.const", value: 10000n },
+            { op: "i64.mul" },
+            { op: "i64.sub" },
+            { op: "i64.const", value: 100n },
+            { op: dateGetter === "getDate" ? "i64.rem_s" : "i64.div_s" },
+          );
+          if (dateGetter === "getMonth") {
+            wasmOut.push({ op: "i64.const", value: 1n }, { op: "i64.sub" });
+          }
+          wasmOut.push({ op: "f64.convert_i64_s" });
+          return;
+        }
+        // (a1) call family (#1584 §2a): route through the typed emitCall
+        // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
+        for (const a of instr.args) emitValue(a, out);
+        emitter.emitCall(resolver.resolveFunc(instr.target), out);
+        if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+          const stringCarrier = resolver.resolveString?.();
+          if (!stringCarrier || (stringCarrier.kind !== "ref" && stringCarrier.kind !== "ref_null")) {
+            throw new Error(`ir/lower: native string call adapter has no reference carrier (${func.name})`);
+          }
+          emitter.emitFromExternref({ typeIdx: stringCarrier.typeIdx }, out);
+        }
+        return;
+      }
+      case "intrinsic": {
+        emitPreparedIntrinsic(
+          instr,
+          out,
+          emitter,
+          resolver,
+          emitValue,
+          (operation, compositeOut) => {

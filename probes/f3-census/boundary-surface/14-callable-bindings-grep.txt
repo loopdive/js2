@@ -1,0 +1,20 @@
+16:export const IR_FNCTOR_CONSTRUCTOR_SUPPORT_ROLE = "fnctor-constructor";
+30:  return Object.freeze({ kind: "func", name, binding: Object.freeze(binding) });
+34:export function irUnitCallableBindingId(unitId: IrUnitId): IrBindingId {
+43:export function irUnitFuncRef(identity: IrFunctionIdentity): IrFuncRef {
+49:  return funcRef(name, { kind: "unit", unitId });
+53:export function irImportFuncRef(module: string, field: string, adapterName?: string): IrFuncRef {
+57:  return funcRef(name, { kind: "import", module: checkedModule, field: checkedField });
+61:export function irCapabilityImportFuncRef(
+74:    kind: "import",
+83:export function irRuntimeFuncRef(symbol: string, adapterName?: string): IrFuncRef {
+86:  return funcRef(name, { kind: "runtime", symbol: checkedSymbol });
+90:export function irIntrinsicFuncRef(symbol: string, adapterName?: string): IrFuncRef {
+93:  return funcRef(name, { kind: "intrinsic", symbol: checkedSymbol });
+97:export function irSupportFuncRef(
+107:    kind: "support",
+113:export function irFnctorConstructorBindingId(unitId: IrUnitId): IrBindingId {
+122:export function irFnctorConstructorFuncRef(unitId: IrUnitId, adapterName: string): IrFuncRef {
+124:    kind: "support",
+134:export function irCallableBindingKey(binding: IrCallableBinding): string {
+163:export function sameIrCallableBinding(left: IrCallableBinding, right: IrCallableBinding): boolean {

@@ -1,0 +1,47 @@
+// Symbolic references
+// ---------------------------------------------------------------------------
+//
+// Symbolic refs are the whole reason the middle-end IR exists. The legacy
+// pipeline embeds raw funcIdx / globalIdx integers in emitted instructions,
+// so any late import addition must re-walk every body via
+// `shiftLateImportIndices` to rewrite those integers. The IR instead emits
+// a symbolic `IrFuncRef` with a structural callable binding; lowering resolves
+// it to a concrete index AFTER all imports are finalized, making the shift
+// pass a no-op on the IR path. `name` remains only a compatibility/debug label.
+
+/** Closed structural identity for every symbolic IR type target. */
+export type IrTypeBinding =
+  | { readonly kind: "source"; readonly bindingId: IrBindingId }
+  | {
+      readonly kind: "class";
+      readonly bindingId: IrBindingId;
+      readonly classId: IrClassId;
+    }
+  | {
+      readonly kind: "runtime";
+      readonly bindingId: IrBindingId;
+      readonly symbol: string;
+    }
+  | { readonly kind: "support"; readonly bindingId: IrBindingId };
+
+export interface IrTypeRef {
+  readonly kind: "type";
+  /** Compatibility/debug label; never the semantic lookup key. */
+  readonly name: string;
+  readonly binding: IrTypeBinding;
+---value-references.ts---
+7:export type IrCallableBinding =
+8:  | { readonly kind: "unit"; readonly unitId: IrUnitId }
+9:  | ({ readonly kind: "import"; readonly module: string; readonly field: string } & IrCallableCapabilityProvenance)
+10:  | { readonly kind: "runtime"; readonly symbol: string }
+11:  | { readonly kind: "intrinsic"; readonly symbol: string }
+12:  | { readonly kind: "support"; readonly bindingId: IrBindingId };
+14:export interface IrFuncRef {
+15:  readonly kind: "func";
+22:export type IrGlobalBinding =
+23:  | ({ readonly kind: "source"; readonly bindingId: IrBindingId } & IrSourceGlobalCapabilityProvenance)
+24:  | { readonly kind: "import"; readonly bindingId: IrBindingId; readonly module: string; readonly field: string }
+25:  | { readonly kind: "runtime"; readonly bindingId: IrBindingId; readonly symbol: string }
+26:  | { readonly kind: "support"; readonly bindingId: IrBindingId };
+28:export interface IrGlobalRef {
+29:  readonly kind: "global";

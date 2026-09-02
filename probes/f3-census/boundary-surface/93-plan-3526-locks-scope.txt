@@ -1,0 +1,28 @@
+=== #3526 :1015-1030
+## File ownership and locks
+
+C0 and M1 require one owner for new intrinsic/manifest modules, the named IR
+core/select/effects files, `src/codegen/declarations/import-collector.ts`,
+`src/codegen/registry/imports.ts`, `src/codegen/expressions/late-imports.ts`,
+the Math call/collector/provider files, `src/codegen/stdlib-selfhost.ts`, and
+`src/compiler/import-manifest.ts`. Splitting the fixed-point/freeze invariant
+across parallel writers is unsafe. #3525 overlaps `index.ts`, integration, and
+context; land C0's new-module schema first or assign one sequential integration
+owner rather than parallel-writing those shared hooks.
+
+Later family slices may run in parallel only when their provider files and
+intrinsic IDs are disjoint and C0's manifest schema is frozen. Coordinate the
+Promise/iterator slice with #3527 and all backend adapter changes with #3528.
+
+## Anti-vacuity tests
+
+=== #3526 :1116-1124
+## Out of scope
+
+- Reimplementing runtime behavior inside `src/ir/` or duplicating providers per
+  backend.
+- Treating concrete helper/import names as stable semantic IDs.
+- Folding host capability policy into the selector or backend emitter.
+- Claiming all ~47K runtime lines migrate in one unreviewable commit.
+
+## Risks and mitigations

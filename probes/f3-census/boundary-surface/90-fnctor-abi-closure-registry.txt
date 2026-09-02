@@ -1,0 +1,80 @@
+=== fnctor-abi.ts 38-110 (non-comment)
+export interface IrFnctorShape {
+  readonly kind: "fnctor-shape";
+  readonly sourceId: IrSourceId;
+  readonly constructorUnitId: IrUnitId;
+  readonly constructorName: string;
+  readonly constructorTarget: IrFuncRef;
+  readonly reservedLayout: IrTypeRef;
+  readonly fields: readonly IrFnctorField[];
+  readonly captures: readonly IrFnctorCapture[];
+  readonly userParamTypes: readonly IrType[];
+  readonly hiddenIdentity: boolean;
+  readonly constructorIdentity: {
+    readonly unitId: IrUnitId;
+    readonly paramIndex: number;
+  };
+}
+export interface IrFnctorResolution {
+  readonly shape: IrFnctorShape;
+  readonly structType: IrTypeRef;
+  readonly constructor: IrFuncRef;
+  readonly captureParamTypes: readonly IrType[];
+  readonly userParamTypes: readonly IrType[];
+  readonly constructorIdentityParamIndex: number | null;
+  readonly hiddenIdentity: boolean;
+  readonly resultIsExternref: boolean;
+}
+export interface IrFnctorLowerResolver {
+  resolveFnctor(shape: IrFnctorShape): IrFnctorResolution | null;
+}
+function nonEmpty(value: string): boolean {
+  return value.length > 0 && !value.includes("\0") && !value.includes("\r") && !value.includes("\n");
+}
+function validateRef(ref: { readonly kind: string; readonly name: string }, label: string): string | null {
+  if (ref.kind !== "func" && ref.kind !== "type") return `${label} has an invalid symbolic kind`;
+  return nonEmpty(ref.name) ? null : `${label} has an empty diagnostic name`;
+}
+function validateFields(fields: readonly IrFnctorField[], label: string): string | null {
+  const names = new Set<string>();
+  const ordinals = new Set<number>();
+  for (const field of fields) {
+    if (!nonEmpty(field.name)) return `${label} contains an empty field name`;
+    if (names.has(field.name)) return `${label} contains duplicate field ${field.name}`;
+    if (!Number.isSafeInteger(field.ordinal) || field.ordinal < 0 || ordinals.has(field.ordinal)) {
+      return `${label} contains an invalid/duplicate field ordinal`;
+    }
+    names.add(field.name);
+    ordinals.add(field.ordinal);
+  }
+  return null;
+}
+function validateCaptures(captures: readonly IrFnctorCapture[]): string | null {
+  const names = new Set<string>();
+  const ordinals = new Set<number>();
+  for (const capture of captures) {
+    if (!nonEmpty(capture.name)) return "fnctor captures contain an empty name";
+    if (names.has(capture.name)) return `fnctor captures contain duplicate ${capture.name}`;
+    if (!Number.isSafeInteger(capture.ordinal) || capture.ordinal < 0 || ordinals.has(capture.ordinal)) {
+      return "fnctor captures contain an invalid/duplicate ordinal";
+    }
+    names.add(capture.name);
+    ordinals.add(capture.ordinal);
+
+=== closure-struct-registry.ts signatures
+30:export class ClosureStructRegistry {
+46:  resolveBase(signature: IrClosureSignature, mode: ClosureAllocationMode = "support"): IrClosureLowering | null {
+93:  resolveSubtype(
+    return this.resolveSubtype(
+      signature,
+      captureFieldTypes,
+      hostOneShot ? "host-one-shot" : "ordinary",
+      domCallbackAuthority,
+      liftedFuncIdx,
+    );
+  }
+
+  resolveSubtype(
+    signature: IrClosureSignature,
+    captureFieldTypes: readonly IrType[],
+    mode: ClosureAllocationMode = "support",

@@ -1,0 +1,64 @@
+=== __apply_closure native definition
+src/codegen/object-runtime.ts:7316:    name: "__apply_closure",
+src/codegen/object-runtime.ts:7324:  ctx.funcMap.set("__apply_closure", funcIdx);
+src/codegen/array-tolocalestring.ts:153:  ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+src/codegen/array-tolocalestring.ts:161:  for (const name of ["__extern_get", "__apply_closure", TO_STRING]) {
+src/codegen/object-runtime.ts
+src/codegen/literals.ts
+src/codegen/closures/arrow-phases.ts
+src/codegen/statements/nested-declarations.ts
+src/codegen/closures.ts
+
+=== async-runtime-providers.ts 236-250
+    "value.undefined",
+    capabilities("async.value.undefined"),
+    HOST_CAPABILITY_IMPLEMENTATION,
+  ),
+  provider(
+    "host.promise.react",
+    "promise.react",
+    capabilities("async.callback.wrap", "async.promise.react"),
+    HOST_CAPABILITY_IMPLEMENTATION,
+  ),
+  provider(
+    "host.promise.resolve",
+    "promise.resolve",
+    capabilities("async.promise.resolve"),
+    HOST_CAPABILITY_IMPLEMENTATION,
+
+=== index.ts 6036-6056
+    emitStdoutSinkExports(ctx);
+
+    // Emit __call_fn_0 export for calling zero-arg closures from JS (#851)
+    emitClosureCallExport(ctx);
+
+    // Emit __call_fn_1 export for calling one-arg closures from JS (#1090)
+    emitClosureCallExport1(ctx);
+
+    // Emit __call_fn_2 export for calling two-arg closures from JS (#1382)
+    // Required for Array.from(iter, mapFn) where mapFn is a Wasm closure —
+    // host `Array.from` invokes mapFn with `(value, index)`, so the JS-side
+    // wrapper needs a 2-arg dispatcher to route into the closure.
+    emitClosureCallExport2(ctx);
+
+    // Emit __call_fn_3 / __call_fn_4 exports (#1382 Phase 2). Required for
+    // `Array.prototype.{forEach,map,filter,every,some,find,...}.call(obj, cb)`
+    // dispatched through the host `__proto_method_call` — the host invokes
+    // the callback with `(value, index, array)` (arity 3) or, for reduce,
+    // `(acc, value, index, array)` (arity 4).
+    emitClosureCallExport3(ctx);
+    emitClosureCallExport4(ctx);
+
+=== closure-exports.ts __closure_arity + __call_fn defs
+3:// closure-exports.ts — the `__call_fn_<N>` / `__call_fn_method_<N>` host-dispatch
+111:  if (logicalName === "__closure_arity") return { physicalBase: "$ce", bit: 14 };
+369:export function emitClosureCallExport(ctx: CodegenContext): void {
+379: * the ordinary `__call_fn_0`/`$c0` names later, while this reserved alias stays
+466:export function emitClosureCallExport1(ctx: CodegenContext): void {
+475:export function emitClosureCallExport2(ctx: CodegenContext): void {
+484:export function emitClosureCallExport3(ctx: CodegenContext): void {
+493:export function emitClosureCallExport4(ctx: CodegenContext): void {
+501: * The `__call_fn_<arity>` / `__call_fn_method_<arity>` exports take all user
+652: * and made every `__call_fn_N`/`__call_fn_method_N` containing it invalid.
+774:  const exportName = `__call_fn_${arity}`;
+1025:    // closure called via `__call_fn_3` reported `arguments.length === 6`), which

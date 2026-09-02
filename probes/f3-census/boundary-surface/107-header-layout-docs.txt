@@ -1,0 +1,61 @@
+=== closure-header-layout.ts 58-100
+ * name enumeration and getter emission, matching `$arity` and `$shape`.
+ */
+/**
+ * (#4241) The field NAME of the carrier-intrinsic expando bag. Exported so
+ * every consumer resolves the slot by NAME rather than by index — the slot does
+ * not stay last (`property-access-dispatch.ts` appends fields to already-
+ * registered structs) and it sits at different indices in different carrier
+ * families (index 2 in the closure header, appended in an instance carrier).
+ */
+export const INSTANCE_BAG_FIELD = "$bag";
+
+export function closureBagField(): { name: string; type: ValType; mutable: true } {
+  return { name: "$bag", type: { kind: "externref" }, mutable: true };
+}
+
+/**
+ * The `struct.new` operand for a freshly-minted closure's `$bag` slot. Sits
+ * between the `$arity` i32 and the first capture at EVERY closure allocation
+ * site — a missed site is a loud `struct.new` arity/type validation failure,
+ * never a silent wrong answer.
+ */
+export function closureBagInitInstr(): Instr {
+  return { op: "ref.null.extern" };
+}
+
+/**
+ * Does `fields` START with the canonical closure header? True for a bare
+ * wrapper root and for any subtype that correctly redeclares the header before
+ * its own fields.
+ *
+ * Checked by KIND rather than by identity with the factories above, because the
+ * consumers that ask this question are validating types the allocator already
+ * built and canonicalized — a structural question, not a provenance one.
+ */
+export function hasClosureHeaderPrefix(fields: readonly (FieldDef | undefined)[]): boolean {
+  return (
+    fields.length >= CLOSURE_CAPTURE_FIELD_BASE &&
+    fields[CLOSURE_FUNC_FIELD_IDX]?.type.kind === "funcref" &&
+    fields[CLOSURE_ARITY_FIELD_IDX]?.type.kind === "i32" &&
+    fields[CLOSURE_BAG_FIELD_IDX]?.type.kind === "externref"
+  );
+}
+
+=== marshaling-contract.md callable/closure lines
+12:closure is sometimes wrapped as a host callback and sometimes not; `this`
+28:| **closure ⇄ callback** | wrap the closure-struct as host-callable via `__fn_wrap` / `callback_maker` (`runtime.ts:8904`) | a host fn arriving as externref is invoked via `__call_extern_fn(fn, args)` — **never** `ref.cast` to a closure struct (the #2028 trap) | wasm closure wrapped OUT runs the original body when called from host; host fn passed IN dispatches to the host fn when called from wasm |
+46:  tag**, never a `ref.null` deref. (#2025: `closures.ts:3264-3269` traps
+75:- `OUT`: vec→Array (recurse to `depth`), struct→`_wrapForHost`, closure→
+80:`HOST_CALLBACK_METHODS` (`closures.ts:1060`) remains the closure-vs-host-callback
+81:decision **input** (consumed by `isHostCallbackArgument`), feeding `marshal`'s
+82:closure cell — it is not a parallel conversion path and is not dead code.
+90:| closure ⇄ callback | `__fn_wrap` / `__call_extern_fn` | representable (closure struct + `call_ref`); host-fn IN is host-only |
+106:| **M3** | closure ⇄ callback (host-fn IN) | closure call path → `__call_extern_fn` fallback when callee is externref / cast fails | **#2028** (unblocks the host-fn-param family; same trap as #1950, inverse of #1382) |
+115:- **#1382 / #1950** — wasm-closure-as-JS-callable (the `OUT` closure cell) and
+=== ir-adoption.md call/closure/new rows
+88:| `CallExpression`                 | mixed    | Direct calls to claimed funcs work; `Math.floor` / `Math.pow` and the rest of the whitelisted external surface claim (measured 2026-08-15, #3583). Optional `?.()` rejects at `param-type-not-resolvable` — the union-typed callee, same root gate as the other optional-chaining rows. Re-owned from #1371 (`done`) to #2949.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | #2949                                                                                                           |
+89:| `NewExpression`                  | mixed    | Supported local WasmGC class construction calls an AST-free `_new` wrapper whose source-owned `_init` body is IR-lowered; arbitrary `new` remains host-bound.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | #3522                                                                                                           |
+95:| `FunctionExpression`             | mixed    | CORRECTED (measured 2026-08-15, #3583): NAMED function expressions claim, including self-recursive ones (`const f = function fact(n) { … fact(n-1) }`) — the old "named function-expressions partial" note was stale. Anonymous function expressions claim too. Re-owned from wont-fix #1131 to #3522 (R3 closures).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | #3522                                                                                                           |
+96:| `ArrowFunction`                  | mixed    | Same as `FunctionExpression`; measured claimed 2026-08-15 (#3583).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | #3522                                                                                                           |
+110:| `FunctionDeclaration`                           | ir-owned    | The IR claim unit. Each rejection bucket reduces the claim set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | #1376    |

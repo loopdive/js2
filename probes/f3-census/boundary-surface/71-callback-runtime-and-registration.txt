@@ -1,0 +1,35 @@
+=== runtime.ts __make_callback definitions
+1714:const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
+2071:      if (realArityCache === -2) {
+9992:    (year === -271821 && (month < 4 || (month === 4 && day < 19))) ||
+10646:          const omitLast = isSplit ? last === -1 : typeof last === "number" && Number.isNaN(last);
+14015:      //               `length === -1` NaN sentinel: bufferByteLength − offset).
+17660:        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
+17661:        if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
+
+=== codegen registration of __make_callback
+src/codegen/async-frame.ts:165:  const makeCbIdx = ctx.funcMap.get("__make_callback");
+src/codegen/declarations/import-collector.ts:2008:      !ctx.funcMap.has("__make_callback")
+src/codegen/declarations/import-collector.ts:2010:      addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
+src/codegen/declarations/import-collector.ts:2051:    if (!ctx.funcMap.has("__make_callback")) {
+src/codegen/declarations/import-collector.ts:2053:      addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
+src/codegen/callback-ctor-bridge.ts:52:  if (ctx.standalone || ctx.wasi) return "__make_callback";
+src/codegen/callback-ctor-bridge.ts:53:  if (!callableHasConstructBehavior(node)) return "__make_callback";
+src/codegen/callback-ctor-bridge.ts:60:  if (idx === undefined) return "__make_callback";
+src/codegen/ir-overlay-finalize.ts:272:  const makerIdx = ctx.funcMap.get("__make_callback");
+src/codegen/ir-overlay-finalize.ts:279:    if (imported.module !== "env" || imported.name !== "__make_callback") return false;
+
+=== __apply_closure def
+src/codegen/array-object-proto.ts:2243:  // `then` field reaches `__apply_closure`, which no-ops and answers undefined.
+src/codegen/array-tolocalestring.ts:153:  ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+src/codegen/async-scheduler.ts:1986: *   - callable: `__apply_closure(cb, undefined, [value])`, result settles the
+src/codegen/closure-props.ts:283: * `__apply_closure`'s not-a-function path already returns undefined (the vec
+src/codegen/hof-native.ts:213:  // invoke: __apply_closure(cb, thisArg | undefined, args)
+src/codegen/hof-native.ts:325:  // `__apply_closure` on a non-callable, which answered `undefined` per
+src/codegen/iter-hof-native.ts:221:  // res|acc = __apply_closure(cb, undefined, args) — helpers pass undefined this.
+src/codegen/iter-lazy-native.ts:524:  // res = __apply_closure(helper.fn, undefined, args).
+
+=== __fn_wrap root registration
+
+=== closure-header-layout.ts head
+ls: cannot access 'src/codegen/closure-header-layout.ts': No such file or directory

@@ -1,0 +1,83 @@
+"call" emit sites in from-ast.ts: 0
+"intrinsic" emit sites in from-ast.ts: 0
+"closure.new" emit sites in from-ast.ts: 0
+"closure.cap" emit sites in from-ast.ts: 0
+"closure.call" emit sites in from-ast.ts: 0
+"fnctor.new" emit sites in from-ast.ts: 0
+"fnctor.get" emit sites in from-ast.ts: 0
+"class.new" emit sites in from-ast.ts: 0
+"class.call" emit sites in from-ast.ts: 0
+"class.super_init" emit sites in from-ast.ts: 0
+"class.super_call" emit sites in from-ast.ts: 0
+"class.static_call" emit sites in from-ast.ts: 0
+"coerce.to_externref" emit sites in from-ast.ts: 0
+"extern.new" emit sites in from-ast.ts: 0
+"extern.call" emit sites in from-ast.ts: 0
+---
+1267:    const buf = builder.emitCall(irImportFuncRef("env", "__gen_create_buffer"), [], irVal({ kind: "externref" }));
+2596:  return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
+3959:        irRuntimeFuncRef("__new_ReferenceError"),
+4007:    irIntrinsicFuncRef(irDateSnapshotGetterSymbol(plan.getter)),
+4203:        const r = cx.builder.emitCall(irImportFuncRef("env", hg.importName), [], {
+4599:        irIntrinsicFuncRef(vecNewSizedProviderSymbol(hint, vec)),
+4895:  const result = cx.builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_STRING_FN), [asF64], { kind: "string" });
+5608:    const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
+5624:      cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
+5801:    cx.builder.emitCall(irIntrinsicFuncRef(vecElemSetProviderSymbol(recvType, vec)), [recv, idxI32, narrowVal], null);
+5830:  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, val], null);
+5975:  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, result], null);
+6083:        const value = cx.builder.emitCall(irIntrinsicFuncRef("__arr_get"), [recv, idxI32], elemIr);
+6292:    const undefinedValue = cx.builder.emitCall(irImportFuncRef("env", "__get_undefined"), [], expected);
+6944:      irIntrinsicFuncRef(IR_HOLEY_ARRAY_NEW),
+7104:  const value = cx.builder.emitCall(irRuntimeFuncRef(`__new_${kind}`), [argument], resultType);
+7267:  const r = cx.builder.emitCall(irRuntimeFuncRef(IR_NUMBER_TO_STRING_NATIVE_FN), [value], { kind: "string" });
+7325:  cx.builder.emitCall(irRuntimeFuncRef(IR_CONSOLE_SINK_APPEND_FN), [line], null);
+7394:  const result = cx.builder.emitCall(irRuntimeFuncRef(plan.funcName), args, irDynamic());
+7475:    irRuntimeFuncRef(methodName === "get" ? IR_NATIVE_MAP_GET_NUM_FN : IR_NATIVE_MAP_SET_NUM_FN),
+7502:  const result = cx.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_MAP_NEW_FN), [], storageType);
+7621:        irRuntimeFuncRef(plan.funcName),
+7758:      const part = cx.builder.emitCall(irRuntimeFuncRef(plan.funcName), [code], { kind: "string" });
+7868:    const target = cx.resolver.preparedAsyncConsoleTarget?.(expr) ?? irImportFuncRef("env", importName);
+7994:      irRuntimeFuncRef("__hof_holey_array_filter"),
+8037:        irRuntimeFuncRef(IR_DYN_STRING_REPLACE_FN),
+8070:    const result = cx.builder.emitCall(irRuntimeFuncRef(target), dynamicArgs, irDynamic());
+8117:    const target = cx.resolver.preparedAsyncNumberToStringTarget?.(expr) ?? irImportFuncRef("env", "number_toString");
+8157:    const r = cx.builder.emitCall(irImportFuncRef("env", "number_toFixed"), [recv, digitValue], { kind: "string" });
+8181:    const r = cx.builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_FIXED_FN), [recv, digitValue], { kind: "string" });
+8212:        irRuntimeFuncRef("__str_replaceAll"),
+8313:          irImportFuncRef("env", "__make_callback"),
+8319:          throw new Error(`ir/from-ast: __make_callback produced no value in ${cx.funcName}`);
+8491:  const sign = cx.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], irVal({ kind: "i32" }));
+8792:  const r = cx.builder.emitCall(irIntrinsicFuncRef(funcName), loweredArgs, callResultType);
+9709:  const keys = cx.builder.emitCall(irRuntimeFuncRef(plan.keys), [receiver], externref);
+9712:  const length = cx.builder.emitCall(irRuntimeFuncRef(plan.len), [keys], i32);
+9755:      irRuntimeFuncRef(plan.get),
+9762:    const live = cx.builder.emitCall(irRuntimeFuncRef(plan.has), [receiver, key], i32);
+10121:    const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.hoist.readFuncName), [flat, index], IR_I32);
+10128:  const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.trustedFuncName!), [recv, index], IR_I32);
+10179:  const flat = cx.builder.emitCall(irIntrinsicFuncRef(hoist.flattenFuncName), [recv], { kind: "string" });
+12260:    const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [rand, hint], externref);
+12265:    const number = cx.builder.emitCall(irRuntimeFuncRef("__unbox_number"), [primitive], irVal({ kind: "f64" }));
+12295:          irRuntimeFuncRef("__unbox_number"),
+12733:  const result = cx.builder.emitCall(irRuntimeFuncRef("__extern_has"), [receiver, key], IR_BOOL);
+12765:        const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
+12787:      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+12793:      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+13124:        const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [dynL, dynR], irDynamic());
+13984:  const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [wrapper, hint], externref);
+14109:    const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], irVal({ kind: "i32" }));
+14191:    const fmodResult = cx.builder.emitCall(irIntrinsicFuncRef(FMOD_FN), [lf, rf], irVal({ kind: "f64" }));
+14491:          domCallbackAuthority: {
+14496:      : { hostOneShot: true },
+14530:      exact?.hostOneShot === true ||
+14531:      exact?.domCallbackAuthority !== undefined,
+14613:    exact?.hostOneShot === true,
+14614:    exact?.domCallbackAuthority,
+14619:    ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
+14620:    ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
+14785:  hostOneShot = false,
+14786:  domCallbackAuthority?: import("./nodes.js").IrDomCallbackAuthority,
+14930:        ...(hostOneShot ? { hostOneShot: true } : {}),
+14931:        ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
+14956:    ...(hostOneShot ? { hostOneShot: true } : {}),
+14957:    ...(domCallbackAuthority ? { domCallbackAuthority } : {}),

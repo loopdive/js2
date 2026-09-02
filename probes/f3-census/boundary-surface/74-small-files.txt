@@ -1,0 +1,133 @@
+src/ir/capability-provenance.ts:17:export interface IrDomCallbackAuthority {
+src/ir/fnctor-abi.ts:38:export interface IrFnctorShape {
+src/ir/fnctor-abi.ts:72:export interface IrFnctorLowerResolver {
+
+=== src/ir/dom-boundary.ts
+import type { IrStandaloneDomOperation } from "./dom-capability.js";
+import { IrInvariantError } from "./outcomes.js";
+export type IrStandaloneDomArgumentBoundary = "native-string" | "dom-handle" | "native-callback-zero-void" | "nullish";
+export function isDirectStandaloneDomMemberCall(
+  operation: IrStandaloneDomOperation | undefined,
+): operation is Extract<IrStandaloneDomOperation, { readonly kind: "member-call" }> {
+  return operation?.kind === "member-call" && operation.importName !== "HTMLElement_addEventListener";
+}
+export function coercibleStandaloneDomArgumentBoundary(
+  operation: IrStandaloneDomOperation | undefined,
+  index: number,
+  funcName: string,
+): "native-string" | "dom-handle" | undefined {
+  const boundary = operation?.kind === "member-call" ? operation.argumentBoundaries[index] : undefined;
+  if (boundary === "native-callback-zero-void" || boundary === "nullish") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: certified DOM argument boundary ${boundary} reached generic coercion (${funcName})`,
+    );
+  }
+  return boundary;
+}
+=== src/ir/capability-provenance.ts
+import type { IrUnitId } from "./identity.js";
+export interface IrCallableCapabilityProvenance {
+  readonly capabilityId?: string;
+  readonly providerId?: string;
+}
+export interface IrSourceGlobalCapabilityProvenance {
+  readonly capability?: "dom";
+}
+export interface IrDomCallbackAuthority {
+  readonly ownerUnitId: IrUnitId;
+  readonly liftedOrdinal: number;
+}
+=== src/ir/closure-captures.ts
+import { forEachChild, ts } from "../ts-api.js";
+export function collectOuterWrites(
+  fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration,
+): Set<string> {
+  const writes = new Set<string>();
+  let outer: ts.Node | undefined = fn.parent;
+  while (
+    outer &&
+    !ts.isFunctionDeclaration(outer) &&
+    !ts.isFunctionExpression(outer) &&
+    !ts.isArrowFunction(outer) &&
+    !ts.isSourceFile(outer)
+  ) {
+    outer = outer.parent;
+  }
+  if (!outer || !("body" in outer) || !outer.body) return writes;
+  const body = outer.body as ts.Node;
+  const visit = (node: ts.Node): void => {
+    if (node === fn) return;
+    if (ts.isBinaryExpression(node)) {
+      const op = node.operatorToken.kind;
+      if (
+        op === ts.SyntaxKind.EqualsToken ||
+        (op >= ts.SyntaxKind.PlusEqualsToken && op <= ts.SyntaxKind.CaretEqualsToken)
+      ) {
+        if (ts.isIdentifier(node.left)) writes.add(node.left.text);
+      }
+    }
+    if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      const op = node.operator;
+      if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
+        if (ts.isIdentifier(node.operand)) writes.add(node.operand.text);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return writes;
+}
+=== src/ir/value-references.ts
+import type { IrBindingId, IrUnitId } from "./identity.js";
+import type { IrCallableCapabilityProvenance, IrSourceGlobalCapabilityProvenance } from "./capability-provenance.js";
+export type IrCallableBinding =
+  | { readonly kind: "unit"; readonly unitId: IrUnitId }
+  | ({ readonly kind: "import"; readonly module: string; readonly field: string } & IrCallableCapabilityProvenance)
+  | { readonly kind: "runtime"; readonly symbol: string }
+  | { readonly kind: "intrinsic"; readonly symbol: string }
+  | { readonly kind: "support"; readonly bindingId: IrBindingId };
+export interface IrFuncRef {
+  readonly kind: "func";
+  readonly name: string;
+  readonly binding: IrCallableBinding;
+}
+export type IrGlobalBinding =
+  | ({ readonly kind: "source"; readonly bindingId: IrBindingId } & IrSourceGlobalCapabilityProvenance)
+  | { readonly kind: "import"; readonly bindingId: IrBindingId; readonly module: string; readonly field: string }
+  | { readonly kind: "runtime"; readonly bindingId: IrBindingId; readonly symbol: string }
+  | { readonly kind: "support"; readonly bindingId: IrBindingId };
+export interface IrGlobalRef {
+  readonly kind: "global";
+  readonly name: string;
+  readonly binding: IrGlobalBinding;
+}
+=== src/codegen/program-abi-callable-roles.ts
+export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
+  body: 0,
+  functionValueTrampoline: 1,
+  classMethodAdapter: 3,
+  classHostConstructor: 4,
+  moduleInit: 5,
+  retainedModuleFunction: 6,
+  typedThisTwin: 7,
+  vecHostBridge: 8,
+  closureHostBridge: 9,
+  dateCivilSupport: 10,
+  dataStructHostBridge: 11,
+  callableProvider: 12,
+  classConstructorNew: 13,
+  structFieldAccessor: 14,
+  closureArgcDispatcher: 15,
+  asyncFrameMachinery: 16,
+  vecFromExternMaterializer: 17,
+  stdlibMathHelper: 18,
+  fnctorConstructor: 19,
+  moduleImportAlias: 20,
+  moduleExportAlias: 21,
+} as const);
+export function programAbiCallableRoleOrdinalsAreDistinct(): boolean {
+  const ordinals = Object.values(PROGRAM_ABI_CALLABLE_ROLE);
+  return new Set(ordinals).size === ordinals.length;
+}

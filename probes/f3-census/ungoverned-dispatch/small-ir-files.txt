@@ -1,0 +1,27 @@
+##### J. small IR callable files broad matches
+src/ir/intrinsic-support.ts:111:/** Project the semantic standalone clock intent without adding a helper call. */
+src/ir/intrinsic-support.ts:116:    nested.target.binding.kind !== "intrinsic" ||
+src/ir/intrinsic-support.ts:117:    nested.target.binding.symbol !== IR_ASYNC_CLOCK_SNAPSHOT_FN
+src/ir/intrinsic-support.ts:127:    throw new Error("standalone async clock snapshot has a malformed semantic call");
+src/ir/intrinsic-support.ts:162:    const binding = instr.provider.target.binding;
+src/ir/intrinsic-support.ts:564:    sameIrCallableBinding(left.target.binding, right.target.binding) &&
+src/ir/intrinsic-support.ts:565:    left.target.name === right.target.name
+src/ir/intrinsic-support.ts:810:          kind: "standalone-native-wasmgc",
+src/ir/imported-functions.ts:468:      return { targetUnitId, ...target };
+src/ir/host-extern.ts:210: * Lexical `this`/`arguments`/`super`/`new.target`, nested runtime declarations,
+src/ir/host-free-runtime.ts:4: * host-free target (standalone / WASI / native strings) can service WITHOUT a
+src/ir/program-callable-bindings.ts:748:    const targetBindingId = upstream?.record.bindingId ?? resolved.target.record.bindingId;
+src/ir/legacy-caller-policy.ts:9: * only OUTSIDE JS-host mode (`jsHostExterns !== true`, i.e. standalone/WASI),
+src/ir/legacy-caller-policy.ts:26:  readonly jsHostExterns?: boolean;
+src/ir/legacy-caller-policy.ts:31: * (`jsHostExterns === true`). The negated spelling `jsHostExterns !== true`
+src/ir/legacy-caller-policy.ts:35:export function jsHostExternsEnabled(options: HostExternsOptions | undefined): boolean {
+src/ir/legacy-caller-policy.ts:36:  return options?.jsHostExterns === true;
+src/ir/legacy-caller-policy.ts:41: * unclaimed (legacy)? True exactly in host-free lanes (standalone/WASI).
+src/ir/legacy-caller-policy.ts:44:  return options?.jsHostExterns !== true;
+src/ir/fnctor-abi.ts:67:  /** True only for the standalone/WASI foreign-return constructor ABI. */
+src/ir/closure-struct-registry.ts:11:import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
+src/ir/closure-struct-registry.ts:27: * module-wide registry. Certified standalone DOM callbacks receive a branded
+src/ir/class-field-call-planning.ts:362:    current.target.binding.kind === "unit" &&
+src/ir/class-field-call-planning.ts:363:    proof.target.binding.kind === "unit" &&
+src/ir/class-field-call-planning.ts:364:    current.target.binding.unitId === proof.target.binding.unitId &&
+src/ir/class-field-call-planning.ts:365:    current.target.name === proof.target.name &&

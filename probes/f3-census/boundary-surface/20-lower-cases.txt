@@ -1,0 +1,32 @@
+1536:      case "fnctor.new": {
+1564:      case "fnctor.get": {
+1599:      case "call": {
+1683:      case "intrinsic": {
+2257:      case "string.concat": {
+2275:      case "string.eq": {
+2281:      case "string.len": {
+2349:      case "closure.new": {
+2368:      case "closure.cap": {
+2390:      case "closure.call": {
+2491:      case "class.new": {
+2538:      case "class.call": {
+2556:      case "class.super_init": {
+2575:      case "class.super_call": {
+2643:      case "class.static_call": {
+2974:      case "coerce.to_externref": {
+3977:    case "call":
+3979:    case "intrinsic":
+4013:    case "string.concat":
+4014:    case "string.eq":
+4018:    case "string.len":
+4023:    case "fnctor.new":
+4029:    case "fnctor.get":
+4038:    case "closure.new":
+4040:    case "closure.cap":
+4042:    case "closure.call":
+4058:    case "class.new":
+4064:    case "class.call":
+4066:    case "class.super_init":
+4068:    case "class.super_call":
+4072:    case "class.static_call":
+4094:    case "coerce.to_externref":

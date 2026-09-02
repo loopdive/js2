@@ -1,0 +1,2867 @@
+[
+  {
+    "shape": "01-direct-call",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 183,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "add",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["add", "entry"],
+    "irFirstSkipped": ["add", "entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 2,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "01-direct-call",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 22017,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "add",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["add", "entry"],
+    "irFirstSkipped": ["add", "entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 2,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "01-direct-call",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 22632,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "add",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["add", "entry"],
+    "irFirstSkipped": ["add", "entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 2,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "01-direct-call",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 22659,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "add",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["add", "entry"],
+    "irFirstSkipped": ["add", "entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 2,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "02-indirect-call-var",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 9974,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function_0",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__new_TypeError",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__new_TypeError": "[object Object]",
+      "env.__call_function_0": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 2,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "02-indirect-call-var",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 42469,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 2,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "02-indirect-call-var",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 60149,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 2,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "02-indirect-call-var",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 60016,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 2,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "03-closure-mutable-local",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 3282,
+    "errors": [],
+    "imports": [
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__new_TypeError",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__new_TypeError": "[object Object]",
+      "env.__unbox_number": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "03-closure-mutable-local",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 33003,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "03-closure-mutable-local",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 51773,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "03-closure-mutable-local",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 51725,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "04-closure-param",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 2990,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "entry__closure_0"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 1,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "04-closure-param",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 33007,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "entry__closure_0"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 1,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "04-closure-param",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 33030,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "entry__closure_0"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 1,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "04-closure-param",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 33057,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "entry__closure_0"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 1,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "05-returned-closure",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 5942,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function",
+      "env.__call_function_0",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__js_array_new",
+      "env.__new_TypeError",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__js_array_new": "[object Object]",
+      "env.__call_function": "[object Object]",
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__new_TypeError": "[object Object]",
+      "env.__call_function_0": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "makeCounter",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "makeCounter rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "entry rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "makeCounter: unsupported/select/body-shape-rejected — makeCounter rejected by IR selection (body-shape-rejected)",
+      "entry: unsupported/select/call-graph-closure — entry rejected by IR selection (call-graph-closure)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "05-returned-closure",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 36555,
+    "errors": [
+      "[warning] L0: Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-",
+      "[warning] L0: Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-",
+      "[warning] L0: Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-"
+    ],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "makeCounter",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "makeCounter rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "entry rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "makeCounter: unsupported/select/body-shape-rejected — makeCounter rejected by IR selection (body-shape-rejected)",
+      "entry: unsupported/select/call-graph-closure — entry rejected by IR selection (call-graph-closure)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "05-returned-closure",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 54660,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "makeCounter",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "makeCounter rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "entry rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "makeCounter: unsupported/select/body-shape-rejected — makeCounter rejected by IR selection (body-shape-rejected)",
+      "entry: unsupported/select/call-graph-closure — entry rejected by IR selection (call-graph-closure)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "05-returned-closure",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 54634,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "makeCounter",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "makeCounter rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "entry rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "makeCounter: unsupported/select/body-shape-rejected — makeCounter rejected by IR selection (body-shape-rejected)",
+      "entry: unsupported/select/call-graph-closure — entry rejected by IR selection (call-graph-closure)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "06-bind",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 3890,
+    "errors": [],
+    "imports": [
+      "env.__bind_function",
+      "env.__box_number",
+      "env.__call_function",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__js_array_new",
+      "env.__js_array_push",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__js_array_new": "[object Object]",
+      "env.__js_array_push": "[object Object]",
+      "env.__bind_function": "[object Object]",
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__call_function": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "scale",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["scale"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "06-bind",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 99725,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "scale",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["scale"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "06-bind",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 132257,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "scale",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["scale"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "06-bind",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 107031,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "scale",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["scale"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "07-call-apply",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 812,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "sum3",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "function-invocation-method-unsupported",
+        "detail": "entry rejected by IR selection (function-invocation-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["sum3"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/function-invocation-method-unsupported — entry rejected by IR selection (function-invocation-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "07-call-apply",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 22433,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "sum3",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "function-invocation-method-unsupported",
+        "detail": "entry rejected by IR selection (function-invocation-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["sum3"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/function-invocation-method-unsupported — entry rejected by IR selection (function-invocation-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "07-call-apply",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 22798,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "sum3",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "function-invocation-method-unsupported",
+        "detail": "entry rejected by IR selection (function-invocation-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["sum3"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/function-invocation-method-unsupported — entry rejected by IR selection (function-invocation-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "07-call-apply",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 22825,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "sum3",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "function-invocation-method-unsupported",
+        "detail": "entry rejected by IR selection (function-invocation-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["sum3"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/function-invocation-method-unsupported — entry rejected by IR selection (function-invocation-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "08-array-map-arrow",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 4333,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__new_TypeError",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__new_TypeError": "[object Object]",
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "array-method-unsupported",
+        "detail": "entry rejected by IR selection (array-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/array-method-unsupported — entry rejected by IR selection (array-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "08-array-map-arrow",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 35716,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "array-method-unsupported",
+        "detail": "entry rejected by IR selection (array-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/array-method-unsupported — entry rejected by IR selection (array-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "08-array-map-arrow",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 53572,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "array-method-unsupported",
+        "detail": "entry rejected by IR selection (array-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/array-method-unsupported — entry rejected by IR selection (array-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "08-array-map-arrow",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 53498,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "array-method-unsupported",
+        "detail": "entry rejected by IR selection (array-method-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/array-method-unsupported — entry rejected by IR selection (array-method-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "09-host-callback-addEventListener",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 908,
+    "errors": [],
+    "imports": [
+      "env.Element_set_textContent",
+      "env.EventTarget_addEventListener",
+      "env.__call_function_0",
+      "env.__make_callback",
+      "env.number_toString"
+    ],
+    "importIntents": {
+      "env.EventTarget_addEventListener": "[object Object]",
+      "env.Element_set_textContent": "[object Object]",
+      "env.number_toString": "[object Object]",
+      "env.__make_callback": "[object Object]",
+      "env.__call_function_0": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["install", "install__closure_0"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [],
+    "irClaimed": false
+  },
+  {
+    "shape": "09-host-callback-addEventListener",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 93602,
+    "errors": [
+      "[warning] L0: Host import \"env.eval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.isNaN\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.isFinite\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.alert\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.blur\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.cancelIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-impo",
+      "[warning] L0: Host import \"env.captureEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.close\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.confirm\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlis",
+      "[warning] L0: Host import \"env.focus\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.getComputedStyle\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import",
+      "[warning] L0: Host import \"env.getSelection\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-all",
+      "[warning] L0: Host import \"env.matchMedia\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allow",
+      "[warning] L0: Host import \"env.moveBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.moveTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.open\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.print\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.prompt\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.releaseEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.requestIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-imp",
+      "[warning] L0: Host import \"env.resizeBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.resizeTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.stop\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.toString\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.dispatchEvent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.cancelAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-im",
+      "[warning] L0: Host import \"env.requestAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-i",
+      "[warning] L0: Host import \"env.atob\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.btoa\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.clearInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.clearTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-all",
+      "[warning] L0: Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-impor",
+      "[warning] L0: Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-impor",
+      "[warning] L0: Host import \"env.fetch\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.queueMicrotask\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.reportError\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.setInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.setTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allow",
+      "[warning] L0: Host import \"env.structuredClone\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-",
+      "[warning] L0: Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import",
+      "[warning] L0: Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import",
+      "[warning] L0: Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-imp",
+      "[warning] L0: Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-imp",
+      "[warning] L0: Host import \"env.EventTarget_addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen",
+      "[warning] L0: Host import \"env.Element_set_textContent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host"
+    ],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "install rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "install: unsupported/select/body-shape-rejected — install rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "09-host-callback-addEventListener",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 50422,
+    "errors": [
+      "[warning] L3: Host import leak (warning, #2961): host import \"env.EventTarget_addEventListener\" survives into the finished --target standalone binary and would fail instantia",
+      "[warning] L3: Host import leak (warning, #2961): host import \"env.Element_set_textContent\" survives into the finished --target standalone binary and would fail instantiation "
+    ],
+    "imports": ["env.Element_set_textContent", "env.EventTarget_addEventListener"],
+    "importIntents": {
+      "env.EventTarget_addEventListener": "[object Object]",
+      "env.Element_set_textContent": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "install rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "install: unsupported/select/body-shape-rejected — install rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "09-host-callback-addEventListener",
+    "lane": "wasi",
+    "success": false,
+    "bytes": 0,
+    "errors": [
+      "[error] L1: Codegen error: DOM global 'EventTarget' is not available in WASI target — DOM requires a browser host",
+      "[error] L1: Codegen error: DOM global 'HTMLElement' is not available in WASI target — DOM requires a browser host",
+      "[warning] L0: Host import \"env.EventTarget_addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen",
+      "[warning] L0: Host import \"env.Element_set_textContent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host"
+    ],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "install rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "install: unsupported/select/body-shape-rejected — install rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "09b-host-callback-pinned-b2",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 849,
+    "errors": [],
+    "imports": [
+      "env.Element_set_textContent",
+      "env.EventTarget_addEventListener",
+      "env.__call_function_0",
+      "env.__make_callback"
+    ],
+    "importIntents": {
+      "env.EventTarget_addEventListener": "[object Object]",
+      "env.Element_set_textContent": "[object Object]",
+      "env.__make_callback": "[object Object]",
+      "env.__call_function_0": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["install", "install__closure_0"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [],
+    "irClaimed": false
+  },
+  {
+    "shape": "09b-host-callback-pinned-b2",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 93617,
+    "errors": [
+      "[warning] L0: Host import \"env.eval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.isNaN\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.isFinite\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.alert\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.blur\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.cancelIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-impo",
+      "[warning] L0: Host import \"env.captureEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.close\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.confirm\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlis",
+      "[warning] L0: Host import \"env.focus\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.getComputedStyle\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import",
+      "[warning] L0: Host import \"env.getSelection\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-all",
+      "[warning] L0: Host import \"env.matchMedia\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allow",
+      "[warning] L0: Host import \"env.moveBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.moveTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.open\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.postMessage\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.print\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.prompt\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.releaseEvents\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.requestIdleCallback\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-imp",
+      "[warning] L0: Host import \"env.resizeBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.resizeTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.scroll\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist",
+      "[warning] L0: Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scrollBy\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.scrollTo\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.stop\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.toString\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowli",
+      "[warning] L0: Host import \"env.dispatchEvent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.cancelAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-im",
+      "[warning] L0: Host import \"env.requestAnimationFrame\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-i",
+      "[warning] L0: Host import \"env.atob\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.btoa\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.t",
+      "[warning] L0: Host import \"env.clearInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-al",
+      "[warning] L0: Host import \"env.clearTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-all",
+      "[warning] L0: Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-impor",
+      "[warning] L0: Host import \"env.createImageBitmap\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-impor",
+      "[warning] L0: Host import \"env.fetch\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.",
+      "[warning] L0: Host import \"env.queueMicrotask\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.reportError\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.setInterval\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allo",
+      "[warning] L0: Host import \"env.setTimeout\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-allow",
+      "[warning] L0: Host import \"env.structuredClone\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-",
+      "[warning] L0: Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import",
+      "[warning] L0: Host import \"env.addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import",
+      "[warning] L0: Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-imp",
+      "[warning] L0: Host import \"env.removeEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-imp",
+      "[warning] L0: Host import \"env.EventTarget_addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen",
+      "[warning] L0: Host import \"env.Element_set_textContent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host"
+    ],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "install rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "install: unsupported/select/body-shape-rejected — install rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "09b-host-callback-pinned-b2",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 33180,
+    "errors": [
+      "[warning] L3: Host import leak (warning, #2961): host import \"env.EventTarget_addEventListener\" survives into the finished --target standalone binary and would fail instantia",
+      "[warning] L3: Host import leak (warning, #2961): host import \"env.Element_set_textContent\" survives into the finished --target standalone binary and would fail instantiation "
+    ],
+    "imports": ["env.Element_set_textContent", "env.EventTarget_addEventListener"],
+    "importIntents": {
+      "env.EventTarget_addEventListener": "[object Object]",
+      "env.Element_set_textContent": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "install rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "install: unsupported/select/body-shape-rejected — install rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "09b-host-callback-pinned-b2",
+    "lane": "wasi",
+    "success": false,
+    "bytes": 0,
+    "errors": [
+      "[error] L1: Codegen error: DOM global 'EventTarget' is not available in WASI target — DOM requires a browser host",
+      "[error] L1: Codegen error: DOM global 'HTMLElement' is not available in WASI target — DOM requires a browser host",
+      "[warning] L0: Host import \"env.EventTarget_addEventListener\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen",
+      "[warning] L0: Host import \"env.Element_set_textContent\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host"
+    ],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "install",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "install rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "install: unsupported/select/body-shape-rejected — install rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "10-new-plain-function",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 6425,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__extern_get",
+      "env.__extern_set_strict",
+      "env.__register_fnctor_instance",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__register_fnctor_instance": "[object Object]",
+      "env.__extern_set_strict": "[object Object]",
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__extern_get": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "Point",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["Point"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "10-new-plain-function",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 100730,
+    "errors": [],
+    "imports": ["env.__register_fnctor_instance"],
+    "importIntents": {
+      "env.__register_fnctor_instance": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "Point",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["Point"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "10-new-plain-function",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 131627,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "Point",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["Point"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "10-new-plain-function",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 102595,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "Point",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["Point"],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 2,
+    "irEmittedUnits": 0,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "11-new-class",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 1100,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "Vec_new",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "Vec_len2",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "Vec_new", "Vec_len2"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 3,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "11-new-class",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 22697,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "Vec_new",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "Vec_len2",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "Vec_new", "Vec_len2"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 3,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "11-new-class",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 23044,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "Vec_new",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "Vec_len2",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "Vec_new", "Vec_len2"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 3,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "11-new-class",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 23071,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "Vec_new",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "Vec_len2",
+        "unitKind": "class-member",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["entry", "Vec_new", "Vec_len2"],
+    "irFirstSkipped": ["entry"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 3,
+    "irEmittedUnits": 3,
+    "legacyUnits": 0,
+    "unsupported": [],
+    "irClaimed": true
+  },
+  {
+    "shape": "12-higher-order",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 12005,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function",
+      "env.__call_function_0",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__js_array_new",
+      "env.__js_array_push",
+      "env.__new_TypeError",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__js_array_new": "[object Object]",
+      "env.__js_array_push": "[object Object]",
+      "env.__call_function": "[object Object]",
+      "env.__new_TypeError": "[object Object]",
+      "env.__call_function_0": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "compose",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl", "compose", "compose__closure_0"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 4,
+    "irEmittedUnits": 2,
+    "legacyUnits": 2,
+    "unsupported": [
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "12-higher-order",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 44173,
+    "errors": [
+      "[warning] L0: Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-",
+      "[warning] L0: Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-",
+      "[warning] L0: Host import \"env.__js_array_new\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-a",
+      "[warning] L0: Host import \"env.__js_array_push\" requested under --no-host-imports / WASI strict mode, but the name is not on the dual-mode allowlist (src/codegen/host-import-"
+    ],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "compose",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "compose rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 4,
+    "irEmittedUnits": 2,
+    "legacyUnits": 2,
+    "unsupported": [
+      "compose: unsupported/select/call-graph-closure — compose rejected by IR selection (call-graph-closure)",
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "12-higher-order",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 61517,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "compose",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "compose rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 4,
+    "irEmittedUnits": 2,
+    "legacyUnits": 2,
+    "unsupported": [
+      "compose: unsupported/select/call-graph-closure — compose rejected by IR selection (call-graph-closure)",
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "12-higher-order",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 61330,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "compose",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-graph-closure",
+        "detail": "compose rejected by IR selection (call-graph-closure)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "inc",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "dbl",
+        "unitKind": "function",
+        "kind": "emitted",
+        "stage": "patch",
+        "irBodyEmitted": true,
+        "legacyBodyEmitted": false
+      },
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "body-shape-rejected",
+        "detail": "entry rejected by IR selection (body-shape-rejected)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": ["inc", "dbl"],
+    "irFirstSkipped": ["inc", "dbl"],
+    "irPostClaimErrors": [],
+    "terminalUnits": 4,
+    "irEmittedUnits": 2,
+    "legacyUnits": 2,
+    "unsupported": [
+      "compose: unsupported/select/call-graph-closure — compose rejected by IR selection (call-graph-closure)",
+      "entry: unsupported/select/body-shape-rejected — entry rejected by IR selection (body-shape-rejected)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "13-recursion-local-ref",
+    "lane": "gc-host",
+    "success": true,
+    "bytes": 3288,
+    "errors": [],
+    "imports": [
+      "env.__box_number",
+      "env.__call_function_1",
+      "env.__call_function_2",
+      "env.__call_function_3",
+      "env.__call_function_4",
+      "env.__new_TypeError",
+      "env.__unbox_number"
+    ],
+    "importIntents": {
+      "env.__new_TypeError": "[object Object]",
+      "env.__unbox_number": "[object Object]",
+      "env.__box_number": "[object Object]",
+      "env.__call_function_1": "[object Object]",
+      "env.__call_function_2": "[object Object]",
+      "env.__call_function_3": "[object Object]",
+      "env.__call_function_4": "[object Object]"
+    },
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-resolution-unsupported",
+        "detail": "entry rejected by IR selection (call-resolution-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/call-resolution-unsupported — entry rejected by IR selection (call-resolution-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "13-recursion-local-ref",
+    "lane": "gc-strict-no-host",
+    "success": true,
+    "bytes": 33431,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-resolution-unsupported",
+        "detail": "entry rejected by IR selection (call-resolution-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/call-resolution-unsupported — entry rejected by IR selection (call-resolution-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "13-recursion-local-ref",
+    "lane": "standalone",
+    "success": true,
+    "bytes": 52211,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-resolution-unsupported",
+        "detail": "entry rejected by IR selection (call-resolution-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/call-resolution-unsupported — entry rejected by IR selection (call-resolution-unsupported)"
+    ],
+    "irClaimed": false
+  },
+  {
+    "shape": "13-recursion-local-ref",
+    "lane": "wasi",
+    "success": true,
+    "bytes": 52150,
+    "errors": [],
+    "imports": [],
+    "importIntents": {},
+    "units": [
+      {
+        "name": "entry",
+        "unitKind": "function",
+        "kind": "unsupported",
+        "stage": "select",
+        "code": "call-resolution-unsupported",
+        "detail": "entry rejected by IR selection (call-resolution-unsupported)",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": true
+      },
+      {
+        "name": "<module-init>",
+        "unitKind": "module-init",
+        "kind": "non-executable",
+        "stage": "select",
+        "irBodyEmitted": false,
+        "legacyBodyEmitted": false
+      }
+    ],
+    "irCompiledFuncs": [],
+    "irFirstSkipped": [],
+    "irPostClaimErrors": [],
+    "terminalUnits": 1,
+    "irEmittedUnits": 0,
+    "legacyUnits": 1,
+    "unsupported": [
+      "entry: unsupported/select/call-resolution-unsupported — entry rejected by IR selection (call-resolution-unsupported)"
+    ],
+    "irClaimed": false
+  }
+]

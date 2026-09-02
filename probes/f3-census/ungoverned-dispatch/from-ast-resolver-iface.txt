@@ -1,0 +1,35 @@
+##### B. IrFromAstResolver interface method names (from-ast.ts:382-)
+src/ir/from-ast.ts:384:  hostIndirectEvalTarget?(): IrFuncRef | null;
+src/ir/from-ast.ts:386:  isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
+src/ir/from-ast.ts:388:  isHoleyArrayFilterCall?(expr: ts.CallExpression): boolean;
+src/ir/from-ast.ts:392:  functionPrototypeCallTarget?(): IrFuncRef | null;
+src/ir/from-ast.ts:397:  standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
+src/ir/from-ast.ts:413:  resolveDynamic?(): ValType;
+src/ir/from-ast.ts:435:  stringIsExternref?(): boolean;
+src/ir/from-ast.ts:452:  hasHostNumberToString?(): boolean;
+src/ir/from-ast.ts:496:  stringForOfPlan?(): "char-loop" | "iter-host";
+src/ir/from-ast.ts:516:  dynamicForInPlan?(): {
+src/ir/from-ast.ts:536:  resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
+src/ir/from-ast.ts:543:  getExternClassInfo?(className: string): IrExternClassMeta | undefined;
+src/ir/from-ast.ts:567:  getHostGlobalInfo?(name: string): { importName: string; className: string } | undefined;
+src/ir/from-ast.ts:574:  jsHostExterns?(): boolean;
+src/ir/from-ast.ts:625:  consoleArgVariant?(arg: ts.Expression): "number" | "bool" | "string" | "externref";
+src/ir/from-ast.ts:656:  stringMethodPlan?(
+src/ir/from-ast.ts:668:  fnctorNativeStringReplace?(call: ts.CallExpression): boolean;
+src/ir/from-ast.ts:709:  resolveExternMember?(
+src/ir/from-ast.ts:744:  resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
+src/ir/from-ast.ts:757:  retainedFunctionMethodPlan?(
+src/ir/from-ast.ts:761:  fnctorArrayMethodPlan?(
+src/ir/from-ast.ts:786:  dynamicCarrierIsExternref?(): boolean;
+src/ir/from-ast.ts:827:  readonly constructorInitClassShape?: IrClassShape;
+src/ir/from-ast.ts:829:  readonly constructorFieldInitializers?: readonly IrClassInstanceInitializer[];
+src/ir/from-ast.ts:831:  readonly implicitConstructorParentShape?: IrClassShape;
+src/ir/from-ast.ts:858:  readonly calleeTypes?: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>;
+src/ir/from-ast.ts:860:  readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
+src/ir/from-ast.ts:862:  readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
+src/ir/from-ast.ts:864:  readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
+src/ir/from-ast.ts:866:  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
+src/ir/from-ast.ts:868:  readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+src/ir/from-ast.ts:869:  readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+src/ir/from-ast.ts:870:  readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
+src/ir/from-ast.ts:951:  readonly hostDynamicClassMethodNames?: Set<string>;

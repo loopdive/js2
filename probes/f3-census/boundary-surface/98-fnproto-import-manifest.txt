@@ -1,0 +1,38 @@
+=== integration.ts functionPrototypeCallTarget
+6124:    functionPrototypeCallTarget() {
+6125-      if (!ctx.standalone || ctx.wasi) return null;
+6126-      return ensureFunctionPrototypeCallHelper(ctx) === undefined
+6127-        ? null
+6128-        : irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER);
+6129-    },
+6130-    resolveDynamic() {
+6131-      return resolveIrDynamicCarrierType(ctx);
+6132-    },
+
+=== import-manifest.ts 70-95
+        };
+      if (name === `${prefix}_set_${propName}`)
+        return {
+          type: "extern_class",
+          className: ec.className,
+          action: "set",
+          member: propName,
+          namespacePath: nsPath,
+        };
+    }
+  }
+
+  // Callback maker
+  if (name === "__make_callback") return { type: "callback_maker" };
+  // (#4394) Same maker, constructible bridge — see closures.ts.
+  if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
+  if (name === "__make_getter_callback") return { type: "getter_callback_maker" };
+
+  // Async/await
+  if (name === "__await") return { type: "await" };
+
+  // Dynamic import()
+  if (name === "__dynamic_import") return { type: "dynamic_import" };
+
+  // Proxy
+  if (name === "__proxy_create") return { type: "proxy_create" };

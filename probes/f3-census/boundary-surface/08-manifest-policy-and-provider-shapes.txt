@@ -1,0 +1,277 @@
+/** Adapters that run no batching pass resolve the arm to this. */
+export const STRING_CONCAT_MANY_POLICY_DISABLED: StringConcatManyPolicy = Object.freeze({
+  batch: "off",
+});
+
+export interface RuntimeManifestPolicy {
+  readonly target: RuntimeTarget;
+  readonly backend: RuntimeBackend;
+  /**
+   * Omission resolves to {@link NUMBER_BOUNDARY_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly numberBoundary?: NumberBoundaryPolicy;
+  /**
+   * Omission resolves to {@link BOOLEAN_BOUNDARY_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly booleanBoundary?: BooleanBoundaryPolicy;
+  /**
+   * Omission resolves to {@link EXTERN_IS_UNDEFINED_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly externIsUndefined?: ExternIsUndefinedPolicy;
+  /**
+   * Omission resolves to {@link GENERATOR_NUMBER_BOX_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly generatorNumberBox?: GeneratorNumberBoxPolicy;
+  /**
+   * Omission resolves to {@link STRING_COMPARE_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringCompare?: StringComparePolicy;
+  /**
+   * Omission resolves to {@link STRING_EQ_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringEq?: StringEqPolicy;
+  /**
+   * Omission resolves to {@link STRING_LEN_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringLen?: StringLenPolicy;
+  /**
+   * Omission resolves to {@link STRING_CONCAT_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringConcat?: StringConcatPolicy;
+  /**
+   * Omission resolves to {@link STRING_CHAR_CODE_AT_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly stringCharCodeAt?: StringCharCodeAtPolicy;
+  /**
+   * Omission resolves to {@link STRING_CONCAT_MANY_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringConcatMany?: StringConcatManyPolicy;
+}
+
+/** The frozen manifest's policy always carries an explicit resolved decision. */
+export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
+  readonly numberBoundary: NumberBoundaryPolicy;
+  readonly booleanBoundary: BooleanBoundaryPolicy;
+  readonly externIsUndefined: ExternIsUndefinedPolicy;
+  readonly generatorNumberBox: GeneratorNumberBoxPolicy;
+  readonly stringCompare: StringComparePolicy;
+  readonly stringEq: StringEqPolicy;
+  readonly stringLen: StringLenPolicy;
+  readonly stringConcat: StringConcatPolicy;
+  readonly stringCharCodeAt: StringCharCodeAtPolicy;
+  readonly stringConcatMany: StringConcatManyPolicy;
+};
+
+export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "backend.f64.abs",
+  "backend.f64.ceil",
+  "backend.f64.floor",
+  "backend.f64.fround",
+  "backend.f64.sqrt",
+  "backend.f64.trunc",
+  "backend.math.clz32",
+  "backend.math.imul",
+  "backend.math.max",
+  "backend.math.min",
+  "selfhost.math.acos",
+  "selfhost.math.acosh",
+  "selfhost.math.asin",
+  "selfhost.math.asinh",
+  "selfhost.math.atan",
+  "selfhost.math.atan2",
+  "selfhost.math.atanh",
+  "selfhost.math.cbrt",
+  "selfhost.math.cos",
+  "selfhost.math.cosh",
+  "selfhost.math.exp",
+  "selfhost.math.expm1",
+  "selfhost.math.log",
+  "selfhost.math.log10",
+  "selfhost.math.log1p",
+  "selfhost.math.log2",
+  "selfhost.math.pow",
+  "selfhost.math.reduce-trig",
+  "selfhost.math.round",
+  "selfhost.math.sign",
+  "selfhost.math.sin",
+  "selfhost.math.sinh",
+  "selfhost.math.tan",
+  "selfhost.math.tanh",
+] as const);
+
+export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
+export const NUMERIC_COERCION_RUNTIME_PROVIDER_IDS = Object.freeze(["backend.js.to_uint32"] as const);
+export type NumericCoercionRuntimeProviderId = (typeof NUMERIC_COERCION_RUNTIME_PROVIDER_IDS)[number];
+
+/** (#3526 F1-S1) One provider per admitted number-boundary policy arm. */
+export type RuntimeProviderId =
+  | MathRuntimeProviderId
+  | NumericCoercionRuntimeProviderId
+  | NumberBoundaryRuntimeProviderId
+  | BooleanBoundaryRuntimeProviderId
+  | ExternBoundaryRuntimeProviderId
+  | GeneratorNumberBoxRuntimeProviderId
+  | StringCompareRuntimeProviderId
+  | StringEqRuntimeProviderId
+  | StringLenRuntimeProviderId
+  | StringConcatRuntimeProviderId
+  | StringCharCodeAtRuntimeProviderId
+  | StringConcatManyRuntimeProviderId
+  | AsyncRuntimeProviderId;
+
+export type RuntimeProviderImplementation =
+  | {
+      readonly kind: "backend-op";
+      readonly opcode: IrIntrinsicBackendOp;
+    }
+  | {
+      readonly kind: "backend-sequence";
+      readonly sequence: IrIntrinsicBackendSequence;
+    }
+  | {
+      readonly kind: "backend-composite";
+      readonly operation: IrIntrinsicBackendComposite;
+    }
+  | {
+      readonly kind: "self-hosted";
+      /** Concrete ABI spelling, deliberately below the semantic feature. */
+      readonly symbol: string;
+    }
+  | {
+      /** The provider closes over one or more declared host capabilities. */
+      readonly kind: "host-capability";
+    }
+  | {
+      /**
+       * (#3526 F1-S1) A synchronous callable answered by one exact central
+       * host capability. Lowering derives the canonical physical
+       * `irImportFuncRef` from that record — the semantic identity stays the
+       * versioned `IntrinsicId`, the physical target stays the existing import
+       * so legacy consumers and import order do not drift.
+       *
+       * (#3526 F2-S2) Typed on the FUNC half of the capability id union: a
+       * global capability (`string.const`) has no callable spelling, so
+       * naming one here is a compile error, not a lowering-time surprise.
+       * `#indexProviders` carries the runtime twin of this narrowing.
+       */
+      readonly kind: "host-callable";
+      readonly capability: RuntimeHostCapabilityFuncId;
+    }
+  | {
+      /**
+       * (#3526 F1-S1) A synchronous callable answered by one exact runtime
+       * symbol, lowered through the canonical `irRuntimeFuncRef`.
+       */
+      readonly kind: "runtime-callable";
+      readonly symbol: string;
+    }
+  | {
+      /**
+       * (#3526 F2-S6) A synchronous callable answered by one host capability
+       * FAMILY — a set of imports differing only in arity, whose physical
+       * field the capability record derives from the operand count.
+       *
+       * Typed on the FAMILY half of the capability id union, so a plain func
+       * id here is a compile error and a family id in `host-callable` is one
+       * too. Deliberately NOT admitted into
+       * {@link IntrinsicRuntimeProviderImplementation}: a family row answers a
+       * free-form intrinsic SYMBOL, never a closed `IntrinsicId`, so nothing
+       * may map it to a concrete import through the attachment path.
+       */
+      readonly kind: "host-callable-family";
+      readonly capability: RuntimeHostCapabilityFuncFamilyId;
+    }
+  | {
+      /**
+       * (#3526 F2-S6) The native twin of the family arm: a set of runtime
+       * symbols `symbolPrefix + arity`, bounded by an inclusive arity range.
+       *
+       * The range is the SINGLE authority for the native helper family's
+       * bound — `src/codegen/native-batched-concat.ts` reads it from here
+       * rather than keeping its own copy, and the pass's arity ceiling is
+       * derived from it rather than being a third copy of the literal.
+       */
+      readonly kind: "runtime-callable-family";
+      readonly symbolPrefix: string;
+      readonly arity: { readonly min: number; readonly max: number };
+    }
+  | {
+      /**
+       * (#3526 F2-S4) A field read on a Program-ABI support carrier — the
+       * first native arm in the catalogue that is not a callable at all.
+       *
+       * Deliberately SYMBOLIC: the manifest names the ABI *role* (`"string"`)
+       * and the field index, and the consumer resolves the role to the
+       * registry's carrier type ref at attachment time. It never carries a raw
+       * physical type index, because the manifest is frozen BEFORE the carrier's
+       * physical layout is planned — a type index in a frozen manifest would be
+       * a lie the next lane has to discover.
+       */
+      readonly kind: "carrier-field";
+      readonly carrier: "string";
+      readonly fieldIndex: number;
+    }
+  | {
+      /** Scheduling is supplied by the host Promise job queue, with no import. */
+      readonly kind: "host-managed";
+      readonly service: "promise-job-queue";
+    }
+  | {
+      /** Promise allocation, reactions, settlement, and queueing stay in WasmGC. */
+      readonly kind: "native-managed";
+      readonly service: "native-promise-runtime";
+    };
+
+export type MathRuntimeProviderImplementation = Extract<
+  RuntimeProviderImplementation,
+  { readonly kind: "backend-op" | "backend-sequence" | "backend-composite" | "self-hosted" }
+>;
+
+export type IntrinsicRuntimeProviderImplementation = Extract<
+  RuntimeProviderImplementation,
+  {
+    readonly kind:
+      | "backend-op"
+      | "backend-sequence"
+      | "backend-composite"
+      | "self-hosted"
+      | "host-callable"
+      | "runtime-callable";
+  }
+>;
+
+export interface RuntimeProviderDefinition {
+  readonly id: RuntimeProviderId;
+  readonly feature: RuntimeFeature;
+  /** Present for source intrinsics; semantic runtime requirements need no call ABI. */
+  readonly signature?: IntrinsicSignature;
+  readonly dependencies: readonly RuntimeFeature[];
+  readonly hostCapabilities: readonly HostCapabilityId[];
+  readonly supportedTargets: readonly RuntimeTarget[];
+  readonly supportedBackends: readonly RuntimeBackend[];
+  readonly implementation: RuntimeProviderImplementation;
+}
+
+/**
+ * Project concrete backend reservations from already selected providers.
+ * This is the only semantic-to-backend requirement projection: consumers
+ * receive the resulting closed vector and never rediscover it from features.
+ */
+export function projectRuntimeBackendRequirements(
+  providers: readonly RuntimeProviderDefinition[],
+): readonly RuntimeBackendRequirement[] {
+  const requirements = new Set<RuntimeBackendRequirement>();
+  let family: "host" | "native" | null = null;
+  for (const provider of providers) {
+    const kind = provider.implementation.kind;
+    if (kind === "host-capability" || kind === "host-managed") {

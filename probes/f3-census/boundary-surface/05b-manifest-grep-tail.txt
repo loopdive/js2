@@ -1,0 +1,79 @@
+1327:    { kind: "runtime-callable", symbol: "__jsstr_charCodeAt" },
+1330:  numberBoundaryProvider(
+1334:    { kind: "runtime-callable", symbol: "__str_charCodeAt" },
+1354:  numberBoundaryProvider(
+1358:    { kind: "host-callable-family", capability: "string.concat.many" },
+1361:  numberBoundaryProvider(
+1366:      kind: "runtime-callable-family",
+1375: * caller resolved it to unsupported. */
+1389: * when the caller resolved the CONCATENATION authority to unsupported.
+1419: * `arity.max`. `off` is not a value here by construction: the caller must not
+1435: * the caller resolved it to unsupported. */
+1448: * caller resolved it to unsupported. */
+1449:function booleanBoundaryProviderId(policy: BooleanBoundaryPolicy): BooleanBoundaryRuntimeProviderId | null {
+1453:const BOOLEAN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(BOOLEAN_BOUNDARY_RUNTIME_FEATURES);
+1455:function isBooleanBoundaryFeature(feature: RuntimeFeature): feature is BooleanBoundaryRuntimeFeature {
+1456:  return BOOLEAN_BOUNDARY_FEATURE_SET.has(feature);
+1460: * caller resolved it to unsupported. */
+1461:function externIsUndefinedProviderId(policy: ExternIsUndefinedPolicy): ExternBoundaryRuntimeProviderId | null {
+1466:const EXTERN_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(EXTERN_BOUNDARY_RUNTIME_FEATURES);
+1468:function isExternBoundaryFeature(feature: RuntimeFeature): feature is ExternBoundaryRuntimeFeature {
+1469:  return EXTERN_BOUNDARY_FEATURE_SET.has(feature);
+1473: * caller resolved the arm to unsupported. */
+1474:function numberBoundaryProviderId(
+1475:  feature: NumberBoundaryRuntimeFeature,
+1476:  policy: NumberBoundaryPolicy,
+1477:): NumberBoundaryRuntimeProviderId | null {
+1483:const NUMBER_BOUNDARY_FEATURE_SET: ReadonlySet<string> = new Set(NUMBER_BOUNDARY_RUNTIME_FEATURES);
+1485:function isNumberBoundaryFeature(feature: RuntimeFeature): feature is NumberBoundaryRuntimeFeature {
+1486:  return NUMBER_BOUNDARY_FEATURE_SET.has(feature);
+1676:/** Canonically ordered default provider catalogue for the 33-method slice. */
+1683:/** Closed, canonically ordered catalogue used by production manifest builders. */
+1688:    ...NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
+1689:    ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
+1690:    ...EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
+1704:  ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
+1705:  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+1706:  ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
+1720:  ...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS,
+1721:  ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS,
+1722:  ...EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS,
+1924:  constructor(policy: RuntimeManifestPolicy, options: RuntimeManifestBuilderOptions = {}) {
+1931:    const numberBoundary = policy.numberBoundary ?? NUMBER_BOUNDARY_POLICY_DISABLED;
+1932:    const booleanBoundary = policy.booleanBoundary ?? BOOLEAN_BOUNDARY_POLICY_DISABLED;
+1958:      numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
+1959:      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
+2220:      // (#3526 F2-S2) Runtime twin of the `host-callable` capability type
+2222:      // provider table that arrived through an `unknown`/`as` boundary, where
+2223:      // lowering would otherwise build a callable target out of a global.
+2225:        provider.implementation.kind === "host-callable" &&
+2230:          `host-callable provider ${provider.id} names non-callable host capability ${String(provider.implementation.capability)}`,
+2234:      // mirror: a `host-callable-family` may name only a family id, and the
+2235:      // `host-callable` check above already refuses a family id there — so the
+2239:        provider.implementation.kind === "host-callable-family" &&
+2244:          `host-callable-family provider ${provider.id} names non-family host capability ${String(provider.implementation.capability)}`,
+2247:      // (#3526 F2-S6) A `runtime-callable-family` names a SET of native
+2252:      // provider table arriving through an `unknown`/`as` boundary would
+2253:      // otherwise reach the resolve arm with a bound that admits an arity no
+2255:      if (provider.implementation.kind === "runtime-callable-family") {
+2260:            `runtime-callable-family provider ${provider.id} cannot request concrete host capabilities`,
+2266:            `runtime-callable-family provider ${provider.id} has an empty symbol prefix`,
+2272:            `runtime-callable-family provider ${provider.id} has an invalid minimum arity ${String(arity.min)}`,
+2278:            `runtime-callable-family provider ${provider.id} has an invalid maximum arity ${String(arity.max)}`,
+2287:      // table that arrived through an `unknown`/`as` boundary would otherwise
+2336:    // (#3526 F1-S1) The number boundary is decided by the caller-resolved
+2341:    const policyCandidates = isNumberBoundaryFeature(feature)
+2343:          const selectedId = numberBoundaryProviderId(feature, this.#policy.numberBoundary);
+2347:              `semantic intrinsic ${feature} is unavailable under number-boundary policy ` +
+2348:                `box=${this.#policy.numberBoundary.box}/unbox=${this.#policy.numberBoundary.unbox}`,
+2353:      : // (#3526 F1-S2) The boolean boundary answers to its OWN resolved
+2356:        isBooleanBoundaryFeature(feature)
+2358:            const selectedId = booleanBoundaryProviderId(this.#policy.booleanBoundary);
+2362:                `semantic intrinsic ${feature} is unavailable under boolean-boundary policy ` +
+2363:                  `box=${this.#policy.booleanBoundary.box}`,
+2371:          // including GC native-strings, where `numberBoundary` is unsupported
+2372:          // and `booleanBoundary` has no native arm at all.
+2373:          isExternBoundaryFeature(feature)
+2386:            // too, and its truth table is wider than the number boundary's: this
+2434:                  // callable pair: the native one is a `carrier-field` read. The
+2468:                      // whose BOTH arms are `runtime-callable`: the discriminator

@@ -1,0 +1,116 @@
+##### from-ast 14480-14500
+  ) {
+    // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
+    throw new Error(`ir/from-ast: malformed host void callback plan (${cx.funcName})`);
+  }
+  return lowerClosureExpressionWithSignature(
+    expr,
+    plan.signature,
+    plan.captureNames,
+    cx,
+    plan.standaloneDomReusable === true
+      ? {
+          domCallbackAuthority: {
+            ownerUnitId: plan.ownerUnitId,
+            liftedOrdinal: plan.liftedOrdinal,
+          },
+        }
+      : { hostOneShot: true },
+  );
+}
+
+function lowerClosureExpressionWithSignature(
+##### standaloneDomReusable origin
+33ea8606aa:src/codegen/calendar-codegen-planning.ts:230:            standaloneDomReusable: true,
+33ea8606aa:src/codegen/calendar-codegen-planning.ts:399:  standaloneDomReusable: boolean,
+33ea8606aa:src/codegen/calendar-codegen-planning.ts:417:            ...(standaloneDomReusable ? { standaloneDomReusable: true as const } : {}),
+33ea8606aa:src/codegen/calendar-codegen-planning.ts:557:  readonly standaloneDomReusable: boolean;
+33ea8606aa:src/codegen/calendar-codegen-planning.ts:563:    input.standaloneDomReusable,
+33ea8606aa:src/codegen/index.ts:3380:    standaloneDomReusable: standaloneDomCapability?.requiresInteraction === true,
+33ea8606aa:src/codegen/standalone-dom-callback-authority.ts:56:      plan.standaloneDomReusable !== true ||
+33ea8606aa:src/ir/ast-lowering-plans.ts:325:  readonly standaloneDomReusable?: true;
+33ea8606aa:src/ir/from-ast.ts:14489:    plan.standaloneDomReusable === true
+##### closure-exports 1268-1300
+function hostCallableFallbackTerminal(
+  ctx: CodegenContext,
+  arity: number,
+  fnParamIdx: number,
+  thisInstrs: readonly Instr[],
+  argParamStart: number,
+  hostArgsLocal: number,
+): Instr[] | undefined {
+  // Native-first modules classify their host boundary explicitly
+  // (`__boundary_callback_call_N`, see planHostCallFallback); an implicit
+  // `__call_function_N` there trips the host-import-policy ratchet (#4397).
+  // Keep the legacy null terminal for that profile.
+  const legacyArrayAbi = process.env.JS2WASM_FIXED_ARITY_HOST_CALLS === "0";
+  if (
+    ctx.standalone ||
+    ctx.wasi ||
+    ctx.targetProfile.semanticProviders === "native-first" ||
+    (!legacyArrayAbi && arity > 4)
+  ) {
+    return undefined;
+  }
+  const plan = planHostCallFallback(arity);
+  ensureHostCallFallbackImports(ctx, plan);
+  flushLateImportShifts(ctx, null);
+  const callIdx = ctx.funcMap.get(plan.importName);
+  if (callIdx === undefined) return undefined;
+  const callInstrs: Instr[] = [];
+  if (plan.fixedArity) {
+    callInstrs.push({ op: "local.get", index: fnParamIdx }, ...thisInstrs);
+    for (let i = 0; i < arity; i++) callInstrs.push({ op: "local.get", index: argParamStart + i });
+  } else {
+    const arrNew = ctx.funcMap.get("__js_array_new");
+    const arrPush = ctx.funcMap.get("__js_array_push");
+##### host-call-fallback 15-60
+  importName: string;
+  arity: number;
+};
+
+export function planHostCallFallback(arity: number, nativeBoundary = false): HostCallFallbackPlan {
+  const fixedArity = nativeBoundary || (process.env.JS2WASM_FIXED_ARITY_HOST_CALLS !== "0" && arity <= 4);
+  return {
+    fixedArity,
+    importName: nativeBoundary
+      ? `__boundary_callback_call_${arity}`
+      : fixedArity
+        ? `__call_function_${arity}`
+        : "__call_function",
+    arity,
+  };
+}
+
+export function ensureHostCallFallbackImports(ctx: CodegenContext, plan: HostCallFallbackPlan): void {
+  const externRef: ValType = { kind: "externref" };
+  if (plan.fixedArity) {
+    const params: ValType[] = [externRef, externRef];
+    for (let i = 0; i < plan.arity; i++) params.push(externRef);
+    ensureLateImport(ctx, plan.importName, params, [externRef]);
+    return;
+  }
+  ensureLateImport(ctx, "__js_array_new", [], [externRef]);
+  ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
+  ensureLateImport(ctx, "__call_function", [externRef, externRef, externRef], [externRef]);
+}
+
+export function buildHostCallFallbackArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  plan: HostCallFallbackPlan,
+  calleeAnyLocal: number,
+  argLocals: readonly number[],
+  // (#4313) A bare call's `thisArg` is `undefined`. A caller that can
+  // materialize a real `undefined` externref passes it here; the null default
+  // preserves the previous behaviour for callers that cannot.
+  thisArgInstrs: readonly Instr[] = [{ op: "ref.null.extern" }],
+): Instr[] | undefined {
+  const callFn = ctx.funcMap.get(plan.importName);
+  if (callFn === undefined) return undefined;
+  const invokePrefix: Instr[] = [
+    { op: "local.get", index: calleeAnyLocal },
+    { op: "extern.convert_any" },
+##### planHostCallFallback callers
+33ea8606aa:src/codegen/closure-exports.ts:1289:  const plan = planHostCallFallback(arity);
+33ea8606aa:src/codegen/expressions/calls.ts:4436:  const hostCallPlan = planHostCallFallback(arity, ctx.targetProfile.semanticProviders === "native-first");

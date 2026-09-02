@@ -1,0 +1,70 @@
+=== src/ir/fnctor-abi.ts (321 lines)
+ * Backend-neutral ABI contract for function-style constructors (fnctors).
+ *
+ * This module is intentionally independent of AST propagation and codegen
+ * context.  It records the identity/layout facts that a future `fnctor.new`
+ * and `fnctor.get` implementation must prove before crossing into lowering.
+ * No existing IrType or instruction is widened here; an absent resolver keeps
+ * the current dynamic/legacy path unchanged.
+ */
+ * Nominal, source-qualified shape of one approved function-style constructor.
+ * `name` fields are diagnostics only; source/unit/layout bindings are the
+ * semantic identity and must be checked by every resolver.
+ */
+=== src/ir/program-abi.ts (954 lines)
+ * Explicit provenance for a pass-created executable unit that is not present
+ * in the source inventory. Display names and encoded-ID parsing are
+ * deliberately absent from this contract.
+ */
+=== src/ir/program-callable-bindings.ts (928 lines)
+//
+// Checker-owned whole-program callable binding identity for the M1A
+// cross-source prepared-component slice.  This module deliberately has no
+// codegen, Wasm, or CodegenContext dependency: the graph is built once from
+// the authoritative source/unit inventory and is consumed by later planning
+// layers as an immutable projection.
+=== src/ir/program-callable-selection.ts (44 lines)
+=== src/ir/prepared-callable-resolution.ts (223 lines)
+=== src/ir/closure-struct-registry.ts (187 lines)
+ * Closure allocation registry shared by preparation and final IR lowering.
+ *
+ * Base structs reuse the canonical legacy wrapper for a signature. Captured
+ * subtypes extend that wrapper and keep their allocation metadata in the same
+ * module-wide registry. Certified standalone DOM callbacks receive a branded
+ * subtype at this allocation seam without changing ordinary closure identity.
+ */
+=== src/ir/closure-captures.ts (43 lines)
+=== src/ir/prepared-closure-support.ts (511 lines)
+=== src/ir/abi-bindings.ts (410 lines)
+=== src/ir/dom-boundary.ts (29 lines)
+=== src/ir/dom-capability.ts (1098 lines)
+//
+// #4576 — checker-backed certification for the exact standalone Builtins DOM
+// component. This is deliberately a leaf module: codegen planning, selection,
+// and lowering must consume one node-identity plan without importing either
+// codegen or the JavaScript runtime.
+=== src/ir/host-extern.ts (434 lines)
+//
+// (#2856) Host-extern ambient-global resolution for the IR selector.
+//
+// Deliberately a LEAF module (imports only the ts facade and the checker
+// type-mapper): it is consumed both by `src/codegen/index.ts` (the real
+// compiler's `planIrOverlay`) and by `scripts/check-ir-fallbacks.ts` (the IR
+// retirement gate, which builds its own program/checker). Importing it from
+// the gate script must not drag the whole codegen module graph in — doing so
+// perturbs ESM evaluation order and trips the coercion-engine/string-ops
+// circular-init TDZ.
+ * #3657 — certify a direct call from a top-level class member to a same-file
+ * user `declare function` stub.
+ *
+ * This deliberately excludes lib globals, imports, overloads, aliases,
+=== src/ir/imported-functions.ts (507 lines)
+//
+// Checker-backed resolution for the deliberately narrow imported-function IR
+// slice (#3214 A+B1).  This module is intentionally a leaf: it knows about
+// TypeScript symbols/declarations, but not about selector or lowering state.
+// Both the selector and the overlay planner consume the same resolver so a
+// call cannot be selected under one alias interpretation and lowered under
+// another.
+=== src/ir/capability-provenance.ts (20 lines)
+=== src/ir/ast-lowering-plans.ts (447 lines)

@@ -1,0 +1,100 @@
+=== wasmgc-emitter.ts closure/call methods
+329:  emitToExternref(out: Instr[]): void {
+337:  emitFromExternref(target: { typeIdx: number } | IrType, out: Instr[]): void {
+345:  emitFuncRef(funcIdx: number, out: Instr[]): void {
+371:  emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
+382:  emitClosureArityOperand(arity: number, out: Instr[]): void {
+387:  emitClosureFuncGet(layout: IrClosureLowering, out: Instr[]): void {
+391:  emitCaptureGet(layout: IrClosureLowering, index: number, out: Instr[]): void {
+399:  emitCall(funcIdx: number, out: Instr[]): void {
+403:  emitCallRef(funcTypeIdx: number, out: Instr[]): void {
+    out.push({ op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 });
+  }
+
+  emitPromiseValueGet(promiseTypeIdx: number, out: Instr[]): void {
+    out.push({ op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 });
+  }
+
+  // ---- closure family (#2953) — byte-identical to the prior inline
+  // struct.new/get pushes in lower.ts. The caller has already emitted the
+  // lifted function reference through emitFuncRef, captures, and any required
+  // ref.cast.
+  emitClosureNew(layout: IrClosureLowering, _captureCount: number, out: Instr[]): void {
+    const authorityGlobalIdx = layout.domCallbackAuthorityGlobalIdx?.();
+    if (authorityGlobalIdx !== undefined) out.push({ op: "global.get", index: authorityGlobalIdx });
+    out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
+  }
+
+  // (#3673) $arity operand — sits between the lifted funcref and the captures
+  // in every root-wrapper-hierarchy closure allocation. (#4241) The `$bag`
+  // expando slot follows it, so the two header operands are pushed together:
+  // the trait has ONE hook for "the header operands between the funcref and
+  // the captures", and splitting them would let a backend emit half a header.
+  emitClosureArityOperand(arity: number, out: Instr[]): void {
+    out.push({ op: "i32.const", value: arity });
+    out.push({ op: "ref.null.extern" }); // (#4241) $bag — no expandos at birth
+  }
+
+  emitClosureFuncGet(layout: IrClosureLowering, out: Instr[]): void {
+    out.push({ op: "struct.get", typeIdx: layout.structTypeIdx, fieldIdx: layout.funcFieldIdx });
+  }
+
+  emitCaptureGet(layout: IrClosureLowering, index: number, out: Instr[]): void {
+    out.push({ op: "struct.get", typeIdx: layout.structTypeIdx, fieldIdx: layout.capFieldIdx(index) });
+  }
+
+  // ---- (a1) call family (#1584 §2a) — byte-identical to the prior inline
+=== linear-emitter.ts closure methods
+484-  // equivalent handle, not a WasmGC funcref (#2956, closures).
+485:  emitFuncRef(): void {
+486-    notImplemented("emitFuncRef");
+487-  }
+488-
+489-  // Promise aggregate family — the linear Promise record layout and handle
+490-  // representation land with the remaining #2956 aggregate work.
+491-  emitPromiseNew(): void {
+--
+503-  // not a reference-typed funcref, so this needs distinct lowering.
+504:  emitCallRef(): void {
+505-    notImplemented("emitCallRef");
+506-  }
+507-
+508-  // closure family — WasmGC wrapper structs become arena records + table
+509-  // indices in the linear backend (#2956), so no raw struct fallback is valid.
+510:  emitClosureNew(): void {
+511-    notImplemented("emitClosureNew");
+512-  }
+513:  emitClosureFuncGet(): void {
+514-    notImplemented("emitClosureFuncGet");
+515-  }
+516:  emitCaptureGet(): void {
+517-    notImplemented("emitCaptureGet");
+518-  }
+519-
+520-  // struct/object family — the resolver computes offsets through the direct
+521-  // backend's layout.ts and supplies a deferred allocation helper. The helper
+522-  // consumes fields in canonical order and leaves the arena pointer (i32).
+=== bytecode-emitter.ts closure methods
+615:  emitCallRef(funcTypeIdx: number, out: BytecodeSink): void {
+616-    out.emit(OP.CALL_REF, funcTypeIdx);
+617-  }
+618-
+619-  // ---- (a2) struct/object family (#1584 §2a) — heap-backed structs --------
+--
+749:  emitFuncRef(): void {
+750-    throw new Error("BytecodeEmitter: function references not yet wired — see §2a closure family.");
+751-  }
+752-
+753-  // ---- Promise aggregate family (#2953) — the VM needs a Promise record
+--
+768:  emitClosureNew(): void {
+769-    throw new Error("BytecodeEmitter: closure construction not yet wired — see §2a closure family.");
+770-  }
+771:  emitClosureFuncGet(): void {
+772-    throw new Error("BytecodeEmitter: closure function reads not yet wired — see §2a closure family.");
+773-  }
+774:  emitCaptureGet(): void {
+775-    throw new Error("BytecodeEmitter: closure capture reads not yet wired — see §2a closure family.");
+776-  }
+777-
+778-  // ---- (a5) ref-cell family (#2953) — a 1-field mutable struct. Not yet wired

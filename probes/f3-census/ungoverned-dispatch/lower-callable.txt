@@ -1,0 +1,54 @@
+##### lower.ts annotated mode reads
+##### lower.ts broad matches
+src/ir/lower.ts:226:   * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
+src/ir/lower.ts:234:   *   - `nativeStrings` mode  → `{ kind: "ref", typeIdx: ctx.anyStrTypeIdx }`.
+src/ir/lower.ts:246:   *   - WasmGC fast/standalone mode → `ref_null $AnyValue` (registered via
+src/ir/lower.ts:248:   *   - WasmGC host (non-fast) mode → `externref` (host-boxed values).
+src/ir/lower.ts:264:   * dynamic op lowering (linear — #1852-G4/#2956).
+src/ir/lower.ts:279:  nativeStrings?(): boolean;
+src/ir/lower.ts:333:   * standalone `$Promise` WasmGC struct type. The struct's layout is
+src/ir/lower.ts:349:   * wasi lane). Decides the `await` lowering:
+src/ir/lower.ts:436:  emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
+src/ir/lower.ts:1197:  // `x | 0` / `x ^ 0` zero-operand fast path below (which needs only the
+src/ir/lower.ts:1208:  // (#3739) Lazily-allocated i64 scratch pool for `emitJsToInt32`'s fast
+src/ir/lower.ts:1209:  // bit-manipulation path (WasmGC/linear only — see that function). Kept
+src/ir/lower.ts:1210:  // separate from `jsBitwiseTmpIdx` (f64) since the fast path doesn't use it.
+src/ir/lower.ts:1267:  // throwing. Used by the fast-path operand inspection in `case "binary"`
+src/ir/lower.ts:1304:  // `tryTypeOf`. Used by the `js.bitor`/`js.bitxor` zero-operand fast path
+src/ir/lower.ts:1308:  // "both already i32" fast path above doesn't catch it).
+src/ir/lower.ts:1601:          instr.target.binding.kind === "intrinsic"
+src/ir/lower.ts:1602:            ? parseIrDateSnapshotGetter(instr.target.binding.symbol)
+src/ir/lower.ts:1611:          const civilIdx = resolver.resolveFunc(instr.target);
+src/ir/lower.ts:1673:        emitter.emitCall(resolver.resolveFunc(instr.target), out);
+src/ir/lower.ts:1674:        if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+src/ir/lower.ts:1729:        emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
+src/ir/lower.ts:1733:        emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out);
+src/ir/lower.ts:2499:          funcIdx: resolver.resolveFunc(instr.target ?? cl.constructorFunc),
+src/ir/lower.ts:2552:          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind, instr.methodName, instr.target)),
+src/ir/lower.ts:2570:          funcIdx: resolver.resolveFunc(instr.target ?? cl.initFunc),
+src/ir/lower.ts:2588:          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName, instr.target)),
+src/ir/lower.ts:2654:          funcIdx: resolver.resolveFunc(cl.memberFunc("static", instr.methodName, instr.target)),
+src/ir/lower.ts:3015:        // gone. These standalone single-result instrs assumed a stored result
+src/ir/lower.ts:3175:        // br_table fast path: i32 disc, every test an int32, dense span.
+src/ir/lower.ts:3392:        // every healthy owner. The linear adapter cannot reach this case at all:
+src/ir/lower.ts:3742:        //   - Native-`$Promise` carrier (wasi): one-level GUARDED unwrap —
+src/ir/lower.ts:3861:        const thenBlock = func.blocks[t.ifTrue.target as number];
+src/ir/lower.ts:3862:        const elseBlock = func.blocks[t.ifFalse.target as number];
+src/ir/lower.ts:3909:        const target = func.blocks[t.branch.target as number];
+src/ir/lower.ts:4461: * Pure helper; used by both the fast path (both i32) and the legacy
+src/ir/lower.ts:4486:// emitter primitives. WasmGC/linear still receive the byte-identical Instr
+src/ir/lower.ts:4491:// (#3739) `S = Instr[]` (WasmGC and linear both use this sink type — see
+src/ir/lower.ts:4492:// `linear-emitter.ts`'s own comment on `emitBinary` for the shared-sink
+##### lower.ts callable op cases
+1536:      case "fnctor.new": {
+1564:      case "fnctor.get": {
+1599:      case "call": {
+2349:      case "closure.new": {
+2368:      case "closure.cap": {
+2390:      case "closure.call": {
+3977:    case "call":
+4023:    case "fnctor.new":
+4029:    case "fnctor.get":
+4038:    case "closure.new":
+4040:    case "closure.cap":
+4042:    case "closure.call":

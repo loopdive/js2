@@ -1,0 +1,18 @@
+
+=== body-shape-rejected reject-arm histogram (#2856 Step-1) ===
+  attributed: 6 rejections
+
+     2  expr-ident-not-in-scope:Identifier
+     1  vardecl-typenode:FunctionType
+     1  closure-return-type:VoidKeyword
+     1  closure-return-type:ArrowFunction
+     1  expr-new-callee-nonident:ParenthesizedExpression
+
+=== per-function ===
+  .tmp/r6-f3-census/lane-measurement/corpus/02-indirect-call-var.ts  entry  →  vardecl-typenode:FunctionType
+  .tmp/r6-f3-census/lane-measurement/corpus/03-closure-mutable-local.ts  entry  →  closure-return-type:VoidKeyword
+  .tmp/r6-f3-census/lane-measurement/corpus/05-returned-closure.ts  makeCounter  →  closure-return-type:ArrowFunction
+  .tmp/r6-f3-census/lane-measurement/corpus/06-bind.ts  entry  →  expr-ident-not-in-scope:Identifier
+  .tmp/r6-f3-census/lane-measurement/corpus/10-new-plain-function.ts  entry  →  expr-new-callee-nonident:ParenthesizedExpression
+  .tmp/r6-f3-census/lane-measurement/corpus/12-higher-order.ts  entry  →  expr-ident-not-in-scope:Identifier
+

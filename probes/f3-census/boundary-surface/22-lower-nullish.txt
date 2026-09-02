@@ -1,0 +1,33 @@
+521: * not a lowering case. The retired `?? irRuntimeFuncRef(<spelling>)` fallbacks
+536: * same failure mode. `forof.string` was the LAST string-op `??` lane fallback
+698:    totalUses.set(v, (totalUses.get(v) ?? 0) + 1);
+704:    m.set(blockId, (m.get(blockId) ?? 0) + 1);
+791:    const total = totalUses.get(v) ?? 0;
+824:    lexicalUseCounts.set(value, (lexicalUseCounts.get(value) ?? 0) + 1);
+825:    const regions = lexicalUseRegions.get(value) ?? new Set<number>();
+828:    const points = lexicalUsePoints.get(value) ?? [];
+974:        const uses = r === null ? 0 : (totalUses.get(r) ?? 0);
+1127:  const slotDefs = func.slots ?? [];
+1297:      return resolver.resolveVecForElement?.(elementValType, alloc) ?? null;
+1300:    return valType ? (resolver.resolveVec?.(valType) ?? null) : null;
+1379:      } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+1904:            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+2260:        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
+2363:        emitter.emitClosureArityOperand?.(instr.signature.defaultParamStart ?? instr.signature.params.length, out);
+2407:        const rootTypeIdx = resolver.resolveClosureRoot?.() ?? null;
+2499:          funcIdx: resolver.resolveFunc(instr.target ?? cl.constructorFunc),
+2570:          funcIdx: resolver.resolveFunc(instr.target ?? cl.initFunc),
+2709:          instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
+2720:        emitter.emitVecNewFixed(vec, instr.elements.length, instr.capacity ?? instr.elements.length, dataScratch, out);
+2749:        // retired `?? irRuntimeFuncRef(importName)` fallback).
+2831:        // `?? irRuntimeFuncRef("__box_number")` fallback any more: attachment
+3269:            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+3395:        // retired `?? irIntrinsicFuncRef(...)` fallback was therefore dead, and
+3522:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3529:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3537:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3544:        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+3600:            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+3841:      const useCount = totalUses.get(instr.result) ?? 0;
+4311:    return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
+4334:    const rootTypeIdx = resolver.resolveClosureRoot?.() ?? null;

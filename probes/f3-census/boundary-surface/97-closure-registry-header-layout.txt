@@ -1,0 +1,98 @@
+=== docs mentions of closure ABI
+docs/architecture/runtime-eval-interpreter.md
+docs/architecture/marshaling-contract.md
+plan/log/ir-optimization-retirement-ledger.md
+plan/log/standalone-gap-map.md
+plan/log/sprints/index.md
+plan/log/analysis-2026-07/00-ir-async-standalone-audit.md
+plan/log/issues/sprints/53/async-cluster-architect-spec.md
+plan/log/issues/sprints/53/pr-pre-review-2026-05-21.md
+plan/log/issues/sprints/50/sprint-planning.md
+plan/log/retrospectives/sprint-65.md
+
+=== closure-struct-registry.ts 1-30 + 93-135
+import type { CodegenContext } from "../codegen/context/types.js";
+import {
+  CLOSURE_CAPTURE_FIELD_BASE,
+  closureArityField,
+  closureBagField,
+  getOrCreateFuncRefWrapperTypes,
+  type ClosureAllocationMode,
+} from "../codegen/closures/funcref-wrapper-types.js";
+import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
+import type { IrClosureLowering } from "./backend/handles.js";
+import type { IrClosureSignature, IrDomCallbackAuthority, IrType } from "./nodes.js";
+import type { FieldDef, StructTypeDef, ValType } from "./types.js";
+import { irTypeKey } from "./type-key.js";
+function signatureKey(signature: IrClosureSignature): string {
+  const params = signature.params.map(irTypeKey).join(",");
+  return `(${params})->${signature.returnType === null ? "void" : irTypeKey(signature.returnType)}`;
+}
+export class ClosureStructRegistry {
+  resolveSubtype(
+    signature: IrClosureSignature,
+    captureFieldTypes: readonly IrType[],
+    mode: ClosureAllocationMode = "support",
+    domCallbackAuthority?: IrDomCallbackAuthority,
+    liftedFuncIdx?: number,
+  ): IrClosureLowering | null {
+    if (captureFieldTypes.length === 0) {
+      const base = this.resolveBase(signature, mode);
+      return base && domCallbackAuthority
+        ? resolveStandaloneDomCallbackClosureSubtype(this.ctx, domCallbackAuthority, base, base, liftedFuncIdx)
+        : base;
+    }
+    const key = `${signatureKey(signature)}#${captureFieldTypes.map(irTypeKey).join(",")}`;
+    const cached = this.subCache.get(key);
+    if (cached) {
+      this.observe(cached.structTypeIdx, mode);
+      if (!domCallbackAuthority) return cached;
+      const base = this.resolveBase(signature, mode);
+      return base
+        ? resolveStandaloneDomCallbackClosureSubtype(this.ctx, domCallbackAuthority, base, cached, liftedFuncIdx)
+        : null;
+    }
+    const base = this.resolveBase(signature, mode);
+    if (!base) return null;
+    const fields: FieldDef[] = [
+      { name: "func", type: { kind: "funcref" }, mutable: false },
+      closureArityField(),
+      closureBagField(),
+    ];
+    for (let index = 0; index < captureFieldTypes.length; index++) {
+      let fieldType: ValType;
+      try {
+        fieldType = this.resolveValType(captureFieldTypes[index]!);
+      } catch {
+        return null;
+      }
+      fields.push({ name: `cap${index}`, type: fieldType, mutable: false });
+    }
+
+=== closure-header-layout location
+src/codegen/closures/closure-header-layout.ts
+ * (#4241) The closure-struct HEADER layout — the single source of truth for the
+ * fields every struct in the funcref-wrapper root hierarchy carries before its
+ * captures, and for the predicate that recognises that header.
+ *
+ * ## Why this is its own module
+ * The layout used to be stated in TWO places that could not see each other: the
+ * mint-site constants in `funcref-wrapper-types.ts`, and a hand-written
+ * `type.fields.length === 2 && fields[0] is funcref && fields[1] is i32`
+ * validator inside `program-abi-type-planning.ts`'s IR closure-support check.
+ * Adding the `$bag` slot satisfied the constants and silently violated the
+ * validator, which does not warn — it THROWS, so all five async functions in
+ * `website/playground/examples/js/async.ts` failed IR-first with
+ * "non-canonical physical wrapper root" and the `check:ir-only` readiness gate
+ * exited 1. Nothing in the type system connected the two statements.
+ *
+ * `funcref-wrapper-types.ts` cannot host the predicate, because it imports the
+ * codegen barrel (`../index.js`) and `program-abi-type-planning.ts` is reachable
+ * from that barrel — importing it there would close an initialization cycle
+ * around `const` exports. So this module is a LEAF, importing only TYPES, for
+ * the same reason and in the same shape as `closure-classifier.ts`: one
+ * definition, many consumers, never two divergent copies.
+ *
+ * ## The layout
+ * ```
+ *   0  func    funcref     the lifted function reference

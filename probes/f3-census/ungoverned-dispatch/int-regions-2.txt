@@ -1,0 +1,189 @@
+##### int 7080-7240 (non-comment)
+    },
+    resolveGlobal(ref: IrGlobalRef): number {
+      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "global") {
+        throw new IrInvariantError(
+          "unknown-global-ref",
+          "lower",
+          `injected unknown global ref through resolver (${ref.name})`,
+        );
+      }
+      if (!ctx.programAbiSession) {
+        throw new IrInvariantError(
+          "unknown-global-ref",
+          "lower",
+          `ir/integration: global ref "${ref.name}" has no ProgramAbiSession`,
+        );
+      }
+      return preparedScopeLookup
+        ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding))
+        : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
+    },
+    resolveType(ref: IrTypeRef): number {
+      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "type") {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "lower",
+          `injected unknown type ref through resolver (${ref.name})`,
+        );
+      }
+      if (!ctx.programAbiSession) {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "lower",
+          `ir/integration: type ref "${ref.name}" has no ProgramAbiSession`,
+        );
+      }
+      return preparedScopeLookup
+        ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding))
+        : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding));
+    },
+    internFuncType(type: FuncTypeDef): number {
+      return addFuncType(ctx, type.params, type.results, type.name);
+    },
+    resolveUnion(members: readonly ValType[]): IrUnionLowering | null {
+      return unionRegistry.resolve(members);
+    },
+    resolveObject(shape: IrObjectShape): IrObjectStructLowering | null {
+      return objResolver.resolve(shape);
+    },
+    resolveClosure(sig: IrClosureSignature): IrClosureLowering | null {
+      return closureResolver.resolveBase(sig);
+    },
+    resolveClosureRoot(): number | null {
+      return getFuncRefWrapperRootTypeIdx(ctx) ?? null;
+    },
+    resolveClosureSubtype: (...args) => closureResolver.resolveSubtype(...args),
+    resolveRefCell(inner: ValType): IrRefCellLowering | null {
+      return refCellResolver.resolve(inner);
+    },
+    resolveClass(shape: IrClassShape): IrClassLowering | null {
+      return classResolver.resolve(shape);
+    },
+    resolveFnctor(shape: IrFnctorShape): IrFnctorLowering | null {
+      return ctx.programAbiFnctors?.resolve(shape) ?? null;
+    },
+    resolveParamPhysicalType(unitId: IrUnitId, parameterIndex: number, logicalType: IrType) {
+      const consumer = fnctorParameterPreselection?.valueConsumer;
+      if (!consumer || consumer.unitId !== unitId || parameterIndex !== consumer.parameterIndex) return undefined;
+      if (logicalType.kind !== "string") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] lost its semantic string type`,
+        );
+      }
+      if (fnctorParameterPreselectionIsCurrent && !fnctorParameterPreselectionIsCurrent()) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] became stale during lowering`,
+        );
+      }
+      return consumer.parameterPhysicalType.kind === "ref_null"
+        ? { type: consumer.parameterPhysicalType, refineNonNull: true as const }
+        : { type: consumer.parameterPhysicalType };
+    },
+    resolveVec(valType: ValType): import("./lower.js").IrVecLowering | null {
+      return resolvePhysicalVecImpl(ctx, valType);
+    },
+    resolveVecForElement(elementValType: ValType): import("./lower.js").IrVecLowering | null {
+      return resolveVecForElementImpl(ctx, elementValType);
+    },
+    resolveString(): ValType {
+      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+        return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+      }
+      return { kind: "externref" };
+    },
+    resolveDynamic(): ValType {
+      return resolveIrDynamicCarrierType(ctx);
+    },
+    resolveDynamicLowering(): IrDynamicLowering | null {
+      if (dynamicLoweringMemo === undefined) {
+        dynamicLoweringMemo = makeDynamicLowering(ctx);
+      }
+      return dynamicLoweringMemo;
+    },
+    nativeStrings(): boolean {
+      return ctx.nativeStrings;
+    },
+    emitStringConst(
+      value: string,
+      alloc?: import("./nodes.js").AllocSiteId,
+      storage?: IrGlobalRef,
+      materializer?: IrFuncRef,
+    ): readonly Instr[] {
+      return emitResolvedStringConst(ctx, resolver, value, alloc, storage, materializer);
+    },
+##### int 7350-7365
+    ensureExnTag(): number {
+      if (ctx.exnTagIdx < 0) {
+        throw new Error("ir/integration: exception tag was not prepared from final IR evidence");
+      }
+      return ctx.exnTagIdx;
+    },
+    standardizedExceptions(): boolean {
+      return ctx.standalone || ctx.wasi;
+    },
+    // -------------------------------------------------------------------
+    // Async / Promise dispatch (#1373b Slice 1).
+    //
+    // Lazily registers (or retrieves) the standalone `$Promise` WasmGC
+    // struct type. The struct layout matches the canonical registration
+    // in `src/codegen/async-scheduler.ts`:
+    //   { state: i32, value: externref, callbacks: externref, $bag: externref }
+##### int 7460-7490
+      legacyName: entry.ownerName,
+    });
+  }
+  for (const entry of fns) {
+    const owner = owners.get(entry.terminalOwnerUnitId)!;
+    const instructionBuffers = [
+      ...entry.fn.blocks.map((block) => block.instrs),
+      ...(entry.fn.asyncRuntime?.states.map((state) => state.body) ??
+        entry.fn.asyncPlan?.states.map((state) => state.body) ??
+        []),
+    ];
+    for (const instrs of instructionBuffers) {
+      for (const root of instrs) {
+        forEachInstrDeep(root, (instr) => {
+          const ref = callableProviderRef(instr);
+          if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
+          try {
+            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
+          } catch (error) {
+            if (!failures.has(owner.unitId)) {
+              failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
+            }
+          }
+        });
+      }
+    }
+  }
+  // Seal deferred import indices before prepared component bodies bake them.
+  flushLateImportShifts(ctx, null);
+  return failures;
+}
+##### int 7540-7560
+          }
+        });
+      }
+    }
+  }
+  if (needed.size === 0) return;
+  const exactStandaloneClock =
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.requiresStandaloneClockCapability === true &&
+    ctx.targetProfile.environment === "none";
+  if ((ctx.standalone || ctx.wasi || ctx.strictNoHostImports) && !exactStandaloneClock) {
+    throw new Error("ir/integration: synthetic Date snapshots require the JS host");
+  }
+
+  let added = false;
+  for (const name of needed) {
+    const spec = HOST_DATE_IMPORTS.get(name);
+    if (!spec) throw new Error(`ir/integration: unsupported synthetic Date import ${name}`);
+    if (!ctx.funcMap.has(name)) added = true;
+    if (exactStandaloneClock && spec.name === "__date_now") {

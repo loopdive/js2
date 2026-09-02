@@ -1,0 +1,115 @@
+=== runtime.ts 17645-17680 (__make_callback dispatch)
+      if (userDep !== undefined) return () => userDep;
+      // No matching dep → keep the historical no-op. (An earlier revision threw
+      // a clear error for a called-but-undepped user-facing ambient name, but
+      // the test262 harness legitimately declares ambient functions it does not
+      // always supply — e.g. host print/log stubs — and relies on the no-op, so
+      // throwing regressed the merged-state test262 gate. The dep-wiring above
+      // is the actual #3325 fix; a targeted "missing dep" diagnostic gated to
+      // non-harness contexts is a possible follow-up.)
+      return () => {};
+    }
+    // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the
+    // maker the compiler picks for an ordinary function definition — the one
+    // callable form with [[Construct]]. Everything else keeps the arrow bridge.
+    case "callback_maker":
+      return (id: number, cap: any) => {
+        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
+        if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
+        const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
+        const constructible = intent.constructible === true;
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, constructible);
+      };
+    case "getter_callback_maker":
+      return (id: number, cap: any) => {
+        // Regular function (not arrow) so 'this' is bound to the receiver;
+        // rest params forward setter arguments (value) to the Wasm callback.
+        // eslint-disable-next-line func-names
+        const bridge = function (this: any, ...args: any[]) {
+          const exports = callbackState?.getExports();
+          // (#2128) A setter may run during START before exports are wired.
+          // Park that write and replay it through the same normalized edge.
+          if (exports === undefined && args.length > 0 && callbackState) {
+            const defer = (callbackState as { deferToExports?: (fn: () => void) => void }).deferToExports;
+            if (defer) {
+              const self = this;
+              defer(() => {
+                invokeNativeFunctionCallback(id, cap, [self, ...args], callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+
+=== runtime.ts 2060-2080 (arity -2 cache)
+      // from the DISPATCHER arity, so padding to `methodMaxArity`
+      // (indistinguishable from real undefined args) inflated the callee's
+      // `arguments.length` (V8-native `.finally` invokes a patched `then` with
+      // exactly 2 args; the wasm `then` observed 5 — the test262
+      // `finally/invokes-then-with-*` assert-#3 failure). Falls back to the
+      // historical max-arity dispatch when the module has no `__closure_arity`
+      // export or the exact-arity dispatcher isn't emitted — never dispatches
+      // BELOW the closure's declared arity (the #2664 acorn omission hazard).
+      let dispatchArity = methodMaxArity;
+      if (realArityCache === -2) {
+        realArityCache = -1;
+        const arityFn = exports.__closure_arity as ((v: any) => number) | undefined;
+        if (typeof arityFn === "function") {
+          try {
+            const a = arityFn(closure);
+
+=== import-collector.ts 2000-2060 (__make_callback registration)
+    // host-free) — the eager registration only ever *declares* an unsatisfiable
+    // never-called import that fails the host-free metric. Gate it off (mirrors the
+    // async-CPS `!ctx.standalone` gate below); any residual host-callback site
+    // degrades to the native closure struct (see compileArrowAsCallback). JS-host
+    // lane byte-identical.
+    if (
+      !isStandalonePromiseActive(ctx) &&
+      (state.callbackFound || state.asyncCpsFound) &&
+      !ctx.funcMap.has("__make_callback")
+    ) {
+      addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
+    }
+    if (state.getterCallbackFound) {
+      // __make_getter_callback: same signature — wraps a function so 'this' is bound (#929)
+      // Used for Object.defineProperty accessor descriptors (getter/setter callbacks).
+      addImport(ctx, "env", "__make_getter_callback", { kind: "func", typeIdx });
+    }
+  }
+
+  // ── collectAsyncCpsImports finalize (#1042) ──
+  // The CPS driver (emitAsyncStateMachine) emits `Promise_resolve` (wrap the
+  // awaited value) and `Promise_then2` (chain the continuation) by stable
+  // funcMap index. Register both upfront so the outer async body never takes
+  // the late-import path (its `call` opcodes would not be shifted — #1384).
+  // `__make_callback` is registered above. Idempotent via funcMap guard so a
+  // module that also uses `.then(cb1,cb2)` / `Promise.resolve` is unaffected.
+  if (!isStandalonePromiseActive(ctx) && (state.asyncCpsFound || state.asyncHostDriveFound)) {
+    if (!ctx.funcMap.has("Promise_resolve")) {
+      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+      addImport(ctx, "env", "Promise_resolve", { kind: "func", typeIdx });
+    }
+    if (!ctx.funcMap.has("Promise_then2")) {
+      const typeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      addImport(ctx, "env", "Promise_then2", { kind: "func", typeIdx });
+    }
+  }
+
+  // ── collectAsyncHostDriveImports finalize (#1042 host drive) ──
+  // The host settle backend of the #2906 resume machine additionally needs
+  // `__make_callback` (its step adapters are `__cb_<id>` reactions) and the
+  // deferred-promise trio: `Promise_new_pending` allocates the result promise
+  // the async fn returns; the resume machine settles it later from a microtask
+  // via `Promise_settle_resolve`/`Promise_settle_reject` (runtime.ts stashes
+  // the resolve/reject capabilities on the promise as `__r`/`__j`). The settle
+  // imports declare an externref result (the JS fns return undefined) so the
+  // shared `call <fulfill>; drop` settle shape stays uniform across backends.
+  if (!isStandalonePromiseActive(ctx) && state.asyncHostDriveFound) {
+    if (!ctx.funcMap.has("__make_callback")) {
+      const typeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
+      addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
+    }
+    if (!ctx.funcMap.has("Promise_new_pending")) {
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", "Promise_new_pending", { kind: "func", typeIdx });
+    }

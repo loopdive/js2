@@ -1,0 +1,25 @@
+##### G. host callback / bind import minting sites
+33ea8606aa:src/codegen/array-tolocalestring.ts:153:  ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+33ea8606aa:src/codegen/async-scheduler.ts:2213:  ensureLateImport(ctx, "__boundary_promise_resolve", [{ kind: "i32" }, { kind: "externref" }], []);
+33ea8606aa:src/codegen/async-scheduler.ts:2214:  ensureLateImport(ctx, "__boundary_promise_reject", [{ kind: "i32" }, { kind: "externref" }], []);
+33ea8606aa:src/codegen/expressions/calls-optional.ts:355:  const callIdx = ensureLateImport(ctx, "__call_function", [externref, externref, externref], [externref]);
+33ea8606aa:src/codegen/expressions/calls.ts:2844:  const callIdx = ensureLateImport(ctx, "__call_function", [externRef, externRef, externRef], [externRef]);
+33ea8606aa:src/codegen/expressions/calls.ts:2879:  const callIdx = ensureLateImport(ctx, "__call_function", [externRef, externRef, externRef], [externRef]);
+33ea8606aa:src/codegen/expressions/host-call-fallback.ts:42:  ensureLateImport(ctx, "__call_function", [externRef, externRef, externRef], [externRef]);
+33ea8606aa:src/codegen/object-runtime.ts:911:    ensureLateImport(ctx, "__boundary_object_has", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+33ea8606aa:src/codegen/object-runtime.ts:918:    ensureLateImport(ctx, "__boundary_object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:949:    ensureLateImport(ctx, "__boundary_object_get_prototype", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:974:    ensureLateImport(ctx, "__boundary_object_get_own_property_names", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:981:    ensureLateImport(ctx, "__boundary_object_own_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:982:    ensureLateImport(ctx, "__boundary_object_is_admitted", [{ kind: "externref" }], [{ kind: "i32" }]);
+33ea8606aa:src/codegen/object-runtime.ts:983:    ensureLateImport(ctx, "__boundary_object_prevent_extensions", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:984:    ensureLateImport(ctx, "__boundary_object_reflect_prevent_extensions", [{ kind: "externref" }], [{ kind: "i32" }]);
+33ea8606aa:src/codegen/object-runtime.ts:985:    ensureLateImport(ctx, "__boundary_object_seal", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:986:    ensureLateImport(ctx, "__boundary_object_freeze", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:987:    ensureLateImport(ctx, "__boundary_object_is_extensible", [{ kind: "externref" }], [{ kind: "i32" }]);
+33ea8606aa:src/codegen/object-runtime.ts:988:    ensureLateImport(ctx, "__boundary_object_is_sealed", [{ kind: "externref" }], [{ kind: "i32" }]);
+33ea8606aa:src/codegen/object-runtime.ts:989:    ensureLateImport(ctx, "__boundary_object_is_frozen", [{ kind: "externref" }], [{ kind: "i32" }]);
+33ea8606aa:src/codegen/object-runtime.ts:990:    ensureLateImport(ctx, "__boundary_object_for_in_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+33ea8606aa:src/codegen/object-runtime.ts:6827:    ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
+##### planHostCallFallback def
+33ea8606aa:src/codegen/expressions/host-call-fallback.ts:19:export function planHostCallFallback(arity: number, nativeBoundary = false): HostCallFallbackPlan {

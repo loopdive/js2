@@ -1,0 +1,81 @@
+=== runtime.ts 2343-2402 _wrapVoidHostCallback (key lines)
+1:function _wrapVoidHostCallback(
+3:  callbackState?: { getExports: () => Record<string, Function> | undefined },
+6:  if (!_canBeWeakKey(closure)) return closure;
+8:    const cached = _wasmVoidHostCallbackCache.get(closure as object);
+9:    if (cached) return cached;
+20:      const callFn = callbackState.getExports()?.__call_fn_0;
+22:        throw new TypeError("wasm closure dispatcher __call_fn_0 is not available");
+32:    if (typeof dispatch !== "function") return dispatch;
+44:  // cache; the compiler-owned one-shot -2 ABI avoids both WeakMap operations.
+45:  return wrapped;
+54: * The `__call_fn_N` dispatcher (emitClosureCallExportN in codegen) iterates
+
+=== createNativeFunctionCallbackBridge def
+src/runtime/native-function-source.ts:94:export function invokeNativeFunctionCallback(
+src/runtime/native-function-source.ts:116:export function createNativeFunctionCallbackBridge(
+
+=== check-host-import-policy.ts 268-330
+        .join("\n")}`,
+    );
+  }
+}
+
+const requiredBoundaryAdapters = {
+  core: ["__boundary_object_get", "__boundary_object_apply"],
+  proxy: ["__boundary_object_callable_kind", "__boundary_object_construct"],
+  dataView: ["__boundary_object_call"],
+  functionBind: ["__boundary_callback_call_1"],
+  objectRest: ["__boundary_object_keys", "__boundary_object_get"],
+  promise: ["__boundary_promise_resolve", "__boundary_promise_reject"],
+} as const;
+for (const [probe, names] of Object.entries(requiredBoundaryAdapters)) {
+  for (const name of names) {
+    const entry = nativeInventories.get(probe)?.find((candidate) => candidate.name === name);
+    if (entry?.classification !== "value-adapter") {
+      throw new Error(`${name} must remain an explicit value adapter, got ${entry?.classification ?? "missing"}`);
+    }
+  }
+}
+
+const compatibility = await compile(probes.core, { fileName: "host-import-policy-compatibility.ts" });
+const compatibilityDebt = compatibility.hostImportSummary?.byClassification["legacy-semantic"] ?? 0;
+if (!compatibility.success || compatibilityDebt === 0) {
+  throw new Error(
+    "compatibility control must compile and retain at least one legacy semantic import (non-vacuity control)",
+  );
+}
+
+const runtimeSource = readRepoFile("src/runtime.ts");
+const resolveStart = runtimeSource.indexOf("function resolveImport(");
+const resolveEnd = runtimeSource.indexOf("\n/** Check a manifest", resolveStart);
+if (resolveStart < 0 || resolveEnd < 0) throw new Error("could not locate resolveImport for the #4401 source budget");
+const resolveSource = runtimeSource.slice(resolveStart, resolveEnd);
+const ownedAdapterPaths = [
+  "src/runtime/boundary-callback-adapter.ts",
+  "src/runtime/boundary-object-adapter.ts",
+  "src/runtime/boundary-promise-adapter.ts",
+  "src/runtime/boundary-value-adapter.ts",
+  "src/runtime/instance-lifecycle-adapter.ts",
+  "src/runtime/platform-capability-adapter.ts",
+  "src/runtime/compatibility-adapter.ts",
+  "src/runtime/compatibility-semantic-adapter.ts",
+] as const;
+// Explicit provider implementations are tracked separately so #4401 does not
+// conflate required platform-capability code with implicit semantic-host debt.
+const explicitCapabilityPaths = [
+  "src/runtime/clock-capability-adapter.ts",
+  "src/runtime/compiled-capability-authority.ts",
+  "src/runtime/dom-capability-adapter.ts",
+  "src/runtime/standalone-dom-string-bridge.ts",
+  "src/runtime/standalone-timer-callback-bridge.ts",
+  "src/runtime/timer-capability-adapter.ts",
+] as const;
+const migrationMetrics = {
+  runtimeTsLines: countLines(runtimeSource),
+  resolveImportLines: countLines(resolveSource),
+  resolveImportCases: resolveSource.match(/^ {4}case "/gm)?.length ?? 0,
+  ownedAdapterLines: ownedAdapterPaths.reduce((total, path) => total + countLines(readRepoFile(path)), 0),
+  explicitCapabilityLines: explicitCapabilityPaths.reduce((total, path) => total + countLines(readRepoFile(path)), 0),
+};
+

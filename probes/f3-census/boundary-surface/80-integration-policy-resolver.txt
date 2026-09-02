@@ -1,0 +1,28 @@
+=== integration.ts policy fields assembled into RuntimeManifestPolicy
+470:  numberBoundary: NumberBoundaryPolicy,
+1228:      numberBoundary: integrationNumberBoundaryPolicy(ctx),
+1229:      booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+1230:      externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
+1231:      generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
+1232:      stringCompare: integrationStringComparePolicy(ctx),
+1233:      stringEq: integrationStringEqPolicy(ctx),
+1234:      stringLen: integrationStringLenPolicy(ctx),
+1235:      stringConcat: integrationStringConcatPolicy(ctx),
+1236:      stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
+1237:      stringConcatMany: integrationStringConcatManyPolicy(ctx),
+
+=== integration.ts resolver impls for closure/fnctor/call adapters
+504:          resolveFunc: (ref) => resolver.resolveFunc(ref),
+505:          callResultAdapter: (ref) => resolver.callResultAdapter?.(ref),
+7032:    resolveFunc(ref: IrFuncRef): number {
+7070:    callResultAdapter(ref: IrFuncRef): "native-string-from-externref" | undefined {
+7131:    resolveClosure(sig: IrClosureSignature): IrClosureLowering | null {
+7134:    resolveClosureRoot(): number | null {
+7137:    resolveClosureSubtype: (...args) => closureResolver.resolveSubtype(...args),
+7150:    resolveFnctor(shape: IrFnctorShape): IrFnctorLowering | null {
+
+=== integration.ts resolveAndObserveCallableProvider
+4223:          resolveAndObserveCallableProvider(ctx, ref, undefined, fuseNativeNumberFormatCarriers);
+6603:function resolveAndObserveCallableProvider(
+7054:        return resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
+7477:            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);

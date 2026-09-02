@@ -1,0 +1,27 @@
+##### A. from-ast consumer sites of callable-gating resolver predicates
+33ea8606aa:src/ir/ast-lowering-plans.ts:399:  readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+33ea8606aa:src/ir/from-ast.ts:372: *   - `getExternClassInfo(name)` — extern-class metadata for slice-10
+33ea8606aa:src/ir/from-ast.ts:384:  hostIndirectEvalTarget?(): IrFuncRef | null;
+33ea8606aa:src/ir/from-ast.ts:392:  functionPrototypeCallTarget?(): IrFuncRef | null;
+33ea8606aa:src/ir/from-ast.ts:868:  readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+33ea8606aa:src/ir/from-ast.ts:1306:    hostVoidCallbacks: options.hostVoidCallbacks,
+33ea8606aa:src/ir/from-ast.ts:2307:  readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+33ea8606aa:src/ir/from-ast.ts:6395:    const target = cx.resolver?.hostIndirectEvalTarget?.();
+33ea8606aa:src/ir/from-ast.ts:7553:    const target = cx.resolver?.functionPrototypeCallTarget?.();
+33ea8606aa:src/ir/from-ast.ts:8289:      const hostCallbackPlan = hostCallbackArrow ? cx.hostVoidCallbacks?.get(hostCallbackArrow) : undefined;
+33ea8606aa:src/ir/from-ast.ts:14719:    hostVoidCallbacks: cx.hostVoidCallbacks,
+33ea8606aa:src/ir/from-ast.ts:14860:    hostVoidCallbacks: cx.hostVoidCallbacks,
+33ea8606aa:src/ir/module-bindings.ts:763:  readonly allowHostExterns: boolean;
+33ea8606aa:src/ir/module-bindings.ts:764:  readonly resolveCapabilityExternBinding?: bindingValue.IrModuleCapabilityExternResolver;
+33ea8606aa:src/ir/module-bindings.ts:769:  readonly allowBuiltinMapExtern: boolean;
+33ea8606aa:src/ir/module-bindings.ts:773:   * this and {@link allowBuiltinMapExtern} may be true — they are the two
+33ea8606aa:src/ir/module-bindings.ts:961:    options.allowBuiltinMapExtern &&
+33ea8606aa:src/ir/module-bindings.ts:1357:      options.resolveCapabilityExternBinding,
+33ea8606aa:src/ir/module-bindings.ts:1975:  const resolveCapabilityExtern = options.resolveCapabilityExternBinding;
+33ea8606aa:src/ir/module-bindings.ts:2015:    if (!valueKind && !isModuleVar && options.allowHostExterns) {
+33ea8606aa:src/ir/module-bindings.ts:2024:    // into the arm above: `allowHostExterns` is false on this lane, and the
+33ea8606aa:src/ir/module-bindings.ts:2169:    supportsHostNumberToString: options.allowHostExterns,
+33ea8606aa:src/ir/select.ts:613:  readonly supportsHostIndirectEval?: boolean;
+33ea8606aa:src/ir/select.ts:657:  readonly hostVoidCallbacks?: IrHostVoidCallbackResolver;
+33ea8606aa:src/ir/select.ts:7428:    currentSelectionOptions?.supportsHostIndirectEval !== true ||
+33ea8606aa:src/ir/select.ts:9916:      const hostVoidCallback = currentSelectionOptions?.hostVoidCallbacks?.(expr);

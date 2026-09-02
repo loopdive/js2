@@ -1,0 +1,147 @@
+33ea8606aa:src/ir/runtime-manifest.ts:6: * The builder is the preparation-time mutation boundary. `freeze()` verifies
+33ea8606aa:src/ir/runtime-manifest.ts:9: * frozen arrays/records. Lowering receives lookup-only `resolveProvider` calls;
+33ea8606aa:src/ir/runtime-manifest.ts:10: * a request absent from the frozen plan is a typed invariant.
+33ea8606aa:src/ir/runtime-manifest.ts:84:export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:97: * resolve their truth table BEFORE freeze; nothing below reads a live codegen
+33ea8606aa:src/ir/runtime-manifest.ts:108:export const NUMBER_BOUNDARY_POLICY_DISABLED: NumberBoundaryPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:126:export const BOOLEAN_BOUNDARY_POLICY_DISABLED: BooleanBoundaryPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:152:export const EXTERN_IS_UNDEFINED_POLICY_DISABLED: ExternIsUndefinedPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:178:export const GENERATOR_NUMBER_BOX_POLICY_DISABLED: GeneratorNumberBoxPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:204:export const STRING_COMPARE_POLICY_DISABLED: StringComparePolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:231:export const STRING_EQ_POLICY_DISABLED: StringEqPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:258:export const STRING_LEN_POLICY_DISABLED: StringLenPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:277: * frozen manifest says so.
+33ea8606aa:src/ir/runtime-manifest.ts:290:export const STRING_CONCAT_POLICY_DISABLED: StringConcatPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:319:export const STRING_CHAR_CODE_AT_POLICY_DISABLED: StringCharCodeAtPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:356:export const STRING_CONCAT_MANY_POLICY_DISABLED: StringConcatManyPolicy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:364:   * Omission resolves to {@link NUMBER_BOUNDARY_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:369:   * Omission resolves to {@link BOOLEAN_BOUNDARY_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:375:   * frozen manifest always publishes the explicit resolved value.
+33ea8606aa:src/ir/runtime-manifest.ts:380:   * frozen manifest always publishes the explicit resolved value.
+33ea8606aa:src/ir/runtime-manifest.ts:384:   * Omission resolves to {@link STRING_COMPARE_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:389:   * Omission resolves to {@link STRING_EQ_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:394:   * Omission resolves to {@link STRING_LEN_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:399:   * Omission resolves to {@link STRING_CONCAT_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:405:   * frozen manifest always publishes the explicit resolved value.
+33ea8606aa:src/ir/runtime-manifest.ts:409:   * Omission resolves to {@link STRING_CONCAT_MANY_POLICY_DISABLED}; the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:415:/** The frozen manifest's policy always carries an explicit resolved decision. */
+33ea8606aa:src/ir/runtime-manifest.ts:416:export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
+33ea8606aa:src/ir/runtime-manifest.ts:429:export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:467:export const NUMERIC_COERCION_RUNTIME_PROVIDER_IDS = Object.freeze(["backend.js.to_uint32"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:471:export const NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:479:export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.boolean.box"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:483:export const EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:494: * manifest freeze the way an async plan requests its runtime intents. The
+33ea8606aa:src/ir/runtime-manifest.ts:495: * feature exists so the frozen manifest — not a hardcoded runtime symbol at
+33ea8606aa:src/ir/runtime-manifest.ts:498:export const GENERATOR_NUMBER_BOX_RUNTIME_FEATURES = Object.freeze(["js.generator.number-box"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:502:export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:513: * (`IR_STRING_COMPARE_FN`), so the demand is requested at manifest freeze rather
+33ea8606aa:src/ir/runtime-manifest.ts:514: * than collected from an `intrinsic` use. The feature exists so the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:518:export const STRING_COMPARE_RUNTIME_FEATURES = Object.freeze(["js.string.compare"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:522:export const STRING_COMPARE_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:534: * here. So the demand is requested at freeze from a `string.eq` instruction
+33ea8606aa:src/ir/runtime-manifest.ts:537:export const STRING_EQ_RUNTIME_FEATURES = Object.freeze(["js.string.eq"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:541:export const STRING_EQ_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.eq", "native.js.string.eq"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:548: * through no `intrinsic`, so the demand is requested at freeze from a
+33ea8606aa:src/ir/runtime-manifest.ts:552: * attached provider. The feature exists so the frozen manifest, not a
+33ea8606aa:src/ir/runtime-manifest.ts:555:export const STRING_LEN_RUNTIME_FEATURES = Object.freeze(["js.string.len"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:559:export const STRING_LEN_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.len", "native.js.string.len"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:568: * freeze from a `string.concat` instruction scan. What is new is that the
+33ea8606aa:src/ir/runtime-manifest.ts:572: * the frozen manifest can say which of the two helpers a module actually needs
+33ea8606aa:src/ir/runtime-manifest.ts:575:export const STRING_CONCAT_RUNTIME_FEATURES = Object.freeze(["js.string.concat", "js.string.concat.owned"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:579:export const STRING_CONCAT_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:594: * `intrinsic` INSTRUCTION, so the demand is requested at freeze from a scan
+33ea8606aa:src/ir/runtime-manifest.ts:595: * that counts both — an instr-only scan would freeze a row for the handful of
+33ea8606aa:src/ir/runtime-manifest.ts:599:export const STRING_CHAR_CODE_AT_RUNTIME_FEATURES = Object.freeze(["js.string.char_code_at"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:603:export const STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:617: * The frozen manifest still records WHICH arities were demanded, through the
+33ea8606aa:src/ir/runtime-manifest.ts:620:export const STRING_CONCAT_MANY_RUNTIME_FEATURES = Object.freeze(["js.string.concat.many"] as const);
+33ea8606aa:src/ir/runtime-manifest.ts:624:export const STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:638:export const STRING_CONCAT_MANY_NATIVE_ARITY = Object.freeze({ min: 3, max: 8 } as const);
+33ea8606aa:src/ir/runtime-manifest.ts:739:       * physical type index, because the manifest is frozen BEFORE the carrier's
+33ea8606aa:src/ir/runtime-manifest.ts:740:       * physical layout is planned — a type index in a frozen manifest would be
+33ea8606aa:src/ir/runtime-manifest.ts:822:  return Object.freeze(RUNTIME_BACKEND_REQUIREMENTS.filter((requirement) => requirements.has(requirement)));
+33ea8606aa:src/ir/runtime-manifest.ts:836:export interface FrozenRuntimeManifest {
+33ea8606aa:src/ir/runtime-manifest.ts:837:  readonly policy: FrozenRuntimeManifestPolicy;
+33ea8606aa:src/ir/runtime-manifest.ts:851:  | "manifest-frozen"
+33ea8606aa:src/ir/runtime-manifest.ts:853:  | "manifest-not-frozen"
+33ea8606aa:src/ir/runtime-manifest.ts:887:const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone", "strict-no-host", "wasi"]);
+33ea8606aa:src/ir/runtime-manifest.ts:888:const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
+33ea8606aa:src/ir/runtime-manifest.ts:890:export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:938:  return Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:942:    dependencies: Object.freeze([...dependencies].sort()),
+33ea8606aa:src/ir/runtime-manifest.ts:946:    implementation: Object.freeze({ ...implementation }),
+33ea8606aa:src/ir/runtime-manifest.ts:950:export const NUMERIC_COERCION_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:987:  return Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:993:    dependencies: Object.freeze([] as readonly RuntimeFeature[]),
+33ea8606aa:src/ir/runtime-manifest.ts:994:    hostCapabilities: Object.freeze([...hostCapabilities]),
+33ea8606aa:src/ir/runtime-manifest.ts:1000:    implementation: Object.freeze({ ...implementation }),
+33ea8606aa:src/ir/runtime-manifest.ts:1011:export const NUMBER_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1041:export const BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1060:export const EXTERN_BOUNDARY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1085:export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1111:export const STRING_COMPARE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1150:export const STRING_EQ_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1194:export const STRING_LEN_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1233: * freeze to a single `string.concat` record and a single import.
+33ea8606aa:src/ir/runtime-manifest.ts:1239:export const STRING_CONCAT_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1322:export const STRING_CHAR_CODE_AT_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1353:export const STRING_CONCAT_MANY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+33ea8606aa:src/ir/runtime-manifest.ts:1489:const PROVIDERS_BY_FEATURE: Readonly<Record<PureMathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:1677:export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
+33ea8606aa:src/ir/runtime-manifest.ts:1684:export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
+33ea8606aa:src/ir/runtime-manifest.ts:1762:  return Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:1765:    dependencies: Object.freeze([...new Set(value.dependencies)].sort(compareStrings)),
+33ea8606aa:src/ir/runtime-manifest.ts:1766:    hostCapabilities: Object.freeze([...new Set(value.hostCapabilities)].sort(compareStrings)),
+33ea8606aa:src/ir/runtime-manifest.ts:1767:    supportedTargets: Object.freeze([...new Set(value.supportedTargets)].sort(compareStrings)),
+33ea8606aa:src/ir/runtime-manifest.ts:1768:    supportedBackends: Object.freeze([...new Set(value.supportedBackends)].sort(compareStrings)),
+33ea8606aa:src/ir/runtime-manifest.ts:1769:    implementation: Object.freeze({ ...value.implementation }),
+33ea8606aa:src/ir/runtime-manifest.ts:1887:  return Object.freeze(
+33ea8606aa:src/ir/runtime-manifest.ts:1889:      const componentFeatures = Object.freeze([...components[index]!]);
+33ea8606aa:src/ir/runtime-manifest.ts:1890:      return Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:1892:        providers: Object.freeze(componentFeatures.map((feature) => providers.get(feature)!.id).sort(compareStrings)),
+33ea8606aa:src/ir/runtime-manifest.ts:1907:type BuilderState = "open" | "building" | "frozen" | "failed";
+33ea8606aa:src/ir/runtime-manifest.ts:1910:  readonly #policy: FrozenRuntimeManifestPolicy;
+33ea8606aa:src/ir/runtime-manifest.ts:1922:  #manifest?: FrozenRuntimeManifest;
+33ea8606aa:src/ir/runtime-manifest.ts:1956:    this.#policy = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:1958:      numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
+33ea8606aa:src/ir/runtime-manifest.ts:1959:      booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
+33ea8606aa:src/ir/runtime-manifest.ts:1960:      externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
+33ea8606aa:src/ir/runtime-manifest.ts:1961:      generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
+33ea8606aa:src/ir/runtime-manifest.ts:1962:      stringCompare: Object.freeze({ compare: stringCompare.compare }),
+33ea8606aa:src/ir/runtime-manifest.ts:1963:      stringEq: Object.freeze({ eq: stringEq.eq }),
+33ea8606aa:src/ir/runtime-manifest.ts:1964:      stringLen: Object.freeze({ len: stringLen.len }),
+33ea8606aa:src/ir/runtime-manifest.ts:1965:      stringConcat: Object.freeze({ concat: stringConcat.concat }),
+33ea8606aa:src/ir/runtime-manifest.ts:1966:      stringCharCodeAt: Object.freeze({ charCodeAt: stringCharCodeAt.charCodeAt }),
+33ea8606aa:src/ir/runtime-manifest.ts:1967:      stringConcatMany: Object.freeze({ batch: stringConcatMany.batch }),
+33ea8606aa:src/ir/runtime-manifest.ts:1979:      Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:1984:        location: Object.freeze({ ...use.location }),
+33ea8606aa:src/ir/runtime-manifest.ts:2036:    this.#declaredCycles.set(key, Object.freeze(canonical));
+33ea8606aa:src/ir/runtime-manifest.ts:2039:  freeze(): FrozenRuntimeManifest {
+33ea8606aa:src/ir/runtime-manifest.ts:2044:      this.#state = "frozen";
+33ea8606aa:src/ir/runtime-manifest.ts:2052:  get manifest(): FrozenRuntimeManifest {
+33ea8606aa:src/ir/runtime-manifest.ts:2053:    if (this.#state !== "frozen" || !this.#manifest) {
+33ea8606aa:src/ir/runtime-manifest.ts:2054:      throw new RuntimeManifestInvariantError("manifest-not-frozen", "runtime manifest is not frozen");
+33ea8606aa:src/ir/runtime-manifest.ts:2063:    this.#assertFrozen();
+33ea8606aa:src/ir/runtime-manifest.ts:2068:        `runtime feature ${String(feature)} was not present at manifest freeze`,
+33ea8606aa:src/ir/runtime-manifest.ts:2075:    this.#assertFrozen();
+33ea8606aa:src/ir/runtime-manifest.ts:2079:        `intrinsic ${String(id)} was not present at manifest freeze`,
+33ea8606aa:src/ir/runtime-manifest.ts:2085:    this.#assertFrozen();
+33ea8606aa:src/ir/runtime-manifest.ts:2089:        `runtime provider ${String(id)} was not present at manifest freeze`,
+33ea8606aa:src/ir/runtime-manifest.ts:2095:    this.#assertFrozen();
+33ea8606aa:src/ir/runtime-manifest.ts:2099:        `host capability ${capability} was not present at manifest freeze`,
+33ea8606aa:src/ir/runtime-manifest.ts:2104:  #buildManifest(): FrozenRuntimeManifest {
+33ea8606aa:src/ir/runtime-manifest.ts:2126:      const plan = Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:2128:        dependencies: Object.freeze([...dependencies].sort(compareStrings)),
+33ea8606aa:src/ir/runtime-manifest.ts:2134:    const features = Object.freeze([...this.#providerPlans.keys()].sort(compareStrings));
+33ea8606aa:src/ir/runtime-manifest.ts:2136:    const providers = Object.freeze(
+33ea8606aa:src/ir/runtime-manifest.ts:2139:    const intrinsicUses = Object.freeze([...this.#uses].sort(useOrder));
+33ea8606aa:src/ir/runtime-manifest.ts:2144:    const hostCapabilities = Object.freeze([...hostCapabilityIds].sort(compareStrings));
+33ea8606aa:src/ir/runtime-manifest.ts:2154:    const hostCapabilityRecords = Object.freeze(
+33ea8606aa:src/ir/runtime-manifest.ts:2163:    return Object.freeze({
+33ea8606aa:src/ir/runtime-manifest.ts:2251:      // the frozen manifest is the only place the consumer can learn it: a
+33ea8606aa:src/ir/runtime-manifest.ts:2285:      // carrier role and field index are checked here too, because the frozen
+33ea8606aa:src/ir/runtime-manifest.ts:2543:      this.#state === "failed" ? "manifest-build-failed" : "manifest-frozen",
+33ea8606aa:src/ir/runtime-manifest.ts:2548:  #assertFrozen(): void {
+33ea8606aa:src/ir/runtime-manifest.ts:2549:    if (this.#state !== "frozen") {
+33ea8606aa:src/ir/runtime-manifest.ts:2550:      throw new RuntimeManifestInvariantError("manifest-not-frozen", `runtime manifest builder is ${this.#state}`);

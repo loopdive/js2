@@ -1,0 +1,297 @@
+{
+  "verdict": "ship",
+  "mainTip": "Ship once the 25 edits below are applied mechanically (395 lines after). Every critique item is addressed in the revised text; the only defects left are re-grounding ones — PR #5482 shifted 33 anchors in src/ir/integration.ts, runtime-manifest.ts, intrinsic-support.ts and the #3526 plan file (all re-mapped and content-verified on origin/main de72c54996 via `git show`), changed two counts (RuntimeManifestPolicy now has 11 fields with `stringConst`; the provider-implementation union now has 14 kinds with `host-global`/`native-global`, so 'CALLS or a symbolic field' becomes 'CALLS or READS'), and two slice rows (F3-S3, F3-S6) scheduled integration.ts writes without the R2-lock caveat F3-S1/F3-S5 carry. All other cited files (from-ast, select, lower, codegen/index, closure-exports, nodes, handles, backends, target-profile, tests) are byte-identical between 33ea8606aa and de72c54996 and every anchor there re-verified. Lane names match results.json (gc-host, gc-strict-no-host, standalone, wasi); all new IntrinsicId/policy/provider names are marked (new); all cited existing identifiers (provider-target-unavailable, late-preparation-unsupported, method-call-unsupported, resolveRuntimeHostCapabilityRecord, #selectProvider, exactCallableImportIndex, target:\"linear\") exist on the tip. Counts re-derived: results.json gives exactly 4 shapes (03/05/08/13) that never emit an IR body and 5 gc-host compile-twice unit names; integration.ts functional mode-read count is identical on both tips.",
+  "critiqueItems": [
+    {
+      "item": "anchorErrors[0]: index.ts:2885-2888 cited three times as the environment:\"none\" DOM gate (real gate is index.ts:4440-4445, plan flag calendar-codegen-planning.ts:366)",
+      "addressed": true,
+      "evidence": "L97-98 'plan flag `src/codegen/index.ts:3380` ← `calendar-codegen-planning.ts:366`, dispatcher gate `:4440-4445`'; L126-127 'the gate at `index.ts:4440-4445` `hasStandaloneDomDispatcher`; `:2885-2888` is the promise-delay gate'; L310 'gate `index.ts:4440-4445`'. Verified on de72c54996: index.ts:4440-4445 is hasStandaloneDomDispatcher with targetProfile.environment === \"none\"; 2884-2889 is supportsStandalonePromiseDelay."
+    },
+    {
+      "item": "anchorErrors[1]: hostIndirectEvalTarget should be :6045-6051 not :6046-6051",
+      "addressed": true,
+      "evidence": "L41 '`hostIndirectEvalTarget` (`:6045-6051`; consumer `from-ast.ts:6395`)'. On de72c54996 the method moved to integration.ts:6253-6259 (edit supplied)."
+    },
+    {
+      "item": "anchorErrors[2]: import-collector.ts (C0/M1 single-owner list, :1015-1024) mis-anchored to import-collector instead of the plan file",
+      "addressed": true,
+      "evidence": "L364 '`import-collector.ts` (on the #3526 C0/M1 single-owner list, `plan/issues/3526-ir-r6-semantic-runtime-contract.md:1017-1023`)'. On de72c54996 that paragraph is :1070-1076 (line 1071 names import-collector.ts) — edit supplied."
+    },
+    {
+      "item": "anchorErrors[3]: resolveAndObserveCallableProvider name lookup is :6910 not :6912",
+      "addressed": true,
+      "evidence": "L60 '(`:6603`) ends in the same name lookup (`:6910`)'. On de72c54996: function at 6811, lookup `ctx.funcMap.get(symbol) ?? nativeStrHelperHandle` at 7118 — edit supplied."
+    },
+    {
+      "item": "anchorErrors[4]: legality.ts:269 must be src/ir/backend/legality.ts:269",
+      "addressed": true,
+      "evidence": "L105 '(`src/ir/backend/legality.ts:269`; `boundary-surface/104-backend-closure-emitters.txt`)'; verified `case \"call\":` at that line on de72c54996."
+    },
+    {
+      "item": "numberErrors[0]: '9 of 14 never reach the IR boundary' contradicted by results.json (4 never, 10 do)",
+      "addressed": true,
+      "evidence": "L155-157 'Only 4 of 14 (03/05/08/13 — no `irBodyEmitted` unit on any lane, `results.json`) never reach the IR boundary; 10 do, via compile-once, partial (02 2/3, 12 2/4) or compile-twice units'. Re-derived from results.json: never-reach = 03-closure-mutable-local, 05-returned-closure, 08-array-map-arrow, 13-recursion-local-ref."
+    },
+    {
+      "item": "numberErrors[1]: '398 reads across 55 files' — 398 lines fall in 20 files; 55 is the scan set",
+      "addressed": true,
+      "evidence": "L108 'reads in 20 of the 55 scanned callable-path files — `codegen/index.ts` 118, `calls.ts` 57, ... `integration.ts` 79'. Recounted mode-reads-functional.grep: 20 files, 118/79/57/51/30; integration.ts count identical on de72c54996."
+    },
+    {
+      "item": "designObjections[0]: contract item 4 named attachedExternIsUndefinedArm, which cannot recognise a call-kind maker; must name preregisterDynamicSupport scan + resolveFunc/resolvePreparedImportCallable arms and the import-parity invariant",
+      "addressed": true,
+      "evidence": "L279-287 'add attached-target recognition in the `call`-on-`env`-import scan of `preregisterDynamicSupport` (`integration.ts:8286-8289`; `attachedExternIsUndefinedArm` `:8194-8196` matches only `intrinsic` instrs and cannot see the maker). Exact resolve arm: `resolveFunc` `:7050-7052` → `resolvePreparedImportCallable` `:6959` (catalog `:4296`) when `ctx.programAbiSession` is set, else `:7056-7057`; both return the pre-pass index iff the record's `module.field` equals the `import-collector.ts:2010` key; `preregisterCallableProviders` `:7441` learns no `call` instrs'. All seven anchors re-mapped to de72c54996 (8463-8466, 8370-8372, 7258-7260, 7167, 4504, 7264-7265, 7649) — edits supplied."
+    },
+    {
+      "item": "designObjections[1]: contract item 3 said :8313 'builds the import ref from the frozen record' but from-ast runs pre-freeze; admission must be post-freeze",
+      "addressed": true,
+      "evidence": "L268-276 '`:8313` builds the import ref from the static catalogue record (`resolveRuntimeHostCapabilityRecord(\"async.callback.wrap\")`; from-ast runs in Phase-1 `integration.ts:2711`, BEFORE `freeze()` at `:4176`, so the frozen manifest is unreadable here — policy ADMISSION is post-freeze, item 4)'; slice row L226 'post-freeze admission, contract item 4'; OQ4 L379-381 'refusal surfaces as `late-preparation-unsupported`@resolve'. Phase-1 comment now :2899 and freeze call :4384 on de72c54996 — edit supplied."
+    },
+    {
+      "item": "designObjections[2]: 'R6 owns ...' had no anchor; cite the C0/M1 one-owner rule at #3526 :1017-1018",
+      "addressed": true,
+      "evidence": "L353 '**Ownership**: slice claim `#3526:f3s1`. Per `#3526 :1017-1018` (C0/M1 one-owner set) R6 is sole owner of `runtime-manifest.ts`, ...' (the critique's own edit 14 text). Paragraph is :1070-1071 on de72c54996 — edit supplied. from-ast.ts overlap with #3522 stays flagged in OQ2 L370-372."
+    },
+    {
+      "item": "designObjections[3]: lane label gc-strict should be gc-strict-no-host; V-A must not name gc-native-strings; name lanes by option object",
+      "addressed": true,
+      "evidence": "grep: no 'gc-strict`' or 'gc-native' in the section; L120-124 lanes named as in results.json with option objects; L329-332 V-A six cells 'gc-host `{}`, gc-strict-no-host `{strictNoHostImports:true}`, standalone `{target:\"standalone\"}`, exact standalone-DOM (same `{target:\"standalone\"}` on a closed-DOM-authority fixture, `hasStandaloneDomDispatcher` true), wasi `{target:\"wasi\"}`, linear `{target:\"linear\"}`'. `target: \"linear\"` verified in src/index.ts:521."
+    },
+    {
+      "item": "designObjections[4]: no invented vocabulary unmarked; existing identifiers verified; ≤400 lines; test file names unused",
+      "addressed": true,
+      "evidence": "New names all carry (new): L226/251 `hostCallbackWrap`/`HostCallbackWrapPolicy` (new), L259 `integrationHostCallbackWrapPolicy(ctx)` (new), L262 `host.callback.wrap` (new), L265 `native.callback.dispatch` (new), L227 `kind: \"export\"` (new)/maker siblings (new ids), L228/L229 policy (new). Existing: provider-target-unavailable (50 hits), late-preparation-unsupported (130), method-call-unsupported (52), resolveRuntimeHostCapabilityRecord (47), #selectProvider (23), exactCallableImportIndex (26), loc-budget-allow — all on de72c54996. 386 lines now, 395 after edits."
+    },
+    {
+      "item": "ownershipViolations[0]: F3-S5 lists src/codegen/index.ts:6038-6056 with no R2 caveat",
+      "addressed": true,
+      "evidence": "L230 '`index.ts:6038-6056` (R2-locked, #3521 `:953-956` — coordinated with the R2 lane as F3-S1 does)'; #3521 :953-956 verified on de72c54996 ('Lock `src/codegen/index.ts`, ... `src/ir/integration.ts` ... to one R2 developer'). Note: the same caveat was missing on F3-S3 and F3-S6 (integration.ts) — edits supplied."
+    },
+    {
+      "item": "ownershipViolations[1]: precedent line must include makeFromAstResolver-arm edits (F2-S1 item 3) so F3-S3 is consistent",
+      "addressed": true,
+      "evidence": "L357-358 'R6 edits only its own policy-projection, attached-target and `makeFromAstResolver`-arm lines there (F2-S1 item 3, `#3526 :3359`)'. Item 3 ('The resolve arm at `:6189-6195` stops reading `ctx.nativeStrings`') is :3412 on de72c54996 — edit supplied."
+    },
+    {
+      "item": "edit 1 (Not measured: index.ts:2885-2888 → 4440-4445 hasStandaloneDomDispatcher)",
+      "addressed": true,
+      "evidence": "L126-127 applied verbatim."
+    },
+    {
+      "item": "edit 2 (plan flag source calendar-codegen-planning.ts:366, dispatcher gate :4440-4445)",
+      "addressed": true,
+      "evidence": "L97-98 applied verbatim."
+    },
+    {
+      "item": "edit 3 (P2 gate index.ts:4440-4445)",
+      "addressed": true,
+      "evidence": "L310 applied verbatim."
+    },
+    {
+      "item": "edit 4 (hostIndirectEvalTarget :6045-6051)",
+      "addressed": true,
+      "evidence": "L41 applied; superseded by new mapping :6253-6259."
+    },
+    {
+      "item": "edit 5 (import-collector owner-list anchor → plan file :1017-1023)",
+      "addressed": true,
+      "evidence": "L364 applied; superseded by new mapping :1070-1076."
+    },
+    {
+      "item": "edit 6 (name lookup :6910)",
+      "addressed": true,
+      "evidence": "L60 applied; superseded by new mapping :7118."
+    },
+    {
+      "item": "edit 7 (src/ir/backend/legality.ts:269)",
+      "addressed": true,
+      "evidence": "L105 applied verbatim."
+    },
+    {
+      "item": "edit 8 (Only 4 of 14 never reach the IR boundary; 10 do)",
+      "addressed": true,
+      "evidence": "L155-157 applied verbatim."
+    },
+    {
+      "item": "edit 9 (398 reads in 20 of the 55 scanned files)",
+      "addressed": true,
+      "evidence": "L108 applied verbatim."
+    },
+    {
+      "item": "edit 10 (item 3: static catalogue record, Phase-1 :2711 before freeze :4176)",
+      "addressed": true,
+      "evidence": "L268-271 applied; anchors re-mapped to :2899/:4384."
+    },
+    {
+      "item": "edit 11 (item 4: preregisterDynamicSupport scan + resolveFunc arms + import-parity invariant)",
+      "addressed": true,
+      "evidence": "L279-285 applied verbatim; anchors re-mapped for de72c54996."
+    },
+    {
+      "item": "edit 12 (F3-S5 index.ts R2-locked caveat)",
+      "addressed": true,
+      "evidence": "L230 applied verbatim."
+    },
+    {
+      "item": "edit 13 (precedent: policy-projection, attached-target and makeFromAstResolver-arm lines, F2-S1 item 3 :3359)",
+      "addressed": true,
+      "evidence": "L357-358 applied; :3359 re-mapped to :3412."
+    },
+    {
+      "item": "edit 14 (Ownership: Per #3526 :1017-1018 C0/M1 one-owner set)",
+      "addressed": true,
+      "evidence": "L353 applied; re-mapped to :1070-1071."
+    }
+  ],
+  "anchorErrors": [
+    "Grounding sentence L3-10 names 33ea8606aa; origin/main is now de72c54996 (33ea8606aa → 079332e3 → PR #5482 merge 3bcad2e9 → de72c54996) and #5482 shifted src/ir/integration.ts (+260), runtime-manifest.ts (+247), intrinsic-support.ts (+75), intrinsics.ts (+21), runtime-host-capabilities.ts (+22, no cited anchor moved), string-support.ts (new), stdlib-selfhost.ts, linear-integration.ts, and the #3526 plan file (+526).",
+    "plan 3526 `:998-999` (family-3 definition) → `:1051-1052`",
+    "plan 3526 `:1017-1018` / `:1017-1023` (C0/M1 file ownership) → `:1070-1071` / `:1070-1076`",
+    "plan 3526 `:3359` (F2-S1 item 3 resolve arm) → `:3412`",
+    "runtime-manifest.ts `:360-413` RuntimeManifestPolicy → `:399-457`; frozen twin `:416-427` → `:460-472`; freeze literal `:1956-1967` → `:2135-2147`; `freeze()` `:2039` → `:2219`; `stringConcatMany` `:412` → `:451` (last field is now `stringConst` `:456`); hostCapabilities `:782` → `:886`; provider-implementation union `:655-758` → `:730-860`; carrier-field `:741-746` → `:818-820`; native-managed `:754-755` → `:858-859`",
+    "Count: '0 of 10 RuntimeManifestPolicy fields' is now 0 of 11 (`stringConst`, #5482); '12 provider implementation kinds … all name something the module CALLS or a symbolic field' is now 14 kinds incl. `host-global`/`native-global` (globals the module READS)",
+    "intrinsic-support.ts `:761` (sole `builder.freeze()` caller) → `:834` (still the sole caller)",
+    "integration.ts `:1217` prepareBuiltFnRuntimeManifest → `:1275`; call site `:4176-4177` → `:4384-4385`; policy projection block `:1226-1237` → `:1284-1296`; Phase-1 comment `:2711` → `:2899`; preregisterCallableProviders call `:4292` → `:4500`, definition `:7441` → `:7649`; catalog `:4296` → `:4504`; Phase-3 comment `:4491` → `:4699`",
+    "integration.ts makeFromAstResolver: hostIndirectEvalTarget `:6045-6051` → `:6253-6259`; functionPrototypeCallTarget `:6124-6129` → `:6332-6337` (L38, L228 twice)",
+    "integration.ts resolvers: resolveAndObserveCallableProvider `:6603` → `:6811`; name lookup `:6910` → `:7118`; resolvePreparedImportCallable `:6959` → `:7167`; makeResolver.resolveFunc `:7032-7068` → `:7240-7276`; import branch `:7050-7052` → `:7258-7260`; funcMap fallthrough `:7056-7057` → `:7264-7265` (`:7057` → `:7265`); nativeStrHelperHandle `:7066` → `:7274`; callResultAdapter `:7070-7080` → `:7278-7288`",
+    "integration.ts attachedExternIsUndefinedArm `:8194-8196` → `:8370-8372`; the `call`-on-`env`-import scan in preregisterDynamicSupport `:8286-8289` → `:8463-8466` (L226 and L281)"
+  ],
+  "ownershipViolations": [
+    "F3-S3 row (L228) lists `src/ir/integration.ts` (`:6124-6129` + projection) with no R2-lock caveat, while the section's own Ownership paragraph requires the F1/F2 line-scoped coordination for integration.ts (#3521 :953-956). Fixed by edit.",
+    "F3-S6 row (L231) lists `integration.ts` with no R2-lock caveat (same lock). Fixed by edit.",
+    "The R2-confirmation gate that the meta open list carries (S1/S3/S5 line-scoped edits need the R2 lane's acceptance before claim) is absent from the section's Open questions. Added as open question 7 by edit."
+  ],
+  "edits": [
+    {
+      "find": "Grounded on `origin/main` `33ea8606aa` (`079332e3` on top is one `[skip ci]`\nbaseline-refresh commit; `src/` and the #3526/#3521 plan files are\nbyte-identical). Three census probes ran against that commit —",
+      "replace": "Grounded on `origin/main` `de72c54996` (2026-09-02: a `[skip ci]` baseline\nrefresh on top of PR #5482, F2-S8 `string.const`). The three census probes ran\non the pre-#5482 tip `33ea8606aa`; #5482 shifted lines only in\n`src/ir/{integration,runtime-manifest,intrinsic-support,intrinsics,runtime-host-capabilities,string-support}.ts`,\n`src/codegen/stdlib-selfhost.ts`, `src/ir/backend/linear-integration.ts` and\nthe #3526 plan file (every other file cited is byte-identical), and the\n`integration.ts` functional mode-read count re-derives unchanged there. Probes —",
+      "why": "Re-ground on the post-#5482 tip and name which cited files shifted."
+    },
+    {
+      "find": "(each has an index/summary file). Every line number below was re-read on\n`33ea8606aa`; every count names its artifact.",
+      "replace": "(each has an index/summary file). Every line number below was re-read on\n`de72c54996`; every count names its artifact (probe outputs: `33ea8606aa`).",
+      "why": "Anchors now verified on de72c54996; counts still come from the 33ea8606aa probe artifacts."
+    },
+    {
+      "find": "callbacks, closure environments, constructor/callable ABI\" (`:998-999`).",
+      "replace": "callbacks, closure environments, constructor/callable ABI\" (`:1051-1052`).",
+      "why": "#5482 added 526 lines to the #3526 plan file; the family-3 line is now :1051-1052."
+    },
+    {
+      "find": "  **0 of 10** `RuntimeManifestPolicy` fields are callable\n  (`src/ir/runtime-manifest.ts:360-413`, frozen twin `:416-427`, freeze\n  literal `:1956-1967`; `ungoverned-dispatch/manifest-freeze.grep`), and",
+      "replace": "  **0 of 11** `RuntimeManifestPolicy` fields are callable (10 at `33ea8606aa`,\n  `stringConst` added by #5482; `src/ir/runtime-manifest.ts:399-457`, frozen\n  twin `:460-472`, freeze literal `:2135-2147`; `ungoverned-dispatch/manifest-freeze.grep`), and",
+      "why": "F2-S8 added the stringConst field; interface/twin/freeze literal moved to 399-457/460-472/2135-2147 on de72c54996."
+    },
+    {
+      "find": "  them BEFORE `freeze()` (`runtime-manifest.ts:2039`, sole caller\n  `intrinsic-support.ts:761`, reached from `prepareBuiltFnRuntimeManifest`\n  `integration.ts:1217` at `:4176-4177` — after Phase-1 build, before\n  `preregisterCallableProviders` `:4292` and Phase-3 lowering `:4491`):",
+      "replace": "  them BEFORE `freeze()` (`runtime-manifest.ts:2219`, sole caller\n  `intrinsic-support.ts:834`, reached from `prepareBuiltFnRuntimeManifest`\n  `integration.ts:1275` at `:4384-4385` — after Phase-1 build, before\n  `preregisterCallableProviders` `:4500` and Phase-3 lowering `:4699`):",
+      "why": "freeze() 2039→2219, builder.freeze() 761→834 (still sole caller), prepareBuiltFnRuntimeManifest 1217→1275 called at 4384-4385, preregisterCallableProviders 4292→4500, Phase-3 comment 4491→4699."
+    },
+    {
+      "find": "`functionPrototypeCallTarget` (`integration.ts:6124-6129`: `null` unless",
+      "replace": "`functionPrototypeCallTarget` (`integration.ts:6332-6337`: `null` unless",
+      "why": "functionPrototypeCallTarget() is at integration.ts:6332-6337 on de72c54996."
+    },
+    {
+      "find": "`from-ast.ts:7553`), `hostIndirectEvalTarget` (`:6045-6051`; consumer",
+      "replace": "`from-ast.ts:7553`), `hostIndirectEvalTarget` (`:6253-6259`; consumer",
+      "why": "hostIndirectEvalTarget() is at integration.ts:6253-6259 on de72c54996."
+    },
+    {
+      "find": "un-governed dispatch: `makeResolver.resolveFunc` (`integration.ts:7032-7068`)\n     routes `unit`/`support`/`import`/`runtime|intrinsic` bindings by kind and\n     then falls through to `ctx.funcMap.get(adapterName)` (`:7057`) /\n     `nativeStrHelperHandle` (`:7066`); `resolveAndObserveCallableProvider`",
+      "replace": "un-governed dispatch: `makeResolver.resolveFunc` (`integration.ts:7240-7276`)\n     routes `unit`/`support`/`import`/`runtime|intrinsic` bindings by kind and\n     then falls through to `ctx.funcMap.get(adapterName)` (`:7265`) /\n     `nativeStrHelperHandle` (`:7274`); `resolveAndObserveCallableProvider`",
+      "why": "resolveFunc 7032-7068→7240-7276, funcMap.get(adapterName) 7057→7265, nativeStrHelperHandle 7066→7274."
+    },
+    {
+      "find": "     (`:6603`) ends in the same name lookup (`:6910`). Which function a NAME\n     denotes depends on which lane registered it. `callResultAdapter`\n     (`:7070-7080`) reads raw `ctx.nativeStrings`. All 29",
+      "replace": "     (`:6811`) ends in the same name lookup (`:7118`). Which function a NAME\n     denotes depends on which lane registered it. `callResultAdapter`\n     (`:7278-7288`) reads raw `ctx.nativeStrings`. All 29",
+      "why": "resolveAndObserveCallableProvider 6603→6811, name lookup 6910→7118, callResultAdapter 7070-7080→7278-7288."
+    },
+    {
+      "find": "several records (`runtime-manifest.ts:782`). The 12 provider implementation\nkinds (`:655-758`) all name something the module CALLS or a symbolic field;",
+      "replace": "several records (`runtime-manifest.ts:886`). The 14 provider implementation\nkinds (`:730-860`; 12 at `33ea8606aa`, `host-global`/`native-global` added by\n#5482) all name something the module CALLS or READS, or a symbolic field;",
+      "why": "hostCapabilities 782→886; #5482 added host-global/native-global kinds (14 now, :730-860), which name a global the module reads."
+    },
+    {
+      "find": "  `carrier-field` with a symbolic role (`:741-746`), deliberately not a type",
+      "replace": "  `carrier-field` with a symbolic role (`:818-820`), deliberately not a type",
+      "why": "carrier-field arm is at runtime-manifest.ts:818-820 on de72c54996."
+    },
+    {
+      "find": "F2-S8 merged (adjacent `runtime-manifest.ts` policy fields)",
+      "replace": "F2-S8 (PR #5482, on `de72c54996`; adjacent `runtime-manifest.ts` policy fields)",
+      "why": "F2-S8 has landed; name the PR so the dependency reads as satisfied."
+    },
+    {
+      "find": "post-freeze admission in `preregisterDynamicSupport` `:8286-8289`)",
+      "replace": "post-freeze admission in `preregisterDynamicSupport` `:8463-8466`)",
+      "why": "The call-on-env-import scan is integration.ts:8463-8466 on de72c54996."
+    },
+    {
+      "find": "govern `functionPrototypeCallTarget` (`integration.ts:6124-6129`), one runtime symbol",
+      "replace": "govern `functionPrototypeCallTarget` (`integration.ts:6332-6337`), one runtime symbol",
+      "why": "Anchor moved to 6332-6337."
+    },
+    {
+      "find": "`runtime-manifest.ts`, `integration.ts` (`:6124-6129` + projection), tests |",
+      "replace": "`runtime-manifest.ts`, `integration.ts` (`:6332-6337` `makeFromAstResolver` arm + projection; R2-locked, #3521 `:953-956` — coordinated with the R2 lane as F3-S1 does), tests |",
+      "why": "Anchor moved; integration.ts is under the R2 lock and F3-S3's row lacked the caveat F3-S1/F3-S5 carry."
+    },
+    {
+      "find": "`object-runtime.ts`, `integration.ts`, tests | **no**",
+      "replace": "`object-runtime.ts`, `integration.ts` (R2-locked, #3521 `:953-956` — coordinated with the R2 lane as F3-S1 does), tests | **no**",
+      "why": "F3-S6 schedules an integration.ts write without the R2-lock caveat."
+    },
+    {
+      "find": "   `{ wrap: \"host\" | \"native-dispatch\" | \"unsupported\" }`, sibling of\n   `stringConcatMany` (`runtime-manifest.ts:412`). Frozen disabled default,",
+      "replace": "   `{ wrap: \"host\" | \"native-dispatch\" | \"unsupported\" }`, sibling of\n   `stringConst` (`runtime-manifest.ts:456`, F2-S8). Frozen disabled default,",
+      "why": "stringConcatMany moved to :451 and stringConst (:456) is now the last policy field."
+    },
+    {
+      "find": "   list F2-S1 item 2 names (type + default + constructor refreeze around\n   `:1956-1967`, feature/provider unions, `#selectProvider` branch, caller\n   projection `integrationHostCallbackWrapPolicy(ctx)` (new) beside\n   `integration.ts:1226-1237` consulted ONCE before freeze, owner-local",
+      "replace": "   list F2-S1 item 2 names (type + default + constructor refreeze around\n   `:2135-2147`, feature/provider unions, `#selectProvider` branch, caller\n   projection `integrationHostCallbackWrapPolicy(ctx)` (new) beside\n   `integration.ts:1284-1296` consulted ONCE before freeze, owner-local",
+      "why": "Freeze literal 1956-1967→2135-2147; policy projection block 1226-1237→1284-1296 (now includes stringConst)."
+    },
+    {
+      "find": "   only `service: \"native-promise-runtime\"`, `runtime-manifest.ts:754-755`).",
+      "replace": "   only `service: \"native-promise-runtime\"`, `runtime-manifest.ts:858-859`).",
+      "why": "native-managed arm moved to 858-859."
+    },
+    {
+      "find": "   from-ast runs in Phase-1 `integration.ts:2711`, BEFORE `freeze()` at `:4176`, so the",
+      "replace": "   from-ast runs in Phase-1 `integration.ts:2899`, BEFORE `freeze()` at `:4384`, so the",
+      "why": "Phase-1 comment 2711→2899; prepareBuiltFnRuntimeManifest call 4176→4384."
+    },
+    {
+      "find": "   (`integration.ts:8286-8289`; `attachedExternIsUndefinedArm` `:8194-8196` matches only\n   `intrinsic` instrs and cannot see the maker). Exact resolve arm: `resolveFunc` `:7050-7052`\n   → `resolvePreparedImportCallable` `:6959` (catalog `:4296`) when `ctx.programAbiSession`",
+      "replace": "   (`integration.ts:8463-8466`; `attachedExternIsUndefinedArm` `:8370-8372` matches only\n   `intrinsic` instrs and cannot see the maker). Exact resolve arm: `resolveFunc` `:7258-7260`\n   → `resolvePreparedImportCallable` `:7167` (catalog `:4504`) when `ctx.programAbiSession`",
+      "why": "All five integration.ts anchors moved with #5482 (scan 8463-8466, arm 8370-8372, import branch 7258-7260, resolvePreparedImportCallable 7167, catalog 4504)."
+    },
+    {
+      "find": "   is set, else `:7056-7057`; both return the pre-pass index iff the record's `module.field`\n   equals the `import-collector.ts:2010` key; `preregisterCallableProviders` `:7441` learns no `call` instrs — routing to the",
+      "replace": "   is set, else `:7264-7265`; both return the pre-pass index iff the record's `module.field`\n   equals the `import-collector.ts:2010` key; `preregisterCallableProviders` `:7649` learns no `call` instrs — routing to the",
+      "why": "funcMap fallthrough 7056-7057→7264-7265; preregisterCallableProviders 7441→7649."
+    },
+    {
+      "find": "**Ownership**: slice claim `#3526:f3s1`. Per `#3526 :1017-1018` (C0/M1 one-owner set)",
+      "replace": "**Ownership**: slice claim `#3526:f3s1`. Per `#3526 :1070-1071` (C0/M1 one-owner set)",
+      "why": "Plan-file owner rule moved to :1070-1071."
+    },
+    {
+      "find": "(F2-S1 item 3, `#3526 :3359`) — same here, coordinated with the R2 lane before",
+      "replace": "(F2-S1 item 3, `#3526 :3412`) — same here, coordinated with the R2 lane before",
+      "why": "F2-S1 item 3 moved to :3412."
+    },
+    {
+      "find": "`plan/issues/3526-ir-r6-semantic-runtime-contract.md:1017-1023`).",
+      "replace": "`plan/issues/3526-ir-r6-semantic-runtime-contract.md:1070-1076`).",
+      "why": "File-ownership paragraph moved to :1070-1076."
+    },
+    {
+      "find": "   record axis, or retire the knob first (a #3520/#4397 host-import-policy\n   question).",
+      "replace": "   record axis, or retire the knob first (a #3520/#4397 host-import-policy\n   question).\n7. R2 lock (#3521 `:953-956`): confirm the R2 lane accepts the F1/F2-style\n   line-scoped edits before claim — F3-S1 (`integration.ts:8463-8466` scan +\n   projection), F3-S3 (`:6332-6337` arm), F3-S5 (`index.ts:6038-6056`), F3-S6.",
+      "why": "The meta open-question list carries this R2-confirmation item but the section did not; it gates three slices."
+    }
+  ],
+  "lineCount": 395
+}

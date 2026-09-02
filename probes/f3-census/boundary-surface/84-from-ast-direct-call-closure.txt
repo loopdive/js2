@@ -1,0 +1,56 @@
+=== from-ast irUnitFuncRef sites
+14534:  const liftedTarget = irUnitFuncRef(liftedIdentity);
+14665:  cx.scope.set(innerName, { kind: "nestedFunc", target: irUnitFuncRef(liftedIdentity), signature, captures });
+=== from-ast emitClosureCall / emitClosureNew contexts
+2588:    const closure = cx.builder.emitClosureNew(plan.trampoline, plan.signature, [], []);
+4132:      return cx.builder.emitCallablePack(closure, hint.signature);
+5623:      const callable = cx.builder.emitCallablePack(closure, closureType.signature);
+6328:        value = cx.builder.emitCallablePack(value, expected.signature);
+6573:      argVal = cx.builder.emitCallablePack(argVal, expected.signature);
+6775:  return cx.builder.emitClosureCall(callee, args, signature.returnType);
+7034:  return cx.builder.emitClassNew(shape, args);
+8302:        const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
+9473:      return cx.builder.emitCallablePack(value, declared.signature);
+12283:      const primitive = cx.builder.emitClosureCall(closure, [], method.type.signature.returnType);
+14618:  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
+=== ast-lowering-plans.ts plan interfaces
+36:export interface IrImportedCallLoweringPlan {
+80:export interface IrDirectCallLoweringPlan {
+88:export interface IrDirectCallTarget {
+94:export interface IrFnctorSourceCallablePlan {
+188:export interface IrIdentityDirectCallCollectionOptions {
+317:export interface IrHostVoidCallbackLoweringPlan {
+export interface IrDirectCallLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  /** Exact closed-union callable target. `name` is adapter metadata only. */
+  readonly target: IrFuncRef;
+  readonly signature: IrClosureSignature;
+}
+
+/** Already-validated callable target supplied by integration planning. */
+export interface IrDirectCallTarget {
+  readonly target: IrFuncRef;
+  readonly signature: IrClosureSignature;
+}
+
+/** Exact source callable record retained by a prepared fnctor projection. */
+export interface IrFnctorSourceCallablePlan {
+  readonly handle: FuncHandle;
+  readonly func: WasmFunction;
+  readonly typeIdx: number;
+  readonly type: FuncTypeDef;
+}
+
+/** One authenticated native-string argument crossing into a runtime builtin. */
+export interface IrFnctorNativeStringBoundaryPlan {
+  readonly kind: "fnctor-native-string-boundary";
+  readonly ownerUnitId: IrUnitId;
+  readonly sourceId: IrSourceId;
+=== from-ast bind/apply hits
+src/ir/from-ast.ts:391:  /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
+src/ir/from-ast.ts:7533:  // #4385 — ES5 §15.3.4. `%Function.prototype%` is a callable intrinsic
+src/ir/from-ast.ts:7550:        `ir/from-ast: Function.prototype spread call is not supported (${cx.funcName})`,
+src/ir/from-ast.ts:7558:        `ir/from-ast: Function.prototype call provider unavailable (${cx.funcName})`,
+src/ir/from-ast.ts:7564:    if (result === null) throw new Error(`ir/from-ast: Function.prototype helper returned void (${cx.funcName})`);
+src/ir/select.ts:9622:      // #4385 — exact ambient `%Function.prototype%()` call. This is a
+src/ir/types.ts:405:  | { op: "call_indirect"; typeIdx: TypeHandle; tableIdx: number }

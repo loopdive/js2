@@ -1,0 +1,33 @@
+
+Unintended (gated; must not increase):
+  reason                                 baseline   current     delta
+  -------------------------------------  --------  --------  --------
+  body-shape-rejected                           0         6        +6
+  call-graph-closure                            0         1        +1
+Deferred (informational):
+  reason                                  baseline   current     delta
+  --------------------------------------  --------  --------  --------
+  array-method-unsupported                       0         1        +1
+  call-resolution-unsupported                    0         1        +1
+  function-invocation-method-unsupported         0         1        +1
+  string-builder-candidate                       2         0        -2
+Module-level rejections (#3142; gated; must not increase): (none)
+
+Module-level units: 0 claimable, 14 empty (declarations-only)
+
+Post-claim demotions (gated; must not increase): (none)
+
+
+IR fallback gate: at least one unintended bucket grew vs. baseline.
+If the change was intentional (e.g. new IR-claimable feature added in a separate PR), run `pnpm run check:ir-fallbacks -- --update` and commit the refreshed baseline.
+
+Per-file breakdown (unintended + deferred):
+  .tmp/r6-f3-census/lane-measurement/corpus/02-indirect-call-var.ts: body-shape-rejected=1
+  .tmp/r6-f3-census/lane-measurement/corpus/03-closure-mutable-local.ts: body-shape-rejected=1
+  .tmp/r6-f3-census/lane-measurement/corpus/05-returned-closure.ts: body-shape-rejected=1, call-graph-closure=1
+  .tmp/r6-f3-census/lane-measurement/corpus/06-bind.ts: body-shape-rejected=1
+  .tmp/r6-f3-census/lane-measurement/corpus/07-call-apply.ts: function-invocation-method-unsupported=1
+  .tmp/r6-f3-census/lane-measurement/corpus/08-array-map-arrow.ts: array-method-unsupported=1
+  .tmp/r6-f3-census/lane-measurement/corpus/10-new-plain-function.ts: body-shape-rejected=1
+  .tmp/r6-f3-census/lane-measurement/corpus/12-higher-order.ts: body-shape-rejected=1
+  .tmp/r6-f3-census/lane-measurement/corpus/13-recursion-local-ref.ts: call-resolution-unsupported=1

@@ -1,0 +1,145 @@
+=== integration.ts 7028-7160 (resolver impls, non-comment)
+  let dynamicLoweringMemo: IrDynamicLowering | null | undefined;
+  const resolver: IrLowerResolver = {
+    resolveFunc(ref: IrFuncRef): number {
+      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "function") {
+        throw new IrInvariantError(
+          "unknown-function-ref",
+          "lower",
+          `injected unknown function ref through resolver (${ref.name})`,
+        );
+      }
+      if (ref.binding.kind === "unit") {
+        return resolvePreparedUnitCallable(ctx, ref, unitCallableSlots, preparedScopeLookup);
+      }
+      if (
+        ref.binding.kind === "support" &&
+        (ctx.programAbiSession?.hasPlan(ref.binding.bindingId) ||
+          preparedScopeLookup?.get(ref.binding.bindingId) !== undefined)
+      ) {
+        return resolvePreparedSupportCallable(ctx, ref, preparedScopeLookup);
+      }
+      if (ref.binding.kind === "import" && ctx.programAbiSession) {
+        return resolvePreparedImportCallable(ctx, ref, importedCallableCatalog, preparedScopeLookup);
+      }
+      if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
+        return resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
+      }
+      const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
+      const idx = ctx.funcMap.get(adapterName);
+      if (idx !== undefined) return idx;
+      const helperIdx = nativeStrHelperHandle(ctx, adapterName);
+      if (helperIdx !== undefined) return helperIdx;
+      throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: unknown function ref "${ref.name}"`);
+    },
+    callResultAdapter(ref: IrFuncRef): "native-string-from-externref" | undefined {
+      if (!fuseNativeNumberFormatCarriers || !ctx.nativeStrings) return undefined;
+      if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") return undefined;
+      const symbol = ref.binding.symbol;
+      return symbol === IR_NUMBER_TO_STRING_NATIVE_FN ||
+        symbol === IR_ASYNC_NUMBER_TO_STRING_FN ||
+        symbol === IR_NUMBER_TO_STRING_FN ||
+        symbol === IR_NUMBER_TO_FIXED_FN
+        ? "native-string-from-externref"
+        : undefined;
+    },
+    resolveGlobal(ref: IrGlobalRef): number {
+      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "global") {
+        throw new IrInvariantError(
+          "unknown-global-ref",
+          "lower",
+          `injected unknown global ref through resolver (${ref.name})`,
+        );
+      }
+      if (!ctx.programAbiSession) {
+        throw new IrInvariantError(
+          "unknown-global-ref",
+          "lower",
+          `ir/integration: global ref "${ref.name}" has no ProgramAbiSession`,
+        );
+      }
+      return preparedScopeLookup
+        ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding))
+        : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "global", irGlobalBindingKey(ref.binding));
+    },
+    resolveType(ref: IrTypeRef): number {
+      if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "type") {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "lower",
+          `injected unknown type ref through resolver (${ref.name})`,
+        );
+      }
+      if (!ctx.programAbiSession) {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "lower",
+          `ir/integration: type ref "${ref.name}" has no ProgramAbiSession`,
+        );
+      }
+      return preparedScopeLookup
+        ? preparedScopeLookup.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding))
+        : ctx.programAbiSession.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding));
+    },
+    internFuncType(type: FuncTypeDef): number {
+      return addFuncType(ctx, type.params, type.results, type.name);
+    },
+    resolveUnion(members: readonly ValType[]): IrUnionLowering | null {
+      return unionRegistry.resolve(members);
+    },
+    resolveObject(shape: IrObjectShape): IrObjectStructLowering | null {
+      return objResolver.resolve(shape);
+    },
+    resolveClosure(sig: IrClosureSignature): IrClosureLowering | null {
+      return closureResolver.resolveBase(sig);
+    },
+    resolveClosureRoot(): number | null {
+      return getFuncRefWrapperRootTypeIdx(ctx) ?? null;
+    },
+    resolveClosureSubtype: (...args) => closureResolver.resolveSubtype(...args),
+    resolveRefCell(inner: ValType): IrRefCellLowering | null {
+      return refCellResolver.resolve(inner);
+    },
+    resolveClass(shape: IrClassShape): IrClassLowering | null {
+      return classResolver.resolve(shape);
+    },
+    resolveFnctor(shape: IrFnctorShape): IrFnctorLowering | null {
+      return ctx.programAbiFnctors?.resolve(shape) ?? null;
+    },
+    resolveParamPhysicalType(unitId: IrUnitId, parameterIndex: number, logicalType: IrType) {
+      const consumer = fnctorParameterPreselection?.valueConsumer;
+      if (!consumer || consumer.unitId !== unitId || parameterIndex !== consumer.parameterIndex) return undefined;
+      if (logicalType.kind !== "string") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `ir/integration: exact fnctor parameter ${unitId}[${parameterIndex}] lost its semantic string type`,
+
+=== policy fn defs
+812:function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPolicy {
+886:function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumberBoxPolicy {
+900:function integrationStringComparePolicy(ctx: CodegenContext): StringComparePolicy {
+1132:function integrationStringConcatManyPolicy(ctx: CodegenContext): StringConcatManyPolicy {
+function integrationStringComparePolicy(ctx: CodegenContext): StringComparePolicy {
+  return Object.freeze({ compare: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S1) True when any of `fns` performs a string relational compare.
+ *
+ * The seam carries no `intrinsic` instruction — from-ast emits a plain `call`
+ * through the `IR_STRING_COMPARE_FN` sentinel func-ref — so the demand is read
+ * off the call population directly, the way `irGeneratorNumberBoxDemand` reads
+ * the `gen.setReturn` one. The same predicate answers the freeze request and
+ * the owner-local partition below, so the two can never disagree.
+ */
+function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (found || instr.kind !== "call") return;
+          const { binding } = instr.target;
+          if (binding.kind === "intrinsic" && binding.symbol === IR_STRING_COMPARE_FN) found = true;
+        });

@@ -1,0 +1,204 @@
+export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
+  "async.callback.wrap",
+  "async.promise.capability.create",
+  "async.promise.react",
+  "async.promise.resolve",
+  "async.promise.settle.fulfill",
+  "async.promise.settle.reject",
+  "async.value.undefined",
+  "boolean.box",
+  "extern.is_undefined",
+  "number.box",
+  "number.unbox",
+  "string.char_code_at",
+  "string.compare",
+  "string.concat",
+  "string.eq",
+  "string.len",
+] as const);
+
+/**
+ * (#3526 F2-S6) The FAMILY half of the func side: one id standing for an
+ * Value types an R6 host capability may carry. `f64` was added by F1-S1 for
+ * the number boundary; `ref_extern` by F2-S2, because `wasm:js-string.concat`
+ * returns `(ref extern)` and not `externref` (`registry/imports.ts`
+ * `addStringImports`). The async projection stays on `externref | i32`.
+ */
+export type RuntimeHostCapabilityValueType = "externref" | "i32" | "f64" | "ref_extern";
+
+const RUNTIME_HOST_CAPABILITY_VALUE_TYPES: ReadonlySet<string> = new Set<RuntimeHostCapabilityValueType>([
+  "externref",
+  "i32",
+  "f64",
+  "ref_extern",
+]);
+
+/**
+ * (#3526 F2-S2) Closed module namespaces, per kind. Keeping them on the kind
+ * arm is what makes `env.<global>` and `wasm:js-string.<global>` — and
+ * `string_constants.<func>` — unrepresentable rather than merely unused.
+ */
+export const RUNTIME_HOST_CAPABILITY_FUNC_MODULES = Object.freeze(["env", "wasm:js-string"] as const);
+export const RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES = Object.freeze([
+  "string_constants",
+  "string_constants16",
+] as const);
+
+export type RuntimeHostCapabilityFuncModule = (typeof RUNTIME_HOST_CAPABILITY_FUNC_MODULES)[number];
+export type RuntimeHostCapabilityGlobalModule = (typeof RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES)[number];
+
+const RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FUNC_MODULES);
+const RUNTIME_HOST_CAPABILITY_GLOBAL_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES);
+
+export const RUNTIME_HOST_CAPABILITY_KINDS = Object.freeze(["func", "func-family", "global"] as const);
+export type RuntimeHostCapabilityKind = (typeof RUNTIME_HOST_CAPABILITY_KINDS)[number];
+export interface RuntimeHostCapabilityFuncFamilyParams<
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly repeat: Value;
+  readonly min: number;
+  readonly max: number | null;
+}
+
+/**
+ * Exception policy at the host reaction boundary. A compiled throw crosses
+ * that boundary as a WebAssembly.Exception carrying the original JS value in
+ * this module's exception tag. The host Promise must observe that value, not
+ * the Wasm carrier. Foreign tags and runtime traps are deliberately excluded.
+ */
+export const HOST_CALLBACK_EXCEPTION_POLICY = "module-tag-payload" as const;
+export type HostCallbackExceptionPolicy = typeof HOST_CALLBACK_EXCEPTION_POLICY;
+
+/** Exact concrete FUNC capability record selected by the frozen manifest. */
+export interface RuntimeHostCapabilityFuncRecord<
+  Id extends RuntimeHostCapabilityFuncId = RuntimeHostCapabilityFuncId,
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly capability: Id;
+  readonly module: RuntimeHostCapabilityFuncModule;
+  readonly field: string;
+  readonly kind: "func";
+  readonly params: readonly Value[];
+  readonly results: readonly Value[];
+  readonly exceptionPolicy?: HostCallbackExceptionPolicy;
+}
+
+/** Exact concrete GLOBAL capability record selected by the frozen manifest. */
+export interface RuntimeHostCapabilityGlobalRecord<
+  Id extends RuntimeHostCapabilityGlobalId = RuntimeHostCapabilityGlobalId,
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly capability: Id;
+  readonly module: RuntimeHostCapabilityGlobalModule;
+  readonly field: RuntimeHostCapabilityGlobalField;
+  readonly kind: "global";
+  readonly valueType: Value;
+  readonly mutable: boolean;
+}
+
+/**
+ * (#3526 F2-S6) Exact FAMILY capability record — a rule for deriving an
+ * unbounded set of concrete func rows, not a concrete row itself.
+ *
+ * Deliberately a separate kind rather than a widening of
+ * {@link RuntimeHostCapabilityFuncRecord}'s `field: string` /
+ * `params: readonly Value[]`: widening those would make every existing
+ * `resolveRuntimeHostCapabilityFuncRecord` consumer handle a scheme it can
+ * never receive. {@link resolveRuntimeHostCapabilityFuncFamilyRecord} is the
+ * one place a concrete row is synthesized, and it takes the arity.
+ */
+export interface RuntimeHostCapabilityFuncFamilyRecord<
+  Id extends RuntimeHostCapabilityFuncFamilyId = RuntimeHostCapabilityFuncFamilyId,
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly capability: Id;
+  readonly module: RuntimeHostCapabilityFuncModule;
+  readonly field: RuntimeHostCapabilityFuncFamilyField;
+  readonly kind: "func-family";
+  readonly params: RuntimeHostCapabilityFuncFamilyParams<Value>;
+  readonly results: readonly Value[];
+}
+
+export type RuntimeHostCapabilityRecord<
+  Id extends RuntimeHostCapabilityId = RuntimeHostCapabilityId,
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> =
+  | RuntimeHostCapabilityFuncRecord<Extract<Id, RuntimeHostCapabilityFuncId>, Value>
+  | RuntimeHostCapabilityFuncFamilyRecord<Extract<Id, RuntimeHostCapabilityFuncFamilyId>, Value>
+  | RuntimeHostCapabilityGlobalRecord<Extract<Id, RuntimeHostCapabilityGlobalId>, Value>;
+
+function funcRecord(
+ * The sole closed authority for host capability ABI. Every projection retains
+ * these exact factory-created objects; no consumer may rebuild one from a
+ * capability ID or an emitted import spelling. Sorted by capability ID so the
+ * async prefix keeps its historical order and position.
+ */
+export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityRecord[] = Object.freeze([
+  record("async.callback.wrap", "__make_callback", ["i32", "externref"], ["externref"], HOST_CALLBACK_EXCEPTION_POLICY),
+  record("async.promise.capability.create", "Promise_new_pending", [], ["externref"]),
+  record("async.promise.react", "Promise_then2", ["externref", "externref", "externref"], ["externref"]),
+  record("async.promise.resolve", "Promise_resolve", ["externref"], ["externref"]),
+  record("async.promise.settle.fulfill", "Promise_settle_resolve", ["externref", "externref"], ["externref"]),
+  record("async.promise.settle.reject", "Promise_settle_reject", ["externref", "externref"], ["externref"]),
+  record("async.value.undefined", "__get_undefined", [], ["externref"]),
+  // (#3526 F1-S2) The boolean boundary. `__box_boolean` is a member of the
+  // same physical `addUnionImports` family; this record is manifest AUTHORITY
+  // over its ABI, not a second registration path. The one-armed family has no
+  // unbox row: `__unbox_boolean` has no IR producer.
+  record("boolean.box", "__box_boolean", ["i32"], ["externref"]),
+  // (#3526 F1-S4) The externref undefined probe. NOT a member of the
+  // `addUnionImports` family: on the host lane `__extern_is_undefined` is a
+  // standalone `ensureLateImport` registration, which is why the preregistration
+  // trigger keys on it separately. This record is manifest AUTHORITY over its
+  // ABI; the physical registration path is unchanged.
+  record("extern.is_undefined", "__extern_is_undefined", ["externref"], ["i32"]),
+  // (#3526 F1-S1) The number boundary. Both names are members of the physical
+  // `addUnionImports` family; the records are manifest AUTHORITY over their
+  // ABI, not a second registration path.
+  record("number.box", "__box_number", ["f64"], ["externref"]),
+  record("number.unbox", "__unbox_number", ["externref"], ["f64"]),
+  // (#3526 F2-S2) The four `wasm:js-string` builtins, pinned against their
+  // registration site (`registry/imports.ts` `addStringImports`). These are
+  // the first records in a NON-`env` module namespace, and `string.concat` is
+  // the first whose result is `(ref extern)` rather than a nullable externref
+  // — a distinction the pre-F2-S2 value union could not express. NOTHING
+  // selects them yet: no provider row names these capabilities, so no frozen
+  // manifest carries them and no import moves.
+  funcRecord("string.char_code_at", "wasm:js-string", "charCodeAt", ["externref", "i32"], ["i32"]),
+  // (#3526 F2-S1) The string relational boundary — family 2's first record.
+  // NOT a member of the `addUnionImports` family and NOT an `ensureLateImport`
+  // registration either: `env.string_compare` is a BASE import minted by the
+  // legacy import collector's pre-pass (`import-collector.ts`, gated on
+  // `!nativeStrings`), so this record is manifest AUTHORITY over an ABI whose
+  // physical registration happens before any IR preparation runs. That is why
+  // the resolve arm looks the field up in `ctx.funcMap` and never mints it.
+  record("string.compare", "string_compare", ["externref", "externref"], ["i32"]),
+  funcRecord("string.concat", "wasm:js-string", "concat", ["externref", "externref"], ["ref_extern"]),
+  // (#3526 F2-S6) The BATCHED many-arity concat family. The IR
+  // `batchStringConcat` pass fuses a single-use immutable `+` tree of three or
+  // more leaves into one call, and the host lane answers it with
+  // `env.__concat_<arity>` — one import per observed arity, minted late, on
+  // demand. `min: 3` is the pass's own floor (`batch-string-concat.ts`'s
+  // three-leaf guard and `irStringConcatManySymbol`'s RangeError); `max: null`
+  // is the measured host fact — `src/runtime.ts` matches the `__concat_`
+  // prefix and answers any N, and the census observed `__concat_9`. The NATIVE
+  // arm's 3..8 bound is a provider fact, not a capability one, and lives on
+  // that provider row.
+  funcFamilyRecord(
+    "string.concat.many",
+    "env",
+    { scheme: "arity-suffix", prefix: "__concat_" },
+    { repeat: "externref", min: 3, max: null },
+    ["externref"],
+  ),
+  // (#3526 F2-S2) The two string-literal GLOBAL namespaces. The import field
+  // is DERIVED from the literal, so the row can only fix the derivation rule:
+  // `addStringConstantGlobal` uses the literal itself, or `hexCodeUnits` in
+  // the `string_constants16` surrogate namespace (#2880). Both are immutable
+  // `externref` globals.
+  globalRecord("string.const", "string_constants", { scheme: "literal" }, "externref", false),
+  globalRecord("string.const.utf16", "string_constants16", { scheme: "literal-utf16-hex" }, "externref", false),
+  funcRecord("string.eq", "wasm:js-string", "equals", ["externref", "externref"], ["i32"]),
+  funcRecord("string.len", "wasm:js-string", "length", ["externref"], ["i32"]),
+]);
+

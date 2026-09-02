@@ -1,0 +1,97 @@
+{
+  "verdict": "revise",
+  "anchorErrors": [
+    "`index.ts:2885-2888` is cited three times (census bullet 'Closure-environment shape … gate `:2885-2888`', 'Not measured … the gate at `index.ts:2885-2888`', probe P2) as the `environment:\"none\"` + `native-first` exact standalone-DOM gate. On 33ea8606aa `src/codegen/index.ts:2884-2889` is `supportsStandalonePromiseDelay = ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast && semanticProviders === \"native-first\"` — no `environment` term at all. The environment gate is `src/codegen/index.ts:4440-4445` (`hasStandaloneDomDispatcher = requiresStandaloneDomInteractionCapability === true && standalone && !wasi && nativeStrings && ctx.targetProfile.environment === \"none\"`); the plan-flag source is `src/codegen/calendar-codegen-planning.ts:366` (`supportsStandaloneDomInteraction = standaloneDomCapability?.requiresInteraction === true`).",
+    "`hostIndirectEvalTarget` (`:6046-6051`): the method header is `src/ir/integration.ts:6045` (`hostIndirectEvalTarget() {`); 6046 is the first body line. Should be `:6045-6051`.",
+    "`import-collector.ts` (C0/M1 single-owner list, `:1015-1024`): `src/codegen/declarations/import-collector.ts:1015-1024` is `state.callbackFound = true;` plus the `collectAsyncCpsImports (#1042)` comment — no owner list. The single-owner list is in the #3526 plan file, `plan/issues/3526-ir-r6-semantic-runtime-contract.md:1017-1023` ('## File ownership and locks': C0 and M1 require one owner for … `src/codegen/declarations/import-collector.ts` …). The parenthetical as written reads as an import-collector line range.",
+    "`resolveAndObserveCallableProvider` (`:6603`) ends in the same name lookup (`:6912`): the lookup `index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol)` is `src/ir/integration.ts:6910`; `:6912` is `if (index === null || index === undefined) {`.",
+    "`legality.ts:269`: there is no `src/ir/legality.ts` on 33ea8606aa (git ls-tree); the file is `src/ir/backend/legality.ts` (`:269` = `case \"call\":`). The section's own Note already corrected `src/ir/handles.ts` → `src/ir/backend/handles.ts`; this one slipped through the same way."
+  ],
+  "numberErrors": [
+    "'9 of 14 never reach the IR boundary at all' is contradicted by `lane-measurement/results.json` (re-derived: for each shape, any unit with `irBodyEmitted` on any lane). Only 4 shapes never reach the IR boundary — 03-closure-mutable-local, 05-returned-closure, 08-array-map-arrow, 13-recursion-local-ref. Ten do: 01/04/11 (compile-once), 02 (2/3 units IR on all lanes), 12 (2/4), 06/07/10 (their compile-twice unit is IR-emitted on all four lanes), 09/09b (gc-host). The section's own table already shows 02 as '2/3' and 12 as '2/4', so the '9' is internally inconsistent too; `summary.md` never states a '9 of 14'.",
+    "'398 functional … reads across 55 callable-path files': `ungoverned-dispatch/mode-reads-functional.grep` has 398 lines (verified) but they fall in 20 files (cut -d: -f1 | sort -u); the broad grep hits 39 files; 55 is the SCANNED set per `INDEX.txt` ('BROAD grep … over 55 callable-path files'). Per-file counts 118/79/57/51/30 and the 32 `noJsHost(ctx)` calls (recounted on the 39-file hit set at 33ea8606aa: 32) and the 18 `[makeFromAstResolver]` reads all re-derive exactly; the '55' is a scan-set size restated as a hit count."
+  ],
+  "designObjections": [
+    "Contract item 4 names the wrong seam. `attachedExternIsUndefinedArm` (`src/ir/integration.ts:8194-8196`) returns undefined unless `instr.kind === \"intrinsic\"` with `provider.kind === \"callable\"`; the maker is a plain `call` on an `import` binding (`from-ast.ts:8312-8316`), so that shape can never recognise it. The arms that actually bind the maker are: `resolveFunc` `:7050-7052` → `resolvePreparedImportCallable` (`:6959-…`, resolving through `preparedScopeLookup` or `importedCallableCatalog = catalogProgramAbiCallableImports(ctx)` `:4296`) whenever `ctx.programAbiSession` is set, else the funcMap fallthrough `:7056-7057` (`adapterName = ref.binding.field`). The byte constraint that follows: the record's `(module, field)` must equal the pre-pass registration key `env.__make_callback` (`import-collector.ts:2010`) so both arms return the pre-pass index; `preregisterCallableProviders` (`:7441`) must NOT be taught `call`-kind instructions (any provider preregistration for the maker would be a new registration path); `__make_callback` is not in `UNION_IMPORT_FUNC_NAMES` (verified), so the existing `call`-on-`env`-import scan in `preregisterDynamicSupport` `:8286-8289` is the natural post-freeze admission point and stays byte-free. F2-S1 item 4 could name `attachedExternIsUndefinedArm` because string.compare became an intrinsic demand; F3-S1 cannot.",
+    "Contract item 3 says `:8313` 'builds the import ref from the frozen record'. from-ast runs in Phase-1 Build (`integration.ts:2711`) BEFORE `freeze()` is reached from `prepareBuiltFnRuntimeManifest` at `:4176-4177` — the section states this itself in the four-layer paragraph. from-ast can therefore read only the static catalogue record (`resolveRuntimeHostCapabilityRecord(\"async.callback.wrap\")`), never the frozen manifest's selected provider. The 'manifest as the authority that ADMITS it … fails closed otherwise' must be a post-freeze check (preregisterDynamicSupport `:8286-8289` or `resolveFunc`), whose refusal surfaces as `late-preparation-unsupported`@resolve — exactly the build-vs-resolve fork open question 4 raises for F3-S3. Until the contract says which phase reads the policy, the 'byte-neutral by construction' claim for F3-S1 is unprovable; with the post-freeze placement it holds (no registration, no index shift, disabled policy unreachable on any real lane because selection never admits the arrow).",
+    "'R6 owns `runtime-manifest.ts`, `intrinsic-support.ts`, `runtime-host-capabilities.ts`, `from-ast.ts`, the adapters' has no anchor: the #3526 file contains no 'R6 owns' statement (grep empty). The verifiable statement is `plan/issues/3526-…md:1017-1018`: C0/M1 require ONE owner for new intrinsic/manifest modules and 'the named IR core/select/effects files'. Cite that instead of asserting ownership of `from-ast.ts`, which #3522 R3 (closures compile-once) also writes — open question 2 already admits the overlap for F3-S4.",
+    "Lane label: the artifact names the second lane `gc-strict-no-host` (results.json `lane` values: gc-host, gc-strict-no-host, standalone, wasi); the section calls it `gc-strict`. Harmless, but the V-A matrix lists 'gc-native-strings' as a lane that exists in neither the corpus runner nor results.json — name the six V-A lanes with the runner's option objects so the before/after cells are reproducible.",
+    "No invented vocabulary: `hostCallbackWrap`, `HostCallbackWrapPolicy`, `host.callback.wrap`, `native.callback.dispatch` have zero hits in src/tests/plan on 33ea8606aa; `host-callable` provider kind, `provider-target-unavailable`, `late-preparation-unsupported`, `preparedStringCompareProvider`, `#selectProvider`, `resolveRuntimeHostCapabilityRecord`, `attachedExternIsUndefinedArm`, `exactCallableImportIndex`, `native-managed`/`native-promise-runtime` (`runtime-manifest.ts:754-755`), 12 implementation kinds in `:655-758` (counted 12 `readonly kind:`), `hostCapabilities` `:782`, 10 policy fields, 16 func ids all verified. Opening file is 367 lines (≤ 400). Both new test file names are unused."
+  ],
+  "ownershipViolations": [
+    "F3-S5 lists `src/codegen/index.ts` (`:6038-6056`) as a file it edits with no R2 caveat. `src/codegen/index.ts` is under the R2 lock (`plan/issues/3521-ir-r2-prepared-program-free-function-compile-once.md:953-956`: 'Lock `src/codegen/index.ts`, `src/codegen/declarations.ts`, `src/ir/integration.ts`, `src/ir/prepare.ts`, and `src/ir/program.ts` to one R2 developer'), and the section's own Ownership paragraph says F3-S1 does not write the R2 call sites in `src/codegen/index.ts`. Either add the same 'coordinated with the R2 lane' line F3-S1 carries, or keep the export publication inside `closure-exports.ts` and leave the `emitClosureCallExportN` call sites untouched.",
+    "The precedent line 'F1/F2 precedent is that R6 edits only its own policy-projection and attached-target lines there' understates what F2 did and makes F3-S3 violate the section's own rule: F2-S1 contract item 3 (`#3526 :3359-3366`) rewrote a `makeFromAstResolver` arm in `integration.ts` ('The resolve arm at `:6189-6195` stops reading `ctx.nativeStrings`'), and F3-S3 edits the resolver arm `:6124-6129`. State the precedent as policy-projection + attached-target + `makeFromAstResolver`-arm lines so F3-S3's file list is consistent with it."
+  ],
+  "edits": [
+    {
+      "find": "the exact standalone-DOM lane (`environment:\"none\"` + `native-first`, the gate\nat `index.ts:2885-2888`)",
+      "replace": "the exact standalone-DOM lane (`environment:\"none\"` + `native-first`, the gate\nat `index.ts:4440-4445` `hasStandaloneDomDispatcher`; `:2885-2888` is the promise-delay gate)",
+      "why": "index.ts:2885-2888 is supportsStandalonePromiseDelay (no environment term); the environment===\"none\" gate is index.ts:4440-4445."
+    },
+    {
+      "find": "plan flag `src/codegen/index.ts:3380`, gate\n  `:2885-2888`; reserve-time re-read",
+      "replace": "plan flag `src/codegen/index.ts:3380` ←\n  `calendar-codegen-planning.ts:366`, dispatcher gate `:4440-4445`; reserve-time re-read",
+      "why": "Same wrong anchor; the plan flag's source is calendar-codegen-planning.ts:366 and the environment gate is index.ts:4440-4445."
+    },
+    {
+      "find": "profile (`environment:\"none\"`, `native-first`; gate `index.ts:2885-2888`)",
+      "replace": "profile (`environment:\"none\"`, `native-first`; gate `index.ts:4440-4445`)",
+      "why": "Third occurrence of the promise-delay gate cited as the DOM gate."
+    },
+    {
+      "find": "`hostIndirectEvalTarget` (`:6046-6051`; consumer",
+      "replace": "`hostIndirectEvalTarget` (`:6045-6051`; consumer",
+      "why": "Method header is integration.ts:6045."
+    },
+    {
+      "find": "`import-collector.ts` (C0/M1 single-owner list, `:1015-1024`).",
+      "replace": "`import-collector.ts` (on the #3526 C0/M1 single-owner list, `plan/issues/3526-ir-r6-semantic-runtime-contract.md:1017-1023`).",
+      "why": "The line range belongs to the plan file's 'File ownership and locks' section, not to import-collector.ts (whose 1015-1024 is state.callbackFound + a comment)."
+    },
+    {
+      "find": "(`:6603`) ends in the same name lookup (`:6912`).",
+      "replace": "(`:6603`) ends in the same name lookup (`:6910`).",
+      "why": "funcMap.get(symbol) ?? nativeStrHelperHandle is at integration.ts:6910."
+    },
+    {
+      "find": "(`legality.ts:269`; `boundary-surface/104-backend-closure-emitters.txt`).",
+      "replace": "(`src/ir/backend/legality.ts:269`; `boundary-surface/104-backend-closure-emitters.txt`).",
+      "why": "No src/ir/legality.ts exists on 33ea8606aa; the file is under src/ir/backend/."
+    },
+    {
+      "find": "a selector-rejected terminal unit. 9 of 14 never reach the IR boundary at\n  all — selector coverage",
+      "replace": "a selector-rejected terminal unit. Only 4 of 14 (03/05/08/13 — no `irBodyEmitted`\n  unit on any lane, `results.json`) never reach the IR boundary; 10 do, via\n  compile-once, partial (02 2/3, 12 2/4) or compile-twice units — selector coverage",
+      "why": "results.json re-derivation: 4 shapes never reach IR, 10 do; the '9' contradicts the section's own 2/3 and 2/4 rows."
+    },
+    {
+      "find": "reads across 55 callable-path files — `codegen/index.ts` 118, `calls.ts` 57,",
+      "replace": "reads in 20 of the 55 scanned callable-path files — `codegen/index.ts` 118, `calls.ts` 57,",
+      "why": "mode-reads-functional.grep has 398 lines in 20 files; 55 is the scan set (INDEX.txt), not a hit count."
+    },
+    {
+      "find": "   the frozen record (`irImportFuncRef(record.module, record.field)`), binding",
+      "replace": "   the static catalogue record (`resolveRuntimeHostCapabilityRecord(\"async.callback.wrap\")`;\n   from-ast runs in Phase-1 `integration.ts:2711`, BEFORE `freeze()` at `:4176`, so the\n   frozen manifest is unreadable here — policy ADMISSION is post-freeze, item 4), binding",
+      "why": "from-ast is pre-freeze per the section's own four-layer paragraph; only the static record is available at :8313."
+    },
+    {
+      "find": "   recognition (the `attachedExternIsUndefinedArm` shape, `integration.ts:8194`) routing to the",
+      "replace": "   recognition in the `call`-on-`env`-import scan of `preregisterDynamicSupport`\n   (`integration.ts:8286-8289`; `attachedExternIsUndefinedArm` `:8194-8196` matches only\n   `intrinsic` instrs and cannot see the maker). Exact resolve arm: `resolveFunc` `:7050-7052`\n   → `resolvePreparedImportCallable` `:6959` (catalog `:4296`) when `ctx.programAbiSession`\n   is set, else `:7056-7057`; both return the pre-pass index iff the record's `module.field`\n   equals the `import-collector.ts:2010` key; `preregisterCallableProviders` `:7441` learns no `call` instrs — routing to the",
+      "why": "Names the actual binding arms and the import-parity invariant for a call-kind maker, as F2-S1 item 4 did for its intrinsic demand."
+    },
+    {
+      "find": "| `closure-exports.ts`, `index.ts:6038-6056`, `runtime-manifest.ts`, tests | yes",
+      "replace": "| `closure-exports.ts`, `index.ts:6038-6056` (R2-locked, #3521 `:953-956` — coordinated with the R2 lane as F3-S1 does), `runtime-manifest.ts`, tests | yes",
+      "why": "src/codegen/index.ts is under the #3521 R2 lock; F3-S5 listed it without the caveat the section requires of F3-S1."
+    },
+    {
+      "find": "F1/F2 precedent is that R6 edits only its own policy-projection and\nattached-target lines there",
+      "replace": "F1/F2 precedent is that R6 edits only its own policy-projection,\nattached-target and `makeFromAstResolver`-arm lines there (F2-S1 item 3, `#3526 :3359`)",
+      "why": "F2-S1 edited a resolver arm in integration.ts; without this F3-S3's :6124-6129 edit contradicts the stated precedent."
+    },
+    {
+      "find": "**Ownership**: slice claim `#3526:f3s1`. R6 owns `runtime-manifest.ts`,",
+      "replace": "**Ownership**: slice claim `#3526:f3s1`. Per `#3526 :1017-1018` (C0/M1 one-owner set) R6 is sole owner of `runtime-manifest.ts`,",
+      "why": "'R6 owns' appears nowhere in the plan; the anchored statement is the C0/M1 one-owner rule at :1017-1018."
+    }
+  ]
+}

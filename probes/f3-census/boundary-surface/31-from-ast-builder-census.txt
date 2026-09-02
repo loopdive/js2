@@ -1,0 +1,111 @@
+builder.emitCall sites in from-ast.ts: 60
+builder.emitIntrinsic sites in from-ast.ts: 6
+builder.emitClosureNew sites in from-ast.ts: 2
+builder.emitClosureCap sites in from-ast.ts: 1
+builder.emitClosureCall sites in from-ast.ts: 2
+builder.emitFnctorNew sites in from-ast.ts: 0
+builder.emitFnctorGet sites in from-ast.ts: 1
+builder.emitClassNew sites in from-ast.ts: 1
+builder.emitClassCall sites in from-ast.ts: 3
+builder.emitClassSuperInit sites in from-ast.ts: 2
+builder.emitClassSuperCall sites in from-ast.ts: 1
+builder.emitClassStaticCall sites in from-ast.ts: 1
+builder.emitCoerceToExternref sites in from-ast.ts: 14
+builder.emitExternNew sites in from-ast.ts: 1
+builder.emitExternCall sites in from-ast.ts: 1
+---builder.ts emit methods---
+210:  emitCall(target: IrFuncRef, args: readonly IrValueId[], resultType: IrType | null): IrValueId | null {
+226:  emitIntrinsic(id: IntrinsicId, args: readonly IrValueId[], site?: IrSiteId): IrValueId {
+768:  emitFnctorNew(
+810:  emitFnctorGet(value: IrValueId, shape: IrFnctorShape, fieldName: string): IrValueId {
+832:  emitClosureNew(
+868:  emitClosureCap(self: IrValueId, index: number, resultType: IrType): IrValueId {
+885:  emitClosureCall(callee: IrValueId, args: readonly IrValueId[], resultType: IrType | null): IrValueId | null {
+972:  emitClassNew(shape: IrClassShape, args: readonly IrValueId[]): IrValueId {
+1001:  emitClassGet(value: IrValueId, fieldName: string, resultType: IrType): IrValueId {
+1019:  emitClassSet(value: IrValueId, fieldName: string, newValue: IrValueId): void {
+1033:  emitClassCall(
+1065:  emitClassSuperInit(parentShape: IrClassShape, self: IrValueId, args: readonly IrValueId[]): void {
+1083:  emitClassSuperCall(
+1114:  emitClassInstanceOf(value: IrValueId, targetShape: IrClassShape): IrValueId {
+1133:  emitClassStaticCall(
+1164:  emitExternNew(className: string, args: readonly IrValueId[], importPrefix = className): IrValueId {
+1186:  emitExternCall(
+1218:  emitExternProp(className: string, property: string, receiver: IrValueId, resultType: IrType): IrValueId {
+1236:  emitExternPropSet(className: string, property: string, receiver: IrValueId, value: IrValueId): void {
+1650:  emitCoerceToExternref(value: IrValueId): IrValueId {
+1664:  emitCallablePack(value: IrValueId, signature: IrClosureSignature): IrValueId {
+---from-ast __make_callback site---
+      if (hostCallbackPlan && hostCallbackArrow) {
+        if (
+          methodName !== "addEventListener" ||
+          i !== 1 ||
+          expected.kind !== "externref" ||
+          hostCallbackPlan.signature.params.length !== 0 ||
+          hostCallbackPlan.signature.returnType !== null
+        ) {
+          // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
+          throw new Error(`ir/from-ast: invalid host void callback plan for ${definingClass}.${methodName}`);
+        }
+        const closure = lowerHostVoidCallbackExpression(hostCallbackArrow, hostCallbackPlan, cx);
+        const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
+        if (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") {
+          args.push(packed);
+          continue;
+        }
+        // -2 is the compiler-owned one-shot sentinel: this exact inline
+        // closure is created solely for the immediately following host call,
+        // so it cannot cross the boundary a second time. The runtime may
+        // therefore skip the identity WeakMap used by the reusable -1 ABI.
+        const sentinel = cx.builder.emitConst({ kind: "i32", value: -2 }, irVal({ kind: "i32" }));
+        const wrapped = cx.builder.emitCall(
+          irImportFuncRef("env", "__make_callback"),
+          [sentinel, packed],
+          irVal({ kind: "externref" }),
+        );
+        if (wrapped === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+          throw new Error(`ir/from-ast: __make_callback produced no value in ${cx.funcName}`);
+        }
+        args.push(wrapped);
+        continue;
+      }
+      const argVal = lowerExpr(argument, cx, irVal(expected));
+      const boundary = coercibleStandaloneDomArgumentBoundary(
+        exactStandaloneDomCall ? standaloneDomCall : undefined,
+        i,
+        cx.funcName,
+      );
+      args.push(coerceToExpectedExtern(argVal, expected, cx, `arg ${i} of ${definingClass}.${methodName}`, boundary));
+---from-ast callback authority decision---
+  plan: IrHostVoidCallbackLoweringPlan,
+  cx: LowerCtx,
+): IrValueId {
+  requireMatchingLoweringPlanOwner("host void callback", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  if (
+    !ts.isBlock(expr.body) ||
+    expr.parameters.length !== 0 ||
+    plan.signature.params.length !== 0 ||
+    plan.signature.returnType !== null ||
+    cx.liftedCounter.value !== plan.liftedOrdinal
+  ) {
+    // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
+    throw new Error(`ir/from-ast: malformed host void callback plan (${cx.funcName})`);
+  }
+  return lowerClosureExpressionWithSignature(
+    expr,
+    plan.signature,
+    plan.captureNames,
+    cx,
+    plan.standaloneDomReusable === true
+      ? {
+          domCallbackAuthority: {
+            ownerUnitId: plan.ownerUnitId,
+            liftedOrdinal: plan.liftedOrdinal,
+          },
+        }
+      : { hostOneShot: true },
+  );
+}
+
+function lowerClosureExpressionWithSignature(

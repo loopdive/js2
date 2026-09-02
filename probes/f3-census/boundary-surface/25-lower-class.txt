@@ -1,0 +1,170 @@
+      case "class.new": {
+        const cl = resolver.resolveClass?.(instr.shape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${instr.shape.className} (${func.name})`);
+        }
+        for (const a of instr.args) emitValue(a, out);
+        emitter.pushRaw(out, {
+          op: "call",
+          funcIdx: resolver.resolveFunc(instr.target ?? cl.constructorFunc),
+        });
+        return;
+      }
+      case "class.get": {
+        const recvT = typeOf(instr.value);
+        if (recvT.kind !== "class") {
+          throw new Error(`ir/lower: class.get receiver must be class IrType, got ${recvT.kind} (${func.name})`);
+        }
+        const cl = resolver.resolveClass?.(recvT.shape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${recvT.shape.className} (${func.name})`);
+        }
+        emitValue(instr.value, out);
+        emitter.pushRaw(out, {
+          op: "struct.get",
+          typeIdx: cl.structTypeIdx,
+          fieldIdx: cl.fieldIdx(instr.fieldName),
+        });
+        return;
+      }
+      case "class.set": {
+        const recvT = typeOf(instr.value);
+        if (recvT.kind !== "class") {
+          throw new Error(`ir/lower: class.set receiver must be class IrType, got ${recvT.kind} (${func.name})`);
+        }
+        const cl = resolver.resolveClass?.(recvT.shape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${recvT.shape.className} (${func.name})`);
+        }
+        emitValue(instr.value, out);
+        emitValue(instr.newValue, out);
+        emitter.pushRaw(out, {
+          op: "struct.set",
+          typeIdx: cl.structTypeIdx,
+          fieldIdx: cl.fieldIdx(instr.fieldName),
+        });
+        return;
+      }
+      case "class.call": {
+        const recvT = typeOf(instr.receiver);
+        if (recvT.kind !== "class") {
+          throw new Error(`ir/lower: class.call receiver must be class IrType, got ${recvT.kind} (${func.name})`);
+        }
+        const cl = resolver.resolveClass?.(recvT.shape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${recvT.shape.className} (${func.name})`);
+        }
+        // `this` first, then user args, then call $<className>_<methodName>.
+        emitValue(instr.receiver, out);
+        for (const a of instr.args) emitValue(a, out);
+        emitter.pushRaw(out, {
+          op: "call",
+          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind, instr.methodName, instr.target)),
+        });
+        return;
+      }
+      case "class.super_init": {
+        // #3000-E: `super(args)` — run the PARENT's `<parent>_init` on the
+        // already-allocated `self`. Legacy `_init` signature is
+        // `(...ctorParams, self) -> (ref $struct)` (self LAST), so emit the user
+        // args first, then `self`, then call. The returned instance is discarded
+        // (super() is a statement) → drop.
+        const cl = resolver.resolveClass?.(instr.parentShape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower super class ${instr.parentShape.className} (${func.name})`);
+        }
+        for (const a of instr.args) emitValue(a, out);
+        emitValue(instr.self, out);
+        emitter.pushRaw(out, {
+          op: "call",
+          funcIdx: resolver.resolveFunc(instr.target ?? cl.initFunc),
+        });
+        emitter.pushRaw(out, { op: "drop" });
+        return;
+      }
+      case "class.super_call": {
+        // #3000-E: `super.method(args)` — static-dispatch to the PARENT's method
+        // slot (`<parent>_<method>`) with the subclass receiver first, then args.
+        // Resolving against `parentShape` (not the receiver's shape) bypasses any
+        // subclass override.
+        const cl = resolver.resolveClass?.(instr.parentShape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower super class ${instr.parentShape.className} (${func.name})`);
+        }
+        emitValue(instr.receiver, out);
+        for (const a of instr.args) emitValue(a, out);
+        emitter.pushRaw(out, {
+          op: "call",
+          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName, instr.target)),
+        });
+        return;
+      }
+      case "class.instanceof": {
+        // (#3144) `value instanceof <target>` — read the receiver struct's
+        // hidden `__tag` (slot 0) and compare against the TARGET class's
+        // instanceof-compatible tag set (own + descendants), mirroring the
+        // legacy `compileInstanceOf` non-nullable-ref path. The IR class
+        // carrier is a non-null `(ref $Struct)`, so no null arm exists.
+        const recvT = typeOf(instr.value);
+        if (recvT.kind !== "class") {
+          throw new Error(`ir/lower: class.instanceof value must be class IrType, got ${recvT.kind} (${func.name})`);
+        }
+        const recvCl = resolver.resolveClass?.(recvT.shape);
+        if (!recvCl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${recvT.shape.className} (${func.name})`);
+        }
+        const targetCl = resolver.resolveClass?.(instr.targetShape);
+        if (!targetCl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${instr.targetShape.className} (${func.name})`);
+        }
+        const tags = targetCl.instanceOfTags;
+        emitValue(instr.value, out);
+        if (tags.length === 0) {
+          // Tag-less target class — legacy parity: evaluate LHS, false.
+          emitter.pushRaw(out, { op: "drop" });
+          emitter.pushRaw(out, { op: "i32.const", value: 0 });
+          return;
+        }
+        emitter.pushRaw(out, {
+          op: "struct.get",
+          typeIdx: recvCl.structTypeIdx,
+          fieldIdx: recvCl.fieldIdx("__tag"),
+        });
+        if (tags.length === 1) {
+          emitter.pushRaw(out, { op: "i32.const", value: tags[0]! });
+          emitter.pushRaw(out, { op: "i32.eq" });
+          return;
+        }
+        // Multiple compatible tags: (tag == t0) || (tag == t1) || … via an
+        // i32 scratch local (same shape as legacy's multi-tag emission).
+        const scratch = dynamicScratch.instanceofTag();
+        emitter.pushRaw(out, { op: "local.set", index: scratch });
+        emitter.pushRaw(out, { op: "local.get", index: scratch });
+        emitter.pushRaw(out, { op: "i32.const", value: tags[0]! });
+        emitter.pushRaw(out, { op: "i32.eq" });
+        for (let i = 1; i < tags.length; i++) {
+          emitter.pushRaw(out, { op: "local.get", index: scratch });
+          emitter.pushRaw(out, { op: "i32.const", value: tags[i]! });
+          emitter.pushRaw(out, { op: "i32.eq" });
+          emitter.pushRaw(out, { op: "i32.or" });
+        }
+        return;
+      }
+      case "class.static_call": {
+        // (#3144) `C.m(args)` — legacy statics take NO self param
+        // (class-bodies.ts: `methodParams = isStatic ? [] : [self]`), so
+        // emission is args then a direct call by collision-relocated key.
+        const cl = resolver.resolveClass?.(instr.shape);
+        if (!cl) {
+          throw new Error(`ir/lower: resolver cannot lower class ${instr.shape.className} (${func.name})`);
+        }
+        for (const a of instr.args) emitValue(a, out);
+        emitter.pushRaw(out, {
+          op: "call",
+          funcIdx: resolver.resolveFunc(cl.memberFunc("static", instr.methodName, instr.target)),
+        });
+        return;
+      }
+      // Slice 6 (#1169e): slot / vec / for-of ops.
+      case "slot.read": {
+        emitter.emitLocalGet(slotWasmIdx(instr.slotIndex), out);

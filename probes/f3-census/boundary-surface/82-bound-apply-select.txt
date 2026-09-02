@@ -1,0 +1,74 @@
+=== bound/apply/call_indirect in src/ir (counts per file, nonzero)
+src/ir/fnctor-argument-projection.ts:1
+src/ir/fnctor-method-edges.ts:1
+src/ir/from-ast.ts:5
+src/ir/integration.ts:1
+src/ir/runtime-eval-boundary-plan.ts:8
+src/ir/select.ts:1
+src/ir/types.ts:1
+
+=== codegen bound-function / call_indirect files
+annexb-global-live-binding.ts
+apply-arglist-typeerror.ts
+apply-closure-args.ts
+async-closure-promise.ts
+bound-fn-meta.ts
+callback-ctor-bridge.ts
+closure-call-fast.ts
+closure-classifier.ts
+closure-exports.ts
+closure-props.ts
+closure-prototype-edge.ts
+closure-receiver-install.ts
+closures
+closures.ts
+construct-bound.ts
+dom-string-boundary.ts
+dynamic-method-call-arity.ts
+fnctor-typed-bindings.ts
+function-bind-apply.ts
+generic-callback-result.ts
+global-function-bindings.ts
+global-var-bindings.ts
+native-dynamic-boundary-tag.ts
+native-promise-number-boundary.ts
+node-fs-binding-identity.ts
+replacer-apply-bridge.ts
+runtime-eval-boundary.ts
+single-assignment-binding.ts
+standalone-dom-callback-authority.ts
+struct-accessor-closure.ts
+struct-boundary-reify.ts
+typed-array-set-bounds.ts
+
+=== select.ts callable-related rejection reasons
+      1 9935:"expr-host-void-callback-body"
+      1 9923:"expr-host-void-callback-event"
+      1 9919:"expr-host-void-callback-capture-scope"
+      1 9784:"expr-array-filter-callback"
+      1 9036:"expr-new-fnctor-arg"
+      1 827:"param-shape-rejected"
+      1 790:"body-shape-rejected"
+      1 6047:"closure-body"
+      1 6046:"closure-body-kind"
+      1 6044:"closure-concise-body"
+      1 6028:"closure-param-name"
+      1 6024:"closure-param-shadow"
+      1 6022:"closure-param-type"
+      1 6020:"closure-param-shape"
+      1 6018:"closure-param-default"
+      1 6014:"closure-name-shadow"
+      1 6010:"closure-return-type"
+      1 6007:"closure-type-params"
+      1 6006:"closure-async"
+      1 6004:"closure-generator"
+      1 6003:"closure-body-missing"
+      1 5705:"vardecl-closure-init"
+      1 5699:"vardecl-let-closure"
+      1 4932:"with-no-closure"
+      1 4931:"with-closure-boundary"
+      1 2465:"closure"
+      1 2400:"closure"
+      1 220:"body-shape-rejected"
+      1 2180:"closure"
+      1 2125:"body-shape-rejected"

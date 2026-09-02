@@ -1,0 +1,22 @@
+=== check-host-import-policy.ts callback mentions
+277:  functionBind: ["__boundary_callback_call_1"],
+304:  "src/runtime/boundary-callback-adapter.ts",
+320:  "src/runtime/standalone-timer-callback-bridge.ts",
+
+=== async-runtime-providers.ts async.callback.wrap consumers
+49:  "async.callback.wrap",
+243:    capabilities("async.callback.wrap", "async.promise.react"),
+
+=== runtime.ts bridge fns
+2343:function _wrapVoidHostCallback(
+2403:function _maybeWrapCallableUnknownArity(
+
+=== __cb_ exports
+src/codegen/async-frame.ts:356:   * `__make_callback`-wrapped step adapters (exported `__cb_<id>`), settle =
+src/codegen/async-frame.ts:386:  /** Host backend: `__cb_<id>` callback id of the fulfill step adapter. */
+src/codegen/async-frame.ts:388:  /** Host backend: `__cb_<id>` callback id of the reject step adapter. */
+src/codegen/async-frame.ts:1681:  // (`exports["__cb_" + id](caps, value)`), so they are named `__cb_<id>` and
+src/codegen/async-frame.ts:1683:  // design (the wasi adapters were built to the `__cb_` ABI from the start).
+src/codegen/async-frame.ts:1697:  const stepFulfillName = info.host ? `__cb_${info.stepFulfillCbId}` : `${stepName}_fulfill`;
+src/codegen/async-frame.ts:1698:  const stepRejectName = info.host ? `__cb_${info.stepRejectCbId}` : `${stepName}_reject`;
+src/codegen/async-frame.ts:1735:  // `__cb_<id>` NAME, so the adapters need real export entries (the `exported`

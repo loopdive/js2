@@ -1,0 +1,34 @@
+=== src/runtime/boundary-callback-adapter.ts (21 lines)
+3:export interface BoundaryCallbackAdapterContext {
+11:export function createBoundaryCallbackAdapter(arity: number, context: BoundaryCallbackAdapterContext): Function {
+=== src/runtime/native-function-source.ts (156 lines)
+// #3540 — Compiled closures do not retain source text, so their observable
+// Function stringification uses the implementation-defined NativeFunction
+// grammar rather than exposing a WasmGC struct fallback (`[object Object]`) or
+// the source of an internal JS callback bridge. This is deliberately a facade:
+// closure storage/call dispatch stays unchanged.
+24:export function installNativeFunctionSourceFacade<T extends Function>(fn: T): T {
+38:export function compiledClosureNativeSource(value: any, callbackState?: CallbackState): string | undefined {
+54:export function normalizeModuleCallbackException(
+94:export function invokeNativeFunctionCallback(
+116:export function createNativeFunctionCallbackBridge(
+=== src/runtime/standalone-timer-callback-bridge.ts (243 lines)
+18:export interface StandaloneTimerCallbackState {
+22:export interface StandaloneTimerCallbackBridge {
+168:export function createStandaloneTimerCallbackBridge(): StandaloneTimerCallbackBridge {
+211:export function wrapStandaloneTimerCallback(
+227:export function assertExplicitEmbedderCapabilityBindings(
+
+=== __call_fn_N dispatcher emit + __closure_arity emit
+src/codegen/objlit-to-primitive.ts:155:  const arityIdx = ctx.funcMap.get("__closure_arity");
+src/codegen/host-fnctor-method-driver.ts:78:    const closureArityIdx = ctx.funcMap.get("__closure_arity");
+src/codegen/typed-this.ts:727://      place, mirroring `__call_fn_method_N`, closure-exports.ts);
+src/codegen/receiver-cse.ts:42: * installed by `__call_fn_method_N` and restored on return (closure-exports.ts),
+src/codegen/expressions/calls.ts:4486:    // Mirror the generic `__call_fn_N` dispatcher (closure-exports.ts): only
+src/codegen/expressions/calls.ts:4935:    // `__call_fn_N` rest arm (closure-exports.ts). Falls back to positional
+src/codegen/index.ts:5563:    // `__call_fn_method_N` exports that install / restore this global are
+src/codegen/index.ts:6038:    // Emit __call_fn_0 export for calling zero-arg closures from JS (#851)
+src/codegen/index.ts:6041:    // Emit __call_fn_1 export for calling one-arg closures from JS (#1090)
+src/codegen/index.ts:6044:    // Emit __call_fn_2 export for calling two-arg closures from JS (#1382)
+
+=== __boundary_callback_call_1 sites

@@ -1,0 +1,1280 @@
+src/ir/integration.ts:36:} from "../codegen/standalone-clock-capability.js";
+src/ir/integration.ts:98:} from "../codegen/standalone-wrapper-instanceof.js";
+src/ir/integration.ts:132:import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
+src/ir/integration.ts:606:  if (write?.kind !== "global.set" || write.target.binding.kind !== "source" || write.value !== valueParam) {
+src/ir/integration.ts:609:  const valueGlobalBindingId = write.target.binding.bindingId;
+src/ir/integration.ts:615:    tdzRead.target.binding.kind !== "source" ||
+src/ir/integration.ts:616:    tdzRead.target.binding.bindingId === valueGlobalBindingId ||
+src/ir/integration.ts:639:    constructError.target.binding.kind !== "runtime" ||
+src/ir/integration.ts:640:    constructError.target.binding.symbol !== "__new_ReferenceError" ||
+src/ir/integration.ts:652:    tdzGlobalBindingId: tdzRead.target.binding.bindingId,
+src/ir/integration.ts:813:  const hostNumberBoundary = !ctx.nativeStrings;
+src/ir/integration.ts:828: * `hasHostBooleanBox` resolver predicate (`!ctx.nativeStrings`), consulted
+src/ir/integration.ts:835:  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("unsupported" as const) });
+src/ir/integration.ts:843: * `ctx.standalone || ctx.wasi || ctx.nativeStrings`), consulted once, here,
+src/ir/integration.ts:852:    probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? ("native" as const) : ("host" as const),
+src/ir/integration.ts:887:  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("native" as const) });
+src/ir/integration.ts:894: * `ctx.nativeStrings` (integration.ts, the `IR_STRING_COMPARE_FN` arm),
+src/ir/integration.ts:895: * consulted once, here, before freeze. `standalone` and `wasi` both imply
+src/ir/integration.ts:896: * `nativeStrings`, so this one flag is the whole truth table — which is why the
+src/ir/integration.ts:897: * arm is stated as `nativeStrings ? native : host` rather than repeating
+src/ir/integration.ts:901:  return Object.freeze({ compare: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+src/ir/integration.ts:920:          const { binding } = instr.target;
+src/ir/integration.ts:936: * `ctx.nativeStrings` (the three-symbol concat/eq arm's single `if`), consulted
+src/ir/integration.ts:938: * same reason: `standalone` and `wasi` both imply `nativeStrings`.
+src/ir/integration.ts:941:  return Object.freeze({ eq: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+src/ir/integration.ts:972: * The EXACT fact `prepareStrings` read directly off `ctx.nativeStrings` when it
+src/ir/integration.ts:975: * reason: `standalone` and `wasi` both imply `nativeStrings`.
+src/ir/integration.ts:978:  return Object.freeze({ len: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+src/ir/integration.ts:1011: * `ctx.nativeStrings` (the two-symbol concat arm's single `if`), consulted once,
+src/ir/integration.ts:1013: * siblings, for the same reason: `standalone` and `wasi` both imply
+src/ir/integration.ts:1014: * `nativeStrings`. The concat MODE is deliberately absent — it selects the
+src/ir/integration.ts:1018:  return Object.freeze({ concat: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+src/ir/integration.ts:1056: * The EXACT fact the resolve-time table read directly off `ctx.nativeStrings`
+src/ir/integration.ts:1063: * `standalone` and `wasi` both imply `nativeStrings`.
+src/ir/integration.ts:1066:  return Object.freeze({ charCodeAt: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+src/ir/integration.ts:1100:          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+src/ir/integration.ts:1102:            instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
+src/ir/integration.ts:1103:            instr.target.binding.symbol === NATIVE_CHARCODEAT_FN
+src/ir/integration.ts:1126: * particular `wasi` is NOT redundant with `nativeStrings`: `nativeStrings:
+src/ir/integration.ts:1127: * false` is an accepted override on target wasi, and such a module compiles on
+src/ir/integration.ts:1129: * `wasm:js-string.concat` and no `__concat_`. Only the wasi term keeps the
+src/ir/integration.ts:1133:  if (ctx.nativeStrings) {
+src/ir/integration.ts:1134:    return Object.freeze({ batch: ctx.standalone && !ctx.wasi ? ("native" as const) : ("off" as const) });
+src/ir/integration.ts:1137:    batch: ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? ("off" as const) : ("host" as const),
+src/ir/integration.ts:1160:          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+src/ir/integration.ts:1161:          const symbol = instr.target.binding.symbol;
+src/ir/integration.ts:1226:      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+src/ir/integration.ts:1400:              neutral = instr.target.binding.kind === "unit";
+src/ir/integration.ts:1559:      const target = direct?.target ?? imported?.target;
+src/ir/integration.ts:1957:  const sourceTargets = new Map([...targets].filter(([, target]) => target.target.binding.kind === "unit"));
+src/ir/integration.ts:1958:  const compatibilityTargets = new Map([...targets].filter(([, target]) => target.target.binding.kind !== "unit"));
+src/ir/integration.ts:2014:  const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
+src/ir/integration.ts:2015:  const jsHostExterns = irTargetProfile.allowHostImports;
+src/ir/integration.ts:2018:    ctx.standalone &&
+src/ir/integration.ts:2019:    !ctx.wasi &&
+src/ir/integration.ts:2020:    ctx.nativeStrings &&
+src/ir/integration.ts:2028:    makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
+src/ir/integration.ts:2030:    numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
+src/ir/integration.ts:2032:    allowHostExterns: jsHostExterns && !ctx.nativeStrings,
+src/ir/integration.ts:2033:    allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+src/ir/integration.ts:2035:    allowNativeMapStorage: ctx.nativeStrings,
+src/ir/integration.ts:2173:      jsHostExterns,
+src/ir/integration.ts:2185:      supportsHoleyArrayFilter: ctx.standalone,
+src/ir/integration.ts:2209:      supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
+src/ir/integration.ts:2210:      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+src/ir/integration.ts:2553:        (previous.target.binding.kind !== "runtime" ||
+src/ir/integration.ts:2554:          previous.target.binding.symbol !== boundary.builtin ||
+src/ir/integration.ts:2555:          previous.target.name !== boundary.target.name)
+src/ir/integration.ts:2564:        target: boundary.target,
+src/ir/integration.ts:2691:  //   - `nativeStrings()` — drives the for-of strategy switch
+src/ir/integration.ts:2791:          // of the IR resolver. Replaces the per-feature `nativeStrings:
+src/ir/integration.ts:2945:              candidate.target?.binding.kind === "unit" &&
+src/ir/integration.ts:2946:              candidate.target.binding.unitId === selectedUnitId,
+src/ir/integration.ts:3335:      if (!ctx.wasi) {
+src/ir/integration.ts:4479:  // (fast: `ensureAnyHelpers` → $AnyValue + the `__any_box_*`/`__any_unbox_*`
+src/ir/integration.ts:4597:    for (const plan of preparedDirectCalls.values()) bindPlannedUnitTarget(plan.target);
+src/ir/integration.ts:4598:    for (const plan of loweringPlans?.importedCalls.values() ?? []) bindPlannedUnitTarget(plan.target);
+src/ir/integration.ts:4599:    for (const plan of loweringPlans?.topLevelFunctionValues.values() ?? []) bindPlannedUnitTarget(plan.target);
+src/ir/integration.ts:5287:          nested.kind === "call" ? nested.target : nested.kind === "closure.new" ? nested.liftedFunc : undefined;
+src/ir/integration.ts:5601:  readonly hostImports: ReadonlyMap<string, number>;
+src/ir/integration.ts:5606:  const hostImports = new Map<string, number>();
+src/ir/integration.ts:5614:  if (ctx.nativeStrings) {
+src/ir/integration.ts:5625:      if (idx !== undefined) hostImports.set(op, idx);
+src/ir/integration.ts:5628:  return { nativeHelpers, hostImports };
+src/ir/integration.ts:5664: * from-ast actually consults — `nativeStrings()`, `resolveString()`,
+src/ir/integration.ts:5770:      "standalone RegExp test plan has no exact structural module-global identity",
+src/ir/integration.ts:5782:        `standalone RegExp carrier '${name}' has no allocator-owned module global`,
+src/ir/integration.ts:5794:      `standalone RegExp carrier ${globalName} is not the legacy externref module slot`,
+src/ir/integration.ts:6042:    supportsIrBackendTargetCapability(projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }), capability);
+src/ir/integration.ts:6046:      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
+src/ir/integration.ts:6061:        !supportsBackendCapability("standalone-wrapper-instanceof") ||
+src/ir/integration.ts:6072:          `standalone wrapper instanceof helper ${ctorName} has no allocator-owned function`,
+src/ir/integration.ts:6079:        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+src/ir/integration.ts:6090:        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+src/ir/integration.ts:6100:      if (!supportsBackendCapability("standalone-native-regexp-test-carrier") || !moduleBindingResolver) return null;
+src/ir/integration.ts:6121:      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
+src/ir/integration.ts:6125:      if (!ctx.standalone || ctx.wasi) return null;
+src/ir/integration.ts:6134:      return !ctx.fast;
+src/ir/integration.ts:6142:    // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
+src/ir/integration.ts:6147:    // reads no `nativeStrings` at that site. Byte-inert by construction: the
+src/ir/integration.ts:6156:      const native = ctx.nativeStrings;
+src/ir/integration.ts:6262:      if (ctx.nativeStrings) {
+src/ir/integration.ts:6269:      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
+src/ir/integration.ts:6273:      return ctx.nativeStrings
+src/ir/integration.ts:6278:      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+src/ir/integration.ts:6294:        if (className !== "Date" || ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+src/ir/integration.ts:6320:    // standalone/strictNoHostImports, so `document` correctly stays
+src/ir/integration.ts:6330:    jsHostExterns(): boolean {
+src/ir/integration.ts:6331:      return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+src/ir/integration.ts:6344:      if (!ctx.nativeStrings || ctx.mapTypeIdx < 0) return undefined;
+src/ir/integration.ts:6352:      if (!ctx.nativeStrings) return undefined;
+src/ir/integration.ts:6362:    // predicate instead of reading `nativeStrings` directly — the mode
+src/ir/integration.ts:6371:      return !ctx.nativeStrings;
+src/ir/integration.ts:6377:    // predicate instead of reading `nativeStrings` directly — same
+src/ir/integration.ts:6380:    // exact truth value the old in-place `nativeStrings?.() === false` read
+src/ir/integration.ts:6384:    // standalone floor (the demote arm is load-bearing there).
+src/ir/integration.ts:6386:      return !ctx.nativeStrings;
+src/ir/integration.ts:6390:    // (`!nativeStrings`), this is "owns the host-free formatter"
+src/ir/integration.ts:6391:    // (`nativeStrings`), so the two can never claim one call twice.
+src/ir/integration.ts:6410:    // `nativeStrings?.()` read (absent → iter-host).
+src/ir/integration.ts:6412:      return ctx.nativeStrings ? "char-loop" : "iter-host";
+src/ir/integration.ts:6415:    // supplies imports; standalone/WASI supplies the #2964 native object
+src/ir/integration.ts:6418:      return ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
+src/ir/integration.ts:6525:    // #1375 narrow slice — TS-narrowing fast-path for optional chaining.
+src/ir/integration.ts:6566: * The arm no longer reads `ctx.nativeStrings`: the frozen `stringConcat` policy
+src/ir/integration.ts:6643:    if (ctx.standalone) {
+src/ir/integration.ts:6647:        "standalone async clock snapshot escaped its constant runtime projection",
+src/ir/integration.ts:6652:    index = ctx.nativeStrings
+src/ir/integration.ts:6656:    index = ctx.nativeStrings
+src/ir/integration.ts:6667:    if (ctx.wasi || ctx.standalone) {
+src/ir/integration.ts:6709:    // `ctx.nativeStrings` fact inside `compile()`, so a disagreement can only
+src/ir/integration.ts:6752:    // (#3526 F2-S1) The arm no longer reads `ctx.nativeStrings`: the frozen
+src/ir/integration.ts:6777:    // put under manifest authority. The arm no longer reads `ctx.nativeStrings`:
+src/ir/integration.ts:6807:    // before it. The arm no longer reads `ctx.nativeStrings`: the frozen
+src/ir/integration.ts:6846:    index = ctx.nativeStrings ? ensureIrNativeStringRepeatProvider(ctx) : ensureIrHostStringRepeatProvider(ctx);
+src/ir/integration.ts:6855:    if (ctx.nativeStrings) {
+src/ir/integration.ts:6863:    // `ctx.nativeStrings`: the frozen `stringCharCodeAt` policy already resolved
+src/ir/integration.ts:6885:    if (ctx.nativeStrings) {
+src/ir/integration.ts:6890:    if (ctx.nativeStrings) {
+src/ir/integration.ts:6901:    if (ctx.nativeStrings) {
+src/ir/integration.ts:6945:  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/ir/integration.ts:7071:      if (!fuseNativeNumberFormatCarriers || !ctx.nativeStrings) return undefined;
+src/ir/integration.ts:7178:    // for-of vec fast path needs from a `(ref $vec_*)` ValType. The legacy
+src/ir/integration.ts:7198:      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+src/ir/integration.ts:7207:    // (codegen/index.ts — "any/unknown → ref_null $AnyValue in fast mode,
+src/ir/integration.ts:7219:    // (both key on ctx.fast). Helpers/imports the handle resolves by name
+src/ir/integration.ts:7227:    // Slice 6 part 4 refactor (#1185): expose the nativeStrings mode
+src/ir/integration.ts:7230:    nativeStrings(): boolean {
+src/ir/integration.ts:7231:      return ctx.nativeStrings;
+src/ir/integration.ts:7246:      // own `ctx.nativeStrings` read — a second, independent copy of the lane
+src/ir/integration.ts:7255:      // `emitStringConcat` contract is shared with the linear backend, which
+src/ir/integration.ts:7263:        if (!ctx.nativeStrings || countedStringAppendTripCount === undefined) {
+src/ir/integration.ts:7268:      return ctx.nativeStrings ? [call, { op: "ref.as_non_null" }] : [call];
+src/ir/integration.ts:7272:      // retired `ctx.nativeStrings` fallback was the seam's SECOND un-governed
+src/ir/integration.ts:7289:        return [{ op: "call", funcIdx: resolver.resolveFunc(provider.target) }];
+src/ir/integration.ts:7301:      // own `ctx.nativeStrings` read — a second, independent copy of the lane
+src/ir/integration.ts:7314:        return ctx.nativeStrings ? [call] : [{ op: "f64.convert_i32_s" }, call];
+src/ir/integration.ts:7316:      if (ctx.nativeStrings) {
+src/ir/integration.ts:7357:      return ctx.standalone || ctx.wasi;
+src/ir/integration.ts:7362:    // Lazily registers (or retrieves) the standalone `$Promise` WasmGC
+src/ir/integration.ts:7375:    // `$Promise` carrier (wasi) → one-level unwrap; JS-host → identity.
+src/ir/integration.ts:7415:      return instr.target;
+src/ir/integration.ts:7417:      return instr.provider?.kind === "callable" ? instr.provider.target : undefined;
+src/ir/integration.ts:7425:      return instr.target;
+src/ir/integration.ts:7535:            nested.target.binding.kind === "import" &&
+src/ir/integration.ts:7536:            nested.target.binding.module === "env" &&
+src/ir/integration.ts:7537:            nested.target.binding.field === "__date_now"
+src/ir/integration.ts:7547:    ctx.standalone &&
+src/ir/integration.ts:7548:    !ctx.wasi &&
+src/ir/integration.ts:7551:  if ((ctx.standalone || ctx.wasi || ctx.strictNoHostImports) && !exactStandaloneClock) {
+src/ir/integration.ts:7612:      if (ctx.nativeStrings && instr.countedStringAppendTripCount !== undefined) {
+src/ir/integration.ts:7626:      instr.target.binding.kind === "intrinsic" &&
+src/ir/integration.ts:7627:      (instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
+src/ir/integration.ts:7631:        instr.target.binding.symbol === JSSTR_CHARCODEAT_TRUSTED_FN)
+src/ir/integration.ts:7643:      instr.target.binding.kind === "intrinsic" &&
+src/ir/integration.ts:7644:      instr.target.binding.symbol === IR_STRING_COMPARE_FN
+src/ir/integration.ts:7664:  if (usesStringOp && !ctx.nativeStrings) {
+src/ir/integration.ts:7714:    if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
+src/ir/integration.ts:7727:    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
+src/ir/integration.ts:7761:          ctx.nativeStrings && instr.countedStringAppendTripCount !== undefined
+src/ir/integration.ts:7779:      ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : { kind: "externref" },
+src/ir/integration.ts:7870:  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") {
+src/ir/integration.ts:7879:            "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
+src/ir/integration.ts:7915:  if (!ctx.nativeStrings) return;
+src/ir/integration.ts:7921:        return instr.target.binding.kind === "runtime" && instr.target.binding.symbol === "__str_replaceAll";
+src/ir/integration.ts:7947: * indices, while the standalone object runtime appends a family of defined
+src/ir/integration.ts:7958:            instr.target.binding.kind === "runtime" &&
+src/ir/integration.ts:7959:            (instr.target.binding.symbol === "__for_in_keys" || instr.target.binding.symbol === "__object_keys_forin")
+src/ir/integration.ts:7969:  if (ctx.standalone || ctx.wasi) {
+src/ir/integration.ts:7999:            instr.target.binding.kind === "runtime" &&
+src/ir/integration.ts:8000:            instr.target.binding.symbol === "__extern_has"
+src/ir/integration.ts:8010:  if (ctx.standalone || ctx.wasi) {
+src/ir/integration.ts:8060: * — host `env::*` imports OR wasi/standalone native funcs of the same names. A
+src/ir/integration.ts:8129: * the host (non-fast) preregister path does NOT otherwise run — so a `dyn.eq`
+src/ir/integration.ts:8170: *   - fast (gc strategy): `ensureAnyHelpers` — $AnyValue + the canonical
+src/ir/integration.ts:8197:  const { binding } = instr.provider.target;
+src/ir/integration.ts:8267:              ? i.provider.target
+src/ir/integration.ts:8287:          if (i.kind === "call" && i.target.binding.kind === "import" && i.target.binding.module === "env") {
+src/ir/integration.ts:8288:            if (UNION_IMPORT_FUNC_NAMES.has(i.target.binding.field)) usesNamedUnionImport = true;
+src/ir/integration.ts:8289:            else if (i.target.binding.field === "__extern_is_undefined") usesExternIsUndefined = true;
+src/ir/integration.ts:8291:          if (i.kind === "call" && i.target.binding.kind === "runtime") {
+src/ir/integration.ts:8292:            switch (i.target.binding.symbol) {
+src/ir/integration.ts:8364:    if (ctx.standalone || ctx.wasi) {
+src/ir/integration.ts:8400:  // `addUnionImports` covers host (env imports) AND wasi/standalone (native
+src/ir/integration.ts:8403:  // path below. In `fast` (gc) mode the any-helper family owns boxing, but a
+src/ir/integration.ts:8425:  if (usesToNumber && ctx.standalone) {
+src/ir/integration.ts:8426:    // The canonical standalone ToNumber sequence performs
+src/ir/integration.ts:8433:  if (ctx.fast) {
+src/ir/integration.ts:8501: * Mode split MUST mirror `resolveDynamic()` (same `ctx.fast` test — the
+src/ir/integration.ts:8503: *   - fast → "gc": `ref_null $AnyValue`; box via `boxToAny` (THE canonical
+src/ir/integration.ts:8509: *   - non-fast → "host": externref; `__box_number` family + `__typeof_*`
+src/ir/integration.ts:8526:  if (ctx.fast) {
+src/ir/integration.ts:8674:  // Non-fast: externref carrier; host imports or standalone/WASI native
+src/ir/lower.ts:226:   * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
+src/ir/lower.ts:234:   *   - `nativeStrings` mode  → `{ kind: "ref", typeIdx: ctx.anyStrTypeIdx }`.
+src/ir/lower.ts:246:   *   - WasmGC fast/standalone mode → `ref_null $AnyValue` (registered via
+src/ir/lower.ts:248:   *   - WasmGC host (non-fast) mode → `externref` (host-boxed values).
+src/ir/lower.ts:264:   * dynamic op lowering (linear — #1852-G4/#2956).
+src/ir/lower.ts:279:  nativeStrings?(): boolean;
+src/ir/lower.ts:333:   * standalone `$Promise` WasmGC struct type. The struct's layout is
+src/ir/lower.ts:349:   * wasi lane). Decides the `await` lowering:
+src/ir/lower.ts:436:  emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
+src/ir/lower.ts:1197:  // `x | 0` / `x ^ 0` zero-operand fast path below (which needs only the
+src/ir/lower.ts:1208:  // (#3739) Lazily-allocated i64 scratch pool for `emitJsToInt32`'s fast
+src/ir/lower.ts:1209:  // bit-manipulation path (WasmGC/linear only — see that function). Kept
+src/ir/lower.ts:1210:  // separate from `jsBitwiseTmpIdx` (f64) since the fast path doesn't use it.
+src/ir/lower.ts:1267:  // throwing. Used by the fast-path operand inspection in `case "binary"`
+src/ir/lower.ts:1304:  // `tryTypeOf`. Used by the `js.bitor`/`js.bitxor` zero-operand fast path
+src/ir/lower.ts:1308:  // "both already i32" fast path above doesn't catch it).
+src/ir/lower.ts:1601:          instr.target.binding.kind === "intrinsic"
+src/ir/lower.ts:1602:            ? parseIrDateSnapshotGetter(instr.target.binding.symbol)
+src/ir/lower.ts:1611:          const civilIdx = resolver.resolveFunc(instr.target);
+src/ir/lower.ts:1673:        emitter.emitCall(resolver.resolveFunc(instr.target), out);
+src/ir/lower.ts:1674:        if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+src/ir/lower.ts:1729:        emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
+src/ir/lower.ts:1733:        emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out);
+src/ir/lower.ts:2499:          funcIdx: resolver.resolveFunc(instr.target ?? cl.constructorFunc),
+src/ir/lower.ts:2552:          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind, instr.methodName, instr.target)),
+src/ir/lower.ts:2570:          funcIdx: resolver.resolveFunc(instr.target ?? cl.initFunc),
+src/ir/lower.ts:2588:          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName, instr.target)),
+src/ir/lower.ts:2654:          funcIdx: resolver.resolveFunc(cl.memberFunc("static", instr.methodName, instr.target)),
+src/ir/lower.ts:3015:        // gone. These standalone single-result instrs assumed a stored result
+src/ir/lower.ts:3175:        // br_table fast path: i32 disc, every test an int32, dense span.
+src/ir/lower.ts:3392:        // every healthy owner. The linear adapter cannot reach this case at all:
+src/ir/lower.ts:3742:        //   - Native-`$Promise` carrier (wasi): one-level GUARDED unwrap —
+src/ir/lower.ts:3861:        const thenBlock = func.blocks[t.ifTrue.target as number];
+src/ir/lower.ts:3862:        const elseBlock = func.blocks[t.ifFalse.target as number];
+src/ir/lower.ts:3909:        const target = func.blocks[t.branch.target as number];
+src/ir/lower.ts:4461: * Pure helper; used by both the fast path (both i32) and the legacy
+src/ir/lower.ts:4486:// emitter primitives. WasmGC/linear still receive the byte-identical Instr
+src/ir/lower.ts:4491:// (#3739) `S = Instr[]` (WasmGC and linear both use this sink type — see
+src/ir/lower.ts:4492:// `linear-emitter.ts`'s own comment on `emitBinary` for the shared-sink
+src/codegen/index.ts:11:import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
+src/codegen/index.ts:29:import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
+src/codegen/index.ts:323:import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
+src/codegen/index.ts:325:import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default ON
+src/codegen/index.ts:422:import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
+src/codegen/index.ts:478:import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+src/codegen/index.ts:573:} from "./linear-type-reservations.js"; // (#3272) extracted verbatim
+src/codegen/index.ts:604:} from "./standalone-dom-callback-authority.js";
+src/codegen/index.ts:642:} from "./wasi.js"; // (#3272) extracted verbatim
+src/codegen/index.ts:754:// standalone/WASI. A width-matched packed element type makes `array.set` truncate
+src/codegen/index.ts:761:// is deferred (#2593 note). The packed map is gated on `ctx.wasi || ctx.standalone`.
+src/codegen/index.ts:784: * host/gc and standalone/WASI lanes (BigInt is represented as a first-class
+src/codegen/index.ts:798:  if (ctx.wasi || ctx.standalone) {
+src/codegen/index.ts:1157:    // mapping (externref in ALL modes) diverged from legacy's fast-mode
+src/codegen/index.ts:1158:    // `any` ABI — legacy `resolveWasmType` is mode-split (fast →
+src/codegen/index.ts:1160:    // `f(x: any)` had a DIFFERENT fast-mode signature than its legacy
+src/codegen/index.ts:1169:    // (ref_null $vec_<elem>) struct ref the for-of vec fast path needs,
+src/codegen/index.ts:1302:          ctx.standalone &&
+src/codegen/index.ts:1303:          !ctx.wasi &&
+src/codegen/index.ts:1304:          !ctx.strictNoHostImports &&
+src/codegen/index.ts:1308:          (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports) || exactStandaloneDomPosition)
+src/codegen/index.ts:1352:  // legacy `resolveWasmType`'s any/unknown carrier (fast: ref_null $AnyValue,
+src/codegen/index.ts:2099:    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+src/codegen/index.ts:2197://     linear backend, whose resolver does not supply that plan.
+src/codegen/index.ts:2255:// under `--target standalone`/`wasi` (it early-returns there). In those targets
+src/codegen/index.ts:2275: * playground corpus, which MISSED the standalone-target dimension: a basic
+src/codegen/index.ts:2276: * `function* g(){ yield 1 }` under `--target standalone` makes the IR generator
+src/codegen/index.ts:2277: * path emit a ref to the host-only `__gen_create_buffer`, which standalone never
+src/codegen/index.ts:2290:  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
+src/codegen/index.ts:2292:  if (!ctx || !(ctx.standalone || ctx.wasi)) return false;
+src/codegen/index.ts:2300:  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
+src/codegen/index.ts:2344:    // `__module_init` slot. Cleared alongside funcs under the `new.target`
+src/codegen/index.ts:2496:  const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+src/codegen/index.ts:2510:  const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+src/codegen/index.ts:2690:      ctx.nativeStrings &&
+src/codegen/index.ts:2839:  const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
+src/codegen/index.ts:2840:  const jsHostExterns = irTargetProfile.allowHostImports;
+src/codegen/index.ts:2846:    jsHostExterns,
+src/codegen/index.ts:2863:            numberStorage: ctx.fast ? "i32" : "f64",
+src/codegen/index.ts:2865:            allowHostExterns: jsHostExterns && !ctx.nativeStrings,
+src/codegen/index.ts:2866:            allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+src/codegen/index.ts:2870:            allowNativeMapStorage: ctx.nativeStrings,
+src/codegen/index.ts:2882:    jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
+src/codegen/index.ts:2883:  const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
+src/codegen/index.ts:2885:    ctx.standalone &&
+src/codegen/index.ts:2886:    ctx.nativeStrings &&
+src/codegen/index.ts:2887:    !ctx.wasi &&
+src/codegen/index.ts:2888:    !ctx.fast &&
+src/codegen/index.ts:2914:  // (#3053 U2) Fast host-js-string (`fast && !standalone && !wasi`) has the carrier in
+src/codegen/index.ts:2919:  // (`ctx.fast`), so every claimed config emits a valid, carrier-aligned body.
+src/codegen/index.ts:2920:  const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
+src/codegen/index.ts:2960:    // carrier both front-ends derive from the SAME `ctx.nativeStrings` /
+src/codegen/index.ts:2999:        if (ctx.fast) return false;
+src/codegen/index.ts:3000:        // In the non-fast ABI an unresolved implicit parameter remains the
+src/codegen/index.ts:3002:        // the same unknown evidence to `dynamic`, whose non-fast carrier is
+src/codegen/index.ts:3025:      (!ctx.fast && hasNonFastScalarProjection && allProjectionsAreNonFastStable)
+src/codegen/index.ts:3046:      jsHostExterns,
+src/codegen/index.ts:3049:      dynamicRuntimeBuildable: !ctx.fast,
+src/codegen/index.ts:3050:      // #2952 slice 5 — for-in currently owns only the non-fast dynamic
+src/codegen/index.ts:3054:        if (ctx.fast) return false;
+src/codegen/index.ts:3062:      forInHeadValueIsHostString: !ctx.nativeStrings,
+src/codegen/index.ts:3075:      supportsHoleyArrayFilter: ctx.standalone,
+src/codegen/index.ts:3116:      supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
+src/codegen/index.ts:3117:      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+src/codegen/index.ts:3119:      ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
+src/codegen/index.ts:3298:  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
+src/codegen/index.ts:3316:  // (#2023) The IR `new C(...)` lowering does not thread the new.target
+src/codegen/index.ts:3318:  // program uses `new.target`, route every function through legacy so the
+src/codegen/index.ts:3320:  // is a coarse but safe gate — `new.target` is rare, so the perf cost is
+src/codegen/index.ts:3331:        detail: "new.target threading is still owned by the direct frontend",
+src/codegen/index.ts:3339:        detail: "new.target threading is still owned by the direct frontend",
+src/codegen/index.ts:3347:        detail: "new.target threading is still owned by the direct frontend",
+src/codegen/index.ts:3361:    supportsStandalonePromiseDelay ? "standalone-native" : "host-executor",
+src/codegen/index.ts:3367:    ...(jsHostExterns && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+src/codegen/index.ts:3646:  const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
+src/codegen/index.ts:3652:      !multiIrTargetHasExactRegistryEntry(ctx, callPlan.target, plan.identityPlan.identityContext, safety)
+src/codegen/index.ts:3659:    if (!multiIrTargetHasExactRegistryEntry(ctx, valuePlan.target, plan.identityPlan.identityContext, safety)) {
+src/codegen/index.ts:3808:    if (valuePlan.target.binding.kind !== "unit") {
+src/codegen/index.ts:3812:        `function-value cache target ${valuePlan.target.name} has no exact source-unit binding`,
+src/codegen/index.ts:3815:    const funcIdx = ctx.funcMap.get(valuePlan.target.name);
+src/codegen/index.ts:3819:      definedFuncAt(ctx, funcIdx)?.name !== valuePlan.target.name
+src/codegen/index.ts:3824:    const singleton = ensureFuncClosureSingleton(ctx, valuePlan.target.name, funcIdx, false);
+src/codegen/index.ts:4014:  // (#3523 R4 gap 3) `wasi-start-export` joins the two host/standalone
+src/codegen/index.ts:4018:  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export" | "wasi-start-export">;
+src/codegen/index.ts:4217:  const targetDeclarations = ctx.oracle.declarationsOf(shape.target);
+src/codegen/index.ts:4225:    shape.target.text !== declaration.name.text
+src/codegen/index.ts:4247:  if (ctx.oracle.staticJsTypeOf(shape.target) !== "number") return false;
+src/codegen/index.ts:4270:    (!ctx.nativeStrings &&
+src/codegen/index.ts:4271:      !ctx.standalone &&
+src/codegen/index.ts:4272:      !ctx.wasi &&
+src/codegen/index.ts:4273:      planning?.plan.invocation.target === "host" &&
+src/codegen/index.ts:4275:    (ctx.nativeStrings &&
+src/codegen/index.ts:4276:      ctx.standalone &&
+src/codegen/index.ts:4277:      !ctx.wasi &&
+src/codegen/index.ts:4279:      planning?.plan.invocation.target === "standalone" &&
+src/codegen/index.ts:4281:    // (#3523 R4 gap 3) The WASI lane. `nativeStrings` auto-enables for WASI, so
+src/codegen/index.ts:4287:    (ctx.wasi &&
+src/codegen/index.ts:4288:      ctx.nativeStrings &&
+src/codegen/index.ts:4289:      planning?.plan.invocation.target === "wasi" &&
+src/codegen/index.ts:4290:      planning.plan.invocation.kind === "wasi-start-export");
+src/codegen/index.ts:4292:    ctx.fast ||
+src/codegen/index.ts:4293:    // (#3523 R4 gap 3) `strictNoHostImports` is DERIVED — `strictEnvImportGate`
+src/codegen/index.ts:4294:    // is `input.strictNoHostImports ?? target === "wasi"` — so under WASI it is
+src/codegen/index.ts:4295:    // always true and refuses the lane on its own. Dropping `ctx.wasi` from
+src/codegen/index.ts:4300:    (ctx.strictNoHostImports && !ctx.wasi) ||
+src/codegen/index.ts:4410:  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export" && invocationKind !== "wasi-start-export")
+src/codegen/index.ts:4423:  // host imports on its separate preparation route. The standalone-native
+src/codegen/index.ts:4427:    ({ runtimeProjection }) => runtimeProjection !== "standalone-native",
+src/codegen/index.ts:4442:    ctx.standalone &&
+src/codegen/index.ts:4443:    !ctx.wasi &&
+src/codegen/index.ts:4444:    ctx.nativeStrings &&
+src/codegen/index.ts:4459:      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
+src/codegen/index.ts:4594:    generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+src/codegen/index.ts:4595:    fast: ctx.fast,
+src/codegen/index.ts:4815:  // This keeps unproven fast scalar ABI, structured ABI, cross-policy call
+src/codegen/index.ts:4834:  const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
+src/codegen/index.ts:4996:  if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:4997:    throw new Error("the js2wasm:runtime provider requires standalone/WASI native strings");
+src/codegen/index.ts:5034:  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+src/codegen/index.ts:5058:  // the inline struct.get fast-path (which reads the live field and ignores the
+src/codegen/index.ts:5069:  // hangs), and only for standalone — the gc/host lane keeps its genuine
+src/codegen/index.ts:5071:  ctx.wrapperCtorCarrierDemanded = ctx.standalone === true && moduleReadsConstructorProp(ast.sourceFile);
+src/codegen/index.ts:5076:    ctx.standalone === true || ast.sourceFile.text.includes("Reflect.deleteProperty");
+src/codegen/index.ts:5089:  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single");
+src/codegen/index.ts:5107:  if (ctx.standalone) {
+src/codegen/index.ts:5127:  // lanes: the widening itself is not standalone-only.
+src/codegen/index.ts:5134:  if (ctx.standalone || ctx.wasi) {
+src/codegen/index.ts:5140:  // (#4648) Runs on every lane — the aliasing is §16.1.7, not a standalone
+src/codegen/index.ts:5147:    // exports the linear memory and this module imports it at memory index 0,
+src/codegen/index.ts:5149:    // (before any func import) to mirror `src/codegen/wasi.ts`'s node:fs link
+src/codegen/index.ts:5158:    // WASI target: register linear memory, bump pointer global, and WASI imports
+src/codegen/index.ts:5159:    if (ctx.wasi) {
+src/codegen/index.ts:5162:      // (never escape the GC heap) so they can be backed by linear memory with
+src/codegen/index.ts:5196:    // (#2357/#47) Reserve the standalone TypedArray `$__subview_<elem>` struct
+src/codegen/index.ts:5205:    // here — after the vec-independent linear-u8 reservation, before any function
+src/codegen/index.ts:5209:    if (ctx.standalone || ctx.wasi) {
+src/codegen/index.ts:5213:      // every standalone module's type table, renumbering the #2835 i8-packed
+src/codegen/index.ts:5225:    // the dynamic-new fallback fires in host AND standalone.
+src/codegen/index.ts:5251:    if (ctx.wasi) {
+src/codegen/index.ts:5260:      // --target wasi/standalone, where the ambient global-function flood
+src/codegen/index.ts:5267:      // pre-#2520 behaviour while preserving the wasi/standalone flood fix.
+src/codegen/index.ts:5269:        ctx.wasi || ctx.standalone ? collectReferencedGlobalNames([ast.sourceFile], ctx.checker) : undefined;
+src/codegen/index.ts:5321:    if (ctx.testRuntime && ctx.nativeStrings) {
+src/codegen/index.ts:5351:    // (#2026 PR-1b) The guard must cover BOTH no-JS-host targets (`wasi` AND
+src/codegen/index.ts:5352:    // `standalone`), not just `standalone`. Under `--target wasi` the import was
+src/codegen/index.ts:5356:    // nativeStrings is not a real module global, baking a `-1` global index and
+src/codegen/index.ts:5358:    // flowed as a value (`use(A)`, `new K()` dynamic-new). `standalone` already
+src/codegen/index.ts:5359:    // skipped this and worked; `wasi` now matches.
+src/codegen/index.ts:5360:    if (sourceContainsClass(ast.sourceFile) && !(ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:5371:      // reason as __register_class_object; standalone/wasi keep their zero-host
+src/codegen/index.ts:5431:    // (#3469) Mint the standalone host-free `console.log`/`print` sink
+src/codegen/index.ts:5436:    // `console.*` in standalone mode (`ctx.usesStandaloneConsoleSink`). Readout
+src/codegen/index.ts:5454:    if (ctx.wasi && ctx.linearUint8 && ctx.linearUint8.safeBindings.size > 0) {
+src/codegen/index.ts:5461:    // #1623 — pre-emit the WASI/standalone error constructors BEFORE any user
+src/codegen/index.ts:5471:    if ((ctx.wasi || ctx.standalone) && sourceContainsBindingPattern(ast.sourceFile)) {
+src/codegen/index.ts:5514:    // (#2023) Detect any `new.target` use up front so class collection assigns
+src/codegen/index.ts:5516:    // default — programs without `new.target` are byte-identical.
+src/codegen/index.ts:5520:    // append the conditional standalone-only `$__proto__` field to marked
+src/codegen/index.ts:5532:      ctx.standalone &&
+src/codegen/index.ts:5533:      ctx.nativeStrings &&
+src/codegen/index.ts:5534:      !ctx.wasi &&
+src/codegen/index.ts:5535:      !ctx.fast &&
+src/codegen/index.ts:5591:        target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "host",
+src/codegen/index.ts:5775:      // classShapes → overrideMap → safeSelection → new.target gate).
+src/codegen/index.ts:5955:    // dual-run testing in nativeStrings mode (#1187). No-op unless
+src/codegen/index.ts:5956:    // ctx.testRuntime && ctx.nativeStrings.
+src/codegen/index.ts:5963:    // the syntactic `Object.create(Foo.prototype)` fast path.
+src/codegen/index.ts:5975:    // the standalone native iterator runtime was registered.
+src/codegen/index.ts:5991:      // Native in standalone/WASI (appends funcs, no funcIdx shift).
+src/codegen/index.ts:6027:    // with zero host imports. No-op unless (standalone || wasi) &&
+src/codegen/index.ts:6028:    // nativeStrings && the `$exc` tag was registered (i.e. the module can
+src/codegen/index.ts:6033:    // standalone host-free `console.log`/`print` output (the test262 async
+src/codegen/index.ts:6034:    // completion marker) with zero host imports. No-op unless the standalone
+src/codegen/index.ts:6070:    // (#1888 Slice 1) Arities 3 and 4 for the standalone open-any method
+src/codegen/index.ts:6106:      // (#3981) A standalone `new <function value>(a, b, …)` driver calls
+src/codegen/index.ts:6140:    // (#3981) Fill the reserved standalone `__native_construct_<N>` drivers now
+src/codegen/index.ts:6142:    // one (every JS-host module, and any standalone module with no
+src/codegen/index.ts:6162:    // No-op when no accessor arm reserved a driver (no standalone object runtime).
+src/codegen/index.ts:6171:    // `__call_fn_method_0..4` are registered. No-op when no standalone open-any
+src/codegen/index.ts:6205:    // classifier list). No-op when no standalone `.bind`-on-any site reserved it.
+src/codegen/index.ts:6208:    // (#1100) Fill the reserved standalone Proxy trap-invoke drivers
+src/codegen/index.ts:6212:    // standalone `new Proxy` site reserved the runtime (`ctx.proxyDispatchReserved`).
+src/codegen/index.ts:6219:    // reserved a dispatcher (standalone/wasi only).
+src/codegen/index.ts:6236:    // the async scheduler's thenable substrate reserved it (standalone/wasi).
+src/codegen/index.ts:6242:    // set-algebra any-dispatch site reserved them (standalone/nativeStrings).
+src/codegen/index.ts:6275:    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
+src/codegen/index.ts:6329:    inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
+src/codegen/index.ts:6343:    // (#1904) Fill the standalone native Array.isArray predicate after all
+src/codegen/index.ts:6359:    // (#3169) Splice CLOSED-STRUCT array-like arms into the standalone
+src/codegen/index.ts:6367:    // (#3183) Splice `$__vec_base` arms into the standalone dynamic-path for-in /
+src/codegen/index.ts:6413:    // no builtin closure was materialized (standalone only).
+src/codegen/index.ts:6452:    // native errors (standalone/wasi only) — byte-identical otherwise.
+src/codegen/index.ts:6465:    // No-op unless `ctx.standalone && ctx.protoIndexDirty` reserved the store.
+src/codegen/index.ts:6489:    // funcs only (no import shifts). No-op unless standalone AND the
+src/codegen/index.ts:6510:    // `"1,2" == [1,2]` reduce a runtime `$Vec` host-free. No-op when no standalone
+src/codegen/index.ts:6522:    // registry the standalone `__reflect_is_constructor` reads. BEFORE
+src/codegen/index.ts:6535:    // #1896: teach standalone __typeof_function/__typeof_object to recognise
+src/codegen/index.ts:6562:    // install the identity-guarded standalone view after all competing MOP
+src/codegen/index.ts:6568:    // just above). `__to_primitive`'s standalone class arm baked a `call` to the
+src/codegen/index.ts:6571:    // reduce via the class's methods host-free. No-op when no standalone
+src/codegen/index.ts:6582:    if (ctx.wasi) {
+src/codegen/index.ts:6593:    // Skipped for `--target wasi` so that downstream `wasm-opt --all-features`
+src/codegen/index.ts:6671:    // window. See `plan/issues/4645-superlinear-compile-time-large-modules.md`.
+src/codegen/index.ts:6700:    // across gc/wasi/standalone) has run by this point; the remaining passes
+src/codegen/index.ts:6726:  // import section for host imports that leaked into a standalone/strict
+src/codegen/index.ts:6751: * Severity by target: wasi / explicit `--no-host-imports` (`strictNoHostImports`)
+src/codegen/index.ts:6752: * → **error** (fails the build). Plain `--target standalone` → **warning**
+src/codegen/index.ts:6755: * the `host_free_pass` floor cannot move. #2961 ratchets standalone to a hard
+src/codegen/index.ts:6757: * the standalone scan for A/B. No-op for host/WasmGC builds.
+src/codegen/index.ts:6760:  const severity: "error" | "warning" | null = ctx.strictNoHostImports
+src/codegen/index.ts:6762:    : ctx.standalone && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+src/codegen/index.ts:6901: * standalone / WASI modules stay byte-identical). gc/host has no module-init
+src/codegen/index.ts:6903: * simple prologue/epilogue wrap is sufficient; WASI/standalone never reach here
+src/codegen/index.ts:6904: * (the read site only records the flag when `!ctx.wasi`).
+src/codegen/index.ts:7042:  // `_start`. The test262 standalone harness calls exports (e.g. `test()`)
+src/codegen/index.ts:7058:  if (ctx.wasi) {
+src/codegen/index.ts:7069:  if (ctx.wasi && ctx.exnTagIdx >= 0 && ctx.nativeStrings && ctx.wasiFdWriteIdx >= 0 && ctx.wasiProcExitIdx >= 0) {
+src/codegen/index.ts:7079:  const unhandledReporterIdx = ctx.wasi ? ensureUnhandledRejectionReporter(ctx) : -1;
+src/codegen/index.ts:7085:  // `main()` call), moving init to a standalone `__module_init`. But that left
+src/codegen/index.ts:7272:  if (ctx.standalone || ctx.wasi || ctx.hostDynamicClassAccessorReads.size === 0) return keys;
+src/codegen/index.ts:7350:    !ctx.standalone && !ctx.wasi && ctx.hostDynamicClassMethodNames.size > 0 && ctx.classSet.size > 0;
+src/codegen/index.ts:7356:  const needsExternrefBackedClassBridges = !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.size > 0;
+src/codegen/index.ts:7600:    // `ref.null.extern`, byte-identical standalone). Numeric/ref params get the
+src/codegen/index.ts:7908:    !ctx.standalone &&
+src/codegen/index.ts:7909:    !ctx.wasi &&
+src/codegen/index.ts:8673: * string backend's representation). In nativeStrings mode the hint param is a
+src/codegen/index.ts:8676: * never runs in the standalone nativeStrings path — so such entries are skipped
+src/codegen/index.ts:8736:    // When the hint IS forwarded, skip nativeStrings non-externref string-ref
+src/codegen/index.ts:8858:  if (!ctx.standalone && !ctx.nativeStrings && ctx.funcMap.get("__get_undefined") === undefined) {
+src/codegen/index.ts:8884:          mode: "standalone";
+src/codegen/index.ts:8932:          // This is what lets standalone reduce a single-literal object operand
+src/codegen/index.ts:8943:          // (ES5 standalone lane) A callable stored in an `externref`/`eqref`
+src/codegen/index.ts:8969:      // name-keyed standalone method — but ONLY for structs with the genuine
+src/codegen/index.ts:8973:      // per object. The standalone `${structName}_${methodName}` func is only the
+src/codegen/index.ts:8976:      // Single-literal structs intentionally STAY on the name-keyed standalone
+src/codegen/index.ts:8989:      const preferClosure = forked || ctx.standalone;
+src/codegen/index.ts:9033:        // (ES5 standalone lane) The field holds a callable, but no closure type
+src/codegen/index.ts:9047:        // tail rendered the canonical "[object Object]". Measured standalone:
+src/codegen/index.ts:9074:      // 2. Fallback: name-keyed standalone method `StructName_toString`. Used by
+src/codegen/index.ts:9090:        entries.push({ structName, typeIdx, mode: "standalone", funcIdx, resultType, padInstrs });
+src/codegen/index.ts:9134:      if (entry.mode === "standalone") {
+src/codegen/index.ts:9161:          // anyref of type anyref"), the standalone `__call_toString` /
+src/codegen/index.ts:9188:        // (ES5 standalone lane) Untracked callable in a method field: read it,
+src/codegen/index.ts:9358:    // (ES5 standalone lane) externref scratch (index 6) for the
+src/codegen/index.ts:9435:  const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
+src/codegen/index.ts:9894:          mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(parameter, localId), ctx.checker, ctx.fast),
+src/codegen/index.ts:9897:        const results = isVoidType(returnType) ? [] : [mapTsTypeToWasm(returnType, ctx.checker, ctx.fast)];
+src/codegen/index.ts:10163:  // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
+src/codegen/index.ts:10165:  if (!options?.experimentalIR || ctx.fast || !authority) return;
+src/codegen/index.ts:10167:  const hostImportedFunctions = ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? undefined : resolver;
+src/codegen/index.ts:10214:  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+src/codegen/index.ts:10226:  if (ctx.standalone || ctx.wasi) {
+src/codegen/index.ts:10235:    ctx.standalone === true && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
+src/codegen/index.ts:10258:  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
+src/codegen/index.ts:10264:    // WASI target: register linear memory, bump pointer global, and WASI imports
+src/codegen/index.ts:10265:    if (ctx.wasi) {
+src/codegen/index.ts:10291:    if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf)) && !(ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:10328:    if (ctx.wasi) {
+src/codegen/index.ts:10342:        // #2520 — gate the lib-file referenced-names filter to wasi/standalone
+src/codegen/index.ts:10347:          ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
+src/codegen/index.ts:10402:    // (#3496) Mirror the single-source pre-body step for standalone console
+src/codegen/index.ts:10436:    // (#3765 multi-source parity) The standalone single-source path installs
+src/codegen/index.ts:10446:    if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+src/codegen/index.ts:10490:    // (#2023) Whole-realm new.target detection — OR across all source files.
+src/codegen/index.ts:10638:    // and the linked standalone start function throws even when the entry is an
+src/codegen/index.ts:10865:    profilePhase("inline-is-truthy-call-sites", () => inlineIsTruthyCallSites(ctx)); // (#4157) ToBoolean call-site fast path, default ON
+src/codegen/index.ts:10927:    profilePhase("inline-flat-str-call-sites", () => inlineFlatStrCallSites(ctx)); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
+src/codegen/index.ts:10937:    // (#3495) `__extern_get_idx` is reserved while compiling standalone
+src/codegen/index.ts:11023:    // (no-op unless ctx.testRuntime && ctx.nativeStrings).
+src/codegen/index.ts:11141:    // #1896: teach standalone __typeof_function/__typeof_object to recognise
+src/codegen/index.ts:11143:    profilePhase("fill-standalone-typeof-closure-arms", () => fillStandaloneTypeofClosureArms(ctx));
+src/codegen/index.ts:11146:    profilePhase("fill-standalone-fnctor-to-string-arms", () => fillStandaloneObjectProtoToStringFnctorArms(ctx));
+src/codegen/index.ts:11170:    // did — every standalone multi-file compile reaching `__to_primitive`'s
+src/codegen/index.ts:11185:    // at 0..5 — so a standalone `new <function value>()` reserved its
+src/codegen/index.ts:11204:    // with zero host imports. No-op unless (standalone || wasi) &&
+src/codegen/index.ts:11205:    // nativeStrings && the `$exc` tag was registered (i.e. the module can
+src/codegen/index.ts:11210:    // standalone host-free `console.log`/`print` output (the test262 async
+src/codegen/index.ts:11211:    // completion marker) with zero host imports. No-op unless the standalone
+src/codegen/index.ts:11222:    profilePhase("add-wasi-start-export", () => {
+src/codegen/index.ts:11223:      if (ctx.wasi) addWasiStartExport(ctx);
+src/codegen/index.ts:11235:    // Skipped for `--target wasi` so that downstream `wasm-opt --all-features`
+src/codegen/index.ts:11272:    profilePhase("finalize-standalone-timer-exports", () => finalizeStandaloneTimerCallbackExports(ctx));
+src/codegen/index.ts:11694:    if (ref.target && (ref.target.objectFlags & ts.ObjectFlags.Tuple) !== 0) {
+src/codegen/index.ts:11804: * `resolveWasmType` fast path and returning `null` there is exactly the
+src/codegen/index.ts:12013:    objectType.objectFlags & ts.ObjectFlags.Reference ? (objectType as unknown as ts.TypeReference).target : undefined;
+src/codegen/index.ts:12035: * ordinary Map imports. Native-string/standalone builds deliberately retain
+src/codegen/index.ts:12040:  return !ctx.nativeStrings && inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
+src/codegen/index.ts:12089:  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(tsType) && !isStringWrapperType(tsType)) {
+src/codegen/index.ts:12139:      (!ctx.nativeStrings && (sym?.name === "RegExpExecArray" || sym?.name === "RegExpMatchArray"))
+src/codegen/index.ts:12196:      // `__unbox_symbol` (host) / the `$Symbol` carrier read (standalone)
+src/codegen/index.ts:12268:    // (#838 gate — fable-dev-5) Only in standalone/wasi: in js-host the BigInt
+src/codegen/index.ts:12276:      (TYPED_ARRAY_NAMES.has(builtinSymName) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))
+src/codegen/index.ts:12289:    // (#1103a) Map → WasmGC native Map struct (`$Map`) in standalone /
+src/codegen/index.ts:12290:    // nativeStrings mode. Mirrors Date above — a `Map`-typed binding/param
+src/codegen/index.ts:12294:    if (builtinSymName === "Map" && ctx.nativeStrings) {
+src/codegen/index.ts:12299:    // (#2162) Set → the SAME native `$Map` struct in standalone / nativeStrings
+src/codegen/index.ts:12303:    if (builtinSymName === "Set" && ctx.nativeStrings) {
+src/codegen/index.ts:12308:    // (#2162) WeakMap / WeakSet → the SAME native `$Map` struct in standalone /
+src/codegen/index.ts:12309:    // nativeStrings mode (they reuse the Map backing store with object-identity
+src/codegen/index.ts:12311:    if ((builtinSymName === "WeakMap" || builtinSymName === "WeakSet") && ctx.nativeStrings) {
+src/codegen/index.ts:12329:    // host MOP coherently. The set is empty in standalone mode (recorded
+src/codegen/index.ts:12330:    // host-only), so standalone codegen is unaffected.
+src/codegen/index.ts:12349:    // getter/method dispatcher. Other standalone fnctors keep their existing
+src/codegen/index.ts:12352:      ctx.standalone && sym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(sym.name) === true;
+src/codegen/index.ts:12362:    const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
+src/codegen/index.ts:12363:    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
+src/codegen/index.ts:12381:        if (foreignReturnFnctor && (ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:12522:    // (standalone/nativeStrings), replacing externref + per-op
+src/codegen/index.ts:12533:  // Only in fast mode where there are no host-imported extern classes to conflict with.
+src/codegen/index.ts:12534:  // In non-fast mode, any/unknown falls through to mapTsTypeToWasm → externref.
+src/codegen/index.ts:12535:  if (ctx.fast && tsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
+src/codegen/index.ts:12549:  return symbolBrand(tsType, mapTsTypeToWasm(tsType, ctx.checker, ctx.fast));
+src/codegen/index.ts:12781:  // not match the struct, so reads come back null; standalone: the externref→struct
+src/codegen/index.ts:12881:    // the destructuring default fast-path.
+src/codegen/index.ts:13408:      if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) {
+src/codegen/index.ts:13412:      // `$Object` (externref, standalone-only) in compileObjectLiteral; the
+src/codegen/index.ts:13415:      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) {
+src/codegen/index.ts:13547:      // ref (standalone RegExp match array — the sole externref → ref hoist
+src/codegen/index.ts:13872:  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
+src/codegen/index.ts:13894:  if (!ctx.standalone || !initializer) return null;
+src/codegen/index.ts:13976:    const target = resolveWasmType(ctx, genericFactory.target);
+src/codegen/index.ts:14023:  if (methodName === "subarray" && (ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:14125:      // #1886 Slice B: skip linear-backed `new Uint8Array(...)` bindings — their
+src/codegen/index.ts:14213:          ctx.standalone &&
+src/codegen/index.ts:14231:          ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
+src/codegen/index.ts:14297:        // dispatches on it dynamically. Host lane only (standalone has no
+src/codegen/index.ts:14303:          !ctx.standalone &&
+src/codegen/index.ts:14304:          !ctx.wasi &&
+src/ir/intrinsic-support.ts:111:/** Project the semantic standalone clock intent without adding a helper call. */
+src/ir/intrinsic-support.ts:116:    nested.target.binding.kind !== "intrinsic" ||
+src/ir/intrinsic-support.ts:117:    nested.target.binding.symbol !== IR_ASYNC_CLOCK_SNAPSHOT_FN
+src/ir/intrinsic-support.ts:127:    throw new Error("standalone async clock snapshot has a malformed semantic call");
+src/ir/intrinsic-support.ts:162:    const binding = instr.provider.target.binding;
+src/ir/intrinsic-support.ts:564:    sameIrCallableBinding(left.target.binding, right.target.binding) &&
+src/ir/intrinsic-support.ts:565:    left.target.name === right.target.name
+src/ir/intrinsic-support.ts:810:          kind: "standalone-native-wasmgc",
+src/ir/runtime-manifest.ts:70:export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
+src/ir/runtime-manifest.ts:71:export type RuntimeBackend = "wasmgc" | "linear";
+src/ir/runtime-manifest.ts:96: * additionally depends on `nativeStrings` and `semanticProviders`. Callers
+src/ir/runtime-manifest.ts:140: * `ctx.standalone || ctx.wasi || ctx.nativeStrings`.
+src/ir/runtime-manifest.ts:187: * The seam's truth table is `nativeStrings ? native : host`, which is the exact
+src/ir/runtime-manifest.ts:188: * decision the resolve-time provider table made by reading `ctx.nativeStrings`
+src/ir/runtime-manifest.ts:191: * and `externIsUndefined` also goes native on standalone/WASI — which for this
+src/ir/runtime-manifest.ts:192: * seam are subsumed, because `standalone` and `wasi` both imply `nativeStrings`.
+src/ir/runtime-manifest.ts:213: * The truth table is the same one (`nativeStrings ? native : host`) because both
+src/ir/runtime-manifest.ts:240: * Same one-flag truth table as both (`nativeStrings ? native : host`, because
+src/ir/runtime-manifest.ts:241: * `standalone` and `wasi` each imply `nativeStrings`), but the physical pair is
+src/ir/runtime-manifest.ts:268: * Same one-flag truth table as all three (`nativeStrings ? native : host`), but
+src/ir/runtime-manifest.ts:300: * Same one-flag truth table as all four (`nativeStrings ? native : host`), and
+src/ir/runtime-manifest.ts:330: * NATIVE helpers exist on `gc-native-strings` and on `wasi` (the legacy twin
+src/ir/runtime-manifest.ts:336: * The projection keeps the wasi term because it is LIVE, not redundant:
+src/ir/runtime-manifest.ts:337: * `nativeStrings: false` is an accepted override on target wasi, and such a
+src/ir/runtime-manifest.ts:338: * module compiles on the host string backend — only the wasi term keeps the
+src/ir/runtime-manifest.ts:339: * pass off there (measured: CAT3 wasi/host-strings, 1000 bytes, pairwise
+src/ir/runtime-manifest.ts:342: * It describes the IR PIPELINE, not the module. `batch: "off"` on wasi is true
+src/ir/runtime-manifest.ts:515: * manifest — not a `ctx.nativeStrings` read inside the resolve-time provider
+src/ir/runtime-manifest.ts:553: * `ctx.nativeStrings` read inside the attachment pass, is the authority.
+src/ir/runtime-manifest.ts:635: * `tests/issue-4566-standalone-algorithms-module-init.test.ts` is what pins the
+src/ir/runtime-manifest.ts:887:const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone", "strict-no-host", "wasi"]);
+src/ir/runtime-manifest.ts:888:const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
+src/ir/runtime-manifest.ts:1006: * by policy in this slice: standalone does define a native `__box_number`
+src/ir/runtime-manifest.ts:1008: * `!nativeStrings`, and support may not be inferred from helper presence. The
+src/ir/runtime-manifest.ts:1009: * `$AnyValue` standalone boxing family is explicitly not this intrinsic.
+src/ir/runtime-manifest.ts:1393: * arms read `ctx.nativeStrings` alone today — exactly F2-S5's
+src/ir/runtime-manifest.ts:1925:    if (!TARGET_SET.has(policy.target) || !BACKEND_SET.has(policy.backend)) {
+src/ir/runtime-manifest.ts:1928:        `invalid runtime manifest policy ${String(policy.target)}/${String(policy.backend)}`,
+src/ir/runtime-manifest.ts:1945:    // cannot produce that pair — `concat` is `nativeStrings ? native : host`
+src/ir/runtime-manifest.ts:1946:    // and `batch` is `native` only under `nativeStrings`, `host` only under
+src/ir/runtime-manifest.ts:1947:    // `!nativeStrings` — so this guards HAND-BUILT policies, which is exactly
+src/ir/runtime-manifest.ts:2354:        // policy, on the same argument: `!nativeStrings` is a lane fact that
+src/ir/runtime-manifest.ts:2403:              // selected by `nativeStrings` alone (standalone and WASI imply it).
+src/ir/runtime-manifest.ts:2508:      candidate.supportedTargets.includes(this.#policy.target),
+src/ir/runtime-manifest.ts:2513:        `runtime feature ${feature} is unavailable for target ${this.#policy.target}`,
+src/ir/imported-functions.ts:468:      return { targetUnitId, ...target };
+src/ir/host-extern.ts:210: * Lexical `this`/`arguments`/`super`/`new.target`, nested runtime declarations,
+src/ir/host-free-runtime.ts:4: * host-free target (standalone / WASI / native strings) can service WITHOUT a
+src/ir/program-callable-bindings.ts:748:    const targetBindingId = upstream?.record.bindingId ?? resolved.target.record.bindingId;
+src/ir/legacy-caller-policy.ts:9: * only OUTSIDE JS-host mode (`jsHostExterns !== true`, i.e. standalone/WASI),
+src/ir/legacy-caller-policy.ts:26:  readonly jsHostExterns?: boolean;
+src/ir/legacy-caller-policy.ts:31: * (`jsHostExterns === true`). The negated spelling `jsHostExterns !== true`
+src/ir/legacy-caller-policy.ts:35:export function jsHostExternsEnabled(options: HostExternsOptions | undefined): boolean {
+src/ir/legacy-caller-policy.ts:36:  return options?.jsHostExterns === true;
+src/ir/legacy-caller-policy.ts:41: * unclaimed (legacy)? True exactly in host-free lanes (standalone/WASI).
+src/ir/legacy-caller-policy.ts:44:  return options?.jsHostExterns !== true;
+src/ir/fnctor-abi.ts:67:  /** True only for the standalone/WASI foreign-return constructor ABI. */
+src/ir/closure-struct-registry.ts:11:import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
+src/ir/closure-struct-registry.ts:27: * module-wide registry. Certified standalone DOM callbacks receive a branded
+src/ir/class-field-call-planning.ts:362:    current.target.binding.kind === "unit" &&
+src/ir/class-field-call-planning.ts:363:    proof.target.binding.kind === "unit" &&
+src/ir/class-field-call-planning.ts:364:    current.target.binding.unitId === proof.target.binding.unitId &&
+src/ir/class-field-call-planning.ts:365:    current.target.name === proof.target.name &&
+src/codegen/registry/imports.ts:21:import { STANDALONE_REGEXP_REFLECTION_PROPS } from "../regexp-standalone.js";
+src/codegen/registry/imports.ts:33: * Under `ctx.strictNoHostImports` (auto-on for `--target wasi`, controllable
+src/codegen/registry/imports.ts:47: * not requested under strict mode because `nativeStrings` is auto-enabled.
+src/codegen/registry/imports.ts:49: * dedicated error pointing the user at the nativeStrings option.
+src/codegen/registry/imports.ts:67:  if (ctx.strictNoHostImports) {
+src/codegen/registry/imports.ts:122: * In `nativeStrings` mode (auto-on for `--target wasi`), no JS host runtime
+src/codegen/registry/imports.ts:154:  if (ctx.nativeStrings) {
+src/codegen/registry/imports.ts:202: * and copying it through exported linear memory is unavailable while the
+src/codegen/registry/imports.ts:207:  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
+src/codegen/registry/imports.ts:208:  if (!ctx.nativeStrings) {
+src/codegen/registry/imports.ts:330:  // (#2023) Keep the cached new.target global index in step with the shift, so
+src/codegen/registry/imports.ts:582:  // (#3251 S1) Vec-overlay state global (registered at finalize; standalone
+src/codegen/registry/imports.ts:611:  // #1470: standalone target must never register the wasm:js-string namespace.
+src/codegen/registry/imports.ts:612:  // The nativeStrings path is the standalone alternative and is forced on for
+src/codegen/registry/imports.ts:613:  // ctx.standalone in createCodegenContext. If a caller still reaches this
+src/codegen/registry/imports.ts:614:  // path under standalone (e.g. via a missed gate), no-op so the resulting
+src/codegen/registry/imports.ts:616:  // behavior via the same nativeStrings forcing.
+src/codegen/registry/imports.ts:769:    // map stale under plain `--nativeStrings` JS-host mode.
+src/codegen/registry/imports.ts:775:    // (#1913) Regex helper map moves in lockstep too — regexp-standalone call
+src/codegen/registry/imports.ts:799:    // helper bodies and the map. Matches addUnionImports (#1677-fast-path) and
+src/codegen/registry/imports.ts:916:  // routes here (HOST mode only — standalone defers `symbol[]`; see
+src/codegen/registry/imports.ts:1084:    // native-string helper bodies. Without this, reconcile double-shifts them (#1677-fast-path).
+src/codegen/registry/imports.ts:1113: * Used under `--target wasi`, where the standard `env::*` host imports
+src/codegen/registry/imports.ts:1133: *     the appropriate boxed struct (string under wasi/nativeStrings is
+src/codegen/registry/imports.ts:1136: *   - `__typeof_object/function(externref)` are conservatively 0 — wasi
+src/codegen/registry/imports.ts:1140: *     type-tag string under nativeStrings would require constructing a
+src/codegen/registry/imports.ts:1141: *     NativeString per tag, which is deferred until a wasi caller
+src/codegen/registry/imports.ts:1172:  // externref` — a stale call into an adjacent boxing helper (277 standalone
+src/codegen/registry/imports.ts:1219:  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && !ctx.funcMap.has("__str_to_number")) {
+src/codegen/registry/imports.ts:1259:  // (#3673) i31 fast path: an integral value in the signed-31-bit range is
+src/codegen/registry/imports.ts:1407:  //    that isn't a boxed bool → ALSO false (under wasi we don't
+src/codegen/registry/imports.ts:1437:      // not a boxed bool → false (conservative under wasi)
+src/codegen/registry/imports.ts:1444:  // ToBigInt frontier for values already represented by the standalone
+src/codegen/registry/imports.ts:1492:  // standalone carriers that can be represented without a string parser:
+src/codegen/registry/imports.ts:1584:      ...throwNativeError("SyntaxError", "Cannot convert string to a BigInt in standalone mode"),
+src/codegen/registry/imports.ts:1708:      // In standalone/nativeStrings mode an `any`-held string is a $AnyString
+src/codegen/registry/imports.ts:1788:  // 11. __typeof_string(externref) -> i32. Under nativeStrings (auto-on
+src/codegen/registry/imports.ts:1789:  //     for wasi) strings are NativeString structs at `ctx.anyStrTypeIdx`.
+src/codegen/registry/imports.ts:1899:      // nativeStrings/standalone a string value is a `$AnyString` GC struct
+src/codegen/registry/imports.ts:1920:  // 14. __typeof_function(externref) -> i32 — wasi binaries don't expose
+src/codegen/registry/imports.ts:1925:  //     (#2965) This was a `ref.null.extern` stub ("defer until a wasi caller
+src/codegen/registry/imports.ts:1927:  //     standalone site where the typeof string is a VALUE rather than an
+src/codegen/registry/imports.ts:1946:  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/registry/imports.ts:2017:  // standalone `any[].indexOf/lastIndexOf/includes` need no JS host import. Tag
+src/codegen/registry/imports.ts:2263: * registration out of `declarations.ts:1014-1062` into a standalone
+src/codegen/registry/imports.ts:2284:  if ((ctx.standalone || ctx.wasi) && !options?.allowNoJsHost) return;
+src/codegen/registry/imports.ts:2292:  // standalone-refusal / native-helper set, so the `allowNoJsHost` fallback
+src/codegen/registry/imports.ts:2328:  // Only registered in JS-host mode (caller-guarded `!standalone && !wasi`), so
+src/codegen/registry/imports.ts:2329:  // the standalone `__for_in_*` refusal inside ensureLateImport never triggers
+src/codegen/registry/imports.ts:2357:  const useNativeEncodingApi = ctx.wasi || ctx.standalone || ctx.strictNoHostImports;
+src/codegen/registry/imports.ts:2516:            // #1914 — standalone answers RegExp reflection reads natively
+src/codegen/registry/imports.ts:2543:      // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
+src/codegen/registry/imports.ts:2586:          // OBJECT_RUNTIME_HELPER_NAMES, so under `--target standalone`/`wasi`
+src/codegen/registry/imports.ts:2593:          // module ships an unsatisfiable `env::__extern_get` (the standalone
+src/codegen/registry/imports.ts:2598:          if (!(ctx.standalone || ctx.wasi)) {
+src/codegen/expressions/late-imports.ts:19:// (#3100 S4) Native standalone iteration substrate: the four `__iterator*`
+src/codegen/expressions/late-imports.ts:29:import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
+src/codegen/expressions/late-imports.ts:33: * implementations for under no-JS-host mode (WASI / standalone). When any of
+src/codegen/expressions/late-imports.ts:52:  // standalone `any[].indexOf/lastIndexOf/includes` need no JS host import.
+src/codegen/expressions/late-imports.ts:60: * Wasm-native runtime yet (that's Phase B). Under `--target standalone` there
+src/codegen/expressions/late-imports.ts:64: * message that points the user at the supported fast path (typed object
+src/codegen/expressions/late-imports.ts:92: * Emit the #1472 Phase A standalone refusal for a dynamic-shape object/property
+src/codegen/expressions/late-imports.ts:100:  if (!ctx.standalone || !STANDALONE_REFUSED_IMPORT(name)) return false;
+src/codegen/expressions/late-imports.ts:111:      `yet supported in --target standalone (#1472 Phase B). Use a typed object ` +
+src/codegen/expressions/late-imports.ts:112:      `literal or class instance for fast-path codegen, which compiles to ` +
+src/codegen/expressions/late-imports.ts:122: * `toPrimitiveHostCallInstrs` in type-coercion.ts). In `--target standalone`
+src/codegen/expressions/late-imports.ts:140:  if (!ctx.standalone || name !== "__to_primitive") return false;
+src/codegen/expressions/late-imports.ts:147:      `yet supported in standalone mode (#1806). A Wasm-native numeric/string-hint ` +
+src/codegen/expressions/late-imports.ts:252:  // Build set of import function names for fast lookup.
+src/codegen/expressions/late-imports.ts:276:  // sites (exec/test/match/split/replace in regexp-standalone.ts) read this
+src/codegen/expressions/late-imports.ts:309:  // ~165-test `__str_flatten call[0]` standalone invalid-Wasm bucket. Mirrors
+src/codegen/expressions/late-imports.ts:310:  // the re-base addUnionImports' inline shift has done since #1677-fast-path.
+src/codegen/expressions/late-imports.ts:433:    if (isWasiErrorName(errorName)) {
+src/codegen/expressions/late-imports.ts:449:  // #2748 — WASI is ALSO host-free (`ctx.strictNoHostImports` is true for
+src/codegen/expressions/late-imports.ts:450:  // `--target wasi`), so it MUST take the SAME native object-runtime path, NOT
+src/codegen/expressions/late-imports.ts:452:  // predated the now-proven standalone path; leaving WASI on the host import
+src/codegen/expressions/late-imports.ts:460:  // dyn-read / object-runtime host-import gate. Mirrors the `ctx.wasi ||
+src/codegen/expressions/late-imports.ts:461:  // ctx.standalone` routing of UNION_NATIVE_HELPER_NAMES above and the #2609
+src/codegen/expressions/late-imports.ts:462:  // `__object_is` host-free (`ctx.standalone || ctx.wasi`) registration inside
+src/codegen/expressions/late-imports.ts:473:  // the leak fix: before #2866, a standalone `o[sym] = v` / `symbol[]` read
+src/codegen/expressions/late-imports.ts:489:  // assignment/dstr cluster of the standalone JSONL; rest patterns leaked
+src/codegen/expressions/late-imports.ts:494:  if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/late-imports.ts:514:  // --target standalone with a clear compile error. We still register the
+src/codegen/expressions/late-imports.ts:520:  // under --target standalone with a trackable compile error, replacing the
+src/codegen/expressions/late-imports.ts:549:    // gc/host and gap-free standalone output is byte-identical.
+src/codegen/expressions/late-imports.ts:615:  // `ensureNativeStringHelpers` (native-strings path: wasi/standalone or
+src/codegen/expressions/late-imports.ts:616:  // explicit `--nativeStrings`). On the default JS-host GC path the helpers are
+src/codegen/expressions/late-imports.ts:728: * Under native-strings mode (auto-on for `--target standalone`/`wasi`) there is
+src/codegen/expressions/late-imports.ts:732: * sentinel via `emitUndefined`, which (a) keeps standalone host-import-free and
+src/codegen/expressions/late-imports.ts:739:  if (ctx.nativeStrings) return undefined;
+src/codegen/expressions/late-imports.ts:746: * ref.null.extern (indistinguishable from null) in standalone mode — unless
+src/codegen/closures.ts:38:import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
+src/codegen/closures.ts:131:// (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
+src/codegen/closures.ts:171: * Synthetic closure binding used by standalone object-literal method lowering
+src/codegen/closures.ts:1552:      // Fallback (standalone mode): ref.is_null is imprecise — treats null
+src/codegen/closures.ts:1657:        (ctx.standalone || ctx.wasi) &&
+src/codegen/closures.ts:1926: * the whole compile in the standalone lane.
+src/codegen/closures.ts:1931: * have traded a standalone crash for a gc regression.
+src/codegen/closures.ts:2310: * divergence is not newly exposed to the standalone floor (correct-or-legacy).
+src/codegen/closures.ts:2483: * index (or `undefined` in standalone mode where the import is unavailable).
+src/codegen/closures.ts:2496: * available, else fall back to `ref.is_null` (imprecise in standalone — treats
+src/codegen/closures.ts:2999:  if (ts.isBlock(body) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+src/codegen/closures.ts:3029:  // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
+src/codegen/closures.ts:3047:    (ctx.standalone || ctx.wasi) &&
+src/codegen/closures.ts:3099:    // previously compiled to a null-returning shape under standalone). Same
+src/codegen/closures.ts:3164:    if ((ctx.standalone || ctx.wasi) && !ctx.funcMap.has("__gen_create_buffer")) {
+src/codegen/closures.ts:3437:    !(ctx.standalone || ctx.wasi) ||
+src/codegen/closures.ts:3461:  /** Object-literal [[HomeObject]] to carry for standalone `super` reads. */
+src/codegen/closures.ts:3595:    // the nominal constructible subtype existed only for standalone — which is
+src/codegen/closures.ts:3596:    // exactly why standalone passed `test/harness/isConstructor.js` and js-host
+src/codegen/closures.ts:3854:    !ctx.standalone &&
+src/codegen/closures.ts:3855:    !ctx.wasi &&
+src/codegen/closures.ts:4201:      !ctx.standalone &&
+src/codegen/closures.ts:4202:      !ctx.wasi &&
+src/codegen/closures.ts:4523:    if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/calls.ts:154:    restoreOnException && (ctx.standalone || ctx.wasi)
+src/codegen/expressions/calls.ts:261:} from "../json-standalone.js";
+src/codegen/expressions/calls.ts:369:import { tryCompileRawWasiCall } from "../raw-wasi-api.js";
+src/codegen/expressions/calls.ts:449:} from "../regexp-standalone.js";
+src/codegen/expressions/calls.ts:529:} from "../linear-uint8-signatures.js";
+src/codegen/expressions/calls.ts:550: * writeSync (no path). Under --target wasi these are rejected — standalone WASI
+src/codegen/expressions/calls.ts:574: * (#3031) Per-source-file syntactic gate for the standalone Proxy [[Call]] arm:
+src/codegen/expressions/calls.ts:619: * standalone/WASI. Only a bound target that is itself an admitted caller-owned
+src/codegen/expressions/calls.ts:660: * Object.create/defineProperties static-expansion fast path so the emitted
+src/codegen/expressions/calls.ts:667: * externref onto the stack. Under `--target standalone`, the native
+src/codegen/expressions/calls.ts:688:    (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone) &&
+src/codegen/expressions/calls.ts:712: * Root cause (standalone): the native `__object_create` / `__object_setPrototypeOf`
+src/codegen/expressions/calls.ts:736:    ctx.standalone &&
+src/codegen/expressions/calls.ts:762: * #2160 — `String(arr)` / `Number(arr)` array→primitive coercion in standalone.
+src/codegen/expressions/calls.ts:764: * In native-strings (standalone / WASI) mode there is no JS host
+src/codegen/expressions/calls.ts:783:  // Only meaningful where the native array-join path applies (standalone /
+src/codegen/expressions/calls.ts:786:  if (!(ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0)) return undefined;
+src/codegen/expressions/calls.ts:904: * number, OR (standalone only) a `new Number(x)` WRAPPER object.
+src/codegen/expressions/calls.ts:909: * trapped in standalone ("null pointer" / wrong value). Mirror of the #1878
+src/codegen/expressions/calls.ts:910: * String-wrapper fix. Gated on `ctx.standalone` for the wrapper case — the native
+src/codegen/expressions/calls.ts:911: * `__to_primitive` recovery (see `emitNumberMethodReceiverF64`) is standalone-only;
+src/codegen/expressions/calls.ts:915:  return isNumberType(receiverType) || (ctx.standalone && isNumberWrapperType(receiverType));
+src/codegen/expressions/calls.ts:925: * is `"0"`). This is the dominant standalone gap in the S15.7.4.2 corpus
+src/codegen/expressions/calls.ts:1037:  // superlinear in file size.
+src/codegen/expressions/calls.ts:1081:  if (ctx.standalone && isNumberWrapperType(receiverType)) {
+src/codegen/expressions/calls.ts:1189:  if (!ctx.standalone) return undefined;
+src/codegen/expressions/calls.ts:1482:  // externrefs with null, so use the canonical standalone undefined singleton
+src/codegen/expressions/calls.ts:1600:  if (!(ctx.standalone || ctx.wasi)) return undefined;
+src/codegen/expressions/calls.ts:1872:  if (!ctx.standalone) return undefined;
+src/codegen/expressions/calls.ts:1929:  // early-return below — so `JSON.stringify(b)` refused in standalone instead
+src/codegen/expressions/calls.ts:1962:  // (host-mode pulls it from `__get_undefined`; standalone mode falls
+src/codegen/expressions/calls.ts:2008:    // exactly when `ctx.nativeStrings`; the `then` arm is `number_toString`,
+src/codegen/expressions/calls.ts:2010:    // — which, since #3912's gate change, is also `ctx.nativeStrings`. The old
+src/codegen/expressions/calls.ts:2011:    // `ctx.standalone || ctx.wasi` predicate therefore disagreed with the
+src/codegen/expressions/calls.ts:2012:    // literal under `fast` (nativeStrings without either target): the arms had
+src/codegen/expressions/calls.ts:2015:    // lane. `ctx.nativeStrings` is the one question both arms actually ask.
+src/codegen/expressions/calls.ts:2016:    const nativeStringArms = ctx.nativeStrings && ctx.anyStrTypeIdx >= 0;
+src/codegen/expressions/calls.ts:2053:  // string / String — standalone/WASI have no JSON_stringify host import.
+src/codegen/expressions/calls.ts:2059:  if ((ctx.standalone || ctx.wasi) && flags & ts.TypeFlags.StringLike) {
+src/codegen/expressions/calls.ts:2069:    // in nativeStrings mode), so downstream string ops (===, return) see the same
+src/codegen/expressions/calls.ts:2081: * argument in standalone / WASI mode, where there is no `env::JSON_parse`
+src/codegen/expressions/calls.ts:2100:  if (!(ctx.standalone || ctx.wasi)) return undefined;
+src/codegen/expressions/calls.ts:2302: * Keep identifiers and other runtime values dynamic: standalone's native
+src/codegen/expressions/calls.ts:2340: * Callable targets reshape to the ordinary `.bind` path. Under standalone,
+src/codegen/expressions/calls.ts:2396: * Native-first/standalone targets mint the Wasm-owned `$__bound_fn` carrier;
+src/codegen/expressions/calls.ts:2614:    return !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:2627:    return !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:2645:        return !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:2874:  if (ctx.standalone || ctx.wasi || !expr.arguments.some((arg) => ts.isSpreadElement(arg))) return null;
+src/codegen/expressions/calls.ts:3084:  // walk, standalone gate) + emission live in `promise-subclass.ts`.
+src/codegen/expressions/calls.ts:3093: * Used to gate static-dispatch fast-paths for wrapper-type method calls
+src/codegen/expressions/calls.ts:3104: * fast-path on wrapper objects — not a measurable perf hit because wrappers
+src/codegen/expressions/calls.ts:3151: * to bypass the static fast-paths when source has reassigned the method.
+src/codegen/expressions/calls.ts:3172:  const arrNewIdx = ctx.standalone
+src/codegen/expressions/calls.ts:3177:  // standalone $ObjVec path stays empty-args until it grows a native push.
+src/codegen/expressions/calls.ts:3178:  const wantArgs = callExpr !== undefined && callExpr.arguments.length > 0 && !ctx.standalone && !ctx.wasi;
+src/codegen/expressions/calls.ts:3668:  // The standalone lane has a Wasm-native RegExp carrier now. Route the exact
+src/codegen/expressions/calls.ts:3671:  // through the standalone carrier (`pattern.source` became undefined in the
+src/codegen/expressions/calls.ts:3674:  if (ctx.standalone) {
+src/codegen/expressions/calls.ts:3741: * fast path. Mirrors `isGlobalEvalIdentifier` with the extra local/capture
+src/codegen/expressions/calls.ts:4024:    // A linear Uint8Array source param contributes two trailing slots
+src/codegen/expressions/calls.ts:4195:  // (#3074) Applied on BOTH lanes. It was originally standalone-gated for
+src/codegen/expressions/calls.ts:4198:  // stuck vacuous — measured at 1,535 default records vs 448 standalone, i.e.
+src/codegen/expressions/calls.ts:4525:    (ctx.standalone === true || ctx.targetProfile.semanticProviders === "native-first") &&
+src/codegen/expressions/calls.ts:4539:    (ctx.standalone === true || ctx.wasi === true) &&
+src/codegen/expressions/calls.ts:4541:  const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+src/codegen/expressions/calls.ts:4589:  // Ensure box/unbox helpers exist (standalone: registered as native defined
+src/codegen/expressions/calls.ts:4623:  if (needsProvidedUndefinedCheck || (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback)) {
+src/codegen/expressions/calls.ts:4626:  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+src/codegen/expressions/calls.ts:4643:  // mode pulls it from `__get_undefined`; standalone / native-strings MUST NOT
+src/codegen/expressions/calls.ts:4646:  // `emitUndefined`, and the standalone representation is the (#2106 S1)
+src/codegen/expressions/calls.ts:4656:    (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback);
+src/codegen/expressions/calls.ts:4729:  const variadicArm = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+src/codegen/expressions/calls.ts:4790:  // f64"; test262 harness/wellKnownIntrinsicObjects.js standalone). This is
+src/codegen/expressions/calls.ts:4854:  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
+src/codegen/expressions/calls.ts:5182:  // `$__bound_fn` minted by a standalone `.bind(...)` site. Pack the args into
+src/codegen/expressions/calls.ts:5307: * True for a syntactic value produced by the standalone runtime-eval
+src/codegen/expressions/calls.ts:5318:  if (!ctx.standalone) return undefined;
+src/codegen/expressions/calls.ts:5404:  // ("not enough arguments on the stack for call", the −601 standalone regression).
+src/codegen/expressions/calls.ts:5471:      if (opts?.allowDynamic === true && (ctx.standalone === true || ctx.wasi === true) && type !== null) {
+src/codegen/expressions/calls.ts:5543: * (#2980 class 1) `.then`/`.catch` runtime dispatch on standalone/WASI native
+src/codegen/expressions/calls.ts:5558: * native `$Promise` struct at RUNTIME, and route to the fast native chain
+src/codegen/expressions/calls.ts:5560: * {@link emitHostPromiseThenFallback} — exactly the pre-widen standalone
+src/codegen/expressions/calls.ts:5573: * CALLER CONTRACT: only call this for the NON-wasi case (`ctx.wasi !==
+src/codegen/expressions/calls.ts:5577: * object). The call sites in `compileCallExpression` branch on `ctx.wasi`
+src/codegen/expressions/calls.ts:5579: * for wasi untouched.
+src/codegen/expressions/calls.ts:5594: * (fall through) off the standalone/wasi lane or when no driven producers exist.
+src/codegen/expressions/calls.ts:5604:  if (ctx.standalone !== true && ctx.wasi !== true) return null;
+src/codegen/expressions/calls.ts:5681: * (#2903) Host-import names that PRODUCE promises the standalone module did
+src/codegen/expressions/calls.ts:5719: * Standalone-only (wasi keeps its `nullMiss` contract; gc/host never emits the
+src/codegen/expressions/calls.ts:5726: * standalone modules host-import-leaky (measured 2026-07-10, see
+src/codegen/expressions/calls.ts:5731:  if (ctx.standalone !== true || ctx.wasi === true) return false;
+src/codegen/expressions/calls.ts:5747:  // for `--target wasi` any-receiver dispatch, where the zero-import contract
+src/codegen/expressions/calls.ts:5788:      // (#4394) Standalone (non-wasi) `.then` miss arm: a user thenable's own
+src/codegen/expressions/calls.ts:5792:      // host import; wasi keeps its zero-import null contract.
+src/codegen/expressions/calls.ts:5793:      if (ctx.standalone === true && ctx.wasi !== true && method === "then") {
+src/codegen/expressions/calls.ts:5828:          // otherwise-passing standalone modules. `throw` is terminal
+src/codegen/expressions/calls.ts:5891: * (#2903) `.finally` runtime dispatch on standalone/WASI native `$Promise`
+src/codegen/expressions/calls.ts:5897: * wasi (`nullMiss` — zero-import contract).
+src/codegen/expressions/calls.ts:5974: *   - static number arg → `predicate(arg)` (unchanged fast path).
+src/codegen/expressions/calls.ts:5994:  // number" fast path AND the runtime `__typeof_number` guard mis-handle (the
+src/codegen/expressions/calls.ts:6007:  // would otherwise hijack the "static number" fast path and coerce, violating
+src/codegen/expressions/calls.ts:6130:      // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
+src/codegen/expressions/calls.ts:6132:      // keeps its existing host-delegated behaviour (the slice is standalone).
+src/codegen/expressions/calls.ts:6202:  // future `flushLateImportShifts` already walks. Drop the standalone buffer
+src/codegen/expressions/calls.ts:6276:  if (!ctx.wasi) return undefined;
+src/codegen/expressions/calls.ts:6478: * bare-identifier calls the injected standalone `Iterator.zip / zipKeyed /
+src/codegen/expressions/calls.ts:6493: * injected under `--target standalone|wasi`, and in JS-host mode the
+src/codegen/expressions/calls.ts:6501:  if (!ctx.standalone && !ctx.wasi) return undefined;
+src/codegen/expressions/calls.ts:6547: * #3509 — A standalone dynamic import in an ordinary lifted closure can be lowered
+src/codegen/expressions/calls.ts:6564: * standalone build can test the concrete `$Proxy` RTT without invoking any
+src/codegen/expressions/calls.ts:6572:    (!ctx.standalone && !ctx.wasi) ||
+src/codegen/expressions/calls.ts:6607:    (!ctx.standalone && !ctx.wasi) ||
+src/codegen/expressions/calls.ts:7004:    (!ctx.standalone && !ctx.wasi) ||
+src/codegen/expressions/calls.ts:7360:  // reactor (async-scheduler.ts). Only fires under --target wasi; everything else
+src/codegen/expressions/calls.ts:7384:  // #2928 — dynamic standalone Function(...) value form, plus the immediate
+src/codegen/expressions/calls.ts:7391:    if (ctx.standalone && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
+src/codegen/expressions/calls.ts:7404:  if (!noJsHost(ctx) && !ctx.nativeStrings && immediateFunctionCtor) {
+src/codegen/expressions/calls.ts:7411:  // landed via #2918). Lets a standalone/WASI embedder — and, once the carrier
+src/codegen/expressions/calls.ts:7412:  // is activated for `--target standalone` (blocked on #2864's native $Frame),
+src/codegen/expressions/calls.ts:7424:  // disturbing JS-host / gc / linear codegen (byte-identical off the carrier path).
+src/codegen/expressions/calls.ts:7486:    ctx.standalone &&
+src/codegen/expressions/calls.ts:7498:    ctx.standalone &&
+src/codegen/expressions/calls.ts:7514:  // In standalone/WASI mode the host import is unavailable and will trap at
+src/codegen/expressions/calls.ts:7538:              : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
+src/codegen/expressions/calls.ts:7543:      // (#2960) WASI (until its linker grows the provider), or a standalone
+src/codegen/expressions/calls.ts:7615:  // #3494 — standalone has no host loader, while compileMulti does not yet
+src/codegen/expressions/calls.ts:7625:    if (ctx.standalone) {
+src/codegen/expressions/calls.ts:7630:          "Warning: standalone dynamic import has no module loader and will throw if this function is invoked (#3509; module evaluation #3494)",
+src/codegen/expressions/calls.ts:7937:        (ctx.standalone &&
+src/codegen/expressions/calls.ts:8024:    // Native-first/standalone: mint a Wasm-owned `$__bound_fn` carrying target,
+src/codegen/expressions/calls.ts:8048:    // For standalone functions (no `this`), drop thisArg and call directly.
+src/codegen/expressions/calls.ts:8071:      // member read that standalone refuses at compile time via `__get_builtin`.
+src/codegen/expressions/calls.ts:8086:      // (#4656) A dynamic standalone Function value is represented by a
+src/codegen/expressions/calls.ts:8092:      // Keep this syntactic and standalone-only: constant Function forms are
+src/codegen/expressions/calls.ts:8191:      // step 2 IsConstructor, BEFORE touching the iterable). On the standalone
+src/codegen/expressions/calls.ts:8207:      // method closure under nativeStrings, so it ADDS a collection-specific
+src/codegen/expressions/calls.ts:8381:      // dropping thisArg (standalone functions ignore `this`). This reuses the
+src/codegen/expressions/calls.ts:8422:            // arguments are evaluated even though standalone functions ignore
+src/codegen/expressions/calls.ts:8453:      // Case 1: identifier.call(thisArg, args...) — standalone function
+src/codegen/expressions/calls.ts:8510:        // standalone function (handled below, which DROPS thisArg), the thisArg
+src/codegen/expressions/calls.ts:8826:        // ReferenceError path, and standalone/WASI retain their native lanes.
+src/codegen/expressions/calls.ts:8828:          !ctx.standalone &&
+src/codegen/expressions/calls.ts:8829:          !ctx.wasi &&
+src/codegen/expressions/calls.ts:8874:          // is opaque to the host's `Object.prototype.toString`) AND standalone
+src/codegen/expressions/calls.ts:8883:              // (#4491 wave-7) The fold's standalone terminal is a FALLBACK, not
+src/codegen/expressions/calls.ts:8898:              if (ctx.standalone && proof.unprovenDefault && receiverExpr !== undefined) {
+src/codegen/expressions/calls.ts:8927:              // nativeStrings/standalone — the host `global.get` path only works
+src/codegen/expressions/calls.ts:8928:              // in non-nativeStrings mode, so use the shared helper).
+src/codegen/expressions/calls.ts:8937:            if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/calls.ts:8976:              `Codegen error: standalone RegExp literal-substring backend does not support ` +
+src/codegen/expressions/calls.ts:8978:                `with a plain static pattern and no flags, or recompile without --target standalone.`,
+src/codegen/expressions/calls.ts:8984:          // `__proto_method_call` is refused under --target standalone (no JS
+src/codegen/expressions/calls.ts:8991:          //     and emits the __str_* fast path. The covered method set is the
+src/codegen/expressions/calls.ts:8994:          //     call, which already has a clean native standalone path
+src/codegen/expressions/calls.ts:9002:          if (ctx.standalone && expr.arguments.length >= 1 && !isBuiltinRegExpPrototype) {
+src/codegen/expressions/calls.ts:9004:            // round-trip correctly standalone (verified end-to-end). Methods
+src/codegen/expressions/calls.ts:9094:            // Unsupported (typeName, methodName) under standalone: refuse-loud,
+src/codegen/expressions/calls.ts:9106:                `supported in --target standalone (#1888 Slice 3/4) — ${cite}. ` +
+src/codegen/expressions/calls.ts:9107:                `Recompile without --target standalone, or call the method directly on a typed receiver.`,
+src/codegen/expressions/calls.ts:9338:    if (!ctx.wasi && ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "process") {
+src/codegen/expressions/calls.ts:9443:      ctx.wasi &&
+src/codegen/expressions/calls.ts:9517:  // answers for this shape were both WRONG and lane-divergent: standalone took
+src/codegen/expressions/calls.ts:9541: * under standalone), and call `__extern_method_call(recv, "<name>", args)` —
+src/codegen/expressions/calls.ts:9563:  if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
+src/codegen/expressions/calls.ts:9566:  const arrNewName = ctx.standalone ? "__objvec_new" : "__js_array_new";
+src/codegen/expressions/calls.ts:9567:  const arrPushName = ctx.standalone ? "__objvec_push" : "__js_array_push";
+src/codegen/expressions/calls.ts:9568:  if (ctx.standalone) {
+src/codegen/expressions/calls.ts:9911:    // (#4394) Exact-first (typeIdx-aware) matching — the old kind-only linear
+src/codegen/expressions/calls.ts:9914:    // trap (standalone deepEqual-* family). Mechanism in closure-sig-match.ts.
+src/codegen/expressions/calls.ts:10173:  // fast path, so register its source strictness like every other source body.
+src/codegen/expressions/calls.ts:10385:  if (ctx.nativeStrings !== true && isStringType(ctx.checker.getTypeAtLocation(arg0))) return false;
+src/codegen/expressions/calls.ts:10400:        return ctx.nativeStrings === true;
+src/codegen/expressions/calls.ts:10507:  // like the other standalone Error-family prototype methods. Keep this
+src/codegen/expressions/calls-closures.ts:68: * binds it to an `env::<Class>_<m>` host import that the standalone runtime
+src/codegen/expressions/calls-closures.ts:129: * result at the field boundary. In standalone, #5255 admits the analogous
+src/codegen/expressions/calls-closures.ts:137:  if (ctx.standalone || ctx.wasi) {
+src/codegen/expressions/calls-closures.ts:1422:  // vivified prototype; approved standalone fnctors resolve through their
+src/codegen/expressions/calls-closures.ts:1427:  if (!ctx.wasi && !ts.isPrivateIdentifier(propAccess.name)) {
+src/codegen/expressions/calls-closures.ts:1439:      ctx.standalone &&
+src/codegen/expressions/calls-closures.ts:1442:    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
+src/codegen/expressions/calls-closures.ts:1443:      if (ctx.standalone) {
+src/codegen/expressions/calls-closures.ts:1614:    (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/calls-closures.ts:2056:  // (#4771) JS-host twin of the standalone arm below: the same inherited
+src/codegen/expressions/calls-closures.ts:2070:  // resolvable Function-prototype symbol and standalone mode.
+src/codegen/expressions/calls-closures.ts:2072:    ctx.standalone &&
+src/codegen/expressions/calls-closures.ts:2303:  // standalone runtime can inspect the receiver's real `$NativeRegExp` brand.
+src/codegen/expressions/calls-closures.ts:2310:  // import that made the whole module fail to instantiate in standalone mode
+src/codegen/expressions/calls-closures.ts:2315:  if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+src/codegen/expressions/calls-closures.ts:2328:  // standalone/wasi binary cannot satisfy. Both live in native-is-prototype-of.ts.
+src/codegen/expressions/calls-closures.ts:2379:  // import the standalone runtime cannot satisfy (round-6 leak analysis:
+src/codegen/expressions/calls-closures.ts:2390:  // not merely a standalone leak — `Uint8ClampedArray_every` runs the host
+src/codegen/expressions/calls-closures.ts:2419:  // standalone runtime cannot satisfy (the dominant leak of the
+src/codegen/expressions/calls-closures.ts:2420:  // built-ins/TypedArray/prototype/fill standalone cluster; the receiver there
+src/codegen/expressions/calls-closures.ts:2431:  // `ta.copyWithin(…)`/`ta.reverse()` to a host import the standalone runtime
+src/codegen/expressions/calls-closures.ts:2439:  // standalone guarantee for every `%TypedArray%.prototype` scalar callback
+src/codegen/expressions/calls-closures.ts:2445:  // — a host import the standalone runtime cannot satisfy (measured
+src/codegen/expressions/calls-closures.ts:2449:  // standalone ladder bottom out at the #2151 closed-method dispatcher, whose
+src/codegen/expressions/calls-closures.ts:2459:  // arm that never runs, and the whole standalone module then fails to
+src/codegen/expressions/calls-closures.ts:2468:  // TypeError in standalone where the base emitted an unsatisfiable import. A
+src/codegen/expressions/calls-closures.ts:2478:  // `any` receiver under standalone/wasi. The candidate pool below still
+src/codegen/expressions/calls-closures.ts:2479:  // contains the WeakMap/Set/WeakSet extern classes even in nativeStrings mode
+src/codegen/expressions/calls-closures.ts:2484:  // host imports the standalone runtime cannot satisfy, while the WasmGC-native
+src/codegen/expressions/calls-closures.ts:2494:    (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/calls-closures.ts:2566:  // HOST import (unsatisfiable standalone → module fails to instantiate before
+src/codegen/expressions/calls-closures.ts:2567:  // dispose runs). In `nativeStrings` mode, run a `ref.test $DisposableStack`
+src/codegen/expressions/calls-closures.ts:2571:  // (`!nativeStrings`) is untouched.
+src/codegen/expressions/calls-closures.ts:2572:  if (ctx.nativeStrings && ctx.externClasses.get("DisposableStack")?.methods.has(methodName)) {
+src/codegen/expressions/calls-closures.ts:2579:  // unsatisfiable standalone (e.g. `(Object.values(o) as any).join(",")`). Route
+src/codegen/expressions/call-identifier.ts:38:} from "../linear-uint8-signatures.js";
+src/codegen/expressions/call-identifier.ts:53:import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
+src/codegen/expressions/call-identifier.ts:88:import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
+src/codegen/expressions/call-identifier.ts:149:  const target = resolveWasmType(ctx, factory.target);
+src/codegen/expressions/call-identifier.ts:247:  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0 && usesNativeNumberFormat(ctx)) {
+src/codegen/expressions/call-identifier.ts:347: * Dispatch standalone carriers whose runtime representation must win over the
+src/codegen/expressions/call-identifier.ts:360:  if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+src/codegen/expressions/call-identifier.ts:534:    // same limit the host `this.m(...)` fast path carries).
+src/codegen/expressions/call-identifier.ts:535:    (ctx.standalone || ctx.wasi || expr.arguments.length <= 8)
+src/codegen/expressions/call-identifier.ts:539:    if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-identifier.ts:540:      // (#4648) JS-host lane. The standalone arm below packs the arguments into
+src/codegen/expressions/call-identifier.ts:599:    !ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:669:    ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:720:      // avoiding both aliasing and an unbounded linear-memory bump allocation.
+src/codegen/expressions/call-identifier.ts:756:  // rejected outright under --target wasi (standalone has no filesystem). The
+src/codegen/expressions/call-identifier.ts:761:    ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:770:        `'node:fs' path-based call to '${fnName}' is not available under --target wasi (#2631): ` +
+src/codegen/expressions/call-identifier.ts:771:        `standalone WASI has no filesystem (no path_open / preopens). Only the fd-based synchronous ` +
+src/codegen/expressions/call-identifier.ts:834:        // parsing. In standalone / WASI the native `parseInt` / `parseFloat`
+src/codegen/expressions/call-identifier.ts:848:        const nativeParse = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi;
+src/codegen/expressions/call-identifier.ts:868:          // (#3912) NATIVE STRING → HOST IMPORT. `fast` is the one config with a
+src/codegen/expressions/call-identifier.ts:877:          // `parseInt("42")` with a plain LITERAL traps under `fast`. #3912 only
+src/codegen/expressions/call-identifier.ts:883:          ctx.nativeStrings &&
+src/codegen/expressions/call-identifier.ts:919:    // Host mode: per-name `env.*` import. Standalone/wasi (#2500): the encode
+src/codegen/expressions/call-identifier.ts:1002:      // engine call the string-ref arm uses). Standalone / nativeStrings only;
+src/codegen/expressions/call-identifier.ts:1018:        if (ctx.nativeStrings && elemType !== undefined && !elemIsNever && resolveArrayInfo(ctx, arg0TsType)) {
+src/codegen/expressions/call-identifier.ts:1034:      // string-struct case and silently yields 0 in standalone (#1688), so this
+src/codegen/expressions/call-identifier.ts:1040:          ctx.nativeStrings &&
+src/codegen/expressions/call-identifier.ts:1053:      // host / coerceType("number") standalone, object ref→coerceType("number"),
+src/codegen/expressions/call-identifier.ts:1138:        op: ctx.fast ? "i32.const" : "f64.const",
+src/codegen/expressions/call-identifier.ts:1141:      return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+src/codegen/expressions/call-identifier.ts:1152:      // so native-strings / standalone (`--target standalone` / WASI) materializes
+src/codegen/expressions/call-identifier.ts:1187:      if (ctx.nativeStrings && ctx.oracle.staticJsTypeOf(strArg0) === "symbol") {
+src/codegen/expressions/call-identifier.ts:1198:      if (!ctx.nativeStrings && ctx.oracle.staticJsTypeOf(strArg0) === "symbol") {
+src/codegen/expressions/call-identifier.ts:1216:      // #2160 — String(arr) in standalone: route an array argument through its
+src/codegen/expressions/call-identifier.ts:1228:      // #2161 — String(re) in standalone: a static / backend-created RegExp
+src/codegen/expressions/call-identifier.ts:1310:        // Native/standalone object ToString needs a real `$AnyString` result.
+src/codegen/expressions/call-identifier.ts:1314:        if (ctx.nativeStrings) {
+src/codegen/expressions/call-identifier.ts:1371:        ctx.nativeStrings &&
+src/codegen/expressions/call-identifier.ts:1409:        // (#2915) In standalone mode use the NATIVE `__is_truthy` union helper
+src/codegen/expressions/call-identifier.ts:1414:        // `ctx.standalone` so the GC/host lane stays byte-identical.
+src/codegen/expressions/call-identifier.ts:1415:        const useNativeTruthy = ctx.standalone;
+src/codegen/expressions/call-identifier.ts:1500:    // fast-deep-equal's `equal`) ended up carrying uri-js's UMD factory locals
+src/codegen/expressions/call-identifier.ts:1580:    // `Function.prototype.call` VALUE, whose standalone body is the #2984
+src/codegen/expressions/call-identifier.ts:1582:    if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+src/codegen/expressions/call-identifier.ts:1683:    // rule-tester reaching fast-deep-equal's `equal` rather than uri-js's
+src/codegen/expressions/call-identifier.ts:1745:      // provider-specific. Native-first/standalone dispatch `$__bound_fn`
+src/codegen/expressions/call-identifier.ts:1775:        ctx.standalone &&
+src/codegen/expressions/call-identifier.ts:1789:      if (isKnownVariable && !ctx.standalone && !noJsHost(ctx) && calleeIsCapabilityCtorParam(ctx, expr.expression)) {
+src/codegen/expressions/call-identifier.ts:1828:          ctx.standalone || ctx.wasi
+src/codegen/expressions/call-identifier.ts:2156:            if (ctx.standalone || ctx.wasi) return null;
+src/codegen/expressions/call-identifier.ts:2625:          // standalone runtime-eval callback marker (`var alias = eval`). The
+src/codegen/expressions/call-identifier.ts:2627:          // mode routes through `__call_function`; standalone/WASI routes
+src/codegen/expressions/call-identifier.ts:2640:            !ctx.standalone &&
+src/codegen/expressions/call-identifier.ts:2641:            !ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:2666:            (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-identifier.ts:2771:            (ctx.standalone || ctx.wasi) && innerResultType?.kind === "externref"
+src/codegen/expressions/call-identifier.ts:3154:        (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+src/codegen/expressions/call-identifier.ts:3181:      // only — standalone keeps its existing lowering (the ReferenceError /
+src/codegen/expressions/call-identifier.ts:3185:        !ctx.standalone &&
+src/codegen/expressions/call-identifier.ts:3186:        !ctx.wasi &&
+src/codegen/expressions/call-identifier.ts:3788:      reportError(ctx, expr, "Cannot spread arguments into a linear Uint8Array helper call (#1886)");
+src/codegen/expressions/call-identifier.ts:3907:              "Codegen error: linear Uint8Array helper argument is not backed by linear memory (#1886)",
+src/codegen/expressions/call-receiver-method.ts:95:import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
+src/codegen/expressions/call-receiver-method.ts:157:} from "./standalone-primitive-tail.js";
+src/codegen/expressions/call-receiver-method.ts:185: * is evaluated.  The generic zero-argument `.toString()` fast path below is a
+src/codegen/expressions/call-receiver-method.ts:290: * Validate a local shared-backing TypedArray before one of the standalone
+src/codegen/expressions/call-receiver-method.ts:291: * packed-carrier HOF fast paths.  Those paths intentionally run before
+src/codegen/expressions/call-receiver-method.ts:476:  if (ctx.standalone) {
+src/codegen/expressions/call-receiver-method.ts:484:    if (ctx.wasi || !pinnedFnctor) return undefined;
+src/codegen/expressions/call-receiver-method.ts:508:  if (!ctx.standalone && !ctx.wasi && dispatchArgs.length > 8) return undefined;
+src/codegen/expressions/call-receiver-method.ts:511:  const dispatchIdx = ctx.standalone
+src/codegen/expressions/call-receiver-method.ts:515:    ctx.standalone || ctx.wasi
+src/codegen/expressions/call-receiver-method.ts:523:  if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:532:  if (!ctx.standalone && !ctx.wasi) addStringConstantGlobal(ctx, methodName);
+src/codegen/expressions/call-receiver-method.ts:550:  if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:583: * A standalone fnctor subclass can inherit Iterator helpers from the live
+src/codegen/expressions/call-receiver-method.ts:586: * that standalone deliberately does not provide. Admit only classes whose
+src/codegen/expressions/call-receiver-method.ts:599:  if (!ctx.standalone || fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
+src/codegen/expressions/call-receiver-method.ts:698:  if (!ctx.standalone) return false;
+src/codegen/expressions/call-receiver-method.ts:716:  if (ctx.nativeStrings || method !== "charCodeAt" || !ts.isIdentifier(propAccess.expression)) return null;
+src/codegen/expressions/call-receiver-method.ts:806:  if (ctx.standalone && propAccess.name.text === "concat" && ts.isIdentifier(propAccess.expression)) {
+src/codegen/expressions/call-receiver-method.ts:846:  // Web/Node APIs, but WASI/standalone cannot rely on env.TextEncoder_* host
+src/codegen/expressions/call-receiver-method.ts:848:  if ((noJsHost(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings) {
+src/codegen/expressions/call-receiver-method.ts:967:          // between standalone's canonical tag-1 singleton and `null`.
+src/codegen/expressions/call-receiver-method.ts:978:  // standalone modes, so the byte-by-byte copy is mode-agnostic. In JS-host
+src/codegen/expressions/call-receiver-method.ts:980:  // (`slice is not a function`, #1717); in standalone there is no runtime
+src/codegen/expressions/call-receiver-method.ts:1130:    // module provably cannot mint a HOST promise (or under wasi, whose
+src/codegen/expressions/call-receiver-method.ts:1142:      (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+src/codegen/expressions/call-receiver-method.ts:1168:      (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+src/codegen/expressions/call-receiver-method.ts:1178:      // constructor takes the standalone super(executor) path. TypeScript
+src/codegen/expressions/call-receiver-method.ts:1199:      // chains natively; a miss keeps the host path under standalone
+src/codegen/expressions/call-receiver-method.ts:1201:      // imports) and yields null under wasi (zero-import contract; a host
+src/codegen/expressions/call-receiver-method.ts:1203:      // native machinery (`isStandaloneThenChainNativeActive` — wasi, or
+src/codegen/expressions/call-receiver-method.ts:1204:      // standalone with the scheduler registered), so every other module is
+src/codegen/expressions/call-receiver-method.ts:1215:        // TypeError (null under wasi). Producer modules never reach this arm
+src/codegen/expressions/call-receiver-method.ts:1221:            nullMiss: ctx.wasi === true || nativeFirstPromise,
+src/codegen/expressions/call-receiver-method.ts:1232:          { nullMiss: ctx.wasi === true || nativeFirstPromise },
+src/codegen/expressions/call-receiver-method.ts:1241:        // contains "Promise_then" for `--target wasi`, and instantiates
+src/codegen/expressions/call-receiver-method.ts:1243:        // hardening below is scoped to the NON-wasi case (`ctx.standalone`
+src/codegen/expressions/call-receiver-method.ts:1247:        // ALREADY the pre-widen fallback for every standalone `.then`
+src/codegen/expressions/call-receiver-method.ts:1251:        // corpus item currently reaches a non-native receiver under wasi
+src/codegen/expressions/call-receiver-method.ts:1266:          } else if (ctx.wasi === true || nativeFirstPromise) {
+src/codegen/expressions/call-receiver-method.ts:1300:        // user's onRejected continuation. (#2980 class 1: same wasi/standalone
+src/codegen/expressions/call-receiver-method.ts:1315:          } else if (ctx.wasi === true || nativeFirstPromise) {
+src/codegen/expressions/call-receiver-method.ts:1346:        // `.then`/`.catch` above); standalone takes the receiver bridge.
+src/codegen/expressions/call-receiver-method.ts:1355:          } else if (ctx.wasi === true || nativeFirstPromise) {
+src/codegen/expressions/call-receiver-method.ts:1471:      // #1910 R3 — Boolean wrapper .valueOf() in standalone: the internal
+src/codegen/expressions/call-receiver-method.ts:1477:    // #2160 — standalone recovery of the wrapper's internal [[PrimitiveValue]]
+src/codegen/expressions/call-receiver-method.ts:1478:    // slot. In --target standalone there is no JS host, so `new String(x)` /
+src/codegen/expressions/call-receiver-method.ts:1487:    // `ctx.standalone` specifically — WASI keeps the host-import object
+src/codegen/expressions/call-receiver-method.ts:1488:    // machinery (the native object-runtime is standalone-only), so it stays on
+src/codegen/expressions/call-receiver-method.ts:1503:    if (ctx.standalone && isWrapperValueAccessor) {
+src/codegen/expressions/call-receiver-method.ts:1570:  if (!ctx.standalone && !ctx.wasi && receiverType.isUnion() && !ts.isPrivateIdentifier(propAccess.name)) {
+src/codegen/expressions/call-receiver-method.ts:2213:            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+src/codegen/expressions/call-receiver-method.ts:2280:        // fallback (`ad543a660e`) resolves every standalone fnctor local, since
+src/codegen/expressions/call-receiver-method.ts:2461:  // helper, BEFORE the array-methods.ts path (whose standalone packed-carrier
+src/codegen/expressions/call-receiver-method.ts:2471:    ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:2521:  // array-methods.ts path. On main the standalone typed-array externref arm in
+src/codegen/expressions/call-receiver-method.ts:2531:  // deferred to R4b. Standalone-gated → gc/wasi byte-identical.
+src/codegen/expressions/call-receiver-method.ts:2532:  if (ctx.standalone && STANDALONE_TA_SCALAR_HOFS.has(propAccess.name.text)) {
+src/codegen/expressions/call-receiver-method.ts:2584:    (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-receiver-method.ts:2609:    ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:2681:    // a standalone `new Number(x)` wrapper via __to_primitive/__unbox_number.
+src/codegen/expressions/call-receiver-method.ts:2686:    // #1335: in standalone / WASI (nativeStrings) mode the native
+src/codegen/expressions/call-receiver-method.ts:2696:    // (#3912) The old third conjunct was `(ctx.standalone || ctx.wasi)` — the
+src/codegen/expressions/call-receiver-method.ts:2698:    // one layer down. `fast` sets `nativeStrings` but neither of those, so
+src/codegen/expressions/call-receiver-method.ts:2706:    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && usesNativeNumberFormat(ctx);
+src/codegen/expressions/call-receiver-method.ts:2734:  // 0-arg `.toString()` arm above. This removes the standalone/WASI
+src/codegen/expressions/call-receiver-method.ts:2740:    (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-receiver-method.ts:2750:      const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && (ctx.standalone || ctx.wasi);
+src/codegen/expressions/call-receiver-method.ts:2765:    // standalone mode, so compiling this argument with an f64 hint would
+src/codegen/expressions/call-receiver-method.ts:2822:  // string-constant global that, in native-strings/standalone mode, resolves to
+src/codegen/expressions/call-receiver-method.ts:2833:    if (method === "toString" && expr.arguments.length === 0 && ctx.nativeStrings) {
+src/codegen/expressions/call-receiver-method.ts:2845:    // above is the standalone fallback.
+src/codegen/expressions/call-receiver-method.ts:2846:    if (method === "toString" && expr.arguments.length === 0 && !ctx.nativeStrings) {
+src/codegen/expressions/call-receiver-method.ts:3119:  // undefined ⇒ the empty string standalone. That is exactly how compiled
+src/codegen/expressions/call-receiver-method.ts:3123:    ctx.nativeStrings &&
+src/codegen/expressions/call-receiver-method.ts:3142:  // but which lowers to a native-string ref in standalone mode — the
+src/codegen/expressions/call-receiver-method.ts:3144:  // `__extern_get`/dynamic path (null standalone). compileNativeStringMethodCall
+src/codegen/expressions/call-receiver-method.ts:3186:    if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/expressions/call-receiver-method.ts:3199:      // primitive string. Gated on `ctx.standalone` (the native object-runtime
+src/codegen/expressions/call-receiver-method.ts:3200:      // / `__to_primitive` machinery is standalone-only — WASI keeps the host
+src/codegen/expressions/call-receiver-method.ts:3203:      if (ctx.standalone && isStringWrapperType(receiverType) && method !== "toString" && method !== "valueOf") {
+src/codegen/expressions/call-receiver-method.ts:3589:    // `__extern_toString` (registered host-free under standalone via #1866),
+src/codegen/expressions/call-receiver-method.ts:3592:    const toLSName = ctx.standalone || ctx.wasi ? "__extern_toString" : "__extern_toLocaleString";
+src/codegen/expressions/call-receiver-method.ts:3613:  // ladder, which would reintroduce a host-only toString import in standalone.
+src/codegen/expressions/call-receiver-method.ts:3615:    ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:3627:  // not the captured callable-source fast path below.  This is deliberately
+src/codegen/expressions/call-receiver-method.ts:3631:    ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:3661:    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString", ctx))
+src/codegen/expressions/call-receiver-method.ts:3672:        // (#2515 S0) sentinel-safe materialization (standalone bakes `-1`).
+src/codegen/expressions/call-receiver-method.ts:3688:        // standalone lowers exec natively to a capture-array vec `(ref null
+src/codegen/expressions/call-receiver-method.ts:3735:      // (#2515 S0) sentinel-safe — standalone stores `-1` for the string
+src/codegen/expressions/call-receiver-method.ts:3848:        const builtinNamespace = ctx.standalone
+src/codegen/expressions/call-receiver-method.ts:3866:      if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:3897:      // never invokes the method (standalone analog of the JS-host #2015 bug).
+src/codegen/expressions/call-receiver-method.ts:3993:      if (needsRuntimeUserMethodDispatch && !ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-receiver-method.ts:3997:        (ctx.standalone || ctx.wasi || needsRuntimeUserMethodDispatch) &&
+src/codegen/expressions/call-receiver-method.ts:4005:        if (ctx.standalone && methodName === "test" && arity === 1) {
+src/codegen/expressions/call-receiver-method.ts:4181:          // names: standalone has no host, so that env import leaked and the
+src/codegen/expressions/call-receiver-method.ts:4183:          // 2026-06-26 standalone JSONL). The dispatcher's `$__vec_base`/
+src/codegen/expressions/call-receiver-method.ts:4187:          // (#3016) precedent; standalone-gated so gc/wasi stay byte-identical.
+src/codegen/expressions/call-receiver-method.ts:4189:            ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:4217:      // Gated to `ctx.standalone` ONLY (not wasi): the `__extern_get_idx`
+src/codegen/expressions/call-receiver-method.ts:4219:      // emitted only under standalone (`objArrayLikeArms = ctx.standalone` in
+src/codegen/expressions/call-receiver-method.ts:4220:      // object-runtime.ts). Under wasi they are absent, so a vararg dispatcher
+src/codegen/expressions/call-receiver-method.ts:4221:      // would read null args — wasi keeps the existing fall-through behaviour
+src/codegen/expressions/call-receiver-method.ts:4222:      // (the same pre-existing wasi arg-vec gap noted in the issue). Widening
+src/codegen/expressions/call-receiver-method.ts:4223:      // the array-like arms to wasi is a separate, broader change.
+src/codegen/expressions/call-receiver-method.ts:4225:        (ctx.standalone || (!ctx.wasi && needsRuntimeUserMethodName)) &&
+src/codegen/expressions/call-receiver-method.ts:4234:        if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
+src/codegen/expressions/call-receiver-method.ts:4267:      // Gated to `ctx.standalone` ONLY (same constraint as Slice 4 — the
+src/codegen/expressions/call-receiver-method.ts:4269:      // and the loop-append rely on are emitted only under standalone). Scope:
+src/codegen/expressions/call-receiver-method.ts:4276:        ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:4292:        // are all unconditionally registered in standalone (the object runtime
+src/codegen/expressions/call-receiver-method.ts:4387:      // dogfoods there); standalone keeps the existing path (a noted follow-up).
+src/codegen/expressions/call-receiver-method.ts:4390:        !ctx.standalone &&
+src/codegen/expressions/call-receiver-method.ts:4499:        if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
+src/codegen/expressions/call-receiver-method.ts:4502:        // #1888: standalone builds a native $ObjVec; fixed JS-host calls were
+src/codegen/expressions/call-receiver-method.ts:4612:  // acceptance forbids standalone regressions (the native dispatcher's
+src/codegen/expressions/call-receiver-method.ts:4614:  if (!ctx.standalone && !ctx.wasi) {
+src/codegen/expressions/call-tail-dispatch.ts:41:import { tryCompileStandaloneRegExpSymbolCall, usesNativeRegExpProvider } from "../regexp-standalone.js";
+src/codegen/expressions/call-tail-dispatch.ts:172:      // path; await-free/elidable IIFEs keep the byte-identical fast path.
+src/codegen/expressions/call-tail-dispatch.ts:306:            // initialization. The fast path previously stored a binding-
+src/codegen/expressions/call-tail-dispatch.ts:359:            // expression will ACTUALLY lower to. Under standalone, an object
+src/codegen/expressions/call-tail-dispatch.ts:636:  // Handle standalone super() calls (constructor chaining) — top-level super(...)
+src/codegen/expressions/call-tail-dispatch.ts:763:        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+src/codegen/expressions/call-tail-dispatch.ts:783:          (ctx.standalone || ctx.wasi) &&
+src/codegen/expressions/call-tail-dispatch.ts:865:            // standalone native engine. A string replacer returns undefined
+src/codegen/expressions/call-tail-dispatch.ts:867:            if (ctx.wasi && methodName === "@@replace" && expr.arguments.length === 2) {
+src/codegen/expressions/call-tail-dispatch.ts:896:                `Codegen error: standalone RegExp literal-substring backend does not support ` +
+src/codegen/expressions/call-tail-dispatch.ts:898:                  `with a plain static pattern and no flags, or recompile without --target standalone.`,
+src/codegen/expressions/call-tail-dispatch.ts:1197:        // (#3027) Native-strings mode (standalone/wasi `--nativeStrings`)
+src/codegen/expressions/call-tail-dispatch.ts:1211:        if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/expressions/call-tail-dispatch.ts:1443:          (ctx.standalone || externrefArrayElement) &&
+src/codegen/expressions/call-tail-dispatch.ts:1762:      if (!ctx.standalone && !noJsHost(ctx) && ts.isPropertyAccessExpression(bindCall.expression)) {
+src/codegen/expressions/call-tail-dispatch.ts:1793:      // cast below null → call_ref trap (standalone deepEqual-* family).
+src/codegen/expressions/calls-guards.ts:19:import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+src/codegen/expressions/calls-guards.ts:93:  if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
+src/codegen/expressions/calls-guards.ts:133: * gc and standalone lanes).
+src/codegen/expressions/calls-guards.ts:368: * `--target standalone`): `__instance === __gunc` and `__instance.prop` are
+src/codegen/expressions/calls-guards.ts:423: * `--target standalone`): the identity already holds — `emitObjectCoercion`'s
+src/codegen/expressions/calls-guards.ts:583: * standalone mode routes static literal patterns to #682's native subset and
+src/codegen/expressions/calls-guards.ts:689:    // Fallback if host import unavailable (standalone) — emit null externref.
+src/codegen/expressions/calls-guards.ts:696:  // standalone backend an object-valued struct can otherwise be reified by
+src/codegen/expressions/calls-guards.ts:760:    // the standalone i64 carrier truncates it before Object(v) can preserve the
+src/codegen/expressions/calls-guards.ts:763:    const hostBigInt = !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first";
+src/codegen/expressions/calls-optional.ts:74:  // even when the standalone undefined-singleton regime is inactive (for
+src/codegen/expressions/calls-optional.ts:176:    if (ctx.fast && ctx.nativeStrTypeIdx >= 0) {
+src/codegen/expressions/calls-optional.ts:275:  // single evaluation and the receiver as `this`; standalone and spread calls
+src/codegen/expressions/spread-arguments-call.ts:103:  // WASI without the standalone object runtime has neither the host readers nor
+src/codegen/expressions/spread-arguments-call.ts:107:  if (noJsHost(ctx) && !ctx.standalone) return false;
+src/codegen/closure-call-fast.ts:3: * (#4185) Closure-receiver fast arm for the dynamic `.call` dispatchers.
+src/codegen/closure-call-fast.ts:5: * The standalone allocation census attributed the largest post-#4173 transient
+src/codegen/closure-call-fast.ts:51: * `__call_m_call_<arity>`) in the closure fast arm. Returns `current`
+src/codegen/construct-bound.ts:4: * standalone` / WASI (ECMA-262 §10.4.1.2).
+src/codegen/construct-bound.ts:7: * #3140 gave standalone a native bound-function carrier — `$__bound_fn
+src/codegen/construct-bound.ts:27: *       cur   = cur.target
+src/codegen/construct-bound.ts:184: * This is the shape the dominant standalone site needs. `new <any-typed
+src/codegen/bound-fn-meta.ts:4: * function, for `--target standalone`.
+src/codegen/bound-fn-meta.ts:6: * #3140 gave standalone a native bound-function carrier (`$__bound_fn`) and
+src/codegen/bound-fn-meta.ts:25: * inherit from `Function.prototype`) broke as fast as the `length` rows fixed.
+src/codegen/bound-fn-meta.ts:102:  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureNativeStringHelpers(ctx);
+src/codegen/bound-fn-meta.ts:233:  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return;
+src/codegen/callback-ctor-bridge.ts:52:  if (ctx.standalone || ctx.wasi) return "__make_callback";
+src/codegen/host-bridge-exports.ts:11:// `src/runtime.ts` depends on it. In standalone/WASI there is no JS host: the
+src/codegen/host-bridge-exports.ts:16:// standalone module that used one array and threw once shipped ~21 kB of
+src/codegen/host-bridge-exports.ts:135:    // must survive standalone/WASI stripping.
+src/codegen/host-bridge-exports.ts:140:    // authorization; a same-spelled user export survives standalone/WASI.
+src/codegen/closure-exports.ts:4:// exports plus the is-closure / closure-arity / is-data-struct / standalone
+src/codegen/closure-exports.ts:121: * The historical logical label remains the public fast path. Every compiler
+src/codegen/closure-exports.ts:374: * Retain the exact zero-argument dispatcher needed by the standalone timer
+src/codegen/closure-exports.ts:387:    throw new Error("standalone timer callback dispatcher was requested but __call_fn_0 was not emitted");
+src/codegen/closure-exports.ts:391:    throw new Error("standalone timer callback dispatcher lost its compiler-owned function handle");
+src/codegen/closure-exports.ts:711: * Build the terminal fallback for a callable owned by the linked standalone
+src/codegen/closure-exports.ts:871:    !ctx.standalone &&
+src/codegen/closure-exports.ts:872:    !ctx.wasi &&
+src/codegen/closure-exports.ts:948:          // standalone mode. __unbox_number recognizes i31, boxed-number, and
+src/codegen/closure-exports.ts:1282:    ctx.standalone ||
+src/codegen/closure-exports.ts:1283:    ctx.wasi ||
+src/codegen/closure-exports.ts:1437:    !ctx.standalone &&
+src/codegen/closure-exports.ts:1438:    !ctx.wasi &&
+src/codegen/closure-exports.ts:1525:          // Mirror the free-call bridge above: standalone host booleans can be
+src/codegen/closure-exports.ts:1949: * The standalone `__reflect_is_constructor` (`reflect-construct-native.ts`)
+src/codegen/closure-exports.ts:1950: * answers IsConstructor from exactly that set — which is why standalone passes
+src/codegen/closure-exports.ts:2061:  // (#3673) Root fast path: every closure struct in the wrapper hierarchy
+src/codegen/closure-exports.ts:2138: * VACUOUS PASS in the standalone/WASI lanes. The JS-host lane fixed the same bug
+src/codegen/closure-exports.ts:2199:  // (#3673) Root fast path — mirror of buildClosureArityProbe: one
+src/codegen/ir-imported-call-planning.ts:85:  if (plan.source !== "ambient-host" || plan.target.binding.kind !== "import" || plan.target.binding.module !== "env") {
+src/codegen/ir-imported-call-planning.ts:92:  const targetName = plan.target.binding.field;
+src/codegen/ir-imported-call-planning.ts:99:    if (imported.module !== plan.target.binding.module || imported.name !== targetName) return false;
+src/codegen/ir-imported-call-planning.ts:429:              const params = certified.target.declaration.parameters.map((parameter) =>
+src/codegen/ir-imported-call-planning.ts:432:              const returnNode = effectiveIrReturnTypeNode(certified.target.declaration);
+src/codegen/ir-imported-call-planning.ts:452:              for (const optional of ctx.funcOptionalParams.get(certified.target.targetName) ?? []) {
+src/codegen/ir-imported-call-planning.ts:458:              const importedIdentity = planIdentity.imported(ownerName, node.expression, certified.target);
+src/codegen/ir-imported-call-planning.ts:460:                ctx.funcUsesArguments.has(certified.target.targetName) ||
+src/codegen/ir-imported-call-planning.ts:461:                ctx.funcOptionalParams.has(certified.target.targetName);
+src/codegen/ir-imported-call-planning.ts:473:                const valueIdentity = planIdentity.value(ownerName, functionArgument.argument, functionArgument.target);
+src/codegen/ir-imported-call-planning.ts:474:                if (valueIdentity.target.binding.kind !== "unit") {
+src/codegen/ir-imported-call-planning.ts:478:                    `function-value target ${valueIdentity.target.name} has no exact source-unit binding`,
+src/codegen/ir-imported-call-planning.ts:481:                const trampolineName = `__fn_tramp_${functionArgument.target.targetName}_cached`;
+src/codegen/ir-imported-call-planning.ts:482:                const cacheGlobalName = `__fn_closure_${functionArgument.target.targetName}`;
+src/codegen/ir-imported-call-planning.ts:488:                    valueIdentity.target.binding.unitId,
+src/codegen/ir-imported-call-planning.ts:493:                    valueIdentity.target.binding.unitId,
+src/codegen/ir-legacy-caller-abi.ts:3: * #3518 (standalone lane) — exact direct/IR signature certification used by the
+src/codegen/ir-legacy-caller-abi.ts:4: * standalone/WASI caller-direction call-graph closure in `src/ir/select.ts`.
+src/codegen/ir-legacy-caller-abi.ts:14: * (`jsHostExterns !== true`), so widening it cannot move a JS-host claim.
+src/codegen/ir-legacy-caller-abi.ts:28: *   legacy `resolveWasmType`   `ctx.nativeStrings && ctx.anyStrTypeIdx >= 0`
+src/codegen/ir-legacy-caller-abi.ts:30: *   IR     `resolveString()`   `ctx.nativeStrings && ctx.anyStrTypeIdx >= 0`
+src/codegen/ir-legacy-caller-abi.ts:67: * boolean → i32, string → the one `nativeStrings`-keyed carrier above, void →
+src/codegen/ir-fnctor-admission.ts:49:    ctx.standalone === true &&
+src/codegen/ir-fnctor-admission.ts:50:    ctx.nativeStrings === true &&
+src/codegen/ir-fnctor-admission.ts:51:    ctx.wasi === false &&
+src/codegen/ir-fnctor-admission.ts:52:    ctx.fast === false &&
+src/codegen/standalone-dom-callback-authority.ts:43:    throw new Error(`standalone DOM callback has invalid lifted ordinal ${authority.liftedOrdinal}`);
+src/codegen/standalone-dom-callback-authority.ts:60:      throw new Error(`standalone DOM callback ${plan.ownerName}#${plan.liftedOrdinal} is not () -> void`);
+src/codegen/standalone-dom-callback-authority.ts:68:      throw new Error(`standalone DOM callback authority ${key} is not unique`);
+src/codegen/standalone-dom-callback-authority.ts:99:    !ctx.standalone ||
+src/codegen/standalone-dom-callback-authority.ts:100:    ctx.wasi ||
+src/codegen/standalone-dom-callback-authority.ts:101:    !ctx.nativeStrings ||
+src/codegen/standalone-dom-callback-authority.ts:147:    throw new Error("standalone DOM callback plan lost its exact singleton global");
+src/codegen/standalone-dom-callback-authority.ts:184:    throw new Error(`standalone DOM callback authority ${key} was not reserved from the certified plan population`);
+src/codegen/standalone-dom-callback-authority.ts:199:      throw new Error(`standalone DOM callback authority ${key} changed its lifted function type`);
+src/codegen/standalone-dom-callback-authority.ts:207:    throw new Error(`standalone DOM callback authority ${key} has no exact closure struct hierarchy`);
+src/codegen/standalone-dom-callback-authority.ts:215:    throw new Error(`standalone DOM callback authority ${key} has no exact zero-argument void lifted ABI`);
+src/codegen/standalone-dom-callback-authority.ts:222:    throw new Error(`standalone DOM callback authority ${key} lost its exact brand type`);
+src/codegen/standalone-dom-callback-authority.ts:256:    throw new Error(`standalone DOM callback authority ${key} has no exact closure metadata`);
+src/codegen/standalone-dom-callback-authority.ts:291:    throw new Error(`standalone DOM callback authority ${key} lost its exact lifted function object`);
+src/codegen/standalone-dom-callback-authority.ts:294:    throw new Error(`standalone DOM callback authority ${key} was assigned more than one lifted function`);
+src/codegen/standalone-dom-callback-authority.ts:391:    throw new Error("standalone DOM callback dispatcher was not reserved before component sealing");
+src/codegen/standalone-dom-callback-authority.ts:400:      throw new Error(`standalone DOM callback authority ${key} has no exact allocated carrier/function pair`);
+src/codegen/standalone-dom-callback-authority.ts:403:      throw new Error(`standalone DOM callback authority ${key} reused another plan's lifted function`);
+src/codegen/closures/callback-classification.ts:83: *  of these types is a native packed-carrier typed array in standalone. */
+src/codegen/closures/callback-classification.ts:96:/** (#2903 R4) Scalar-returning callback HOFs whose standalone typed-array
+src/codegen/closures/callback-classification.ts:305:      // standalone mode for no reason; the GC closure-struct path produces a
+src/codegen/closures/callback-classification.ts:310:      if (ctx.standalone && (methodName === "call" || methodName === "apply")) {
+src/codegen/closures/callback-classification.ts:344:        // (#3231) In standalone/nativeStrings mode a callback passed to a native
+src/codegen/closures/callback-classification.ts:350:        if (ctx.nativeStrings && recName === "DisposableStack" && (methodName === "defer" || methodName === "adopt")) {
+src/codegen/closures/callback-classification.ts:400:          ctx.standalone &&
+src/codegen/closures/method-trampolines.ts:960: * direct `call_ref` fast path against the closure's funcref slot rather
+src/codegen/closures/method-trampolines.ts:1256: * A caller that wants a first-class value — not a `call_ref` fast path — never
+src/codegen/closures/method-trampolines.ts:1309:  // `array-methods.ts:setupArrayCallback` take the direct `call_ref` fast
+grep: (standard input): binary file matches
+src/codegen/host-import-allowlist.ts:9: * are an opt-in fast path when a host is available, not the default.
+src/codegen/host-import-allowlist.ts:27: *   provide them (i.e. NOT in WASI / nativeStrings mode — strict mode flips
+src/codegen/host-import-allowlist.ts:28: *   nativeStrings ON automatically, so these should never be requested).
+src/codegen/host-import-allowlist.ts:55:  // `wasi_snapshot_preview1.*`), which exports the shared linear memory and the
+src/codegen/host-import-allowlist.ts:371:      "Dynamic `import()` is wont-fix in standalone mode (see test262 skip filters in CLAUDE.md). Kept on the allowlist for build-tool flows.",
+src/codegen/host-import-allowlist.ts:378:      "`eval` is wont-fix in standalone mode. Kept on the allowlist; future work flips to a compile error under strict mode.",
+src/codegen/host-import-allowlist.ts:398:      "console.* host imports. Under `--target wasi` these are replaced with fd_write at registration time; they should never appear in WASI strict builds. Allowed for non-WASI `--no-host-imports` debugging only.",
+src/codegen/host-import-allowlist.ts:436: * `nativeStrings` mode which strict mode auto-enables; they should not
+src/codegen/analysis/host-callable-initializer.ts:82:  if (ctx.standalone || ctx.wasi) return false;

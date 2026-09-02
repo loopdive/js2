@@ -1,0 +1,4 @@
+33ea8606aa:src/ir/integration.ts:4223:          resolveAndObserveCallableProvider(ctx, ref, undefined, fuseNativeNumberFormatCarriers);
+33ea8606aa:src/ir/integration.ts:6603:function resolveAndObserveCallableProvider(
+33ea8606aa:src/ir/integration.ts:7054:        return resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
+33ea8606aa:src/ir/integration.ts:7477:            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);

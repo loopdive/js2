@@ -1,0 +1,130 @@
+3:import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
+5:import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
+7:  resolveRuntimeHostCapabilityFuncFamilyRecord,
+8:  resolveRuntimeHostCapabilityFuncRecord,
+9:  RUNTIME_HOST_CAPABILITY_RECORDS,
+10:  type RuntimeHostCapabilityRecord,
+11:  type RuntimeHostCapabilityValueType,
+12:} from "./runtime-host-capabilities.js";
+63: * (#3526 F1-S1) Closed set of PHYSICAL callable targets each intrinsic admits,
+70:function callableBindingKey(binding: IrFuncRef["binding"]): string {
+83:const ADMITTED_CALLABLE_TARGETS: ReadonlyMap<IrInstrIntrinsic["id"], ReadonlySet<string>> = (() => {
+87:    if (implementation.kind !== "host-callable" && implementation.kind !== "runtime-callable") continue;
+91:        implementation.kind === "host-callable"
+92:          ? callableBindingKey(
+94:                // (#3526 F2-S2) `resolveRuntimeHostCapabilityFuncRecord` is the
+95:                // fail-closed kind guard: a global capability has no callable
+98:                  resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
+102:          : callableBindingKey(irRuntimeFuncRef(implementation.symbol).binding);
+111:/** Project the semantic standalone clock intent without adding a helper call. */
+115:    nested.kind !== "call" ||
+127:    throw new Error("standalone async clock snapshot has a malformed semantic call");
+161:  if (instr.provider?.kind === "callable") {
+165:        errors.push(`${instr.id} callable provider must retain the semantic intrinsic binding`);
+173:      const admitted = ADMITTED_CALLABLE_TARGETS.get(instr.id);
+174:      if (!admitted || !admitted.has(callableBindingKey(binding))) {
+176:          `${instr.id} callable provider target ${callableBindingKey(binding)} is not an admitted physical provider`,
+225:  capabilityRecords: readonly RuntimeHostCapabilityRecord[],
+236:  if (provider.implementation.kind === "host-callable") {
+240:    const record = resolveRuntimeHostCapabilityFuncRecord(capabilityRecords, provider.implementation.capability);
+241:    return Object.freeze({ kind: "callable", target: irImportFuncRef(record.module, record.field, record.field) });
+243:  if (provider.implementation.kind === "runtime-callable") {
+244:    return Object.freeze({ kind: "callable", target: irRuntimeFuncRef(provider.implementation.symbol) });
+247:    kind: "callable",
+254:/** The one generator-boxing feature row; named once so no caller spells it. */
+258: * (#3526 F1-S3) The callable the frozen manifest selected for the numeric
+263: * are observed through `resolveAndObserveCallableProvider`, which admits only
+264: * `runtime` and `intrinsic` references by design. Attaching the host arm's
+265: * canonical `env.__box_number` import reference instead fails every generator
+266: * owner with `unexpected-internal-throw` on both host lanes (measured on the
+268: * symbol answers the seam — through the central capability record on the host
+281:  if (provider.implementation.kind === "runtime-callable") {
+284:  if (provider.implementation.kind === "host-callable") {
+285:    const record = resolveRuntimeHostCapabilityFuncRecord(
+286:      prepared!.manifest.hostCapabilityRecords,
+291:  throw new Error(`IR generator number-box provider ${provider.id} is not a callable implementation`);
+294:/** The one string-compare feature row; named once so no caller spells it. */
+304: * host arm; `ensureNativeStringHelpers` + `nativeStrHelperHandle` on the native
+305: * one), so a single callable reference could not carry the decision without
+311:): { readonly arm: "host"; readonly field: string } | { readonly arm: "native"; readonly symbol: string } | undefined {
+316:  if (provider.implementation.kind === "runtime-callable") {
+319:  if (provider.implementation.kind === "host-callable") {
+320:    const record = resolveRuntimeHostCapabilityFuncRecord(
+321:      prepared!.manifest.hostCapabilityRecords,
+324:    return { arm: "host", field: record.field };
+326:  throw new Error(`IR string-compare provider ${provider.id} is not a callable implementation`);
+329:/** The one string-eq feature row; named once so no caller spells it. */
+338: * by different existing routines and a single callable reference could not carry
+342: * reason F2-S2 had to land first: the host arm returns the record's MODULE as
+343: * well as its field. `wasm:js-string.equals` is a builtin import, not an `env`
+351:  | { readonly arm: "host"; readonly module: string; readonly field: string }
+358:  if (provider.implementation.kind === "runtime-callable") {
+361:  if (provider.implementation.kind === "host-callable") {
+362:    const record = resolveRuntimeHostCapabilityFuncRecord(
+363:      prepared!.manifest.hostCapabilityRecords,
+366:    return { arm: "host", module: record.module, field: record.field };
+368:  throw new Error(`IR string-eq provider ${provider.id} is not a callable implementation`);
+371:/** The one string-len feature row; named once so no caller spells it. */
+378: * Third in the family-2 series and the first whose native arm is not a callable
+384: * The host arm carries the record's MODULE as well as its field, for the same
+391:  | { readonly arm: "host"; readonly module: string; readonly field: string }
+401:  if (provider.implementation.kind === "host-callable") {
+402:    const record = resolveRuntimeHostCapabilityFuncRecord(
+403:      prepared!.manifest.hostCapabilityRecords,
+406:    return { arm: "host", module: record.module, field: record.field };
+411:/** The two string-concat feature rows, one per mode; named once so no caller spells them. */
+426: * of the two helpers on that authority answers. On the host lane both modes
+429: * leaving the collapse implicit at the call site.
+431: * Like {@link preparedStringEqProvider} the host arm returns the record's
+441:  | { readonly arm: "host"; readonly module: string; readonly field: string }
+449:  if (provider.implementation.kind === "runtime-callable") {
+452:  if (provider.implementation.kind === "host-callable") {
+453:    const record = resolveRuntimeHostCapabilityFuncRecord(
+454:      prepared!.manifest.hostCapabilityRecords,
+457:    return { arm: "host", module: record.module, field: record.field };
+459:  throw new Error(`IR string-concat provider ${provider.id} is not a callable implementation`);
+462:/** The one string-charCodeAt feature row; named once so no caller spells it. */
+470: * implementation kind: both rows are `runtime-callable`, so the discriminator
+473: * (`ensureHostCharCodeAtGuarded` / `ensureNativeCharCodeAtHelper`), which is
+475: * locate, and the host arm's `capabilities` are what its helper needs
+481:  | { readonly arm: "host"; readonly symbol: string; readonly capabilities: readonly string[] }
+488:  if (provider.implementation.kind !== "runtime-callable") {
+491:  return provider.id === "host.js.string.char_code_at"
+492:    ? { arm: "host", symbol: provider.implementation.symbol, capabilities: provider.hostCapabilities }
+496:/** The one batched many-arity feature row; named once so no caller spells it. */
+505: * the CONCRETE import or symbol is derived here rather than stored. The host
+507: * caller mints the import itself (`ensureLateImport`) and the record is the
+511: * Late minting is deliberate and is the contract, not an accident: the host
+522:      readonly arm: "host";
+525:      readonly params: readonly RuntimeHostCapabilityValueType[];
+526:      readonly results: readonly RuntimeHostCapabilityValueType[];
+534:  if (provider.implementation.kind === "runtime-callable-family") {
+541:  if (provider.implementation.kind === "host-callable-family") {
+542:    const row = resolveRuntimeHostCapabilityFuncFamilyRecord(
+543:      prepared!.manifest.hostCapabilityRecords,
+547:    return { arm: "host", module: row.module, field: row.field, params: row.params, results: row.results };
+549:  throw new Error(`IR string-concat-many provider ${provider.id} is not a callable family implementation`);
+562:    left.kind === "callable" &&
+563:    right.kind === "callable" &&
+564:    sameIrCallableBinding(left.target.binding, right.target.binding) &&
+572:  capabilityRecords: readonly RuntimeHostCapabilityRecord[],
+595:  capabilityRecords: readonly RuntimeHostCapabilityRecord[],
+624:   * `generatorNumberBoxDemand`: the seam is a plain `call` through the
+642:   * predecessor: `string.len` resolves through no callable symbol at all, so
+653:   * must not freeze an `owned-append` provider it will never call.
+660:   * AND the plan-path `intrinsic` calls whose symbol already names the lane. An
+662:   * plan-path call with no row to be verified against.
+667:   * one batched call, sorted and unique.
+775:    const hostProjection = selectedProviders.every(
+777:        provider.implementation.kind === "host-capability" || provider.implementation.kind === "host-managed",
+779:    if (!nativeProjection && !hostProjection) {
+780:      throw new Error(`IR async runtime attachment for ${fn.name} mixes host and native providers`);
+782:    const capabilities = new Set<AsyncHostCapabilityId>();
+784:      for (const capability of provider.hostCapabilities) {
+788:        if (!isAsyncHostCapabilityId(capability)) {
+794:    const records = manifest.hostCapabilityRecords
+795:      .filter((record) => isAsyncHostCapabilityId(record.capability) && capabilities.has(record.capability))
+796:      .map(asAsyncHostAdapter);
+802:        const attached = attachProvidersToBuffer(state.body, providers, manifest.hostCapabilityRecords);
+819:          kind: "host-wasmgc",
+842:      input.functions.map((fn) => attachAsyncRuntime(attachProviders(fn, providers, manifest.hostCapabilityRecords))),

@@ -1,0 +1,31 @@
+=== host-import-policy mentions
+check-host-import-policy.ts
+
+=== handles.ts 110-170
+    readonly newFuncIdx: number;
+  };
+}
+export interface IrClosureLowering {
+  readonly structTypeIdx: number;
+  readonly funcFieldIdx: number;
+  capFieldIdx(index: number): number;
+  readonly funcTypeIdx: number;
+  readonly domCallbackAuthorityGlobalIdx?: () => number;
+}
+export interface IrRefCellLowering {
+  readonly typeIdx: number;
+  readonly fieldIdx: number;
+}
+export interface IrFnctorLowering {
+  readonly instanceCarrierType: ValType;
+  readonly constructorResultType: ValType;
+  readonly reservedLayout: IrTypeRef;
+  readonly constructorFunc: IrFuncRef;
+  readonly captureParamTypes: readonly ValType[];
+  readonly tdzFlagParamTypes: readonly ValType[];
+  readonly userParamTypes: readonly ValType[];
+  readonly hiddenIdentity: boolean;
+  readonly constructorIdentityParamIndex: number | null;
+  readonly resultIsExternref: boolean;
+  readonly supportsConstruction: boolean;
+  readonly supportsFieldGet: boolean;

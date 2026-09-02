@@ -1,0 +1,63 @@
+      case "coerce.to_externref": {
+        // Push the value, then re-tag an anyref subtype → externref.
+        //
+        // #2955 — whether the operand is ALREADY externref is a string-mode
+        // decision that belongs HERE, at lower time, not in the from-ast
+        // front-end. `extern.convert_any` maps an anyref subtype into
+        // externref, but it is INVALID over an operand whose Wasm valtype is
+        // already externref (externref is not itself an anyref subtype). In
+        // host-strings mode `IrType.string` lowers to externref, so the
+        // convert must be ELIDED; in native-strings mode it lowers to
+        // `(ref $AnyString)` (an anyref subtype) and the convert is REQUIRED.
+        // An operand already typed `(val) externref` is likewise a no-op.
+        // Emitting the convert over an already-externref operand is dead
+        // today (from-ast guards every site), so this elision is byte-inert
+        // for existing callers while letting from-ast drop those guards and
+        // emit `coerce.to_externref` mode-agnostically (identical IR in both
+        // string modes; per-mode lowered bytes unchanged).
+
+        // block { loop { ... } } via the trait (#1584 a3).
+        const loopWrap: Instr[] = [];
+        emitter.emitLoop({ kind: "empty" }, loopBody as unknown as S, loopWrap as unknown as S);
+        emitter.emitBlock({ kind: "empty" }, loopWrap as unknown as S, wasmOut as unknown as S);
+        return;
+      }
+      // Slice 10 (#1169i) — extern class ops. All five forms delegate to
+      // host imports registered by the legacy `collectUsedExternImports`
+      // pass (see `src/codegen/index.ts:6114`), which scans the AST
+      // before the IR runs. By the time we reach this case, the funcMap
+      // contains stable indices for `<className>_new`,
+      // `<className>_<method>`, and `<className>_get_<prop>` /
+      // `<className>_set_<prop>`. The resolver's `resolveFunc` looks
+      // them up by name.
+      case "extern.new": {
+        const importName = `${instr.importPrefix}_new`;
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+        for (const a of instr.args) emitValue(a, out);
+        emitter.pushRaw(out, { op: "call", funcIdx: fn });
+        return;
+      }
+      case "extern.call": {
+        const importName = `${instr.className}_${instr.method}`;
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+        emitValue(instr.receiver, out);
+        for (const a of instr.args) emitValue(a, out);
+        emitter.pushRaw(out, { op: "call", funcIdx: fn });
+        return;
+      }
+      case "extern.prop": {
+        const importName = `${instr.className}_get_${instr.property}`;
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+        emitValue(instr.receiver, out);
+        emitter.pushRaw(out, { op: "call", funcIdx: fn });
+        return;
+      }
+      case "extern.propSet": {
+        const importName = `${instr.className}_set_${instr.property}`;
+        const fn = resolver.resolveFunc(instr.provider ?? irImportFuncRef("env", importName));
+        emitValue(instr.receiver, out);
+        emitValue(instr.value, out);
+        emitter.pushRaw(out, { op: "call", funcIdx: fn });
+        return;
+      }
+      case "extern.regex": {

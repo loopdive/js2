@@ -1,0 +1,193 @@
+=== ensureFunctionPrototypeCallHelper
+src/codegen/function-prototype-callable.ts:17:export const FUNCTION_PROTOTYPE_CALL_HELPER = "__function_prototype_call";
+src/codegen/function-prototype-callable.ts:19:export function ensureFunctionPrototypeCallHelper(ctx: CodegenContext): number | undefined {
+=== standalone-dom-callback-authority.ts 380-439
+    init: [
+      ...(input.baseConstruction?.init ?? []),
+      { op: "global.get", index: carrier.domCallbackAuthorityGlobalIdx!() },
+    ],
+  };
+}
+/** Finalize the exact fail-closed dispatcher after every certified carrier exists. */
+export function materializeStandaloneDomCallbackDispatch(ctx: CodegenContext): WasmFunction {
+  const reservation = standaloneDomCallbackReservations.get(ctx);
+  if (!reservation || definedFuncHandleOf(ctx, reservation.dispatcher) === undefined) {
+    throw new Error("standalone DOM callback dispatcher was not reserved before component sealing");
+  }
+  if (reservation.materialized) return reservation.dispatcher;
+  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  const observedFunctions = new Set<WasmFunction>();
+  for (const [key] of reservation.expectedByKey) {
+    const carrier = reservation.carriersByKey.get(key);
+    const liftedFuncIdx = carrier?.liftedFunc ? definedFuncHandleOf(ctx, carrier.liftedFunc) : undefined;
+    if (!carrier?.liftedFunc || liftedFuncIdx === undefined) {
+      throw new Error(`standalone DOM callback authority ${key} has no exact allocated carrier/function pair`);
+    }
+    if (observedFunctions.has(carrier.liftedFunc)) {
+      throw new Error(`standalone DOM callback authority ${key} reused another plan's lifted function`);
+    }
+    observedFunctions.add(carrier.liftedFunc);
+    const typeIdx = carrier.lowering.structTypeIdx;
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx },
+          { op: "struct.get", typeIdx, fieldIdx: carrier.authorityFieldIdx },
+          { op: "global.get", index: standaloneDomCallbackAuthorityGlobalIdx(ctx, carrier.authorityBrandGlobal) },
+          { op: "ref.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx },
+              { op: "call", funcIdx: liftedFuncIdx },
+              { op: "return" },
+            ],
+            else: [],
+          },
+        ],
+        else: [],
+      },
+    );
+  }
+  body.push({ op: "unreachable" });
+  reservation.dispatcher.body = body;
+  reservation.materialized = true;
+  return reservation.dispatcher;
+}
+=== prepared-closure-support.ts exports
+29:export interface PreparedClosureRegistry {
+39:export interface PreparedRefCellRegistry {
+86:export function lowerPreparedClosureSupportType(
+137:export function prepareDerivedCallableTypeIdx(
+159:export interface PreparedDerivedCallableSlot {
+165:export function allocatePreparedDerivedCallableSlots(
+244:export function prepareDependencyCompleteClosureSupport(
+=== abi-bindings.ts exports
+60:export function irModuleGlobalBindingId(sourceId: IrSourceId, declarationOrdinal: number): IrBindingId {
+70:export function irModuleTdzGlobalBindingId(sourceId: IrSourceId, declarationOrdinal: number): IrBindingId {
+79:export interface IrModuleGlobalBindingIdentity {
+86:export function parseIrModuleGlobalBindingId(id: IrBindingId): IrModuleGlobalBindingIdentity | undefined {
+114:export function arePairedIrModuleGlobalBindingIds(valueId: IrBindingId, tdzId: IrBindingId): boolean {
+126:export function irModuleGlobalRef(
+140:export function irModuleTdzGlobalRef(
+152:export function irSourceGlobalRef(bindingId: IrBindingId, adapterName: string, capability?: "dom"): IrGlobalRef {
+161:export function irImportGlobalRef(
+186:export function irPlannedImportGlobalRef(
+208:export function irRetainedImportGlobalRef(
+231:export function irRuntimeGlobalRef(
+251:export function irArgcGlobalRef(entrySourceId: IrSourceId): IrGlobalRef {
+265:export function irSupportGlobalRef(
+284:export function irSourceTypeRef(
+303:export function irClassTypeRef(classId: IrClassId, adapterName: string): IrTypeRef {
+313:export function irRuntimeTypeRef(
+333:export function irSupportTypeRef(
+352:export function irFnctorLayoutTypeRef(unitId: IrUnitId, adapterName: string): IrTypeRef {
+361:export function irGlobalBindingKey(binding: IrGlobalBinding): string {
+384:export function sameIrGlobalBinding(left: IrGlobalBinding, right: IrGlobalBinding): boolean {
+389:export function irTypeBindingKey(binding: IrTypeBinding): string {
+408:export function sameIrTypeBinding(left: IrTypeBinding, right: IrTypeBinding): boolean {
+=== program-callable-selection.ts
+import type { IrProgramCallableUse } from "./program-callable-bindings.js";
+import { ts } from "../ts-api.js";
+declare module "./select.js" {
+  interface IrSelectionOptions {
+    readonly resolveProgramCallableUse?: (call: ts.CallExpression) => IrProgramCallableUse | undefined;
+  }
+}
+export function programCallablePhase1Verdict(
+  resolve: ((call: ts.CallExpression) => IrProgramCallableUse | undefined) | undefined,
+  expr: ts.CallExpression,
+  preambleIsBuildable: () => boolean,
+  acceptArgument: (argument: ts.Expression) => boolean,
+  rejectDynamicShape: () => boolean,
+  rejectSpread: (spread: ts.SpreadElement) => boolean,
+): boolean | undefined {
+  if (!preambleIsBuildable()) return false;
+  if (!resolve?.(expr)) return undefined;
+  if (expr.questionDotToken || expr.typeArguments?.length) return rejectDynamicShape();
+  for (const argument of expr.arguments) {
+    if (ts.isSpreadElement(argument)) return rejectSpread(argument);
+    if (!acceptArgument(argument)) return false;
+  }
+  return true;
+}
+export function visitProgramCallableUse(
+  resolve: ((call: ts.CallExpression) => IrProgramCallableUse | undefined) | undefined,
+  node: ts.CallExpression,
+  visit: (node: ts.Node) => void,
+  markUnsupported: () => void,
+): boolean {
+  if (!resolve?.(node)) return false;
+  if (node.questionDotToken || node.typeArguments?.length || node.arguments.some(ts.isSpreadElement)) {
+    markUnsupported();
+    return true;
+  }
+  for (const argument of node.arguments) visit(argument);
+  return true;
+}
+=== select.ts 9912-9940
+      // coverage: the event type and the callback body must both fit the
+      // complete Phase-1 surface, and every certified capture must already be
+      // live in this lexical scope. No other arrow argument bypasses the
+      // generic `isPhase1Expr` rejection below.
+      const hostVoidCallback = currentSelectionOptions?.hostVoidCallbacks?.(expr);
+      if (hostVoidCallback) {
+        for (const capture of hostVoidCallback.captureNames) {
+          if (!scope.has(capture)) return shapeNo("expr-host-void-callback-capture-scope", hostVoidCallback.callback);
+        }
+        const eventType = expr.arguments[0]!;
+        if (ts.isSpreadElement(eventType) || !isPhase1Expr(eventType, scope, localClasses)) {
+          return shapeNo("expr-host-void-callback-event", eventType);
+        }
+        const callbackScope = new Set(scope);
+        if (
+          !isPhase1StatementList(
+            hostVoidCallback.callback.body.statements,
+            callbackScope,
+            localClasses,
+            /* isGenerator */ false,
+            /* isVoidReturn */ true,
+          )
+        ) {
+          return shapeNo("expr-host-void-callback-body", hostVoidCallback.callback.body);
+        }
+        return true;
+      }
+      for (const arg of expr.arguments) {
+        // Slice 8a (#1169g): spread args restricted to method calls is
+=== integration.ts 1218-1245
+  ctx: CodegenContext,
+  sourceFile: string,
+  entries: readonly BuiltFn[],
+): { readonly entries: readonly BuiltFn[]; readonly runtime?: PreparedIrRuntimeManifest } {
+  const runtime = prepareIrRuntimeManifest({
+    functions: entries.map((entry) => entry.fn),
+    sourceFile,
+    policy: {
+      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+      backend: "wasmgc",
+      numberBoundary: integrationNumberBoundaryPolicy(ctx),
+      booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+      externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
+      generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
+      stringCompare: integrationStringComparePolicy(ctx),
+      stringEq: integrationStringEqPolicy(ctx),
+      stringLen: integrationStringLenPolicy(ctx),
+      stringConcat: integrationStringConcatPolicy(ctx),
+      stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
+      stringConcatMany: integrationStringConcatManyPolicy(ctx),
+    },
+    // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
+    // later — see `forEachIrGeneratorSetReturn`.
+    generatorNumberBoxDemand: irGeneratorNumberBoxDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S1) Same predicate the partition scan above runs, so a demand
+    // the freeze requests can never be one the partition failed to classify.
+    stringCompareDemand: irStringCompareDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S3) Same predicate the partition scan above runs, for the same

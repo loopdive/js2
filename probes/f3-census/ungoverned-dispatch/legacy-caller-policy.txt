@@ -1,0 +1,22 @@
+##### legacy-caller-policy.ts full
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+interface HostExternsOptions {
+  readonly jsHostExterns?: boolean;
+}
+
+export function jsHostExternsEnabled(options: HostExternsOptions | undefined): boolean {
+  return options?.jsHostExterns === true;
+}
+
+export function demoteOnLegacyCallerPolicy(options: HostExternsOptions | undefined): boolean {
+  return options?.jsHostExterns !== true;
+}
+##### consumers
+33ea8606aa:src/ir/select-identity.ts:43:import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
+33ea8606aa:src/ir/select.ts:72:import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
+33ea8606aa:src/ir/select.ts:1107:  // (#4521) The policy lives in ./legacy-caller-policy.ts, shared with select-identity.ts.
+33ea8606aa:src/ir/select.ts:1516:  const deferred = hostExternCapability(jsHostExternsEnabled(options)) === "defer";
+33ea8606aa:src/ir/select.ts:1524:    domSurfaceCapability(jsHostExternsEnabled(options), true) !== "defer" &&
+33ea8606aa:src/ir/select.ts:1525:    !jsHostExternsEnabled(options)
+33ea8606aa:src/ir/select.ts:7427:    !jsHostExternsEnabled(currentSelectionOptions) ||

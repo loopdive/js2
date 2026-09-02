@@ -1,0 +1,62 @@
+=== native-callback-zero-void sites
+src/ir/from-ast.ts:8303:        if (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") {
+src/ir/dom-capability.ts:71:        | readonly ["native-string", "native-callback-zero-void", "nullish"];
+src/ir/dom-capability.ts:1015:            argumentBoundaries: Object.freeze(["native-string", "native-callback-zero-void", "nullish"] as const),
+
+=== __apply_closure definition (native)
+src/codegen/array-tolocalestring.ts:153:  ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+src/codegen/array-tolocalestring.ts:161:  for (const name of ["__extern_get", "__apply_closure", TO_STRING]) {
+src/codegen/array-tolocalestring.ts:186:  const applyIdx = ctx.funcMap.get("__apply_closure");
+src/codegen/builtin-proto-member-override.ts:244:  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyClosureIdx });
+src/codegen/closed-method-dispatch.ts:1608:    const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+src/codegen/closed-method-dispatch.ts:1730:    const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+src/codegen/closure-props.ts:1129:  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+src/codegen/construct-bound.ts:263:  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+
+=== getFuncRefWrapperRootTypeIdx / wrapper root
+src/codegen/closures/funcref-wrapper-types.ts:72:export function getOrCreateFuncRefWrapperTypes(
+src/codegen/closures/funcref-wrapper-types.ts:235:export function getFuncRefWrapperRootTypeIdx(ctx: CodegenContext): number | undefined {
+
+=== __closure_arity export
+src/codegen/objlit-to-primitive.ts:155:  const arityIdx = ctx.funcMap.get("__closure_arity");
+src/codegen/host-fnctor-method-driver.ts:78:    const closureArityIdx = ctx.funcMap.get("__closure_arity");
+src/codegen/index.ts:6177:    // `__closure_arity` are final. No-op when no `ref → f64` coercion reserved
+src/codegen/object-runtime.ts:7373: *   n = max(i32(__extern_length(args)), __closure_arity(fn))
+
+=== __make_callback_ctor
+src/index.ts:54:  // `constructible` marks the #4394 sibling bridge (`__make_callback_ctor`),
+src/codegen/callback-ctor-bridge.ts:40: * existing contract), `__make_callback_ctor` when the callable is constructible
+src/codegen/callback-ctor-bridge.ts:56:    "__make_callback_ctor",
+src/codegen/callback-ctor-bridge.ts:62:  return "__make_callback_ctor";
+src/runtime.ts:17655:    // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the
+src/compiler/import-manifest.ts:85:  if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
+
+=== ir-overlay-finalize.ts 265-292
+  }
+  return retained;
+}
+
+/** Final-context proof for B2's symbolic `__make_callback` dependency. */
+export function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolean {
+  if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION === "callback") return false;
+  const makerIdx = ctx.funcMap.get("__make_callback");
+  if (makerIdx === undefined || makerIdx < 0 || makerIdx >= ctx.numImportFuncs) return false;
+
+  let functionIndex = 0;
+  for (const imported of ctx.mod.imports) {
+    if (imported.desc.kind !== "func") continue;
+    if (functionIndex++ !== makerIdx) continue;
+    if (imported.module !== "env" || imported.name !== "__make_callback") return false;
+    const type = ctx.mod.types[imported.desc.typeIdx];
+    return (
+      type?.kind === "func" &&
+      type.params.length === 2 &&
+      type.params[0]?.kind === "i32" &&
+      type.params[1]?.kind === "externref" &&
+      type.results.length === 1 &&
+      type.results[0]?.kind === "externref"
+    );
+  }
+  return false;
+}
+

@@ -1,0 +1,245 @@
+4: * The single closed authority for every R6 host-capability ABI record.
+7: * catalogue lived inside `async-runtime-providers.ts`. The number-boundary
+8: * family (`env.__box_number` / `env.__unbox_number`) is the first non-async
+21: * types IS admissible under `AsyncHostAdapterValueType`. What keeps it out of
+22: * the async projection is the ID filter — `ASYNC_HOST_CAPABILITY_ID_SET`, the
+27: * host crossings do not all live in `env`, and two of them are not functions
+31: *    NON-`env` module namespace, which the pre-F2-S2 record type could not
+32: *    spell (`module` was the literal `"env"`).
+33: *  * string literals reach the host lane as GLOBAL imports whose import FIELD
+40: * This slice moves NO boundary: it only makes those crossings expressible.
+47: * kind a capability is. `RuntimeHostCapabilityId` is their union, so a
+48: * `host-callable` provider row can be typed on the func half alone and a
+52:export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
+53:  "async.callback.wrap",
+73: * unbounded SET of physical imports that differ only in arity.
+75: * `env.__concat_3` … `env.__concat_9` (and, on the host lane, any N — the JS
+82: * {@link RUNTIME_HOST_CAPABILITY_FUNC_IDS}, and that separation is the whole
+83: * point: a family id in the func list would make `RuntimeHostCapabilityFuncId`
+84: * admit it, so a plain `host-callable { capability: "string.concat.many" }`
+86: * {@link asCallableRuntimeHostCapabilityRecord} at module init — exactly the
+90:export const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS = Object.freeze(["string.concat.many"] as const);
+92:export const RUNTIME_HOST_CAPABILITY_GLOBAL_IDS = Object.freeze(["string.const", "string.const.utf16"] as const);
+94:export type RuntimeHostCapabilityFuncId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_IDS)[number];
+95:export type RuntimeHostCapabilityFuncFamilyId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS)[number];
+96:export type RuntimeHostCapabilityGlobalId = (typeof RUNTIME_HOST_CAPABILITY_GLOBAL_IDS)[number];
+97:export type RuntimeHostCapabilityId =
+98:  | RuntimeHostCapabilityFuncId
+99:  | RuntimeHostCapabilityFuncFamilyId
+100:  | RuntimeHostCapabilityGlobalId;
+103:export const RUNTIME_HOST_CAPABILITY_IDS: readonly RuntimeHostCapabilityId[] = Object.freeze(
+105:    ...RUNTIME_HOST_CAPABILITY_FUNC_IDS,
+106:    ...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
+107:    ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS,
+111:const RUNTIME_HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);
+112:const RUNTIME_HOST_CAPABILITY_FUNC_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FUNC_IDS);
+113:const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_ID_SET: ReadonlySet<string> = new Set(
+114:  RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
+116:const RUNTIME_HOST_CAPABILITY_GLOBAL_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_IDS);
+118:export function isRuntimeHostCapabilityId(value: string): value is RuntimeHostCapabilityId {
+119:  return RUNTIME_HOST_CAPABILITY_ID_SET.has(value);
+122:/** Runtime twin of the func half of the id union (the `host-callable` domain). */
+123:export function isRuntimeHostCapabilityFuncId(value: string): value is RuntimeHostCapabilityFuncId {
+124:  return RUNTIME_HOST_CAPABILITY_FUNC_ID_SET.has(value);
+127:/** Runtime twin of the FAMILY half of the id union (the `host-callable-family` domain). */
+128:export function isRuntimeHostCapabilityFuncFamilyId(value: string): value is RuntimeHostCapabilityFuncFamilyId {
+129:  return RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_ID_SET.has(value);
+133:export function isRuntimeHostCapabilityGlobalId(value: string): value is RuntimeHostCapabilityGlobalId {
+134:  return RUNTIME_HOST_CAPABILITY_GLOBAL_ID_SET.has(value);
+138: * Value types an R6 host capability may carry. `f64` was added by F1-S1 for
+139: * the number boundary; `ref_extern` by F2-S2, because `wasm:js-string.concat`
+143:export type RuntimeHostCapabilityValueType = "externref" | "i32" | "f64" | "ref_extern";
+145:const RUNTIME_HOST_CAPABILITY_VALUE_TYPES: ReadonlySet<string> = new Set<RuntimeHostCapabilityValueType>([
+154: * arm is what makes `env.<global>` and `wasm:js-string.<global>` — and
+157:export const RUNTIME_HOST_CAPABILITY_FUNC_MODULES = Object.freeze(["env", "wasm:js-string"] as const);
+158:export const RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES = Object.freeze([
+163:export type RuntimeHostCapabilityFuncModule = (typeof RUNTIME_HOST_CAPABILITY_FUNC_MODULES)[number];
+164:export type RuntimeHostCapabilityGlobalModule = (typeof RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES)[number];
+166:const RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FUNC_MODULES);
+167:const RUNTIME_HOST_CAPABILITY_GLOBAL_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES);
+169:export const RUNTIME_HOST_CAPABILITY_KINDS = Object.freeze(["func", "func-family", "global"] as const);
+170:export type RuntimeHostCapabilityKind = (typeof RUNTIME_HOST_CAPABILITY_KINDS)[number];
+171:const RUNTIME_HOST_CAPABILITY_KIND_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_KINDS);
+182:export const RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES = Object.freeze(["literal", "literal-utf16-hex"] as const);
+183:export type RuntimeHostCapabilityFieldScheme = (typeof RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES)[number];
+184:const RUNTIME_HOST_CAPABILITY_FIELD_SCHEME_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES);
+186:export interface RuntimeHostCapabilityGlobalField {
+187:  readonly scheme: RuntimeHostCapabilityFieldScheme;
+193: * `arity-suffix` — the field is `prefix + arity`: `env.__concat_3`,
+194: * `env.__concat_9`. Deliberately its OWN list rather than a member of
+195: * {@link RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES}: a global's schemes derive a
+199:export const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES = Object.freeze(["arity-suffix"] as const);
+200:export type RuntimeHostCapabilityFuncFamilyFieldScheme =
+201:  (typeof RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES)[number];
+202:const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEME_SET: ReadonlySet<string> = new Set(
+203:  RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES,
+211:const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY = 3;
+213:export interface RuntimeHostCapabilityFuncFamilyField {
+214:  readonly scheme: RuntimeHostCapabilityFuncFamilyFieldScheme;
+220: * A family's parameter list as a SCHEME: `repeat` × arity, bounded by
+221: * `[min, max]`. `max: null` is unbounded — the measured host fact (the JS
+225:export interface RuntimeHostCapabilityFuncFamilyParams<
+226:  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+234: * Exception policy at the host reaction boundary. A compiled throw crosses
+235: * that boundary as a WebAssembly.Exception carrying the original JS value in
+236: * this module's exception tag. The host Promise must observe that value, not
+239:export const HOST_CALLBACK_EXCEPTION_POLICY = "module-tag-payload" as const;
+240:export type HostCallbackExceptionPolicy = typeof HOST_CALLBACK_EXCEPTION_POLICY;
+243:export interface RuntimeHostCapabilityFuncRecord<
+244:  Id extends RuntimeHostCapabilityFuncId = RuntimeHostCapabilityFuncId,
+245:  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+248:  readonly module: RuntimeHostCapabilityFuncModule;
+253:  readonly exceptionPolicy?: HostCallbackExceptionPolicy;
+257:export interface RuntimeHostCapabilityGlobalRecord<
+258:  Id extends RuntimeHostCapabilityGlobalId = RuntimeHostCapabilityGlobalId,
+259:  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+262:  readonly module: RuntimeHostCapabilityGlobalModule;
+263:  readonly field: RuntimeHostCapabilityGlobalField;
+271: * unbounded set of concrete func rows, not a concrete row itself.
+274: * {@link RuntimeHostCapabilityFuncRecord}'s `field: string` /
+276: * `resolveRuntimeHostCapabilityFuncRecord` consumer handle a scheme it can
+277: * never receive. {@link resolveRuntimeHostCapabilityFuncFamilyRecord} is the
+280:export interface RuntimeHostCapabilityFuncFamilyRecord<
+281:  Id extends RuntimeHostCapabilityFuncFamilyId = RuntimeHostCapabilityFuncFamilyId,
+282:  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+285:  readonly module: RuntimeHostCapabilityFuncModule;
+286:  readonly field: RuntimeHostCapabilityFuncFamilyField;
+288:  readonly params: RuntimeHostCapabilityFuncFamilyParams<Value>;
+292:export type RuntimeHostCapabilityRecord<
+293:  Id extends RuntimeHostCapabilityId = RuntimeHostCapabilityId,
+294:  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+296:  | RuntimeHostCapabilityFuncRecord<Extract<Id, RuntimeHostCapabilityFuncId>, Value>
+297:  | RuntimeHostCapabilityFuncFamilyRecord<Extract<Id, RuntimeHostCapabilityFuncFamilyId>, Value>
+298:  | RuntimeHostCapabilityGlobalRecord<Extract<Id, RuntimeHostCapabilityGlobalId>, Value>;
+301:  capability: RuntimeHostCapabilityFuncId,
+302:  module: RuntimeHostCapabilityFuncModule,
+304:  params: readonly RuntimeHostCapabilityValueType[],
+305:  results: readonly RuntimeHostCapabilityValueType[],
+306:  exceptionPolicy?: HostCallbackExceptionPolicy,
+307:): RuntimeHostCapabilityFuncRecord {
+320: * The `env`-defaulting alias every pre-F2-S2 row was written against. Kept so
+325:  capability: RuntimeHostCapabilityFuncId,
+327:  params: readonly RuntimeHostCapabilityValueType[],
+328:  results: readonly RuntimeHostCapabilityValueType[],
+329:  exceptionPolicy?: HostCallbackExceptionPolicy,
+330:): RuntimeHostCapabilityFuncRecord {
+331:  return funcRecord(capability, "env", field, params, results, exceptionPolicy);
+335:  capability: RuntimeHostCapabilityFuncFamilyId,
+336:  module: RuntimeHostCapabilityFuncModule,
+337:  field: RuntimeHostCapabilityFuncFamilyField,
+338:  params: RuntimeHostCapabilityFuncFamilyParams,
+339:  results: readonly RuntimeHostCapabilityValueType[],
+340:): RuntimeHostCapabilityFuncFamilyRecord {
+352:  capability: RuntimeHostCapabilityGlobalId,
+353:  module: RuntimeHostCapabilityGlobalModule,
+354:  field: RuntimeHostCapabilityGlobalField,
+355:  valueType: RuntimeHostCapabilityValueType,
+357:): RuntimeHostCapabilityGlobalRecord {
+369: * The sole closed authority for host capability ABI. Every projection retains
+374:export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityRecord[] = Object.freeze([
+375:  record("async.callback.wrap", "__make_callback", ["i32", "externref"], ["externref"], HOST_CALLBACK_EXCEPTION_POLICY),
+382:  // (#3526 F1-S2) The boolean boundary. `__box_boolean` is a member of the
+388:  // `addUnionImports` family: on the host lane `__extern_is_undefined` is a
+393:  // (#3526 F1-S1) The number boundary. Both names are members of the physical
+400:  // the first records in a NON-`env` module namespace, and `string.concat` is
+406:  // (#3526 F2-S1) The string relational boundary — family 2's first record.
+408:  // registration either: `env.string_compare` is a BASE import minted by the
+417:  // more leaves into one call, and the host lane answers it with
+418:  // `env.__concat_<arity>` — one import per observed arity, minted late, on
+421:  // is the measured host fact — `src/runtime.ts` matches the `__concat_`
+423:  // arm's 3..8 bound is a provider fact, not a capability one, and lives on
+427:    "env",
+443:const RECORD_BY_ID: ReadonlyMap<RuntimeHostCapabilityId, RuntimeHostCapabilityRecord> = new Map(
+444:  RUNTIME_HOST_CAPABILITY_RECORDS.map((entry) => [entry.capability, entry] as const),
+446:const CANONICAL_RECORDS: ReadonlySet<RuntimeHostCapabilityRecord> = new Set(RUNTIME_HOST_CAPABILITY_RECORDS);
+448:function compareCapabilityRecords(left: RuntimeHostCapabilityRecord, right: RuntimeHostCapabilityRecord): number {
+462:      `host capability ${describeRecord(value)} keys ${actual.join(",")} do not match ${canonical.join(",")}`,
+469:  expected: readonly RuntimeHostCapabilityValueType[],
+471:  capability: RuntimeHostCapabilityId,
+476:    value.some((entry, index) => entry !== expected[index] || !RUNTIME_HOST_CAPABILITY_VALUE_TYPES.has(String(entry)))
+479:      `host capability ${capability} ${field} ${JSON.stringify(value)} do not match ${JSON.stringify(expected)}`,
+491: * equality rejections: `unknown host capability <id> kind/module <x>` says the
+495:export function assertRuntimeHostCapabilityRecord(value: unknown): asserts value is RuntimeHostCapabilityRecord {
+497:    throw new Error(`host capability record must be a plain object, got ${String(value)}`);
+501:    throw new Error(`host capability ${describeRecord(candidate)} must be a plain object`);
+504:  if (typeof capability !== "string" || !RUNTIME_HOST_CAPABILITY_ID_SET.has(capability)) {
+505:    throw new Error(`unknown host capability ${String(capability)}`);
+507:  const id = capability as RuntimeHostCapabilityId;
+509:  if (!expected) throw new Error(`host capability ${id} has no canonical record`);
+510:  if (typeof candidate.kind !== "string" || !RUNTIME_HOST_CAPABILITY_KIND_SET.has(candidate.kind)) {
+511:    throw new Error(`unknown host capability ${id} kind ${String(candidate.kind)}`);
+514:    throw new Error(`host capability ${id} kind ${String(candidate.kind)} does not match ${expected.kind}`);
+527:  if (typeof candidate.module !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET.has(candidate.module)) {
+528:    throw new Error(`unknown host capability ${id} module ${String(candidate.module)}`);
+531:    throw new Error(`host capability ${id} module ${String(candidate.module)} does not match ${expected.module}`);
+534:    throw new Error(`host capability ${id} field ${String(candidate.field)} does not match ${expected.field}`);
+540:      `host capability ${id} exception policy ${String(candidate.exceptionPolicy)} does not match ${String(expected.exceptionPolicy)}`,
+557:  id: RuntimeHostCapabilityId,
+558:  expected: RuntimeHostCapabilityFuncFamilyRecord,
+561:  if (typeof candidate.module !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET.has(candidate.module)) {
+562:    throw new Error(`unknown host capability ${id} module ${String(candidate.module)}`);
+565:    throw new Error(`host capability ${id} module ${String(candidate.module)} does not match ${expected.module}`);
+569:    throw new Error(`host capability ${id} field ${String(field)} does not match a family field scheme`);
+573:  if (typeof scheme !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEME_SET.has(scheme)) {
+574:    throw new Error(`unknown host capability ${id} field scheme ${String(scheme)}`);
+577:    throw new Error(`host capability ${id} field scheme ${scheme} does not match ${expected.field.scheme}`);
+580:    throw new Error(`host capability ${id} field prefix ${String(prefix)} does not match ${expected.field.prefix}`);
+584:    throw new Error(`host capability ${id} params ${String(params)} do not match a family params scheme`);
+589:  if (!Number.isSafeInteger(min) || (min as number) < RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY) {
+591:      `host capability ${id} params min ${String(min)} is below the ${RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY}-operand floor`,
+595:    throw new Error(`host capability ${id} params max ${String(max)} does not cover min ${String(min)}`);
+599:      `host capability ${id} params range ${String(min)}..${String(max)} does not match ${String(expected.params.min)}..${String(expected.params.max)}`,
+607:  id: RuntimeHostCapabilityId,
+608:  expected: RuntimeHostCapabilityGlobalRecord,
+611:  if (typeof candidate.module !== "string" || !RUNTIME_HOST_CAPABILITY_GLOBAL_MODULE_SET.has(candidate.module)) {
+612:    throw new Error(`unknown host capability ${id} module ${String(candidate.module)}`);
+615:    throw new Error(`host capability ${id} module ${String(candidate.module)} does not match ${expected.module}`);
+619:    throw new Error(`host capability ${id} field ${String(field)} does not match a global field scheme`);
+623:  if (typeof scheme !== "string" || !RUNTIME_HOST_CAPABILITY_FIELD_SCHEME_SET.has(scheme)) {
+624:    throw new Error(`unknown host capability ${id} field scheme ${String(scheme)}`);
+627:    throw new Error(`host capability ${id} field scheme ${scheme} does not match ${expected.field.scheme}`);
+632:      `host capability ${id} mutable ${String(candidate.mutable)} does not match ${String(expected.mutable)}`,
+638:export function assertCanonicalRuntimeHostCapabilityRecord(
+640:): asserts value is RuntimeHostCapabilityRecord {
+641:  assertRuntimeHostCapabilityRecord(value);
+643:    throw new Error(`host capability ${value.capability} is not the canonical catalog record`);
+649: * A global record has no `params`/`results` and no callable import spelling,
+653:export function asCallableRuntimeHostCapabilityRecord(
+654:  value: RuntimeHostCapabilityRecord,
+655:): RuntimeHostCapabilityFuncRecord {
+657:    throw new Error(`host capability ${value.capability} is not a callable host capability`);
+663:export function canonicalizeRuntimeHostCapabilityCatalog(
+664:  records: readonly RuntimeHostCapabilityRecord[],
+665:): readonly RuntimeHostCapabilityRecord[] {
+666:  if (!Array.isArray(records)) throw new Error("host capability catalog must be an array");
+667:  const seen = new Set<RuntimeHostCapabilityId>();
+669:    assertCanonicalRuntimeHostCapabilityRecord(entry);
+671:      throw new Error(`host capability catalog duplicates ${entry.capability}`);
+675:  const missing = RUNTIME_HOST_CAPABILITY_IDS.filter((capability) => !seen.has(capability));
+676:  if (missing.length > 0 || records.length !== RUNTIME_HOST_CAPABILITY_IDS.length) {
+677:    throw new Error(`host capability catalog is incomplete; missing ${missing.join(",") || "none"}`);
+683:export function resolveRuntimeHostCapabilityRecord(
+684:  records: readonly RuntimeHostCapabilityRecord[],
+685:  capability: RuntimeHostCapabilityId,
+686:): RuntimeHostCapabilityRecord {
+688:  if (!found) throw new Error(`host capability catalog does not define ${capability}`);
+689:  assertCanonicalRuntimeHostCapabilityRecord(found);
+696: * Structurally the `module` / `field` / `params` / `results` a caller would
+698: * {@link RuntimeHostCapabilityFuncRecord}, because it is not a catalogue
+699: * object: `assertCanonicalRuntimeHostCapabilityRecord` would (correctly)
+703:export interface ResolvedRuntimeHostCapabilityFuncFamilyRow<
+704:  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+706:  readonly module: RuntimeHostCapabilityFuncModule;
+717:export function resolveRuntimeHostCapabilityFuncFamilyRecord(
+718:  records: readonly RuntimeHostCapabilityRecord[],
+719:  capability: RuntimeHostCapabilityFuncFamilyId,
+721:): ResolvedRuntimeHostCapabilityFuncFamilyRow {
+722:  const found = resolveRuntimeHostCapabilityRecord(records, capability);
+724:    throw new Error(`host capability ${capability} is not a host capability family`);
+729:      `host capability family ${capability} does not cover arity ${String(arity)} (${min}..${max ?? "unbounded"})`,
+743: * runtime twin, for catalogues that arrive through an `unknown` boundary.
+745:export function resolveRuntimeHostCapabilityFuncRecord(
+746:  records: readonly RuntimeHostCapabilityRecord[],
+747:  capability: RuntimeHostCapabilityFuncId,
+748:): RuntimeHostCapabilityFuncRecord {
+749:  return asCallableRuntimeHostCapabilityRecord(resolveRuntimeHostCapabilityRecord(records, capability));

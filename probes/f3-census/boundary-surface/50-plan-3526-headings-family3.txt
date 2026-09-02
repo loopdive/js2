@@ -1,0 +1,154 @@
+=== headings
+360:## Objective
+380:## Baseline evidence and current seam
+432:## Typed contract
+434:### `IntrinsicId`
+447:### `RuntimeFeature`
+459:### `HostCapability`
+468:### Projection and freeze
+489:## Bounded landing sequence
+491:### C0 — contract, fixed point, and freeze
+530:### M1 — deterministic pure Math
+587:### A1 implementation plan — frozen async capability catalog (2026-08-26)
+789:### A2 implementation plan — per-owner provider and backend-requirement attachment (2026-08-28)
+990:### Later measured family slices
+1015:## File ownership and locks
+1030:## Anti-vacuity tests
+1079:## Acceptance criteria
+1105:## Deletion boundary
+1116:## Out of scope
+1124:## Risks and mitigations
+1141:## 2026-08-29 F1-S1 implementation plan — number-boundary intrinsics (family 1, slice 1)
+1150:### Measured facts (verified on the grounded tree)
+1203:### Contract
+1230:### Production changes (exact ownership)
+1257:### Behavior-neutrality obligations (each is a test)
+1281:### Required pre-implementation verifications (record answers in the checkpoint note)
+1297:### Validation
+1307:## 2026-08-30 Sol correction — F1-S1 provider and preparation authority
+1317:### Corrected facts and retained control paths
+1354:### One host-capability catalogue
+1381:### Synchronous callable provider implementations
+1408:### Exact policy and owner-local preparation
+1455:### Materialization without ABI drift
+1475:### Revised production ownership
+1500:### Acceptance matrix and coordination gate
+1527:## 2026-08-31 F1-S1 implementation checkpoint — Opus lane
+1533:### Coordination gate
+1542:### Required pre-implementation verifications (answers)
+1588:### What landed
+1623:### Divergences from the plan (recorded, not widened)
+1669:### The async-prepare join needed the resolved policy, not a shape match
+1702:### `check:ir-kind-neutrality` baseline refresh
+1727:### Not touched (per the lock)
+1736:## 2026-09-01 F1-S2 implementation plan — boolean-boundary intrinsic (family 1, slice 2)
+1744:### Measured facts (verified on the grounded tree)
+1782:### Contract
+1822:### Behavior-neutrality obligations (each is a test or a measured record)
+1845:### Required pre-implementation verifications (record answers in the checkpoint)
+1868:### Validation
+1884:### Explicitly out of scope
+1895:## 2026-09-01 F1-S2 pre-implementation verifications — Opus lane
+1905:### 1. Full-repo trace of `hasHostBooleanBox` — the one-arm premise HOLDS
+1922:### 2. Async non-involvement — proven twice over
+1946:### 3. `box-boolean-fuse.ts` interaction — measured, and it is NIL
+1967:### 4. Brand producers — all pure type facts
+1988:### Reachability of the arm — measured, and it is narrow
+2007:## 2026-09-01 F1-S2 implementation checkpoint — Opus lane
+2013:### What landed
+2056:### Measured neutrality
+2121:### Non-vacuity — verified by the specified revert-only-the-arm check
+2139:### Divergences from the plan (recorded, not widened)
+2169:### Reachability, stated as a limit rather than a claim
+2179:### Validation run
+2204:### Not touched (per the plan's scope discipline)
+2213:## 2026-09-01 F1-S3 implementation plan — generator setReturn boxing under manifest authority (family 1, slice 3)
+2226:### Measured facts (verified on the grounded tree; every line quoted in probes)
+2283:### Contract
+2326:### Behavior-neutrality obligations (each a test or measured record)
+2355:### Required pre-implementation verifications (record answers in the checkpoint)
+2373:### Validation
+2385:### Explicitly out of scope
+2395:## 2026-09-01 F1-S3 pre-implementation verifications — Opus lane
+2405:### V1 — attachment totality: the `??` fallback is UNREACHABLE, so it is retired
+2430:### V2 — sealing/evidence shape: the import-bound route is NOT available
+2467:### V3 — freeze-scan equivalence: one population, by construction
+2483:### V4 — i32 arm coverage: measured, and the plan's fixture had to be replaced
+2506:## 2026-09-01 F1-S3 implementation checkpoint — Opus lane
+2508:### What landed
+2553:### Measured neutrality
+2594:### Non-vacuity — verified by the specified revert-only-the-threading check
+2614:### Divergences from the plan (recorded, not widened)
+2637:### Validation run
+2657:### Not touched (per the plan's scope discipline)
+2668:### Post-merge re-validation (origin/main `2dfb8396`)
+2689:### Merge-queue park (2026-09-01) — diagnosed as not-this-PR, with a gate finding
+2736:### Two follow-ups this slice surfaced but does not own
+2761:## 2026-09-01 F1-S4 implementation plan — boundary residuals (family 1, slice 4)
+2774:### Sub-slice A — the two remaining `__unbox_number` from-ast arms
+2797:### Sub-slice B — `__extern_is_undefined` under manifest authority
+2835:### Sub-slice C — retire the four `gen.*` lowering fallbacks
+2849:### Required pre-implementation verifications (record in the checkpoint)
+2868:### Behavior-neutrality obligations
+2880:### Validation
+2891:### Explicitly out of scope
+2901:## 2026-09-01 F1-S4 pre-implementation verifications — Opus lane
+2910:### V-A population — **the STOP condition is REAL. Sub-A is not in this PR.**
+2962:### V-B readers — enumerated; the import-order-parity route was available
+3004:### V-C totality — all four `gen.*` provider fields, proven the F1-S3 way
+3024:### V-D fixture reach — named, and one cell is honestly vacuous
+3035:## 2026-09-01 F1-S4 implementation checkpoint — Opus lane
+3037:### What landed
+3084:### One divergence from the plan's contract, forced by measurement
+3101:### Measured neutrality
+3186:### Non-vacuity — each sub-slice reverted independently against the kept schema
+3208:### Divergences from the plan (recorded, not widened)
+3242:### Validation run
+3266:### Not touched (per the plan's scope discipline)
+3279:### One follow-up this slice surfaced but does not own
+3293:## 2026-09-01 F2-S1 implementation plan — string.compare under manifest policy (family 2, slice 1)
+3302:### Where family 2 stands (census summary)
+3330:### Sub-A — `stringCompare` policy + `string.compare` capability
+3378:### Sub-B — retire the `forof.string` `??` fallback
+3392:### Required pre-implementation probes (answers go in the checkpoint note)
+3423:### Verification matrix (the 6-point F1 template, issue :1595-1616, verbatim)
+3447:### Out of scope
+3457:## 2026-09-01 F2-S1 checkpoint note — Opus lane
+3463:### Probe answers
+3545:### What landed
+3584:### Sub-B totality — re-proved, and the linear half is NOT the plan's argument
+3607:### Measured neutrality
+3652:### Non-vacuity — each sub-slice reverted independently against the kept schema
+
+=== 985-1015
+function ratchets immediately before committing. Run complete precommit and
+prepush hooks without bypass. Obtain an independent read-only audit of the
+signed head, and open the PR ready only when its scoped diff and required gates
+are mergeable; otherwise keep it draft with the exact blocker.
+
+### Later measured family slices
+
+Land each as an independently ratcheted child/slice, in dependency order:
+
+1. **Scalar/coercion/value carriers:** numeric/boolean/bigint/symbol/nullish,
+   boxing/unboxing, equality, conversion, dynamic tagged values, errors.
+2. **String/text:** allocation, UTF encoding, concatenation, comparison,
+   methods, templates, regex-facing text adapters.
+3. **Callable/closures/callbacks:** direct/indirect calls, bound functions,
+   host callbacks, closure environments, constructor/callable ABI.
+4. **Object/property/classes:** get/set/delete/define, prototype/reflection,
+   class/member/private/super semantics and dynamic objects.
+5. **Collections/iterators:** arrays, typed arrays, Map/Set, iterators,
+   destructuring/spread, iterator close, generators' non-async substrate.
+6. **Host/DOM/Node/console/timers/linking:** ambient externs, fs/process/event
+   adapters, callback imports, strict-no-host policy, WIT/link capabilities.
+7. **JSON and RegExp:** parse/stringify, regex compilation/execution and host
+   versus native provider selection.
+8. **Promise/async scheduler:** Promise capability/reaction/settle/adoption,
+   microtask/timer/async-iterator features required by #3527.
+
+Every slice records before/after census, Prepared units, host capabilities,
+provider reachability, direct emissions, and late-mutation attempts. Family
+completion is structural, not a decrease in one fallback bucket.
+
+## File ownership and locks

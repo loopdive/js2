@@ -1,0 +1,117 @@
+##### from-ast 6390-6400
+  if (expr.questionDotToken) {
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
+  }
+  const indirectEval = exactIndirectEvalStatement(expr);
+  if (indirectEval) {
+    const target = cx.resolver?.hostIndirectEvalTarget?.();
+    if (
+      !statementPosition ||
+      cx.resolver?.jsHostExterns?.() !== true ||
+      cx.resolver?.isAmbientBinding?.(indirectEval.evalIdentifier) !== true ||
+      cx.scope.has("eval") ||
+##### from-ast 7548-7562
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype spread call is not supported (${cx.funcName})`,
+      );
+    }
+    const target = cx.resolver?.functionPrototypeCallTarget?.();
+    if (!target) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype call provider unavailable (${cx.funcName})`,
+      );
+    }
+    for (const argument of expr.arguments) lowerDiscardedExpression(argument, cx);
+    const result = cx.builder.emitCall(target, [], irVal({ kind: "externref" }));
+##### from-ast 8283-8300
+    }
+    const args: IrValueId[] = [];
+    for (let i = 0; i < expr.arguments.length; i++) {
+      const expected = userParams[i]!;
+      const argument = expr.arguments[i]!;
+      const hostCallbackArrow = ts.isArrowFunction(argument) ? argument : undefined;
+      const hostCallbackPlan = hostCallbackArrow ? cx.hostVoidCallbacks?.get(hostCallbackArrow) : undefined;
+      if (hostCallbackPlan && hostCallbackArrow) {
+        if (
+          methodName !== "addEventListener" ||
+          i !== 1 ||
+          expected.kind !== "externref" ||
+          hostCallbackPlan.signature.params.length !== 0 ||
+          hostCallbackPlan.signature.returnType !== null
+        ) {
+          // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
+          throw new Error(`ir/from-ast: invalid host void callback plan for ${definingClass}.${methodName}`);
+        }
+##### select 7422-7435
+  scope?: ReadonlySet<string>,
+): ReturnType<typeof exactIndirectEvalStatement> {
+  const shape = exactIndirectEvalStatement(expr);
+  if (
+    !shape ||
+    !jsHostExternsEnabled(currentSelectionOptions) ||
+    currentSelectionOptions?.supportsHostIndirectEval !== true ||
+    !selectorSeesAmbientBinding(shape.evalIdentifier) ||
+    (scope?.has("eval") ?? false) ||
+    !expressionIsProvenHostEvalString(shape.source)
+  ) {
+    return undefined;
+  }
+  return shape;
+##### select 9912-9925
+      // coverage: the event type and the callback body must both fit the
+      // complete Phase-1 surface, and every certified capture must already be
+      // live in this lexical scope. No other arrow argument bypasses the
+      // generic `isPhase1Expr` rejection below.
+      const hostVoidCallback = currentSelectionOptions?.hostVoidCallbacks?.(expr);
+      if (hostVoidCallback) {
+        for (const capture of hostVoidCallback.captureNames) {
+          if (!scope.has(capture)) return shapeNo("expr-host-void-callback-capture-scope", hostVoidCallback.callback);
+        }
+        const eventType = expr.arguments[0]!;
+        if (ts.isSpreadElement(eventType) || !isPhase1Expr(eventType, scope, localClasses)) {
+          return shapeNo("expr-host-void-callback-event", eventType);
+        }
+        const callbackScope = new Set(scope);
+##### select.ts option-gated arms (callable-ish)
+     13 currentSelectionOptions?.classifyPrimitiveExpression
+     12 currentSelectionOptions?.supportsBackendCapability
+      8 currentSelectionOptions?.projectedClassShapes
+      6 currentSelectionOptions?.classifyDeclaredPrimitiveExpression
+      3 currentSelectionOptions?.isDynamicForInReceiver
+      2 currentSelectionOptions?.resolveProgramCallableUse
+      2 currentSelectionOptions?.resolveImplicitParamType
+      2 currentSelectionOptions?.resolveFnctorAdmission
+      2 currentSelectionOptions?.promiseDelays
+      2 currentSelectionOptions?.isHoleyArrayConstructor
+      2 currentSelectionOptions?.isArrayExpression
+      2 currentSelectionOptions?.isAmbientStringBinding
+      2 currentSelectionOptions?.importedFunctions
+      2 currentSelectionOptions?.implicitParamUsesNumericVecAbi
+      2 currentSelectionOptions?.forInHeadValueIsHostString
+      2 currentSelectionOptions?.dynamicCarrierDivergesFromLegacy
+      2 currentSelectionOptions.supportsBackendCapability
+      1 currentSelectionOptions?.supportsSymbolicMathHelpers
+      1 currentSelectionOptions?.supportsStringArrayLiterals
+      1 currentSelectionOptions?.supportsStandaloneConsoleSink
+      1 currentSelectionOptions?.supportsNumberToString
+      1 currentSelectionOptions?.supportsNumberToFixed
+      1 currentSelectionOptions?.supportsLiteralStringReplace
+      1 currentSelectionOptions?.supportsHostIndirectEval
+      1 currentSelectionOptions?.stableFunctionCallIntegrationBuildable
+      1 currentSelectionOptions?.resolveLocalClassExpression
+      1 currentSelectionOptions?.preparedAsyncPromiseVectorLocal
+      1 currentSelectionOptions?.preparedAsyncDateNowCall
+      1 currentSelectionOptions?.planCountedStringAppend
+      1 currentSelectionOptions?.isRegExpExpression
+      1 currentSelectionOptions?.isAmbientBinding
+      1 currentSelectionOptions?.hostVoidCallbacks
+      1 currentSelectionOptions?.hostDateSnapshots
+      1 currentSelectionOptions?.fnctorNativeStringReplace
+      1 currentSelectionOptions?.fnctorNativeStringBoundary
+      1 currentSelectionOptions?.ambientClassCalls
+      1 currentSelectionOptions.supportsHoleyArrayFilter
+      1 currentSelectionOptions.isHoleyArrayFilterCall
+      1 currentSelectionOptions.classifyDeclaredPrimitiveExpression

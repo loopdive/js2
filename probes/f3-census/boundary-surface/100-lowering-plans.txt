@@ -1,0 +1,52 @@
+=== ast-lowering-plans.ts 36-79
+export interface IrImportedCallLoweringPlan {
+  readonly source: "module-import" | "ambient-host" | "compiler-timer-shim";
+  readonly ownerUnitId: IrUnitId;
+  readonly ownerName: string;
+  readonly target: IrFuncRef;
+  readonly params: readonly IrType[];
+  readonly returnType: IrType | null;
+  readonly optionalParams: ReadonlyMap<number, IrImportedOptionalParamPlan>;
+  readonly needsArgc: boolean;
+  readonly argcGlobal?: IrGlobalRef;
+}
+export function requireValidImportedCallTarget(plan: IrImportedCallLoweringPlan): void {
+  if (plan.source === "compiler-timer-shim") {
+    requireCompilerTimerShimPlan(plan);
+    return;
+  }
+  if (plan.source === "ambient-host") {
+    if (plan.target.binding.kind === "import" && plan.target.binding.module === "env") return;
+    throw new Error(`ir/from-ast: ambient host call target ${plan.target.name} is not backed by an env import`);
+  }
+  if (plan.target.binding.kind !== "unit") {
+    throw new Error(`ir/from-ast: imported source call target ${plan.target.name} is not backed by an exact unit`);
+  }
+}
+export interface IrTopLevelFunctionValueLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  readonly ownerName: string;
+  readonly target: IrFuncRef;
+  readonly signature: IrClosureSignature;
+  readonly trampoline: IrFuncRef;
+  readonly cacheGlobal: IrGlobalRef;
+  readonly cacheGlobalName: string;
+}
+
+=== ast-lowering-plans.ts 317-340 IrHostVoidCallbackLoweringPlan
+export interface IrHostVoidCallbackLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  readonly ownerName: string;
+  readonly signature: IrClosureSignature;
+  readonly captureNames: ReadonlySet<string>;
+  readonly liftedOrdinal: number;
+  readonly standaloneDomReusable?: true;
+}
+export type IrHostDateSnapshotGetter = "getDate" | "getMonth" | "getFullYear";
+export interface IrHostDateSnapshotLoweringPlan {
+  readonly ownerUnitId: IrUnitId;
+  readonly ownerName: string;
+  readonly target: IrFuncRef;
+}
+export interface IrHostDateGetterLoweringPlan extends IrHostDateSnapshotLoweringPlan {
+  readonly snapshot: ts.NewExpression;

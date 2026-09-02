@@ -1,0 +1,45 @@
+##### fnctor-abi.ts 55-85
+  };
+}
+
+/** Backend result of resolving a nominal shape against finalized ABI state. */
+export interface IrFnctorResolution {
+  readonly shape: IrFnctorShape;
+  readonly structType: IrTypeRef;
+  readonly constructor: IrFuncRef;
+  readonly captureParamTypes: readonly IrType[];
+  readonly userParamTypes: readonly IrType[];
+  readonly constructorIdentityParamIndex: number | null;
+  readonly hiddenIdentity: boolean;
+  /** True only for the standalone/WASI foreign-return constructor ABI. */
+  readonly resultIsExternref: boolean;
+}
+
+/** Lowering seam; implementations must return null rather than guessing. */
+export interface IrFnctorLowerResolver {
+  resolveFnctor(shape: IrFnctorShape): IrFnctorResolution | null;
+}
+
+function nonEmpty(value: string): boolean {
+  return value.length > 0 && !value.includes("\0") && !value.includes("\r") && !value.includes("\n");
+}
+
+function validateRef(ref: { readonly kind: string; readonly name: string }, label: string): string | null {
+  if (ref.kind !== "func" && ref.kind !== "type") return `${label} has an invalid symbolic kind`;
+  return nonEmpty(ref.name) ? null : `${label} has an empty diagnostic name`;
+}
+
+function validateFields(fields: readonly IrFnctorField[], label: string): string | null {
+##### foreignReturn setters
+33ea8606aa:src/codegen/fnctor-foreign-return.ts:79:    // it. Name-matched, exactly like `foreignReturnFunctionNames`: a runtime
+33ea8606aa:src/codegen/fnctor-foreign-return.ts:126:export function foreignReturnFunctionNames(sf: ts.SourceFile): ReadonlySet<string> {
+33ea8606aa:src/codegen/fnctor-foreign-return.ts:179:  return sf !== undefined && foreignReturnFunctionNames(sf).has(sym.name);
+33ea8606aa:src/codegen/index.ts:12362:    const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
+33ea8606aa:src/codegen/index.ts:12363:    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
+33ea8606aa:src/codegen/index.ts:12381:        if (foreignReturnFnctor && (ctx.standalone || ctx.wasi)) {
+##### fnctor-foreign-return.ts mode reads
+program-abi-fnctor-planning.ts:99:  if (!ctx.nativeStrings) return physical.kind === "externref";
+program-abi-fnctor-planning.ts:138:        !ctx.nativeStrings ||
+program-abi-fnctor-planning.ts:192:  if (!ctx.standalone || ctx.wasi) return;
+program-abi-fnctor-planning.ts:348:    if (observation.hiddenIdentity !== !this.ctx.wasi) {
+program-abi-fnctor-planning.ts:351:    if (observation.resultIsExternref && !(this.ctx.standalone || this.ctx.wasi)) {

@@ -1,0 +1,17 @@
+R6 family-3 census probe: UN-GOVERNED MODE READS (callable/closure/callback/ctor)
+Grounded on origin/main 33ea8606aa (working tree 079332e3 differs only in benchmark JSON; `git diff --stat 33ea8606aa origin/main -- src scripts tests` is empty).
+All line numbers are from `git show 33ea8606aa:<file>`.
+
+Artifacts (this directory):
+  manifest-freeze.grep            grep freeze|frozen in src/ir/runtime-manifest.ts
+  resolve-callable-callers.grep   resolveAndObserveCallableProvider def + 3 callers
+  mode-reads-callable-files.grep  BROAD grep (1280 lines, incl. comments) over 55 callable-path files
+  mode-reads-functional.grep      NARROW: ctx.{nativeStrings,wasi,standalone,strictNoHostImports,fast} reads, comments stripped (398 lines)
+  mode-reads-by-function.txt      same 398 reads annotated with enclosing function (enclose.awk)
+  int-regions-2.txt, legacy-f3-context.txt, legacy-f3-context-p2.txt, index-contexts.txt,
+  host-callback-abi.txt, closure-resolver.txt, callback-imports-minting.txt, imports-machinery-context.txt,
+  from-ast-consumers.txt, from-ast-resolver-iface.txt, from-ast-select-sites.txt, selection-option-builders.txt,
+  host-void-callback.txt, legacy-caller-policy.txt, fnctor-abi-foreign-return.txt, ir-callable-profile-reads.txt,
+  small-ir-files.txt, lower-callable.txt, fan-in.txt, codegen-index-callable-reads.txt, legacy-callable-reads.txt
+  *.33ea                          verbatim copies of integration.ts, lower.ts, intrinsic-support.ts, runtime-manifest.ts, codegen/index.ts at 33ea8606aa
+  ranked-sites.tsv                the ranked site table used in the report

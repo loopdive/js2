@@ -1,0 +1,66 @@
+##### D. deferredCl 4600-4640
+
+    const stringBackend = computeStringBackend(ctx);
+    // Build the resolver in two steps so the resolver and the
+    // ObjectStructRegistry / ClosureStructRegistry can refer to each
+    // other without a circular direct reference: the registries need
+    // `lowerIrTypeToValType` (which calls `resolver.resolveString` /
+    // `resolveObject` / `resolveClosure`), and the resolver delegates
+    // back to the registries. We hand the resolver `Deferred*Resolver`
+    // shells whose `resolve` callbacks are filled in after the
+    // registries exist.
+    const deferredObj: DeferredObjectResolver = {
+      resolve: (_shape: IrObjectShape) => null,
+    };
+    const deferredCl: DeferredClosureResolver = {
+      resolveBase: () => null,
+      resolveSubtype: () => null,
+    };
+    const deferredCell: DeferredRefCellResolver = {
+      resolve: () => null,
+    };
+    const deferredClass: DeferredClassResolver = {
+      resolve: () => null,
+    };
+    if (options?.deferPreparedPublication && !preparedClosure?.preparedScopeLookup) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "detached prepared integration requires one authenticated open ABI overlay before resolver construction",
+      );
+    }
+    resolver = makeResolver(
+      ctx,
+      unionRegistry,
+      stringBackend,
+      deferredObj,
+      deferredCl,
+      deferredCell,
+      deferredClass,
+      unitCallableSlots,
+      importedCallableCatalog,
+      preparedRuntimeManifest,
+##### DeferredClosureResolver iface 5641-5660
+interface DeferredClosureResolver {
+  resolveBase: (sig: IrClosureSignature) => IrClosureLowering | null;
+  resolveSubtype: (
+    sig: IrClosureSignature,
+    fields: readonly IrType[],
+    hostOneShot?: boolean,
+    domCallbackAuthority?: IrDomCallbackAuthority,
+    liftedFuncIdx?: number,
+  ) => IrClosureLowering | null;
+}
+
+interface DeferredRefCellResolver {
+  resolve: (inner: ValType) => IrRefCellLowering | null;
+}
+
+interface DeferredClassResolver {
+  resolve: (shape: IrClassShape) => IrClassLowering | null;
+}
+
+/** Exact binding of one structural source unit to its settled Wasm slot. */
+##### closure-struct-registry / prepared-closure-support mode reads
+src/ir/closure-struct-registry.ts:11:import { resolveStandaloneDomCallbackClosureSubtype } from "../codegen/standalone-dom-callback-authority.js";
+src/ir/closure-struct-registry.ts:27: * module-wide registry. Certified standalone DOM callbacks receive a branded

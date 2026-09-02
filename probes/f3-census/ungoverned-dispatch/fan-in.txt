@@ -1,0 +1,33 @@
+##### fan-in counts
+irRuntimeFuncRef\(           from-ast.ts: 29
+irIntrinsicFuncRef\(         from-ast.ts: 15
+irImportFuncRef\(            from-ast.ts: 7
+irUnitFuncRef\(              from-ast.ts: 2
+irSupportFuncRef\(           from-ast.ts: 0
+emitCall\(                   from-ast.ts: 60
+emitClosureCall\(            from-ast.ts: 2
+emitClosureNew\(             from-ast.ts: 2
+emitFnctorNew\(              from-ast.ts: 0
+kind: "closure.call"         from-ast.ts: 0
+kind: "call"                 from-ast.ts: 0
+resolver\.resolveFunc\(      lower.ts: 29
+resolveClosure\(             lower.ts: 0
+resolveClosureSubtype\(      lower.ts: 0
+resolveFnctor\(              lower.ts: 0
+##### callableProviderRef def
+7412:function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
+function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
+  switch (instr.kind) {
+    case "call":
+      return instr.target;
+    case "intrinsic":
+      return instr.provider?.kind === "callable" ? instr.provider.target : undefined;
+    case "closure.new":
+      return instr.liftedFunc;
+    case "class.call":
+    case "class.super_init":
+    case "class.super_call":
+    case "class.static_call":
+    case "class.new":
+      return instr.target;
+    case "string.const":

@@ -1,0 +1,78 @@
+=== integration.ts 812-830 integrationNumberBoundaryPolicy
+function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPolicy {
+  const hostNumberBoundary = !ctx.nativeStrings;
+  return Object.freeze({
+    box: hostNumberBoundary ? ("host" as const) : ("unsupported" as const),
+    unbox: hostNumberBoundary
+      ? ("host" as const)
+      : ctx.targetProfile.semanticProviders === "native-first"
+        ? ("native" as const)
+        : ("unsupported" as const),
+  });
+}
+
+/**
+ * (#3526 F1-S2) This caller's already-resolved BOOLEAN-boundary policy.
+ *
+ * The EXACT fact the from-ast boolean arm used to read through the
+ * `hasHostBooleanBox` resolver predicate (`!ctx.nativeStrings`), consulted
+ * once, here, before freeze. Boolean values share the host union-import family
+ * with numbers but retain their own boxer, so `true` never crosses an externref
+
+=== integration.ts 6585-6640 resolveAndObserveCallableProvider header
+  const arm = preparedStringConcatManyProvider(prepared, arity);
+  if (!arm) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "batched string concatenation has no frozen provider under the string-concat policy",
+    );
+  }
+  if (arm.arm === "native") return ensureNativeBatchedConcat(ctx, arity);
+  return ensureLateImport(
+    ctx,
+    arm.field,
+    arm.params.map((param) => ({ kind: param }) as ValType),
+    arm.results.map((result) => ({ kind: result }) as ValType),
+    arm.module,
+  );
+}
+
+function resolveAndObserveCallableProvider(
+  ctx: CodegenContext,
+  ref: IrFuncRef,
+  // (#3526 F2-S1) The whole prepared manifest, not just its intrinsic-provider
+  // map: the string-compare arm reads a FEATURE row (`js.string.compare`) that
+  // no intrinsic use ever puts in that map, plus the frozen host-capability
+  // records the host arm's field name comes from.
+  prepared?: PreparedIrRuntimeManifest,
+  fuseNativeNumberFormatCarriers = false,
+): number {
+  const runtimeProviders = prepared?.providers;
+  if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
+    throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
+  }
+  const registry = ctx.programAbiCallableProviders;
+  const existing = registry?.resolveCurrentIndex(ref);
+  if (existing !== undefined) return existing;
+
+  let index: number | null | undefined;
+  const { symbol } = ref.binding;
+  if (ref.binding.kind === "intrinsic" && isIntrinsicId(symbol)) {
+    const provider = runtimeProviders?.get(symbol);
+    if (!provider || provider.implementation.kind !== "self-hosted") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `semantic intrinsic ${symbol} has no frozen callable provider`,
+      );
+    }
+    if (ref.name !== provider.implementation.symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `semantic intrinsic ${symbol} changed provider from ${provider.implementation.symbol} to ${ref.name}`,
+      );
+    }
+    index = preparedMathProviderIndex(ctx, provider.implementation.symbol);
+  } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {

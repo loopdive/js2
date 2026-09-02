@@ -1,0 +1,59 @@
+=== from-ast 14520-14540
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
+      throw new Error(`ir/from-ast: exact closure capture proof diverged (${cx.funcName})`);
+    }
+  }
+
+  const liftedIdentity = allocateLoweredLiftedFunctionArtifact(
+    expr,
+    cx,
+    (ordinal) => exactClosureLiftedName(cx.funcName, ordinal, exact?.expectedLiftedName),
+    exact?.expectedLiftedTarget !== undefined ||
+      exact?.hostOneShot === true ||
+      exact?.domCallbackAuthority !== undefined,
+  );
+  recordLiftedUnitProvenance(liftedIdentity, cx);
+  const liftedTarget = irUnitFuncRef(liftedIdentity);
+  if (
+    exact?.expectedLiftedTarget &&
+    (!sameIrCallableBinding(liftedTarget.binding, exact.expectedLiftedTarget.binding) ||
+      liftedTarget.name !== exact.expectedLiftedTarget.name)
+  ) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
+=== from-ast 14600-14625
+    }
+  }
+
+  // Lift body. The lifted function takes (__self: IrType.closure,
+  // ...sig.params) and reads captures via `closure.cap`.
+  const lifted = liftClosureBody(
+    liftedIdentity,
+    expr,
+    signature,
+    captures,
+    captureFieldTypes,
+    cx,
+    exact?.allowConciseVoidBody === true,
+    exact?.hostOneShot === true,
+    exact?.domCallbackAuthority,
+  );
+  cx.lifted.push(lifted);
+
+  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
+    ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
+    ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
+  });
+}
+
+/**
+ * Lower a nested function declaration. Adds a `nestedFunc` scope
+=== from-ast imported-call plan consumption
+119:  type IrImportedCallLoweringPlan,
+131:  IrImportedCallLoweringPlan,
+866:  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
+1304:    importedCalls: options.importedCalls,
+2305:  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
+6307:  plan: IrImportedCallLoweringPlan,
+6516:  const imported = cx.importedCalls?.get(expr);
+14717:    importedCalls: cx.importedCalls,
+14858:    importedCalls: cx.importedCalls,

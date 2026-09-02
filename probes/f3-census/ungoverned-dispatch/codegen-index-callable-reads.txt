@@ -1,0 +1,79 @@
+##### codegen/index.ts selected functions
+src/codegen/index.ts:2292 [isTargetOmittedHostImportInvariant]   if (!ctx || !(ctx.standalone || ctx.wasi)) return false;
+src/codegen/index.ts:2510 [recordObservedIrOutcomes]   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+src/codegen/index.ts:2690 [makeIrImplicitParamTypeResolver]       ctx.nativeStrings &&
+src/codegen/index.ts:2839 [planIrOverlay]   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
+src/codegen/index.ts:2863 [planIrOverlay]             numberStorage: ctx.fast ? "i32" : "f64",
+src/codegen/index.ts:2865 [planIrOverlay]             allowHostExterns: jsHostExterns && !ctx.nativeStrings,
+src/codegen/index.ts:2866 [planIrOverlay]             allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+src/codegen/index.ts:2870 [planIrOverlay]             allowNativeMapStorage: ctx.nativeStrings,
+src/codegen/index.ts:2883 [planIrOverlay]   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
+src/codegen/index.ts:2885 [planIrOverlay]     ctx.standalone &&
+src/codegen/index.ts:2886 [planIrOverlay]     ctx.nativeStrings &&
+src/codegen/index.ts:2887 [planIrOverlay]     !ctx.wasi &&
+src/codegen/index.ts:2888 [planIrOverlay]     !ctx.fast &&
+src/codegen/index.ts:2920 [planIrOverlay]   const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
+src/codegen/index.ts:2999 [planIrOverlay]         if (ctx.fast) return false;
+src/codegen/index.ts:3025 [planIrOverlay]       (!ctx.fast && hasNonFastScalarProjection && allProjectionsAreNonFastStable)
+src/codegen/index.ts:3049 [planIrOverlay]       dynamicRuntimeBuildable: !ctx.fast,
+src/codegen/index.ts:3054 [planIrOverlay]         if (ctx.fast) return false;
+src/codegen/index.ts:3062 [planIrOverlay]       forInHeadValueIsHostString: !ctx.nativeStrings,
+src/codegen/index.ts:3075 [planIrOverlay]       supportsHoleyArrayFilter: ctx.standalone,
+src/codegen/index.ts:3116 [planIrOverlay]       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
+src/codegen/index.ts:3117 [planIrOverlay]       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
+src/codegen/index.ts:3298 [planIrOverlay]   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
+src/codegen/index.ts:3646 [makeMultiIrSafeSelection]   const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
+src/codegen/index.ts:4270 [preparedExactLexicalModuleInit]     (!ctx.nativeStrings &&
+src/codegen/index.ts:4271 [preparedExactLexicalModuleInit]       !ctx.standalone &&
+src/codegen/index.ts:4272 [preparedExactLexicalModuleInit]       !ctx.wasi &&
+src/codegen/index.ts:4275 [preparedExactLexicalModuleInit]     (ctx.nativeStrings &&
+src/codegen/index.ts:4276 [preparedExactLexicalModuleInit]       ctx.standalone &&
+src/codegen/index.ts:4277 [preparedExactLexicalModuleInit]       !ctx.wasi &&
+src/codegen/index.ts:4287 [preparedExactLexicalModuleInit]     (ctx.wasi &&
+src/codegen/index.ts:4288 [preparedExactLexicalModuleInit]       ctx.nativeStrings &&
+src/codegen/index.ts:4292 [preparedExactLexicalModuleInit]     ctx.fast ||
+src/codegen/index.ts:4300 [preparedExactLexicalModuleInit]     (ctx.strictNoHostImports && !ctx.wasi) ||
+src/codegen/index.ts:4442 [preparedLexicalComponentPreflightFailure]     ctx.standalone &&
+src/codegen/index.ts:4443 [preparedLexicalComponentPreflightFailure]     !ctx.wasi &&
+src/codegen/index.ts:4444 [preparedLexicalComponentPreflightFailure]     ctx.nativeStrings &&
+src/codegen/index.ts:4459 [preparedLexicalComponentPreflightFailure]       projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
+src/codegen/index.ts:4594 [planIrFirstBodyRouting]     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+src/codegen/index.ts:4595 [planIrFirstBodyRouting]     fast: ctx.fast,
+src/codegen/index.ts:4996 [emitSharedRuntimeProviderExports]   if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:5034 [generateModule]   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+src/codegen/index.ts:5071 [generateModule]   ctx.wrapperCtorCarrierDemanded = ctx.standalone === true && moduleReadsConstructorProp(ast.sourceFile);
+src/codegen/index.ts:5076 [generateModule]     ctx.standalone === true || ast.sourceFile.text.includes("Reflect.deleteProperty");
+src/codegen/index.ts:5089 [generateModule]   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single");
+src/codegen/index.ts:5107 [generateModule]   if (ctx.standalone) {
+src/codegen/index.ts:5134 [generateModule]   if (ctx.standalone || ctx.wasi) {
+src/codegen/index.ts:5159 [generateModule]     if (ctx.wasi) {
+src/codegen/index.ts:5209 [generateModule]     if (ctx.standalone || ctx.wasi) {
+src/codegen/index.ts:5251 [generateModule]     if (ctx.wasi) {
+src/codegen/index.ts:5269 [generateModule]         ctx.wasi || ctx.standalone ? collectReferencedGlobalNames([ast.sourceFile], ctx.checker) : undefined;
+src/codegen/index.ts:5321 [generateModule]     if (ctx.testRuntime && ctx.nativeStrings) {
+src/codegen/index.ts:5360 [generateModule]     if (sourceContainsClass(ast.sourceFile) && !(ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:5454 [generateModule]     if (ctx.wasi && ctx.linearUint8 && ctx.linearUint8.safeBindings.size > 0) {
+src/codegen/index.ts:5471 [generateModule]     if ((ctx.wasi || ctx.standalone) && sourceContainsBindingPattern(ast.sourceFile)) {
+src/codegen/index.ts:5532 [generateModule]       ctx.standalone &&
+src/codegen/index.ts:5533 [generateModule]       ctx.nativeStrings &&
+src/codegen/index.ts:5534 [generateModule]       !ctx.wasi &&
+src/codegen/index.ts:5535 [generateModule]       !ctx.fast &&
+src/codegen/index.ts:5591 [generateModule]         target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "host",
+src/codegen/index.ts:6582 [generateModule]     if (ctx.wasi) {
+src/codegen/index.ts:6760 [assertNoLeakedHostImports]   const severity: "error" | "warning" | null = ctx.strictNoHostImports
+src/codegen/index.ts:6762 [assertNoLeakedHostImports]     : ctx.standalone && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+src/codegen/index.ts:9435 [registerReassignedFunctionGlobals]   const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
+src/codegen/index.ts:9894 [registerImportBindingAliases]           mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(parameter, localId), ctx.checker, ctx.fast),
+src/codegen/index.ts:9897 [registerImportBindingAliases]         const results = isVoidType(returnType) ? [] : [mapTsTypeToWasm(returnType, ctx.checker, ctx.fast)];
+src/codegen/index.ts:10165 [compileMultiPreparedProgramOverlays]   if (!options?.experimentalIR || ctx.fast || !authority) return;
+src/codegen/index.ts:10167 [compileMultiPreparedProgramOverlays]   const hostImportedFunctions = ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? undefined : resolver;
+src/codegen/index.ts:10214 [generateMultiModule]   if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+src/codegen/index.ts:10226 [generateMultiModule]   if (ctx.standalone || ctx.wasi) {
+src/codegen/index.ts:10235 [generateMultiModule]     ctx.standalone === true && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
+src/codegen/index.ts:10258 [generateMultiModule]   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
+src/codegen/index.ts:10265 [generateMultiModule]     if (ctx.wasi) {
+src/codegen/index.ts:10291 [generateMultiModule]     if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf)) && !(ctx.standalone || ctx.wasi)) {
+src/codegen/index.ts:10328 [generateMultiModule]     if (ctx.wasi) {
+src/codegen/index.ts:10347 [generateMultiModule]           ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
+src/codegen/index.ts:10446 [generateMultiModule]     if (ctx.standalone && process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+src/codegen/index.ts:11223 [generateMultiModule]       if (ctx.wasi) addWasiStartExport(ctx);

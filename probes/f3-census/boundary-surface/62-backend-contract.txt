@@ -1,0 +1,35 @@
+=== backend/contract.ts emitter methods (call/closure/fnctor/extern/funcref)
+=== backend/*.ts closure/callable/call_ref/fnctor/callback mentions (counts)
+src/ir/backend/bytecode-emitter.ts:17
+src/ir/backend/bytecode-vm.ts:16
+src/ir/backend/contract-conformance.ts:10
+src/ir/backend/contract.ts:4
+src/ir/backend/emitter.ts:27
+src/ir/backend/handles.ts:8
+src/ir/backend/legality.ts:31
+src/ir/backend/linear-emitter.ts:14
+src/ir/backend/linear-integration.ts:9
+src/ir/backend/linear-ir-coverage.ts:0
+src/ir/backend/string-contract.ts:0
+src/ir/backend/wasm-int32-coercion.ts:0
+src/ir/backend/wasm-math-minmax.ts:0
+src/ir/backend/wasmgc-emitter.ts:12
+=== legality.ts / linear-ir-coverage.ts kinds
+src/ir/backend/legality.ts:189:  if (instr.kind === "fnctor.new" || instr.kind === "fnctor.get") {
+src/ir/backend/legality.ts:196:        (instr.kind === "fnctor.new" ? lowering.supportsConstruction : lowering.supportsFieldGet);
+src/ir/backend/legality.ts:244:    case "intrinsic":
+src/ir/backend/legality.ts:269:    case "call":
+src/ir/backend/legality.ts:339:    case "intrinsic":
+src/ir/backend/legality.ts:341:    case "call":
+src/ir/backend/legality.ts:402:    case "intrinsic":
+src/ir/backend/legality.ts:404:    case "call":
+src/ir/backend/legality.ts:661:    case "closure.new":
+src/ir/backend/legality.ts:666:    case "class.new":
+src/ir/backend/legality.ts:675:    case "fnctor.new":
+src/ir/backend/legality.ts:678:    case "fnctor.get":
+src/ir/backend/linear-emitter.ts:337:    out.push({ op: "call", funcIdx: vecNewFuncIdx });
+src/ir/backend/linear-emitter.ts:344:      out.push({ op: "call", funcIdx: vecInitF64FuncIdx });
+src/ir/backend/linear-emitter.ts:452:  // Direct call — `{op:"call",funcIdx}` is core Wasm, identical on both backends
+src/ir/backend/linear-emitter.ts:456:    out.push({ op: "call", funcIdx });
+src/ir/backend/linear-emitter.ts:528:    out.push({ op: "call", funcIdx: linear.newFuncIdx });
+src/ir/backend/linear-emitter.ts:552:    out.push({ op: "call", funcIdx: asLinearRefCell(layout).linearMemory.newFuncIdx });

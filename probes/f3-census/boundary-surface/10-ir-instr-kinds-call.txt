@@ -1,0 +1,10 @@
+src/ir/nodes.ts:172://   { kind: "closure", signature }
+src/ir/nodes.ts:176://   { kind: "callable", signature }
+src/ir/nodes.ts:382:  | { readonly kind: "closure"; readonly signature: IrClosureSignature }
+src/ir/nodes.ts:389:  | { readonly kind: "callable"; readonly signature: IrClosureSignature }
+src/ir/nodes.ts:837:  readonly kind: "call";
+src/ir/nodes.ts:860:  | { readonly kind: "callable"; readonly target: IrFuncRef };
+src/ir/nodes.ts:868:  readonly kind: "intrinsic";
+src/ir/nodes.ts:1262:      readonly kind: "callable";
+src/ir/nodes.ts:1364: * Result type: `{ kind: "closure"; signature }`. The Wasm-level SSA carrier is
+src/ir/nodes.ts:1846: * type `{ kind: "callable"; signature }`; both lower to externref.

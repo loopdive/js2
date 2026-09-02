@@ -1,0 +1,54 @@
+=== from-ast 6700-6754 (closure call callee acceptance)
+function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): ts.Expression[] {
+  const out: ts.Expression[] = [];
+  for (const a of args) {
+    if (ts.isSpreadElement(a)) {
+      if (!ts.isArrayLiteralExpression(a.expression)) {
+        demoteToLegacy(
+          "call-resolution-unsupported",
+          `ir/from-ast: dynamic-length spread args not in slice 8a (${ts.SyntaxKind[a.expression.kind]} in ${cx.funcName})`,
+        );
+      }
+      for (const e of a.expression.elements) {
+        if (ts.isSpreadElement(e) || ts.isOmittedExpression(e)) {
+          demoteToLegacy(
+            "call-resolution-unsupported",
+            `ir/from-ast: nested spread / sparse element inside spread arg not in slice 8a (${cx.funcName})`,
+          );
+        }
+        out.push(e);
+      }
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+/**
+ * Slice 3 / #3214 B0: lower a call-by-value to an internal closure or a
+ * boundary callable binding. The lowered `closure.call` emits canonical-root
+ * self, args, root self again, field-0 funcref extraction, and call_ref.
+ * Boundary callables unpack externref through a root cast on each self use;
+ * `collectIrUses`'s double count forces the source SSA value into a local.
+ */
+function isUnshadowedUndefinedExpression(expr: ts.Expression, cx: LowerCtx): boolean {
+  let candidate = expr;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  return (
+    ts.isIdentifier(candidate) &&
+    candidate.text === "undefined" &&
+    !cx.scope.has("undefined") &&
+    cx.resolver?.resolveModuleBinding?.(candidate) === undefined
+  );
+}
+function lowerClosureCall(
+  callee: IrValueId,
+  signature: IrClosureSignature,
+  argExprs: readonly ts.Expression[],
+  cx: LowerCtx,
+  statementPosition = false,
+): IrValueId | null {
+  if (signature.returnType === null && !statementPosition) {
+    unsupportedVoidCallExpression(`ir/from-ast: void closure calls are not in value position scope (${cx.funcName})`);
+  }
+  const expandedArgExprs = expandStaticSpreadArgs(argExprs, cx);
