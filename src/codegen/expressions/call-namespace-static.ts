@@ -295,8 +295,8 @@ function isPlainJsonCodecObjectLiteral(literal: ts.ObjectLiteralExpression): boo
 }
 
 /**
- * (#5269 F3) Is this closed-struct initializer FLAT — no property whose value is
- * itself an object or array literal?
+ * (#5269 F3) Is this closed-struct initializer FLAT — is every property's VALUE
+ * something the shallow materializer can copy across intact?
  *
  * `materializeStructAsDynamicObject` opens the outer struct into a `$Object`,
  * but it copies each field ACROSS AS-IS (`extern.convert_any`). A nested
@@ -304,15 +304,65 @@ function isPlainJsonCodecObjectLiteral(literal: ts.ObjectLiteralExpression): boo
  * recognises and `SerializeJSONObject` silently DROPS the key:
  * `var o = {a:1, b:{c:2}}; JSON.stringify(o, {})` answered `{"a":1}` where node
  * answers `{"a":1,"b":{"c":2}}` — and where the base compiler REFUSED the shape
- * outright (#1599). A wrong answer is strictly worse than a refusal, so a
- * nested shape declines here and keeps the refusal until the materializer can
- * recurse.
+ * outright (#1599). A wrong answer is strictly worse than a refusal.
+ *
+ * (#5269 R2-1) The first cut asked only about the property initializer's
+ * SYNTACTIC KIND, so it saw through the BINDING (`variableInitializerOf` on the
+ * `var o = …`) but not through the property VALUE. Six spellings still dropped
+ * the key — a nested object reached through an identifier, a shorthand, a
+ * parenthesis, a `const`/`let`, a call result, a conditional. So the test now
+ * RESOLVES each value the same way the binding is resolved, and — this is the
+ * load-bearing half — treats anything it cannot resolve (call result,
+ * conditional, parameter, property access) as NOT flat.
+ *
+ * Refusing conservatively is right here: base refused ALL of these shapes, so a
+ * false "not flat" costs only a refusal that already existed, while a false
+ * "flat" silently loses data.
  */
-function isFlatClosedCodecLiteral(literal: ts.ObjectLiteralExpression): boolean {
+function isFlatClosedCodecLiteral(ctx: CodegenContext, literal: ts.ObjectLiteralExpression): boolean {
+  const valueIsFlat = (expr: ts.Expression, depth: number): boolean => {
+    // Bounded: a resolution chain this long is pathological, and refusing is
+    // the safe answer anyway.
+    if (depth > 4) return false;
+    let value: ts.Expression = expr;
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isNonNullExpression(value) ||
+      ts.isSatisfiesExpression(value)
+    ) {
+      value = value.expression;
+    }
+    // A literal of either kind is the original defect.
+    if (ts.isObjectLiteralExpression(value) || ts.isArrayLiteralExpression(value)) return false;
+    // An identifier is flat only if what it is BOUND to is flat. An identifier
+    // with no resolvable initializer (a parameter, an import, a reassigned
+    // binding) is not something this can reason about — refuse.
+    if (ts.isIdentifier(value)) {
+      const init = ctx.oracle.variableInitializerOf(value);
+      return init === undefined ? false : valueIsFlat(init, depth + 1);
+    }
+    // Primitives are the only values the shallow copy is known to carry.
+    return (
+      ts.isStringLiteral(value) ||
+      ts.isNoSubstitutionTemplateLiteral(value) ||
+      ts.isNumericLiteral(value) ||
+      value.kind === ts.SyntaxKind.TrueKeyword ||
+      value.kind === ts.SyntaxKind.FalseKeyword ||
+      value.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isPrefixUnaryExpression(value) &&
+        value.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(value.operand))
+    );
+  };
+
   return literal.properties.every((property) => {
-    if (!ts.isPropertyAssignment(property)) return true;
-    const init = property.initializer;
-    return !ts.isObjectLiteralExpression(init) && !ts.isArrayLiteralExpression(init);
+    // `{ a: 1, c }` — the shorthand's VALUE is the binding `c` names, which is
+    // exactly the spelling that slipped through before.
+    if (ts.isShorthandPropertyAssignment(property)) return valueIsFlat(property.name, 0);
+    if (!ts.isPropertyAssignment(property)) return false;
+    return valueIsFlat(property.initializer, 0);
   });
 }
 
@@ -2885,7 +2935,7 @@ export function compileNamespaceStaticCall(
                   init !== undefined &&
                   ts.isObjectLiteralExpression(init) &&
                   isPlainJsonCodecObjectLiteral(init) &&
-                  !isFlatClosedCodecLiteral(init)
+                  !isFlatClosedCodecLiteral(ctx, init)
                 ) {
                   return undefined;
                 }

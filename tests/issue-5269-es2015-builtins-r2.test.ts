@@ -600,6 +600,36 @@ describe("#5269 F3 — never answer where the base compiler refused", () => {
      ${check("JSON.stringify(o, {})", '{"a":1,"b":2}')}`,
   );
 
+  // (#5269 R2-1) The first F3 cut tested only the property initializer's
+  // syntactic KIND, so it saw through the BINDING but not the property VALUE:
+  // six more spellings still dropped the nested key. Each of these compiled and
+  // answered `{"a":1}` where node answers `{"a":1,"b":{"c":2}}` and base refused
+  // outright. Refusing is the accepted outcome; answering wrongly is not — the
+  // same invariant the direct-literal pin below encodes.
+  for (const [name, src] of [
+    ["via an identifier", "var inner = { c: 2 };\nvar o = { a: 1, b: inner };"],
+    ["via a shorthand", "var b = { c: 2 };\nvar o = { a: 1, b };"],
+    ["via parentheses", "var o = { a: 1, b: ({ c: 2 }) };"],
+    ["via a const binding", "const inner = { c: 2 };\nvar o = { a: 1, b: inner };"],
+    ["via a call result", "function f() { return { c: 2 }; }\nvar o = { a: 1, b: f() };"],
+    ["via a conditional", "var o = { a: 1, b: true ? { c: 2 } : { d: 3 } };"],
+  ] as ReadonlyArray<readonly [string, string]>) {
+    it(`F3 R2-1 — a nested object ${name} refuses rather than dropping a key — standalone`, async () => {
+      const program = `${src}\n       var r = JSON.stringify(o, {});\n       if (r !== '{"a":1,"b":{"c":2}}') { throw new Error("wrong: " + r); }`;
+      const result = await compile(program, {
+        allowJs: true,
+        fileName: "issue-5269-r21.js",
+        skipSemanticDiagnostics: true,
+        inferModuleStrictArguments: false,
+        deferTopLevelInit: true,
+        hostBridge: "always" as const,
+        target: "standalone" as const,
+      } as Parameters<typeof compile>[1]);
+      if (!result.success) return; // refusal — what base did
+      expect(await runLane(program, "standalone")).toBeNull();
+    });
+  }
+
   // The regression itself was a NESTED shape compiling and answering `{"a":1}`.
   // It cannot be pinned as an expected string, because the sanctioned outcome is
   // a compile-time REFUSAL (what base did). So pin the invariant instead:
