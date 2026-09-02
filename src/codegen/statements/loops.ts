@@ -334,6 +334,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
   // #2682: canonical string-read-loop hoist proof + its scoped save/restore.
   let charReadProof: HoistedCharRead | null = null;
   let savedHoistedCharReads: Map<string, HoistedCharRead> | undefined;
+  // (#5271 step 2.2, for-head twin) Every lexical name the head introduces —
+  // the loop-exit restore below must FORGET the ones that had no outer entry to
+  // save, or a head-fresh local outlives its §14.7.4 loop environment and keeps
+  // answering reads of a same-spelled module global.
+  const introducedNames: string[] = [];
   if (
     stmt.initializer &&
     ts.isVariableDeclarationList(stmt.initializer) &&
@@ -344,7 +349,6 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
     // object / nested / rest binding-pattern bindings out of the
     // shadow-tracking. The result was that `for (let [x] = [...]) ...`
     // leaked `x` into the outer scope after the loop terminated.
-    const introducedNames: string[] = [];
     for (const decl of stmt.initializer.declarations) {
       for (const n of collectPatternBindingNames(decl.name)) {
         introducedNames.push(n);
@@ -408,12 +412,21 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
         // §14.7.4) — inside a function it must be a per-invocation local, NEVER a
         // same-named module global (recursion would clobber the shared counter;
         // compiled-acorn's top-level `i` → `$__mod_i` runaway). `let`/`const`
-        // aren't hoisted into `localMap`, so `hasLocalShadow` missed them. Only
-        // `__module_init` (module top level) keeps the global. `var` unchanged.
+        // aren't hoisted into `localMap`, so `hasLocalShadow` missed them.
+        // `var` unchanged.
         // Full write-up in the #3343 issue.
+        //
+        // (#5271 step 2.1) The `__module_init` exception #3343 kept is dropped:
+        // a `let`/`const` head is never REGISTERED as a module global
+        // (`declarations.ts` walks top-level VariableStatements only), so the
+        // global arm could only ever fire on a SAME-SPELLED outer binding — i.e.
+        // only on the bug. `for (let x …)` at module top level with an outer
+        // `let x` wrote the outer global (probe p01: `x === 'inside'` after the
+        // loop). A top-level head with no outer twin already allocated a local
+        // and is unchanged.
         const hasLocalShadow = fctx.localMap.has(name);
-        const blockScopedInsideFunction = !isVar && fctx.name !== "__module_init";
-        const moduleGlobalIdx = hasLocalShadow || blockScopedInsideFunction ? undefined : ctx.moduleGlobals.get(name);
+        const blockScopedFreshBinding = !isVar;
+        const moduleGlobalIdx = hasLocalShadow || blockScopedFreshBinding ? undefined : ctx.moduleGlobals.get(name);
         if (moduleGlobalIdx !== undefined) {
           if (decl.initializer) {
             const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
@@ -602,6 +615,20 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
       perIterCells.push({ name, refCellTypeIdx, boxedLocal });
     }
+  }
+
+  // (#5271 step 2.4) §14.7.4.3 ForBodyEvaluation step 2 runs
+  // CreatePerIterationEnvironment BEFORE the first test, not only at the
+  // iteration boundary. Mint C₁ = struct.new(C₀.value) here and re-aim the
+  // boxed local at it, so a closure built in the HEAD initializer keeps C₀
+  // while a `x = 'inside'` in the test/body/increment mutates C₁ (probe p19,
+  // `statements/for/scope-body-lex-open`). The boundary copy below is
+  // unchanged — together they are spec steps 2 and 3.c.
+  for (const cell of perIterCells) {
+    fctx.body.push({ op: "local.get", index: cell.boxedLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: cell.refCellTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "struct.new", typeIdx: cell.refCellTypeIdx });
+    fctx.body.push({ op: "local.set", index: cell.boxedLocal });
   }
 
   // #1589: Pre-emptive boxing for non-let/const names captured by closures.
@@ -904,6 +931,12 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
     }
   }
 
+  // (#5271 step 2.2, for-head twin) Forget head-fresh slots that hid nothing.
+  for (const name of introducedNames) {
+    if (savedForScope?.has(name)) continue;
+    fctx.localMap.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+  }
   // Restore localMap entries for for-loop let/const initializers
   if (savedForScope) {
     for (const [name, idx] of savedForScope) {

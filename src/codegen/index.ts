@@ -13683,6 +13683,35 @@ export function hoistLetConstWithTdz(
 }
 
 /**
+ * (#5271 step 2.3) Pre-allocate the value slot (and TDZ flag) of a BLOCK's own
+ * direct `let`/`const`/`using` declarations at block ENTRY.
+ *
+ * `hoistLetConstWithTdz` only ever ran for a whole function body, so a block's
+ * lexical binding got its local at the DECLARATION, not at block entry. A
+ * closure built earlier in the same block — `{ p = function(){ return x; };
+ * let x = 'inside'; }` — therefore found no slot named `x` and fell through to
+ * whatever the spelling resolved to outside the block: the enclosing local, or
+ * a same-spelled module global (`__mod_x`). Both are the wrong binding
+ * (§13.2.14: the block's declarative environment is created before ANY of its
+ * statements run), and the module-global case is cluster A of #5271.
+ *
+ * Pass the block's DIRECT statements only. `walkStmtForLetConst` claims a slot
+ * per name and skips names already in `localMap`, so this must run AFTER
+ * `saveBlockScopedShadowsForNames` has hidden the outer entries; it then also
+ * records `preHoistedLetConstSlots`, which is what makes the later
+ * `compileVariableStatement` reuse this slot instead of allocating a second one.
+ */
+export function preallocateBlockScopedSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmts: readonly ts.Statement[],
+): void {
+  for (const stmt of stmts) {
+    if (ts.isVariableStatement(stmt)) walkStmtForLetConst(ctx, fctx, stmt);
+  }
+}
+
+/**
  * Check if a let/const variable needs a TDZ flag by analyzing all references.
  * Returns false if every access to the symbol is provably after the declaration
  * in straight-line code (same function, no closures, loop-local safe).

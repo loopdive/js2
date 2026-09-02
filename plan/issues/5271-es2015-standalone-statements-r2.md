@@ -53,7 +53,16 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/index.ts
   - src/ir/with-environment.ts
+# 2026-09-02 (Opus implementation pass): the block-entry lexical pre-allocation
+# of step 2.3 adds one call at each block-compile site, and step 3's standalone
+# HasBinding native reads ToBoolean through the existing `__is_truthy` engine
+# helper (a CALL to it, not a hand-rolled truthiness matrix — the gate counts
+# the name).
+coercion-sites-allow:
+  - src/codegen/with-has-binding-native.ts
 func-budget-allow:
+  - src/codegen/statements.ts::compileStatementInner
+  - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/statements/loops.ts::compileForStatement
   - src/codegen/statements/loops.ts::compileForInStatement
   - src/codegen/statements/shared.ts::saveBlockScopedShadowsForNames
@@ -604,3 +613,74 @@ the pattern's §8.5.3 IteratorStep count.
 
 - `stmt-cl-E.txt`: **0 → 6 pass** (all six rows).
 - Controls: 20/20. Probe p10 fail → pass.
+
+### Step 2 — module-level lexical shadowing (clusters A + A2 + A3)
+
+Five changes, four of them different from the plan's guesses — the closure half
+was measured, not inherited:
+
+1. `loops.ts compileForStatement`: dropped the `__module_init` exception on the
+   lexical for-head (`blockScopedInsideFunction` → `blockScopedFreshBinding`), so
+   a `let`/`const` head never writes a same-spelled top-level global (p01).
+2. Loop exit + `restoreBlockScopedShadows` now FORGET block/head-fresh locals
+   that hid nothing (`BlockScopeSave.blockNames`, and the for-head's
+   `introducedNames`). Before, a block name whose outer twin was a module
+   GLOBAL left its dead local in `localMap` for the rest of the function (p02).
+3. **New, and the actual cause of `try/scope-catch-block-lex-open`:** a block's
+   own `let`/`const` had no slot until its DECLARATION ran, so a closure built
+   earlier in the same block captured whatever the spelling meant outside the
+   block. `preallocateBlockScopedSlots` (`index.ts`, one pass of the existing
+   `walkStmtForLetConst` over the block's direct VariableStatements) now claims
+   those slots at block ENTRY — plain blocks, `try`, `catch`, `finally`.
+   (The plan attributed this to `promoteAccessorCapturesToGlobals`'
+   name-keyed `moduleGlobals.has` gate; instrumenting `planClosureCaptures`
+   showed the capture was dropped one step earlier, at `localIdx === undefined`
+   — there was no slot to capture at all, in a function body as much as at
+   module level.) Loop bodies were deliberately left out of this change.
+4. `loops.ts`: CreatePerIterationEnvironment now also runs BEFORE the first
+   test (§14.7.4.3 step 2), not only at the iteration boundary (p19).
+5. `eval-inline.ts foldedIndirectEvalReadsCallerBinding`: in `__module_init`,
+   refuse the literal indirect-eval splice while a block-local shadows a
+   same-spelled module global, so `(0,eval)('x;')` resolves globally (p18).
+
+- `stmt-cl-A.txt` + `-A2` + `-A3`: **0 → 8 pass** (all eight rows).
+- Two extra flips outside the step's own list — `{let,const}/block-local-use-
+  before-initialization-in-prior-statement` (cluster B1) — because the
+  block-entry pre-allocation also gives the block's binding its TDZ flag.
+- Controls: 20/20. Full 68-row list: **0 → 16 pass** after steps 1-2.
+
+### Step 3 — `with` Object Environment Record, standalone (cluster D, partial)
+
+**D1 landed.** `src/codegen/with-has-binding-native.ts` registers the DEFINED
+`__with_has_binding_native` (§9.1.1.2.1: HasProperty, then `Get(env,
+@@unscopables)`, then `ToBoolean(Get(unscopables, N))`), and `with-scope.ts`
+routes all three HasBinding gate sites (`emitDynamicWithGet`,
+`emitCaptureWithHasBinding`, `emitDynamicWithDelete`) through it in standalone.
+It is a defined function, never an import, so the module stays host-import-free.
+
+- `stmt-cl-D.txt`: **0 → 3 pass** — `binding-blocked-by-unscopables`,
+  `unscopables-get-err`, `unscopables-prop-get-err`.
+
+**Not done, with measured reasons** (D2-D4; 10 rows + D5 still CE):
+
+- The four `*-in-get-unscopables` rows are blocked by a defect OUTSIDE this
+  issue: a well-known-symbol key written as an object-literal COMPUTED key is
+  invisible to a dynamic symbol-key read. Reduced to a 6-line probe with no
+  `with` in it —
+  `var env = { [Symbol.unscopables]: {a:1} }; var k = Symbol.unscopables;
+  typeof env[k]` answers `"undefined"` (a runtime `env[Symbol.unscopables] = …`
+  write is found correctly, which is why `binding-blocked-by-unscopables`
+  passes). The literal stores the `@@unscopables` STRING member key while
+  `__obj_find` hashes a `$Symbol` key by its ID, so the two spellings never
+  meet. That is symbol-key STORAGE (#5269 / #3537 territory), not `with`.
+- The two `set-mutable-binding-…-typed-array-in-proto-chain` rows need
+  §10.4.5.5 [[Set]] on a TypedArray in the receiver's PROTOTYPE chain to answer
+  `true` for a canonical numeric index string (`"NaN"`) without creating an own
+  property. TypedArray exotic behaviour, not `with`.
+- The three `*-with-proxy-env` rows need D3 (a bare CALLEE inside `with` must
+  resolve through `resolveWithBinding` before the static builtin fold) and, for
+  two of them, a well-known symbol's DESCRIPTION: standalone prints
+  `Symbol()` where the expected log says `Symbol(Symbol.unscopables)`, because
+  nothing seeds `__symbol_desc_table` for well-known ids.
+- D4 (`variable/binding-resolution`, the keyed-destructuring row) and D5 (the
+  loud `unscopables-inc-dec` refusal) are unchanged.

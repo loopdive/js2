@@ -158,3 +158,249 @@ describe("#5271 step 1 — elision-only array patterns step the iterator exactly
     );
   });
 });
+
+describe("#5271 step 2 — module-level lexical shadowing", () => {
+  it("a top-level for-head `let` does not write the same-spelled top-level binding", async () => {
+    // RED on base: `x` reads back "inside" after the loop (the head aliased the global).
+    await expectBothLanes(
+      `
+      let x = 'outside';
+      var probeBefore = function() { return x; };
+      for (let x = 'inside'; false; ) {}
+      LOG("after=" + x);
+      LOG("closure=" + probeBefore());
+    `,
+      ["after=outside", "closure=outside"],
+    );
+  });
+
+  it("a block `let` stops shadowing the same-spelled global once the block closes", async () => {
+    // RED on base: the block-fresh local outlives the block, so `x` reads null.
+    await expectBothLanes(
+      `
+      var probe;
+      let x = 'a';
+      { let x = 'inside'; probe = function() { return x; }; }
+      x = 'outside';
+      LOG("outer=" + x);
+      LOG("block=" + probe());
+    `,
+      ["outer=outside", "block=inside"],
+    );
+  });
+
+  it("a closure built in a block BEFORE the block's `let` captures the block binding", async () => {
+    // RED on base: reads the same-spelled module global ("outside").
+    await expectBothLanes(
+      `
+      var probeBlock;
+      let x = 'outside';
+      { probeBlock = function() { return x; }; let x = 'inside'; }
+      LOG("block=" + probeBlock());
+    `,
+      ["block=inside"],
+    );
+  });
+
+  it("the same, in a catch block", async () => {
+    await expectBothLanes(
+      `
+      var probeBlock;
+      let x = 'outside';
+      try { throw 1; } catch (e) { probeBlock = function() { return x; }; let x = 'inside'; }
+      LOG("block=" + probeBlock());
+    `,
+      ["block=inside"],
+    );
+  });
+
+  it("CreatePerIterationEnvironment runs before the first test (head closure keeps C0)", async () => {
+    // RED on base: probeBefore() reads "inside" — the head closure shared the
+    // cell the condition mutates.
+    await expectBothLanes(
+      `
+      var probeBefore; var run = true;
+      for (let x = 'outside', _ = probeBefore = function() { return x; }; run && (x = 'inside'); ) run = false;
+      LOG("head=" + probeBefore());
+    `,
+      ["head=outside"],
+    );
+  });
+
+  it("the literal indirect-eval fold is REFUSED under a block shadow", async () => {
+    // RED on base: the splice compiled `x` in the module-init frame and read the
+    // block shadow ("inside"); indirect eval must resolve in the GLOBAL
+    // environment. Neither lane can be RUN here — host `__extern_eval` evaluates
+    // in the vitest realm (no global `x`), and the standalone replacement is the
+    // runtime-eval TIER, which this pin does not link — so the assertion is that
+    // the fold was refused. `eval-code/indirect/lex-env-heritage.js` covers the
+    // executed behaviour.
+    const compileStandalone = (body: string) =>
+      compile(`function LOG(s) { console.log(s); }\n${body}\n`, {
+        allowJs: true,
+        fileName: "issue-5271-indirect-eval-shadow.js",
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+        nativeStrings: true,
+        hostBridge: "always",
+        deferTopLevelInit: true,
+      });
+    const shadowed = await compileStandalone(
+      `let x = 'outside';\nvar r;\n{ let x = 'inside'; r = (0,eval)('x;'); }\nLOG("r=" + r);`,
+    );
+    // The refusal routes to the runtime-eval TIER. (`result.imports` does not
+    // list that tier — it is linked below the host-import surface — so the WAT
+    // is what says whether the fold happened.)
+    expect(shadowed.wat ?? "").toContain("runtime-eval");
+    // CONTROL: with no shadow the literal splice still folds, so no tier is
+    // pulled in — the refusal is scoped to the shadowing case, not global.
+    const unshadowed = await compileStandalone(`let y = 'outside';\nvar r2 = (0,eval)('y;');\nLOG("r2=" + r2);`);
+    expect(unshadowed.wat ?? "").not.toContain("runtime-eval");
+  });
+
+  it("CONTROL — a plain block `let` that shadows nothing is unchanged", async () => {
+    await expectBothLanes(
+      `
+      { let a = 1; LOG("a=" + a); }
+      { let a = 2; LOG("a2=" + a); }
+    `,
+      ["a=1", "a2=2"],
+    );
+  });
+
+  it("CONTROL — a top-level `for (let i…)` counter with no outer twin still works", async () => {
+    await expectBothLanes(
+      `
+      var total = 0;
+      for (let i = 0; i < 4; i++) total = total + i;
+      LOG("total=" + total);
+    `,
+      ["total=6"],
+    );
+  });
+
+  it("CONTROL — per-iteration closures still see distinct bindings", async () => {
+    await expectBothLanes(
+      `
+      var fs = [];
+      for (let i = 0; i < 3; i++) fs.push(function() { return i; });
+      LOG("f0=" + fs[0]());
+      LOG("f1=" + fs[1]());
+      LOG("f2=" + fs[2]());
+    `,
+      ["f0=0", "f1=1", "f2=2"],
+    );
+  });
+
+  it("CONTROL — a `var` inside a block still binds the module global", async () => {
+    await expectBothLanes(
+      `
+      var v = 1;
+      { var v = 2; }
+      LOG("v=" + v);
+    `,
+      ["v=2"],
+    );
+  });
+
+  it("CONTROL — indirect eval with no shadow still folds and reads the global", async () => {
+    await expectBothLanes(
+      `
+      let g1 = 'g';
+      LOG("r=" + (0,eval)('g1;'));
+    `,
+      ["r=g"],
+    );
+  });
+
+  it("CONTROL — nested same-named for-heads keep their own bindings", async () => {
+    await expectBothLanes(
+      `
+      var out = '';
+      for (let i = 0; i < 2; i++) { for (let i = 10; i < 12; i++) out = out + i; out = out + '|'; }
+      LOG("out=" + out);
+    `,
+      ["out=1011|1011|"],
+    );
+  });
+});
+
+describe("#5271 step 3 — `with` HasBinding applies @@unscopables (standalone)", () => {
+  it("a true-coercing @@unscopables entry blocks the object-environment binding", async () => {
+    // RED on base: standalone gated `with` on HasProperty alone, so `x` read 1.
+    await expectBothLanes(
+      `
+      var x = 2;
+      var env = { x: 1 };
+      env[Symbol.unscopables] = { x: true };
+      with (env) { LOG("x=" + x); }
+    `,
+      ["x=2"],
+    );
+  });
+
+  // The next two are STANDALONE-only pins. Both shapes are also wrong in the
+  // JS-host lane on this tree (host answers `x=2` for a FALSY entry, and never
+  // propagates a throwing getter), but that is the `env::__with_has_binding`
+  // host import's own behaviour — untouched by #5271, which only adds the
+  // standalone twin. Pinning the host lane here would encode a separate bug.
+  it("a falsy @@unscopables entry does NOT block it", async () => {
+    expect(
+      await runStandalone(`
+      var x = 2;
+      var env = { x: 1 };
+      env[Symbol.unscopables] = { x: false };
+      with (env) { LOG("x=" + x); }
+    `),
+    ).toEqual(["x=1"]);
+  });
+
+  it("a throwing @@unscopables getter propagates out of the lookup", async () => {
+    expect(
+      await runStandalone(`
+      var x = 2;
+      var env = { x: 1 };
+      var thrown = 'none';
+      Object.defineProperty(env, Symbol.unscopables, { get: function() { throw new TypeError('boom'); } });
+      try { with (env) { x; } } catch (e) { thrown = e.name; }
+      LOG("thrown=" + thrown);
+    `),
+    ).toEqual(["thrown=TypeError"]);
+  });
+
+  it("CONTROL — an ordinary `with` with no @@unscopables still reads the env property", async () => {
+    await expectBothLanes(
+      `
+      var a = 'outer';
+      var env = { a: 'inner', b: 'only-inner' };
+      with (env) { LOG("a=" + a); LOG("b=" + b); }
+      LOG("after=" + a);
+    `,
+      ["a=inner", "b=only-inner", "after=outer"],
+    );
+  });
+
+  it("CONTROL — a name absent from the env still cascades to the outer binding", async () => {
+    await expectBothLanes(
+      `
+      var outerOnly = 'outer';
+      var env = { other: 1 };
+      with (env) { LOG("v=" + outerOnly); }
+    `,
+      ["v=outer"],
+    );
+  });
+
+  it("CONTROL — a `with` write still lands on the env property", async () => {
+    await expectBothLanes(
+      `
+      var w = 'outer';
+      var env = { w: 'inner' };
+      with (env) { w = 'written'; }
+      LOG("env=" + env.w);
+      LOG("outer=" + w);
+    `,
+      ["env=written", "outer=outer"],
+    );
+  });
+});
