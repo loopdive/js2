@@ -4589,6 +4589,1515 @@ emitters (`emitStringConcat`, `emitStringLen` — each belongs to its own slice)
 `booleanBoundary`, `externIsUndefined`, `generatorNumberBox`, `stringCompare` —
 all unchanged.
 
+## 2026-09-02 F2-S6 implementation plan — batched many-arity string concat under manifest policy (family 2, slice 6)
+
+Written by the Fable planning lane against the verified census grounded at
+`origin/main` `a07f65319f` (F2-S4 merged as PR #5460). `origin/main` has since
+moved to `5f13a35bc6` (#5464/#5465 test-rot rewrites, npm-compat refreshes):
+**no `src/` delta** against the grounding, so every `src/` line below holds on
+both — but `scripts/loc-budget-baseline.json` moved 40 lines in that window
+(plus six test files: `imported-string-constants`, `issue-320`, `issue-3517-*`,
+`issue-3529-*`), so the LOC ceilings the lane is measured against are NOT the
+grounding's (see V-D). In flight: **F2-S5 (`string.concat` pair arm) on
+`claude/issue-3526-f2s5-string-concat`**, tip `6d6425c8e3` (one squash commit
++ a main merge) — **PR #5467, open and auto-parked 2026-09-02 07:48 UTC on
+collateral from #5224 (diagnosis in the PR thread); confirm it has merged
+before enqueueing**. It adds
+`StringConcatPolicy` (branch `runtime-manifest.ts:273`),
+`integrationStringConcatPolicy` (branch `integration.ts:1012-1014`,
+`nativeStrings ? native : host`), `irStringConcatDemand` (`:1029`),
+`preparedStringConcatProvider` (branch `intrinsic-support.ts:433`), the
+partition block (`:3954`), and
+`tests/issue-3526-string-boundary-concat.test.ts` whose "leaves the BATCHED
+many-arity family byte-identical — the F2-S6 fence" test (branch `:464-492`)
+is this slice's front-line fence. **Every `integration.ts` line below moves
+again when F2-S5 lands** — observed at `6d6425c8e3` (not census-verified): the
+batch selection `:3678` → `:3732` (+54), the two arms `:6360/:6369` →
+`:6435/:6444` (+75), the freeze call `:3918` → `:3993`,
+`preregisterCallableProviders` `:7084` → `:7178`. Content anchors govern: the
+batch selection is the `const hostBatchedConcat = !ctx.nativeStrings && …`
+pair; the arms are the two `ref.binding.kind === "intrinsic"` branches keyed
+on `IR_ASYNC_STRING_CONCAT_5_FN` and `parseIrStringConcatManyArity(symbol) !==
+null`; the policy/demand functions go beside `integrationStringConcatPolicy` /
+`irStringConcatDemand`; the partition block beside
+`stringConcatPolicy.concat === "unsupported"`.
+
+**Sequencing (predecessor stacking).** F2-S6 reuses F2-S5's `stringConcat`
+policy as its provider selector, so branch from
+`origin/claude/issue-3526-f2s5-string-concat`, re-merge it whenever it changes,
+and **enqueue only after F2-S5 merges** — a real wait, not a formality. F2-S7
+(`charCodeAt`) can stack on F2-S5 the same way (policy field +
+`#selectProvider` branch + partition block — mechanical adjacency, not a
+dependency). F2-S8 (`string.const`) is last and hardest.
+
+Census artifacts (originals under the planning session's scratchpad
+`/tmp/claude-0/-home-user-js2/28d6498f-fc64-5f6d-952c-7075f472bc2f/scratchpad/`,
+verified present 2026-09-02; **durable copies under `probes/f2s6/`,
+`probes/f2s7/` and `probes/f2s8/` on branch `claude/probe-artifacts-2026-09-02`,
+`.txt` suffix, never merged — fetch that branch from another container**): `census-f2s6-batched-concat.md` (its `## verdict`
+`wrongSites`/`corrections` override the body); `f2s6/f2s6-matrix.mts` (driver:
+14 fixtures CAT/CAT3/CAT4/CAT5/CAT8/CAT9/TPL3/TPL6/TPLEQ/LITRUN/MULTIUSE/
+CATNUM3/ASYNC/EVALFN × 6 lanes incl. `gc-strict`; the wasi edge cell is NOT in
+it — the census measured that by a separate probe); `f2s6/f2s6-instrument.py`
+(reach counters — **known defect**: `ctx.mod.funcs.length` throws, fix to
+`ctx.mod.functions`; it carries no shift-ref/shift-map patch);
+`f2s6/f2s6-shift.mts` (the shift re-run driver over CAT3/TPLEQ/CATNUM3/ASYNC —
+the verdict's shift figures come from it plus a re-created patch, "results then
+match", so they ARE reproducible once the patch is re-created);
+`f2s6/f2s6-policy.mts` (walks `scripts/check-host-import-policy.ts`'s
+`const probes = {` on both gate lanes and counts `env.__concat_*`);
+`f2s6/matrix.{md,json,out}` (the 84-cell BEFORE record). Siblings for the
+ranking table: `f2-cca-matrix.mts`, `f2-cca-instrument.py`,
+`f2-cca-matrix-before.{md,json}`, `f2-cca-probe-strict.mts`,
+`f2-cca-pin-clean.out`, `f2-cca-pins-instrumented.out` + `census-charcodeat.md`;
+`census-string-const-matrix.{mts,md,json}`, `census-string-const-instrument.py`,
+`census-string-const-probe{,2,3}.mts`, `census-string-const-run.out` +
+`census-string-const.md`.
+
+### What moves and what does not (census, 84 cells)
+
+The seam is the **batched** many-arity family: the `batchStringConcat` pass
+(`src/ir/passes/batch-string-concat.ts:77`) fuses any single-use immutable
+`string.concat` tree of ≥3 leaves (`:21` predicate, `:198` arity cap, `:199`
+3-leaf floor) into one `call` on the free-form intrinsic symbol
+`string.concat$arityN` (`:266`; `src/ir/string-runtime.ts:44/67-70/74`),
+lowered to `env.__concat_N` (host, late-minted) or `__str_concat_N` (native,
+3..8, `src/codegen/native-batched-concat.ts:20-21`, `ensureNativeBatchedConcat`
+`:37`, `mintDefinedFunc` `:65`). A second symbol, `async.string.concat$arity5`
+(`src/ir/async-semantic-runtime.ts:7`, produced at
+`src/codegen/async-ir-planning.ts:849-850` behind `isPreparedIrAsyncConcat`
+`:679`), has its own arm with the identical lowering.
+
+| # | site | what it reads | fate |
+| --- | --- | --- | --- |
+| 1 | `src/ir/integration.ts:3678` `hostBatchedConcat` | `!nativeStrings && !standalone && !wasi && !strictNoHostImports` | **moves** — reads the frozen `stringConcatMany.batch` |
+| 2 | `src/ir/integration.ts:3679` `standaloneBatchedConcat` | `nativeStrings && standalone && !wasi` | **moves** — same |
+| 3 | `src/ir/integration.ts:3680-3684` pass call | literal `8` (a copy of `MAX_BATCHED_CONCAT_ARITY`) or ∞ | **moves** — cap derived from the provider row |
+| 4 | `src/ir/integration.ts:6360-6368` async5 arm | `ctx.nativeStrings ? ensureNativeBatchedConcat(ctx, 5) : ensureLateImport("__concat_5")` | **moves** — reads `preparedStringConcatManyProvider(prepared, 5)`; symbol and condition kept |
+| 5 | `src/ir/integration.ts:6369-6377` many-arity arm | same, per arity | **moves** — same helper |
+| 6 | `src/codegen/string-ops.ts:1762` legacy native twin | `noJsHost(ctx)` (`js-errors.ts:29`) + `JS2WASM_NATIVE_BATCHED_CONCAT` | **stays outside** — demoted functions only |
+| 7 | `src/codegen/string-ops.ts:1835-1862` `compileBatchedConcat` (+ folded-arity-2 `:2055-2058`) | no lane read; legacy host twin | **stays outside** |
+| 8 | `src/codegen/expressions/eval-inline.ts:2372` | `new Function` body join → `__concat_${pieces}` | **stays outside**; 0 reaches in the matrix |
+| 9 | `src/codegen/expressions/late-imports.ts:400` `ensureLateImport` (`:551/:554` shift open + `addImport`) | other names only; `__concat_N` falls through to raw `env` | unchanged; the host arm keeps calling it |
+| 10 | `src/runtime.ts:11415`, `scripts/generate-size-benchmarks.ts:136` | prefix-matched JS providers | unchanged |
+| 11 | `src/host-import-policy.ts:76` + `:151-152`, `src/compiler/import-manifest.ts:323` | classification: builtin fallthrough → `legacy-semantic / ecmascript-runtime` | unchanged (out of scope) |
+| 12 | `src/ir/backend/linear-integration.ts`, `src/codegen/stdlib-selfhost.ts` policy blocks | — | gain `stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED` |
+
+Measured (14 fixtures × 6 lanes = 84 cells, compile-only — bytes, sha,
+ordered import list, reach counts; no cell was executed; the wasi edge cell is
+an 85th measurement outside `matrix.md`):
+
+- **Only `gc-host` and `standalone` batch.** Flag tuples
+  `(nativeStrings, standalone, wasi, strict)`: gc-host `(F,F,F,F)`→host;
+  standalone `(T,T,F,F)`→native; gc-native-strings `(T,F,F,F)`, wasi
+  `(T,F,T,T)`, gc-strict `(T,F,F,T)`→none; linear never enters the pass.
+- **Host is unbounded, native caps at 8**: CAT3/4/5/8/9 → `env.__concat_N#0`;
+  CAT9 standalone declines (`batch-cap 9>8`, 8 pairwise `__str_concat`). TPL3
+  (6 leaves) → `_6`, TPL6 → `_7`.
+- **Import position is the byte-identity lever, not funcidx shifting.** The
+  `wasm:js-string` 5-import block (`src/codegen/registry/imports.ts:629`
+  `addStringImports`) is registered pre-Phase-3, so the host arm mints
+  `__concat_N` at import index 5 (`late-import new@imp5`), index 6 on CATNUM3
+  after `number_toString`, index 97 on ASYNC inside an open batch (`__concat_5#21`
+  of 27 after dead-import elimination). Those mints happen **inside the walk of
+  `preregisterCallableProviders`** (`integration.ts:7084`; it calls the resolve
+  arms via `resolveAndObserveCallableProvider` `:7118-7120` and seals with
+  `flushLateImportShifts(ctx, null)` `:7130`) — `batchOpen=false` at every
+  IR-arm registration except ASYNC. `flushLateImportShifts`
+  (`late-imports.ts:686`) ran (+1@5; ASYNC +2@96) but moved **0 instruction refs
+  and 0 funcMap entries** in all four measured host cells — every defined
+  function is on a stable handle (`src/emit/resolve-layout.ts:80`
+  `STABLE_FUNC_BASE = 1 << 21`). ASYNC gc-strict and gc-native-strings DO carry
+  live-regime flushes (26 refs / 18 map; 75 map) but none is a `__concat_N`
+  registration — **those lanes never mint it**; a flush AT a `__concat_N` site
+  on a live-regime module remains unmeasured (census unmeasured #3).
+- **`!ctx.wasi` in the host selector is LIVE**, not redundant: the edge cell
+  `{target:"wasi", nativeStrings:false, strictNoHostImports:false}` compiles
+  (CAT3: 1000 bytes, `wasm:js-string.concat`, pairwise) and only `!ctx.wasi`
+  keeps the pass off there. The standalone selector's `!ctx.wasi` IS
+  unreachable (`src/target-profile.ts:68-69` throws on wasi∧standalone).
+- **The legacy twins batch where the IR pass does not.** CATNUM3
+  (`operand-coercion-unsupported`) → gc-host `env.__concat_3#1` via
+  `compileBatchedConcat`; standalone/wasi `__str_concat_3` via the native twin;
+  ASYNC wasi → `__str_concat_5` ×2 (one mint, one cache hit) with the IR pass off.
+- **`check:host-import-policy`** (bare, unpatched tree, exit 0): native-first
+  imports **395/395**, compat legacy-semantic **23/23** — both AT ceiling.
+  `__concat_*` in the ratcheted counts: **zero**; the only `__concat_` the gate
+  ever produces is `env.__concat_3` on the compat `errors` probe, via the LEGACY
+  twin, in an unratcheted inventory. Not re-run on a modified tree (probe P5).
+- Cross-census check: CAT3 gc-host reproduces sha-for-sha (149/`4677a84a2dcd`
+  in this census and in F2-S5's fence test). F2-S5's other fence cell, TPL
+  (`${a}!`, 173/`a6702c76db07`), is not an F2-S6 fixture; no other cross-census
+  sha claim is made.
+
+**Conformance yield is zero by design.** Both authorities exist; the slice moves
+WHICH authority the IR pass and its two arms consult. The 84-cell matrix (+ the
+edge cell) must come back identical, batching cells included.
+
+### Design — a pass policy, a family feature, and F2-S5's provider selector
+
+Three facts force the shape. (1) **The pass creates the demand**, so it needs
+a frozen decision of its own —
+`StringConcatManyPolicy { readonly batch: "host" | "native" | "off" }`, projected
+from the lane as the two predicates **verbatim** (`nativeStrings ? (standalone ?
+"native" : "off") : (standalone || wasi || strictNoHostImports) ? "off" : "host"`)
+— not the census's simplified form, because the wasi term is live. (2) **The two
+resolve arms today read `ctx.nativeStrings` alone**, i.e. exactly F2-S5's
+`stringConcat.concat`, independent of the pass — so the provider row for the
+family feature is selected by **`this.#policy.stringConcat.concat`**, not by
+`batch`. A cross-policy rule at canonicalization refuses `batch !== "off" &&
+batch !== stringConcat.concat` (nearest existing `RuntimeManifestInvariantCode`
+`:614`, F2-S4's precedent; do not grow the union). **It cannot fire from the
+projections** — `integrationStringConcatPolicy` is `nativeStrings ? native :
+host` and `batch` is `native` only under `nativeStrings`, `host` only under
+`!nativeStrings` — so it guards hand-built policies only (one (b) pin); the
+async5 argument in P4 rests on `stringConcat.concat` alone. Alternative — the
+census's self-contained `{ batch, maxArity }` policy that also selects the row:
+rejected, `maxArity` would be a third copy of the native cap, and it would
+silently re-route the async5 arm on any lane where that producer fires with the
+pass off. (3) **Demand is scanned AFTER the pass**, from the batched IR:
+`irStringConcatManyDemand(fns)` returns the sorted unique arities of every
+`call` whose target symbol parses via `parseIrStringConcatManyArity` or equals
+`IR_ASYNC_STRING_CONCAT_5_FN`. A module with no fused root freezes **no** family
+row (CAT, LITRUN, MULTIUSE on gc-host), matching F2-S5's "no row when nothing
+concatenates". Alternative — request the feature whenever `batch !== "off"`:
+rejected as vacuous manifests on every gc-host module. Pass and freeze already
+sit in one function (`compileIrPathFunctions` `:1808`: pass `:3678-3684`,
+freeze `:3918`); P2 confirms what the freeze input carries.
+
+**Manifest vocabulary the slice adds (each tied to a measured fact):**
+
+- **A func-family capability record**, new kind `"func-family"`, id
+  `string.concat.many`, module `env`, `field: { scheme: "arity-suffix", prefix: "__concat_" }`,
+  `params: { repeat: "externref", min: 3, max: null }`, `results: ["externref"]`.
+  A separate record kind, not a widening of
+  `RuntimeHostCapabilityFuncRecord.field: string` / `params: readonly Value[]`
+  (`src/ir/runtime-host-capabilities.ts:171/:173`, exact-matched at `:393-397`):
+  widening would make every `resolveRuntimeHostCapabilityFuncRecord` (`:498`)
+  consumer handle a scheme it can never receive. **The id goes in a THIRD list
+  `RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS` with its own
+  `RuntimeHostCapabilityFuncFamilyId` type** — NOT in
+  `RUNTIME_HOST_CAPABILITY_FUNC_IDS` (`:52`): putting it there would make
+  `RuntimeHostCapabilityFuncId` (`:73`) admit it, so a plain `host-callable
+  { capability: "string.concat.many" }` would type-check and be caught only by
+  the runtime throw in `asCallableRuntimeHostCapabilityRecord` (`:453-460`) at
+  `ADMITTED_CALLABLE_TARGETS` module init — exactly the typed-half hole F2-S2
+  closed for globals (`runtime-manifest.ts:480-486`). With the third list,
+  `host-callable-family.capability` is typed on the family half and
+  `host-callable` cannot name it. `RUNTIME_HOST_CAPABILITY_IDS` becomes the
+  sorted three-way union. A new
+  `resolveRuntimeHostCapabilityFuncFamilyRecord(id, arity)` synthesizes the
+  physical row `{ module, field: prefix + arity, params: repeat × arity, results }`;
+  the plain resolver and `asCallableRuntimeHostCapabilityRecord` throw on a
+  family id (the latter already does, `:456`). Scheme list: a new frozen
+  `RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES` (the global-only list is
+  `:147`); `RUNTIME_HOST_CAPABILITY_KINDS` (`:134`) gains `"func-family"`.
+- **Two implementation kinds** on `RuntimeProviderImplementation`
+  (`src/ir/runtime-manifest.ts:485/:493` are the one-capability / one-symbol
+  arms): `host-callable-family { capability: RuntimeHostCapabilityFuncFamilyId }`
+  and `runtime-callable-family { symbolPrefix: "__str_concat_", arity: { min: 3, max: 8 } }`.
+  The native range lives **here once**; `native-batched-concat.ts:20-21` imports
+  it (`codegen → ir/runtime-manifest` is the direction `stdlib-selfhost.ts`
+  already uses) and the literal `8` at `integration.ts:3683` is deleted.
+  Alternative — keep the constants in `native-batched-concat.ts` and pin equality
+  by test: rejected (two copies plus a pin is the census's risk #5 verbatim).
+  **Registration stays in the arms (late minting).** Today's mint IS the resolve
+  arm executing inside `preregisterCallableProviders`' walk; nothing changes
+  there. What must hold is that no consumer maps a family row or record to a
+  concrete import earlier: `ADMITTED_CALLABLE_TARGETS`
+  (`intrinsic-support.ts:77-100`) already skips any kind that is not
+  `host-callable`/`runtime-callable` (`:81` positive check — pin it, no edit);
+  `IntrinsicRuntimeProviderImplementation` (`runtime-manifest.ts:528`, an
+  `Extract`) must not admit the family kinds; the async attachment filter
+  (`intrinsic-support.ts:605-613`, `:653`; `async-plan.ts:442`;
+  `async-runtime-providers.ts:120`) selects by `isAsyncHostCapabilityId` and so
+  never sees the record; `canonicalizeRuntimeHostCapabilityCatalog` (`:463`,
+  called `runtime-manifest.ts:1661`) and `assertRuntimeHostCapabilityRecord`
+  (`:359`) must accept a scheme-field record. Late minting is kept because bytes
+  depend on import order (ASYNC `#21 of 27`); a freeze-time registration would
+  move every batching cell by design and touch both at-ceiling ratchets.
+- **No signature family — the census's option (b).** `string.concat$arityN` /
+  `async.string.concat$arity5` are free-form symbols, not `IntrinsicId`s, and
+  `IntrinsicSignature` is fixed-arity (`src/ir/intrinsics.ts:184`). The rows
+  carry **no `signature`**; the record's params scheme plus the native row's
+  arity range are the only shape statements, and the host arm derives its
+  `ensureLateImport` params from the record, so the record IS the checked
+  contract. Alternative (a), an `IntrinsicSignatureFamily` on both rows:
+  rejected because `provider-signature-mismatch` (`runtime-manifest.ts:1627-1636`,
+  `signatureEquals` `:1280`) fires only when `RUNTIME_FEATURE_SIGNATURES[feature]`
+  (`:655`) exists — F2-S5 registered no entry for `js.string.concat` (grep on
+  `6d6425c8e3`: none), so a family signature would be checked by nothing unless
+  `RUNTIME_FEATURE_SIGNATURES`'s value type and `signatureEquals` were widened
+  manifest-wide for one feature. The symbols stay outside `INTRINSIC_DEFINITIONS`.
+- **Cap derivation**: `stringConcatManyArityCap(batch)` in `runtime-manifest.ts`
+  reads the static rows — `"host"` → the family record's `params.max` (`null` →
+  `Number.POSITIVE_INFINITY`), `"native"` → the native row's `arity.max` (8).
+  `tests/ir/passes.test.ts:489` keeps its numeric third parameter and does not move.
+
+What the slice governs after landing: the IR pass and the two IR resolve arms.
+What it does NOT govern, stated so `batch: "off"` on wasi is read correctly:
+the legacy twins (sites 6-8) still mint `__concat_N` / `__str_concat_N` on
+demoted functions (CATNUM3 on every lane, ASYNC wasi ×2, the policy gate's
+`errors` probe). The policy describes the IR pipeline, not the module.
+
+### Contract
+
+**A. `src/ir/runtime-manifest.ts`**
+
+1. `StringConcatManyPolicy { readonly batch: "host" | "native" | "off" }`,
+   frozen `STRING_CONCAT_MANY_POLICY_DISABLED = { batch: "off" }`, after F2-S5's
+   `STRING_CONCAT_POLICY_DISABLED`; `RuntimeManifestPolicy.stringConcatMany?`,
+   `FrozenRuntimeManifestPolicy.stringConcatMany`, canonicalization beside the
+   `stringConcat ?? STRING_CONCAT_POLICY_DISABLED` line, plus the cross-policy
+   rule (design fact 2).
+2. The two family implementation kinds on the union (`:485-495` neighbourhood);
+   validation rules beside the `carrier-field` triad: a `host-callable-family`
+   names a `RuntimeHostCapabilityFuncFamilyId`; a `runtime-callable-family`
+   requests no host capability, has `min ≥ 3`, `max ≥ min`, safe integers;
+   `symbolPrefix` non-empty. Keep both kinds OUT of
+   `IntrinsicRuntimeProviderImplementation` (`:528`).
+3. `STRING_CONCAT_MANY_RUNTIME_FEATURES = ["js.string.concat.many"]`,
+   `STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS = ["host.js.string.concat.many", "native.js.string.concat.many"]`;
+   splice into `RuntimeFeature` (main `:68` neighbourhood), `RuntimeProviderId`
+   (branch `:503-514`, one member per family), the `RUNTIME_FEATURES` /
+   `RUNTIME_PROVIDER_IDS` arrays (branch `:1394/:1408`), `RUNTIME_PROVIDERS`.
+   Rows: host → `host-callable-family` on `["string.concat.many"]`; native →
+   `runtime-callable-family` with `[]`; neither carries `signature`; no
+   `RUNTIME_FEATURE_SIGNATURES` entry (design bullet 3).
+4. `stringConcatManyProviderId(policy)` keyed on `policy.stringConcat.concat`,
+   `isStringConcatManyFeature`, a `#selectProvider` branch after F2-S5's
+   `isStringConcatFeature` branch (branch `:2066-2068`), refusal text
+   `` `runtime feature ${feature} is unavailable under string-concat policy concat=${…} (many-arity family)` ``.
+5. `stringConcatManyArityCap(batch)` (design bullet 4), exported for
+   `integration.ts` and `native-batched-concat.ts`.
+
+**B. `src/ir/intrinsic-support.ts`** (nothing in `intrinsics.ts`)
+
+6. `stringConcatManyDemand?: { readonly arities: readonly number[] }` on the
+   prepare input (sibling of `stringConcatDemand`, branch `:561`), in the
+   freeze-nothing conjunction (branch `:601-602`) and `requestFeature` when
+   non-empty; `STRING_CONCAT_MANY_RUNTIME_FEATURE` beside branch `:408`.
+7. `preparedStringConcatManyProvider(prepared, arity)` → `{ arm: "host"; module;
+   field; params; results } | { arm: "native"; symbol } | undefined`, host via
+   `resolveRuntimeHostCapabilityFuncFamilyRecord(capability, arity)`, native as
+   `` `${symbolPrefix}${arity}` `` after checking `arity` against the row's range
+   (out of range → throw `` `IR string-concat-many provider ${id} does not cover arity ${arity}` ``).
+8. `ADMITTED_CALLABLE_TARGETS` (`:77-100`): no edit — `:81` already skips the
+   family kinds; the (a) pin asserts it.
+
+**C. `src/ir/integration.ts`** (content anchors; lines are main's)
+
+9. `integrationStringConcatManyPolicy(ctx)` beside `integrationStringConcatPolicy`
+   — the verbatim projection of `:3678-3679`. Wired into the freeze policy object
+   (branch `:1106`) and computed in the partition loop beside
+   `stringConcatPolicy` (branch `:3843`).
+10. `irStringConcatManyDemand(fns)` beside `irStringConcatDemand`; passed as
+    `stringConcatManyDemand` at the freeze input. Partition block beside F2-S5's
+    (branch `:3954`): `stringConcatPolicy.concat === "unsupported"` and a
+    non-empty many-arity demand → `late-preparation-unsupported`
+    `"ir/integration: batched string concatenation has no provider under string-concat policy concat=…"`.
+11. `:3678-3684` becomes: `const manyPolicy = integrationStringConcatManyPolicy(ctx);`
+    `const batched = manyPolicy.batch === "off" ? hygienic : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(manyPolicy.batch));`
+    — no `ctx.nativeStrings/standalone/wasi/strictNoHostImports`, no literal `8`.
+12. The two arms (`:6360-6377`) keep their conditions and both routines; the
+    decision becomes `const arm = preparedStringConcatManyProvider(prepared, arity)`
+    (`arity = 5` in the async5 arm); `!arm` →
+    `IrInvariantError("selection-preparation-mismatch", "resolve", "batched string concatenation has no frozen provider under the string-concat policy")`;
+    native → `ensureNativeBatchedConcat(ctx, arity)` (unchanged); host →
+    `ensureLateImport(ctx, arm.field, arm.params, arm.results, arm.module)` —
+    the SAME call as today, now fed by the row. No `ctx.nativeStrings` in either
+    arm. Symbols and producers untouched (alternative — fold
+    `async.string.concat$arity5` into the `string.concat$arityN` family: a
+    from-ast/async-planning refactor with its own census; deferred, see the table).
+13. Not touched: `src/ir/passes/batch-string-concat.ts` (reads `maxArity` as
+    before), `src/ir/string-runtime.ts`, `src/ir/async-semantic-runtime.ts`,
+    `src/codegen/async-ir-planning.ts`, `preregisterCallableProviders`, sites
+    6-11, `late-imports.ts`.
+
+**D. Adapters.** `src/ir/backend/linear-integration.ts` and
+`src/codegen/stdlib-selfhost.ts` (branch `:78` import, `:513` policy block)
+gain `stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED` beside the F2-S5
+`stringConcat:` line. Neither passes a many-arity demand; the linear lane never
+enters the pass (measured: no batch-decision event on any linear cell).
+`src/codegen/native-batched-concat.ts:20-21` import the range from the native
+row; `ensureNativeBatchedConcat`'s guard text unchanged.
+
+**E. `src/ir/runtime-host-capabilities.ts`** — the `func-family` record kind on
+`RuntimeHostCapabilityRecord` (`:191`); `RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS`
++ `RuntimeHostCapabilityFuncFamilyId` + `isRuntimeHostCapabilityFuncFamilyId`
+(beside `:52/:73`); `RUNTIME_HOST_CAPABILITY_IDS` as the sorted three-way union;
+`"func-family"` in `RUNTIME_HOST_CAPABILITY_KINDS` (`:134`); the scheme list;
+the record in `RUNTIME_HOST_CAPABILITY_RECORDS` (`:255`); the
+`assertRuntimeHostCapabilityRecord` arm (`:359`: scheme in list, non-empty
+prefix, `min ≥ 3` — the measured floor at pass `:199`, `string-runtime.ts:67-70`
+and `native-batched-concat.ts:20` — `max === null || max ≥ min`);
+`canonicalizeRuntimeHostCapabilityCatalog` (`:463`) accepting the kind; the
+family resolver; the plain resolver (`:498`) throwing on a family id.
+
+**F. Tests.** New `tests/issue-3526-string-boundary-concat-many.test.ts`, anatomy
+from F2-S5's concat suite:
+
+- (a) contract — ONE feature, TWO family rows, NO signature on either and no
+  `RUNTIME_FEATURE_SIGNATURES` entry; the host row names `string.concat.many`,
+  `isRuntimeHostCapabilityFuncFamilyId` true / `isRuntimeHostCapabilityFuncId`
+  false for it; the record is `func-family` with `arity-suffix` / `__concat_`,
+  params `repeat externref min 3 max null`, result externref;
+  `resolveRuntimeHostCapabilityFuncFamilyRecord("string.concat.many", 7)`
+  yields `env.__concat_7` with 7 externref params; the plain resolver and
+  `asCallableRuntimeHostCapabilityRecord` throw on the family id; the async
+  projection excludes the rows; neither family row is an admitted callable
+  target; the native row's range is `{3, 8}` and `MAX_BATCHED_CONCAT_ARITY`
+  equals it by import, not by copy.
+- (b) policy — `batch` projection table for all six lanes PLUS the edge cell
+  `{target:"wasi", nativeStrings:false, strictNoHostImports:false}` → `off`
+  (structural pin: no `__concat_`, `wasm:js-string.concat` present); the
+  cross-policy rule refuses a hand-built `{batch:"host"}` with `{concat:"native"}`
+  (its only pin — unreachable from projections); default closed and published;
+  no row when nothing fuses (CAT, MULTIUSE); a fused module freezes exactly
+  `["js.string.concat.many"]`; row selected by `stringConcat.concat`; refusal
+  names `string-concat policy` and `many-arity`.
+- (c) end-to-end — gc-host sha pins from `f2s6/matrix.md` (CAT3 149/`4677a84a2dcd`
+  — **deliberately the same cell F2-S5's fence pins**, so a red is attributed to
+  whichever slice landed last; CAT9 167/`c11957fc8004`, TPL6 235/`1d7f766908cf`,
+  TPLEQ 246/`7e6dac42d3c7`; CATNUM3 199/`a4af808e0009` as the legacy-twin
+  control) with ordered import lists (`env.__concat_3` / `wasm:js-string.equals,
+  env.__concat_3` / `env.number_toString, env.__concat_3`); standalone pinned
+  structurally (`$__str_concat_N` present; CAT9 stays 8× pairwise, no `_9` —
+  F2-S5's checkpoint explains why standalone sha pins are a trap); ASYNC gc-host
+  `__concat_5` ×2; a runtime oracle for 3-, 6- and 9-operand chains and a
+  template on host and native-strings lanes (empty leaves, surrogate halves,
+  non-ASCII BMP, a numeric-looking leaf).
+- (d) source pins — batch selection contains `integrationStringConcatManyPolicy(`
+  and `stringConcatManyArityCap(`, no `nativeStrings`/`standalone`/`wasi`/
+  `strictNoHostImports`, no literal `8`; both arms contain
+  `preparedStringConcatManyProvider(`, no `nativeStrings`; the host arm still
+  contains `ensureLateImport(` (late minting is the contract, pin it); the
+  partition block names `string-concat policy`.
+- (e) fail-closed — an unfrozen family (prepared manifest without the feature)
+  makes the arm throw `selection-preparation-mismatch`; a `runtime-callable-family`
+  row asked for arity 9 throws the range error.
+- (f) validation — a `host-callable` naming the family id is a type error
+  (`// @ts-expect-error`) and a `host-callable-family` naming a plain func id
+  throws; `runtime-callable-family` with a host capability throws
+  `unknown-host-capability`; `min: 2` throws; a `func-family` record with an
+  unknown scheme throws.
+
+Existing pins that move, each a named edit, all in
+`tests/issue-3526-string-boundary-schema.test.ts`: `:135-136` (FUNC∪GLOBAL
+sorted-union identity → three-way union); `:137` `toHaveLength(18)` → 19;
+`:138` sorted list gains `string.concat.many`; `:163`
+`RUNTIME_HOST_CAPABILITY_KINDS` → `["func", "func-family", "global"]` (or the
+order E chooses); `:173-186` two-way `kind` branch gains a `func-family` arm
+(scheme in the family scheme list, module `env`, `params.repeat`). `:409` holds
+by construction (`canonicalize…` sorts; `:407-408` prove order-independence)
+once E's canonicalizer accepts the kind; **`:378` `STILL_UNPROVIDED_IDS` does
+NOT move** (`NEW_IDS` `:75-82` is a fixed six-id list). Frozen-policy default
+pins in the compare / eq / len / concat suites and the whole-shape pin in
+`tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:444` neighbourhood
+(F2-S4 divergence 2: not in `issue-3526-ir-runtime-manifest`) gain
+`stringConcatMany: { batch: "off" }`.
+Fences that must NOT move: `tests/issue-958-concat-chain.test.ts:41/50/59`,
+`tests/issue-3523-ir-calendar-retirement.test.ts:471-472`,
+`tests/issue-3523-ir-algorithms-retirement.test.ts:347-349/432-433`,
+`tests/issue-4124-ir-final-async.test.ts:750/760`,
+`tests/issue-3522-ir-builtins-retirement.test.ts:395` (host arm and legacy twin
+keep one spelling), `tests/issue-1470-standalone-string-imports.test.ts:21`
+(`/^env::__concat_\d+$/`), `tests/issue-1342.test.ts:98`,
+`tests/issue-4566-standalone-algorithms-module-init.test.ts:295-297/419-421`,
+`tests/issue-4574-standalone-native-async-family.test.ts:444`,
+`tests/native-batched-string-concat.test.ts:48/60` (legacy env kill-switch,
+untouched), `tests/ir/passes.test.ts:489`, and F2-S5's "F2-S6 fence" test
+(`tests/issue-3526-string-boundary-concat.test.ts:464-492` on the branch).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — the BEFORE byte matrix on the lane's own base** (F2-S5 tip merged
+  with `origin/main`), uninstrumented, all 84 cells via `f2s6/f2s6-matrix.mts`
+  **plus the wasi edge cell added to the driver** (85). Expected: identical to
+  `f2s6/matrix.md` (F2-S5 is byte-neutral by its own 65/65 V-A); any
+  difference is a finding about F2-S5, reported, not absorbed. For reach
+  counts, fix the instrument's `ctx.mod.funcs` first and establish the
+  instrumentation is byte-inert.
+- **P2 — what the freeze input carries.** Pass and freeze are in one function
+  (`compileIrPathFunctions` `:1808`; pass `:3678-3684` binds `fn: final`
+  `:3684`; freeze `prepareBuiltFnRuntimeManifest(ctx, …, healthyForLower)`
+  `:3918`, branch `:3993`, called once per compile). Confirm `healthyForLower`
+  carries the batched `final` (so the post-pass demand scan sees every fused
+  root), confirm the same holds for the `<module-init>` entry, and confirm no
+  reader of the family symbols sits between pass and freeze. (The string.const
+  census's "two passes per compile" is `prepareStrings` scan events, not
+  manifest freezes.)
+- **P3 — consumers of the widened types.** Enumerate every `switch`/`if` on
+  `implementation.kind` (`ADMITTED_CALLABLE_TARGETS` `:81`;
+  `IntrinsicRuntimeProviderImplementation` `runtime-manifest.ts:528`), every
+  `hostCapabilityRecords` / `RUNTIME_HOST_CAPABILITY_RECORDS` consumer
+  (`canonicalizeRuntimeHostCapabilityCatalog` `:463` ← `runtime-manifest.ts:1661`;
+  `asCallableRuntimeHostCapabilityRecord` `:453-460`;
+  `assertRuntimeHostCapabilityRecord` `:359`; async attachment
+  `intrinsic-support.ts:605-613/:653`, `async-plan.ts:442`,
+  `async-runtime-providers.ts:120`), and the #3520/#3521 suites. Expected: every
+  one either skips the family kind by an existing positive check or is edited in
+  E; **anything that maps a family row/record to a concrete import before the
+  resolve arm is a STOP** until excluded. (`catalogProgramAbiCallableImports`,
+  `program-abi-import-planning.ts:911`, catalogs ctx imports, not records —
+  not a consumer.)
+- **P4 — async5 off-lane.** Does `isPreparedIrAsyncConcat`
+  (`async-ir-planning.ts:679`, behind the `:849-850` producer) consult the lane?
+  Compile an async final-main that does not demote on gc-native-strings and on
+  gc-strict. If the async5 ref can be minted with `batch === "off"`, today's arm
+  resolves it via `nativeStrings` — row selection on `stringConcat.concat`
+  reproduces that; record which lane. If it cannot, say so.
+- **P5 — the two at-ceiling ratchets and the red baseline.** Run
+  `check:host-import-policy` bare on the modified tree (expected: 395/395,
+  23/23 unchanged — inferred by the census, never re-run) and measure the
+  standing-red set on the base BEFORE editing: #5465 rewrote the 17 #5274 pins
+  after the census, so the count is **unmeasured** here — do not copy 17.
+
+### Verification matrix
+
+- **V-A byte neutrality** — 84/84 `matrix.md` cells + the edge cell identical
+  (bytes, sha256, ordered import list with indices, WAT text, demotions) against
+  P1's record; corpus (`website/playground/examples/**`, `examples/**`) on both
+  trees; `check:ir-fallbacks` diffed against a base-tree run (byte-identical
+  output).
+- **V-B pins** — the new suite in full; the moved schema/default pins; every
+  fence above green; F2-S5's concat suite green unchanged.
+- **V-C non-vacuity**, each revert independent against the kept schema. Counts
+  are **unmeasured until run** — F2-S4 and F2-S5 both found the row revert
+  larger than predicted; record the measured sets. Predicted: revert item 11
+  only → the (d) batch-selection pins, bytes unchanged (the projection is
+  verbatim); revert item 12 only → the (d) arm pins + the (e) unfrozen-family
+  pin, bytes unchanged (the arms fall back to the same lane read — this is why
+  (e) is load-bearing; the (a) range-import pin is unaffected); revert the two
+  rows only → (a)/(b) and, because the arms now fail closed, every (c)
+  end-to-end batching pin (the F2-S4 "frozen row is the only physical
+  authority" behaviour); revert the cross-policy rule only → its one (b) pin;
+  revert the range import in `native-batched-concat.ts` only → the (a) equality
+  pin.
+- **V-D gates** — the five ratchets bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)` (`check-loc-budget`,
+  `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+  `check:dead-exports`); `typecheck`, `lint`, `prettier --check`;
+  `check:ir-dialect`, `check:ir-layering` (the `codegen → ir/runtime-manifest`
+  import in `native-batched-concat.ts` must pass it), `check:ir-only`,
+  `check:linear-ir`, `check:host-import-policy` (P5), `check:test-vacuity-shapes`,
+  `check:ir-kind-neutrality` — evidence lines below the inserted functions move
+  again (`forof.string` in `integration.ts`); refresh surgically by sorted-leaf
+  diff, no verdict moves. `check:ir-fallbacks` diffed against base.
+- **LOC** — **unmeasured**; by analogy to two measured slices (F2-S4 +381 with
+  one new kind; F2-S5 +353 measured, against its own +170 estimate) expect
+  roughly +400–500 net src LOC: two implementation kinds with validation, one
+  record kind with resolvers and a third id list, one policy with a cross-policy
+  rule, one demand scan, no signature family. The ceilings moved with
+  `scripts/loc-budget-baseline.json` after the grounding (40 lines,
+  `a07f65319f..5f13a35bc6`) and will move again when F2-S5 lands — measure
+  against the lane's real `LOC_GATE_BASE`, not the census's. Grant every grown
+  path in this file's frontmatter `loc-budget-allow` with a dated F2-S6
+  rationale (new path: `src/codegen/native-batched-concat.ts` if it grows);
+  **never edit `scripts/*-baseline.json` for LOC.** One PR, two commits (E
+  first, then A-D/F) — a separate S6a record-only PR was considered and
+  rejected: a record nothing reads gives V-C nothing to revert against.
+
+### Out of scope
+
+Sites 6-11 (the legacy twins incl. folded arity-2 `string-ops.ts:2055-2058`,
+`eval-inline.ts:2372`, the JS providers, the `__concat_N` classification — a
+typed intent changes 0 ratcheted counts and is a gate-policy change); unifying
+`async.string.concat$arity5` into the family symbol; a signature family /
+widening `RUNTIME_FEATURE_SIGNATURES`; `batch-string-concat.ts` internals
+beyond the cap argument; the `operand-coercion-unsupported` demotions; wasi's
+legacy-only batching; `__concat_2` corpus presence and corpus-wide arity counts
+(unmeasured); registration timing of the host import; `charCodeAt`,
+`string.const`, `stringMethodPlan`, `src/ir/from-ast.ts`.
+
+### After this slice (ranked)
+
+| rank | boundary | why / decision already taken |
+| --- | --- | --- |
+| **F2-S7** | `charCodeAt` | stacks on F2-S5 (policy field + `#selectProvider` branch + partition block); census `census-charcodeat.md` — two-record host row (`string.char_code_at`, `string.len`) behind a defined helper: reuse `runtime-callable` rows naming the helper symbol, not a new composed-callable kind (the helper is minted by `char-code-at-helpers.ts` either way; a kind would describe codegen, not authority) |
+| **F2-S8** | `string.const` | last and hardest: `host-global` / `native-global` kinds, derived field, two namespaces, oversized materializer, legacy pre-pass minting is the ORDER authority (`census-string-const.md`) — the IR seam re-labels globals it finds, it does not mint them; say so in that plan |
+| later | async5 symbol unification | producer refactor (`async-ir-planning.ts:849-850`, `async-semantic-runtime.ts:7`); byte-neutral in principle, touches #4124/#4574 |
+| later | `__concat_N` typed intent | policy-gate spelling; 0 ratcheted-count change |
+| later | signature family | only if `RUNTIME_FEATURE_SIGNATURES` is widened manifest-wide; otherwise unchecked by construction |
+
+## 2026-09-02 F2-S7 implementation plan — charCodeAt under manifest policy (family 2, slice 7)
+
+Written by the Fable planning lane from the verified census
+(`census-charcodeat.md` — durable copy `probes/f2s7/census-charcodeat.md.txt`
+on branch `claude/probe-artifacts-2026-09-02`, original in the planning
+session's scratchpad; its `## verdict` corrections applied) measured at `origin/main` `a07f65319f`.
+`origin/main` is now `5f13a35bc6`, ten commits on; `git diff --stat a07f65319f
+origin/main` over every seam file (`src/ir/integration.ts`,
+`src/ir/runtime-manifest.ts`, `src/ir/intrinsic-support.ts`,
+`src/ir/intrinsics.ts`, `src/codegen/char-code-at-helpers.ts`,
+`src/ir/backend/linear-integration.ts`, `src/codegen/stdlib-selfhost.ts`,
+`src/ir/from-ast.ts`, `src/ir/string-support.ts`) is empty, so every `a07f`
+line below holds on today's main. Two things are in flight and both move this
+plan's anchors:
+
+- **F2-S4 landed** (PR #5460, merge `985de5b65b`). The frozen row is the only
+  physical authority for a seam with no resolve arm (F2-S4 checkpoint,
+  divergence 5); this seam HAS a resolve arm (site 1), so that lesson applies
+  only to the instr path (see V-C).
+- **F2-S5 is PR #5467** on `origin/claude/issue-3526-f2s5-string-concat`
+  (head `6d6425c8e3`, impl commit `b814a01a4c`; open, auto-parked 2026-09-02
+  07:48 UTC on collateral from #5224 — diagnosis in the PR thread). `git diff --numstat a07f65319f
+  b814a01a4c -- src/`: `integration.ts` 116/22 (+94 net), `runtime-manifest.ts`
+  168/4 (+164), `intrinsic-support.ts` 66/1 (+65), `intrinsics.ts` 26/0 (+26),
+  `linear-integration.ts` and `stdlib-selfhost.ts` +2 each — **+353 net**, the
+  figure its own frontmatter grant records (`:225-226` on the branch). It does
+  NOT yet contain today's `origin/main` tip. It touches no charCodeAt line, but
+  **every `integration.ts` anchor below moves when it lands**. Both numberings
+  are given where measured: `a07f` → F2-S5 head; content anchors are given
+  where a line number alone would mislead.
+
+**Sequencing.** Branch from `origin/claude/issue-3526-f2s5-string-concat`
+(predecessor stacking, CLAUDE.md "known dependency"), merge `origin/main` into
+it first, and **enqueue only after F2-S5 merges**; re-merge if F2-S5 changes.
+F2-S6 (many-arity concat) stacks on F2-S5 too and adds the same three
+mechanical things this slice adds (a policy field, a `#selectProvider` branch,
+a partition block) plus the adapter lines and the schema fence — independent
+in substance, adjacent in text; F2-S6 is ranked first, and whichever lands
+second re-merges and re-anchors. F2-S8 (`string.const`) is last.
+
+### What moves and what does not (census, 65 cells)
+
+The seam is `s.charCodeAt(i)`. Two producers reach WasmGC codegen: the
+**plan path** (`from-ast.ts:8673` `stringMethodPlan` → `:8792` an intrinsic
+`call` whose SYMBOL already names the lane, `__jsstr_charCodeAt` or
+`__str_charCodeAt`) and the **instr path** (`from-ast.ts:8661` a
+`string.char_code_at` instruction, minted only with receiver-encoding
+evidence — a literal receiver — carrying the semantic provider
+`__ir_string_char_code_at` attached unconditionally by `string-support.ts:70/:137`).
+Six physical symbols serve it (`char-code-at-helpers.ts:47-80`); this slice
+governs the two GUARDED ones.
+
+| # | site (`a07f` → F2-S5 head) | what it reads | fate |
+| --- | --- | --- | --- |
+| 1 | `integration.ts:6527` → `:6624`, resolve arm `IR_STRING_CHAR_CODE_AT_FN` | `ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx)` | **THE R6-shaped decision** — reads the frozen `stringCharCodeAt` row (4/65 cells: OOB × gc-host, gc-native-strings, standalone, wasi) |
+| 2 | `integration.ts:6417` → `:6492`, arm `JSSTR_CHARCODEAT_FN` | nothing — materializes the plan symbol via `ensureHostCharCodeAtGuarded` (7 cells) | keeps its materializer; **verifies** the symbol against the frozen row (fail-closed) |
+| 3 | `integration.ts:6421` → `:6496`, arm `NATIVE_CHARCODEAT_FN` | nothing — `ensureNativeCharCodeAtHelper` (24 cells) | same as 2 |
+| 4 | `integration.ts:6974` → `:7068`, `emitStringCharCodeAt` adapter fallback | `ctx.nativeStrings` when no provider is attached | **dead** (0/65) — retire fail-closed |
+| 5 | `integration.ts:5898/5907` → `:5973`, `stringMethodPlan` | `ctx.nativeStrings` at PLAN time, baked into the symbol (35/65 cells) | **out of scope** — from-ast-side vocabulary (#2955 discipline); the policy can VERIFY it, not re-decide it |
+| 6 | `integration.ts:6003-6012` → `:6078`, `charReadPlan() {` | `nativeStrings`, three struct-type indices, `standalone`/`wasi`/`strictNoHostImports` | **out of scope** — plan-time; the trusted/hoist arms `:6425`/`:6437` consume it and read no flag |
+| 7 | `integration.ts:7268` → `:7362` (the `if (instr.kind === "call" && … JSSTR_CHARCODEAT_FN \|\| … JSSTR_CHARCODEAT_TRUSTED_FN)` block, `:7361-7365` on the branch), host pre-registration scan | enumerates `JSSTR_CHARCODEAT_FN` / `_TRUSTED_FN` calls | unchanged — it is the ordering guarantee the host helper needs (`addStringImports` before Phase 3) |
+| 8 | `src/ir/backend/linear-integration.ts:1560/1637` | no lane read; `__linear_ir_str_char_code_at` | unchanged; the adapter's policy block (`:683-686` on the branch, `stringConcat` at `:686`) declares DISABLED |
+| 9 | `src/codegen/stdlib-selfhost.ts:510-513` (branch; `stringConcat` at `:513`) | policy block | gains `stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED` |
+
+Measured facts the design rests on (census `numberChecks`, all reproduced on a
+fresh worktree; artefacts under the scratchpad (durable copies in `probes/f2s7/` on
+`claude/probe-artifacts-2026-09-02`, `.txt` suffix), verified by `ls`: driver
+`f2-cca-matrix.mts`, instrumentation `f2-cca-instrument.py`, strict probe
+`f2-cca-probe-strict.mts`, BEFORE record `f2-cca-matrix-before.md` / `.json`,
+pin runs `f2-cca-pin-clean.out` / `f2-cca-pins-instrumented.out`):
+
+- 13 fixtures (LOOP, LOOPSUM, LOOPNC, READ, CONST, NEG, OOB, OMIT, TPL, FOROF,
+  CHAIN, SUBCONST, CLEAN — sources in the census `## fixtures`) × 5 lanes
+  (`{}`, `{nativeStrings:true}`, `standalone`, `wasi`, `linear`) = 65 cells;
+  `emitWat:true` does not change a byte (65/65 same sha).
+- Path totals: plan path 35 (7 gc-host, 24 native lanes, 4 linear); instr
+  path 5 (OOB × 5, of which **4** pass through arm 1 — OOB linear reaches
+  neither the arm nor the GC adapter); hoist/trusted 8 (LOOP, LOOPSUM × 4 GC
+  lanes); demote/fail 12 (SUBCONST × 4 GC via `preferLegacyFlatSubstringCharCodeAt`,
+  FOROF gc-host `charCodeAt on externref not in slice 4`, 7 linear
+  `Unsupported method call: .charCodeAt()`); CLEAN 5. Adapter fallback (site 4)
+  **0/65**.
+- The lane fact is ONE flag: guarded-host ⇔ `!nativeStrings` & no proof;
+  guarded-native ⇔ `nativeStrings` & no proof. `charReadPlan`'s
+  `standalone||wasi||strictNoHostImports` guard IS reachable from `compile()`
+  — only with an explicit `nativeStrings:false`, and the compile then fails on
+  `string_constants.*` under strict mode, so no module is emitted (census
+  verdict; the original "unreachable" claim was wrong).
+- The host provider is a DEFINED helper closing over TWO capability records
+  (`char-code-at-helpers.ts:173-179`: `jsStringImports.get("charCodeAt")` and
+  `.get("length")`, returns `null` if either is missing; sig
+  `(externref,i32)->f64` at `:181`). The native helper is
+  `(ref $AnyString,i32)->f64` (`:239`) and is ALSO `number | null` (`:227`).
+  Neither is an import — the F2-S3 `exactCallableImportIndex(ctx, module, field)`
+  arm template does NOT transfer.
+- Host import block in every emitting gc-host cell: `wasm:js-string.length#0`,
+  `wasm:js-string.charCodeAt#1`; native lanes import nothing FOR THE SEAM
+  (they do carry `env.__str_from_mem/__str_to_mem/__str_extern_len`).
+- OMIT reports the TS diagnostic `Expected 1 arguments, but got 0.` with
+  `success=true` on all five lanes; the plan pads i32 0 (`padOmitted`).
+- Runtime results were NOT executed for the 65 cells (byte/sha/reach only);
+  suites #3931 and #1105 cover the guarded/hoist runtime semantics.
+
+Conformance yield is **zero by design**: both authorities already exist, the
+manifest only decides which answers, and the matrix must come back 65/65
+byte-identical — the LOOP/LOOPSUM cells double as the fence proving the
+hoist/trusted arms were not touched.
+
+### Why one feature, `runtime-callable` rows, and a new signature
+
+**One policy, one feature.** `StringCharCodeAtPolicy { charCodeAt: "host" | "native" | "unsupported" }`
+selects feature `js.string.char_code_at` (the guarded semantic read,
+`(string, i32) -> f64`, NaN out of range) between rows
+`host.js.string.char_code_at` and `native.js.string.char_code_at`. The
+proof-licensed arms (`__jsstr_charCodeAt_trusted`; the `__str_flatten` +
+`__str_flat_charCodeAt` PAIR with a preheader-slot protocol) are a different
+feature with a plan-time decision and a symbol pair no implementation kind
+expresses — **deferred**, not folded in (alternative: a second feature
+`js.string.char_code_at.trusted` whose rows the arms only verify; rejected
+because the native row would have to encode a two-symbol protocol, and the
+decision that picks it lives in `charReadPlan`, outside R6).
+
+**Implementation kind: reuse `runtime-callable` for BOTH rows**, the host row
+carrying `hostCapabilities: ["string.char_code_at", "string.len"]`. Measured
+basis: validation (`runtime-manifest.ts:1716-1760`) forbids capabilities only
+on `host-managed` / `native-managed` / `carrier-field` and requires ≥1 only on
+`host-capability`; nothing forbids them on `runtime-callable`. The two
+tempting kinds do not fit: `host-capability` is bound to the async family
+projection (`projectRuntimeBackendRequirements` `:558`, throws on a host/native
+mix at `:565-570`), and `host-callable` names an IMPORT the arm binds with
+`exactCallableImportIndex`, whereas this provider is a helper minted on
+demand. `ADMITTED_CALLABLE_TARGETS` (`intrinsic-support.ts:77-100`) is keyed
+on `INTRINSIC_DEFINITIONS` entries sharing the provider's feature;
+`js.string.char_code_at` has no `intrinsic` instruction, so the rows contribute
+nothing there — exactly as `native.js.string.eq`. **Alternative, named:** a new
+kind `composed-callable { symbol; capabilities }` stating "defined helper over
+N records" as a first-class fact. Rejected for this slice on cost (F2-S4 shows
+a new kind is a union arm plus a validation triad, +~100 LOC) with no consumer
+that would read the distinction; if a later seam needs it, the two rows here
+migrate in one edit.
+
+**Signature: mint `EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE`** in
+`src/ir/intrinsics.ts` beside `:287-291` — params `[EXTERNREF, I32]`, result
+F64. No existing constant has those params (the eight at `:250-307` plus
+F2-S5's `EXTERNREF_PAIR_TO_REF_EXTERN`). This is the first row whose signature
+is NOT its capability record's ABI (`runtime-host-capabilities.ts:286` is
+`(externref,i32)->i32`): the record is the raw builtin that traps out of range
+(#2003); the seam's semantic shape is the guarded f64. The native row reuses
+the constant nominally, as `native.js.string.eq` does. Do NOT mint an
+`EXTERNREF_I32_TO_I32` twin — that belongs to the deferred trusted feature.
+
+**Demand must count BOTH producers.** An instr-only scan (the F2-S3/F2-S4
+template) freezes a row for 4/65 cells and leaves the 35 plan-path cells with
+nothing to verify against. `irStringCharCodeAtDemand(fns)` = any
+`string.char_code_at` instr OR any `call` whose target is
+`{kind:"intrinsic", symbol: JSSTR_CHARCODEAT_FN | NATIVE_CHARCODEAT_FN}`
+(mirror site 7's enumeration, minus the trusted symbol). The trusted/hoist
+symbols are NOT demand — LOOP/LOOPSUM freeze no row and their arms stay
+untouched.
+
+**The double decision, stated.** The same flag is read at plan time (`:5907`)
+and, after this slice, from the frozen row at resolve. Inside `compile()` they
+cannot disagree (`integrationStringCharCodeAtPolicy` is the same expression).
+They CAN disagree for an adapter that passes a policy AND a demand; the arms at
+sites 2/3 therefore **verify** (symbol ≠ row → `selection-preparation-mismatch`)
+and `unsupported` + demand **partitions the owner** — the policy refuses, it
+never re-lowers. A later slice can neutralise the plan symbol to
+`IR_STRING_CHAR_CODE_AT_FN` so site 1 re-decides for every cell; that is out of
+scope here and named in "After this slice".
+
+**No attach move, no second attach pass.** The semantic provider is already on
+every `string.char_code_at` (`string-support.ts:70/:137`) and site 1
+re-decides at resolve, so nothing needs to run behind the freeze. The F2-S4
+lesson stands: `attachIrStringSupport` is NOT idempotent for a second pass (its
+callable arm re-derives six seams) — do not call it again.
+
+### Contract
+
+**A. `src/ir/runtime-manifest.ts`** (anchors `a07f`; F2-S5 inserts its
+`stringConcat` siblings immediately after every `stringLen` one — place the
+charCodeAt sibling after `stringConcat`'s)
+
+1. `StringCharCodeAtPolicy { readonly charCodeAt: "host" | "native" | "unsupported" }`
+   and frozen `STRING_CHAR_CODE_AT_POLICY_DISABLED`, after `StringLenPolicy`
+   `:240-252` (then F2-S5's concat policy).
+2. `RuntimeManifestPolicy.stringCharCodeAt?` (`:291` sibling),
+   `FrozenRuntimeManifestPolicy.stringCharCodeAt` (`:302`), canonicalization
+   at `:1472/:1481` (`stringCharCodeAt: Object.freeze({ charCodeAt: … })`).
+3. `STRING_CHAR_CODE_AT_RUNTIME_FEATURES = ["js.string.char_code_at"]`,
+   `STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS = ["host.js.string.char_code_at", "native.js.string.char_code_at"]`
+   and their types, spliced where `STRING_LEN_*` are (`:431-436`, the
+   `RuntimeFeature` / `RuntimeProviderId` unions, `RUNTIME_PROVIDERS` `:1238`,
+   `RUNTIME_FEATURES` `:1251`, the id list `:1264`).
+4. **Widen `numberBoundaryProvider`'s `id` / `feature` parameter unions**
+   (`a07f :722`, unions `:723-738`; branch `:788`, where F2-S5 already appended
+   `StringConcatRuntimeProviderId` / `StringConcatRuntimeFeature`) with
+   `StringCharCodeAtRuntimeProviderId` / `StringCharCodeAtRuntimeFeature` —
+   the two rows do not typecheck without it. Then
+   `STRING_CHAR_CODE_AT_RUNTIME_PROVIDERS` via that helper:
+   - `("host.js.string.char_code_at", "js.string.char_code_at", EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE, { kind: "runtime-callable", symbol: "__jsstr_charCodeAt" }, ["string.char_code_at", "string.len"])`
+   - `("native.js.string.char_code_at", "js.string.char_code_at", EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE, { kind: "runtime-callable", symbol: "__str_charCodeAt" }, [])`
+   Doc on the host row: a defined helper CLOSING OVER two records, minted on
+   demand by `ensureHostCharCodeAtGuarded`; the capabilities are what it needs
+   registered, not what it is.
+5. `stringCharCodeAtProviderId(policy)`, `isStringCharCodeAtFeature`, and a
+   `#selectProvider` branch after the len branch (`:1899-1909`; after F2-S5's
+   concat branch), refusal text
+   `` `runtime feature ${feature} is unavailable under string-char-code-at policy charCodeAt=${this.#policy.stringCharCodeAt.charCodeAt}` ``.
+   No new validation rule; no new kind.
+
+**B. `src/ir/intrinsic-support.ts` / `src/ir/intrinsics.ts`**
+
+6. `intrinsics.ts`: `EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE` beside `:287-291`.
+7. `stringCharCodeAtDemand?: boolean` on the prepare input (sibling of
+   `stringLenDemand` `:500`), in the freeze-nothing conjunction (`:538-539`)
+   and the `requestFeature` line (`:551`); `STRING_CHAR_CODE_AT_RUNTIME_FEATURE`
+   const beside `:366`.
+8. `preparedStringCharCodeAtProvider(prepared)` — sibling of
+   `preparedStringLenProvider` (`:382-403`; its `host-callable` branch is
+   `:395`) — returns
+   `{ arm: "host"; symbol: string; capabilities: readonly string[] } | { arm: "native"; symbol: string } | undefined`;
+   the arm is `provider.id === "host.js.string.char_code_at" ? "host" : "native"`
+   (both kinds are `runtime-callable`, so the ID, not the kind, is the
+   discriminator — say so in the doc); any other kind throws
+   `` `IR string-char-code-at provider ${provider.id} is not a charCodeAt implementation` ``.
+
+**C. `src/ir/integration.ts`** (`a07f` → F2-S5 head)
+
+9. `integrationStringCharCodeAtPolicy(ctx)` =
+   `Object.freeze({ charCodeAt: ctx.nativeStrings ? "native" : "host" })` after
+   `integrationStringLenPolicy` (`:970` → `:972`; place it after F2-S5's
+   `integrationStringConcatPolicy` at `:1012`) — the exact fact `:5907` and
+   `:6527` read today. Wire into the freeze policy (len twin `:1068-1074` →
+   `:1123`; place after F2-S5's `stringConcatDemand` line `:1128`) and the
+   partition loop (block after the len block `:3880-3891` → after F2-S5's
+   concat block at `:3954`):
+   `stringCharCodeAtPolicy.charCodeAt === "unsupported" && irStringCharCodeAtDemand([entry.fn])`
+   → `IrUnsupportedError("late-preparation-unsupported", "resolve", "ir/integration: charCodeAt has no provider under string-char-code-at policy charCodeAt=…")`.
+10. `irStringCharCodeAtDemand(fns)` — the two-producer scan above, sibling of
+    `irStringLenDemand` `:983`; passed as `stringCharCodeAtDemand`.
+11. **Site 1** (`:6527` → `:6624`): `const arm = preparedStringCharCodeAtProvider(prepared)`;
+    `!arm` → `IrInvariantError("selection-preparation-mismatch", "resolve", "charCodeAt has no frozen provider under the string-char-code-at policy")`;
+    `arm.arm === "native"` → `index = ensureNativeCharCodeAtHelper(ctx)`; host →
+    `index = ensureHostCharCodeAtGuarded(ctx)`. BOTH helpers return
+    `number | null`; a `null` index keeps today's meaning — it falls to
+    `resolveFunc`'s `unknown-function-ref` invariant (`:6556-6561` →
+    `:6654-6659`, `cannot materialize callable provider …`), a hard compile
+    error, never a late import (the len suite's analogous pin is "fails
+    closed on a missing host import rather than registering a new one",
+    len.test.ts `:540-544`). Site 7's scan and `instrUsesStrings` `:7435`
+    guarantee the imports for both producers. No `ctx.nativeStrings` in the
+    arm; never `funcMap.get(arm.symbol)` (#1072 shadowing — the #3520 pin).
+12. **Sites 2/3** (`:6417`/`:6421` → `:6492`/`:6496`): keep condition and
+    materializer; prepend
+    `const arm = preparedStringCharCodeAtProvider(prepared); if (!arm || arm.symbol !== symbol) throw new IrInvariantError("selection-preparation-mismatch", "resolve", "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row")`.
+    Since demand includes these calls, `prepared` carries the row in every
+    cell that reaches them (P4 confirms nothing mints such a call after the
+    freeze).
+13. **Site 4** (`:6974` → `:7068`): keep the provider branch verbatim; replace
+    the rest with `throw new Error("ir/integration: string.char_code_at has no prepared runtime provider")`
+    — after P3's zero-reach measurement. The `_inputEncoding` parameter stays
+    (`lower.ts:2292` contract shared with linear).
+14. Not touched: `:5898-5910` `stringMethodPlan`, `:5964`
+    `preferLegacyFlatSubstringCharCodeAt`, `:6003-6012` `charReadPlan`,
+    `:6425-6437` hoist/trusted arms, site 7's pre-registration scan,
+    `string-support.ts`, `char-code-at-helpers.ts` bodies, `from-ast.ts`,
+    `lower.ts`, `nodes.ts`, `runtime-host-capabilities.ts` (row `:286` stays).
+
+**D. Adapters.** `src/ir/backend/linear-integration.ts` policy block
+(`:683-686` on the branch) and `src/codegen/stdlib-selfhost.ts` (`:510-513`)
+gain `stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED` after the
+`stringConcat` line (`:686` / `:513`); imports beside the
+`STRING_LEN_POLICY_DISABLED` ones. Neither freeze passes the demand, so
+DISABLED refuses nothing; linear keeps lowering through
+`__linear_ir_str_char_code_at` (measured: READ/CONST/NEG/OMIT/OOB).
+
+**E. Records.** No change to `runtime-host-capabilities.ts`; the `:286`
+`string.char_code_at` and `:304` `string.len` records are what the host row
+names. `scripts/ir-kind-neutrality-baseline.json`: evidence lines below the
+inserted functions move (`forof.string` in `integration.ts`; F2-S5 already
+patched two) — refresh surgically by sorted-leaf diff, no verdict moves;
+`string.char_code_at` stays whatever verdict it carries.
+
+**F. Tests.** New `tests/issue-3526-string-boundary-charcodeat.test.ts`,
+anatomy from the len suite (`tests/issue-3526-string-boundary-len.test.ts`,
+`describe` blocks at `:245/:303/:402/:515/:582/:694`):
+
+- (a) contract — ONE feature; ONE new signature constant (params
+  `[externref, i32]`, result F64; pin it is the only signature with those
+  params); TWO provider ids, both `runtime-callable`; the host row names
+  exactly `["string.char_code_at", "string.len"]` and the native row `[]`; the
+  async projection excludes the seam twice, by two different mechanisms —
+  the capability RECORDS `string.char_code_at` and `string.len` by ID
+  (`asAsyncHostAdapter`'s seven-ID filter, the len precedent at len.test.ts
+  `:280-295`), and the two provider ROWS by KIND
+  (`projectRuntimeBackendRequirements` `:565-585` `continue`s past anything
+  but `host-capability` / `host-managed` / `native-managed`, so a
+  `runtime-callable` row is ignored) — pin both; no `intrinsic` instruction (a
+  charCodeAt-only module freezes no manifest without the demand and exactly
+  `["js.string.char_code_at"]` with it); the frozen manifest's
+  `hostCapabilities` lists both records when host is selected and neither when
+  native is.
+- (b) policy — host arm `{arm:"host", symbol:"__jsstr_charCodeAt"}`; native
+  arm `{arm:"native", symbol:"__str_charCodeAt"}` requesting NO capability;
+  refusal names `string-char-code-at` and the value; default closed and
+  published; independent of compare / eq / len / concat and family 1; no row
+  when nothing calls charCodeAt.
+- (c) end-to-end — host lane keeps `wasm:js-string.length#0`,
+  `wasm:js-string.charCodeAt#1` in the same positions (READ, OOB) and defines
+  `__jsstr_charCodeAt` (WAT); native-strings lanes define `__str_charCodeAt`
+  with no `wasm:js-string` import; a runtime oracle against JS for
+  `charCodeAt` on host, native-strings and linear (linear only READ/CONST/
+  NEG/OMIT/OOB shapes) over: in-range ASCII, NaN out of range (OOB), negative
+  index, omitted index (→ index 0), fractional index (ToIntegerOrInfinity),
+  both halves of a surrogate pair, a BMP non-ASCII code unit; **sha fence**:
+  LOOP and LOOPSUM on all four GC lanes equal the BEFORE record's sha
+  (`f2-cca-matrix-before.json`) — proving the hoist/trusted arms untouched.
+- (d) source pins on site 1 — contains `preparedStringCharCodeAtProvider(`,
+  no `nativeStrings`, no `funcMap`, no `ensureLateImport`, still names
+  `IR_STRING_CHAR_CODE_AT_FN` and both helper names (the fail-closed null
+  covers both arms); sites 2/3 contain the verify line
+  (`arm.symbol !== symbol` + `selection-preparation-mismatch`) and still name
+  their materializers; the partition block names
+  `string-char-code-at policy`; `irStringCharCodeAtDemand`'s source names
+  BOTH `"string.char_code_at"` and the two plan symbols.
+- (e) sub-B — the emitter refuses an unattached `string.char_code_at`
+  (`ir/integration: string.char_code_at has no prepared runtime provider`),
+  accepts an attached one, and its source contains no `nativeStrings`.
+- (f) verify — **source-text pins, not a behavioural fence**: no entry point
+  lets a test inject a manifest policy into `resolveFunc` (the policy is
+  derived from ctx inside `compile()`; the only adapters that pass one, D,
+  pass DISABLED with no demand), the family's one existing mismatch pin
+  (eq.test.ts `:471`) is source-text, and F2-S4's partition/verify pins are
+  too (len.test.ts `:516-544`, `:560-564`). So (f) pins the sites 2/3 verify
+  line and the partition condition
+  (`stringCharCodeAtPolicy.charCodeAt === "unsupported" && irStringCharCodeAtDemand([entry.fn])`)
+  as text. If P6 finds a harness, promote (f) to a behavioural fence and say
+  so in the checkpoint; do not invent one for this slice.
+
+Existing pins that move, each a named edit: `tests/issue-3526-string-boundary-schema.test.ts`
+`PROVIDED_IDS` (`:93` on both trees — `["string.eq","string.len"]` at `a07f`,
+`["string.concat","string.eq","string.len"]` on the branch) gains
+`string.char_code_at`, and the `STILL_UNPROVIDED_IDS` fence (`:378` on both
+trees — `toHaveLength(4)` at `a07f`, `toHaveLength(3)` on the branch) shrinks
+to 2 and asserts positively that a provider names `string.char_code_at`
+(F2-S5's schema churn is at `:77`, `:152`, `:194`, `:212` — these two anchors
+did not move). Frozen-default pins are field-by-field `expect(frozen.policy.X).toEqual(X_POLICY_DISABLED)`
+lines, so the edit is one appended line each —
+`expect(frozen.policy.stringCharCodeAt).toEqual(STRING_CHAR_CODE_AT_POLICY_DISABLED);`
+— after the block's last policy expect: compare `:268` → `:270` (F2-S5's
+`stringConcat` line; the `stringLen` line moved +1 to `:269`), eq `:301` →
+`:303` (`stringLen` at `:302`), len `:350` → `:359` (`stringLen` at `:351`,
+F2-S5 appended concat at the block's END), and F2-S5's concat suite defaults
+block (`it(...)` `:362-376` on the branch, expects `:366-374`, `stringLen` at
+`:374`). The ONE whole-shape policy equality is
+`tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:444` (branch
+`:444-445`, `stringConcat` at `:445`), which gains the object-literal field
+`stringCharCodeAt: { charCodeAt: "unsupported" }` (NOT
+`issue-3526-ir-runtime-manifest.test.ts`, which has no such assertion —
+census correction, and F2-S3/F2-S4 recorded the same). Pins that STAY:
+`tests/issue-3931.test.ts:101-125,158-268,270-305,309-410`,
+`tests/issue-1105-charcodeat.test.ts:38-108` (108-line file, `describe` at
+`:38`), `tests/issue-3520-callable-preregistration.test.ts:13-27` (a user
+export named `__jsstr_charCodeAt` must still compile as a source unit — the
+row's symbol is binding-aware, item 11),
+`tests/string-derived-length-fast-path.test.ts:344`,
+`tests/linear-charcodeat-ascii-fast-path.test.ts:142+`,
+`tests/issue-3521-prepared-component-dependencies.test.ts:50,994,1019` (pins
+the semantic provider on the prepared instr — unchanged), schema `:204-211`
+and `:313`. No existing test pins site 1's source text, so there is no
+"un-migrated charCodeAt arm" fence to invert (unlike concat).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — BEFORE byte matrix on the lane's own base** (post-F2-S5 + `origin/main`
+  merge), `f2-cca-matrix.mts` WITHOUT instrumentation, 65 cells deep-equal to
+  `f2-cca-matrix-before.json` (bytes, sha, ordered import section with
+  indices, demotions). Expected identical — F2-S5 is byte-neutral by its own
+  V-A. If any cell differs, look at **TPL first** (`` `${a}!`.charCodeAt(0) ``,
+  which carries `env.__concat_3#5` on gc-host — the one charCodeAt cell
+  F2-S5's concat policy could plausibly touch); any difference is a finding
+  about F2-S5, reported, not absorbed. Then once WITH `f2-cca-instrument.py`
+  re-anchored to the branch's line numbers, to re-establish the reach counts
+  (`6624/ir-*`, `6492`, `6496`, `7068`).
+- **P2 — readers of `provider.hostCapabilities` on a `runtime-callable` row**:
+  `intrinsic-support.ts:595`, `async-plan.ts:300/405/441`, the frozen
+  manifest's published union. Expected: publication/validation only, nothing
+  mints an import from it (`check:host-import-policy` count unchanged; the
+  gc-host import block stays two entries). If a reader mints, the host row's
+  capabilities must become documentation-only and the finding goes in the
+  checkpoint.
+- **P3 — zero-reach of the site-4 fallback**: temporary `throw` in place of
+  `:7068`'s fallback, the 65-cell matrix (byte-identical with the throw in)
+  and the string suites (`strings`, `native-strings` ×3,
+  `host-string-prefix-suffix-fast-path`, #3931, #4517, #1105, #3520, #3521,
+  `linear-charcodeat-ascii-fast-path`, `string-derived-length-fast-path`, the
+  #3526 string suites incl. concat). **Measure the standing-red control set on
+  the lane's base FIRST** — its red count is **unmeasured** post-#5465 (#5274's
+  five rewritten suites are not in this set, so it says nothing here). The
+  one known red: `string-derived-length-fast-path` "applies immutable
+  derived-result proofs to host strings…" (`illegal cast`, reproduced on
+  `a07f` in `f2-cca-pin-clean.out:20-28`; #5274 did not touch that file) —
+  expected still red, not this slice's, must not be blamed on it.
+- **P4 — every guarded call is visible to the demand scan**: no pass between
+  the freeze and resolve mints a `JSSTR_CHARCODEAT_FN` / `NATIVE_CHARCODEAT_FN`
+  call (planning grep: 0 hits in `src/ir/passes/`, `lower.ts`, `builder.ts`;
+  re-confirm on the branch, including `src/ir/passes/batch-string-concat.ts`,
+  imported at `integration.ts:305` and invoked at `:3681/:3683` → `:3735/:3737`),
+  and no test hand-builds a resolver with those symbols and no prepared
+  manifest (planning grep: only `issue-3520`, which uses `compile()`).
+  Expected: none — otherwise item 12's fail-closed verify would throw where
+  today's arm compiles.
+- **P5 — signature ≠ record ABI**: does any #3526 suite assert a provider's
+  `signature` equals its named capability record's params/results? (Schema
+  `:313` compares record vs import registration, not vs provider.) Expected:
+  none. If one exists it is a finding — extend it to admit the guarded f64
+  shape, do not weaken it, and do not switch the row to the i32 record ABI.
+- **P6 — a policy-injection harness for resolve**: is there any entry point
+  (a `generateModule` / `compileIrPathFunctions` call with a hand-built ctx,
+  or an adapter that passes both a policy and a demand) by which a test can
+  freeze `charCodeAt: "native"` and resolve a function carrying a
+  `__jsstr_charCodeAt` call? Expected (census: unmeasured; planning read:
+  none). If none, (f) stays source-text; if one exists, name it and promote
+  (f) to a behavioural fence (`selection-preparation-mismatch` at resolve;
+  `unsupported` + demand → `late-preparation-unsupported`).
+
+### Verification matrix
+
+- **V-A** byte neutrality — 65/65 cells identical to P1's record (bytes, sha256,
+  import section with indices, demotions, WAT text `diff -r` empty), the
+  LOOP/LOOPSUM hoist cells and the 7 linear compile-fails included; corpus
+  (`website/playground/examples/**`, `examples/**`) × 4 GC lanes on both
+  trees; `check:ir-fallbacks` diffed against a base-tree run (byte-identical).
+- **V-B** pins — the new suite in full; the moved pins named above; #3931,
+  #1105, #3520, #3521 untouched and green; reach counts re-instrumented on the
+  AFTER tree equal the BEFORE (site 1 ×4, site 2 ×7, site 3 ×24, site 4
+  fallback 0).
+- **V-C** non-vacuity, each revert independent against the kept schema
+  (counts unmeasured — record them): revert only site 1 → the (d) site-1 pins
+  fail (and, if P6 promoted (f), the instr-path fence); revert only the
+  sites 2/3 verify → the (d)/(f) verify-line pins fail, nothing else; revert
+  only site 4 → exactly the (e) refusal pin; revert only the demand's
+  plan-symbol half → the (d) demand pin and — because sites 2/3 then find no
+  row — every plan-path (c) pin (expected interlocked, the F2-S4 divergence-5
+  shape, not the F2-S3 prediction); revert only the manifest rows → (a)/(b)
+  and every (c) pin (site 1 is fail-closed on the row).
+- **V-D** gates — the five ratchets bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)` (and once more against the
+  F2-S5 branch tip while stacked); `typecheck`, `lint`, `prettier --check`;
+  `check:ir-dialect`, `check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+  `check:host-import-policy` (no new import, no new builtin),
+  `check:test-vacuity-shapes`, `check:ir-kind-neutrality` (surgical evidence
+  refresh, no verdict moves), `check:ir-fallbacks` diffed against base.
+- **LOC** — estimate +230 net src LOC (one policy, two rows, one signature,
+  the two-producer demand, three arm edits, one retirement; measured
+  comparators: F2-S3 was +260 with a resolve arm — checkpoint `:4560`, grant
+  `:166`; F2-S5 is +353 with two features — numstat above). Grant in this
+  file's frontmatter with a dated F2-S7 rationale, placed **after the F2-S5
+  block** the branch already carries (`:225+` on the branch; the F2-S4 block
+  at `:187-221` is the wording template); **never edit
+  `scripts/*-baseline.json` for LOC**.
+
+### Out of scope
+
+The plan-time lane reads (`stringMethodPlan` `:5898-5907`, `charReadPlan`
+`:6003-6012`, `preferLegacyFlatSubstringCharCodeAt` `:5964`) and the from-ast
+producers; the trusted/hoist feature and arms `:6425`/`:6437`; the
+`char-code-at-helpers.ts` bodies; the SUBCONST demote, the FOROF gc-host
+`charCodeAt on externref` demote and the 7 linear `.charCodeAt()` compile
+failures (pre-existing); `charAt` (`:6520-6525`, its own lane read); the
+`fast: true` lane (not in the matrix — a #3931 config only); the
+`string.len` record's governance (F2-S4); F2-S6's batching pass; F2-S8's
+`string.const`.
+
+### After this slice (ranked)
+
+| rank | boundary | why |
+| --- | --- | --- |
+| **F2-S6** | batched many-arity concat (branch from F2-S5; land BEFORE this slice if both are ready — the adjacency conflict is mechanical either way; census `census-f2s6-batched-concat.md`, drivers under `f2s6/`) | last lane reads in the string block; variadic `env` record scheme + a pass policy |
+| **F2-S8** | `string.const` | hardest: host-global / native-global kinds, derived field, two namespaces; the IR seam is not the minting authority — the plan must say what it governs (census `census-string-const.md`, matrix `census-string-const-matrix.{mts,json,md}`, probes `census-string-const-probe{,2,3}.mts`) |
+| later | neutralise the charCodeAt plan symbol to `IR_STRING_CHAR_CODE_AT_FN` | lets site 1 re-decide for all 35 plan-path cells; removes the double decision this slice only verifies |
+| later | `js.string.char_code_at.trusted` | needs a pair-shaped kind and a plan-time policy hook; the `charAt` arm `:6520` in the same sweep |
+
+## 2026-09-02 F2-S8 implementation plan — string.const under manifest policy (family 2, slice 8)
+
+Written by the Fable planning lane against `origin/main` `5f13a35bc6` (F2-S4
+merged as PR #5460; #5465 rewrote the #5274 red pins). The census was measured
+at `a07f65319f`; `git diff --stat a07f65319f origin/main` over the ten seam
+files (`src/ir/{integration,runtime-manifest,intrinsic-support,string-support,runtime-host-capabilities,nodes}.ts`,
+`src/ir/backend/linear-integration.ts`, `src/codegen/registry/imports.ts`,
+`src/codegen/{native-string-literals,stdlib-selfhost}.ts`) is **empty**, so
+every file:line below holds on `5f13a35bc6` (= HEAD `f1739d2b52` for these
+files). In flight: **F2-S5, PR #5467** on `origin/claude/issue-3526-f2s5-string-concat`,
+tip `6d6425c8e3` (`b814a01a4c` + a merge of `origin/main`; open, auto-parked
+2026-09-02 07:48 UTC on collateral from #5224 — diagnosis in the PR thread). Its change set
+(`git diff --stat origin/main...6d6425c8e3`, 14 files) moves **every B/C/D/F
+anchor here** — measured at the tip: `integration.ts` +138 (`prepareStrings`
+`:7235→:7329`, `if (usesStringOp && !ctx.nativeStrings) {` `:7307→:7401`,
+`storageForConst` `:7369→:7463`, `emitResolvedStringConst` `:6576→:6674`,
+`resolveAndObserveCallableProvider` `:6304→:6379`, `const lengthAttached =`
+`:1089→:1143`); `runtime-manifest.ts` +172 (1967→2131 lines; `RUNTIME_PROVIDERS`
+`:1228→:1369`, the `isStringLenFeature(feature)` branch `:1902→:2048`);
+`intrinsic-support.ts` +67 (`:500→:553`, `:382→:384`, `:77→:79`, `:366→:368`;
+anchors `readonly stringLenDemand?: boolean;`, `export function preparedStringLenProvider(`,
+`const ADMITTED_CALLABLE_TARGETS`); `intrinsics.ts` +26 (appended after
+`:287-291`, which survives); both adapters +2 (`stringConcat: STRING_CONCAT_POLICY_DISABLED,`
+after `stringLen: STRING_LEN_POLICY_DISABLED,`); the schema suite (36 lines),
+the `it("defaults an omitted policy closed` pins (+2/+4/+4), `issue-4104…:442-445`
+(+1), and `scripts/ir-kind-neutrality-baseline.json` (`forof.string` evidence
+`integration.ts:6531→:6629`). F2-S6 (batched concat) and F2-S7 (`charCodeAt`)
+each add a policy field, a `#selectProvider` branch, a partition block and an
+adapter line in the same adjacency. **Re-anchor by content**:
+`function prepareStrings(`, `const storageForConst = (instr: IrInstrStringConst)`,
+`providerRegistry.observe(provider, materialization.funcIdx)`,
+`function emitResolvedStringConst(`, `if (!runtime) return { entries };`,
+`has no provider under string-len policy`, `export const STRING_LEN_RUNTIME_PROVIDERS`.
+
+**Sequencing: the LAST family-2 slice and the hardest.** Dispatch only after
+F2-S5, F2-S6 and F2-S7 have merged, branching from `origin/main` then; if a
+predecessor is still queued, branch from its REAL branch (predecessor
+stacking, never a `gh-readonly-queue/*` ref) and enqueue only after it lands.
+
+### What moves and what does not (census, 78 cells)
+
+The seam is the `string.const` IR instruction (`src/ir/nodes.ts:1205`
+`storage?: IrGlobalRef`, `:1211` `materializer?: IrFuncRef`, mutually
+exclusive) and the attachment in `prepareStrings` that binds one of them. There
+is **no resolve-table arm and no callable**: the attached `IrGlobalRef` IS the
+physical choice, resolved at emission from the Program-ABI plan
+(`integration.ts:6725` `resolveGlobal`) — immune to the legacy path's
+mid-emission index shifts.
+
+| # | site | what it reads | fate |
+| --- | --- | --- | --- |
+| 1 | `src/ir/integration.ts:7370`, `storageForConst` (`:7369`) host arm | `!ctx.nativeStrings` → `programAbiStringConstantRef(ctx, value)` (`src/codegen/program-abi-import-planning.ts:991`) | **THE decision** — reads the frozen `stringConst` policy; gains an exact-global check |
+| 2 | `integration.ts:7378`, native arm | `ctx.programAbiGlobals.prepareNativeStringLiteral(global)` (`program-abi-global-planning.ts:98`) on a `kind:"global"` materialization | the native resolver; moves with the attachment, unchanged |
+| 3 | `integration.ts:7357`, `nativeMaterializationFor` | `!ctx.nativeStrings \|\| ctx.nativeStrTypeIdx < 0` | folds into the native arm (policy says native ⇒ materialize) |
+| 4 | `integration.ts:7360-7363`, encoding read | `ctx.utf8Storage && instr.alloc && ctx.allocRegistry` → `u8:`/`u16:` key | **unchanged** — storage WIDTH, below the policy |
+| 5 | `integration.ts:7382-7392`, `materializerForConst` (observe `:7389`) | `materialization.kind === "callable"` (literal > `ARRAY_NEW_FIXED_MAX` 10000, `native-string-literals.ts:57`) | **unchanged, policy-silent** — moves with the attachment |
+| 6 | `integration.ts:7307-7315`, host pre-registration | `usesStringOp && !ctx.nativeStrings` → `addStringImports` + `addStringConstantGlobal` (`:7314`) per scanned literal | **NOT touched** — the registration / import-ORDER authority; also gates charAt/repeat |
+| 7 | `integration.ts:7398`, the omnibus `attachIrStringSupport` call | `storageForConst`, `materializerForConst` | its `string.const` arm becomes a no-op; a const-only pass runs inside the freeze |
+| 8 | `integration.ts:6589` / `:6596`, `emitResolvedStringConst` (`:6576-6600`) no-storage fallback | `ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0` → inline native literal; else raw `stringGlobalMap` `global.get` | **NOT retired here** — 0 `string.const` reaches in 78 cells, but `extern.regex` (`src/ir/lower.ts:3561`/`:3566`) emits pattern/flags through it with no storage; unmeasured (P3) |
+| 9 | `src/codegen/registry/imports.ts:154` (`-1` sentinel), `:175-177` (`hasLoneSurrogate` → `string_constants16`/`hexCodeUnits`), `:207` (`addHostStringConstantGlobal` refusal, mint `:209`); `src/codegen/declarations/import-collector.ts:1660` (the `if (ctx.nativeStrings)` finalize branch), `:1670` (its `addStringConstantGlobal(ctx, value)` mint), `:1457` (function names) | lane / per-literal | **out of scope** — legacy producers (38 of 39 host mints); `:175-177` is the derivation the two schemes MIRROR, never select |
+| 10 | `src/ir/backend/linear-integration.ts:1576-1593` (data segment); `src/codegen/stdlib-selfhost.ts:508-512` | no lane read / policy block | unchanged; both adapters declare `stringConst: STRING_CONST_POLICY_DISABLED` (`:681-686`, `:508-512`) |
+
+Census — 13 fixtures × 6 lanes (five required + `standalone+utf8`, the only
+way to reach the `u8:` arm) = 78 cells at `a07f65319f`, 21 markers; the
+verifier re-derived 78/78 bytes+sha12 and re-instrumented 54 cells. Artifacts
+under the planning session's scratchpad (all verified by `ls`; durable copies
+in `probes/f2s8/` on branch `claude/probe-artifacts-2026-09-02`, `.txt` suffix): `census-string-const.md` (the census, verdict notes at
+its head), `-matrix.mts` (driver; imports `../src/index.js`, so run from a
+worktree root as `.tmp/sc-matrix.mts`; 13 fixture sources verbatim),
+`-instrument.py` (scratch worktree only; each patch asserts its anchor count),
+`-matrix.md`/`.json` (BEFORE record), `-run.out`, `-probe{,2,3}.mts` (same
+relative import; probe2 has REGEX
+`export function f(s: string): boolean { return /ab+c/i.test(s); }`, probe3
+BOOLTPL `` export function f(b: boolean): string { return `${b}`; } ``);
+`booltpl.mts` and `matrix-wt.mts` — **both hard-wired to the removed worktree
+`/home/user/js2/.claude/worktrees/verify-string-const/src/…`**, re-point first;
+`f2s8-red-recheck.out` (post-#5465 red re-check at `/home/user/js2` HEAD
+`f1739d2b52`). Predecessor drivers: `f2s6/{f2s6-matrix.mts,f2s6-instrument.py,f2s6-policy.mts,f2s6-shift.mts,matrix.md,matrix.json,matrix.out}`
+and `f2-cca-{matrix.mts,instrument.py,matrix-before.md,matrix-before.json,probe-strict.mts}`.
+BOOLTPL and REGEX are cited by the census but NOT in its matrix — add both
+(P1): 15 × 6 = 90 cells.
+
+What it measured:
+
+- **The IR seam is NOT the minting authority on the host lane.** 38 of 39
+  `string_constants` mints came from the legacy collector finalize
+  (`import-collector.ts:1670`, under the `:1660` lane branch), the 39th from
+  `src/codegen/statements/tdz.ts:120` (LATEGLOBAL). `prepareStrings`' own
+  `addStringConstantGlobal` (`:7314`) was `already:true` in 10/10
+  required-fixture host cells (7/7 in the verifier's re-sample); it mints only
+  IR-only literals — BOOLTPL's `"true"`/`"false"`, each triggering
+  `fixupModuleGlobalIndices` (`imports.ts:321`; thresholds 2→3, delta 1;
+  `:7314` is the single-value helper). **So the policy governs the LABEL
+  (which `IrGlobalRef` the instruction carries) on a global something else
+  minted, plus the interned `__strlit_N` on native lanes; not mint time or
+  import order.**
+- **Import order is a three-producer product:** collector func imports first
+  (INIT `env.console_log_string`#0, BOOLTPL `wasm:js-string.concat`#0), then
+  collector literal globals in AST-scan order with `string_constants16`
+  INTERLEAVED (LONE: `sc@0`, `sc16@1` `"0078d8000079"`, `sc@2`), then late
+  imports at their emission point (TPLONLY `env.__concat_3` after 3 globals;
+  LATEGLOBAL `env.__throw_reference_error` between `@2` and `@3`). Nothing in
+  this slice may re-time a registration.
+- **Native lanes: 0 `string_constants` globals in every required fixture**;
+  the seam interns `__strlit_N` (`native-string-literals.ts:117`/`:122`; ASCII
+  2, DUP 3, LONG12000 3 + one `__strlit_materialize_${nativeStrHelpers.size}`
+  helper (`:195`/`:237`), `_43`/`_41` by lane; standalone TPLONLY 6 through
+  the EXISTING batched `__str_concat_N` codegen, `src/codegen/native-batched-concat.ts:37`
+  — F2-S6 is the unlanded plan to govern it, not the producer of today's
+  bytes). The one host global under gc-native-strings (LATEGLOBAL
+  `"n is not defined"@0`) is the LEGACY `imports.ts:207` path — `native` on
+  that lane is not "no `string_constants`".
+- **Two namespaces, one arm:** `string_constants16` is chosen per literal by
+  `hasLoneSurrogate` (`imports.ts:175`; runtime twin `src/runtime/string-constants.ts:11`;
+  one source `src/string-surrogate.ts:26`); PAIR stays in `string_constants`.
+  Not a lane or policy choice. `:6589`/`:6596` reached 0 times for
+  `string.const`; their only producer is `extern.regex`, unfixtured.
+- Linear: 0 imports; ASCII/EMPTY/LONG*/DUP → data segment; BMP/PAIR/LONE and
+  TPLONLY REJECTED (ASCII proof, `src/ir/analysis/linear-string-runtime.ts:13`),
+  visible only in `getLastLinearIrReport()`. Demotions (need
+  `trackIrOutcomes: true`): INITCONST/LATEGLOBAL `body-shape-rejected`; INIT
+  coercion / host-surface. Controls, kept.
+- **The census's "red today" note is stale:** `imported-string-constants` (4)
+  and `issue-320` (1) were red at `a07f`; #5465 (`dff0f43000`) rewrote them —
+  `f2s8-red-recheck.out` on `f1739d2b52`: 29/29 green (8 + 21). P1
+  re-measures on the lane's own base.
+
+Conformance yield is **zero by design**; the matrix must come back 90/90
+byte-identical (bytes, sha256, WAT, ordered import list with indices,
+demotions, linear report text). **What the frozen row governs, plainly:** the
+`js.string.const` row is authoritative for `string.const` INSTRUCTIONS only.
+Regex literals count as demand (item 11) so a regex-only module's
+`hostCapabilityRecords` truthfully names the namespace it imports — but their
+emission stays the `:6596`/`:6589` legacy fallback until the next slice gives
+`extern.regex` a `storage`. The manifest claims the capability; the seam does
+not yet route those two literals through it.
+
+### Why two kinds, two features, one policy
+
+The manifest has no value-shaped provider: of the ten kinds in
+`RuntimeProviderImplementation` (`runtime-manifest.ts:450-522`), lowering can
+act on `host-callable { capability: RuntimeHostCapabilityFuncId }` (`:485-486`;
+a global id there is refused by `#indexProviders` `:1738-1741`, schema suite
+`:560-600`) and `runtime-callable { symbol }` (`:493-494`). The verifier's
+correction stands — `host-capability` (`:470`) CAN already request a global
+id (`hostCapabilities` `:547` is checked against `HOST_CAPABILITY_ID_SET`
+`:1268`/`:1709`; freeze resolves it kind-agnostically, `runtime-host-capabilities.ts:483`
+at `runtime-manifest.ts:1668-1670`) — but `projectRuntimeBackendRequirements`
+(`:558`, `:565`) treats that kind as the ASYNC host family, so reusing it is
+rejected (the charCodeAt census's reason too). What is missing is an
+`implementation` discriminant. Add two kinds:
+
+```ts
+| { readonly kind: "host-global"; readonly capability: RuntimeHostCapabilityGlobalId }
+| { readonly kind: "native-global"; readonly role: "native-string-literal" }
+```
+
+Symbolic, like F2-S4's `carrier-field`: the host row names the GLOBAL record
+(its `field.scheme` is the derivation, never an enumerable field list); the
+native row names the Program-ABI global ROLE
+(`PROGRAM_ABI_GLOBAL_ROLE.nativeStringLiteral`, `program-abi-global-planning.ts:14`,
+applied at `:121`), never an index — the manifest freezes before
+`internNativeStringLiteral` (`native-string-literals.ts:117`) allocates.
+
+| feature | host row | native row |
+| --- | --- | --- |
+| `js.string.const` | `host.js.string.const` — `host-global` on `string.const` (`string_constants`, scheme `literal`) | `native.js.string.const` — `native-global`, role `native-string-literal` |
+| `js.string.const.utf16` | `host.js.string.const.utf16` — `host-global` on `string.const.utf16` (`string_constants16`, `literal-utf16-hex`) | `native.js.string.const.utf16` — `native-global`, same role (a lone surrogate is a plain u16 literal natively) |
+
+Policy `StringConstPolicy { readonly storage: "host" | "native" | "unsupported" }`
+selects the arm for BOTH features. **Values `host`/`native`, not
+`host-global`/`native-global`** — the kinds carry the global-ness, and the
+values stay parallel to `compare`/`eq`/`len`/`concat`. **Two features, not one
+host row requesting both capabilities:** a surrogate-free module freezes only
+`js.string.const` and its `hostCapabilityRecords` names exactly the import
+namespaces it needs; the alternative (one row, `hostCapabilities: ["string.const","string.const.utf16"]`)
+would claim `string_constants16` on every module. The utf16 split stays a
+per-literal DERIVATION inside the host arm, requested as a feature, never
+offered as an arm — as F2-S5 keeps `owned-append` a row fact.
+
+**Signature: ONE nominal constant.** Every `IntrinsicSignature`
+(`src/ir/intrinsics.ts:184-188`) is callable-shaped; add
+`EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE` beside `:287-291` (`params []`, result
+`EXTERNREF_TYPE`); native rows reuse it as `native.js.string.len` reuses
+`EXTERNREF_TO_I32` for a `struct.get`. The alternative — a `valueType` on
+`RuntimeProvider` (`:545-550`) — changes every projection; rejected here.
+
+### Contract
+
+**A. `src/ir/runtime-manifest.ts`**
+
+1. `StringConstPolicy` + frozen `STRING_CONST_POLICY_DISABLED` after F2-S5's
+   `stringConcat` sibling (after `STRING_LEN_POLICY_DISABLED` `:250-252` here).
+   Doc: family 2's last policy; the only one whose arms are VALUES; governs
+   the label, not the mint.
+2. `RuntimeManifestPolicy.stringConst?` (`:291` sibling),
+   `FrozenRuntimeManifestPolicy.stringConst` (`:302`), canonicalization beside
+   `:1472`; `STRING_CONST_RUNTIME_FEATURES` (two ids, the `:431-432` tuple
+   pattern) spliced into `RuntimeFeature` (`:67`), `FEATURE_SET` (`:1243-1251`)
+   and `RUNTIME_FEATURE_SIGNATURES` (`:655`); `STRING_CONST_RUNTIME_PROVIDERS`
+   (four rows, the `STRING_LEN_RUNTIME_PROVIDERS` `:948-962` shape) spliced
+   into `RUNTIME_PROVIDERS` (`:1228`, spread beside `:1238`); id types into
+   `RuntimeProviderId` (`:438`) and the `numberBoundaryProvider{,Id}` unions
+   (`:722`, `:1018`). There is no `RUNTIME_FEATURES` list.
+3. The two kinds on the union `:450-522` ONLY — NOT in
+   `MathRuntimeProviderImplementation` (`:523`) nor the
+   `IntrinsicRuntimeProviderImplementation` `Extract` (`:528`).
+4. Four rows via `numberBoundaryProvider(id, feature, EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE, implementation, hostCapabilities)`
+   — host rows `["string.const"]` / `["string.const.utf16"]`, native rows `[]`.
+5. `stringConstProviderId(feature, policy)`, `isStringConstFeature` (the
+   `:974` shape), a `#selectProvider` branch after F2-S7's (after the
+   `isStringLenFeature(feature)` branch `:1900-1914` here), refusal
+   `provider-target-unavailable`
+   `` `runtime feature ${feature} is unavailable under string-const policy storage=${this.#policy.stringConst.storage}` ``.
+6. Validation beside `:1728-1762`: `host-global` → `capability` satisfies
+   `isRuntimeHostCapabilityGlobalId` (`runtime-host-capabilities.ts:98`) AND
+   appears in `hostCapabilities`; `native-global` → no host capability, `role`
+   is `"native-string-literal"`. Reuse `unknown-host-capability` /
+   `unknown-runtime-provider` (F2-S4 divergence 4).
+
+**B. `src/ir/intrinsic-support.ts` / `src/ir/intrinsics.ts`**
+
+7. `EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE` in `intrinsics.ts` beside `:287-291`.
+8. `stringConstDemand?: { readonly literal: boolean; readonly utf16: boolean }`
+   on the prepare input (sibling of `:500`; F2-S5's `stringConcatDemand` pair
+   at branch `:561` is the precedent), in the "freeze nothing" conjunction
+   (`:536-539`; branch `:601-602`), two `requestFeature` lines (`:551`
+   siblings; branch `:615-616`); constants beside `:366`. **Item 12 depends
+   on the conjunction line.**
+9. `preparedStringConstProvider(prepared, feature)` — sibling of
+   `preparedStringLenProvider` (`:382`) — returns
+   `{ arm: "host"; module; scheme } | { arm: "native"; role } | undefined`;
+   host via a NEW `resolveRuntimeHostCapabilityGlobalRecord` in
+   `runtime-host-capabilities.ts` (twin of `:498`, kind-guarded — `:483` is
+   kind-agnostic, `:498` func-only); anything else throws
+   `` `IR string-const provider ${provider.id} is not a literal-storage implementation` ``.
+   `ADMITTED_CALLABLE_TARGETS` (`:77`, kind filter `:81`) `continue`s on both
+   kinds. The func-only guards are **six** `resolveRuntimeHostCapabilityFuncRecord`
+   call sites on main (`:92/:234/:279/:314/:356/:396`), **seven** on the
+   F2-S5 branch (`:94/:236/:281/:316/:358/:398/:449`), plus the kind guard
+   `asCallableRuntimeHostCapabilityRecord` (`async-runtime-providers.ts:106`)
+   — P4 greps them, never enumerates; none is on a `host-global` row's path.
+
+**C. `src/ir/integration.ts`**
+
+10. `integrationStringConstPolicy(ctx)` =
+    `Object.freeze({ storage: ctx.nativeStrings ? "native" : "host" })` beside
+    `integrationStringLenPolicy` (`:970-971`) — the exact fact `:7370` reads.
+    Wire into the freeze policy (`:1057` sibling) and the partition loop
+    (compute beside the len policy; block beside `:3880-3882`):
+    `storage === "unsupported"` and either demand flag →
+    `IrUnsupportedError("late-preparation-unsupported", "resolve", "ir/integration: string literal storage has no provider under string-const policy storage=…")`.
+11. `irStringConstDemand(fns)` — one scan: `literal` on any `string.const` OR
+    `extern.regex` (mirrors `:7251` `literals.add(instr.value)` and the regex
+    adds `:7294-7295` under `:7291`; a regex literal DOES occupy a
+    `string_constants` global on host, so it is demand — caveat above),
+    `utf16` iff any such literal `hasLoneSurrogate` (import from
+    `src/string-surrogate.ts:26` — `integration.ts` has no such import today;
+    NOT from `src/codegen/`, so `check:ir-layering` does not grow). Passed as
+    `stringConstDemand` beside `:1074`.
+12. **Move the attachment behind the freeze (F2-S4 pattern).** `prepareStrings`
+    (`:7235`) KEEPS the scan, `:7307-7315` verbatim, `attachIrStringCarrier`,
+    `prepareStringCarrier()`, `providerForRepeat`; its `attachIrStringSupport`
+    call (`:7398`) passes `storageForConst: () => undefined` and no
+    `materializerForConst`. The block `:7355-7392` (`nativeMaterializations`,
+    `nativeMaterializationFor`, `storageForConst`, `materializerRefs`,
+    `materializerForConst`) moves into a new
+    `prepareStringConst(ctx, lengthAttached, runtime)` in
+    `prepareBuiltFnRuntimeManifest` (`:1040`), after `prepareStringLength`
+    (`:1089`), before `materializePreparedMathProviders` (`:1090`). **Input is
+    `lengthAttached`** — the output of BOTH prior passes (`prepareStrings` at
+    `:3915`, whose first pass bound `string.repeat`, then `:1089`) — or the
+    exact-binding checks in `string-support.ts:105-107` trip. **It sits after
+    the early return `if (!runtime) return { entries };` (`:1076`), so it runs
+    ONLY because item 8 puts `stringConstDemand` into the freeze-nothing
+    conjunction: a module with any `string.const`/`extern.regex` always
+    freezes.** Break that coupling and literals silently lose `storage` and
+    fall into `:6596` — byte-identical on host (same global), INVISIBLE to
+    V-A; pin (c) guards it. Changes inside the moved block, and only these:
+    `arm(value) = preparedStringConstProvider(runtime, hasLoneSurrogate(value) ? UTF16 : LITERAL)`
+    (`undefined` ⇒ entries unchanged); the host arm keeps
+    `programAbiStringConstantRef` and adds the **exact-global check**
+    `ref.binding.kind === "import" && ref.binding.module === arm.module`
+    (`irImportGlobalRef` carries `module`/`field`, `src/ir/abi-bindings.ts:161-183`;
+    error `ir/integration: prepared string.const has no exact ${arm.module} import global`).
+    That check guards **derivation drift**, not mis-registration:
+    `programAbiStringConstantRef` (`program-abi-import-planning.ts:991-1012`)
+    walks `ctx.mod.imports` to the `stringGlobalMap` index, so its `module` is
+    whatever `imports.ts:175-177` derived — it differs only if
+    `hasLoneSurrogate` in `integration.ts` disagrees with the collector's call
+    (two derivations, one source `string-surrogate.ts:26`). The native arm
+    drops the `!ctx.nativeStrings` read at `:7357`, keeps the physical skips;
+    `materializerForConst` unchanged. Attach through a NEW const-only pass
+    `attachIrStringConstStorage(fn, storageForConst, materializerForConst)`
+    in `string-support.ts` (the `string.const` arm of `:94-119` lifted
+    verbatim) — **not `attachIrStringSupport`**, whose callable arm re-derives
+    providers on a second pass (F2-S4 divergence 1, 4 corpus cells).
+    Order-preservation (P2 proves it): the host arm reads what `:7314`
+    registered — no mint; the native arm's `internNativeStringLiteral` and
+    the oversized `pushDefinedFunc` now run after `prepareIrRuntimeManifest`
+    + `prepareStringLength`, byte-neutral iff nothing in that window pushes a
+    defined or import global (the oversized `funcIdx` is a late-resolved
+    handle, census `2097203`). `providerRegistry.observe` (`:7389`) moves
+    with it — from before `:3918` to inside it, still before
+    `preregisterCallableProviders` (`:4034`) and long before `planRetained()`
+    (`src/codegen/program-abi-finalization.ts:33`) seals the registry
+    (`program-abi-provider-planning.ts:292-297`, `planning-sealed`).
+    LONG12000 native cells and DUP are the fence.
+13. `emitResolvedStringConst` (`:6576-6600`): **unchanged**; P3 measures the
+    `extern.regex` reach, and retiring it needs the regex seam to carry storage.
+14. Not touched: `:7307-7315`, `:7255`, `lower.ts:2254`/`:3561`/`:3566`,
+    `wasmgc-emitter.ts:68`, `from-ast.ts`, `builder.ts:355`, every
+    resolve-table arm, `registry/imports.ts`, `import-collector.ts`,
+    `native-string-literals.ts`, `program-abi-*-planning.ts`.
+
+**D. Adapters.** `linear-integration.ts` gains `stringConst: STRING_CONST_POLICY_DISABLED`
+after the `stringLen` line of `:681-686` (import beside `:142`);
+`stdlib-selfhost.ts` in `:508-512` (import beside `:77`) — both one line
+lower on the F2-S5 branch. Neither freeze passes a const demand, so DISABLED
+refuses nothing; linear `:739-746` is the `usesRepeat ? … : functions` ternary
+whose `attachIrStringSupport` call (`:741-744`) keeps
+`storageForConst: () => undefined` — it runs only when `usesRepeat`.
+
+**E. Records.** `runtime-host-capabilities.ts` rows `:301-302` and `:71`
+unchanged; ADD `resolveRuntimeHostCapabilityGlobalRecord` (item 9).
+`RUNTIME_HOST_CAPABILITY_IDS` stays 18 (schema suite `:137`, same on the F2-S5 branch).
+
+**F. Tests.** New `tests/issue-3526-string-boundary-const.test.ts`, anatomy
+from the len suite:
+
+- (a) contract — TWO feature rows; ONE new signature (`params []`, result
+  externref; pin it is the only empty-params signature); FOUR provider ids;
+  host rows name the two GLOBAL records (module + scheme); async projection and
+  `projectRuntimeBackendRequirements` ignore all four; no `intrinsic`
+  instruction (a literal-only module freezes nothing without the demand,
+  exactly `["js.string.const"]` with `{literal, !utf16}`, both with a lone
+  surrogate).
+- (b) policy — host arm through the GLOBAL record, module and scheme
+  published; native arm names the role, requests NO capability; refusal names
+  `string-const` and `storage=`; omitted policy defaults closed and is
+  published; independent of every sibling policy; a surrogate-free module's
+  `hostCapabilityRecords` has `string.const` and NOT `string.const.utf16`; a
+  regex-only module freezes `js.string.const` (the caveat, pinned).
+- (c) end-to-end — host: ASCII binds `string_constants."hello"` at the SAME
+  position (`"f"@0 "hello"@1 ""@2`); LONE keeps `sc@0 / sc16@1 / sc@2`; BOOLTPL
+  keeps `wasm:js-string.concat`#0 ahead of `"true"`/`"false"`; **every
+  `string.const` in a compiled host module carries `storage` after
+  preparation** (`:6596` reach = 0 for `string.const` — the early-return
+  pin); native: no `string_constants*` import, one `__strlit_N` for DUP's two
+  uses, LONG12000 two chunk globals + a materializer; a runtime oracle on
+  seven literals (`""`, ASCII, BMP, a valid pair, `"x\uD800y"` with `.length`
+  3, 2000 chars, a literal shared by two functions) on host, native-strings
+  and linear (ASCII subset — non-ASCII stays rejected there).
+- (d) source pins on the NEW attach site — contains
+  `preparedStringConstProvider(`, the exact-global error text,
+  `hasLoneSurrogate(`; no `nativeStrings`; `prepareStrings`' source no longer
+  contains `const storageForConst`; the partition block names `string-const policy`.
+- (e) validation — `host-global` on a FUNC id, `host-global` omitting its
+  capability from `hostCapabilities`, `native-global` requesting one: each
+  throws; `role: "vec"` is a `@ts-expect-error`; `host-callable` on
+  `string.const` STILL throws (the F2-S2 refusal is kept, not inverted).
+- (f) the const-only pass — attaches storage / materializer, refuses both or a
+  different binding (`:98-116` messages verbatim), no-op on `string.len` /
+  `string.repeat` (the F2-S4 defect reduced to a unit).
+
+Existing pins to move, each named: schema suite `PROVIDED_IDS` (`:93`) grows
+both const ids; the `STILL_UNPROVIDED_IDS` fence (`:378`; 4 here, 3 on the
+F2-S5 branch) reaches **0 once F2-S7 has landed** — replace it with "every
+NEW_ID is named"; the `:560-600` fail-closed block STAYS and gains the twin
+"a `host-global` row is admitted by `#indexProviders`"; the `:22` comment
+("no provider names any of the six new rows") is rewritten; the defaults pins
+`issue-3526-string-boundary-{compare:254,eq:290,len:346}.test.ts` (each `+1`
+on the branch), `issue-3526-string-boundary-concat.test.ts:362` ("defaults an
+omitted policy closed and publishes the resolved decision", branch only) and
+`tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:442-445` (`:442-446`
+on the branch) gain `stringConst: { storage: "unsupported" }`. **Do NOT
+move:** `tests/issue-3521-prepared-component-dependencies.test.ts:820`
+(constructs `storageForConst` against the retained omnibus interface), schema
+suite `:327`/`:352`, and every suite the census's `## pins` block lists as
+pinning OUTPUTS (`imported-string-constants`, `issue-320`, `issue-1470`,
+`native-strings{,-standalone}`, `issue-1174`/`2515`/`2880`,
+`issue-3520-imported-global-abi:34-54`, the #3523 module-init suites,
+`equivalence/global-index-shift-trycatch`, `ir/passes`, `ir/alloc-provenance`).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — the BEFORE byte matrix on the lane's own base, uninstrumented.**
+  `census-string-const-matrix.mts` + BOOLTPL + REGEX = 90 cells. The 78
+  census cells are expected to reproduce `census-string-const-matrix.md`
+  exactly IF F2-S5/S6/S7's own V-A held on their trees (F2-S5's is not on
+  main; F2-S6/S7 are plans only) — any difference is a finding about the
+  predecessor, reported not absorbed. Record the 12 new cells (no census
+  BEFORE exists). Re-measure the red set on the base: expected 0 in
+  `imported-string-constants` / `issue-320` after #5465; name the residue.
+- **P2 — the window, two questions.** (i) Between `prepareStrings`' return
+  (`:3915`) and the new `prepareStringConst` call inside `:3918`: anything
+  pushing `ctx.mod.globals`, adding an import global, or reading
+  `string.const.storage`/`.materializer`? Grep `prepareIrRuntimeManifest`,
+  `prepareStringLength`, `attachProviders`; expected none (F2-S4's P2 found
+  only intrinsic readers). (ii) `observe` after the freeze: grep `.observe(`
+  in `integration.ts` — expected `:6301`/`:6563` (inside
+  `resolveAndObserveCallableProvider` `:6304-6565`, reached from `:4034` on)
+  and `:7389` only, so the materializer's observation ORDINAL
+  (`sealObservationOrder`, `program-abi-provider-planning.ts:546`) is
+  unchanged; a wrong answer is a loud `planning-sealed` throw, never a silent
+  byte diff. Decisive form for both: block moved + instrumented, LONG12000/DUP
+  native cells byte-identical.
+- **P3 — the fallback's real producer.** Temporary `throw` at `:6589-6600`,
+  90 cells. Expected: every non-REGEX cell byte-identical with the throw in;
+  REGEX/gc-host reaches `:6596` and REGEX/native `:6589` N times (N
+  unmeasured — record it). N = 0 everywhere ⇒ retire the fallback in THIS
+  slice — the sub-B retirement as measured in F2-S3's checkpoint P1 and
+  F2-S4's checkpoint P3 (0 reaches, matrix byte-identical with the throw in)
+  — and say so; N > 0 ⇒ item 13 stands.
+- **P4 — mint timing and closed enumerations.** BOOLTPL with `:7314`
+  instrumented: expected two `already:false` mints, thresholds 2→3, delta 1,
+  still from `prepareStrings` — registration BEFORE the freeze, only the label
+  moved. `grep -n resolveRuntimeHostCapabilityFuncRecord src/ir/*.ts` (six
+  sites on main, seven after F2-S5) plus `asCallableRuntimeHostCapabilityRecord`
+  — confirm none is on the `host-global` path. Grep tests for closed
+  `implementation.kind` enumerations (F2-S4 P1 found none; F2-S5/S6/S7 may
+  have added one) and for `hostCapabilityRecords` walks assuming func
+  records — 11 files on main (`issue-3526-{boolean-boundary-intrinsic,boundary-residuals,generator-number-box,ir-runtime-manifest,number-boundary-intrinsics,string-boundary-compare,string-boundary-eq,string-boundary-len,string-boundary-schema}`, `issue-4103-ir-async-runtime-providers`, `issue-4104-ir-async-plan-runtime-consumer`).
+- **P5 — layering and neutrality.** `check:ir-layering` with the
+  `src/string-surrogate.ts` import in `integration.ts` (not `src/codegen/`;
+  count unchanged); `check:ir-kind-neutrality` evidence that moves:
+  `forof.string` `src/ir/integration.ts:6531` (`:6629` on the F2-S5 branch —
+  already moved there); `string.const`'s own evidence is `src/ir/nodes.ts:1195`
+  (declared `:1194`) — does not move, and its `neutral`/`core` verdict stays
+  (the UTF-16 residual is not this slice's).
+
+### Verification matrix
+
+- **V-A** byte neutrality — 90/90 cells identical: bytes, sha256, full WAT,
+  ordered import list with func/global indices parsed from the binary,
+  `irOutcomes` (`trackIrOutcomes: true`), linear `getLastLinearIrReport()`
+  text; `check:ir-fallbacks` diffed against a base run; the corpus
+  (`website/playground/examples/**`, `examples/**`) × four WasmGC lanes.
+- **V-B** pins — the new suite in full; the moved pins; instrumented AFTER
+  tree: per-cell `storageForConst` host/native reach counts equal BEFORE, and
+  `:6596` reach for `string.const` = 0 on every host cell.
+- **V-C** non-vacuity, each revert independent against the kept schema: only
+  the attachment move (restore `:7355-7392`, delete `prepareStringConst`) →
+  the (d) pins fail; only the exact-global check → the (d) error-text pin and
+  the LONE scheme pin; only the const-only pass (use `attachIrStringSupport`)
+  → the (f) pins and the counted-native-repeat corpus cells (F2-S4's 4,
+  re-measured); only the demand-in-conjunction line (item 8) → the (c)
+  storage-carried pin (the early-return coupling, made visible); only the
+  manifest rows → expect the F2-S4 shape (divergence 5): (a)/(b) AND every
+  (c) pin, because after the move the frozen row is the only physical
+  authority — record the count, do not predict it.
+- **V-D** gates — the five ratchets bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`; `typecheck`, `lint`,
+  `prettier --check`; `pnpm run check:ir-dialect`, `check:ir-layering`,
+  `check:ir-only` (a `.ts` script — run via `pnpm run`), `check:linear-ir`,
+  `check:host-import-policy` (no new host import), `check:test-vacuity-shapes`,
+  `check:ir-kind-neutrality` (surgical evidence refresh, no verdict moves),
+  `check:ir-fallbacks` diffed against base.
+- **LOC** — **unmeasured estimate** +420 net src LOC (two kinds + validation,
+  four rows, two features, one signature, one record resolver, the demand
+  pair, the moved block + `prepareStringConst`, the const-only pass); F2-S4's
+  comparable shape landed at +381 against a +150 estimate — a floor.
+  `runtime-manifest.ts` is 1967 here, 2131 on the F2-S5 branch, over the
+  god-file threshold; grant in this file's frontmatter with a dated F2-S8
+  rationale. **Never edit `scripts/*-baseline.json` for LOC.**
+
+### Out of scope
+
+The legacy pre-pass mint and its ordering (`import-collector.ts:1457`/`:1648`/`:1660`/`:1670`,
+`imports.ts:130-192`/`:207-209`/`:321`, `src/codegen/statements/tdz.ts:120`,
+`data-struct-host-bridge.ts:81`, `struct-field-exports.ts:1129`; the census
+counted 352 `addStringConstantGlobal(` grep lines at `a07f`, 353 on
+`5f13a35bc6` by `grep -rn "addStringConstantGlobal(" src` — definition and a
+comment included, the drift unmeasured); the oversized materializer arm
+(`:7382-7392`, `native-string-literals.ts:195`); storage width (`:7360-7363`,
+`native-string-literals.ts:23`); the `extern.regex` no-storage path (item 13 /
+P3); the module-init second pipeline (`prepareStrings` runs twice per compile
+when module-init is claimed — the INIT cells check the demand is idempotent);
+the linear ASCII-proof admission (`src/ir/analysis/linear-string-runtime.ts:13`);
+`string.repeat`'s `:7255` read; the `nodes.ts:1195` UTF-16 residual; the other
+`StringBackendEmitter`s (`src/ir/backend/porffor/sink.ts:401`,
+`src/ir/backend/bytecode-emitter.ts:413`, `src/ir/backend/contract-conformance.ts:96`
+— only `sink.ts` is under `porffor/`); multi-file builds
+(`planProgramAbiStringConstantImport`, `program-abi-import-planning.ts:940`,
+one entry source `:949-955`).
+
+### After this slice (ranked)
+
+| rank | boundary | why |
+| --- | --- | --- |
+| **next** | `extern.regex` literal storage | give pattern/flags a `storage` at attachment so `:6589`/`:6596` can be retired fail-closed and the regex-only row stops over-claiming; needs P3's count first |
+| later | legacy host-literal mint → Program-ABI registration | the ORDER authority (`import-collector.ts:1670` under `:1660`, the `:7314` single-value helper, BOOLTPL's per-literal fixups); a registration seam, not a manifest one |
+| later | oversized native literal as a manifest sub-arm | needs a kind that can name a minted-per-literal defined function; freezing would then depend on literal lengths — decide whether that is wanted at all |
+| later | family-2 close-out | `STILL_UNPROVIDED_IDS` at 0; retire `IrStringSupportProviders.storageForConst` from the omnibus pass (3521:820, linear `:739-746`) once nothing else uses it |
+
 ## 2026-09-02 F2-S5 implementation plan — string.concat under manifest policy (family 2, slice 5)
 
 Written by the Fable planning lane against `origin/main` `a7edf000ee` (F2-S3
