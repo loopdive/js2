@@ -4,7 +4,7 @@ title: "ES2015 standalone: buffers conformance wave 1"
 status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-09-01
+updated: 2026-09-02
 priority: high
 horizon: l
 feasibility: medium
@@ -427,3 +427,126 @@ flight on the same arm before starting.
   is now 884 lines: lift the DataView arm into `tryCompileDataViewNew` before
   the next wave. #5194 edits neighbouring TypedArray functions in
   `dataview-native.ts` — reconcile at merge, never rebase.
+
+## 2026-09-01 PR #5224 integration
+
+The draft PR #5224 carried an **unvalidated, interrupted WIP snapshot**
+(`99fdfec26`, 2026-08-28, 11 files, +858/−55) whose base was ~714 commits behind
+`main`. That WIP is the artefact the validated lane later MINED and
+re-implemented on current main. This integration replaces it: the PR branch
+`claude/es2015-buffers-wave1-wip` is now `origin/main` (`813b828b6`) plus the
+four validated `lane-5150.mbox` patches, applied with `git am --3way` — no
+history rewritten, no force-push.
+
+### Merge resolution — every WIP file resolved to MAIN
+
+`git pull --no-rebase origin main` conflicted in 5 files and auto-merged 6.
+All 11 were resolved to **main's** side, because each WIP hunk is an older
+version of something main (or the lane patch applied on top) already has:
+
+| WIP file | Why main wins |
+| --- | --- |
+| `src/codegen/expressions/call-receiver-method.ts` | main already emits `canonicalUndefinedExternInstrs(ctx)` for the DataView-setter expression result (#2864). The WIP diff against main was **comment-only**. |
+| `src/codegen/expressions/calls.ts` | main renamed the arm to the table-driven `tryCompileCollectionCtorCallWithoutNew`; the WIP's separate dispatch site for its own `tryCompileBufferCtorCallWithoutNew` no longer has a slot. |
+| `src/codegen/expressions/new-builtin-globals.ts` | same mechanism, better: the lane adds `ArrayBuffer`/`SharedArrayBuffer`/`DataView` to `CALL_WITHOUT_NEW_COLLECTION_CTORS` instead of adding a fourth near-copy of the throw helper. |
+| `src/codegen/dataview-native.ts` | main already imports and uses `canonicalUndefinedExternInstrs` for the setter return. |
+| `src/codegen/declarations.ts` | main kept `proxyOrTransferredResultNeedsExternref`; the WIP had renamed it to `transferredArrayLikeResultNeedsExternref` on a 714-commit-old tree. The lane adds `inferTaViewType` alongside main's name. |
+| `src/codegen/property-access.ts`, `property-access-dispatch.ts` | the WIP's module-global `$__ta_view` lookups and the lane's are the **same code**; the lane's comments are the refined ones. |
+| `src/codegen/builtin-value-read.ts`, `closed-method-dispatch.ts`, `expressions/new-indexed.ts` | superseded wholesale by lane patches 3, 1 and 2. |
+| `plan/issues/5150-es2015-standalone-buffers-wave1.md` | main's copy; lane patch 4 re-applies the lane's edits. |
+
+The merge commit's tree is therefore byte-identical to `origin/main`; the
+implementation arrives entirely in the four lane commits.
+
+**WIP-only hunks DROPPED** (~56 lines, all superseded — none kept):
+
+- `expressions/new-builtin-globals.ts::tryCompileBufferCtorCallWithoutNew`
+  (+37) and its `expressions/calls.ts` dispatch site (+8) — the lane's
+  table entry covers the identical §25.1.3.1 / §25.3.2.1 step-1 clause, and the
+  two arms would have shadowed each other (the WIP's ran first).
+  Empirically confirmed: `ArrayBuffer/undefined-newtarget-throws.js` and
+  `DataView/newtarget-undefined-throws.js` both flip to `pass` with only the
+  lane's arm present.
+- `expressions/call-receiver-method.ts` (+5/−6) — comment-only against main.
+
+No WIP-only hunk was kept, so the "does a buffers row depend on it" test
+resolved by construction: with all three files at main's version plus the lane
+patches, all 16 rows the wave targets pass.
+
+### Validation on the integrated branch (HEAD `9deedf8fe`)
+
+Measured 2026-09-01/02 in worktree
+`/home/user/js2/.claude/worktrees/wf_27c6d40c-3be-1`.
+
+| Check | Result |
+| --- | --- |
+| 53-row buffers list, `--target standalone`, before (`origin/main`) | **0 pass / 48 fail / 5 compile_error** |
+| 53-row buffers list, after (this branch) | **16 pass / 32 fail / 5 compile_error** |
+| Net | **+16, zero regressions, zero other status transitions** |
+| Host-import check on all 16 flipped rows | **16/16 clean** (compiler `result.imports` empty) |
+| 20-row `built-ins/TypedArray/prototype/**` control sample (standalone, all passing at base) | **20/20 pass** |
+| `pnpm run typecheck` (TS7) | clean |
+| `pnpm run typecheck:ts5` | 2 pre-existing `WebAssembly.Tag` errors in `src/linked-provider-runtime.ts`, a file this branch does not touch |
+| `npx vitest run tests/issue-5150-es2015-buffers.test.ts` | **14/14** |
+| loc / func / coercion / oracle-ratchet / dead-exports | all green (merge-base == `origin/main`, so this is also CI's base) |
+| `pnpm run test:equivalence:gate` | 24 failing / 1718 passing / 24 known-failures — **no new regressions** |
+
+Commands used for the measurement (both runs used a **120 s** compile timeout,
+not the stock probe's hard-coded 15 s — under load on this 4-core box the 15 s
+ceiling falsely reports ~a third of these rows as `compilation timeout`, which
+is the trap recorded in `## Suspended Work`):
+
+```
+# before, in the pristine main checkout (verified src/ byte-identical to origin/main)
+cd /home/user/js2 && npx tsx .tmp/es2015/run-rows.mts \
+  /home/user/js2/.tmp/es2015/buffers-head.txt --standalone --timeout 120000
+# after, in the integration worktree
+npx tsx .tmp/es2015/run-rows.mts .tmp/es2015/buffers-head.txt --standalone --timeout 120000
+```
+
+`buffers-head.txt` was derived from the suspension manifest's
+`lists/buffers-paths.txt` by stripping the leading `test/` (the manifest ships
+no `buffers-head.txt`).
+
+### The 16 flipped rows
+
+```
+built-ins/ArrayBuffer/allocation-limit.js
+built-ins/ArrayBuffer/length-is-too-large-throws.js
+built-ins/ArrayBuffer/prototype/slice/end-default-if-undefined.js
+built-ins/ArrayBuffer/toindex-length.js
+built-ins/ArrayBuffer/undefined-newtarget-throws.js
+built-ins/DataView/buffer-does-not-have-arraybuffer-data-throws.js
+built-ins/DataView/buffer-not-object-throws.js
+built-ins/DataView/detached-buffer.js
+built-ins/DataView/excessive-bytelength-throws.js
+built-ins/DataView/excessive-byteoffset-throws.js
+built-ins/DataView/newtarget-undefined-throws.js
+built-ins/DataView/prototype/setUint8/index-is-out-of-range.js
+built-ins/DataView/prototype/setUint8/negative-byteoffset-throws.js
+built-ins/DataView/prototype/setUint8/no-value-arg.js
+built-ins/DataView/prototype/setUint8/set-values-return-undefined.js
+built-ins/DataView/prototype/setUint8/toindex-byteoffset.js
+```
+
+`ArrayBuffer/isView/invoked-as-a-fn.js` did NOT flip, but its failure moved from
+"`ArrayBuffer.isView` is not yet implemented in --target standalone" to a real
+`isView(<TypedArray>)` value assertion — cluster G lands the closure; the
+remaining half needs the per-kind TypedArray carrier work in #5194.
+
+### Two notes for the reviewer
+
+- **`DataView/detached-buffer.js` links `js2wasm:runtime-eval::*`.** Those four
+  imports are the #2928/#4242 **Wasm-native** eval substrate the standalone lane
+  links on purpose (the row's `$DETACHBUFFER` goes through `eval`), not a JS
+  host import. The compiler's `result.imports` — the manifest CI's
+  `scripts/test262-worker.mjs` (~L1797) actually gates on — is **empty** for
+  this row, so it is not a `host_import_leak`. Worth stating explicitly because
+  a probe that reads `WebAssembly.Module.imports` instead will flag it.
+- **The 5 compile_errors are unchanged and out of scope**: all five are the
+  #3371 refusal, "standalone `Reflect.construct` cannot preserve an arbitrary
+  distinct NewTarget without a statically-resolved NewTarget".
+
+Remaining work is unchanged from `## Suspended Work`: Step 2 (cluster B, the
+ctor/instance object model), Step 3.3 (slice species) and Step 5 (cluster E,
+#3371). `status` stays `in-review` — the PR author is not the merger.
