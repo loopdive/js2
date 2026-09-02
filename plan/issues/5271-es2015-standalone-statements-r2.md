@@ -1,7 +1,7 @@
 ---
 id: 5271
 title: "ES2015 standalone: statements + language semantics — r2 residual pass (68 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-02
 updated: 2026-09-02
@@ -25,6 +25,15 @@ related: [5154, 5158, 5157, 4444]
 loc-budget-allow:
   - total
   - src/codegen/statements/loops.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/class-static-metadata.ts
+  - src/codegen/analysis/static-string-constants.ts
+  - src/codegen/expressions/misc.ts
+  - src/codegen/statements.ts
+  - src/codegen/forin-key-destructure.ts
+  - src/codegen/with-has-binding-native.ts
+  - src/codegen/context/types.ts
+  - src/codegen/annexb-cancel.ts
   - src/codegen/statements/shared.ts
   - src/codegen/statements/variables.ts
   - src/codegen/statements/destructuring.ts
@@ -53,7 +62,19 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/index.ts
   - src/ir/with-environment.ts
+# 2026-09-02 (Opus implementation pass): the block-entry lexical pre-allocation
+# of step 2.3 adds one call at each block-compile site, and step 3's standalone
+# HasBinding native reads ToBoolean through the existing `__is_truthy` engine
+# helper (a CALL to it, not a hand-rolled truthiness matrix — the gate counts
+# the name).
+coercion-sites-allow:
+  - src/codegen/with-has-binding-native.ts
 func-budget-allow:
+  - src/codegen/statements.ts::compileStatementInner
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/statements/loops.ts::compileForStatement
   - src/codegen/statements/loops.ts::compileForInStatement
   - src/codegen/statements/shared.ts::saveBlockScopedShadowsForNames
@@ -581,3 +602,414 @@ rows explicitly deferred in the PR body with the reason):
   X5); #5272 (done) — runner leak check that makes every local pass honest.
 - #4444 — ES2015 standalone closeout umbrella ("2026-09-01 evening dispatch
   census": this cluster's 84 rows).
+
+## 2026-09-02 implementation (Opus)
+
+Worktree `.claude/worktrees/agent-a6e921d2f4c8cf407`, branch
+`worktree-agent-a6e921d2f4c8cf407`. Honest base measured on this worktree's
+HEAD before any edit with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/stmt-head.txt --standalone`:
+**0 pass · 67 fail · 1 compile_error** over the 68 in-scope rows (the CE is
+D5 `with/unscopables-inc-dec`, deferred by the plan), and **20/20** on
+`stmt-controls.txt`. The 27 planner probes reproduced **25 fail / 2 pass**,
+matching the plan.
+
+### Step 1 — elision-only array patterns (cluster E)
+
+`compileArrayDestructuring`'s native-generator drain
+(`src/codegen/statements/destructuring.ts`) called `emitNativeGeneratorToVec`
+with no `stepLimit`, so `let [,] = g()` ran the generator to completion.
+Passing `patternIteratorStepCount(pattern.elements)` (the same helper and the
+same `-1`-means-unbounded guard the param lane uses, #4768) bounds the drain to
+the pattern's §8.5.3 IteratorStep count.
+
+- `stmt-cl-E.txt`: **0 → 6 pass** (all six rows).
+- Controls: 20/20. Probe p10 fail → pass.
+
+### Step 2 — module-level lexical shadowing (clusters A + A2 + A3)
+
+Five changes, four of them different from the plan's guesses — the closure half
+was measured, not inherited:
+
+1. `loops.ts compileForStatement`: dropped the `__module_init` exception on the
+   lexical for-head (`blockScopedInsideFunction` → `blockScopedFreshBinding`), so
+   a `let`/`const` head never writes a same-spelled top-level global (p01).
+2. Loop exit + `restoreBlockScopedShadows` now FORGET block/head-fresh locals
+   that hid nothing (`BlockScopeSave.blockNames`, and the for-head's
+   `introducedNames`). Before, a block name whose outer twin was a module
+   GLOBAL left its dead local in `localMap` for the rest of the function (p02).
+3. **New, and the actual cause of `try/scope-catch-block-lex-open`:** a block's
+   own `let`/`const` had no slot until its DECLARATION ran, so a closure built
+   earlier in the same block captured whatever the spelling meant outside the
+   block. `preallocateBlockScopedSlots` (`index.ts`, one pass of the existing
+   `walkStmtForLetConst` over the block's direct VariableStatements) now claims
+   those slots at block ENTRY — plain blocks, `try`, `catch`, `finally`.
+   (The plan attributed this to `promoteAccessorCapturesToGlobals`'
+   name-keyed `moduleGlobals.has` gate; instrumenting `planClosureCaptures`
+   showed the capture was dropped one step earlier, at `localIdx === undefined`
+   — there was no slot to capture at all, in a function body as much as at
+   module level.) Loop bodies were deliberately left out of this change.
+4. `loops.ts`: CreatePerIterationEnvironment now also runs BEFORE the first
+   test (§14.7.4.3 step 2), not only at the iteration boundary (p19).
+5. `eval-inline.ts foldedIndirectEvalReadsCallerBinding`: in `__module_init`,
+   refuse the literal indirect-eval splice while a block-local shadows a
+   same-spelled module global, so `(0,eval)('x;')` resolves globally (p18).
+
+- `stmt-cl-A.txt` + `-A2` + `-A3`: **0 → 8 pass** (all eight rows).
+- Two extra flips outside the step's own list — `{let,const}/block-local-use-
+  before-initialization-in-prior-statement` (cluster B1) — because the
+  block-entry pre-allocation also gives the block's binding its TDZ flag.
+- Controls: 20/20. Full 68-row list: **0 → 16 pass** after steps 1-2.
+
+### Step 3 — `with` Object Environment Record, standalone (cluster D, partial)
+
+**D1 landed.** `src/codegen/with-has-binding-native.ts` registers the DEFINED
+`__with_has_binding_native` (§9.1.1.2.1: HasProperty, then `Get(env,
+@@unscopables)`, then `ToBoolean(Get(unscopables, N))`), and `with-scope.ts`
+routes all three HasBinding gate sites (`emitDynamicWithGet`,
+`emitCaptureWithHasBinding`, `emitDynamicWithDelete`) through it in standalone.
+It is a defined function, never an import, so the module stays host-import-free.
+
+- `stmt-cl-D.txt`: **0 → 3 pass** — `binding-blocked-by-unscopables`,
+  `unscopables-get-err`, `unscopables-prop-get-err`.
+
+**Not done, with measured reasons** (D2-D4; 10 rows + D5 still CE):
+
+- The four `*-in-get-unscopables` rows are blocked by a defect OUTSIDE this
+  issue: a well-known-symbol key written as an object-literal COMPUTED key is
+  invisible to a dynamic symbol-key read. Reduced to a 6-line probe with no
+  `with` in it —
+  `var env = { [Symbol.unscopables]: {a:1} }; var k = Symbol.unscopables;
+  typeof env[k]` answers `"undefined"` (a runtime `env[Symbol.unscopables] = …`
+  write is found correctly, which is why `binding-blocked-by-unscopables`
+  passes). The literal stores the `@@unscopables` STRING member key while
+  `__obj_find` hashes a `$Symbol` key by its ID, so the two spellings never
+  meet. That is symbol-key STORAGE (#5269 / #3537 territory), not `with`.
+- The two `set-mutable-binding-…-typed-array-in-proto-chain` rows need
+  §10.4.5.5 [[Set]] on a TypedArray in the receiver's PROTOTYPE chain to answer
+  `true` for a canonical numeric index string (`"NaN"`) without creating an own
+  property. TypedArray exotic behaviour, not `with`.
+- The three `*-with-proxy-env` rows need D3 (a bare CALLEE inside `with` must
+  resolve through `resolveWithBinding` before the static builtin fold) and, for
+  two of them, a well-known symbol's DESCRIPTION: standalone prints
+  `Symbol()` where the expected log says `Symbol(Symbol.unscopables)`, because
+  nothing seeds `__symbol_desc_table` for well-known ids.
+- D4 (`variable/binding-resolution`, the keyed-destructuring row) and D5 (the
+  loud `unscopables-inc-dec` refusal) are unchanged.
+
+### Step 4 — for-in lexical head (cluster C)
+
+`stmt-cl-C.txt`: **0 → 10 pass** (all ten rows). Three defects, two of them not
+where the plan looked:
+
+1. **C2 (key-string patterns).** New `src/codegen/forin-key-destructure.ts`
+   converts the enumerated key to the per-code-unit `string[]` vec
+   (`__str_to_char_vec`, #3100 S4) and runs the ordinary typed-vec
+   `destructureParamArray` over it, so elisions, defaults, nested patterns,
+   rest elements and duplicate names all behave as they do anywhere else. The
+   module-global sync is applied for a `var` head only — a `let`/`const` head
+   that syncs clobbers a same-spelled top-level `let` (caught by
+   `scope-body-lex-open`'s `probeBefore()`).
+2. **The static-unroll path wrote NO head at all.** `emitForInStaticUnroll`
+   took only an `emitCallTargetWrite` callback, so a binding-pattern or member
+   head over a closed-shape receiver (`for (var [a, b] in { ab: null })`) bound
+   nothing. All three lowerings now share one `emitForInHeadWrite`.
+3. **C1 was not `analyzeTdzAccess`.** The §14.7.5.6 step-2 head TDZ environment
+   was installed only on the dynamic-enumerator path; a closed-shape receiver
+   (every `scope-head-lex-*` row uses an object literal) reached the static
+   unroll, which compiled the receiver with no TDZ env — and the unroll's early
+   `return` also skipped the #2705 Slice B outer-binding restore, so the head
+   name leaked past the loop. Install/teardown are now
+   `installForInHeadTdzEnv` / `tearDownForInHeadTdzEnv`, applied on the unroll
+   path too, and `restoreForInHeadBindings` runs on all three early returns.
+   No change to `analyzeTdzAccess` or `compileTypeofExpression` was needed.
+
+Known gap outside the row list: an OBJECT-pattern for-in head
+(`for (var { length } in { abc: 0 })`) still reads `NaN` — the object lane does
+not box the key string as a String object. No in-scope row covers it.
+
+Controls: 20/20. Full 68-row list after steps 1-4: **0 → 29 pass** (floor 28
+cleared).
+
+### Step 5 — TDZ (cluster B, 3 of 6)
+
+- **B1 (2 rows)** flipped for free in step 2: the block-entry pre-allocation
+  gives a block's `let` its TDZ flag, so `{ x; let x; }` throws.
+- **B3 (1 row) — the cause was a CONSTANT FOLD at the CALL SITE, not the
+  module-global arm.** `f`'s own body already emitted the runtime check
+  (verified in the WAT); the caller had folded `x + 1` to a literal, so the call
+  never happened. `tryStaticToNumber` (`expressions/misc.ts`) and
+  `resolveStrictConstant` (`analysis/static-string-constants.ts`) both traced a
+  `const` binding to its initializer with no TDZ consideration — the same rule
+  #1607 already applied to the self-referential case, generalized. Both now
+  refuse when `analyzeTdzAccess(...) !== "skip"`. Reduced with a probe pair: a
+  literal-initialized `const` did not throw, a `const x = (function(){…})()`
+  did.
+- **B2 (3 rows) NOT done.** A hoisted `function f(){ return x + 1; }` in the
+  same block as `let x` must observe the block binding's TDZ flag. Step 2.3's
+  pre-allocation makes `f` capture the block binding, but the ref cell is minted
+  at the DECLARATION, so a call before it dereferenced null (a trap instead of
+  the ReferenceError). Rather than ship a trap, `preallocateBlockScopedSlots`
+  now SKIPS a block that hoists a function declaration, keeping the pre-#5271
+  lowering for that shape. The real fix is to box the value + flag at block
+  entry (#1177 attach sites) — left for a follow-up.
+
+`stmt-cl-B.txt`: **0 → 3 pass**. Controls 20/20. Full list after steps 1-5:
+**0 → 30 pass**.
+
+### Step 7 — declaration-lane residue (cluster G, 4 of 7)
+
+- **G1 (1 row).** A `const` for-head is re-added to `fctx.constBindings` after
+  the head declarators, and — the part the plan's site did not cover — the
+  **i32-counter fast path** (`emitPromotedI32Increment`) writes the slot
+  directly and never reaches `emitConstIdentifierUpdateGuard`. The guard is now
+  asked FIRST for an incrementor that writes an identifier, so
+  `for (const i = 0; i < 1; i++)` throws TypeError.
+- **G2 (3 rows).** `Object.getOwnPropertyDescriptor(class {}, 'name').value`
+  reported the compiler's `__anonClass_<n>` REGISTRY KEY. New
+  `classObjectDisplayName` (`class-static-metadata.ts`) routes a synthetic class
+  identity through the shared §10.2.9 `fnInstanceNameOf`, and both the
+  literal-key gOPD fold (`call-builtin-static.ts`) and the dynamic native-MOP
+  arm (`object-runtime.ts fillClassObjectNameArms`) use it. A NAMED class
+  expression and a class declaration are unchanged; a `static name()` member
+  still overrides the intrinsic (the existing `classIntrinsicOverridden` /
+  `staticMethodSet` screens).
+- **G3 (3 rows) NOT done** — the param-destructuring lanes
+  (`ary-ptrn-elem-ary-rest-init`, `dflt-obj-ptrn-prop-ary`,
+  `dflt-params-arg-val-not-undefined`). The plan itself sequences these last
+  ("high blast radius", #5154 L(a) call-site-driven lane widening); left for a
+  follow-up.
+
+`stmt-cl-G.txt`: **0 → 4 pass**. Controls 20/20. Full list after steps 1-5 + 7:
+**0 → 34 pass**.
+
+### Step 8 — Script-goal semantics (cluster H, 2 of 3)
+
+- **`block-decl-strict`.** `annexb-cancel.ts` recorded the unbound-read site only
+  for a strict SWITCH-case function; a strict BLOCK function is the same rule
+  (B.3.3's relaxed treatment is explicitly non-strict), so `ts.isBlock(parent)`
+  joins the case/default test. `annexBDeclaringRange` already returns `null` for
+  an actual function BODY block, so an ordinary nested function declaration is
+  untouched. **Narrowed (review F4):** what this changes is the GLOBAL-CODE
+  read. A strict function-NESTED block function called or `typeof`-ed after its
+  block still resolves, byte-identically to the branch base — see F4 below.
+- **`decl-lex-restricted-global`.** §16.1.7 GlobalDeclarationInstantiation step
+  5.d: a SCRIPT-goal top-level lexical name that collides with a restricted
+  global (`undefined` / `NaN` / `Infinity`) throws SyntaxError before any
+  statement runs. `noteRestrictedGlobalLexicalName` records the first collision
+  during declaration collection and `compileModuleInitBody` opens with the
+  throw. Not a compile diagnostic — the runner wants a runtime throw for
+  `phase: runtime`. A source with an import/export indicator (module goal) is
+  skipped.
+- **`decl-lex` (1 row) NOT done.** `class C {}; C = 5` still reads back the
+  class: the binding needs a live externref module global seeded at declaration
+  time, the twin of `liveFuncBindingGlobals` for reassigned functions, plus the
+  identifier read/write routing. Left for a follow-up.
+
+Note on the pin file: the `let undefined` shape could not be reproduced inside
+`tests/issue-5271-…` (that harness's module-init routing prints before the
+throw); the test262 row is the evidence and it passes.
+
+`stmt-cl-H.txt`: **0 → 2 pass**.
+
+### Step 9 — property reference on a primitive base (cluster I): NOT done
+
+Both rows are blocked upstream of the `with`/reference lowering. Reduced to a
+4-line probe: `Symbol.prototype.test262 = 'sp'; Symbol().test262` answers `null`
+because the WRITE does not land where a symbol receiver's consult can see it —
+that is the Symbol wrapper/prototype identity the plan names as #5269 cluster
+B1, not the reference walk. A `$Symbol` arm in `__protoidx_brand_off` was
+written and MEASURED to flip nothing on its own, so it was reverted rather than
+shipped unmeasured.
+
+### Steps 6 and 10 (clusters F and J): not attempted in this pass
+
+No work was done on `arguments`/rest (F, 7 rows) or the direct-eval seams (J,
+4 rows); they are untouched and still fail exactly as the baseline records.
+
+## 2026-09-02 wave result (Opus)
+
+`stmt-head.txt` (the 68 in-scope rows), `--target standalone`, in-process
+runner (which applies CI's standalone host-import leak check since #5461):
+
+| | before | after (wave) | after (review fixes + main) |
+|---|---:|---:|---:|
+| pass | **0** | **36** | **39** |
+| fail | 67 | 31 | 28 |
+| compile_error | 1 (D5, deferred by the plan) | 1 (same row) | 1 (same row) |
+
+The last column is the final state on `origin/main` `4abfe80ea1`; three of its
+39 arrived with main rather than from this branch (see the re-validation
+section at the end).
+
+`stmt-controls.txt`: **20/20 before and after.** No previously-passing row
+regressed, and every flip is a real `pass` (the runner's leak check makes a
+standalone pass host-import-free by construction).
+
+Per cluster: E 6/6 · A+A2+A3 8/8 · C 10/10 · G 4/7 · B 3/6 · D 3/14 (+1 CE
+deferred) · H 2/3 · I 0/2 · F 0/7 (not attempted) · J 0/4 (not attempted).
+Two rows outside the step lists flipped as a side effect of step 2
+(`{let,const}/block-local-use-before-initialization-in-prior-statement`).
+
+**Below the plan's ≥48 target, above its floor of 28.** What is left, and why,
+is recorded per step above; the four largest remaining groups are cluster F
+(7 rows, untouched), cluster J (4, untouched), cluster D's D2-D4 (10, three
+independent blockers measured), and G3 (3, sequenced last by the plan itself).
+
+### Validation (post `git merge origin/main`, 2026-09-02)
+
+- `pnpm run typecheck` (TS7): clean.
+- Ratchet gates, run bare: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports` — all 0.
+- `tests/issue-5271-es2015-statements-r2.test.ts`: **49/49**. Every mechanism has
+  a positive pin (verified RED on the branch base where a base run was possible)
+  AND a CONTROL for its ordinary case.
+- **Equivalence gate: green.** Run as 8 shards (the box was carrying four
+  concurrent gates and a single full run was evicted twice): every shard reports
+  `✓ No new equivalence regressions`, 24 known-failure baseline entries and 0
+  new ones.
+- Pre-existing failures confirmed NOT caused by this branch, by checking out
+  `origin/main`'s `src/` into this worktree and re-running:
+  `tests/issue-1387-with-diagnostic.test.ts` (2) and
+  `tests/issue-1128-dstr-tdz.test.ts` (1) fail identically on `origin/main`.
+
+## 2026-09-02 adversarial review — findings addressed (Opus)
+
+Probes: `/home/user/js2/.tmp/rev5271/` (`probe.mts`, `run.sh`, `watdiff.sh`, `p/`,
+and the merge-base reference tree `mb/`); skeptic repros under
+`/home/user/js2/.tmp/refute-st-F1/` and `refute-st-F2/`.
+
+### F1 (HIGH, regression on BOTH lanes) — FIXED
+
+`hoistFunctionDeclarations` runs at FUNCTION entry and recurses into nested
+`if` / `try` / block statements, PINNING every capture to
+`fctx.localMap.get(name)` as it stands then — the slot `hoistLetConstWithTdz`
+claimed (call it A). Block entry hides that entry
+(`saveBlockScopedShadowsForNames`), and step 2.3's
+`preallocateBlockScopedSlots` then minted a SECOND slot (B) and OVERWROTE the
+`preHoistedLetConstSlots` record. On the base tree `compileVariableStatement`'s
+#2814 Bug-C path realigned the declaration back to A — but it is guarded by
+`!fctx.localMap.has(name)`, and the extra slot made that guard false, so the
+path never fired: the declaration wrote B while the hoisted function kept
+reading A.
+
+Blast radius: every `let`/`const` in a NON-LOOP block that a `function` declared
+one level deeper (inner block, `if`, `try`) reads — `0` / `null` / `"null"` on
+the host lane and a `dereferencing a null pointer` trap in standalone. The
+step-5 skip only covered a `FunctionDeclaration` that is a DIRECT child of the
+block, which is why this survived it.
+
+Fix: `reinstallPreHoistedCapturedSlots` (`index.ts`) re-installs slot A —
+`localMap` plus its TDZ flag — before the block-entry walk, under exactly the
+admission test the Bug-C path uses: a `preHoistedLetConstSlots` record for THIS
+declaration, and a capture by a plain (non-async, non-generator) nested
+function. A declaration the function-entry hoist SKIPPED (because an outer
+same-named binding already claimed the name) has no record and still gets its
+own block-fresh slot — which is what keeps step 2's rows green.
+
+The step-5 direct-child skip is RETAINED, and measured to still be needed: with
+it removed, the three cluster-B2 rows go back to a null-pointer trap, because
+`__module_init` runs no function-entry pre-hoist and so has no record to
+re-install.
+
+Measured (reviewer's repros, both lanes, now matching node):
+
+| repro | node | lane before | lane after |
+|---|---|---|---|
+| `refute-st-F1/r.js` | `5,4` | host `TypeError` · standalone trap | `5,4` |
+| `refute-st-F1/r2.js` | `3,8,four!,9,2,7` | host `2,0,null!,0,0,5` · standalone trap | `3,8,four!,9,2,7` |
+
+`rev5271/p/p21-hoist-if-try.js` is now **byte-identical to the merge-base tree
+on both lanes** (its remaining oddities — the host-lane `bind` artifact, `k5`,
+the trailing trap — are all present on `mb` too, i.e. pre-existing).
+
+Pins: eight shapes (the six from `r2.js` plus the two from `r.js`), both lanes,
+each verified RED on the pre-fix tree, plus a control for the step-2 shape they
+must not undo.
+
+### F2 (MEDIUM, emission regression on ordinary typed code) — FIXED
+
+Step 5's fold gate asked `analyzeTdzAccess`, which answers `"check"` for ANY
+read whose containing function is a `FunctionDeclaration` (hoisting lets a call
+precede the declaration). So `const NAME = "kern"; function label(n) { return
+NAME + ":" + n; }` stopped folding: the module emitted a runtime `__concat_3`
+plus two TDZ-flag guards where the base emitted one
+`string_constants "kern:"`. Same output, worse code — not the
+wasm_sha-neutral change the earlier write-up implied.
+
+Fix: `topLevelConstInitializedBeforeAnyUserCode`
+(`expressions/identifiers.ts`) adds the positional proof the gate was missing.
+Module initialization runs the top-level statements IN ORDER, so if every
+statement ending before this `const` is inert — an import, a type-only
+declaration, a hoisted function declaration, or a variable statement whose
+initializers cannot invoke anything — then the first user code to run is at or
+after the declaration and the read can never be in its TDZ. An importer cannot
+run earlier either: a module body completes before its exports are used.
+Anything else before the declaration (an expression statement, control flow, a
+class with static initializers) answers false and keeps the runtime check.
+Both fold sites — `tryStaticToNumber` and `resolveStrictConstant` — consult it.
+
+Verified with `watdiff.sh`: `refute-st-F2/k.ts` is byte-identical to the
+merge-base tree on BOTH lanes again (host 463 lines, standalone 48847, empty
+diff), and the `string_constants "kern:"` import is back. The B3 row
+`const/global-closure-get-before-initialization` stays fixed — a call statement
+precedes its declaration, so the proof correctly refuses. Controls added: the
+folded-constant assertion (and the absence of `__concat_3`) on the host lane,
+and the call-before-declaration shape.
+
+### F3 (LOW, documented) — local allocation ORDER changes
+
+The block-entry pre-allocation claims a block's `let`/`const` slot at block
+entry rather than at the declaration, so a function that allocates other locals
+in between numbers its locals differently. Module SIZE therefore moves for such
+shapes even though behaviour does not: `rev5271/p/p16-misc-shapes.js` is
+16300 vs 16292 bytes (host) and 279076 vs 279068 (standalone) against the
+merge-base tree, with **byte-identical program output**. Sequential shapes —
+nothing allocated between block entry and the declaration — stay
+byte-identical. This is an accepted, behaviour-neutral consequence of the fix,
+recorded so a future `wasm_sha` comparison against pre-#5271 artifacts is not
+mistaken for a defect.
+
+### F4 (LOW, documented) — the step-8 strict-block rule is narrower than claimed
+
+The strict-block-function change affects **global-code READS only**. A strict
+function-nested block function that is called or `typeof`-ed AFTER its block
+still resolves: `rev5271/p/p07-strict-annexb.js` is byte-identical to the
+merge-base tree on both lanes (`e2 strict block fn after: 1`,
+`e8 strict if fn: function`). The step-8 note above should be read as "a strict
+block function at SCRIPT top level no longer leaks its name", not as a general
+B.3.3 strictness change.
+
+### Re-validation after F1 + F2 (post `git merge origin/main` at `4abfe80ea1`)
+
+Re-run in full after merging the Array/Object wave (#5494) — a clean merge, no
+conflicts.
+
+- `stmt-head.txt` (68 in-scope rows, standalone): **0 (honest base) → 39 pass**,
+  28 fail, 1 compile_error. The CE is the plan-deferred D5 row
+  `with/unscopables-inc-dec` — the #1387 loud refusal, unchanged, not a
+  host-import leak. **No row that passed before now fails.** Three of the 39
+  came in with `origin/main`, not from this branch
+  (`eval-code/direct/super-prop-{dot,expr}-no-home`,
+  `function/arguments-with-arguments-fn`); 36 are this branch's.
+- `stmt-controls.txt`: **20/20**.
+- `tests/issue-5271-es2015-statements-r2.test.ts`: **61/61** (49 from the wave +
+  9 F1 regression pins + the F1 step-2 control + 3 F2 pins/controls).
+- Reviewer repros, both lanes, matching node: `r.js` → `5,4`; `r2.js` →
+  `3,8,four!,9,2,7`. `refute-st-F2/k.ts` byte-identical to the merge-base tree
+  on both lanes (host 463 lines, standalone 48847, empty diff).
+- `pnpm run typecheck` clean. All five ratchet gates 0, and re-run with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)` to simulate CI's merge preview —
+  also 0, so no grant is stranded.
+- **Equivalence gate: green.** Run as 8 shards launched with `setsid nohup` (a
+  supervisor-reaped run prints `ELIFECYCLE` and is not a verdict): all 8 exited
+  0 with `✓ No new equivalence regressions`, 24 known-failure baseline entries,
+  0 new.
+- Neighbouring suites for the touched files pass: `issue-2663-with-rmw`,
+  `es5-standalone-with`, `issue-2572-standalone-forin`,
+  `ir-let-const-equivalence`, `issue-2169-destructure-native-generator` —
+  62/62.
+- The three known pre-existing failures (`issue-1387-with-diagnostic` ×2,
+  `issue-1128-dstr-tdz` ×1) were re-checked AFTER this merge by checking out
+  `origin/main`'s `src/` into the worktree: they fail identically there, so they
+  remain not-ours.
