@@ -3419,7 +3419,24 @@ worth more to standalone than the 68% host figure alone suggests.
   measured on THIS base tree: **17 failed / 47 passed before the edit and 17 /
   47 after, the same 17 by name.** Re-measured once more on the final tree after
   the keyed-site narrowing: still 17 / 47, still the same 17 by name (`diff` of
-  the sorted FAIL lists is empty). No growth.
+  the sorted FAIL lists is empty). No growth. **Then `origin/main` at
+  `f64beb1a03` was merged in and the family went green — 64 / 64, zero reds:**
+  `#5274` was fixed on main while this branch was in flight, so the comparison
+  above is now history. What it still establishes is the only thing it was ever
+  asked to: gap-6a added none of them.
+- **Post-merge re-validation** against `origin/main` `f64beb1a03`, which itself
+  edits `src/codegen/declarations.ts` (+20) — the file this slice wires into, so
+  the merge is not a formality: `pnpm run typecheck` clean; the five ratchets
+  green bare and again under `LOC_GATE_BASE=$(git rev-parse origin/main)`; the
+  three target suites **44/44**
+  (`issue-3523-module-init-discovery-static` 11, `issue-3523-module-init-single-pass` 15,
+  `issue-3765-numeric-locals` 18); and the two module-init scar suites **39/39**
+  (`issue-3523-ir-module-init-compile-once` 20, `issue-4376-module-init-chunking` 19).
+  **On the merged tree the `#4376` TDZ case took 34 597 ms — 403 ms of headroom
+  under vitest's 35 s default.** It passed, and the A/B below says the pass-1
+  skip makes it faster rather than slower, but the margin is now small enough
+  that a loaded CI runner will flake it sooner or later. That is worth raising
+  as its own issue against `#4376`, not as a gap-6a blocker.
 
 ### Pins that MOVED, deliberately
 
