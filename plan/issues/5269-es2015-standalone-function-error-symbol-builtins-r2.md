@@ -1,10 +1,10 @@
 ---
 id: 5269
 title: "ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins — r2 residual pass"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 priority: high
 horizon: l
 feasibility: medium
@@ -95,6 +95,11 @@ func-budget-allow:
   - src/codegen/json-codec-native.ts::emitJsonStringifyValue
   - src/codegen/literals.ts::objectLiteralForcesHostPath
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  # 2026-09-02 (Opus impl, Step G-5): the InternalizeJSONProperty proxy arm
+  # gains the §7.2.2 IsArray step-3 recursion — a loop that unwraps a
+  # proxy-of-a-proxy to its first non-proxy [[ProxyTarget]] before the
+  # array-vs-object classification. Same arm shape, one more unwrap.
+  - src/codegen/json-codec-native.ts::emitJsonParseTextReviver
 ---
 
 # #5269 — ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins (r2)

@@ -1969,6 +1969,18 @@ export function tryEmitJsonStringifyPrimitive(
     return { kind: "externref" };
   }
 
+  // (#5269 G-4) §25.5.2 SerializeJSONProperty step 11 — a Symbol value has no
+  // JSON serialisation, so `JSON.stringify(sym)` is `undefined` (the same
+  // channel as `undefined`, not the string "null"). Without this arm the symbol
+  // reached the dynamic codec, whose value ladder has no `$Symbol` case, and the
+  // root coalesced the "serialises to undefined" null into the literal "null".
+  if (flags & ts.TypeFlags.ESSymbolLike) {
+    const t = compileExpression(ctx, fctx, arg);
+    if (t) fctx.body.push({ op: "drop" });
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
+
   // boolean / true / false
   if (flags & ts.TypeFlags.BooleanLike) {
     const argResult = compileExpression(ctx, fctx, arg, { kind: "i32" });

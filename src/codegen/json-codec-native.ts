@@ -172,6 +172,18 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
 
+  // (#5269 G-2) `$Proxy` is NOT a `$Object` subtype, so a proxy value matched no
+  // arm and serialised as the literal `null`. §25.5.2 treats it like any other
+  // object: IsArray decides the array-vs-object walk, and every key/element read
+  // must run the traps. These are the SAME dynamic helpers the InternalizeJSON
+  // proxy arms (#3176) use — each already carries a `$Proxy` front guard — so the
+  // arms below are a traversal, not new Proxy plumbing.
+  const proxyTypeIdxSV = objTypes.proxyTypeIdx;
+  const objectKeysIdxSV = ctx.funcMap.get("__object_keys");
+  const externLengthIdxSV = ctx.funcMap.get("__extern_length");
+  const newObjIdxSV = ctx.funcMap.get("__new_plain_object");
+  const externSetIdxSV = ctx.funcMap.get("__extern_set");
+
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
   const anyref: ValType = { kind: "anyref" };
@@ -258,6 +270,12 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const L_VB = 26; // externref — the normalised $ObjVec built from a vec receiver
   const L_VBLEN = 27; // i32 — vec length
   const L_VBI = 28; // i32 — normalisation loop index
+  // (#5269 G-2) Proxy walk scratch. Dedicated locals: the proxy arms return
+  // before the vec-normalisation block, but keeping them separate makes each
+  // walk independently readable and immune to a later reordering of the ladder.
+  const L_PXKEYS = 29; // externref — ownKeys snapshot for the proxy object walk
+  const L_PXTGT = 30; // anyref — [[ProxyTarget]], unwrapped through proxy-of-proxy
+  const L_PXTMP = 31; // externref — scratch holder for ToLength(Get(proxy,"length"))
 
   const litStr = (s: string): Instr[] => nativeStringLiteralInstrs(ctx, s);
 
@@ -785,6 +803,336 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     { op: "return" },
   ];
 
+  // ── (#5269 G-2) $Proxy arms ───────────────────────────────────────────────
+  // §25.5.2 SerializeJSONProperty step 10: an object that is not callable is
+  // serialised as an array or an object depending on IsArray, and EVERY key and
+  // element read is an observable Get. A `$Proxy` carrier is not a `$Object`
+  // subtype, so before this it matched no arm and the whole value rendered as
+  // the literal `null` (and a revoked proxy silently produced `"null"` instead
+  // of a TypeError). The reads go through `__object_keys` / `__extern_get` /
+  // `__extern_length`, each of which already carries the `$Proxy` front guard
+  // installed by `fillProxyDispatch`, so trap abruptness and the revoked-proxy
+  // TypeError propagate without new Proxy plumbing here.
+  const proxyArmsReady =
+    objectKeysIdxSV !== undefined &&
+    externLengthIdxSV !== undefined &&
+    newObjIdxSV !== undefined &&
+    externSetIdxSV !== undefined &&
+    externGetIdxIdx !== undefined &&
+    numToStrIdxTJ !== undefined;
+
+  // The proxy value as an externref (the ABI every dynamic helper takes). Minted
+  // fresh per use — never aliased into two branches (#2169b/#1058).
+  const pxExtern = (): Instr[] => [{ op: "local.get", index: L_ANY }, { op: "extern.convert_any" }];
+
+  // child = proxy[L_CKEY] → replacer transform → recursion, leaving L_PIECE.
+  // `omitOnReplacerUndefined` is the SerializeJSONObject rule (a replacer that
+  // returns `undefined` drops the property); an array element instead keeps the
+  // recursion, which renders `null`.
+  const proxyChildToPiece = (omitOnReplacerUndefined: boolean): Instr[] => [
+    ...pxExtern(),
+    { op: "local.get", index: L_CKEY },
+    { op: "call", funcIdx: externGetIdxTJ },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: L_CHILDV },
+    { op: "local.get", index: P_REPLACER },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...pxExtern(), // holder = the proxy
+        { op: "local.get", index: P_REPLACER },
+        { op: "local.get", index: L_CKEY },
+        { op: "local.get", index: L_CHILDV },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: replacerDriverIdx },
+        { op: "any.convert_extern" },
+        { op: "local.set", index: L_CHILDV },
+      ],
+    },
+    ...(omitOnReplacerUndefined
+      ? ([
+          { op: "local.get", index: P_REPLACER },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          { op: "local.get", index: L_CHILDV },
+          { op: "ref.is_null" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: strRefNull },
+            then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+            else: [
+              { op: "local.get", index: L_CHILDV },
+              { op: "local.get", index: P_DEPTH },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.get", index: P_GAP },
+              { op: "local.get", index: L_CKEY },
+              ...pxExtern(), // holder = the proxy
+              { op: "local.get", index: P_REPLACER },
+              { op: "local.get", index: P_ALLOW },
+              { op: "call", funcIdx },
+            ],
+          },
+        ] satisfies Instr[])
+      : ([
+          { op: "local.get", index: L_CHILDV },
+          { op: "local.get", index: P_DEPTH },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.get", index: P_GAP },
+          { op: "local.get", index: L_CKEY },
+          ...pxExtern(), // holder = the proxy
+          { op: "local.get", index: P_REPLACER },
+          { op: "local.get", index: P_ALLOW },
+          { op: "call", funcIdx },
+        ] satisfies Instr[])),
+    { op: "local.set", index: L_PIECE },
+  ];
+
+  const proxyArrayArmSV: Instr[] = proxyArmsReady
+    ? [
+        // §25.5.2 SerializeJSONArray step 6: len = LengthOfArrayLike(value).
+        // The `length` Get runs on the PROXY (so a throwing `get` trap
+        // propagates — `value-array-abrupt.js`); the throwaway ordinary object
+        // only reuses the existing ToLength(ToNumber(ToPrimitive(...))) in
+        // `__extern_length`, so a `length` whose `valueOf` throws also
+        // propagates.
+        ...pxExtern(),
+        ...litStr("length"),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: externGetIdxTJ },
+        { op: "local.set", index: L_PXTMP },
+        { op: "call", funcIdx: newObjIdxSV! },
+        { op: "local.set", index: L_VB },
+        { op: "local.get", index: L_VB },
+        ...litStr("length"),
+        { op: "extern.convert_any" },
+        { op: "local.get", index: L_PXTMP },
+        { op: "call", funcIdx: externSetIdxSV! },
+        { op: "local.get", index: L_VB },
+        { op: "call", funcIdx: externLengthIdxSV! },
+        { op: "i32.trunc_sat_f64_s" },
+        { op: "local.set", index: L_CAP },
+        ...litStr("["),
+        { op: "local.set", index: L_OUT },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: L_I },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: L_I },
+                { op: "local.get", index: L_CAP },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_I },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [...appendLit(",")],
+                },
+                ...appendSep(L_NL_IN),
+                { op: "local.get", index: L_I },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: numToStrIdxTJ! },
+                { op: "local.set", index: L_CKEY },
+                ...proxyChildToPiece(false),
+                { op: "local.get", index: L_PIECE },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [...appendLit("null")],
+                  else: [...appendPiece],
+                },
+                { op: "local.get", index: L_I },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: L_I },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: L_CAP },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...appendSep(L_NL_OUT)],
+        },
+        ...appendLit("]"),
+        { op: "local.get", index: L_OUT },
+        { op: "return" },
+      ]
+    : [];
+
+  const proxyObjectArmSV: Instr[] = proxyArmsReady
+    ? [
+        // §25.5.2 SerializeJSONObject step 6.a — EnumerableOwnPropertyNames.
+        // `__object_keys`'s Proxy front guard runs `ownKeys` and filters by the
+        // `getOwnPropertyDescriptor` trap's enumerable bit; a revoked proxy
+        // throws the TypeError here (`value-object-proxy-revoked.js`).
+        ...pxExtern(),
+        { op: "call", funcIdx: objectKeysIdxSV! },
+        { op: "local.set", index: L_PXKEYS },
+        { op: "local.get", index: L_PXKEYS },
+        { op: "call", funcIdx: externLengthIdxSV! },
+        { op: "i32.trunc_sat_f64_s" },
+        { op: "local.set", index: L_CAP },
+        ...litStr("{"),
+        { op: "local.set", index: L_OUT },
+        { op: "i32.const", value: 1 },
+        { op: "local.set", index: L_FIRST },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: L_I },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: L_I },
+                { op: "local.get", index: L_CAP },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_PXKEYS },
+                { op: "local.get", index: L_I },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: externGetIdxIdx! },
+                { op: "local.set", index: L_CKEY },
+                ...(externHasIdx === undefined
+                  ? []
+                  : ([
+                      { op: "local.get", index: P_ALLOW },
+                      { op: "ref.is_null" },
+                      { op: "i32.eqz" },
+                      {
+                        op: "if",
+                        blockType: { kind: "empty" },
+                        then: [
+                          { op: "local.get", index: P_ALLOW },
+                          { op: "local.get", index: L_CKEY },
+                          { op: "call", funcIdx: externHasIdx },
+                          { op: "i32.eqz" },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: [
+                              { op: "local.get", index: L_I },
+                              { op: "i32.const", value: 1 },
+                              { op: "i32.add" },
+                              { op: "local.set", index: L_I },
+                              { op: "br", depth: 2 },
+                            ],
+                          },
+                        ],
+                      },
+                    ] satisfies Instr[])),
+                ...proxyChildToPiece(true),
+                { op: "local.get", index: L_PIECE },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: L_FIRST },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [...appendLit(",")],
+                    },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.set", index: L_FIRST },
+                    ...appendSep(L_NL_IN),
+                    { op: "local.get", index: L_OUT },
+                    { op: "ref.as_non_null" },
+                    { op: "local.get", index: L_CKEY },
+                    { op: "call", funcIdx: quoteIdx },
+                    { op: "call", funcIdx: concatIdx },
+                    { op: "local.set", index: L_OUT },
+                    ...appendSep(L_COLON),
+                    ...appendPiece,
+                  ],
+                },
+                { op: "local.get", index: L_I },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: L_I },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: L_FIRST },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...appendSep(L_NL_OUT)],
+        },
+        ...appendLit("}"),
+        { op: "local.get", index: L_OUT },
+        { op: "return" },
+      ]
+    : [];
+
+  // §7.2.2 IsArray step 3 recurses through a proxy whose target is itself a
+  // proxy, so unwrap to the first non-proxy target before classifying. A revoked
+  // proxy has a NULL target, which classifies as an object and throws at the
+  // first trap-guarded read below — the TypeError the spec demands.
+  const proxyArmSV: Instr[] = proxyArmsReady
+    ? [
+        { op: "local.get", index: L_ANY },
+        { op: "ref.cast", typeIdx: proxyTypeIdxSV },
+        { op: "struct.get", typeIdx: proxyTypeIdxSV, fieldIdx: 1 },
+        { op: "local.set", index: L_PXTGT },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: L_PXTGT },
+                { op: "ref.test", typeIdx: proxyTypeIdxSV },
+                { op: "i32.eqz" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: L_PXTGT },
+                { op: "ref.cast", typeIdx: proxyTypeIdxSV },
+                { op: "struct.get", typeIdx: proxyTypeIdxSV, fieldIdx: 1 },
+                { op: "local.set", index: L_PXTGT },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: L_PXTGT },
+        { op: "ref.test", typeIdx: objVecTypeIdx },
+        { op: "local.get", index: L_PXTGT },
+        { op: "ref.test", typeIdx: vecBaseIdx },
+        { op: "i32.or" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: proxyArrayArmSV,
+          else: proxyObjectArmSV,
+        },
+      ]
+    : [];
+
   // ── dispatch ──────────────────────────────────────────────────────────────
   const body: Instr[] = [
     // depth guard (circular-ref bound): return null on overflow.
@@ -888,6 +1236,20 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
           },
         ] satisfies Instr[])),
     ...buildRawJsonStringifyArm(ctx, L_ANY, objectTypeIdx, anyStrTypeIdx, externGetIdxTJ),
+    // (#5269 G-2) `$Proxy` BEFORE `$Object` — a proxy is its own opaque carrier,
+    // so the object arm's `__obj_ordered` would read the (empty) proxy struct's
+    // own bag instead of running the traps.
+    ...(proxyArmsReady
+      ? ([
+          { op: "local.get", index: L_ANY },
+          { op: "ref.test", typeIdx: proxyTypeIdxSV },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: proxyArmSV,
+          },
+        ] satisfies Instr[])
+      : []),
     { op: "local.get", index: L_ANY },
     { op: "ref.test", typeIdx: objectTypeIdx },
     {
@@ -1082,6 +1444,9 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       { count: 1, type: { kind: "externref" } }, // L_VB (#4085)
       { count: 1, type: i32 }, // L_VBLEN (#4085)
       { count: 1, type: i32 }, // L_VBI (#4085)
+      { count: 1, type: { kind: "externref" } }, // L_PXKEYS (#5269 G-2)
+      { count: 1, type: anyref }, // L_PXTGT (#5269 G-2)
+      { count: 1, type: { kind: "externref" } }, // L_PXTMP (#5269 G-2)
     ],
     // (#2166 PR-D2) Deep-clone so every `call`/operand occurrence is an
     // INDEPENDENT object. The body spreads shared helper `Instr[]` arrays
@@ -1255,6 +1620,285 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
     ],
     exported: false,
   } as unknown as (typeof ctx.mod.functions)[number]);
+
+  // ── (#5269 G-3) __json_stringify_root_replacer_dyn(v, gap, replacer) ───────
+  // §25.5.2 step 4 classifies a NON-callable replacer at RUNTIME: IsArray(it)
+  // decides between "build a PropertyList allowlist" and "ignore the replacer
+  // entirely". Statically the compiler can only recognise a call signature or an
+  // array LITERAL, so every other object replacer (`{}`, `new String('str')`,
+  // `new Proxy(['b'], {})`, a revoked proxy) used to hit the #1599 refusal.
+  //
+  // Callability stays a STATIC decision at the call site — a replacer the
+  // checker sees as callable is passed straight to the root above — so this
+  // helper never has to answer IsCallable itself; it only distinguishes
+  // array-like from "ignore".
+  if (
+    objectKeysIdxSV !== undefined &&
+    externLengthIdxSV !== undefined &&
+    externGetIdxIdx !== undefined &&
+    numToStrIdxTJ !== undefined
+  ) {
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    const typeErrCtorIdx = ctx.funcMap.get("__new_TypeError");
+    const tagIdx = ensureExnTag(ctx);
+    const revokedMsg = "Cannot perform IsArray on a proxy that has been revoked";
+    const throwTypeError = (): Instr[] => {
+      if (typeErrCtorIdx === undefined) return [{ op: "unreachable" }];
+      addStringConstantGlobal(ctx, revokedMsg);
+      return [
+        ...stringConstantExternrefInstrs(ctx, revokedMsg),
+        { op: "call", funcIdx: typeErrCtorIdx },
+        { op: "throw", tagIdx },
+        { op: "unreachable" },
+      ];
+    };
+
+    const dynTypeIdx = addFuncType(ctx, [anyref, strRefNull, { kind: "externref" }], [strRef]);
+    const dynFuncIdx = mintDefinedFunc(ctx);
+    ctx.funcMap.set("__json_stringify_root_replacer_dyn", dynFuncIdx);
+    // params: 0 v:anyref  1 gap:ref null $AnyString  2 replacer:externref
+    const D_TGT = 3; // anyref — replacer's [[ProxyTarget]] chain end
+    const D_LEN = 4; // i32
+    const D_K = 5; // i32
+    const D_ALLOW = 6; // externref — the PropertyList carrier
+    const D_ITEM = 7; // externref — Get(replacer, k)
+    const D_TMP = 8; // externref — ToLength scratch holder
+    const D_KEY = 9; // externref — the index key string / the coerced item key
+
+    // The replacer with no PropertyList and no function — §25.5.2 "ignore".
+    const serialiseIgnoringReplacer = (): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "ref.null.extern" },
+      { op: "ref.null.extern" },
+      { op: "call", funcIdx: rootRepFuncIdx },
+      { op: "return" },
+    ];
+    // `ref.test` of the replacer against a concrete carrier type.
+    const replacerIs = (idx: number): Instr[] => [
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: idx },
+    ];
+
+    const dynBody: Instr[] = [
+      { op: "local.get", index: 2 },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: serialiseIgnoringReplacer() },
+      // §7.2.2 IsArray — unwrap the proxy chain; a revoked link throws.
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: D_TGT },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: D_TGT },
+              { op: "ref.test", typeIdx: proxyTypeIdxSV },
+              { op: "i32.eqz" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: D_TGT },
+              { op: "ref.cast", typeIdx: proxyTypeIdxSV },
+              { op: "struct.get", typeIdx: proxyTypeIdxSV, fieldIdx: 4 }, // revoked
+              { op: "if", blockType: { kind: "empty" }, then: throwTypeError() },
+              { op: "local.get", index: D_TGT },
+              { op: "ref.cast", typeIdx: proxyTypeIdxSV },
+              { op: "struct.get", typeIdx: proxyTypeIdxSV, fieldIdx: 1 },
+              { op: "local.set", index: D_TGT },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      { op: "local.get", index: D_TGT },
+      { op: "ref.test", typeIdx: objVecTypeIdx },
+      { op: "local.get", index: D_TGT },
+      { op: "ref.test", typeIdx: vecBaseIdx },
+      { op: "i32.or" },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: serialiseIgnoringReplacer() },
+      // len = LengthOfArrayLike(replacer). A plain vec answers from its own
+      // length field; anything else (a Proxy) must go through the observable
+      // `Get(replacer, "length")` + ToLength, so a throwing `get` trap or a
+      // throwing `valueOf` on the returned value propagates.
+      ...replacerIs(vecBaseIdx),
+      {
+        op: "if",
+        blockType: { kind: "val", type: i32 },
+        then: [
+          { op: "local.get", index: 2 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: vecBaseIdx },
+          { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
+        ],
+        else: [
+          ...replacerIs(objVecTypeIdx),
+          {
+            op: "if",
+            blockType: { kind: "val", type: i32 },
+            then: [
+              { op: "local.get", index: 2 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: objVecTypeIdx },
+              { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+            ],
+            else: [
+              { op: "local.get", index: 2 },
+              ...litStr("length"),
+              { op: "extern.convert_any" },
+              { op: "call", funcIdx: externGetIdxTJ },
+              { op: "local.set", index: D_ITEM },
+              { op: "call", funcIdx: newObjIdx },
+              { op: "local.set", index: D_TMP },
+              { op: "local.get", index: D_TMP },
+              ...litStr("length"),
+              { op: "extern.convert_any" },
+              { op: "local.get", index: D_ITEM },
+              { op: "call", funcIdx: externSetIdx },
+              { op: "local.get", index: D_TMP },
+              { op: "call", funcIdx: externLengthIdxSV },
+              { op: "i32.trunc_sat_f64_s" },
+            ],
+          },
+        ],
+      },
+      { op: "local.set", index: D_LEN },
+      { op: "call", funcIdx: newObjIdx },
+      { op: "local.set", index: D_ALLOW },
+      { op: "i32.const", value: 0 },
+      { op: "local.set", index: D_K },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: D_K },
+              { op: "local.get", index: D_LEN },
+              { op: "i32.ge_s" },
+              { op: "br_if", depth: 1 },
+              // v = Get(replacer, ToString(k)) — index read for a plain vec,
+              // property read (trap/accessor aware) for anything else.
+              ...replacerIs(vecBaseIdx),
+              ...replacerIs(objVecTypeIdx),
+              { op: "i32.or" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: [
+                  { op: "local.get", index: 2 },
+                  { op: "local.get", index: D_K },
+                  { op: "f64.convert_i32_s" },
+                  { op: "call", funcIdx: externGetIdxIdx },
+                ],
+                else: [
+                  { op: "local.get", index: 2 },
+                  { op: "local.get", index: D_K },
+                  { op: "f64.convert_i32_s" },
+                  { op: "call", funcIdx: numToStrIdxTJ },
+                  { op: "call", funcIdx: externGetIdxTJ },
+                ],
+              },
+              { op: "local.set", index: D_ITEM },
+              // §25.5.2 step 4.b.iv — only String and Number items contribute a
+              // PropertyList entry. String and Number WRAPPER objects also count
+              // per the spec; they are not recognised here (no target row needs
+              // them) and are simply skipped, like every other item kind.
+              { op: "local.get", index: D_ITEM },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: anyStrTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: D_ALLOW },
+                  { op: "local.get", index: D_ITEM },
+                  { op: "local.get", index: D_ITEM },
+                  { op: "call", funcIdx: externSetIdx },
+                ],
+                else: [
+                  { op: "local.get", index: D_ITEM },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: boxNumTypeIdx >= 0 ? boxNumTypeIdx : -20 },
+                  { op: "local.get", index: D_ITEM },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: -20 },
+                  { op: "i32.or" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: D_ITEM },
+                      { op: "any.convert_extern" },
+                      { op: "ref.test", typeIdx: -20 },
+                      {
+                        op: "if",
+                        blockType: { kind: "val", type: f64 },
+                        then: [
+                          { op: "local.get", index: D_ITEM },
+                          { op: "any.convert_extern" },
+                          { op: "ref.cast", typeIdx: -20 },
+                          { op: "i31.get_s" },
+                          { op: "f64.convert_i32_s" },
+                        ],
+                        else:
+                          boxNumTypeIdx >= 0
+                            ? [
+                                { op: "local.get", index: D_ITEM },
+                                { op: "any.convert_extern" },
+                                { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                                { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                              ]
+                            : [{ op: "f64.const", value: 0 }],
+                      },
+                      { op: "call", funcIdx: numToStrIdxTJ },
+                      { op: "local.set", index: D_KEY },
+                      { op: "local.get", index: D_ALLOW },
+                      { op: "local.get", index: D_KEY },
+                      { op: "local.get", index: D_KEY },
+                      { op: "call", funcIdx: externSetIdx },
+                    ],
+                  },
+                ],
+              },
+              { op: "local.get", index: D_K },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: D_K },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "ref.null.extern" },
+      { op: "local.get", index: D_ALLOW },
+      { op: "call", funcIdx: rootRepFuncIdx },
+    ];
+
+    pushDefinedFunc(ctx, dynFuncIdx, {
+      name: "__json_stringify_root_replacer_dyn",
+      typeIdx: dynTypeIdx,
+      locals: [
+        { count: 1, type: anyref }, // D_TGT
+        { count: 1, type: i32 }, // D_LEN
+        { count: 1, type: i32 }, // D_K
+        { count: 1, type: { kind: "externref" } }, // D_ALLOW
+        { count: 1, type: { kind: "externref" } }, // D_ITEM
+        { count: 1, type: { kind: "externref" } }, // D_TMP
+        { count: 1, type: { kind: "externref" } }, // D_KEY
+      ],
+      body: deepCloneInstrs(dynBody),
+      exported: false,
+    } as unknown as (typeof ctx.mod.functions)[number]);
+  }
 
   return funcIdx;
 }
@@ -3627,6 +4271,31 @@ export function emitJsonParseTextReviver(ctx: CodegenContext): number {
     { op: "ref.cast", typeIdx: proxyTypeIdx },
     { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
     { op: "local.set", index: L_PROXY_TARGET },
+    // (#5269 G-5) §7.2.2 IsArray step 3 RECURSES through a proxy whose target is
+    // itself a proxy. A single `[[ProxyTarget]]` read classified
+    // `new Proxy(new Proxy([], {}), {})` as an object and walked it with the
+    // object arm (`revived-proxy.js`). Unwrap to the first non-proxy target.
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: L_PROXY_TARGET },
+            { op: "ref.test", typeIdx: proxyTypeIdx },
+            { op: "i32.eqz" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: L_PROXY_TARGET },
+            { op: "ref.cast", typeIdx: proxyTypeIdx },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
+            { op: "local.set", index: L_PROXY_TARGET },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
     { op: "local.get", index: L_PROXY_TARGET },
     { op: "ref.test", typeIdx: objVecTypeIdx },
     { op: "local.get", index: L_PROXY_TARGET },

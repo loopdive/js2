@@ -61,11 +61,15 @@ import {
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
-import { compileObjectLiteralAsExternref } from "../literals.js";
+import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
-import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
+import {
+  emitArgAsNativeString,
+  emitHostExternrefToNativeString,
+  emitNativeStringToHostExternref,
+} from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import {
@@ -294,7 +298,12 @@ function isPlainJsonCodecObjectLiteral(literal: ts.ObjectLiteralExpression): boo
  * `anyref` ABI. This keeps literal-carrier selection out of the namespace
  * dispatcher and gives compact/replacer routes one identical conversion path.
  */
-function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
+function emitJsonCodecValueAsAnyref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  value: ts.Expression,
+  opts?: { materializeClosedStruct?: boolean },
+): boolean {
   const unwrapped = unwrapReflectConstructExpr(value);
   let valueType: ValType | null = { kind: "externref" };
   if (ts.isArrayLiteralExpression(unwrapped) && !unwrapped.elements.some(ts.isSpreadElement)) {
@@ -303,7 +312,34 @@ function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, 
     ensureObjectRuntime(ctx);
     valueType = compileObjectLiteralAsExternref(ctx, fctx, unwrapped);
   } else {
-    valueType = compileExpression(ctx, fctx, value, { kind: "anyref" });
+    // (#5269 G-3) A `var o = {…}` binding lowers to a CLOSED struct, which the
+    // codec's value ladder has no arm for — it serialises as the literal
+    // `null`. The replacer routes reach this with the binding's identifier
+    // (the static fold, which resolves the literal, is skipped whenever a
+    // replacer is observable), so open the struct into a `$Object` first.
+    // Narrow on purpose: only an identifier whose own initializer is a plain
+    // object literal, never a vec / class instance / dynamic value.
+    const closedLiteralInit =
+      (opts?.materializeClosedStruct ?? false) && ts.isIdentifier(unwrapped)
+        ? ctx.oracle.variableInitializerOf(unwrapped)
+        : undefined;
+    const closedLiteralStruct =
+      closedLiteralInit !== undefined &&
+      ts.isObjectLiteralExpression(closedLiteralInit) &&
+      isPlainJsonCodecObjectLiteral(closedLiteralInit);
+    if (closedLiteralStruct) {
+      const raw = compileExpression(ctx, fctx, value);
+      if (raw === null) return false;
+      const mat =
+        (raw.kind === "ref" || raw.kind === "ref_null") && materializeStructAsDynamicObject(ctx, fctx, raw.typeIdx);
+      if (mat) {
+        valueType = { kind: "externref" };
+      } else {
+        valueType = raw;
+      }
+    } else {
+      valueType = compileExpression(ctx, fctx, value, { kind: "anyref" });
+    }
   }
   if (valueType === null) return false;
   if (valueType.kind === "externref" || valueType.kind === "ref_extern") {
@@ -312,6 +348,50 @@ function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, 
     coerceType(ctx, fctx, valueType, { kind: "anyref" });
   }
   return true;
+}
+
+/**
+ * (#5269 G-2) Does this `JSON.stringify` value argument statically denote a
+ * `Proxy` carrier?
+ *
+ * `new Proxy([], handler)` has the TypeScript type `never[]`, and
+ * `Proxy.revocable([], {}).proxy` is typed the same way, so the array-typed
+ * refusal in the JSON arm — which exists because a CLOSED typed vec is not a
+ * `$ObjVec` — swallowed both. A Proxy is neither: it is the opaque `$Proxy`
+ * struct the native codec now walks through its traps.
+ *
+ * Deliberately expression-shaped and narrow (two spellings), not a type test:
+ * the point is to exempt exactly the values whose runtime carrier is a `$Proxy`,
+ * never to widen the array refusal itself.
+ */
+function jsonValueIsProxyShaped(ctx: CodegenContext, value: ts.Expression): boolean {
+  const seen = new Set<ts.Node>();
+  const walk = (node: ts.Expression | undefined, depth: number): boolean => {
+    if (node === undefined || depth > 4) return false;
+    const expr = unwrapReflectConstructExpr(node);
+    if (seen.has(expr)) return false;
+    seen.add(expr);
+    // `new Proxy(target, handler)`
+    if (ts.isNewExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy") return true;
+    // `<ident>.proxy` where `<ident>` came from `Proxy.revocable(...)`
+    if (ts.isPropertyAccessExpression(expr) && expr.name.text === "proxy") {
+      const holder = expr.expression;
+      if (!ts.isIdentifier(holder)) return false;
+      const init = ctx.oracle.variableInitializerOf(holder);
+      return (
+        init !== undefined &&
+        ts.isCallExpression(init) &&
+        ts.isPropertyAccessExpression(init.expression) &&
+        ts.isIdentifier(init.expression.expression) &&
+        init.expression.expression.text === "Proxy" &&
+        init.expression.name.text === "revocable"
+      );
+    }
+    // `const p = new Proxy(...)` / `const q = new Proxy(p, {})`
+    if (ts.isIdentifier(expr)) return walk(ctx.oracle.variableInitializerOf(expr), depth + 1);
+    return false;
+  };
+  return walk(value, 0);
 }
 
 function isOrdinaryFunctionLike(node: ts.Node | undefined): boolean {
@@ -2550,7 +2630,14 @@ export function compileNamespaceStaticCall(
         return { kind: "i32" };
       }
     }
-    if ((method === "stringify" || method === "parse") && expr.arguments.length >= 1) {
+    // (#5269 G-1) `JSON.parse()` with NO argument is a legal call whose
+    // §25.5.1 step 1 `ToString(undefined)` produces "undefined" — a SyntaxError
+    // from the grammar, not a compile refusal. It used to miss this gate and
+    // fall through to the generic `__get_builtin` compile error.
+    if (
+      (method === "stringify" || method === "parse") &&
+      (expr.arguments.length >= 1 || (method === "parse" && useNativeJsonProvider))
+    ) {
       // (#1324 primitives slice) For JSON.stringify of statically-typed
       // primitive values (null / undefined / boolean, plus number when the
       // target has a number_toString helper), emit the result without the
@@ -2560,7 +2647,21 @@ export function compileNamespaceStaticCall(
       // JSON_stringify host import — full pure-Wasm shape walking is
       // tracked under #1353 (architect-spec follow-up).
       if (method === "stringify") {
-        const primitiveStringType = tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
+        // (#5269 G-3) §25.5.2 step 4 processes the replacer BEFORE the value is
+        // serialised, so `JSON.stringify(null, replacerWithThrowingLength)`
+        // throws. The primitive fold compiles the replacer for side effects only
+        // and drops it, which never runs those observable Gets — so under the
+        // native provider a non-nullish replacer keeps the value on the codec
+        // route (whose primitive arms serialise it just as well).
+        const replacerArgForFold = expr.arguments[1];
+        const replacerObservable =
+          useNativeJsonProvider &&
+          replacerArgForFold !== undefined &&
+          replacerArgForFold.kind !== ts.SyntaxKind.NullKeyword &&
+          !(ts.isIdentifier(replacerArgForFold) && replacerArgForFold.text === "undefined");
+        const primitiveStringType = replacerObservable
+          ? undefined
+          : tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
         if (primitiveStringType !== undefined) {
           // Compile remaining args (replacer, space) for their side
           // effects only — primitive stringify ignores them per spec
@@ -2621,6 +2722,14 @@ export function compileNamespaceStaticCall(
             ts.isArrayLiteralExpression(valueExpression) && !valueExpression.elements.some(ts.isSpreadElement)
               ? valueExpression
               : undefined;
+          // (#5269 G-2) `new Proxy([], h)` is typed `never[]`, so the array-typed
+          // refusal above claimed every proxy-of-an-array before the codec could
+          // see it. A Proxy carrier is NOT a closed typed vec — it is the opaque
+          // `$Proxy` struct the codec now walks through its traps — so the
+          // refusal's rationale does not apply to it. Narrow, deliberately
+          // expression-shaped: only the two spellings the Proxy front guards can
+          // actually produce statically.
+          const proxyShapedValue = jsonValueIsProxyShaped(ctx, expr.arguments[0]!);
           // (#2166 PR-B) Resolve a static `space` argument to the §25.5.2
           // indent unit ("gap"). `undefined` space → compact (gap ""). A
           // *dynamic* space arg stays unresolved → keep the refusal below
@@ -2631,7 +2740,11 @@ export function compileNamespaceStaticCall(
             const staticSpace = staticSpaceValue(ctx, spaceArg);
             gap = staticSpace === undefined ? undefined : jsonGapFromStaticSpace(staticSpace);
           }
-          if (replacerNullish && gap !== undefined && (!isArrayLike || arrayLiteralForCodec !== undefined)) {
+          if (
+            replacerNullish &&
+            gap !== undefined &&
+            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue)
+          ) {
             if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
             emitJsonStringifyValue(ctx);
             flushLateImportShifts(ctx, fctx);
@@ -2656,7 +2769,7 @@ export function compileNamespaceStaticCall(
           if (
             !replacerNullish &&
             gap !== undefined &&
-            (!isArrayLike || arrayLiteralForCodec !== undefined) &&
+            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue) &&
             replacerArg !== undefined
           ) {
             const replacerCallable =
@@ -2664,6 +2777,33 @@ export function compileNamespaceStaticCall(
               ts.isFunctionExpression(replacerArg) ||
               ctx.checker.getTypeAtLocation(replacerArg).getCallSignatures().length > 0;
             const isArrayLiteral = ts.isArrayLiteralExpression(replacerArg);
+            // (#5269 G-3) Anything else — `{}`, `new String('str')`, a symbol, a
+            // `new Proxy(['b'], {})`, a revoked proxy — is classified at RUNTIME
+            // by `__json_stringify_root_replacer_dyn`: IsArray decides between a
+            // PropertyList allowlist and ignoring the replacer, and a revoked
+            // proxy throws the §7.2.2 TypeError. Previously every one of these
+            // hit the #1599 refusal.
+            if (!replacerCallable && !isArrayLiteral) {
+              // Register the codec first (idempotent, no stack effect) so the
+              // "dyn root unavailable" decline happens BEFORE any operand is
+              // pushed — a `return null` with a half-built stack is the #3725
+              // hazard.
+              emitJsonStringifyValue(ctx);
+              if (ctx.funcMap.get("__json_stringify_root_replacer_dyn") === undefined) return undefined;
+              if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, { materializeClosedStruct: true }))
+                return null;
+              if (gap === "") {
+                fctx.body.push({ op: "ref.null", typeIdx: ctx.anyStrTypeIdx });
+              } else {
+                for (const instr of nativeStringLiteralInstrs(ctx, gap)) fctx.body.push(instr);
+              }
+              const r = compileExpression(ctx, fctx, replacerArg, { kind: "externref" });
+              if (r === null) return null;
+              if (r.kind !== "externref") coerceType(ctx, fctx, r, { kind: "externref" });
+              flushLateImportShifts(ctx, fctx);
+              fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_stringify_root_replacer_dyn")! });
+              return nativeStringType(ctx);
+            }
             if (replacerCallable || isArrayLiteral) {
               // value → anyref
               if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
@@ -2706,11 +2846,21 @@ export function compileNamespaceStaticCall(
         // (#2166 PR-D1) The static-literal fold ignores a reviver — skip it
         // when a 2nd arg is present so `JSON.parse('5', reviver)` runs the
         // reviver walk instead of folding to the bare parsed value.
-        if (expr.arguments.length < 2) {
+        if (expr.arguments.length === 1) {
           const parsedType = tryEmitJsonParseLiteral(ctx, fctx, expr);
           if (parsedType !== undefined) {
             return parsedType;
           }
+        }
+        // (#5269 G-1) `JSON.parse()` — ToString(undefined) is "undefined", which
+        // the ECMA-404 grammar rejects → a catchable SyntaxError from
+        // `__json_parse_text`, exactly as `JSON.parse(undefined)` already does.
+        if (expr.arguments.length === 0) {
+          for (const ins of stringConstantExternrefInstrs(ctx, "undefined")) fctx.body.push(ins);
+          emitJsonParseText(ctx);
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_text")! });
+          return { kind: "anyref" };
         }
         // (#2166 PR-C) Dynamic-graph JSON.parse: a runtime JSON *text* →
         // object / array / string / primitive value, parsed entirely in Wasm
@@ -2753,49 +2903,58 @@ export function compileNamespaceStaticCall(
               reviverCallable = false;
             }
           }
+          // (#5269 G-1) §25.5.1 step 1 is `ToString(text)` for EVERY text —
+          // `null`, `false`, `0`, `3.14` parse as their string forms and a
+          // Symbol throws a TypeError. Only the string/any route keeps the
+          // byte-identical `compileExpression(..., externref)` lowering; a
+          // statically non-string argument goes through the §7.1.17 ToString
+          // walker (`emitArgAsNativeString`) instead of the refusal below.
           if (isStringOrAny) {
             const argResult = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
             if (argResult === null) return null;
             if (argResult.kind !== "externref") {
               coerceType(ctx, fctx, argResult, { kind: "externref" });
             }
-            if (reviverCallable) {
-              // text already on the stack as externref; push the reviver as a
-              // GC closure widened to externref. CRITICAL: compile the closure
-              // via the GC-struct path (`compileArrowAsClosure`), NOT
-              // `compileExpression(..., externref)` — the latter routes an
-              // inline arrow at this non-user call site through the host
-              // `__make_callback` bridge (an `env::` import that breaks
-              // standalone and whose JS wrapper fails the `__call_fn_method_2`
-              // ref.cast). The driver consumes the GC closure as externref via
-              // extern.convert_any.
-              const revResult =
-                ts.isArrowFunction(reviverArg!) || ts.isFunctionExpression(reviverArg!)
-                  ? compileArrowAsClosure(ctx, fctx, reviverArg!)
-                  : compileExpression(ctx, fctx, reviverArg!, { kind: "anyref" });
-              if (revResult === null) return null;
-              if (revResult.kind === "ref" || revResult.kind === "ref_null" || revResult.kind === "anyref") {
-                fctx.body.push({ op: "extern.convert_any" });
-              } else if (revResult.kind !== "externref") {
-                coerceType(ctx, fctx, revResult, { kind: "externref" });
-              }
-              emitJsonParseTextReviver(ctx);
-              flushLateImportShifts(ctx, fctx);
-              fctx.body.push({
-                op: "call",
-                funcIdx: ctx.funcMap.get("__json_parse_text_reviver")!,
-              });
-              return { kind: "anyref" };
+          } else {
+            emitArgAsNativeString(ctx, fctx, expr.arguments[0]!);
+            fctx.body.push({ op: "extern.convert_any" });
+          }
+          if (reviverCallable) {
+            // text already on the stack as externref; push the reviver as a
+            // GC closure widened to externref. CRITICAL: compile the closure
+            // via the GC-struct path (`compileArrowAsClosure`), NOT
+            // `compileExpression(..., externref)` — the latter routes an
+            // inline arrow at this non-user call site through the host
+            // `__make_callback` bridge (an `env::` import that breaks
+            // standalone and whose JS wrapper fails the `__call_fn_method_2`
+            // ref.cast). The driver consumes the GC closure as externref via
+            // extern.convert_any.
+            const revResult =
+              ts.isArrowFunction(reviverArg!) || ts.isFunctionExpression(reviverArg!)
+                ? compileArrowAsClosure(ctx, fctx, reviverArg!)
+                : compileExpression(ctx, fctx, reviverArg!, { kind: "anyref" });
+            if (revResult === null) return null;
+            if (revResult.kind === "ref" || revResult.kind === "ref_null" || revResult.kind === "anyref") {
+              fctx.body.push({ op: "extern.convert_any" });
+            } else if (revResult.kind !== "externref") {
+              coerceType(ctx, fctx, revResult, { kind: "externref" });
             }
-            emitJsonParseText(ctx);
+            emitJsonParseTextReviver(ctx);
             flushLateImportShifts(ctx, fctx);
-            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_text")! });
-            // The codec returns the value graph as anyref ($Object/$ObjVec/
-            // $NativeString widened, or a ref $AnyValue for primitives). The
-            // downstream coercion paths (object property read, AnyValue→
-            // primitive) dispatch on the concrete ref via ref.test.
+            fctx.body.push({
+              op: "call",
+              funcIdx: ctx.funcMap.get("__json_parse_text_reviver")!,
+            });
             return { kind: "anyref" };
           }
+          emitJsonParseText(ctx);
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_text")! });
+          // The codec returns the value graph as anyref ($Object/$ObjVec/
+          // $NativeString widened, or a ref $AnyValue for primitives). The
+          // downstream coercion paths (object property read, AnyValue→
+          // primitive) dispatch on the concrete ref via ref.test.
+          return { kind: "anyref" };
         }
       }
       void tryEmitJsonParsePrimitive;
