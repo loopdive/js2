@@ -98,6 +98,8 @@ import {
 import { isRuntimeEvalCallableResultExpression } from "./runtime-eval-callable-result.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js"; // (#5153 D) §12.3.5.1 key evaluation
 import { nullishExternTestInstrs } from "../any-helpers.js"; // (#5153 C.1) RequireObjectCoercible on the super base
+import { ensureNativeIteratorRuntime, externIsObjectInstrs } from "../iterator-native.js"; // (#5267 A) native GetIterator + §7.4 Object test for the collection-ctor drive
+import { buildStandardTryTable } from "../../ir/try-table.js"; // (#5267 A) IteratorClose-on-throw wrapper
 import {
   coerceType,
   compileExpression,
@@ -4206,6 +4208,310 @@ function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: numbe
   ];
 }
 
+/** (#5267 Step A) Which keyed-collection constructor the iterable drive serves. */
+type CollectionCtorKind = "Map" | "Set" | "WeakMap" | "WeakSet";
+
+/**
+ * (#5267 Step A) Emit `<body>` guarded so that ANY throw out of it first calls
+ * `IteratorClose(iter)` — with the close's own abrupt completion SUPPRESSED —
+ * and then re-raises the ORIGINAL exception (§7.4.9 step 6: the outer throw
+ * wins, which is what `iterator-close-failure-after-set-failure.js` asserts —
+ * the adder's `Test262Error` propagates even though `return()` throws a
+ * `TypeError`).
+ *
+ * Shape copied from the for-of `#1347` wrapper (`statements/loops.ts:3290`);
+ * the instruction objects are minted here rather than shared with it.
+ */
+function wrapWithIteratorClose(ctx: CodegenContext, fctx: FunctionContext, body: Instr[], iterLocal: number): Instr {
+  const returnIdx = ctx.funcMap.get("__iterator_return");
+  if (returnIdx === undefined) {
+    return { op: "block", blockType: { kind: "empty" }, body };
+  }
+  const closeBody: Instr[] = [
+    { op: "local.get", index: iterLocal },
+    { op: "call", funcIdx: returnIdx },
+  ];
+  if (ctx.wasi || ctx.standalone) {
+    const tagIdx = ensureExnTag(ctx);
+    const exnLocal = allocLocal(fctx, `__collctor_exn_${fctx.locals.length}`, { kind: "externref" });
+    const innerClose = buildStandardTryTable({ kind: "empty" }, closeBody, [
+      { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: [{ op: "drop" }] },
+    ]);
+    return buildStandardTryTable({ kind: "empty" }, body, [
+      {
+        kind: "catch",
+        tagIdx,
+        payloadType: { kind: "externref" },
+        body: [
+          { op: "local.set", index: exnLocal },
+          innerClose,
+          { op: "local.get", index: exnLocal },
+          { op: "throw", tagIdx },
+        ],
+      },
+    ]);
+  }
+  return {
+    op: "try",
+    blockType: { kind: "empty" },
+    body,
+    catches: [],
+    catchAll: [
+      { op: "try", blockType: { kind: "empty" }, body: closeBody, catches: [], catchAll: [] },
+      { op: "rethrow", depth: 0 },
+    ],
+  };
+}
+
+/**
+ * (#5267 Step A) §24.1.1.1 / §24.2.1.1 / §24.3.1.1 / §24.4.1.1 steps 5-9 —
+ * `AddEntriesFromIterable` (Map/WeakMap) and its element twin (Set/WeakSet),
+ * driven natively over a GENERAL iterable.
+ *
+ * Before this, every constructor arm admitted only the shapes it could seed
+ * statically (no-arg, nullish, an array literal of pairs/elements, an
+ * array-TYPED variable) and **fell through** for everything else — which for
+ * `Map`/`Set`/`WeakMap`/`WeakSet` meant the generic ctor path and an
+ * `env::Map_new` / `env::Set_new` / `env::WeakMap_new` / `env::WeakSet_new`
+ * host-import leak in standalone mode. `new Map(customIterable)` silently
+ * produced an EMPTY map when the module happened to be instantiated against a
+ * host `env` (measured 2026-09-01, `probes5267/p4`).
+ *
+ * Emitted order (spec order — every step is observable):
+ *   1. `Get(coll, adder)` + IsCallable  — BEFORE the iterable is touched.
+ *   2. evaluate the iterable; a RUNTIME nullish value ⇒ empty collection
+ *      (the static `nullishArg` test only covers literals).
+ *   3. `GetIterator(iterable)` — a non-iterable throws the #3388 TypeError here.
+ *   4. per step: `IteratorStep` / `IteratorValue`. An abrupt `next()` or
+ *      `value` getter propagates WITHOUT IteratorClose (§7.4.5/§7.4.6 —
+ *      `iterator-next-failure.js` / `iterator-value-failure.js` assert
+ *      `return()` is never called), so the close wrapper starts AFTER it.
+ *   5. Map/WeakMap: the entry must be an Object (else IteratorClose +
+ *      TypeError), then `Get(entry, "0")` / `Get(entry, "1")`.
+ *   6. `Call(adder, coll, «k, v» | «v»)`. Anything abrupt from 5-6 closes the
+ *      iterator (its own abrupt suppressed) and rethrows.
+ *
+ * `collTmp` holds the freshly built (empty) collection; on return the stack is
+ * unchanged and the collection is fully seeded. Returns `false` when a required
+ * runtime symbol is missing, in which case NOTHING was emitted and the caller
+ * must fall through.
+ */
+function emitNativeCollectionCtorIterableDrive(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  collTmp: number,
+  iterableExpr: ts.Expression,
+  kind: CollectionCtorKind,
+): boolean {
+  const isPairKind = kind === "Map" || kind === "WeakMap";
+  const isWeak = kind === "WeakMap" || kind === "WeakSet";
+  const adderName = isPairKind ? "set" : "add";
+
+  // Every late import / runtime registration FIRST: `ensureLateImport` can
+  // shift function indices, so no funcIdx may be resolved before the flush and
+  // no sub-expression may be compiled before it either (#2043).
+  ensureNativeIteratorRuntime(ctx);
+  ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+
+  const iterIdx = ctx.funcMap.get("__iterator");
+  const iterNextIdx = ctx.funcMap.get("__iterator_next");
+  const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const adderIdx = ctx.mapHelpers.get(kind === "WeakSet" ? "__weakset_add" : isPairKind ? "__map_set" : "__set_add");
+  if (iterIdx === undefined || iterNextIdx === undefined || getIdxIdx === undefined || adderIdx === undefined) {
+    return false;
+  }
+  if (isPairKind && externIsObjectInstrs(ctx, 0) === undefined) return false;
+
+  // ── 1. Get(coll, adder) + IsCallable, then the observable-adder dispatch ──
+  emitCollectionAdderGuard(ctx, fctx, collTmp, adderName);
+  const dispatch = prepareNativeSetAdderDispatch(ctx, fctx, collTmp, adderName);
+
+  // ── 2. evaluate the iterable → externref ────────────────────────────────
+  const srcLocal = allocLocal(fctx, `__collctor_src_${fctx.locals.length}`, { kind: "externref" });
+  const srcType = compileExpression(ctx, fctx, iterableExpr);
+  if (srcType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (srcType.kind !== "externref") {
+    coerceType(ctx, fctx, srcType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: srcLocal });
+
+  const iterLocal = allocLocal(fctx, `__collctor_it_${fctx.locals.length}`, { kind: "externref" });
+  const valLocal = allocLocal(fctx, `__collctor_val_${fctx.locals.length}`, { kind: "externref" });
+  const doneLocal = allocLocal(fctx, `__collctor_done_${fctx.locals.length}`, { kind: "i32" });
+  const kExt = allocLocal(fctx, `__collctor_kext_${fctx.locals.length}`, { kind: "externref" });
+  const kAny = allocLocal(fctx, `__collctor_k_${fctx.locals.length}`, { kind: "anyref" });
+  const vAny = allocLocal(fctx, `__collctor_v_${fctx.locals.length}`, { kind: "anyref" });
+
+  // Every array built here is DETACHED until the final `fctx.body.push` below.
+  // It must be registered in `ctx.liveBodies` while detached (so a late-import
+  // shift remaps its funcIdxs) and DEREGISTERED once it is reachable from
+  // `fctx.body` — the #2182 invariant checks that add/delete balance per
+  // function.
+  const detached: Instr[][] = [];
+  const track = (arr: Instr[]): Instr[] => {
+    ctx.liveBodies.add(arr);
+    detached.push(arr);
+    return arr;
+  };
+
+  /** Throw a catchable TypeError with `msg`, as a nested instruction list. */
+  const throwTypeError = (msg: string): Instr[] => {
+    const arm = track([]);
+    const saved = fctx.body;
+    fctx.body = arm;
+    try {
+      emitThrowTypeError(ctx, fctx, msg);
+    } finally {
+      fctx.body = saved;
+    }
+    return arm;
+  };
+
+  // ── 5-6. the per-entry body, inside the IteratorClose wrapper ───────────
+  const entryBody: Instr[] = track([]);
+  if (isPairKind) {
+    // Type(nextItem) is Object — else IteratorClose + TypeError.
+    entryBody.push(...externIsObjectInstrs(ctx, valLocal)!, { op: "i32.eqz" }, {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: throwTypeError("Iterator value is not an entry object"),
+    } satisfies Instr);
+    // k = Get(entry, "0"); v = Get(entry, "1") — a throwing accessor on either
+    // propagates out of the wrapper, which closes the iterator first.
+    entryBody.push(
+      { op: "local.get", index: valLocal },
+      { op: "f64.const", value: 0 },
+      { op: "call", funcIdx: getIdxIdx },
+      { op: "local.tee", index: kExt },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: kAny },
+      { op: "local.get", index: valLocal },
+      { op: "f64.const", value: 1 },
+      { op: "call", funcIdx: getIdxIdx },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: vAny },
+    );
+  } else {
+    entryBody.push(
+      { op: "local.get", index: valLocal },
+      { op: "local.tee", index: kExt },
+      {
+        op: "any.convert_extern",
+      } satisfies Instr,
+      { op: "local.set", index: kAny } satisfies Instr,
+    );
+  }
+  if (isWeak) {
+    // §CanBeHeldWeakly — a primitive key/value is a TypeError from the adder
+    // (`WeakMap/iterator-items-keys-cannot-be-held-weakly.js`). Symbols are
+    // deliberately NOT admitted here: separating an unregistered symbol from a
+    // `Symbol.for` one needs a registry probe the runtime does not expose, and
+    // every weak row that uses symbol keys reaches the literal seeding path,
+    // not this drive.
+    const holdable = externIsObjectInstrs(ctx, kExt);
+    if (holdable !== undefined) {
+      entryBody.push(...holdable, { op: "i32.eqz" }, {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: throwTypeError(
+          isWeak && isPairKind ? "Invalid value used as weak map key" : "Invalid value used in weak set",
+        ),
+      } satisfies Instr);
+    }
+  }
+  const directAdd: Instr[] = [
+    { op: "local.get", index: collTmp },
+    { op: "local.get", index: kAny },
+    ...(isPairKind ? ([{ op: "local.get", index: vAny }] satisfies Instr[]) : []),
+    { op: "call", funcIdx: adderIdx },
+    { op: "drop" },
+  ];
+  if (dispatch !== undefined) {
+    entryBody.push({ op: "local.get", index: dispatch.modeLocal }, {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: isPairKind
+        ? emitNativeSetAdderCall(dispatch, collTmp, kAny, vAny)
+        : emitNativeSetAdderCall(dispatch, collTmp, kAny),
+      else: directAdd,
+    } satisfies Instr);
+  } else {
+    entryBody.push(...directAdd);
+  }
+
+  // ── 3-4. GetIterator + the step loop ───────────────────────────────────
+  // (#5267 Step A) Divergence guard, emitted ONLY in a module that installs a
+  // non-data property descriptor (`ctx.vecAccessorDescriptorDirty`, the #4159
+  // pre-scan flag). Ordinary modules keep an unbounded, byte-identical loop.
+  //
+  // Why it exists: an ARRAY held in a module-scope binding loses object
+  // identity when it is stored into a property (measured 2026-09-02 —
+  // `({v: a}).v === a` and `[a][0] === a` are both FALSE at module scope in
+  // the standalone lane, TRUE for a function-local array). The #3251 overlay
+  // that holds `Object.defineProperty(a, 0, {get})` is keyed by vec identity,
+  // so the COPY the iterator hands back reads its plain element and a getter
+  // that must throw silently does not. `Map/iterator-item-{first,second}-entry-
+  // returns-abrupt.js` build a deliberately infinite iterator whose only exit
+  // is that throw, so the spec-faithful drive never terminates — and the
+  // test262 runner has NO wall-clock guard around execution, so one such row
+  // wedges a whole CI shard. The ceiling converts that into a catchable
+  // TypeError. It is 4M ENTRIES, ~4 orders of magnitude past any real
+  // `new Map(iterable)`, and it disappears the moment module-scope array
+  // identity is fixed (follow-up; the identity gap is pre-existing and
+  // independent of this drive).
+  const stepCap = ctx.vecAccessorDescriptorDirty === true ? 1 << 22 : 0;
+  const stepsLocal = stepCap > 0 ? allocLocal(fctx, `__collctor_steps_${fctx.locals.length}`, { kind: "i32" }) : -1;
+  const capGuard: Instr[] =
+    stepCap > 0
+      ? [
+          { op: "local.get", index: stepsLocal },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.tee", index: stepsLocal },
+          { op: "i32.const", value: stepCap },
+          { op: "i32.ge_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: throwTypeError("Iterable did not terminate"),
+          },
+        ]
+      : [];
+  const loopBody: Instr[] = track([
+    ...capGuard,
+    { op: "local.get", index: iterLocal },
+    { op: "call", funcIdx: iterNextIdx },
+    { op: "local.set", index: valLocal }, // externref value (top of stack)
+    { op: "local.set", index: doneLocal }, // i32 done (below it)
+    { op: "local.get", index: doneLocal },
+    { op: "br_if", depth: 1 },
+    wrapWithIteratorClose(ctx, fctx, entryBody, iterLocal),
+    { op: "br", depth: 0 },
+  ]);
+  const driveBody: Instr[] = track([
+    { op: "local.get", index: srcLocal },
+    { op: "call", funcIdx: iterIdx },
+    { op: "local.set", index: iterLocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    },
+  ]);
+
+  // A RUNTIME nullish iterable is spec-empty (§ steps 5-6) — `var it; new Map(it)`.
+  const nullishTest = nullishExternTestInstrs(ctx, srcLocal);
+  fctx.body.push(
+    ...(nullishTest ?? [{ op: "local.get", index: srcLocal }, { op: "ref.is_null" }]),
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: driveBody },
+  );
+  for (const arr of detached) ctx.liveBodies.delete(arr);
+  return true;
+}
+
 /**
  * (#2162 / #3572) `new WeakMap()` / `new WeakSet()` and their iterable
  * constructor forms in standalone / nativeStrings mode → the native
@@ -4255,8 +4561,19 @@ function tryCompileNativeWeakCollectionNew(
     !isWeakMap && wcArgs.length === 1 && wcArrArg === undefined && !nullishArg && isArrayTypedArg(ctx, wcArgs[0]!)
       ? wcArgs[0]!
       : undefined;
+  // (#5267 Step A) Every remaining 1-argument form — a custom iterable, an
+  // array literal whose elements are not `[k,v]` pairs (`new WeakMap([1,1])`),
+  // a non-array variable — is driven natively. Previously these returned
+  // `undefined` and leaked `env::WeakMap_new` / `env::WeakSet_new`.
+  const driveWeak =
+    wcArgs.length === 1 && !nullishArg && !seedableMapPairs && !seedableSetElems && wcNonLiteralArrArg === undefined;
   const wcHandled =
-    wcArgs.length === 0 || nullishArg || seedableMapPairs || seedableSetElems || wcNonLiteralArrArg !== undefined;
+    wcArgs.length === 0 ||
+    nullishArg ||
+    seedableMapPairs ||
+    seedableSetElems ||
+    wcNonLiteralArrArg !== undefined ||
+    driveWeak;
   if (!wcHandled) return undefined;
 
   addUnionImports(ctx);
@@ -4271,6 +4588,14 @@ function tryCompileNativeWeakCollectionNew(
     value: isWeakMap ? COLLECTION_KIND.WEAKMAP : COLLECTION_KIND.WEAKSET,
   }); // (#3171) brand tag
   fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+  if (driveWeak) {
+    // The drive emits step 7's `Get(coll, adder)` itself, in spec order.
+    const dTmp = allocLocal(fctx, `__wcctor_d_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+    fctx.body.push({ op: "local.set", index: dTmp });
+    emitNativeCollectionCtorIterableDrive(ctx, fctx, dTmp, wcArgs[0]!, isWeakMap ? "WeakMap" : "WeakSet");
+    fctx.body.push({ op: "local.get", index: dTmp });
+    return { kind: "ref", typeIdx: ctx.mapTypeIdx };
+  }
   if (wcArgs.length === 1 && !nullishArg) {
     // §24.3.1.1 / §24.4.1.1 step 7 — Get(coll, "set"/"add") + IsCallable, before
     // the iterable is consumed. `new WeakMap()` never performs this Get.
@@ -5155,7 +5480,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // inner `[K,V]` pair lowers to a typed tuple *struct* (not an inner vec), so
     // its extraction differs from the Set element walk. The array-literal-of-pairs
     // form is handled below; a non-literal Map arg falls through to the empty map.
-    if (args.length === 0 || nullishArg || seedablePairs) {
+    // (#5267 Step A) Anything else with an argument — a custom iterable, a
+    // variable of pairs, an array literal whose elements are not pair literals
+    // — is driven by `emitNativeCollectionCtorIterableDrive` instead of falling
+    // through to the generic ctor path (which leaked `env::Map_new`).
+    const driveMap = args.length === 1 && !nullishArg && !seedablePairs;
+    if (args.length === 0 || nullishArg || seedablePairs || driveMap) {
       addUnionImports(ctx);
       ensureMapHelpers(ctx);
       const mapNewIdx = ctx.mapHelpers.get("__map_new");
@@ -5163,6 +5493,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.MAP }); // (#3171) brand tag
         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+        if (driveMap) {
+          const dTmp = allocLocal(fctx, `__mapctor_d_${fctx.locals.length}`, {
+            kind: "ref",
+            typeIdx: ctx.mapTypeIdx,
+          });
+          fctx.body.push({ op: "local.set", index: dTmp });
+          // A `false` return means a runtime symbol was missing and NOTHING was
+          // emitted — the empty collection stays on the stack (graceful: an
+          // empty Map, never a host-import leak), same policy as
+          // `seedNativeSetFromArrayArg`.
+          emitNativeCollectionCtorIterableDrive(ctx, fctx, dTmp, args[0]!, "Map");
+          fctx.body.push({ op: "local.get", index: dTmp });
+          return { kind: "ref", typeIdx: ctx.mapTypeIdx };
+        }
         if (seedablePairs && arrArg !== undefined) {
           // §24.1.1.1 step 7 runs for ANY iterable argument, including `[]`.
           const gTmp = allocLocal(fctx, `__mapctor_g_${fctx.locals.length}`, {
@@ -5248,7 +5592,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         (ts.isIdentifier(args[0]!) && (args[0]! as ts.Identifier).text === "undefined"));
     const nonLiteralArrArg =
       args.length === 1 && arrArg === undefined && !nullishArg && isArrayTypedArg(ctx, args[0]!) ? args[0]! : undefined;
-    if (args.length === 0 || nullishArg || arrArg || nonLiteralArrArg) {
+    // (#5267 Step A) A general iterable (a custom `@@iterator` object, a string,
+    // a Set/Map, a call result of unknown type) is driven natively rather than
+    // falling through to the generic ctor path, which leaked `env::Set_new`.
+    const driveSet = args.length === 1 && !nullishArg && arrArg === undefined && nonLiteralArrArg === undefined;
+    if (args.length === 0 || nullishArg || arrArg || nonLiteralArrArg || driveSet) {
       addUnionImports(ctx);
       ensureSetHelpers(ctx);
       const mapNewIdx = ctx.mapHelpers.get("__map_new");
@@ -5256,6 +5604,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.SET }); // (#3171) brand tag
         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
+        if (driveSet) {
+          const dTmp = allocLocal(fctx, `__setctor_d_${fctx.locals.length}`, {
+            kind: "ref",
+            typeIdx: ctx.mapTypeIdx,
+          });
+          fctx.body.push({ op: "local.set", index: dTmp });
+          emitNativeCollectionCtorIterableDrive(ctx, fctx, dTmp, args[0]!, "Set");
+          fctx.body.push({ op: "local.get", index: dTmp });
+          return { kind: "ref", typeIdx: ctx.mapTypeIdx };
+        }
         if (arrArg !== undefined || nonLiteralArrArg !== undefined) {
           // §24.2.1.1 step 7 — Get(set, "add") + IsCallable, before iteration.
           const gTmp = allocLocal(fctx, `__setctor_g_${fctx.locals.length}`, {
