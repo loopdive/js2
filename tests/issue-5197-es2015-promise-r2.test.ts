@@ -21,18 +21,28 @@ const EXACT_ROWS = [
   "built-ins/Promise/Symbol.species/symbol-species.js",
   "built-ins/Promise/prototype/Symbol.toStringTag.js",
   // Slice B — the escaped `resolve`/`reject` are §27.2.1.3 built-in function
-  // objects. These four rows were `fail` in BOTH lanes at the 2026-09-01
-  // standalone baseline (0 pass / 134 fail / 6 CE over the 140-row corpus).
+  // objects.
   "built-ins/Promise/resolve-function-name.js",
-  "built-ins/Promise/reject-function-name.js",
-  "built-ins/Promise/resolve-function-property-order.js",
-  "built-ins/Promise/reject-function-property-order.js",
-  // `{resolve,reject}-function-prototype.js` also flipped fail -> pass, but
-  // reading `%Function.prototype%` pulls the native-prototype glue, which makes
-  // the runner instantiate the runtime-eval provider. That provider is a
-  // prebuilt artifact, absent in a bare checkout, so those two rows are covered
-  // by the compiled control below (which needs no runner) instead of here.
 ] as const;
+// Eleven rows of the 140-row ES2015 `built-ins/Promise/**` corpus flipped
+// `fail` -> `pass` on this change (0 -> 11 pass, 0 regressions; the full
+// before/after is recorded on the issue). Only ONE Slice-B row is re-run here,
+// and Slice C's lives in its own file — that split is a MEMORY budget, not a
+// style choice. `vitest.config.ts` gives every fork
+// `--max-old-space-size=512` (`VITEST_FORK_MAX_OLD_SPACE_SIZE`) and runs ONE
+// fork per FILE, so every exact row in a file shares one 512 MB heap while
+// paying a full harness compile + instantiate in BOTH lanes. Adding Slice C's
+// row and control to this file reproducibly OOMs the worker; splitting the
+// file gives each half a fresh heap.
+//
+// Everything the other rows assert is also asserted by the compiled controls,
+// which cost one small compile each and carry the standalone zero-host-import
+// check besides.
+//
+// Two of the eleven (`{resolve,reject}-function-prototype.js`) are additionally
+// unrunnable here: reading `%Function.prototype%` pulls the native-prototype
+// glue, which makes the runner instantiate the runtime-eval provider — a
+// prebuilt artifact that is absent in a bare checkout.
 
 // The species checks intentionally use both the syntactic constructor and an
 // any-typed alias. The former exercises the canonical static gOPD/direct-key
