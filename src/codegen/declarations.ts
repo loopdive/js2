@@ -169,7 +169,7 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
-import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
+import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
 import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
@@ -6252,19 +6252,30 @@ export function compileDeclarations(
     }
   }
 
-  // Recompile module init after top-level functions are compiled so call sites
-  // inside module-level code can see the final inlinable-function registry.
+  // Recompile module init after top-level functions are compiled.
+  //
+  // (#3523 R4 gap-1b) The historical comment here said the recompile exists
+  // "so call sites inside module-level code can see the final inlinable-function
+  // registry". Measured 2026-09-01, that is NOT what happens for a DIRECT init
+  // statement: with `JS2WASM_IR_INLINE=0` the two-pass `__module_init` still
+  // emits a plain `call` for a module-level call to a small local function.
+  // Every inlining actually observed there comes from the finalize-time
+  // `ir-inline.ts` pass, which runs after both passes over every function. The
+  // registry reaches only the closure BODIES compiled during init — which is
+  // why the gate below refuses on call-plus-closure and not on calls alone.
   // The first compile above still serves early closure/setup discovery.
-  // Only the emitting call needs the final-registry recompile; in the other
-  // multi-source modes the body it would produce is discarded unread.
+  // Only the emitting call needs the recompile; in the other multi-source
+  // modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
-    // call, so a population with no call anywhere recompiles to the body pass 1
-    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
-    // the end. Skipping then also skips `restorePropOrderState` (nothing
-    // recompiles; pass 1's end state is where pass 2 converged anyway) and
-    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
-    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // (#3523 R4 gap-1a/1b) A second direct compile can differ from pass 1's
+    // (fixup-maintained) body through exactly two measured mechanisms: the
+    // inlinable-function registry, read only when compiling a call, and closure
+    // re-lifting, which needs a closure to lift. A population missing either
+    // ingredient recompiles to what pass 1 already produced, so pass 1's body
+    // stands and the recompile is skipped. Skipping then also skips
+    // `restorePropOrderState` (nothing recompiles; pass 1's end state is where
+    // pass 2 converged anyway). Fail closed — see
+    // `declarations/module-init-pass2-stable.ts`. An async-graph init always
     // takes pass 2 (its lowering exists only there), stated explicitly rather
     // than via the scan's AwaitExpression refusal. The env seam restores the
     // unconditional recompile so tests can A/B against the two-pass body.
@@ -6272,7 +6283,7 @@ export function compileDeclarations(
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
-      !moduleInitPopulationIsCallFree(ctx)
+      !moduleInitPopulationIsPass2Stable(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
       // pre-pass-1 value so this recompile does not treat pass 1's own

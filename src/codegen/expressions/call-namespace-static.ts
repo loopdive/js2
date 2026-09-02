@@ -60,6 +60,7 @@ import {
   tryEmitJsonParseLiteral,
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
+import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
@@ -70,7 +71,7 @@ import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCustomCapabilityCheck,
-  emitStandalonePromiseCustomResolve,
+  emitStandalonePromiseCustomSettle,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
@@ -2255,10 +2256,20 @@ export function compileNamespaceStaticCall(
     ts.isPropertyAccessExpression(propAccess.expression) &&
     ts.isIdentifier(propAccess.expression.expression) &&
     propAccess.expression.expression.text === "Promise" &&
-    propAccess.expression.name.text === "resolve" &&
+    // (#5197 Slice D) `reject` joins `resolve` here: §27.2.4.6 and §27.2.4.7 are
+    // the SAME protocol — `NewPromiseCapability(C)` then `Call` on one settle
+    // slot — so admitting only one of them left the other on the unsatisfiable
+    // `Promise_reject` host import for every custom `C`.
+    (propAccess.expression.name.text === "resolve" || propAccess.expression.name.text === "reject") &&
     isStandalonePromiseActive(ctx) &&
-    expr.arguments.length === 2
+    // (#5197 Slice D) One argument is the ordinary `Promise.resolve.call(C)`
+    // spelling: NewPromiseCapability still runs, and the settled value is
+    // `undefined`. Requiring two arguments sent that whole family to the host
+    // import even though `C` is the only operand the capability protocol reads.
+    expr.arguments.length >= 1 &&
+    expr.arguments.length <= 2
   ) {
+    const settleKind = propAccess.expression.name.text === "reject" ? "reject" : "resolve";
     const ctorArg = unwrapReflectConstructExpr(expr.arguments[0]!);
     const ctorDecl = ts.isIdentifier(ctorArg) ? ctx.oracle.valueDeclarationOf(ctorArg) : ctorArg;
     const ctorInit = ctorDecl && ts.isVariableDeclaration(ctorDecl) ? ctorDecl.initializer : undefined;
@@ -2273,6 +2284,13 @@ export function compileNamespaceStaticCall(
       const snap = snapshotSpeculative(ctx, fctx);
       ensurePromiseSettleFunctions(ctx);
       ensureObjectRuntime(ctx);
+      // (#5197 Slice D) The missing-second-argument value, resolved HERE — the
+      // canonical `undefined` reserves the `$AnyValue` substrate on first use,
+      // and doing that later would land inside the detached `valueInstrs`
+      // buffer with `fctx.body` swapped away. In standalone a null externref is
+      // JS `null`, NOT `undefined`, so `Promise.resolve.call(C)` must settle
+      // with this singleton or the capability sees the wrong value (#2864).
+      const absentValueInstrs = canonicalUndefinedExternInstrs(ctx);
       const ctorType = compileExpression(ctx, fctx, expr.arguments[0]!);
       const ctorInfo =
         ctorType && (ctorType.kind === "ref" || ctorType.kind === "ref_null")
@@ -2282,8 +2300,13 @@ export function compileNamespaceStaticCall(
             : undefined;
       const supportsCapabilityCtor =
         ctorInfo !== undefined &&
-        ctorInfo.paramTypes.length === 1 &&
-        ctorInfo.paramTypes[0]?.kind === "externref" &&
+        // (#5197 Slice D) A ZERO-parameter `C` is admitted too. NewPromiseCapability
+        // still constructs it — the executor simply never reaches a formal, both
+        // capability slots stay undefined, and §27.2.1.5 steps 8-9 then throw the
+        // TypeError the spec requires. Refusing it here made that observable
+        // outcome a host-import compile failure instead.
+        ctorInfo.paramTypes.length <= 1 &&
+        (ctorInfo.paramTypes.length === 0 || ctorInfo.paramTypes[0]?.kind === "externref") &&
         (ctorInfo.returnType === null ||
           ctorInfo.returnType.kind === "externref" ||
           ctorInfo.returnType.kind === "ref" ||
@@ -2308,14 +2331,21 @@ export function compileNamespaceStaticCall(
         const savedBody = fctx.body;
         fctx.body = valueInstrs;
         try {
-          const valueType = compileExpression(ctx, fctx, expr.arguments[1]!, { kind: "externref" });
-          if (valueType === null) fctx.body.push({ op: "ref.null.extern" });
-          else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+          const valueArg = expr.arguments[1];
+          // No second argument → the settled value is `undefined`.
+          if (valueArg === undefined) fctx.body.push(...absentValueInstrs);
+          else {
+            const valueType = compileExpression(ctx, fctx, valueArg, { kind: "externref" });
+            if (valueType === null) fctx.body.push({ op: "ref.null.extern" });
+            else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+          }
         } finally {
           fctx.body = savedBody;
         }
         try {
-          if (emitStandalonePromiseCustomResolve(ctx, fctx, ctorLocal, ctorInfo, ctorSelfTypeIdx, valueInstrs)) {
+          if (
+            emitStandalonePromiseCustomSettle(ctx, fctx, ctorLocal, ctorInfo, ctorSelfTypeIdx, valueInstrs, settleKind)
+          ) {
             return { kind: "externref" };
           }
         } finally {

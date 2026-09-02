@@ -3247,6 +3247,44 @@ function tryCompileNativeConstructFromValue(
  * fallback is new, so there is no perf or shape change for statically-resolved
  * construction.
  */
+/**
+ * (#5197 Slice B) §7.2.4 IsConstructor for a runtime callee that turned out to
+ * be one of the compiler's own §17 built-in function objects — a promise
+ * `resolve`/`reject`, a GetCapabilitiesExecutor, a reified `Array.isArray`, …
+ *
+ * "Built-in function objects that are not identified as constructors do not
+ * implement the [[Construct]] internal method", so `new resolveFn()` is a
+ * TypeError. Without this the standalone unknown-ctor base evaluated to a bare
+ * null externref and the `assert.throws(TypeError, …)` rows silently passed
+ * through (`built-ins/Promise/{resolve,reject}-function-nonconstructor.js`).
+ *
+ * Deliberately narrow: it fires ONLY for a value that `ref.test`s as a
+ * registered builtin-function metadata family. A user `function f(){}` reaching
+ * this base is untouched, so this cannot convert a working construction into a
+ * throw. Emits NOTHING when the object runtime is absent (host/gc mode, or a
+ * standalone module with no reified builtin function), keeping those byte-identical.
+ *
+ * `descLocal` is the `anyref` slot already holding the evaluated callee.
+ */
+function emitBuiltinFnNotAConstructorGuard(ctx: CodegenContext, fctx: FunctionContext, descLocal: number): void {
+  const isBuiltinIdx = ctx.funcMap.get("__builtinfn_is_builtin");
+  if (isBuiltinIdx === undefined) return;
+  const guardBody: Instr[] = [];
+  const savedBody = fctx.body;
+  fctx.body = guardBody;
+  try {
+    emitThrowTypeError(ctx, fctx, "is not a constructor");
+  } finally {
+    fctx.body = savedBody;
+  }
+  fctx.body.push(
+    { op: "local.get", index: descLocal },
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: isBuiltinIdx },
+    { op: "if", blockType: { kind: "empty" }, then: guardBody },
+  );
+}
+
 function emitDynamicNewFallback(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3875,6 +3913,7 @@ function emitDynamicNewFallback(
     const base: Instr[] = [];
     const savedBase = fctx.body;
     fctx.body = base;
+    emitBuiltinFnNotAConstructorGuard(ctx, fctx, descLocal);
     emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
     fctx.body = savedBase;
     noMatchBase = base;
@@ -6389,6 +6428,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             fctx.body.push({ op: "local.set", index: aLocal });
             taArgLocals.push(aLocal);
           }
+          // (#5197) §13.3.5.1 step 3 runs AFTER ArgumentListEvaluation, so the
+          // IsConstructor refusal is emitted here rather than beside the callee.
+          emitBuiltinFnNotAConstructorGuard(ctx, fctx, taDescLocal);
           emitTaDynCtorConstructFromLocals(ctx, fctx, taDescLocal, taArgLocals);
           // (#4196) A `$__bound_fn` is not a `$__ta_ctor`, so the arm above
           // yields null for it. Retry as §10.4.1.2 [[Construct]] on null.

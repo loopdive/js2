@@ -4,7 +4,7 @@ import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBi
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import {
-  resolveRuntimeHostCapabilityRecord,
+  resolveRuntimeHostCapabilityFuncRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
@@ -26,6 +26,7 @@ import {
 import {
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   STRING_COMPARE_RUNTIME_FEATURES,
+  STRING_EQ_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -83,8 +84,11 @@ const ADMITTED_CALLABLE_TARGETS: ReadonlyMap<IrInstrIntrinsic["id"], ReadonlySet
         implementation.kind === "host-callable"
           ? callableBindingKey(
               irImportFuncRef(
+                // (#3526 F2-S2) `resolveRuntimeHostCapabilityFuncRecord` is the
+                // fail-closed kind guard: a global capability has no callable
+                // spelling, so admitting one here would mint a nonsense target.
                 ...((record) => [record.module, record.field] as const)(
-                  resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
+                  resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
                 ),
               ).binding,
             )
@@ -226,7 +230,7 @@ function providerAttachment(
     // The canonical record IS the manifest authority for this ABI; the emitted
     // target stays the exact physical union import so raw consumers and import
     // order are untouched.
-    const record = resolveRuntimeHostCapabilityRecord(capabilityRecords, provider.implementation.capability);
+    const record = resolveRuntimeHostCapabilityFuncRecord(capabilityRecords, provider.implementation.capability);
     return Object.freeze({ kind: "callable", target: irImportFuncRef(record.module, record.field, record.field) });
   }
   if (provider.implementation.kind === "runtime-callable") {
@@ -271,7 +275,7 @@ export function preparedGeneratorNumberBoxProvider(
     return irRuntimeFuncRef(provider.implementation.symbol);
   }
   if (provider.implementation.kind === "host-callable") {
-    const record = resolveRuntimeHostCapabilityRecord(
+    const record = resolveRuntimeHostCapabilityFuncRecord(
       prepared!.manifest.hostCapabilityRecords,
       provider.implementation.capability,
     );
@@ -306,13 +310,55 @@ export function preparedStringCompareProvider(
     return { arm: "native", symbol: provider.implementation.symbol };
   }
   if (provider.implementation.kind === "host-callable") {
-    const record = resolveRuntimeHostCapabilityRecord(
+    const record = resolveRuntimeHostCapabilityFuncRecord(
       prepared!.manifest.hostCapabilityRecords,
       provider.implementation.capability,
     );
     return { arm: "host", field: record.field };
   }
   throw new Error(`IR string-compare provider ${provider.id} is not a callable implementation`);
+}
+
+/** The one string-eq feature row; named once so no caller spells it. */
+const STRING_EQ_RUNTIME_FEATURE = STRING_EQ_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S3) Which arm of the string equality seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * Like {@link preparedStringCompareProvider} this returns the CLASSIFICATION
+ * plus the physical spelling, not an `IrFuncRef` — the two arms are materialized
+ * by different existing routines and a single callable reference could not carry
+ * the decision without moving a registration.
+ *
+ * It differs from the compare's twin in ONE way, and the difference is the whole
+ * reason F2-S2 had to land first: the host arm returns the record's MODULE as
+ * well as its field. `wasm:js-string.equals` is a builtin import, not an `env`
+ * one, so `ctx.funcMap` cannot name it unambiguously (it is keyed on the bare
+ * field `equals`, which a user function shadows — #1072). The consumer looks it
+ * up by import-section position instead, which needs both halves of the name.
+ */
+export function preparedStringEqProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_EQ_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-eq provider ${provider.id} is not a callable implementation`);
 }
 
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
@@ -393,6 +439,14 @@ export function prepareIrRuntimeManifest(input: {
    * all and the resolve arm would have no provider row to read.
    */
   readonly stringCompareDemand?: boolean;
+  /**
+   * (#3526 F2-S3) True when some function in `functions` compares two strings
+   * for equality. Same shape and same reason as `stringCompareDemand`, read off
+   * the `string.eq` instruction population: the instruction exists, but it is
+   * not an `intrinsic`, so the walk below never collects it and an eq-only
+   * module would otherwise freeze no manifest at all.
+   */
+  readonly stringEqDemand?: boolean;
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -425,7 +479,13 @@ export function prepareIrRuntimeManifest(input: {
     for (const block of fn.blocks) collectBuffer(block.instrs);
     for (const state of fn.asyncPlan?.states ?? []) collectBuffer(state.body);
   }
-  if (uses.length === 0 && asyncPlans.size === 0 && !input.generatorNumberBoxDemand && !input.stringCompareDemand) {
+  if (
+    uses.length === 0 &&
+    asyncPlans.size === 0 &&
+    !input.generatorNumberBoxDemand &&
+    !input.stringCompareDemand &&
+    !input.stringEqDemand
+  ) {
     return undefined;
   }
 
@@ -435,6 +495,7 @@ export function prepareIrRuntimeManifest(input: {
   }
   if (input.generatorNumberBoxDemand) builder.requestFeature(GENERATOR_NUMBER_BOX_RUNTIME_FEATURE);
   if (input.stringCompareDemand) builder.requestFeature(STRING_COMPARE_RUNTIME_FEATURE);
+  if (input.stringEqDemand) builder.requestFeature(STRING_EQ_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {
