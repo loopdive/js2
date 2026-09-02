@@ -2,9 +2,10 @@
   "id": "5274",
   "assignee": "ttraenkler/fable-ir-takeover",
   "requested_by": "ttraenkler/fable-ir-takeover",
-  "status": "in-progress",
+  "status": "done",
   "branch": "claude/issue-5274-string-test-rot",
   "claimed_at": "2026-09-02T06:22:43Z",
-  "updated_at": "2026-09-02T06:22:43Z",
-  "write_id": "1625-bwu9pfed"
+  "updated_at": "2026-09-02T07:30:10Z",
+  "write_id": "30832-ioodw701",
+  "released_at": "2026-09-02T07:30:10Z"
 }
