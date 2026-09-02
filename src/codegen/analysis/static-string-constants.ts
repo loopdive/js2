@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+// (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
+import { analyzeTdzAccess } from "../expressions/identifiers.js";
 
 /**
  * Resolve a compile-time constant, but only for truly immutable values.
@@ -15,6 +17,12 @@ export function resolveStrictConstant(ctx: CodegenContext, expression: ts.Expres
   if (ts.isParenthesizedExpression(expr)) return resolveStrictConstant(ctx, expr.expression);
 
   if (ts.isIdentifier(expr)) {
+    // (#5271 step 5, B3) A read that is in the binding's TEMPORAL DEAD ZONE has
+    // no value — it throws. Folding it to the initializer's text erased the
+    // throw: `function f(){ return x + '!'; } f(); const x = 'a';` compiled to a
+    // bare string constant, so `const/global-closure-get-before-initialization`
+    // saw no ReferenceError. The plain (unfolded) read already emits the check.
+    if (analyzeTdzAccess(ctx, expr) !== "skip") return undefined;
     const initializer = ctx.oracle.constInitializerOf(expr);
     return initializer ? resolveStrictConstant(ctx, initializer) : undefined;
   }

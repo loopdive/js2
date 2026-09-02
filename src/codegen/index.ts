@@ -13706,6 +13706,17 @@ export function preallocateBlockScopedSlots(
   fctx: FunctionContext,
   stmts: readonly ts.Statement[],
 ): void {
+  // (#5271 step 5) A block that also hoists a FUNCTION DECLARATION is left
+  // alone. The hoisted function is materialized before the block's statements
+  // run, so giving it a block-scoped binding to capture makes it capture a ref
+  // cell that is only minted at the DECLARATION — a call before that point then
+  // dereferences null instead of throwing the §13.3.1 ReferenceError. Boxing
+  // the value + flag at block entry is the real fix (#5271 cluster B2, not
+  // done); until then this keeps the pre-#5271 lowering for that shape rather
+  // than turning a wrong answer into a trap.
+  for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt)) return;
+  }
   for (const stmt of stmts) {
     if (ts.isVariableStatement(stmt)) walkStmtForLetConst(ctx, fctx, stmt);
   }

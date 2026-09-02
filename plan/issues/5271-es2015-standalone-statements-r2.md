@@ -718,3 +718,29 @@ not box the key string as a String object. No in-scope row covers it.
 
 Controls: 20/20. Full 68-row list after steps 1-4: **0 → 29 pass** (floor 28
 cleared).
+
+### Step 5 — TDZ (cluster B, 3 of 6)
+
+- **B1 (2 rows)** flipped for free in step 2: the block-entry pre-allocation
+  gives a block's `let` its TDZ flag, so `{ x; let x; }` throws.
+- **B3 (1 row) — the cause was a CONSTANT FOLD at the CALL SITE, not the
+  module-global arm.** `f`'s own body already emitted the runtime check
+  (verified in the WAT); the caller had folded `x + 1` to a literal, so the call
+  never happened. `tryStaticToNumber` (`expressions/misc.ts`) and
+  `resolveStrictConstant` (`analysis/static-string-constants.ts`) both traced a
+  `const` binding to its initializer with no TDZ consideration — the same rule
+  #1607 already applied to the self-referential case, generalized. Both now
+  refuse when `analyzeTdzAccess(...) !== "skip"`. Reduced with a probe pair: a
+  literal-initialized `const` did not throw, a `const x = (function(){…})()`
+  did.
+- **B2 (3 rows) NOT done.** A hoisted `function f(){ return x + 1; }` in the
+  same block as `let x` must observe the block binding's TDZ flag. Step 2.3's
+  pre-allocation makes `f` capture the block binding, but the ref cell is minted
+  at the DECLARATION, so a call before it dereferenced null (a trap instead of
+  the ReferenceError). Rather than ship a trap, `preallocateBlockScopedSlots`
+  now SKIPS a block that hoists a function declaration, keeping the pre-#5271
+  lowering for that shape. The real fix is to box the value + flag at block
+  entry (#1177 attach sites) — left for a follow-up.
+
+`stmt-cl-B.txt`: **0 → 3 pass**. Controls 20/20. Full list after steps 1-5:
+**0 → 30 pass**.

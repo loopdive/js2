@@ -505,3 +505,66 @@ describe("#5271 step 4 — for-in lexical head (standalone)", () => {
     ).toEqual(["n=0"]);
   });
 });
+
+describe("#5271 step 5 — a constant fold must not erase a TDZ throw", () => {
+  it("a NUMERIC top-level const read before its declaration throws", async () => {
+    // RED on base: `x + 1` folded to `f64.const 2` at the call site, so the
+    // callee's own TDZ check never ran.
+    await expectBothLanes(
+      `
+      function f() { return x + 1; }
+      var t = 'no';
+      try { f(); } catch (e) { t = e.name; }
+      const x = 1;
+      LOG("t=" + t);
+    `,
+      ["t=ReferenceError"],
+    );
+  });
+
+  it("a STRING top-level const read before its declaration throws", async () => {
+    // STANDALONE-only: in the JS-host lane a string-typed TDZ throw surfaces as
+    // a raw `WebAssembly.Exception` that the compiled `try`/`catch` does not
+    // catch — with `let` as much as with `const`, i.e. on the branch base and
+    // independent of this fold gate (verified with a `let` probe).
+    expect(
+      await runStandalone(`
+      function g() { return s + '!'; }
+      var t = 'no';
+      try { g(); } catch (e) { t = e.name; }
+      const s = 'a';
+      LOG("t=" + t);
+    `),
+    ).toEqual(["t=ReferenceError"]);
+  });
+
+  it("CONTROL — the same folds still happen AFTER the declaration", async () => {
+    await expectBothLanes(
+      `
+      const k = 2;
+      const sk = 'a';
+      function h() { return k + 1; }
+      function hs() { return sk + '!'; }
+      LOG("h=" + h());
+      LOG("hs=" + hs());
+      LOG("inline=" + (k * 3));
+      LOG("sinline=" + (sk + 'z'));
+    `,
+      ["h=3", "hs=a!", "inline=6", "sinline=az"],
+    );
+  });
+
+  it("CONTROL — a `let` read before its declaration is unaffected by the fold gate", async () => {
+    await expectBothLanes(
+      `
+      var t = 'no';
+      function f2() { return y + 1; }
+      try { f2(); } catch (e) { t = e.name; }
+      let y = 1;
+      LOG("t=" + t);
+      LOG("after=" + f2());
+    `,
+      ["t=ReferenceError", "after=2"],
+    );
+  });
+});
