@@ -1333,6 +1333,16 @@ function compileNestedFunctionDeclarationInScope(
      * lifted body's struct.get/set should produce/consume. */
     boxedValType?: ValType;
   }[] = [];
+  // A phase-0 pre-registration is the ABI earlier call sites already emit;
+  // keep it across an intermediate promotion (see collectPromotedPreRegisteredSlots).
+  const preRegisteredCaptures = opts.reuseReservedEntry ? ctx.nestedFuncCaptures.get(funcName) : undefined;
+  const promotedPreRegisteredSlots = collectPromotedPreRegisteredSlots(
+    ctx,
+    fctx,
+    preRegisteredCaptures,
+    referencedNames,
+    transitivelyRequiredNames,
+  );
   for (const name of referencedNames) {
     if (ownLocals.has(name) && !transitivelyRequiredNames.has(name)) continue;
     if (skipUnobservedHoistedCapture(fctx, stmt, name, directlyReferencedNames, transitivelyRequiredNames)) continue;
@@ -1359,7 +1369,7 @@ function compileNestedFunctionDeclarationInScope(
     // singleton — so `new Child()` inside the nested fn constructed from
     // null (react's ChildComponent family). Skip the value capture.
     if (ctx.classSet.has(name) && isSiblingClassDeclarationName(stmt, name)) continue;
-    const localIdx = fctx.localMap.get(name);
+    const localIdx = fctx.localMap.get(name) ?? promotedPreRegisteredSlots.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
     let type =
@@ -1454,6 +1464,7 @@ function compileNestedFunctionDeclarationInScope(
       boxedValType: outerBoxedEntry?.valType,
     });
   }
+  reorderToPreRegisteredAbi(captures, preRegisteredCaptures);
   if (shouldCaptureEnclosingDirectEvalState(ctx, fctx, stmt, reachesDirectEval)) {
     // Phase 0 only needs a stable slot/type so its reserved signature matches
     // the real compile. Runtime materialization belongs to the real hoist pass,
@@ -2670,6 +2681,62 @@ function emitEagerNestedCallCaptureBoxes(
 /** Publish a capturing sibling's lifted signature before any sibling body is
  * compiled. Returns true when the declaration must skip the capture-free
  * reservation path (including generators, whose state machine registers it). */
+type PreRegisteredCaptures = NonNullable<ReturnType<CodegenContext["nestedFuncCaptures"]["get"]>>;
+
+/**
+ * A sibling pre-registered in phase 0 (`preRegisterCapturingSibling`) has
+ * already published its capture list as the call-site ABI: every direct call
+ * and closure reification compiled before the real lift prepends EXACTLY that
+ * list. A lift-time transitive promotion run by an EARLIER sibling
+ * (`promoteAccessorCapturesToGlobals` transitive-only mode) can meanwhile move
+ * one of those bindings to a module global — deleting it from `localMap`,
+ * which silently dropped it from the recomputed signature while the earlier
+ * call sites still pushed it (React's ReactDOMServerIntegrationTestUtils shim:
+ * `itRenders` promoted `initModules`; `expectMarkupMatch` then called
+ * `testMarkupMatch` with one capture too many — "type error in fallthru").
+ * Returns the recorded declaring-frame slot of each such binding (promotion
+ * copies the local into the global, it never clears the slot) and re-marks it
+ * as required, so the lifted param list matches what callers already emit.
+ */
+function collectPromotedPreRegisteredSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  preRegistered: PreRegisteredCaptures | undefined,
+  referencedNames: Set<string>,
+  transitivelyRequiredNames: Set<string>,
+): Map<string, number> {
+  const slots = new Map<string, number>();
+  if (!preRegistered) return slots;
+  for (const cap of preRegistered) {
+    if (fctx.localMap.has(cap.name) || !fctx.promotedCaptureNames?.has(cap.name)) continue;
+    if (!ctx.capturedGlobals.has(cap.name)) continue;
+    const slot =
+      cap.outerLocalIdx < fctx.params.length
+        ? fctx.params[cap.outerLocalIdx]
+        : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+    if (slot?.name !== cap.name) continue;
+    slots.set(cap.name, cap.outerLocalIdx);
+    referencedNames.add(cap.name);
+    transitivelyRequiredNames.add(cap.name);
+  }
+  return slots;
+}
+
+/**
+ * Same ABI contract as above: callers prepend the pre-registered captures in
+ * the pre-registered ORDER, so a re-lift publishes that order (names the
+ * pre-registration did not know keep their relative order at the end).
+ */
+function reorderToPreRegisteredAbi(
+  captures: { name: string }[],
+  preRegistered: PreRegisteredCaptures | undefined,
+): void {
+  if (!preRegistered) return;
+  const order = new Map(preRegistered.map((c, i) => [c.name, i] as const));
+  if (!captures.every((c) => order.has(c.name))) return;
+  captures.sort((a, b) => order.get(a.name)! - order.get(b.name)!);
+}
+
 function preRegisterCapturingSibling(
   ctx: CodegenContext,
   fctx: FunctionContext,
