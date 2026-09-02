@@ -32,6 +32,7 @@
  * byte-identical ("ask first, emit second").
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { undefinedSingletonActive } from "./any-helpers.js";
 import { ensureBoxedValueOfHelper } from "./boxed-proto-valueof.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -73,17 +74,28 @@ export function emitNumberProtoFormatBody(ctx: CodegenContext, fctx: FunctionCon
     { op: "local.set", index: xLocal },
   );
 
-  // 2. precision undefined → ToString(x). The closure ABI leaves an absent
-  //    argument as a null externref.
-  fctx.body.push(
-    { op: "local.get", index: 2 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: xLocal }, { op: "call", funcIdx: numToStringIdx }, { op: "return" }],
-    },
-  );
+  // 2. precision undefined → ToString(x).
+  //
+  // Regime-aware on purpose: under the #2106 `$undefined`-singleton regime an
+  // ABSENT argument arrives as a NON-null singleton, so a bare `ref.is_null`
+  // would miss it, `ToNumber(undefined)` would give NaN, and step 3 would turn
+  // `(1).toPrecision()` — whose answer is "1" — into a RangeError.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const precisionAbsent: Instr[] =
+    undefinedSingletonActive(ctx) && isUndefinedIdx !== undefined
+      ? [
+          { op: "local.get", index: 2 },
+          { op: "ref.is_null" },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: isUndefinedIdx },
+          { op: "i32.or" },
+        ]
+      : [{ op: "local.get", index: 2 }, { op: "ref.is_null" }];
+  fctx.body.push(...precisionAbsent, {
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [{ op: "local.get", index: xLocal }, { op: "call", funcIdx: numToStringIdx }, { op: "return" }],
+  });
 
   // 3. p = ToIntegerOrInfinity(precision): ToNumber, truncate toward zero,
   //    NaN → 0 (which then fails the step-5 range check, as the spec intends).

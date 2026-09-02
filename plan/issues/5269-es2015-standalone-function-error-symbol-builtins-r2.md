@@ -853,3 +853,120 @@ carrier) with an async body. Attempt only after A–L are green.
 - #3371, #5198, #4274 / #4634, #5139, #5140 — owners of the X rows.
 - Handover: `plan/agent-context/es2015-standalone-session-handover.md`
   (method notes).
+
+## 2026-09-02 implementation (Opus)
+
+Steps G, H, A, B, C, L and J-1 landed. Measured with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/builtins-head.txt --standalone`
+over the same 150-row list the plan uses.
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| before (this branch's fork point) | **0** | 132 | 18 |
+| after (post `git merge origin/main`) | **29** | 112 | 9 |
+
+The before run is this branch's own base, not the plan's `c68dea0d2` figure
+(0/128/22) — the Promise (#5454), for-of (#5458) and buffers (#5224) waves
+landed in between, which moved four rows from `compile_error` to `fail`.
+
+**The after run is the STRICTER of the two.** It was taken after merging
+`origin/main`, which carries #5272 — the runner now applies
+`standaloneHostImportError` on the original-harness path, so a row that only
+"passes" by satisfying an `env::` import from the host no longer counts. Every
+flip below survives that check.
+
+All 29 flips are in-scope rows; none of the 64 X rows moved.
+
+### Per step
+
+| step | list | before → after | flipped |
+|---|---|---|---|
+| G — JSON residue | `builtins-cl-G-json.txt` | 0 → 8 of 13 | `value-symbol`, `parse/revived-proxy`, `value-{object,array}-proxy`, `value-{object,array}-proxy-revoked`, `replacer-array-proxy-revoked`, `replacer-array-wrong-type` |
+| H — `[Symbol.toPrimitive]` literals | `builtins-cl-H-…txt` | 0 → 7 of 11 | the 4 annexB `escape`/`unescape` rows, `isNaN`/`isFinite/toprimitive-valid-result`, `indexOf/searchstring-tostring-wrapped-values` |
+| A — Symbol namespace | `builtins-cl-A1…`, `A2…` | 0 → 7 of 14 | the 6 `Symbol/*/prop-desc.js` rows, `species/basic` |
+| B — Symbol.prototype / wrapper | `builtins-cl-B1…`, `B2…` | 0 → 5 of 11 | `prototype/intrinsic`, `prototype/Symbol.toStringTag`, `toString-default-attributes-strict`, `auto-boxing-strict`, `auto-boxing-non-strict` |
+| C — Proxy in the ToString cascade | `builtins-cl-C-…txt` | 0 → 0 of 8 | — (see below) |
+| L — Error instance `message` | `builtins-cl-L-…txt` | 0 → 1 of 1 | `Error/message_property` |
+| J-1 — reflective `toPrecision` | `builtins-cl-J-…txt` | 0 → 1 of 3 | `toPrecision/precision-cannot-be-coerced-to-a-number-in-range` |
+
+Controls: **20/20 on the standalone lane** after every step. On the js-host lane
+4 of the 20 fail (`Error/prototype/toString/name`, `JSON/stringify/space-wrong-type`,
+`Date/prototype/toJSON/called-as-function`, `isNaN/toprimitive-get-abrupt`) —
+**identical on base**, established by a file-copy A/B of the three files the G
+step touches, not assumed.
+
+Focused suite `tests/issue-5269-es2015-builtins-r2.test.ts`: 31 cases, host and
+standalone, each standalone case asserting the module imports nothing from
+`env`. Five ratchet gates green (also with `LOC_GATE_BASE=origin/main`),
+typecheck green, `biome lint src tests scripts` green.
+
+### Findings that change what the remaining work costs
+
+1. **C is blocked behind cluster M, not behind ToString.** The ToString side is
+   fixed and measured: `"" + new Proxy(function(){}, {})` and `String(…)` both
+   answer `function () { [native code] }`, where both were the string
+   `"undefined"`. All six `proxy-*.js` rows nevertheless still fail on their
+   SECOND assertion, `assertNativeFunction(new Proxy(f, { apply() {} }).apply)`:
+   a dynamic `.apply` read on a proxy answers **NULL** (measured directly —
+   `fn.toString` on the result dereferences a null). That is a
+   `Function.prototype` member-read gap. `not-a-constructor.js` and
+   `proxy-non-callable-throws.js` need the `.call` transfer to reach
+   `emitFunctionProtoToStringBody`, which already has the correct
+   callable/non-callable split.
+
+2. **The `env::__new_SuppressedError` leak is now VISIBLE, and it is the whole
+   of cluster E.** In the after run the two E rows
+   (`NativeErrors/message_property_native_error`,
+   `Error/prototype/stack/getter-subclass`) are `compile_error` with
+   `standalone target emitted host imports: env::__new_SuppressedError (#2961)`,
+   where before they were runtime `fail`s with unrelated messages. That is
+   #5272's leak check landing on the original-harness path — the plan's finding 1
+   predicted exactly this re-classification — not a regression from this
+   change-set, which touches nothing in the SuppressedError construction path.
+   E-2 (a native `SuppressedError` under `noJsHost`) is now the first thing to
+   do for that cluster, and its result is directly readable from the runner.
+
+3. **E-1 as the plan specifies it is unreachable, and was reverted.** The arm
+   was written into `native-construct.ts::fillNativeConstructDrivers` and
+   instrumented: `fillNativeConstructDrivers` is **never called** for
+   `var C = TypeError; new C("m")` — no `__native_construct_N` driver is even
+   reserved, because `tryCompileNativeConstruct`'s gate
+   (`new-super.ts`, `resolvesToConstructableFunctionValue` &co.) declines for a
+   builtin-carrier callee. Whatever lowers that shape is the site to find first;
+   until then an arm in the driver is dead code, so none was shipped.
+
+4. **G's five stragglers share one cause outside this issue.** A trapless Proxy
+   over a CLOSED typed-vec target does not forward its reads: `p["length"]` and
+   `p["0"]` both answer `undefined` through `__extern_get` (measured). That is
+   what leaves `replacer-array-proxy` and `value-array-abrupt` failing.
+   Separately, `parse/text-non-string-primitive` still answers `0` for
+   `JSON.parse(false)`, and `replacer-wrong-type` keeps its value binding a
+   closed struct in that module's shape.
+
+5. **H's four stragglers are not the literal.** With the `@@toPrimitive`
+   assertion now passing, the `String.prototype.indexOf` rows fail on the NEXT
+   one: OrdinaryToPrimitive completeness for the `position`/`searchString`
+   arguments (valueOf-before-toString, and the TypeError when neither is
+   callable).
+
+6. **`Symbol/species/builtin-getter-name.js` is now one step away.** The A-5
+   seed means the accessor IS found; the row fails because the getter's RUNTIME
+   `.name` reads `"get"` rather than `"get [Symbol.species]"`, even though
+   `ensureStandaloneSpeciesGetterClosure` records the right
+   `nativeClosureMeta`. The runtime `.name` read is not consulting that map.
+
+7. **A PROPERTY-form `[Symbol.iterator]: function () {…}` literal is not
+   iterable on either lane** — on this change and on its base alike (file-copy
+   A/B on `literals.ts`). Only the METHOD form is. Unrelated to this issue, but
+   it is why the H precondition fixture asserts a member read.
+
+### Not attempted
+
+D (`Error.prototype.stack` accessor pair, 7 rows), M+F (7), J-2
+(`Date.prototype.toJSON`, 2 — its rows need `toJSON.call(10)` and
+`toJSON.call(Symbol())` to find a user-installed `toISOString` on the boxed
+primitive's native-proto companion, a different substrate question from the glue
+ladder), I (7, of which the 3 normalize rows are a table-generation job), K (2).
+E is re-scoped by findings 2 and 3 above: E-2 (native SuppressedError) is now
+the actionable half, and E-1 needs the real dynamic-`new` dispatch site found
+first.

@@ -345,6 +345,17 @@ describe("#5269 Step J — reflective Number.prototype.toPrecision", () => {
      ${check("caught", "3")}`,
   );
 
+  // §21.1.3.5 step 2 — an ABSENT precision is `ToString(x)`, not a RangeError.
+  // Under the #2106 `$undefined`-singleton regime an absent argument arrives as
+  // a NON-null singleton, so a bare `ref.is_null` would miss it and step 3
+  // would coerce it to NaN → 0 → RangeError.
+  standaloneOnly(
+    "J-1 an absent precision is ToString(x), not a RangeError",
+    `var toPrecision = Number.prototype.toPrecision;
+     ${check("toPrecision.call(1)", "1")}
+     ${check("(123.456).toPrecision()", "123.456")}`,
+  );
+
   // …and the in-range answer is the SAME formatter the direct spelling calls.
   standaloneOnly(
     "J-1 an in-range precision formats, and an incompatible receiver throws",
