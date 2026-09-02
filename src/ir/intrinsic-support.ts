@@ -6,7 +6,9 @@ import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId
 import {
   resolveRuntimeHostCapabilityFuncFamilyRecord,
   resolveRuntimeHostCapabilityFuncRecord,
+  resolveRuntimeHostCapabilityGlobalRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityFieldScheme,
   type RuntimeHostCapabilityRecord,
   type RuntimeHostCapabilityValueType,
 } from "./runtime-host-capabilities.js";
@@ -34,6 +36,7 @@ import {
   STRING_CHAR_CODE_AT_RUNTIME_FEATURES,
   STRING_CONCAT_RUNTIME_FEATURES,
   STRING_CONCAT_MANY_RUNTIME_FEATURES,
+  STRING_CONST_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -41,6 +44,7 @@ import {
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type RuntimeProviderPlan,
+  type StringConstRuntimeFeature,
 } from "./runtime-manifest.js";
 
 export interface PreparedIrRuntimeManifest {
@@ -549,6 +553,55 @@ export function preparedStringConcatManyProvider(
   throw new Error(`IR string-concat-many provider ${provider.id} is not a callable family implementation`);
 }
 
+/** The two string-const feature rows, one per import namespace; named once so no caller spells them. */
+const STRING_CONST_RUNTIME_FEATURE = STRING_CONST_RUNTIME_FEATURES[0];
+const STRING_CONST_UTF16_RUNTIME_FEATURE = STRING_CONST_RUNTIME_FEATURES[1];
+
+/** The frozen feature row a literal answers to, by the ONE derivation. */
+export function stringConstFeatureFor(utf16: boolean): StringConstRuntimeFeature {
+  return utf16 ? STRING_CONST_UTF16_RUNTIME_FEATURE : STRING_CONST_RUNTIME_FEATURE;
+}
+
+/**
+ * (#3526 F2-S8) Which arm of the string LITERAL STORAGE seam the frozen
+ * manifest selected for `feature`, or `undefined` when no manifest carries that
+ * row.
+ *
+ * The family's last twin, and the first whose arms are not callables at all.
+ * The host arm returns the import MODULE and the field SCHEME — never a field,
+ * because there is one field per literal and the scheme is what derives it. The
+ * native arm returns the Program-ABI global ROLE, which the consumer resolves
+ * to the interned literal's global; it can never return an index, because the
+ * manifest freezes before `internNativeStringLiteral` allocates one.
+ *
+ * `resolveRuntimeHostCapabilityGlobalRecord` is the fail-closed kind guard, the
+ * mirror of the func one every sibling takes: a callable capability has no
+ * global spelling, so admitting one here would build a nonsense binding.
+ */
+export function preparedStringConstProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+  feature: StringConstRuntimeFeature,
+):
+  | { readonly arm: "host"; readonly module: string; readonly scheme: RuntimeHostCapabilityFieldScheme }
+  | { readonly arm: "native"; readonly role: "native-string-literal" }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === feature,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "native-global") {
+    return { arm: "native", role: provider.implementation.role };
+  }
+  if (provider.implementation.kind === "host-global") {
+    const record = resolveRuntimeHostCapabilityGlobalRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, scheme: record.field.scheme };
+  }
+  throw new Error(`IR string-const provider ${provider.id} is not a literal-storage implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -677,6 +730,22 @@ export function prepareIrRuntimeManifest(input: {
    * contract violation the resolve arm can name.
    */
   readonly stringConcatManyDemand?: { readonly arities: readonly number[] };
+  /**
+   * (#3526 F2-S8) Which literal-storage NAMESPACES some function in
+   * `functions` needs. Same shape and same reason as `stringConcatDemand` — a
+   * pair, because the seam has two feature rows — but it is load-bearing in a
+   * way no sibling demand is.
+   *
+   * `string.const` has no callable symbol AND no resolve arm: after this slice
+   * the frozen row is the only physical authority, and the attachment runs
+   * INSIDE the freeze. A module carrying literals that froze no manifest would
+   * therefore leave every literal without `storage` and fall silently back to
+   * the raw `stringGlobalMap` lookup — byte-identical on the host lane, and so
+   * invisible to a byte matrix. That is why `literal` is in the "freeze nothing
+   * at all" conjunction below: a module with any `string.const` (or any
+   * `extern.regex`, which occupies host globals too) always freezes.
+   */
+  readonly stringConstDemand?: { readonly literal: boolean; readonly utf16: boolean };
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -719,7 +788,9 @@ export function prepareIrRuntimeManifest(input: {
     !input.stringConcatDemand?.immutable &&
     !input.stringConcatDemand?.owned &&
     !input.stringCharCodeAtDemand &&
-    (input.stringConcatManyDemand?.arities.length ?? 0) === 0
+    (input.stringConcatManyDemand?.arities.length ?? 0) === 0 &&
+    !input.stringConstDemand?.literal &&
+    !input.stringConstDemand?.utf16
   ) {
     return undefined;
   }
@@ -738,6 +809,8 @@ export function prepareIrRuntimeManifest(input: {
   if ((input.stringConcatManyDemand?.arities.length ?? 0) > 0) {
     builder.requestFeature(STRING_CONCAT_MANY_RUNTIME_FEATURE);
   }
+  if (input.stringConstDemand?.literal) builder.requestFeature(STRING_CONST_RUNTIME_FEATURE);
+  if (input.stringConstDemand?.utf16) builder.requestFeature(STRING_CONST_UTF16_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

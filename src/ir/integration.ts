@@ -326,11 +326,14 @@ import {
   preparedStringCompareProvider,
   preparedStringConcatManyProvider,
   preparedStringConcatProvider,
+  preparedStringConstProvider,
   preparedStringEqProvider,
   preparedStringLenProvider,
+  stringConstFeatureFor,
   type PreparedIrRuntimeManifest,
 } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
+import { hasLoneSurrogate } from "../string-surrogate.js";
 import {
   attachIrGeneratorSupport,
   collectAttachedGeneratorProviders,
@@ -355,6 +358,7 @@ import type {
   StringComparePolicy,
   StringConcatManyPolicy,
   StringConcatPolicy,
+  StringConstPolicy,
   StringEqPolicy,
   StringLenPolicy,
 } from "./runtime-manifest.js";
@@ -421,7 +425,7 @@ import {
 import { emitExternrefDynamicToNumber } from "./dynamic-number-lowering.js";
 import type { PreparedIrPendingPatch } from "./prepared-lowering-patch.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
-import { attachIrStringLengthProvider, attachIrStringSupport } from "./string-support.js";
+import { attachIrStringConstStorage, attachIrStringLengthProvider, attachIrStringSupport } from "./string-support.js";
 import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
@@ -1067,6 +1071,60 @@ function integrationStringCharCodeAtPolicy(ctx: CodegenContext): StringCharCodeA
 }
 
 /**
+ * (#3526 F2-S8) This caller's already-resolved STRING LITERAL STORAGE policy.
+ *
+ * The EXACT fact `prepareStrings`'s `storageForConst` read directly off
+ * `ctx.nativeStrings` when it decided the binding itself, consulted once, here,
+ * before freeze. Same one-flag truth table as its five family-2 siblings, for
+ * the same reason: `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringConstPolicy(ctx: CodegenContext): StringConstPolicy {
+  return Object.freeze({ storage: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S8) Which literal-storage namespaces any of `fns` needs.
+ *
+ * TWO producers, exactly the enumeration `prepareStrings`' own literal scan
+ * performs: a `string.const` instruction, and an `extern.regex`, whose pattern
+ * and flags lower through two `emitStringConst` calls and DO occupy
+ * `string_constants` globals on the host lane. Counting the regex is what keeps
+ * a regex-only module's frozen `hostCapabilityRecords` truthful about the
+ * namespace it imports — even though its two literals still reach emission
+ * through the no-storage fallback until that seam carries a `storage` of its
+ * own (measured: 2 reaches, REGEX/gc-host, and 0 for `string.const` anywhere).
+ *
+ * `utf16` is the ONE derivation, `hasLoneSurrogate`, shared with the legacy
+ * collector through `src/string-surrogate.ts`. It is a per-literal fact inside
+ * the host arm, never an arm of its own — the pair says which feature ROWS the
+ * module needs, not which authority answers them.
+ */
+function irStringConstDemand(fns: readonly IrFunction[]): { readonly literal: boolean; readonly utf16: boolean } {
+  let literal = false;
+  let utf16 = false;
+  const note = (value: string): void => {
+    literal = true;
+    utf16 ||= hasLoneSurrogate(value);
+  };
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.const") note(instr.value);
+          if (instr.kind === "extern.regex") {
+            note(instr.pattern);
+            note(instr.flags);
+          }
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { literal, utf16 };
+}
+
+/**
  * (#3526 F2-S7) True when any of `fns` performs a guarded `charCodeAt` read.
  *
  * TWO producers reach WasmGC codegen and BOTH are demand — this is the only
@@ -1235,6 +1293,7 @@ function prepareBuiltFnRuntimeManifest(
       stringConcat: integrationStringConcatPolicy(ctx),
       stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
       stringConcatMany: integrationStringConcatManyPolicy(ctx),
+      stringConst: integrationStringConstPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1265,6 +1324,15 @@ function prepareBuiltFnRuntimeManifest(
     // pass ran on the way to this freeze, so every fused root is visible here
     // and a module that fused nothing freezes no family row.
     stringConcatManyDemand: irStringConcatManyDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S8) Same predicate the partition scan above runs, same reason
+    // again — and here the coupling is LOAD-BEARING rather than merely
+    // consistent. `prepareStringConst` runs after the `if (!runtime) return`
+    // early return below, so a module carrying literals that froze no manifest
+    // would attach no storage at all and every literal would fall back to the
+    // raw `stringGlobalMap` lookup: byte-identical on the host lane, and
+    // therefore invisible to a byte matrix. This line is what guarantees a
+    // module with any literal always freezes.
+    stringConstDemand: irStringConstDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -1280,9 +1348,10 @@ function prepareBuiltFnRuntimeManifest(
     return fn === entry.fn ? entry : { ...entry, fn };
   });
   const lengthAttached = prepareStringLength(ctx, preparedEntries, runtime);
+  const constAttached = prepareStringConst(ctx, lengthAttached, runtime);
   materializePreparedMathProviders(ctx, runtime);
   materializePreparedAsyncHostAdapters(ctx, runtime.functions);
-  return { entries: lengthAttached, runtime };
+  return { entries: constAttached, runtime };
 }
 
 /**
@@ -1337,6 +1406,125 @@ function prepareStringLength(
     // `attachIrStringLengthProvider`, which records the corpus failure that
     // proved it.
     const fn = attachIrStringLengthProvider(entry.fn, provider);
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
+}
+
+/**
+ * (#3526 F2-S8) Attach the frozen literal-STORAGE decision to every
+ * `string.const`.
+ *
+ * The second attachment to move behind the freeze, and the reason is the same
+ * one `prepareStringLength` records: this seam has no resolve arm and no
+ * callable symbol at all, so the `IrGlobalRef` (or the oversized materializer)
+ * the instruction carries IS the physical choice — which means the attachment
+ * has to happen after the manifest that decides it is frozen.
+ *
+ * **Input is `lengthAttached`, deliberately.** It is the output of BOTH prior
+ * passes — `prepareStrings`, whose first pass bound `string.repeat`, then
+ * `prepareStringLength` — and the exact-binding checks in
+ * {@link attachIrStringConstStorage} check rather than overwrite, so composing
+ * on anything else would trip them.
+ *
+ * **It sits after `prepareBuiltFnRuntimeManifest`'s `if (!runtime)` early
+ * return, so it runs only because `stringConstDemand` is in the freeze-nothing
+ * conjunction.** Break that coupling and every literal silently loses `storage`
+ * and reaches emission through the raw `stringGlobalMap` fallback — the same
+ * bytes on the host lane, so no byte matrix could see it.
+ *
+ * Order-preservation: the host arm reads what `prepareStrings`' pre-registration
+ * already registered and mints nothing; the native arm's
+ * `internNativeStringLiteral` and the oversized `pushDefinedFunc` now run after
+ * `prepareIrRuntimeManifest` + `prepareStringLength`, and nothing in that window
+ * pushes a defined or import global (the oversized `funcIdx` is a late-resolved
+ * handle). `providerRegistry.observe` moves with the pass — still before
+ * `preregisterCallableProviders` and long before `planRetained()` seals the
+ * registry, so no observation ordinal moves.
+ */
+function prepareStringConst(
+  ctx: CodegenContext,
+  entries: readonly BuiltFn[],
+  runtime: PreparedIrRuntimeManifest,
+): readonly BuiltFn[] {
+  // The Program-ABI type registry is what `prepareStrings` requires before it
+  // attaches anything; this pass keeps that skip rather than inventing a
+  // carrier the rest of preparation does not have.
+  if (!ctx.programAbiTypes) return entries;
+  // ONE derivation, shared with the legacy collector through
+  // `src/string-surrogate.ts`: which of the two namespace features a literal
+  // answers to. The split is per-literal, never an arm.
+  const armFor = (value: string): ReturnType<typeof preparedStringConstProvider> =>
+    preparedStringConstProvider(runtime, stringConstFeatureFor(hasLoneSurrogate(value)));
+
+  const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
+  const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
+    // The lane read that used to guard this is gone: the frozen row's native
+    // arm IS "materialize natively". Only the PHYSICAL skip stays.
+    if (ctx.nativeStrTypeIdx < 0) return undefined;
+    const existing = nativeMaterializations.get(instr);
+    if (existing) return existing;
+    const encoding =
+      ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
+        ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
+        : undefined;
+    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
+    nativeMaterializations.set(instr, materialization);
+    return materialization;
+  };
+
+  const storageForConst = (instr: IrInstrStringConst): IrGlobalRef | undefined => {
+    const arm = armFor(instr.value);
+    if (!arm) return undefined;
+    if (arm.arm === "host") {
+      const ref = programAbiStringConstantRef(ctx, instr.value);
+      if (!ref) return undefined;
+      // The frozen row named a MODULE; the recovered ref's module is whatever
+      // `addStringConstantGlobals` derived from `hasLoneSurrogate` when it
+      // registered the literal. The two derivations have one source, so a
+      // mismatch is derivation DRIFT, not mis-registration — and it is exactly
+      // the failure a `string_constants16` literal bound to a `string_constants`
+      // record would produce at instantiation.
+      if (ref.binding.kind !== "import" || ref.binding.module !== arm.module) {
+        throw new Error(`ir/integration: prepared string.const has no exact ${arm.module} import global`);
+      }
+      return ref;
+    }
+    if (!ctx.programAbiGlobals) return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    if (!materialization || materialization.kind !== "global") return undefined;
+    const global = ctx.mod.globals[materialization.globalIdx - ctx.numImportGlobals];
+    if (!global) {
+      throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
+    }
+    return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
+  };
+
+  const materializerRefs = new Map<number, IrFuncRef>();
+  const materializerForConst = (instr: IrInstrStringConst): IrFuncRef | undefined => {
+    // The oversized native literal arm — a literal past `ARRAY_NEW_FIXED_MAX`
+    // is materialized by a minted helper rather than an interned global. It is
+    // policy-SILENT by design: no manifest kind can name a function minted per
+    // literal, so the frozen row selects the authority and the size still
+    // selects the shape.
+    const arm = armFor(instr.value);
+    if (!arm || arm.arm !== "native") return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    const providerRegistry = ctx.programAbiCallableProviders;
+    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
+    const existing = materializerRefs.get(materialization.funcIdx);
+    if (existing) return existing;
+    const provider = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:${materializerRefs.size}`);
+    providerRegistry.observe(provider, materialization.funcIdx);
+    materializerRefs.set(materialization.funcIdx, provider);
+    return provider;
+  };
+
+  return entries.map((entry) => {
+    // Const-ONLY. The omnibus `attachIrStringSupport` cannot be reused here for
+    // the reason `attachIrStringLengthProvider` records: its callable arm
+    // re-derives five other seams' providers on every run, and this pass has no
+    // authority over any of them.
+    const fn = attachIrStringConstStorage(entry.fn, storageForConst, materializerForConst);
     return fn === entry.fn ? entry : { ...entry, fn };
   });
 }
@@ -3985,6 +4173,7 @@ export function compileIrPathFunctions(
   const stringConcatPolicy = integrationStringConcatPolicy(ctx);
   const stringCharCodeAtPolicy = integrationStringCharCodeAtPolicy(ctx);
   const stringConcatManyPolicy = integrationStringConcatManyPolicy(ctx);
+  const stringConstPolicy = integrationStringConstPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -4144,6 +4333,25 @@ export function compileIrPathFunctions(
           "resolve",
           "ir/integration: batched string concatenation has no provider under string-concat policy " +
             `concat=${stringConcatPolicy.concat}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S8) The literal STORAGE seam partitions on the same rule, in
+    // the same pass. Its demand is a PAIR of namespaces and EITHER is demand,
+    // because one unsupported policy refuses both feature rows at once.
+    const stringConstDemand = irStringConstDemand([entry.fn]);
+    if (stringConstPolicy.storage === "unsupported" && (stringConstDemand.literal || stringConstDemand.utf16)) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string literal storage has no provider under string-const policy " +
+            `storage=${stringConstPolicy.storage}`,
         ),
         "resolve",
       );
@@ -7709,52 +7917,20 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   // attachment moved with it — see `prepareStringLength`, which runs inside
   // `prepareBuiltFnRuntimeManifest`.
 
-  const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
-  const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
-    if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
-    const existing = nativeMaterializations.get(instr);
-    if (existing) return existing;
-    const encoding =
-      ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
-        ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
-        : undefined;
-    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
-    nativeMaterializations.set(instr, materialization);
-    return materialization;
-  };
-
-  const storageForConst = (instr: IrInstrStringConst): IrGlobalRef | undefined => {
-    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
-    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
-    const materialization = nativeMaterializationFor(instr);
-    if (!materialization || materialization.kind !== "global") return undefined;
-    const global = ctx.mod.globals[materialization.globalIdx - ctx.numImportGlobals];
-    if (!global) {
-      throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
-    }
-    return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
-  };
-
-  const materializerRefs = new Map<number, IrFuncRef>();
-  const materializerForConst = (instr: IrInstrStringConst): IrFuncRef | undefined => {
-    const materialization = nativeMaterializationFor(instr);
-    const providerRegistry = ctx.programAbiCallableProviders;
-    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
-    const existing = materializerRefs.get(materialization.funcIdx);
-    if (existing) return existing;
-    const provider = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:${materializerRefs.size}`);
-    providerRegistry.observe(provider, materialization.funcIdx);
-    materializerRefs.set(materialization.funcIdx, provider);
-    return provider;
-  };
+  // (#3526 F2-S8) The literal STORAGE decision is NOT taken here any more, for
+  // the same reason F2-S4 moved the length one: `string.const` has no resolve
+  // arm at all, so the `IrGlobalRef` the instruction carries IS the physical
+  // choice, and the frozen manifest is now its authority. This pass keeps the
+  // literal SCAN and the host pre-registration above — registration and import
+  // ORDER are deliberately untouched — and the attachment moved to
+  // `prepareStringConst`, which runs inside `prepareBuiltFnRuntimeManifest`.
 
   let usesString = false;
   const prepared = fns.map((entry) => {
     const attachment = attachIrStringCarrier(entry.fn, carrierRef);
     usesString ||= attachment.usesString;
     const fn = attachIrStringSupport(attachment.function, {
-      storageForConst,
-      materializerForConst,
+      storageForConst: () => undefined,
       providerForLength: () => undefined,
       providerForRepeat: (instr) =>
         irIntrinsicFuncRef(
