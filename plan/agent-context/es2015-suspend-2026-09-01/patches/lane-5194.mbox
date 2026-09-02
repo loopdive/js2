@@ -1,8 +1,8 @@
 From de01ce77417a0e74ad8413225a677bac66cb14e8 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
 Date: Tue, 1 Sep 2026 21:57:23 +0000
-Subject: [PATCH] =?UTF-8?q?wip(#5194):=20suspension=20snapshot=202026-09-0?=
- =?UTF-8?q?1T21:57Z=20=E2=9C=93?=
+Subject: [PATCH 1/2] =?UTF-8?q?wip(#5194):=20suspension=20snapshot=202026-?=
+ =?UTF-8?q?09-01T21:57Z=20=E2=9C=93?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -1745,6 +1745,95 @@ index 000000000..b0f97f0a7
 +    expect(await runControl(PROTO_GRAPH_SOURCE, "host")).toBe(0);
 +  });
 +});
+-- 
+2.43.0
+
+
+From db9fee35e53faae41d69e4f39556726c10729c2d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 23:51:13 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?wip(#5194):=20post-suspension=20edit=20snap?=
+ =?UTF-8?q?shot=202026-09-01T23:51Z=20=E2=9C=93?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Unverified 24-line edit in native-proto.ts / native-proto-value-read.ts / array-object-proto.ts made by the implementer between the 21:56Z snapshot and its rate-limit termination; plumbing commit, gates not run.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+---
+ src/codegen/array-object-proto.ts      |  3 +++
+ src/codegen/native-proto-value-read.ts |  5 ++++-
+ src/codegen/native-proto.ts            | 18 +++++++++++++++++-
+ 3 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/src/codegen/array-object-proto.ts b/src/codegen/array-object-proto.ts
+index e76f33476..fb24fc45a 100644
+--- a/src/codegen/array-object-proto.ts
++++ b/src/codegen/array-object-proto.ts
+@@ -2348,6 +2348,9 @@ function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number):
+     memberLength: (member) => TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+     // §23.2.3.36: the `@@iterator` value IS the `values` function object.
+     memberAliasOf: (member) => (member === "@@1" ? "values" : undefined),
++    // §23.2.3.32: `%TypedArray%.prototype.toString` IS `Array.prototype.toString`
++    // — the same built-in function object, so the identity must cross brands.
++    memberBrandAliasOf: (c, member) => (member === "toString" ? ensureArrayNativeProtoGlue(c) : undefined),
+     // (#2893 PR-1) The `length`/`byteLength`/`byteOffset` accessor getters now
+     // emit real reflective bodies (brand-recover the view → read/compute the
+     // field → throw on non-view); `buffer` + all methods stay a catchable refusal.
+diff --git a/src/codegen/native-proto-value-read.ts b/src/codegen/native-proto-value-read.ts
+index fd75a6172..da639f428 100644
+--- a/src/codegen/native-proto-value-read.ts
++++ b/src/codegen/native-proto-value-read.ts
+@@ -65,7 +65,10 @@ export function resolveStandaloneProtoMemberValueClosure(
+     // toUTCString. Value reads bypass prototype seeding, so canonicalize here
+     // as well as in the seeded-property path.
+     const closureMember = builtinName === "Date" && member === "toGMTString" ? "toUTCString" : member;
+-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
++    // (#5194 step 2) §23.2.3.32 — a member whose initial value IS another
++    // prototype's function object resolves to that brand's singleton.
++    const closureBrand = glue.memberBrandAliasOf?.(ctx, member) ?? brand;
++    const closure = ensureStandaloneNativeMethodClosure(ctx, closureBrand, closureMember, kind, {
+       refusalBodyFallback: true,
+     });
+     return closure ? { closure, kind } : null;
+diff --git a/src/codegen/native-proto.ts b/src/codegen/native-proto.ts
+index ddab46104..04a0c02f0 100644
+--- a/src/codegen/native-proto.ts
++++ b/src/codegen/native-proto.ts
+@@ -225,6 +225,20 @@ export interface NativeProtoBuiltinGlue {
+    * A member with no alias (the default) is unaffected.
+    */
+   memberAliasOf?: (member: string) => string | undefined;
++  /**
++   * (#5194 step 2) Cross-BRAND member-identity alias — the same rule as
++   * `memberAliasOf`, one level up. §23.2.3.32 says "The initial value of the
++   * `%TypedArray%.prototype.toString` data property is the same built-in
++   * function object as `Array.prototype.toString`", so the two prototypes must
++   * resolve to ONE closure singleton, which `memberAliasOf` (same-brand only)
++   * cannot express. Returning a brand here routes the closure factory to that
++   * brand's member instead, exactly as `memberAliasOf` routes to another name.
++   *
++   * Only closure IDENTITY moves: the member stays this glue's own CSV entry, so
++   * `hasOwnProperty` / gOPD / `getOwnPropertyNames` still report it as an own
++   * property of THIS prototype.
++   */
++  memberBrandAliasOf?: (ctx: CodegenContext, member: string) => number | undefined;
+   /**
+    * Emit a method/getter closure BODY into `fctx`, given the externref `this`
+    * already bound to closure-param index 1 and any further args at indices
+@@ -683,7 +697,9 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
+     // same function object. Seed the alias key with the canonical closure
+     // singleton instead of minting a second per-member wrapper.
+     const closureMember = glue.name === "Date" && member === "toGMTString" ? "toUTCString" : member;
+-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
++    // (#5194 step 2) A cross-brand alias mints the OTHER brand's singleton.
++    const closureBrand = glue.memberBrandAliasOf?.(ctx, member) ?? brand;
++    const closure = ensureStandaloneNativeMethodClosure(ctx, closureBrand, closureMember, kind, {
+       // Reify un-wired members as throwing function VALUES (#2984 Phase 2 /
+       // #3250). The companion is a REFLECTION surface: `typeof p.m ===
+       // "function"`, `p.m.name`, `p.m.length` and `isConstructor(p.m) ===
 -- 
 2.43.0
 
