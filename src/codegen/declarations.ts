@@ -172,6 +172,13 @@ import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
 import {
+  applyModuleClosurePreLift,
+  DISCOVERY_STATIC_ENABLE_SEAM,
+  moduleInitDiscoveryIsStatic,
+  planModuleClosurePreLift,
+  PRELIFT_DISABLE_SEAM,
+} from "./declarations/module-init-closure-prelift.js";
+import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
   planModuleInitChunks,
@@ -6087,14 +6094,44 @@ export function compileDeclarations(
     !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
     moduleInitChunksRequired(orderedInitEntriesForChunking);
 
+  // (#3523 R4 gap-6a) The pass-1 skip is OPT-IN and OFF by default — see
+  // `declarations/module-init-closure-prelift.ts` for the mechanism, and the
+  // `gap-6a v2 repair record` in `plan/issues/3523-ir-r4-module-init-compile-once.md`
+  // for the six measured regression clusters that put it behind this seam. With
+  // the seam unset every expression below is `false`/`undefined` and this
+  // function takes exactly the two-pass path it took before the slice.
+  const discoveryStaticEnabled = process.env[DISCOVERY_STATIC_ENABLE_SEAM] === "1";
+  const preLift =
+    discoveryStaticEnabled && (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
+      ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
+      : undefined;
+  // `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` means "the unconditional two-pass
+  // build" — the A/B baseline every pin in this family compares against — so it
+  // restores pass 1 as well as pass 2, not just the recompile.
+  const discoveryStatic =
+    preLift !== undefined &&
+    process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
+    moduleInitDiscoveryIsStatic(preLift);
+
+  // (#4195) With pass 1 skipped the dedupe MARK is a program POSITION, not a
+  // pass-1 artifact: it records where the initializer's diagnostics start so the
+  // post-pass-2 reconcile never truncates what came before. Taken early ONLY on
+  // the opt-in route, so a discovery-static population still collapses the
+  // duplicate pair measured on `for-in/cptn-decl-itr.js`; the default route
+  // keeps the mark exactly where it has always been, inside the pass-1 branch.
+  if (discoveryStatic) pass1DiagnosticMark = ctx.errors.length;
+
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
-  // skipped only in `"skip"` mode, where an earlier source already ran it over
-  // the same complete statement list.
+  // skipped in `"skip"` mode, where an earlier source already ran it over the
+  // same complete statement list, and — under the opt-in seam only — for a
+  // discovery-static population, where the pre-lift already published what it
+  // would have discovered.
   if (
     (hasModuleInits || hasStaticInits) &&
     moduleInitMode !== "skip" &&
     moduleInitMode !== "prepared" &&
-    !skipModuleInitBody
+    !skipModuleInitBody &&
+    !discoveryStatic
   ) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
@@ -6102,6 +6139,17 @@ export function compileDeclarations(
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
+  } else if (discoveryStatic) {
+    profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    profileCount("module-init-discovery-static", 1);
+    // The test-only seam runs the GATE without the registrations, so the suite
+    // can MEASURE that the inventory is load-bearing (h1's body loses its
+    // `call_ref` and falls back to `__call_function_*`) instead of asserting it.
+    if (process.env[PRELIFT_DISABLE_SEAM] !== "1") {
+      profilePhase("module-init-prelift", () =>
+        applyModuleClosurePreLift(ctx, preLift!, createModuleInitFunctionContext()),
+      );
+    }
   }
 
   // (#3419) Last-wins for duplicate top-level function declarations — mirror
@@ -6301,6 +6349,9 @@ export function compileDeclarations(
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
+      // (#3523 R4 gap-6a) With pass 1 skipped this IS the only compile, so it
+      // always runs — the pass-2-stability question is about a SECOND compile.
+      discoveryStatic ||
       !moduleInitPopulationIsPass2Stable(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
