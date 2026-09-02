@@ -6,7 +6,7 @@ sprint: Backlog
 created: 2026-07-21
 updated: 2026-09-02
 assignee: ttraenkler/fable-ir-takeover
-branch: claude/issue-3526-f2s4-string-len
+branch: claude/issue-3526-f2s5-string-concat
 priority: critical
 horizon: xl
 complexity: XL
@@ -221,6 +221,36 @@ loc-budget-allow:
   # this line records the F2-S4 rationale against them.
   # Byte-neutral: 60/60 measured matrix cells and 104/104 corpus cells
   # identical, WAT text included.
+  #
+  # 2026-09-02 F2-S5 (string.concat under manifest policy + the emitStringConcat
+  # fallback retirement, +353 net src LOC measured against origin/main 7f998ff8
+  # — MORE than the plan's +170 estimate, and the reason is structural: this is
+  # the catalogue's first seam with TWO features under ONE policy, so every
+  # per-seam artefact the three predecessors minted ONCE is minted twice here
+  # (two feature rows, FOUR provider rows, a two-argument selector, a PAIR-shaped
+  # demand) and it is also the first seam that could not reuse an existing ABI.
+  # Breakdown: the `stringConcat` policy, the two features, the four provider
+  # rows and their policy-and-feature-driven selection (runtime-manifest.ts,
+  # +164 — the file is over the 1500-line god-file threshold, 1967 -> 2131, and
+  # carries an F1-S1 grant; as in F2-S3/F2-S4 the growth is one more independent
+  # policy field beside seven existing ones, i.e. repetition of a settled
+  # pattern, and splitting the file is F2's own tail, not this slice's); the ONE
+  # new signature constant `EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE`
+  # (intrinsics.ts, +26 — 437 -> 463 lines, far under the threshold), which had to be
+  # minted because `wasm:js-string.concat` returns a non-null `(ref extern)` and
+  # no existing signature carries that result; the freeze-time demand PAIR and
+  # `preparedStringConcatProvider`, which takes the concat MODE as well as the
+  # prepared manifest because the policy chooses the authority and the mode
+  # chooses the helper on it (intrinsic-support.ts, +65); the caller policy
+  # projection, the `string.concat` instruction-scan demand pair, the
+  # owner-local concat partition, the migrated resolve arm and the retired
+  # no-provider `ctx.nativeStrings` fallback in the WasmGC `emitStringConcat`
+  # adapter (integration.ts, +94); the explicit disabled concat policies in the
+  # linear and self-hosted-stdlib adapters (+2 each). Every cited path already
+  # carries an F1-S1..F2-S4 grant; this line records the F2-S5 rationale against
+  # them and adds no new path. Byte-neutral: 65/65 measured matrix cells and
+  # 104/104 corpus cells identical, WAT text included, the BATCHED many-arity
+  # cells (F2-S6's seam) among them.
   - src/ir/async-plan.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
@@ -5577,3 +5607,269 @@ demote the census surfaced, `src/ir/from-ast.ts`, the `src/ir/dialect/js.ts`
 placement verdict for `string.len`, and every existing policy —
 `numberBoundary`, `booleanBoundary`, `externIsUndefined`, `generatorNumberBox`,
 `stringCompare`, `stringEq` — all unchanged.
+
+### 2026-09-02 F2-S5 checkpoint note — Opus lane
+
+**Branch** `claude/issue-3526-f2s5-string-concat`, based on `origin/main`
+`7f998ff8` (F2-S4 merged, PR #5460). Slice claim `3526:f2s5`. All four probes
+were measured on this branch's own tree BEFORE any source edit.
+
+#### Probe answers
+
+**P1 — nothing asserts one-row-per-capability, so TWO host rows on the single
+`string.concat` capability are legal as planned.** `#indexProviders`
+(`runtime-manifest.ts`) keys uniqueness on `provider.id` alone and groups
+`byFeature`; the freeze aggregates `provider.hostCapabilities` into a **Set**
+before resolving records, so both host rows collapse to one `string.concat`
+entry and one import. The only length assertions anywhere are
+`issue-4103…:94-95` (`hostCapabilities` has 6 entries on an **async-only**
+freeze — invisible to a string feature) and `issue-4104…:447` (`[]` on a
+standalone async freeze). Measured: a host-lane concat freeze publishes
+`hostCapabilities === ["string.concat"]` for either mode.
+
+**P2 — the resolve arm receives the intrinsic SYMBOL and nothing else, and the
+only other consumer of `IR_STRING_CONCAT_OWNED_FN` is the producer.**
+`grep -rn` over `src/` finds it in exactly three places: its definition
+(`string-runtime.ts:23`), the producer's mode→symbol map
+(`string-support.ts:63`, inside `irStringCallableProviderRef`) and the resolve
+arm's condition + helper choice (`integration.ts`). So the mode must be
+recovered from the symbol at resolve time, as contract item 10 says.
+
+**P3 — the emitter no-provider fallback is RETIRED, on a measurement.** A
+temporary `throw` replaced all three fallback branches of the WasmGC
+`emitStringConcat` adapter and the probe was re-run:
+
+- **0 reaches across all 65 byte cells** — and the matrix stayed
+  **byte-identical to the BEFORE record with the throw in place**, which is
+  stronger than "no cell crashed": nothing in any of the 65 modules depended on
+  the branch, not even through a demote.
+- **0 reaches across 22 string suites / 352 passing tests**, with a red set
+  identical name-for-name to the base tree's.
+
+**P4 — the BEFORE byte matrix reproduces the planning lane's record exactly.**
+65 cells compared on fixture, lane, success, byte length, sha256, the ordered
+concat import list and the demotion list: **0 differing**. The record was made
+on `a7edf000ee` (pre-F2-S4) and reproduces on this post-F2-S4 base, which
+independently confirms F2-S4's own byte-neutrality claim for these fixtures.
+**No finding about F2-S4.**
+
+**Pre-existing red controls: 31, not the 17 [#5274](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5274-standing-red-tests-string-and-3529-suites)
+names — and the extra 14 are a CONTAINER limit, not a regression.** The #5274
+set reproduces exactly (`issue-320` 1, `imported-string-constants` 4,
+`issue-3529-equivalence-error-imports` 8, `issue-3529-dataflow-outcomes` 2,
+`issue-3529-ir-producer-parity` 2). On top of it this container fails
+`issue-1761` ×9, `issue-2598-2599` ×3, `issue-2163` ×1 and `issue-3744` ×1 —
+every one of them on a test that runs `optimize`, and 18 of the failures print
+`invalid type: distinct rec groups would be identical after binary writing (to
+resolve this, use --enable-gc)`, i.e. this box's Binaryen refuses the WasmGC
+module the optimizer is handed. The #3744 red is the same cause one step later
+(`optimize: 3` fails, so `irCompiledFuncs` is empty). Measured on the base tree
+BEFORE the first edit and re-measured after: **identical set, name for name.**
+Not this slice's; CI has the working toolchain.
+
+#### What landed
+
+- **`src/ir/intrinsics.ts`** (+26) — `EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE`
+  and its `REF_EXTERN_TYPE`. The one new signature the slice mints: the
+  `string.concat` host record returns a non-null `(ref extern)` and no existing
+  signature carries that result.
+- **`src/ir/runtime-manifest.ts`** (+164) — `StringConcatPolicy`
+  (`concat: "host" | "native" | "unsupported"`), frozen
+  `STRING_CONCAT_POLICY_DISABLED`, the optional `stringConcat` field
+  canonicalized at construction and published resolved, the TWO feature rows
+  (`js.string.concat`, `js.string.concat.owned`), the FOUR provider rows (both
+  host rows on capability `string.concat`; native rows `runtime-callable`
+  `__str_concat` / `__str_concat_owned`), the two-argument
+  `stringConcatProviderId(feature, policy)` and the `#selectProvider` branch
+  whose unavailable arm is a typed `provider-target-unavailable` naming
+  `string-concat policy concat=…`. No new validation rules — both
+  implementation kinds already existed.
+- **`src/ir/intrinsic-support.ts`** (+65) — the `stringConcatDemand`
+  `{immutable, owned}` input (and its place in the "freeze nothing at all"
+  guard) plus `preparedStringConcatProvider(prepared, mode)`, the family's first
+  twin that takes a second argument.
+- **`src/ir/integration.ts`** (+94) — `integrationStringConcatPolicy`,
+  `irStringConcatDemand` (returning the mode pair), the owner-local
+  `unsupported` partition in the same pass as the seven existing ones, the
+  freeze-time policy + demand arguments, the migrated resolve arm and the
+  retired `emitStringConcat` fallback.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `STRING_CONCAT_POLICY_DISABLED` explicitly (+2 each).
+- **`tests/issue-3526-string-boundary-concat.test.ts`** (new, 27 tests).
+
+`src/ir/from-ast.ts`, `src/ir/string-support.ts`, `src/ir/string-builder-shape.ts`,
+`src/ir/passes/batch-string-concat.ts`, `src/ir/nodes.ts`, `src/ir/lower.ts`,
+`src/ir/runtime-host-capabilities.ts` and every other resolve-table arm needed
+**no edit**.
+
+#### Two features under one policy — and the host-side collapse
+
+The manifest decides WHICH authority answers; the concat MODE decides WHICH
+helper on that authority. Modelling that as two features under one policy keeps
+the freeze honest: a module with only `a + b` freezes exactly one row
+(`js.string.concat`) and `preparedStringConcatProvider(prepared, "owned-append")`
+returns `undefined`. Both HOST rows name the same `string.concat` capability
+because `wasm:js-string` has no owned-append builtin — the collapse is stated in
+the rows rather than hidden in the call site, and because the freeze projects
+capabilities through a Set it costs no second import (measured: the `APPEND`
+fixture on `gc-host` binds `wasm:js-string.concat` at func #0, exactly as `CAT`
+does).
+
+#### Divergences from the plan (recorded, not widened)
+
+1. **Net src LOC is +353, not the plan's +170 estimate.** One structural reason,
+   recorded in the frontmatter grant: this is the first seam with TWO features
+   under ONE policy, so every per-seam artefact the three predecessors minted
+   once is minted twice (two features, FOUR provider rows, a two-argument
+   selector, a pair-shaped demand), and it is also the first that could not
+   reuse an existing ABI.
+2. **V-C's third revert behaves the way F2-S4 found, not the way this plan
+   predicted.** The plan expected *"revert only the manifest rows → (a)/(b) fail
+   and the (c) host-lane import-position pins still pass"*. Measured: dropping
+   `...STRING_CONCAT_RUNTIME_PROVIDERS` from `RUNTIME_PROVIDERS` fails **11**
+   tests including the (c) end-to-end pins, because after the migration the
+   frozen row is the only source of the physical choice and the arm fails closed
+   — there is no lane read left to fall back to. The one (c) test that DOES
+   still pass is the batched many-arity fence, which is exactly right: those
+   cells never freeze a concat row at all.
+3. **The plan's P3 suite list names "#3740"; there is no such test file.** The
+   nearest neighbours are `issue-3741-i32-slot-promotion` (unrelated) and
+   `issue-3744-ir-owned-append-string-builder` (already in the list). Ran the
+   other 21 named suites plus `native-strings-roundtrip`.
+4. **The (c) runtime oracle needed THREE owners, not one.** A single
+   `let s = a + b; … s += "x"; return s + \`${a}!\`` owner demotes with
+   `string-evidence-unsupported` before the seam is reached — from-ast requires
+   checker/producer string AND encoding evidence for the appended variable, and
+   both a `a + b` initializer and an append of a string PARAMETER destroy it.
+   The census recorded the same shape sensitivity for its `APPENDREAD` and
+   `APPENDPLUS` fixtures. The suite therefore exercises `+`, a literal-append
+   builder loop and a template as three owners in one module, over the seven
+   input pairs.
+5. **The F2-S6 byte fence is pinned by sha on the `gc-host` cells only.** CAT3
+   (149 bytes, `4677a84a2dcd`) and TPL (173 bytes, `a6702c76db07`) are pinned
+   exactly; on `standalone` the same trees are pinned structurally
+   (`$__str_concat_3` present) rather than by sha, because those modules carry
+   the whole native-strings runtime (~23 KB) and a sha pin there would go red on
+   any unrelated runtime edit — a maintenance trap rather than a fence. The
+   65-cell matrix in this PR is where standalone byte-identity is established.
+6. **The kind-neutrality baseline was patched BY HAND**, following F2-S4's
+   precedent: the regenerator's output is a **269-line** diff for a 2-leaf
+   change. Established by normalising both JSON documents to sorted leaf paths
+   and diffing those — **462 leaves each, exactly 2 changed**, both evidence
+   strings (see V-D).
+
+#### V-A — measured neutrality: 65 of 65 byte cells, 104 of 104 corpus cells
+
+Thirteen fixtures (`CAT`, `CAT3`, `CAT4`, `TPL`, `TPL3`, `APPEND`, `APPENDREAD`,
+`APPENDPLUS`, `TPLEQ`, `CATLEN`, `CATNUM`, plus the `EQ` and `CLEAN` controls) ×
+five lanes (gc-host, gc-native-strings, standalone, WASI, linear). Each cell
+compares byte length, binary sha256, the full emitted WAT text, the ordered
+import list with func/global indices parsed from the binary import section, the
+error list and the `irOutcomes` records. **65/65 identical**, and `diff -r` over
+all 65 WAT texts is empty. The many-arity cells (CAT3, CAT4, TPL, TPL3, TPLEQ —
+the F2-S6 fence) are among them and did not move.
+
+Corpus: every `.ts` under `website/playground/examples/**` and `examples/**`
+(26 files) × four WasmGC lanes = **104 cells**, comparing sha256, byte length,
+success and the full error list. **0 differing** (22 cells fail identically on
+both trees — pre-existing).
+
+`check:ir-fallbacks` run on both trees: **output byte-identical**, and
+`string-builder-candidate` stays at its baseline count of **2**.
+`scripts/ir-fallback-baseline.json` and `scripts/linear-ir-baseline.json` are
+untouched.
+
+#### V-B — the migrated decision is REACHED, and the retired one is not
+
+With instrumentation re-applied on the AFTER tree, the 65-cell run emits the
+concat seam identically to the BEFORE run, counter for counter:
+
+| probe | BEFORE | AFTER |
+| --- | --- | --- |
+| resolve arm, host (`wasm:js-string.concat`) | 4 | 4 |
+| resolve arm, native `__str_concat` | 19 | 19 |
+| resolve arm, native `__str_concat_owned` | 3 | 3 |
+| `emitStringConcat` via provider, `immutable` | 40 | 40 |
+| `emitStringConcat` via provider, `owned-append` | 4 | 4 |
+| `emitStringConcat` via the RETIRED fallback | 0 (throw probe) | **0** |
+| batched many-arity arms (host×3/4/6, native×3/4/6) | 10 | 10 |
+| batch decisions that changed a function | 10 | 10 |
+| linear `emitStringConcat` (`immutable` 8, `owned-append` 1) | 9 | 9 |
+
+The instrumented AFTER run is itself **byte-identical to the clean BEFORE run**
+(65/65), so the instrumentation is byte-inert and the comparison is honest.
+
+**Runtime oracle.** `+`, a `+=` builder loop and a template literal are checked
+against JavaScript through an instantiated host-lane module on seven input
+pairs — `""`×`""`, `""`×ascii, two lone **surrogate halves that combine** into
+one astral code point, a 1000-iteration builder loop, a non-ASCII BMP pair, a
+numeric-looking pair, and a plain ascii pair. The same source compiles and
+validates on a native-strings lane and on linear, and a linear module with both
+modes plus a numeric control instantiates and runs.
+
+#### V-C — non-vacuity, each sub-edit reverted independently
+
+| revert | tests failing | which |
+| --- | --- | --- |
+| the resolve arm (restore the `ctx.nativeStrings` read) | **3** | exactly the three (d) arm pins; 24 others green |
+| the retirement (restore the emitter fallback) | **1** | "keeps the retired fallback's lane read and its private mode mapping out of the emitter" — the discriminator; 26 others green |
+| the four manifest provider rows | **11** | see divergence 2 — the whole seam, by design; the batched-family fence still passes |
+
+As in every family-2 slice, the (d)/(e) pins are deliberately **source-shape**
+assertions: the policy projection reproduces the old truth table exactly, so
+both forms emit identical bytes on every lane — which is the point of the slice
+and why all 65 cells are unchanged. What moved is WHICH authority answers, and
+on this seam that is only observable in source.
+
+#### V-D — gates
+
+Green: `typecheck`; the five ratchets run **bare** and again under
+`LOC_GATE_BASE=$(git rev-parse origin/main)` — loc (+353 net src LOC, every
+grown path granted by this file's frontmatter with the dated F2-S5 rationale;
+`runtime-manifest.ts` 1967 → 2131), func
+(`compileIrPathFunctions` 3157 → 3178, already granted), coercion-sites,
+oracle-ratchet, dead-exports. Also green: `lint`, `prettier --check` on every
+touched path, `check:ir-dialect`, `check:ir-layering`, `check:ir-only`,
+`check:linear-ir`, `check:host-import-policy` (**the host import set does not
+change** — no new `env` import, no new builtin), `check:test-vacuity-shapes`,
+`check:ir-kind-neutrality` (after the surgical refresh below), and
+`check:ir-fallbacks` (diffed against a base-tree run of the same command,
+output byte-identical).
+
+**Kind-neutrality refresh: TWO evidence lines, patched surgically.**
+`forof.string` `src/ir/integration.ts` 6531 → 6629 (the policy, demand and
+partition additions inserted above it) and `string.len`
+`src/ir/backend/linear-integration.ts` 1630 → 1632 (the two-line adapter edit) —
+exactly the two F2-S4's checkpoint predicted would move again. Normalising both
+JSON documents to sorted leaf paths: **462 leaves each, exactly 2 changed**,
+both evidence strings. No verdict, kind, placement, ratchet count or `settledBy`
+rationale moved, and `string.concat` stays **`neutral`** with its
+`src/ir/nodes.ts` evidence untouched.
+
+Focused suites: the new suite (27 tests) plus all #3526 suites, both async
+suites (#4103/#4104), #3520 callable-provider-abi, #3521
+prepared-component-dependencies and the 22-suite string set — **462 passing
+across 28 files**. The only failures anywhere are the 31 pre-existing reds
+described above, unchanged name for name.
+
+**One suite could not be run in this container, on EITHER tree:**
+`tests/issue-3518-multi-prepared-string-leaf-planner.test.ts` OOMs the vitest
+worker (`Reached heap limit`). F2-S4 recorded the same; CI runs it with a larger
+heap.
+
+#### Not touched (per the plan's scope discipline)
+
+The BATCHED many-arity family — the pass selection (`hostBatchedConcat` /
+`standaloneBatchedConcat`), the `string.concat$arityN` /
+`async.string.concat$arity5` resolve arms, the `env.__concat_N` LATE import and
+`ensureNativeBatchedConcat` — all F2-S6. Also untouched: `string-support.ts`'s
+mode→symbol mapping (the demand scan mirrors it rather than replacing it),
+`src/ir/from-ast.ts`, `src/ir/string-builder-shape.ts`,
+`src/ir/passes/batch-string-concat.ts`, `charCodeAt`, `string.const`,
+`stringMethodPlan`, the linear concat/append lowering, the
+`operand-coercion-unsupported` demotions the census surfaced (APPENDPLUS,
+CATNUM), the `string-builder-candidate` selection bucket,
+`tests/issue-3744-ir-owned-append-string-builder.test.ts` (no assertion of its
+reads the arm's source — no finding), and every existing policy —
+`numberBoundary`, `booleanBoundary`, `externIsUndefined`, `generatorNumberBox`,
+`stringCompare`, `stringEq`, `stringLen` — all unchanged.
