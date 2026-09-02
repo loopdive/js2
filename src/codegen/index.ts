@@ -6,6 +6,7 @@ import { emitToBoolean } from "./coercion-engine.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
+  fillErrorStructMessageOwnPropArms,
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -6451,6 +6452,10 @@ export function generateModule(
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
+    // (#5269 L) …and the one intrinsic `$Error_struct` field that is a spec OWN
+    // data property, so `hasOwnProperty(err, "message")` stops disagreeing with
+    // `err.message`. Deliberately narrow — see the fill's doc.
+    fillErrorStructMessageOwnPropArms(ctx);
     emitNativeErrorBoundaryBridge(ctx);
 
     // (#4160) Prototype-index store: fill the reserved `__protoidx_*` helper
@@ -10981,6 +10986,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // splice the native Error reader and publish the optional JS-boundary
     // adapter after native Error/string types are complete.
     profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
+    // (#5269 L) Multi-source parity with the single-source call above.
+    profilePhase("fill-error-struct-hasown-message", () => fillErrorStructMessageOwnPropArms(ctx));
     profilePhase("emit-native-error-boundary-bridge", () => emitNativeErrorBoundaryBridge(ctx));
     // (#4160) Prototype-index store — multi-source parity with the
     // generateModule call above (same after-the-shape-probing-fills ordering;

@@ -617,3 +617,140 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
 
   fn.body.splice(0, 0, ...arm);
 }
+
+/**
+ * (#5269 L) `hasOwnProperty(new Error("m"), "message")` — the ONE intrinsic
+ * `$Error_struct` field that is a spec OWN data property.
+ *
+ * §20.5.1.1 step 4: `CreateNonEnumerableDataPropertyOrThrow(O, "message", msg)`
+ * runs only when the argument is not `undefined`, so `new Error()` has NO own
+ * `message` while `new Error("m")` does. In this compiler the value lives in
+ * struct field 1, not in the `$props` bag, so the own-property walk
+ * (`__obj_find`, then the carrier bag) could not see it and
+ * `error.hasOwnProperty("message")` answered false while `error.message` read
+ * `"my-message"` — the exact disagreement `verifyProperty` reports.
+ *
+ * ## Why this is spliced onto `__hasOwnProperty` and yet is NOT #4017
+ *
+ * #4017 widened these two natives GENERICALLY (any carrier, any key, through
+ * the closure side table) and was auto-parked for costing 684 host-free passes:
+ * `propertyHelper.js` reaches `Object.prototype.hasOwnProperty` on every
+ * `built-ins/**\/{name,length}.js` row. The lesson recorded in
+ * `carrier-bag-hasown.ts` is that generality AT THIS POINT is blast radius.
+ *
+ * This arm is the opposite shape: it fires only for a receiver that `ref.test`s
+ * as `$Error_struct` AND a key that flattens equal to `"message"` AND a non-null
+ * field. A null field falls through to the original body, so `new Error()` keeps
+ * today's answer. No other receiver, key, or outcome is reachable.
+ *
+ * The gOPD twin is spliced from the same builder, over the same field, so
+ * presence and the descriptor cannot disagree — measured: with presence alone,
+ * `verifyProperty` moved from "message should be an own property" to
+ * dereferencing the `undefined` `originalDesc`. Write and delete for `message`
+ * are already answered by `error-props.ts`.
+ *
+ * No-op (byte-identical) unless the module registered `$Error_struct`.
+ */
+export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first") return;
+  const errTypeIdx = ctx.errorStructTypeIdx;
+  if (errTypeIdx < 0) return;
+  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (strFlattenIdx === undefined || strEqualsIdx === undefined) return;
+  if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+
+  // §20.5.1.1: `{ [[Writable]]: true, [[Enumerable]]: false,
+  // [[Configurable]]: true }` — the `__create_descriptor` flag word.
+  const MESSAGE_DESC_FLAGS = 0x01 | 0x04;
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
+
+  for (const name of ["__hasOwnProperty", "__object_hasOwn", "__getOwnPropertyDescriptor", "__delete_property"]) {
+    if (name === "__getOwnPropertyDescriptor" && createDescriptorIdx === undefined) continue;
+    const fn = ctx.mod.functions.find((f) => f.name === name);
+    if (!fn) continue;
+    // params 0=obj 1=key; APPEND locals so every baked index keeps its meaning.
+    const anyL = 2 + fn.locals.length;
+    const fkeyL = anyL + 1;
+    fn.locals.push(
+      { name: "__errhas_any", type: { kind: "anyref" } },
+      { name: "__errhas_fkey", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    );
+    // `hasOwnProperty` answers presence; gOPD answers the §20.5.1.1 descriptor
+    // over the SAME field, so the two cannot disagree about `message`.
+    const answer: Instr[] =
+      name === "__getOwnPropertyDescriptor"
+        ? [
+            { op: "local.get", index: anyL },
+            { op: "ref.cast", typeIdx: errTypeIdx },
+            { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 1 },
+            { op: "i32.const", value: MESSAGE_DESC_FLAGS },
+            { op: "call", funcIdx: createDescriptorIdx! },
+            { op: "return" },
+          ]
+        : name === "__delete_property"
+          ? [
+              // `[[Configurable]]: true` is only true if the property can
+              // actually be deleted — `verifyProperty` PROVES it by deleting.
+              // `$message` is the one mutable intrinsic field (§20.5.1.1 allows
+              // `error.message = "x"`), so clearing it makes the presence and
+              // descriptor arms above answer "absent" on the next query.
+              { op: "local.get", index: anyL },
+              { op: "ref.cast", typeIdx: errTypeIdx },
+              { op: "ref.null.extern" },
+              { op: "struct.set", typeIdx: errTypeIdx, fieldIdx: 1 },
+              { op: "i32.const", value: 1 },
+              { op: "return" },
+            ]
+          : [{ op: "i32.const", value: 1 }, { op: "return" }];
+    const arm: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: anyL },
+      { op: "ref.test", typeIdx: errTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+              { op: "call", funcIdx: strFlattenIdx },
+              { op: "local.set", index: fkeyL },
+              { op: "local.get", index: fkeyL },
+              { op: "ref.as_non_null" },
+              ...nativeStringLiteralInstrs(ctx, "message"),
+              { op: "call", funcIdx: strEqualsIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: anyL },
+                  { op: "ref.cast", typeIdx: errTypeIdx },
+                  { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 1 },
+                  { op: "ref.is_null" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    // A null `$message` (`new Error()`) has NO own `message` —
+                    // fall through so the answer stays whatever it is today.
+                    then: [],
+                    else: answer,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    fn.body.splice(0, 0, ...arm);
+  }
+}

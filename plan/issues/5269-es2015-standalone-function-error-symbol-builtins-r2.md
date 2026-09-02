@@ -105,6 +105,12 @@ func-budget-allow:
   # early-arm shape as the `maybeCaptureArrayProtoOverride` arm directly
   # above it; the arm's body lives in its own function.
   - src/codegen/expressions/assignment.ts::compileAssignment
+  # 2026-09-02 (Opus impl, Step L): both finalize drivers gain ONE call —
+  # `fillErrorStructMessageOwnPropArms`, next to the existing
+  # `fillExternGetErrorProps` call they already make. The arm itself lives
+  # in registry/error-types.ts.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #5269 — ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins (r2)
