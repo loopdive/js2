@@ -9547,3 +9547,35 @@ and every backend emitter needed **no edit**.
 has no record field (deferred (d)) and gained none here. `plan.invocation`,
 `calendar-selection-support.ts`, the closure-environment subtype choice
 (F3-S4) and the unmatched-callee host fallback (F3-S6) are untouched.
+
+
+#### 2026-09-02 review findings — three shape notes handed to F3-S2
+
+The Fable lane's adversarial review of PR #5487 reproduced every headline claim
+(V-A 21/21, the import-parity index, the "same red set" control) and found no
+blocker. Three minor findings, none of them live defects, are recorded here so
+F3-S2 inherits them rather than rediscovering them:
+
+1. **The post-freeze admission scans a narrower shape than the demand it
+   licenses.** `irHostCallbackWrapDemand` walks both `fn.blocks` and
+   `fn.asyncPlan?.states`, but `preregisterDynamicSupport`'s loop is
+   `for (const entry of fns) for (const block of entry.fn.blocks)` with no
+   `asyncPlan` arm, so `admitAttachedHostCallbackMaker` never visits a
+   `call env.__make_callback` that a lowering places in an async plan state
+   body. Bounded: the admission sets no flag and runs no materializer, so a
+   miss is a **missing refusal**, not a mislowering — and the same blind spot
+   already exists for the union-import and `__extern_is_undefined` arms beside
+   it. F3-S2 should close it for all three arms at once or document why not.
+2. **The admission's refusal is not owner-local.** The `IrInvariantError` it
+   throws propagates out of `preregisterDynamicSupport` into
+   `runGlobalPreparation`, whose catch calls `failEveryOwner` — a module-wide
+   demote, which is exactly the failure mode the slice's own partition exists
+   to prevent (the F1-S1 rationale beside `runGlobalPreparation`). Unreachable
+   in-tree today because the owner-local partition demotes first, so this is a
+   shape note, not a bug; a hand-built policy or an adapter that froze the
+   other arm would reach it.
+3. **The record's doc comment overclaimed its own scope** and has been scoped
+   in this PR: a `field` rename lands in one place *for the IR seam*, but
+   `declarations/import-collector.ts:2010`/`:2053` and `async-frame.ts:165`
+   still spell the maker by hand. Bringing them under the record is F3-S2's
+   `callback.wrap.*` sibling row.

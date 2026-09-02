@@ -782,7 +782,16 @@ export function resolveRuntimeHostCapabilityFuncRecord(
  * ABI at build time, and the FROZEN manifest is the authority over whether that
  * crossing is admitted at all, post-freeze
  * (`preparedHostCallbackWrapProvider`). Both name the same record — this one —
- * so a rename lands in one place and neither authority can drift from the other.
+ * so neither authority can drift from the other.
+ *
+ * Scope, precisely: this covers the IR seam. Renaming the record's `field`
+ * lands in one place FOR THAT SEAM, but two legacy sites still spell the maker
+ * by hand — `src/codegen/declarations/import-collector.ts:2010`/`:2053` mint
+ * `env.__make_callback` and `src/codegen/async-frame.ts:165` looks it up
+ * through `ctx.funcMap` — so a rename must move those too. Measured
+ * fail-safe rather than silent: perturbing the field to `__make_callback_probe`
+ * demotes the whole module to a 504-byte legacy build rather than miscompiling.
+ * Bringing those two under the record is F3-S2's `callback.wrap.*` sibling row.
  */
 export const HOST_CALLBACK_WRAP_CAPABILITY_RECORD: RuntimeHostCapabilityFuncRecord =
   resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, "async.callback.wrap");
