@@ -79,6 +79,7 @@ import {
   STRING_CHAR_CODE_AT_POLICY_DISABLED,
   STRING_CONCAT_MANY_POLICY_DISABLED,
   STRING_CONST_POLICY_DISABLED,
+  HOST_CALLBACK_WRAP_POLICY_DISABLED,
   NUMBER_BOUNDARY_POLICY_DISABLED,
 } from "../ir/runtime-manifest.js";
 import { isIntrinsicId } from "../ir/intrinsics.js";
@@ -517,6 +518,7 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
       stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED,
       stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED,
       stringConst: STRING_CONST_POLICY_DISABLED,
+      hostCallbackWrap: HOST_CALLBACK_WRAP_POLICY_DISABLED,
     },
   });
   const funcIdx = lowerAndRegister(ctx, def.name, prepared?.functions[0] ?? ir);
