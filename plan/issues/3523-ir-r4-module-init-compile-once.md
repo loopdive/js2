@@ -4230,3 +4230,44 @@ should be read with that qualifier attached. Which population the real R9
 denominator resembles is still the open question.
 
 Full correction, including the method failure that produced it, on `#3518`.
+
+### What `vardecl-module-storage-unrepresentable` actually is — two wrong guesses, and the step that would settle it
+
+Two precisions on the count first, because both change how the slice should be
+scoped:
+
+1. **The count is files, not declarations.** There is one `<module-init>` unit
+   per source file, and the arm rejects that unit. So "11" means *11 of the 20
+   dogfood files have at least one top-level declaration the module-binding
+   resolver cannot represent* — not 11 declarations.
+2. **The granularity is therefore all-or-nothing per file.** A single
+   unrepresentable declaration rejects the whole module-init. That cuts both
+   ways: fixing one declaration kind may unlock entire files at once, and
+   partial coverage of a file's declarations yields exactly zero.
+
+**Two hypotheses about the cause, both tested and both wrong.** Worth recording
+so nobody spends the same time:
+
+- *"It is function-valued module bindings"* (`const a = (x) => x + 1`). The
+  first failing file inspected, `arrow-params.js`, is 8 top-level declarations
+  and all 8 are arrows, which makes this very inviting. It does not hold across
+  the corpus: `literals.js` has 11 top-level declarations and **zero**
+  function-valued, `templates.js` 6 and zero, `optional-nullish.js` 7 and zero,
+  `escapes-unicode.js` 6 and zero. All are rejected anyway.
+- *"It is untyped `.js` losing type resolution"* — refuted earlier in this
+  census: exactly 1 of 33 rejections corpus-wide is a type-resolution reason.
+
+**What would settle it, concretely.** The arm fires at `select.ts:5664` when
+`currentModuleBindingResolver?.(d.name)` returns `undefined` for a direct
+module-level declaration. The resolver is
+`makeIrModuleBindingResolver` (`src/ir/module-bindings.ts:2227`), wired in
+`src/codegen/index.ts:2863-2880` with `numberStorage`, `allowHostExterns`,
+`allowBuiltinMapExtern`, `allowNativeMapStorage` and the capability-extern hook.
+The next step is to instrument that resolver's `undefined` returns with the
+declaration node kind and the option that gated it, then re-run the corpus. That
+is a source change and a measurement, not a guess, and it is the honest
+precondition for scoping this slice.
+
+**Do not size this slice from the "one condition at one site" framing.** That
+described where the *rejection* is observed. Where the *cause* is has not been
+established, and both cheap explanations are now excluded.
