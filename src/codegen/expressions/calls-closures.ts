@@ -2458,10 +2458,20 @@ export function tryExternClassMethodOnAny(
   // `env::IDBKeyRange_includes` and friends are emitted at COMPILE time by an
   // arm that never runs, and the whole standalone module then fails to
   // instantiate (the runner reports `host_import_leak`, not a wrong value).
-  // Declining lets the ladder bottom out at the #2151 closed-method dispatcher,
-  // which resolves these by runtime shape. Same `noJsHost` gate and same
-  // rationale as the scalar-HOF decline above; the host lane keeps its
-  // byte-identical extern binding because the import IS satisfiable there.
+  // Declining sends the call to the #2151 closed-method dispatcher.
+  //
+  // (#5194 review F4) What that dispatcher does with it, precisely — the
+  // earlier wording ("resolves these by runtime shape") claimed more than is
+  // true. It resolves `sort`/`keys`/`values`/`entries` only for the receivers
+  // that HAVE an arm; for an `any`-typed plain array, Map or Set receiver there
+  // is none yet, so the bottom `__extern_method_call` arm now raises a runtime
+  // TypeError in standalone where the base emitted an unsatisfiable import. A
+  // module that never instantiated becoming one that throws when the call is
+  // actually reached is strictly better, and it is not a regression against any
+  // passing row — but it is a REAL residual, recorded in #5194's issue file
+  // rather than papered over here. Same `noJsHost` gate as the scalar-HOF
+  // decline above; the host lane keeps its byte-identical extern binding
+  // because the import IS satisfiable there.
   if (noJsHost(ctx) && STANDALONE_TA_DISPATCHED_METHODS.has(methodName)) return null;
 
   // (#3309) Collection methods (`get`/`set`/`has`/`add`/`delete`/`clear`) on an
