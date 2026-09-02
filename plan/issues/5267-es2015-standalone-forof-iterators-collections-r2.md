@@ -1,7 +1,7 @@
 ---
 id: 5267
 title: "ES2015 standalone: for-of + iterator prototypes + collections — r2 residual pass"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-01
 updated: 2026-09-01
@@ -40,6 +40,10 @@ loc-budget-allow:
   - src/codegen/function-instance-meta.ts
   - src/codegen/builtin-static-gopd.ts
   - src/codegen/property-access.ts
+  # 2026-09-01 (Opus impl, Step A-2): the well-known-symbol VALUE read
+  # (`Symbol.hasInstance`) must carry the i32 `symbol` brand in the
+  # native-symbol lanes, or an any-channel coercion boxes it as the NUMBER 2.
+  - src/codegen/property-access-dispatch.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/array-methods.ts
   - src/codegen/context/types.ts
@@ -769,3 +773,160 @@ The 4 generator-inside-accessor rows stay in X.
   compile-timeout CEs; measure in-process with a throwaway warm-up row. A/B on
   the same file showed no slowdown (12.1 s new vs 14.6 s base). The lane base
   (`881ee7095`) predates PRs #5434/#5437 (docs only) — merge, never rebase.
+
+## 2026-09-01 resumed implementation (Opus)
+
+Lane resumed from the suspension patch (`lane-5267.mbox`, base `881ee7095`)
+onto current main `813b828b6` — 676 commits later. `git am --3way` auto-merged
+both source files; only the issue file conflicted (add/add).
+
+### Head measurement (mine, both ends)
+
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/forof-head-safe.txt --standalone`,
+152 rows (`forof-head.txt` minus the 3 realm-poisoning F5 rows), one quiet
+in-process run per end, on the SAME list:
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| base = current main `813b828b6` (reverted via file copies) | **9** | 141 | 2 |
+| this lane | **46** | 104 | 2 |
+
+**+37 rows, 0 pass→non-pass regressions** (pass sets diffed; the base's 9 —
+8 `Iterator/prototype/{chunks,windows}` rows main gained since the plan was
+written, plus `SetIteratorPrototype/next/does-not-have-mapiterator-internal-slots-set.js`
+— all still pass). Controls `.tmp/es2015/forof-controls.txt`: **28/28 standalone**.
+On the **js-host** lane the controls are 23/28 — the same 5 rows fail on the
+reverted base, so they are pre-existing on main, not this lane
+(`Map/map.js`, `chunks/chunks-evenly-divisible.js`, `windows/windows-basic.js`,
+`for-of/Array.prototype.Symbol.iterator.js`,
+`for-of/dstr/array-elem-trlg-iter-list-nrml-close.js`).
+
+The suspension's own figure (20 pass of 148) is not comparable: it predates
+main's chunks/windows gain and the two defects below.
+
+### What the resume had to fix before the suspended work was correct
+
+**1. Step B-3 collided with #5131/#5272, which landed the same packing.** Main's
+`__map_iter_next` now returns a canonical two-slot `$Vec` for kind 2
+(`entries`), so the lane's `$ObjVec` packing in the `__iterator_next` MAPSET
+twin ran on top of it and produced `[key, [key, value]]` —
+`map.entries().next().value[1]` was an object, not the value. Main's version
+supersedes: the twin now passes the stepper's value through untouched, and the
+lane's `key` field on `$MapIterResult` (plus its `ensureMapHelpers`
+func-budget grant) is reverted. The done→canonical-`undefined` conversion the
+lane added to that arm is kept — it is what makes the exhausted step report
+`value === undefined` rather than JS `null`.
+
+**2. `[...m.keys()]` threw** once `keys()` yields a live record: the #5131
+strict-spread provider's GetIterator ladder has no OBJ arm, so a subject that
+already IS an `$__IterRec` fell through to the §7.4.1 non-iterable TypeError.
+`buildIteratorBody` now adopts a record SUBJECT by identity (the first half of
+#5188's `iterRecAdoptArm`, extracted as `iterRecIdentityArm` and applied at
+local 0), which fixes both dispatchers at once.
+
+### Cluster B root cause (17 rows) — `.value`/`.done` as a CALL ARGUMENT
+
+`property-access-dispatch.ts`'s IteratorResult arm compiled the RECEIVER and
+only then looked up `__gen_result_value` / `__gen_result_value_f64` /
+`__gen_result_done`. Those readers are host imports, so in a standalone module
+with no generator they are absent — the arm fell through to `PA_FALLTHROUGH`
+with the receiver still on the stack, and the caller re-compiled the whole
+read through the dynamic path. One operand too many. In statement position the
+#1058 stack repair absorbed it (which is why `var v = result.value` worked and
+hid the bug for two waves); in ARGUMENT position it shifted the callee, so
+`assert.sameValue(result.value, 'foo')` died with
+`TypeError: called value is not a function` — the exact #5151 blocker.
+
+Fix: resolve the reader first, compile the receiver only when one exists. When
+a reader IS registered the emitted bytes are unchanged. Measured on the cluster
+list: **0/17 → 12/17**.
+
+Remaining 5: `Map`/`SetIteratorPrototype/next/iteration{,-mutable}.js` (the
+default `@@iterator` route, `result` reads back null) and
+`Set/prototype/values/values-iteration-mutable.js` (an exhausted record is
+revived by a later `add` — it must stay done).
+
+Repro of the whole chain, minimised: `.tmp/es2015/probes5267/` plus
+`.tmp/pb/b11.js` (four `assert.sameValue` shapes, hoisted vs inline).
+**Note for anyone probing this area:** the authoritative
+`runTest262File` compiles the ORIGINAL harness assembly
+(`assembleOriginalHarness`) as **JS** with `allowJs`, `deferTopLevelInit`,
+`hostBridge: "always"`; compiling the same text as `.ts` passes and hides the
+bug. `wrapTest` is the legacy synthetic lane (`runSyntheticTest262File`), not
+what the runner judges by.
+
+### Hang trap — resolved, and its real root cause
+
+The suspension flagged 4 rows as hanging. Measured per-row in bounded children:
+only the **2 `Map`** rows hang; the 2 `WeakMap` twins fail fast (their key is a
+string, so CanBeHeldWeakly throws first). Compile is 9–11 s for both, so it is
+a RUN hang, and `runTest262File` has **no wall-clock guard around execution** —
+one such row wedges a whole CI shard.
+
+Root cause is NOT the descriptor define, which works: measured
+`Object.defineProperty(a, 0, {get})` on a module-scope array stores the
+accessor (`getOwnPropertyDescriptor` reports it) and a direct dynamic read of
+`a[0]` throws. What fails is object IDENTITY — at module scope
+`({v: a}).v === a` and `[a][0] === a` are both **false** in the standalone lane
+(true for a function-local array). The #3251 overlay is keyed by vec identity,
+so the copy the test's iterator hands back reads its plain element, the getter
+never throws, and the test's deliberately infinite iterator never ends. That
+identity gap is pre-existing, independent of this drive, and out of scope here.
+
+Mitigation shipped: the ctor drive carries a divergence ceiling of 4M entries
+(a catchable TypeError) **only in modules that install a non-data descriptor**
+(`ctx.vecAccessorDescriptorDirty`, the #4159 pre-scan flag). Ordinary modules
+keep an unbounded, byte-identical loop. All 4 rows now fail fast instead of
+hanging; the ceiling should be removed when module-scope array identity is
+fixed.
+
+### Status
+
+- Steps A, A-2, B: landed and measured (A+A2 19/27 flipped, B 12/17).
+- Steps C, D, E, F, G: not started.
+- Gates green (LOC, func, coercion, oracle-ratchet, dead-exports, all with
+  `LOC_GATE_BASE=813b828b6`), TS7 typecheck green,
+  `tests/issue-5267-es2015-forof-iterators-r2.test.ts` 17/17.
+- `pnpm run test:equivalence:gate` **green** — "24 failing, 1718 passing, 24
+  known-failures in baseline · No new equivalence regressions". This is the
+  check the suspension listed as not run; F1-c (which changes the degrade the
+  corpus exercises) is still unimplemented, so it must be re-run when that
+  lands.
+- `pnpm run typecheck:ts5` reports 2 pre-existing `WebAssembly.Tag` errors in
+  `src/linked-provider-runtime.ts`, untouched by this lane.
+
+### Leftovers for the next lane (measured pointers, not guesses)
+
+**Cluster B residual (5 rows) — `map[Symbol.iterator]()` is the odd one out.**
+`map.keys()` and `map.entries()` both produce a live record whose `.next()`
+works; `map[Symbol.iterator]()` produces a record (non-null) whose `.next()`
+returns **null**. Measured with `.tmp/pb/c2.js` (all three in one module:
+`keys` OK, `entries` OK, `@@iterator` null) and `.tmp/pb/c3.js` (the same
+failure with the receiver's static type ERASED through an identity function, so
+widening `isGeneratorType` — which does not list `MapIterator`/`SetIterator` —
+is NOT on its own the answer).
+
+Not yet root-caused; two candidate sites, and one cheap experiment settles it.
+The producer is `__iterator(map)` on both routes that can reach it (the
+`@@iterator` arm at `src/codegen/expressions/call-tail-dispatch.ts:751-812`,
+and the `__mapset_symbol_iterator` closure singleton at
+`src/codegen/map-runtime.ts:3070`, whose whole body is `__iterator(this)`), and
+`__iterator`'s spliced `$Map` arm builds the SAME `$__IterRec{MAPSET}` that
+`map.entries()` builds — so a producer difference is not obvious. The consumer
+is `.next()` at `src/codegen/expressions/call-receiver-method.ts:1074` /
+`:3759`. Since the iterator itself is non-null but its step is null, the likely
+shape is a `.next()` site that declined and pushed `ref.null.extern`: **dump
+the WAT for `.tmp/pb/c2.js` and compare the two call sites** before changing
+anything. Rows: `Map`/`SetIteratorPrototype/next/iteration{,-mutable}.js`.
+The 5th, `Set/prototype/values/values-iteration-mutable.js`, is different: an
+EXHAUSTED record is revived by a later `add` (`«4»` where `undefined` is
+required). Exhausted must stay exhausted — see the `idx = -1` note in the plan's
+D-1b.
+
+**Divergence ceiling is a placeholder, not a design.** Remove the 4M-entry cap
+in `emitNativeCollectionCtorIterableDrive` once module-scope array identity is
+fixed (`({v: a}).v === a` must be true). Until then it is the only thing
+keeping `Map/iterator-item-*-entry-returns-abrupt.js` from wedging a shard.
+
+**Steps C, D, E, F, G are untouched** — the plan above is unchanged and still
+accurate for them; only cluster B's residual count moved (17 → 5).
