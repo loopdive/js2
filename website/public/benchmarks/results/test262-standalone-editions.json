@@ -48,12 +48,12 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9905,
-    "fail": 1407,
-    "ce": 392,
+    "pass": 9884,
+    "fail": 1427,
+    "ce": 393,
     "skip": 0,
     "total": 11704,
-    "pct": 85,
+    "pct": 84,
     "features": [
       {
         "name": "destructuring-binding",
@@ -94,20 +94,20 @@
       {
         "name": "Symbol.iterator",
         "pass": 571,
-        "fail": 120,
-        "ce": 104,
+        "fail": 119,
+        "ce": 105,
         "skip": 0,
         "total": 795,
         "pct": 72
       },
       {
         "name": "Symbol",
-        "pass": 470,
-        "fail": 133,
+        "pass": 463,
+        "fail": 140,
         "ce": 6,
         "skip": 0,
         "total": 609,
-        "pct": 77
+        "pct": 76
       },
       {
         "name": "arrow-function",
@@ -120,12 +120,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 227,
-        "fail": 181,
+        "pass": 219,
+        "fail": 189,
         "ce": 23,
         "skip": 0,
         "total": 431,
-        "pct": 53
+        "pct": 51
       },
       {
         "name": "Reflect.construct",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 181,
-        "fail": 107,
+        "pass": 177,
+        "fail": 111,
         "ce": 42,
         "skip": 0,
         "total": 330,
-        "pct": 55
+        "pct": 54
       },
       {
         "name": "Symbol.species",
@@ -399,12 +399,12 @@
       },
       {
         "name": "Reflect.setPrototypeOf",
-        "pass": 17,
-        "fail": 6,
+        "pass": 14,
+        "fail": 9,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 74
+        "pct": 61
       },
       {
         "name": "Map",
@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 302,
-    "fail": 108,
-    "ce": 62,
+    "fail": 105,
+    "ce": 65,
     "skip": 0,
     "total": 472,
     "pct": 64,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 26,
-        "fail": 41,
-        "ce": 25,
+        "fail": 38,
+        "ce": 28,
         "skip": 0,
         "total": 92,
         "pct": 28
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 13,
-        "fail": 16,
-        "ce": 11,
+        "fail": 13,
+        "ce": 14,
         "skip": 0,
         "total": 40,
         "pct": 33
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 4,
-        "fail": 29,
-        "ce": 6,
+        "fail": 26,
+        "ce": 9,
         "skip": 0,
         "total": 39,
         "pct": 10
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 1,
-        "fail": 26,
-        "ce": 3,
+        "fail": 23,
+        "ce": 6,
         "skip": 0,
         "total": 30,
         "pct": 3
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 9,
-        "fail": 18,
-        "ce": 0,
+        "fail": 15,
+        "ce": 3,
         "skip": 0,
         "total": 27,
         "pct": 33
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4384,
-    "fail": 973,
+    "pass": 4382,
+    "fail": 975,
     "ce": 88,
     "skip": 0,
     "total": 5445,
-    "pct": 81
+    "pct": 80
   }
 ]
