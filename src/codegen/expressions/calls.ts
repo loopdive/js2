@@ -310,6 +310,7 @@ import {
   ensureNumberNativeProtoGlue,
   ensureBooleanNativeProtoGlue,
   ensureObjectNativeProtoGlue,
+  ensurePromiseNativeProtoGlue,
   ensureStringNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
   emitTypedArrayIntrinsicCtorObject,
@@ -1328,6 +1329,18 @@ function tryEmitNativeProtoReflectiveCall(
   if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
   else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
     brand = ensureBooleanNativeProtoGlue(ctx);
+  // (#5197 Slice C) The same one-member-at-a-time discipline for `Promise`.
+  // `Promise.prototype.catch.call(target, f)` in its DIRECT syntactic form fell
+  // to the legacy `.call` tail, which drops `thisArg` — so the object's own
+  // `then` was never invoked, though §27.2.5.1 is defined as nothing but that
+  // invocation. (The value-erased spelling `var m = Promise.prototype.catch`
+  // already routed here, which is why a hand-probe of the same shape passed.)
+  // Enumerated rather than opening the family: `then` and `catch` now decide
+  // the receiver at runtime, but `finally` still `ref.cast`s it, so routing
+  // `finally` here would turn today's wrong-but-non-throwing answer into a trap.
+  else if (brand === undefined && ifaceName === "Promise" && (member === "then" || member === "catch")) {
+    brand = ensurePromiseNativeProtoGlue(ctx);
+  }
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);

@@ -1781,7 +1781,7 @@ export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
 
   // Guarantee the iterator runtime (and the $Vec/$IterRec geometry) exist.
   ensureNativeIteratorRuntime(ctx);
-  const { vecTypeIdx, arrTypeIdx } = iterRuntimeTypes(ctx);
+  const { vecTypeIdx, arrTypeIdx, iterRecTypeIdx } = iterRuntimeTypes(ctx);
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
   if (iteratorIdx === undefined || iteratorNextIdx === undefined) {
@@ -1822,7 +1822,11 @@ export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
   const body = buildArrayFromIterNBody(
     { vecTypeIdx, arrTypeIdx },
     { iteratorIdx, iteratorNextIdx, iteratorReturnIdx: ctx.funcMap.get("__iterator_return") },
-    [],
+    // (#5267 B-2) An `$__IterRec` is by construction drainable — `__iterator`
+    // adopts it by identity and the kind arms step it. Without it the
+    // drainability guard passed a record through UNCHANGED, so the caller's
+    // indexed reads answered length 0 and `[...map.keys()]` was empty.
+    [iterRecTypeIdx],
   );
 
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
@@ -2922,7 +2926,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
             iteratorNextIdx,
             iteratorReturnIdx: ctx.funcMap.get("__iterator_return"),
           },
-          [...userTypeIdxs, ...genStateTypeIdxs, ...lazyTypeIdxs],
+          // (#5267 B-2) Keep the record itself drainable across the rebuild.
+          [...userTypeIdxs, ...genStateTypeIdxs, ...lazyTypeIdxs, types.iterRecTypeIdx],
           objDeps,
         );
       }
@@ -3322,30 +3327,15 @@ const CLOSE_RESULT_MSG = "iterator result is not an object";
 function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] | undefined {
   if (!(ctx.standalone || ctx.wasi)) return undefined;
   const ctorIdx = ctx.funcMap.get("__new_TypeError");
-  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
-  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
-  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
-  if (
-    ctorIdx === undefined ||
-    typeofObjectIdx === undefined ||
-    typeofFunctionIdx === undefined ||
-    isTruthyIdx === undefined
-  ) {
-    return undefined;
-  }
+  // (#5267) The Object test itself is `externIsObjectInstrs` — one definition
+  // for both this throw and the collection-constructor drive's entry check, so
+  // the two can never answer differently.
+  const isObject = externIsObjectInstrs(ctx, scratch);
+  if (ctorIdx === undefined || isObject === undefined) return undefined;
   const tagIdx = ensureExnTag(ctx);
   return [
     { op: "local.set", index: scratch },
-    { op: "local.get", index: scratch },
-    { op: "call", funcIdx: typeofObjectIdx },
-    { op: "local.get", index: scratch },
-    { op: "call", funcIdx: typeofFunctionIdx },
-    { op: "i32.or" },
-    // `typeof null` is "object", and every real Object is truthy — so the
-    // truthiness conjunct is what separates `null` from an ordinary object.
-    { op: "local.get", index: scratch },
-    { op: "call", funcIdx: isTruthyIdx },
-    { op: "i32.and" },
+    ...isObject,
     { op: "i32.eqz" },
     {
       op: "if",
@@ -3357,6 +3347,40 @@ function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] |
       ],
       else: [],
     },
+  ];
+}
+
+/**
+ * (#5267 Step A) FRESH instrs that leave `1` on the stack when the externref in
+ * `local` is an ECMAScript **Object** — the §7.4 "Type(value) is Object" test
+ * the keyed-collection constructors run on every entry.
+ *
+ * Same three classifiers `notAnObjectThrowInstrs` uses, so both give the same
+ * answer: `typeof v === "object" && v` (the truthiness conjunct is what
+ * separates `null`, whose typeof is also `"object"`) OR
+ * `typeof v === "function"`. Lives here rather than at the call site so the
+ * coercion vocabulary stays in the one module that owns the iteration
+ * protocol's type tests.
+ *
+ * Registered eagerly by `ensureNativeIteratorRuntime` →
+ * `ensureNotAnObjectThrowDeps`, so this only READS already-present symbols and
+ * can never shift a baked index. Returns `undefined` (caller must decline) when
+ * a classifier is missing. Fresh objects per call (#2169b).
+ */
+export function externIsObjectInstrs(ctx: CodegenContext, local: number): Instr[] | undefined {
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined || isTruthyIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: typeofObjectIdx },
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: isTruthyIdx },
+    { op: "i32.and" },
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: typeofFunctionIdx },
+    { op: "i32.or" },
   ];
 }
 
@@ -3404,19 +3428,25 @@ function ensureNotAnObjectThrowDeps(ctx: CodegenContext): void {
  * Fresh Instr objects per call (#2169b) — never share an `Instr` object across
  * branches, or a mutate-in-place body pass double-remaps its type index.
  */
-function iterRecAdoptArm(types: IterRuntimeTypes, localIdx: number): Instr[] {
-  const { iterRecTypeIdx, vecTypeIdx } = types;
+function iterRecIdentityArm(types: IterRuntimeTypes, localIdx: number): Instr[] {
   return [
     // Already a record → return it unchanged, kind tag and all.
     { op: "local.get", index: localIdx },
     { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    { op: "ref.test", typeIdx: types.iterRecTypeIdx },
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: localIdx }, { op: "return" }],
       else: [],
     },
+  ];
+}
+
+function iterRecAdoptArm(types: IterRuntimeTypes, localIdx: number): Instr[] {
+  const { iterRecTypeIdx, vecTypeIdx } = types;
+  return [
+    ...iterRecIdentityArm(types, localIdx),
     // A canonical `$Vec` → wrap as a fresh VEC cursor.
     { op: "local.get", index: localIdx },
     { op: "any.convert_extern" },
@@ -3959,6 +3989,18 @@ function buildIteratorBody(
   const iteratorTail = strictProtocol ? strictTail : tail;
 
   return [
+    // (#5267 B-2) The SUBJECT is already an iterator record. Since `keys()` /
+    // `values()` / `entries()` yield a live `$__IterRec` cursor rather than an
+    // eager `$Vec`, every GetIterator on one of those results — `[...m.keys()]`
+    // (the #5131 strict spread provider), `Array.from(map.entries())`,
+    // `new Set(s.values())` — arrives here with a record. Wrapping it as an OBJ
+    // carrier would probe a `next` PROPERTY the record does not carry, and on
+    // the strict provider (whose ladder has no OBJ arm) it fell through to the
+    // §7.4.1 non-iterable TypeError. A record IS the answer GetIterator must
+    // return, so adopt it by identity — the same reasoning as #5188's arm for a
+    // delegating `@@iterator` RESULT, applied one level up. A closed struct is
+    // never source-visible, so no user value can match.
+    ...iterRecIdentityArm(types, 0),
     // objAny = any.convert_extern(obj)
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },

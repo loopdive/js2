@@ -152,10 +152,12 @@ export function tryCompileNativeSetMethodCall(
     return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ true);
   }
 
-  // keys()/values() materialize a canonical externref $Vec — for a Set both yield
-  // the element (24.2.3.*). `entries()` (the `[v, v]`-pair projection) needs the
-  // `__iterator` pair consumer, deferred to a #2162 follow-up — it falls through.
-  if (methodName === "keys" || methodName === "values") {
+  // keys()/values()/entries() yield a LIVE `$__IterRec` over the Set — for a Set
+  // keys and values both project the element (24.2.3.*) and `entries()` yields
+  // the `[v, v]` pair, packed by the kind-2 arm of the shared MAPSET stepper
+  // (#5267 B-1/B-3; `entries` was deferred by #2162 and fell through to the
+  // host path, which is what `Set/prototype/entries/returns-iterator.js` hit).
+  if (methodName === "keys" || methodName === "values" || methodName === "entries") {
     ensureSetHelpers(ctx);
     return compileNativeCollectionIterator(ctx, fctx, propAccess, callExpr, methodName, /* isSet */ true);
   }

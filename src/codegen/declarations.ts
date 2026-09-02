@@ -111,7 +111,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
+import { inferTaViewType, proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -169,7 +169,7 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
-import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
+import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
 import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
@@ -254,6 +254,60 @@ const STANDALONE_FN_STATIC_KEEP_EXCLUDED = new Set([
   "caller",
   "arguments",
 ]);
+
+/**
+ * (#5150) Is this module-global typed-array binding ever ASSIGNED a value the
+ * pinned `$__ta_view` slot cannot hold?
+ *
+ * `moduleGlobalWasmType` pins `var t = new Uint8Array(buf)` to the shared-backing
+ * view struct so `t[i]` / `t.length` see the buffer. A later `t = new Uint8Array(2)`
+ * (count constructor) or `t = new Uint8Array([7, 8])` (array literal) builds a
+ * plain `$Vec`, which does not fit that slot: the store is dropped, the global
+ * reads back null and every subsequent access traps. The heterogeneous /
+ * rebind-widening helpers cannot catch it — both sides are objects, so there is
+ * no JS-tag disagreement to detect.
+ *
+ * A rebind to a view of the SAME element type keeps the pin (the value fits);
+ * anything else falls back to the checker-derived vec slot, which is what this
+ * binding had before the pin existed. Binding identity comes from the oracle;
+ * a sloppy-`var` redeclaration makes that lookup return undefined, and the
+ * conservative reading there is "assume it is ours" — losing a pin only costs
+ * the view aliasing, while keeping a wrong one costs a null-pointer trap.
+ */
+function taViewGlobalIsRebound(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  decl: ts.VariableDeclaration,
+  pinned: ValType,
+): boolean {
+  if (!ts.isIdentifier(decl.name)) return false;
+  const name = decl.name.text;
+  const fits = (assigned: ts.Expression): boolean => {
+    const rebindType = inferTaViewType(ctx, assigned);
+    if (rebindType === null || rebindType.kind !== pinned.kind) return false;
+    return rebindType.kind !== "ref_null" || pinned.kind !== "ref_null" || rebindType.typeIdx === pinned.typeIdx;
+  };
+  let rebound = false;
+  const visit = (node: ts.Node): void => {
+    if (rebound) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      !fits(node.right)
+    ) {
+      const target = ctx.oracle.variableDeclarationOf(node.left);
+      if (target === undefined || target === decl) {
+        rebound = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return rebound;
+}
 
 /**
  * Emit the narrow JS/Wasm adapter for native `any`/`unknown` boundary values.
@@ -3456,6 +3510,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // predicate the lowering's dispatcher asks, so slot and value cannot
     // disagree — see array-concat-carrier.ts.
     if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
+    // (#5150) `var ta = new Uint8Array(buffer[, byteOffset[, length]])` at
+    // MODULE scope. The constructor lowers to a shared-backing `$__ta_view`
+    // struct (#3054 B1/B2), but the checker-inferred slot is the plain
+    // TypedArray vec, so the value failed the slot's type and the global stayed
+    // null — every later `ta[i]` / `ta.length` threw "Cannot access property on
+    // null or undefined". Function-local `let`/`const` slots already consult
+    // this (#4376, `inferLetConstInitializerWasmType`); module globals did not,
+    // and test262 writes its bindings at top level.
+    // Only when the binding is never REBOUND to something the pinned view
+    // struct cannot hold: `var t = new Uint8Array(buf); t = new Uint8Array(2)`
+    // stores a plain `$Vec` into a `$__ta_view` slot, which drops to null and
+    // traps on the next read. The widening helpers below (#4428/#4204/#4491)
+    // do not cover this — both sides are objects, so no tag disagreement — so
+    // the rebind check has to live with the pin it guards.
+    {
+      const taViewGlobalType = inferTaViewType(ctx, decl.initializer);
+      if (taViewGlobalType !== null && !taViewGlobalIsRebound(ctx, sourceFile, decl, taViewGlobalType)) {
+        return taViewGlobalType;
+      }
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -6178,19 +6252,30 @@ export function compileDeclarations(
     }
   }
 
-  // Recompile module init after top-level functions are compiled so call sites
-  // inside module-level code can see the final inlinable-function registry.
+  // Recompile module init after top-level functions are compiled.
+  //
+  // (#3523 R4 gap-1b) The historical comment here said the recompile exists
+  // "so call sites inside module-level code can see the final inlinable-function
+  // registry". Measured 2026-09-01, that is NOT what happens for a DIRECT init
+  // statement: with `JS2WASM_IR_INLINE=0` the two-pass `__module_init` still
+  // emits a plain `call` for a module-level call to a small local function.
+  // Every inlining actually observed there comes from the finalize-time
+  // `ir-inline.ts` pass, which runs after both passes over every function. The
+  // registry reaches only the closure BODIES compiled during init — which is
+  // why the gate below refuses on call-plus-closure and not on calls alone.
   // The first compile above still serves early closure/setup discovery.
-  // Only the emitting call needs the final-registry recompile; in the other
-  // multi-source modes the body it would produce is discarded unread.
+  // Only the emitting call needs the recompile; in the other multi-source
+  // modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
-    // call, so a population with no call anywhere recompiles to the body pass 1
-    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
-    // the end. Skipping then also skips `restorePropOrderState` (nothing
-    // recompiles; pass 1's end state is where pass 2 converged anyway) and
-    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
-    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // (#3523 R4 gap-1a/1b) A second direct compile can differ from pass 1's
+    // (fixup-maintained) body through exactly two measured mechanisms: the
+    // inlinable-function registry, read only when compiling a call, and closure
+    // re-lifting, which needs a closure to lift. A population missing either
+    // ingredient recompiles to what pass 1 already produced, so pass 1's body
+    // stands and the recompile is skipped. Skipping then also skips
+    // `restorePropOrderState` (nothing recompiles; pass 1's end state is where
+    // pass 2 converged anyway). Fail closed — see
+    // `declarations/module-init-pass2-stable.ts`. An async-graph init always
     // takes pass 2 (its lowering exists only there), stated explicitly rather
     // than via the scan's AwaitExpression refusal. The env seam restores the
     // unconditional recompile so tests can A/B against the two-pass body.
@@ -6198,7 +6283,7 @@ export function compileDeclarations(
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
-      !moduleInitPopulationIsCallFree(ctx)
+      !moduleInitPopulationIsPass2Stable(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
       // pre-pass-1 value so this recompile does not treat pass 1's own

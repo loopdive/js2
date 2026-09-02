@@ -28,6 +28,7 @@ import {
 } from "./shared.js";
 import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
 import { allocLocal } from "./context/locals.js";
+import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
 import { ensureRegExpNativeProtoGlue } from "./regexp-standalone.js";
 import {
@@ -1199,6 +1200,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // natives are standalone-DEFINED funcs (host-free) registered by
     // `addUnionImports`; if the substrate is unavailable, degrade to the generic
     // catchable-TypeError body (identity/meta still hold).
+    // (#5150) `ArrayBuffer.isView` as a first-class VALUE — `isView/
+    // invoked-as-a-fn.js` does `var isView = ArrayBuffer.isView; isView(x)`.
+    // The direct-call site is already host-free (call-namespace-static.ts);
+    // only the value read fell to the generic "not yet implemented in --target
+    // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
+    case "ArrayBuffer.isView": {
+      if (!noJsHost(ctx)) return null;
+      paramTypes = [{ kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
+      break;
+    }
     case "Number.isInteger":
     case "Number.isFinite":
     case "Number.isNaN":
@@ -1629,6 +1641,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           else: [{ op: "i32.const", value: 0 }],
         },
       );
+    } else if (key === "ArrayBuffer.isView" && !genericThrowBody) {
+      // (#5150) Body = the SAME carrier `ref.test` disjunction the direct call
+      // emits, shared through `isViewRefTestInstrs` so the value and the call
+      // can never answer differently. Params: 0 = self, 1 = the boxed argument.
+      const anyTmp = allocLocal(closureFctx, "isview_any", { kind: "anyref" });
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "any.convert_extern" });
+      closureFctx.body.push({ op: "local.set", index: anyTmp });
+      closureFctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
     } else if (key === "Object.is" && !genericThrowBody) {
       // (#2963 Tier 2b) Body. Params: 0=self, 1=x, 2=y (both boxed externref).
       const typeofNumIdx = ctx.funcMap.get("__typeof_number");

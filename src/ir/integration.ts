@@ -323,6 +323,8 @@ import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
   preparedStringCompareProvider,
+  preparedStringEqProvider,
+  preparedStringLenProvider,
   type PreparedIrRuntimeManifest,
 } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
@@ -347,6 +349,8 @@ import type {
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
   StringComparePolicy,
+  StringEqPolicy,
+  StringLenPolicy,
 } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
@@ -410,7 +414,7 @@ import {
 import { emitExternrefDynamicToNumber } from "./dynamic-number-lowering.js";
 import type { PreparedIrPendingPatch } from "./prepared-lowering-patch.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
-import { attachIrStringSupport } from "./string-support.js";
+import { attachIrStringLengthProvider, attachIrStringSupport } from "./string-support.js";
 import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
@@ -918,6 +922,81 @@ function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
   return false;
 }
 
+/**
+ * (#3526 F2-S3) This caller's already-resolved STRING-EQUALITY policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (the three-symbol concat/eq arm's single `if`), consulted
+ * once, here, before freeze. Same one-flag truth table as the compare's, for the
+ * same reason: `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringEqPolicy(ctx: CodegenContext): StringEqPolicy {
+  return Object.freeze({ eq: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S3) True when any of `fns` compares two strings for equality.
+ *
+ * Simpler than `irStringCompareDemand`: `string.eq` IS an instruction kind, so
+ * the scan is a plain kind test rather than a walk of the `call` population.
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringEqDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.eq") found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * (#3526 F2-S4) This caller's already-resolved STRING-LENGTH policy.
+ *
+ * The EXACT fact `prepareStrings` read directly off `ctx.nativeStrings` when it
+ * built the `IrStringLengthProvider` itself, consulted once, here, before
+ * freeze. Same one-flag truth table as its two family-2 siblings, for the same
+ * reason: `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringLenPolicy(ctx: CodegenContext): StringLenPolicy {
+  return Object.freeze({ len: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S4) True when any of `fns` reads a string's `.length`.
+ *
+ * A plain `string.len` instruction-kind scan, the twin of `irStringEqDemand`.
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree — and it is deliberately the same
+ * enumeration `prepareStrings`'s `usesStringLen` scan performs, so the freeze
+ * cannot request a row for a demand the attachment pass will not find.
+ */
+function irStringLenDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.len") found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -974,6 +1053,8 @@ function prepareBuiltFnRuntimeManifest(
       externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
       generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
       stringCompare: integrationStringComparePolicy(ctx),
+      stringEq: integrationStringEqPolicy(ctx),
+      stringLen: integrationStringLenPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -981,6 +1062,16 @@ function prepareBuiltFnRuntimeManifest(
     // (#3526 F2-S1) Same predicate the partition scan above runs, so a demand
     // the freeze requests can never be one the partition failed to classify.
     stringCompareDemand: irStringCompareDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S3) Same predicate the partition scan above runs, for the same
+    // reason: a demand the freeze requests can never be one the partition failed
+    // to classify.
+    stringEqDemand: irStringEqDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S4) Same predicate the partition scan above runs, same reason
+    // again — and here it is load-bearing rather than merely consistent: the
+    // length seam's physical choice lives ONLY on the frozen row, so a
+    // length-only module that froze no manifest would leave
+    // `prepareStringLength` below with nothing to read.
+    stringLenDemand: irStringLenDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -995,9 +1086,66 @@ function prepareBuiltFnRuntimeManifest(
     }
     return fn === entry.fn ? entry : { ...entry, fn };
   });
+  const lengthAttached = prepareStringLength(ctx, preparedEntries, runtime);
   materializePreparedMathProviders(ctx, runtime);
   materializePreparedAsyncHostAdapters(ctx, runtime.functions);
-  return { entries: preparedEntries, runtime };
+  return { entries: lengthAttached, runtime };
+}
+
+/**
+ * (#3526 F2-S4) Attach the frozen string-LENGTH provider to every `string.len`.
+ *
+ * This runs INSIDE the freeze, after `preparedEntries` is built and before the
+ * math/async materializers, and that placement is the one structural edit of
+ * the slice. Every other family-2 seam is materialized at resolve time, where
+ * the prepared manifest is already in scope; `string.len` has no callable
+ * symbol at all, so the `IrStringLengthProvider` carried on the instruction IS
+ * the physical choice — which means the attachment itself has to happen after
+ * the manifest that decides it is frozen.
+ *
+ * Order-preservation: `prepareStrings` used to attach this before the freeze.
+ * Nothing between the two points reads `string.len.provider` —
+ * `prepareIrRuntimeManifest` collects `intrinsic` uses only, and every reader
+ * (lowering, component sealing, `preregisterCallableProviders`) runs later — so
+ * the move is byte-neutral by construction. `attachIrStringLengthProvider` is a
+ * pure structural map that touches ONLY `string.len` and checks rather than
+ * overwrites an existing attachment, so composing it after the intrinsic pass
+ * instead of before it yields identical IR.
+ */
+function prepareStringLength(
+  ctx: CodegenContext,
+  entries: readonly BuiltFn[],
+  runtime: PreparedIrRuntimeManifest,
+): readonly BuiltFn[] {
+  const arm = preparedStringLenProvider(runtime);
+  // No frozen row at all: nothing in this program reads `.length`.
+  if (!arm) return entries;
+  // The Program-ABI type registry is what names the string carrier; without it
+  // `prepareStrings` attaches nothing either, and this pass keeps that skip
+  // rather than inventing a carrier the rest of preparation does not have.
+  const registry = ctx.programAbiTypes;
+  if (!registry) return entries;
+  let provider: IrStringLengthProvider;
+  if (arm.arm === "native") {
+    provider = { kind: "struct-field", ownerType: registry.stringCarrierRef(), fieldIndex: arm.fieldIndex };
+  } else {
+    const target = irImportFuncRef(arm.module, arm.field, arm.field);
+    const structuralReferenceKey = irCallableBindingKey(target.binding);
+    const imported = catalogProgramAbiCallableImports(ctx).get(structuralReferenceKey);
+    if (!imported || imported.desc.kind !== "func") {
+      throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
+    }
+    provider = { kind: "callable", target };
+  }
+  return entries.map((entry) => {
+    // Length-ONLY. The omnibus `attachIrStringSupport` cannot be reused here:
+    // its callable arm re-derives five other seams' providers on every run, and
+    // this pass has no authority over any of them — see
+    // `attachIrStringLengthProvider`, which records the corpus failure that
+    // proved it.
+    const fn = attachIrStringLengthProvider(entry.fn, provider);
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
 }
 
 function atomicDeferredValTypeIsAllocatorNeutral(type: ValType): boolean {
@@ -3636,6 +3784,8 @@ export function compileIrPathFunctions(
   const externIsUndefinedPolicy = integrationExternIsUndefinedPolicy(ctx);
   const generatorNumberBoxPolicy = integrationGeneratorNumberBoxPolicy(ctx);
   const stringComparePolicy = integrationStringComparePolicy(ctx);
+  const stringEqPolicy = integrationStringEqPolicy(ctx);
+  const stringLenPolicy = integrationStringLenPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -3703,6 +3853,39 @@ export function compileIrPathFunctions(
           "resolve",
           "ir/integration: string relational compare has no provider under string-compare policy " +
             `compare=${stringComparePolicy.compare}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S3) The string equality seam partitions on the same rule, in
+    // the same pass. Its demand is an instruction kind rather than a call
+    // target, but the classification is identical to the compare's.
+    if (stringEqPolicy.eq === "unsupported" && irStringEqDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string equality has no provider under string-eq policy " + `eq=${stringEqPolicy.eq}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S4) The string length seam partitions on the same rule, in the
+    // same pass. Its demand is an instruction kind, like the equality's.
+    if (stringLenPolicy.len === "unsupported" && irStringLenDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string length has no provider under string-len policy " + `len=${stringLenPolicy.len}`,
         ),
         "resolve",
       );
@@ -6277,22 +6460,43 @@ function resolveAndObserveCallableProvider(
       // a late registration here would shift every defined funcidx.
       index = ctx.funcMap.get(arm.field);
     }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_EQUALS_FN) {
+    // (#3526 F2-S3) Lifted out of the three-symbol concat/eq branch below and
+    // put under manifest authority. The arm no longer reads `ctx.nativeStrings`:
+    // the frozen `stringEq` policy already resolved which authority answers, and
+    // this only materializes it through the SAME two routines as before. The
+    // lift itself is byte-inert — the three symbols are disjoint, so `else if`
+    // order between them cannot change which branch a symbol takes.
+    const arm = preparedStringEqProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string equality has no frozen provider under the string-eq policy",
+      );
+    }
+    if (arm.arm === "native") {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, arm.symbol);
+    } else {
+      // The host arm names the capability record's MODULE and field, and is
+      // located by import-section POSITION — never `ctx.funcMap`, which keys
+      // `wasm:js-string` builtins on the bare field and so is shadowable by a
+      // same-named user function (#1072). Never `ensureLateImport` either: the
+      // five-import block is minted by a base-phase caller long before Phase 3,
+      // and a late registration here would shift every defined funcidx.
+      index = exactCallableImportIndex(ctx, arm.module, arm.field);
+    }
   } else if (
     ref.binding.kind === "intrinsic" &&
-    (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN || symbol === IR_STRING_EQUALS_FN)
+    (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN)
   ) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
-      const helper =
-        symbol === IR_STRING_CONCAT_OWNED_FN
-          ? "__str_concat_owned"
-          : symbol === IR_STRING_CONCAT_FN
-            ? "__str_concat"
-            : "__str_equals";
+      const helper = symbol === IR_STRING_CONCAT_OWNED_FN ? "__str_concat_owned" : "__str_concat";
       index = nativeStrHelperHandle(ctx, helper);
     } else {
-      const field = symbol === IR_STRING_EQUALS_FN ? "equals" : "concat";
-      index = exactCallableImportIndex(ctx, "wasm:js-string", field);
+      index = exactCallableImportIndex(ctx, "wasm:js-string", "concat");
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
     index = ensureIrNativeCountedStringRepeatProvider(ctx);
@@ -6712,19 +6916,21 @@ function makeResolver(
       return ctx.nativeStrings ? [call, { op: "ref.as_non_null" }] : [call];
     },
     emitStringEquals(provider): readonly Instr[] {
-      if (provider) {
-        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      // (#3526 F2-S3) Fail closed rather than re-deciding the lane here. The
+      // retired `ctx.nativeStrings` fallback was the seam's SECOND un-governed
+      // mode read, and it was dead: `attachIrStringSupport` attaches this
+      // provider unconditionally for every `string.eq`
+      // (`string-support.ts` — the kind is in the provider-attaching branch and
+      // `irStringCallableProviderRef` never returns `undefined` for it), and
+      // `prepareStrings` runs that pass over every healthy owner. An owner that
+      // reaches lowering with no attachment must demote ALONE, not silently mint
+      // a body from a locally decided symbol. Measured before removal: zero
+      // reaches across the 55-cell byte matrix and 337 tests in 22 string
+      // suites, with a temporary throw in its place.
+      if (!provider) {
+        throw new Error("ir/integration: string.eq has no prepared runtime provider");
       }
-      if (ctx.nativeStrings) {
-        const idx = stringBackend.nativeHelpers.get("__str_equals");
-        if (idx === undefined) {
-          throw new Error("ir/integration: __str_equals helper not registered");
-        }
-        return [{ op: "call", funcIdx: idx }];
-      }
-      const idx = stringBackend.hostImports.get("equals");
-      if (idx === undefined) throw new Error("ir/integration: wasm:js-string equals not registered");
-      return [{ op: "call", funcIdx: idx }];
+      return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
     },
     emitStringLen(_inputEncoding, provider): readonly Instr[] {
       if (provider?.kind === "callable") {
@@ -6739,14 +6945,16 @@ function makeResolver(
           },
         ];
       }
-      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-        // AnyString.length is field 0 (matches struct definition in
-        // src/codegen/native-strings.ts).
-        return [{ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 }];
-      }
-      const idx = stringBackend.hostImports.get("length");
-      if (idx === undefined) throw new Error("ir/integration: wasm:js-string length not registered");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S4) The no-provider fallback is RETIRED. It was the adapter's
+      // own `ctx.nativeStrings` read — a second, independent copy of the lane
+      // decision the frozen manifest now owns — and it was dead:
+      // `prepareStringLength` attaches this provider to every `string.len` in
+      // every healthy owner from the frozen row. An owner that reaches lowering
+      // with no attachment must demote ALONE rather than silently mint a body
+      // from a locally decided lane. Measured before removal: zero reaches
+      // across the 60-cell byte matrix (byte-identical WITH a temporary throw
+      // in its place) and 335 passing tests in 21 string suites.
+      throw new Error("ir/integration: string.len has no prepared runtime provider");
     },
     emitStringCharAt(_alloc, _inputEncoding, provider): readonly Instr[] {
       if (provider) {
@@ -7137,20 +7345,12 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   const registry = ctx.programAbiTypes;
   if (!registry) return fns;
   const carrierRef = registry.stringCarrierRef();
-  let lengthProvider: IrStringLengthProvider | undefined;
-  if (usesStringLen) {
-    if (ctx.nativeStrings) {
-      lengthProvider = { kind: "struct-field", ownerType: carrierRef, fieldIndex: 0 };
-    } else {
-      const target = irImportFuncRef("wasm:js-string", "length", "length");
-      const structuralReferenceKey = irCallableBindingKey(target.binding);
-      const imported = catalogProgramAbiCallableImports(ctx).get(structuralReferenceKey);
-      if (!imported || imported.desc.kind !== "func") {
-        throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
-      }
-      lengthProvider = { kind: "callable", target };
-    }
-  }
+  // (#3526 F2-S4) The length provider is NOT decided here any more. This pass
+  // still pre-registers the host `wasm:js-string` block that the host arm binds
+  // to (the `usesStringLen` scan above feeds `instrUsesStrings`), but WHICH
+  // authority answers `.length` is the frozen manifest's call, and the
+  // attachment moved with it — see `prepareStringLength`, which runs inside
+  // `prepareBuiltFnRuntimeManifest`.
 
   const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
   const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
@@ -7198,7 +7398,7 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     const fn = attachIrStringSupport(attachment.function, {
       storageForConst,
       materializerForConst,
-      providerForLength: () => lengthProvider,
+      providerForLength: () => undefined,
       providerForRepeat: (instr) =>
         irIntrinsicFuncRef(
           ctx.nativeStrings && instr.countedStringAppendTripCount !== undefined

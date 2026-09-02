@@ -119,8 +119,13 @@ import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.j
 import {
   emitStandalonePromiseFinally,
   emitStandalonePromiseThen,
+  getOrRegisterPromiseType,
   type StandalonePromiseThenCallback,
 } from "./async-scheduler.js";
+// (#5197 Slice C) `Promise.prototype.catch` is specified as an observable
+// `Invoke(this, "then", …)`, so its non-Promise receiver arm reuses the same
+// vararg `then` dispatcher the thenable-assimilation job already uses.
+import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -2161,6 +2166,150 @@ function dynamicPromiseHandler(localIndex: number): StandalonePromiseThenCallbac
   };
 }
 
+/**
+ * (#5197 Slice C) §27.2.5.4 step 2 — `IsPromise(this)`.
+ *
+ * Emits `if (!(this is a native $Promise)) throw TypeError` at the head of a
+ * reflective `Promise.prototype.then` body. `catch` deliberately does NOT get
+ * this: §27.2.5.1 is defined purely as `Invoke(this, "then", …)` and works on
+ * any thenable. `finally` does not get it either — its body still `ref.cast`s
+ * the receiver and no reflective spelling routes to it (see the enumerated
+ * brand arm in `tryEmitNativeProtoReflectiveCall`).
+ */
+function emitPromiseReceiverIsPromiseGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  const throwBody: Instr[] = [];
+  const saved = fctx.body;
+  fctx.body = throwBody;
+  try {
+    emitThrowTypeError(ctx, fctx, "Method Promise.prototype.then called on incompatible receiver");
+  } finally {
+    fctx.body = saved;
+  }
+  if (throwBody.length === 0) return;
+  fctx.body.push(
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: promiseTypeIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: throwBody },
+  );
+}
+
+/**
+ * (#5197 Slice C) §27.2.5.1 `Promise.prototype.catch ( onRejected )`
+ *
+ *   1. Let promise be the this value.
+ *   2. Return ? Invoke(promise, "then", «undefined, onRejected»).
+ *
+ * `catch` has NO IsPromise check and NO Promise-specific behaviour of its own —
+ * it is defined entirely in terms of an OBSERVABLE `then` invocation on whatever
+ * `this` is. The previous body went straight to the native `$Promise` `.then`,
+ * which `ref.cast`s the receiver, so `Promise.prototype.catch.call({then(){}})`
+ * trapped with an illegal cast instead of calling the object's own `then`.
+ *
+ * Two arms, chosen by a `ref.test` on the receiver:
+ *
+ *  - a native `$Promise` receiver keeps the intrinsic fast path verbatim. That
+ *    is observationally equivalent while `Promise.prototype.then` is unpatched,
+ *    and it is what every ordinary `p.catch(f)` in a compiled program takes;
+ *  - anything else goes through `__call_m_then_vararg(receiver, «undefined,
+ *    onRejected»)` — the same dispatcher the thenable-assimilation job uses, so
+ *    closed-struct `then` methods, closure-valued `then` fields and open
+ *    `$Object` receivers are all covered by one mechanism, with `this` = the
+ *    receiver and the invocation's own result returned.
+ *
+ * Returns `null` (emitting nothing) when the dispatcher or the arg-vector
+ * builders are unavailable, so the caller falls back to the previous body.
+ */
+function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  const thenDispatchIdx = ctx.funcMap.get("__call_m_then_vararg");
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const undefinedInstrs = undefinedExternInstrs(ctx);
+  if (
+    thenDispatchIdx === undefined ||
+    objVecNewIdx === undefined ||
+    objVecPushIdx === undefined ||
+    undefinedInstrs === undefined
+  ) {
+    return null;
+  }
+  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
+
+  // §7.3.20 Invoke → §7.3.14 Call step 2: `IsCallable(func)` false is a
+  // TypeError, and the vararg dispatcher does not raise one — a non-callable
+  // `then` field reaches `__apply_closure`, which no-ops and answers undefined.
+  // `__promise_has_callable_then` is the module's existing IsCallable(Get(v,
+  // "then")) predicate (built from the SAME collectors as the dispatcher, so
+  // the two agree on what is callable by construction), and it RUNS a stored
+  // accessor — which is exactly right here: a poisoned `then` getter must throw
+  // out of `catch`. Skipped when the predicate was never reserved, leaving the
+  // pre-existing silent-undefined outcome rather than a new hard failure.
+  //
+  // Built BEFORE the native arm on purpose: `emitThrowTypeError` can register
+  // the `__new_TypeError` late import, which shifts already-baked defined-function
+  // indices. Doing it first means nothing is baked yet (#1839/#608).
+  const hasCallableThenIdx = ctx.funcMap.get("__promise_has_callable_then");
+  const notCallableThrow: Instr[] = [];
+  if (hasCallableThenIdx !== undefined) {
+    const savedForThrow = fctx.body;
+    fctx.body = notCallableThrow;
+    try {
+      emitThrowTypeError(ctx, fctx, "is not a function");
+    } finally {
+      fctx.body = savedForThrow;
+    }
+  }
+
+  const nativeArm: Instr[] = [];
+  ctx.liveBodies.add(nativeArm);
+  const saved = fctx.body;
+  fctx.body = nativeArm;
+  try {
+    emitStandalonePromiseThen(ctx, fctx, [{ op: "local.get", index: 1 }], null, dynamicPromiseHandler(2));
+  } finally {
+    fctx.body = saved;
+  }
+
+  const genericArm: Instr[] = [
+    ...(hasCallableThenIdx !== undefined && notCallableThrow.length > 0
+      ? ([
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: hasCallableThenIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: notCallableThrow },
+        ] satisfies Instr[])
+      : []),
+    { op: "call", funcIdx: objVecNewIdx },
+    { op: "local.set", index: argsLocal },
+    { op: "local.get", index: argsLocal },
+    ...undefinedInstrs, // «undefined» — the onFulfilled slot, always present
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: argsLocal },
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: objVecPushIdx },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: thenDispatchIdx },
+  ];
+
+  ctx.liveBodies.delete(nativeArm);
+  fctx.body.push(
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: promiseTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: nativeArm,
+      else: genericArm,
+    },
+  );
+  return { kind: "externref" };
+}
+
 /** Emit a callable reflected Promise.prototype method body.
  *
  * Native-prototype closure ABI: local 0 is the wrapper, local 1 is `this`, and
@@ -2172,11 +2321,22 @@ function emitPromiseProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, 
   const receiver: Instr[] = [{ op: "local.get", index: 1 }];
   switch (member) {
     case "then":
+      // (#5197 Slice C) §27.2.5.4 step 2 — "If IsPromise(promise) is false,
+      // throw a TypeError exception", BEFORE `Get(promise, "constructor")`.
+      // This body is reached only through a REFLECTIVE spelling
+      // (`Promise.prototype.then.call(x, …)`, `const m = Promise.prototype.then`),
+      // never through an ordinary `p.then(f)`, so the guard's whole blast radius
+      // is receivers the spec already rejects. Without it `emitStandalonePromiseThen`'s
+      // `ref.cast` trapped on a foreign `this` instead of throwing.
+      emitPromiseReceiverIsPromiseGuard(ctx, fctx);
       emitStandalonePromiseThen(ctx, fctx, receiver, dynamicPromiseHandler(2), dynamicPromiseHandler(3));
       return { kind: "externref" };
-    case "catch":
+    case "catch": {
+      const generic = emitPromiseProtoCatchBody(ctx, fctx);
+      if (generic !== null) return generic;
       emitStandalonePromiseThen(ctx, fctx, receiver, null, dynamicPromiseHandler(2));
       return { kind: "externref" };
+    }
     case "finally":
       emitStandalonePromiseFinally(ctx, fctx, receiver, dynamicPromiseHandler(2));
       return { kind: "externref" };
@@ -2501,6 +2661,12 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
   const brand = getBuiltinBrand(ctx, "Promise");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    // (#5197 Slice C) `catch`'s generic arm calls `__call_m_then_vararg`.
+    // RESERVE it here, before the glue exists: the member-closure factory emits
+    // each body TWICE (a probe for the result type, then the committed
+    // emission), and minting a function inside either would shift funcidxs
+    // under a body already being written.
+    if (ctx.standalone === true || ctx.wasi === true) reserveClosedMethodDispatchVararg(ctx, "then");
     registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"));
   }
   return brand;
