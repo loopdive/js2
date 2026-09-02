@@ -46,6 +46,7 @@ import {
   F64_UNARY_INTRINSIC_SIGNATURE,
   EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
   EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+  EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
@@ -76,6 +77,7 @@ export type RuntimeFeature =
   | StringEqRuntimeFeature
   | StringLenRuntimeFeature
   | StringConcatRuntimeFeature
+  | StringCharCodeAtRuntimeFeature
   | StringConcatManyRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
@@ -290,6 +292,35 @@ export const STRING_CONCAT_POLICY_DISABLED: StringConcatPolicy = Object.freeze({
 });
 
 /**
+ * (#3526 F2-S7) The exact, already-resolved policy for the guarded
+ * `s.charCodeAt(i)` READ — family 2's fifth sibling, beside
+ * {@link StringComparePolicy}, {@link StringEqPolicy}, {@link StringLenPolicy}
+ * and {@link StringConcatPolicy}.
+ *
+ * Same one-flag truth table as all four (`nativeStrings ? native : host`), and
+ * it governs exactly ONE feature: the GUARDED read, `(string, i32) -> f64` with
+ * `NaN` out of range. The proof-licensed arms the census also found — the
+ * trusted host read and the native `__str_flatten` + `__str_flat_charCodeAt`
+ * preheader PAIR — are a different feature whose decision is taken at PLAN
+ * time, and are deliberately NOT folded in here: a policy field that could not
+ * be honoured at resolve would be a lie about where the authority lives.
+ */
+export interface StringCharCodeAtPolicy {
+  /**
+   * `host` selects `__jsstr_charCodeAt`, the defined helper that closes over
+   * the `string.char_code_at` and `string.len` builtin capabilities; `native`
+   * selects `__str_charCodeAt`, the host-free helper over the Program-ABI
+   * string carrier. Both answer the same guarded f64.
+   */
+  readonly charCodeAt: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no charCodeAt seam resolve the arm to this. */
+export const STRING_CHAR_CODE_AT_POLICY_DISABLED: StringCharCodeAtPolicy = Object.freeze({
+  charCodeAt: "unsupported",
+});
+
+/**
  * (#3526 F2-S6) The exact, already-resolved policy for the BATCHED many-arity
  * concatenation seam — the `batchStringConcat` pass and the two resolve arms
  * that lower what it fuses.
@@ -370,6 +401,11 @@ export interface RuntimeManifestPolicy {
    */
   readonly stringConcat?: StringConcatPolicy;
   /**
+   * Omission resolves to {@link STRING_CHAR_CODE_AT_POLICY_DISABLED}; the
+   * frozen manifest always publishes the explicit resolved value.
+   */
+  readonly stringCharCodeAt?: StringCharCodeAtPolicy;
+  /**
    * Omission resolves to {@link STRING_CONCAT_MANY_POLICY_DISABLED}; the frozen
    * manifest always publishes the explicit resolved value.
    */
@@ -386,6 +422,7 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly stringEq: StringEqPolicy;
   readonly stringLen: StringLenPolicy;
   readonly stringConcat: StringConcatPolicy;
+  readonly stringCharCodeAt: StringCharCodeAtPolicy;
   readonly stringConcatMany: StringConcatManyPolicy;
 };
 
@@ -548,6 +585,28 @@ export const STRING_CONCAT_RUNTIME_PROVIDER_IDS = Object.freeze([
 export type StringConcatRuntimeProviderId = (typeof STRING_CONCAT_RUNTIME_PROVIDER_IDS)[number];
 
 /**
+ * (#3526 F2-S7) The guarded `charCodeAt` seam's requirement — ONE feature.
+ *
+ * Unlike its four family-2 predecessors this seam has TWO producers: an
+ * `intrinsic` `call` whose plan-time symbol already names the lane
+ * (`__jsstr_charCodeAt` / `__str_charCodeAt`) and a `string.char_code_at`
+ * instruction minted only with receiver-encoding evidence. Neither is an
+ * `intrinsic` INSTRUCTION, so the demand is requested at freeze from a scan
+ * that counts both — an instr-only scan would freeze a row for the handful of
+ * instruction cells and leave every plan-path cell with nothing to verify
+ * against.
+ */
+export const STRING_CHAR_CODE_AT_RUNTIME_FEATURES = Object.freeze(["js.string.char_code_at"] as const);
+export type StringCharCodeAtRuntimeFeature = (typeof STRING_CHAR_CODE_AT_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S7) One provider per admitted charCodeAt policy arm. */
+export const STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.string.char_code_at",
+  "native.js.string.char_code_at",
+] as const);
+export type StringCharCodeAtRuntimeProviderId = (typeof STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS)[number];
+
+/**
  * (#3526 F2-S6) The BATCHED many-arity seam's requirement — ONE feature for an
  * unbounded family of arities.
  *
@@ -589,6 +648,7 @@ export type RuntimeProviderId =
   | StringEqRuntimeProviderId
   | StringLenRuntimeProviderId
   | StringConcatRuntimeProviderId
+  | StringCharCodeAtRuntimeProviderId
   | StringConcatManyRuntimeProviderId
   | AsyncRuntimeProviderId;
 
@@ -904,6 +964,7 @@ function numberBoundaryProvider(
     | StringEqRuntimeProviderId
     | StringLenRuntimeProviderId
     | StringConcatRuntimeProviderId
+    | StringCharCodeAtRuntimeProviderId
     | StringConcatManyRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
@@ -914,6 +975,7 @@ function numberBoundaryProvider(
     | StringEqRuntimeFeature
     | StringLenRuntimeFeature
     | StringConcatRuntimeFeature
+    | StringCharCodeAtRuntimeFeature
     | StringConcatManyRuntimeFeature,
   // (#3526 F2-S6) Optional: the batched many-arity family answers a free-form
   // intrinsic SYMBOL rather than a closed `IntrinsicId`, and `IntrinsicSignature`
@@ -1233,6 +1295,48 @@ function isStringConcatFeature(feature: RuntimeFeature): feature is StringConcat
 }
 
 /**
+ * (#3526 F2-S7) The guarded `charCodeAt` seam's two arms.
+ *
+ * Both rows are `runtime-callable` and name a DEFINED helper, not an import —
+ * which is the fact that separates this seam from every family-2 predecessor.
+ * The host helper `__jsstr_charCodeAt` is minted on demand by
+ * `ensureHostCharCodeAtGuarded` and CLOSES OVER two builtin capability records
+ * (`string.char_code_at` for the raw read, `string.len` for the bounds test it
+ * needs to answer `NaN` instead of trapping); the row lists both because they
+ * are what the helper needs REGISTERED, not what the helper is. Requesting
+ * capabilities on a `runtime-callable` row is admitted by construction — the
+ * validation triad forbids them only on `host-managed`, `native-managed` and
+ * `carrier-field`, and requires them only on `host-capability`.
+ *
+ * `host-callable` would have been the wrong kind for the same reason: it names
+ * an IMPORT the consumer binds by import-section position, and this provider is
+ * a defined function. A dedicated `composed-callable` kind stating "a helper
+ * over N records" was considered and rejected for this slice — it would be a
+ * union arm plus a validation triad with no consumer reading the distinction;
+ * if a later seam needs it, these two rows migrate in one edit.
+ *
+ * Both carry {@link EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE} — the seam's
+ * semantic shape, NOT the `string.char_code_at` record's `(externref, i32) ->
+ * i32` trapping ABI.
+ */
+export const STRING_CHAR_CODE_AT_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.char_code_at",
+    "js.string.char_code_at",
+    EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__jsstr_charCodeAt" },
+    ["string.char_code_at", "string.len"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.char_code_at",
+    "js.string.char_code_at",
+    EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_charCodeAt" },
+    [],
+  ),
+]);
+
+/**
  * (#3526 F2-S6) The batched many-arity seam's two arms — one per authority.
  *
  * NEITHER row carries a `signature`, and there is no
@@ -1266,6 +1370,19 @@ export const STRING_CONCAT_MANY_RUNTIME_PROVIDERS: readonly RuntimeProviderDefin
     [],
   ),
 ]);
+
+/** The exact provider the admitted charCodeAt arm selects, or `null` when the
+ * caller resolved it to unsupported. */
+function stringCharCodeAtProviderId(policy: StringCharCodeAtPolicy): StringCharCodeAtRuntimeProviderId | null {
+  if (policy.charCodeAt === "host") return "host.js.string.char_code_at";
+  return policy.charCodeAt === "native" ? "native.js.string.char_code_at" : null;
+}
+
+const STRING_CHAR_CODE_AT_FEATURE_SET: ReadonlySet<string> = new Set(STRING_CHAR_CODE_AT_RUNTIME_FEATURES);
+
+function isStringCharCodeAtFeature(feature: RuntimeFeature): feature is StringCharCodeAtRuntimeFeature {
+  return STRING_CHAR_CODE_AT_FEATURE_SET.has(feature);
+}
 
 /**
  * The exact provider the admitted batched many-arity arm selects, or `null`
@@ -1576,6 +1693,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...STRING_EQ_RUNTIME_PROVIDERS,
     ...STRING_LEN_RUNTIME_PROVIDERS,
     ...STRING_CONCAT_RUNTIME_PROVIDERS,
+    ...STRING_CHAR_CODE_AT_RUNTIME_PROVIDERS,
     ...STRING_CONCAT_MANY_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
@@ -1591,6 +1709,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...STRING_EQ_RUNTIME_FEATURES,
   ...STRING_LEN_RUNTIME_FEATURES,
   ...STRING_CONCAT_RUNTIME_FEATURES,
+  ...STRING_CHAR_CODE_AT_RUNTIME_FEATURES,
   ...STRING_CONCAT_MANY_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
@@ -1606,6 +1725,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...STRING_EQ_RUNTIME_PROVIDER_IDS,
   ...STRING_LEN_RUNTIME_PROVIDER_IDS,
   ...STRING_CONCAT_RUNTIME_PROVIDER_IDS,
+  ...STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS,
   ...STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
@@ -1816,6 +1936,7 @@ export class RuntimeManifestBuilder {
     const stringEq = policy.stringEq ?? STRING_EQ_POLICY_DISABLED;
     const stringLen = policy.stringLen ?? STRING_LEN_POLICY_DISABLED;
     const stringConcat = policy.stringConcat ?? STRING_CONCAT_POLICY_DISABLED;
+    const stringCharCodeAt = policy.stringCharCodeAt ?? STRING_CHAR_CODE_AT_POLICY_DISABLED;
     const stringConcatMany = policy.stringConcatMany ?? STRING_CONCAT_MANY_POLICY_DISABLED;
     // (#3526 F2-S6) The two concat policies are not independent: whatever the
     // pass fuses is lowered through the CONCATENATION authority, so a running
@@ -1842,6 +1963,7 @@ export class RuntimeManifestBuilder {
       stringEq: Object.freeze({ eq: stringEq.eq }),
       stringLen: Object.freeze({ len: stringLen.len }),
       stringConcat: Object.freeze({ concat: stringConcat.concat }),
+      stringCharCodeAt: Object.freeze({ charCodeAt: stringCharCodeAt.charCodeAt }),
       stringConcatMany: Object.freeze({ batch: stringConcatMany.batch }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
@@ -2342,23 +2464,40 @@ export class RuntimeManifestBuilder {
                         }
                         return candidates.filter((candidate) => candidate.id === selectedId);
                       })()
-                    : // (#3526 F2-S6) The BATCHED many-arity family. It selects
-                      // on the CONCATENATION policy, like the pair arm beside
-                      // it — the pass policy decides whether a demand exists at
-                      // all, never which authority answers one.
-                      isStringConcatManyFeature(feature)
+                    : // (#3526 F2-S7) Family 2's fifth policy, and the first
+                      // whose BOTH arms are `runtime-callable`: the discriminator
+                      // is the provider ID, not the implementation kind. The
+                      // refusal names `string-char-code-at` so an operator can
+                      // tell WHICH string seam a disabled adapter refused.
+                      isStringCharCodeAtFeature(feature)
                       ? ((): readonly RuntimeProviderDefinition[] => {
-                          const selectedId = stringConcatManyProviderId(this.#policy.stringConcat);
+                          const selectedId = stringCharCodeAtProviderId(this.#policy.stringCharCodeAt);
                           if (selectedId === null) {
                             throw new RuntimeManifestInvariantError(
                               "provider-target-unavailable",
-                              `runtime feature ${feature} is unavailable under string-concat policy ` +
-                                `concat=${this.#policy.stringConcat.concat} (many-arity family)`,
+                              `runtime feature ${feature} is unavailable under string-char-code-at policy ` +
+                                `charCodeAt=${this.#policy.stringCharCodeAt.charCodeAt}`,
                             );
                           }
                           return candidates.filter((candidate) => candidate.id === selectedId);
                         })()
-                      : candidates;
+                      : // (#3526 F2-S6) The BATCHED many-arity family. It selects
+                        // on the CONCATENATION policy, like the pair arm beside
+                        // it — the pass policy decides whether a demand exists at
+                        // all, never which authority answers one.
+                        isStringConcatManyFeature(feature)
+                        ? ((): readonly RuntimeProviderDefinition[] => {
+                            const selectedId = stringConcatManyProviderId(this.#policy.stringConcat);
+                            if (selectedId === null) {
+                              throw new RuntimeManifestInvariantError(
+                                "provider-target-unavailable",
+                                `runtime feature ${feature} is unavailable under string-concat policy ` +
+                                  `concat=${this.#policy.stringConcat.concat} (many-arity family)`,
+                              );
+                            }
+                            return candidates.filter((candidate) => candidate.id === selectedId);
+                          })()
+                        : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",

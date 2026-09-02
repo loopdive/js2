@@ -97,13 +97,20 @@ const LATER_SLICE_IDS = ["string.concat.many"] as const;
 const LATER_SLICE_ID_SET: ReadonlySet<string> = new Set(LATER_SLICE_IDS);
 
 /**
- * (#3526 F2-S5) The three of those six that STILL have no provider row.
+ * (#3526 F2-S7) The TWO of those six that STILL have no provider row.
  *
- * `string.eq` left this set in F2-S3, `string.len` in F2-S4 and `string.concat`
- * in F2-S5, each when its seam moved under manifest authority; the other three
- * are untouched and the fence below still holds them for F2-S6 and later.
+ * `string.eq` left this set in F2-S3, `string.len` in F2-S4, `string.concat` in
+ * F2-S5 and `string.char_code_at` in F2-S7, each when its seam moved under
+ * manifest authority; the two `string.const*` ids are untouched and the fence
+ * below still holds them for F2-S8.
+ *
+ * `string.char_code_at` arrives differently from the three before it: no
+ * provider names it as a `host-callable` CAPABILITY. It is named by the
+ * `hostCapabilities` list of a `runtime-callable` row — `__jsstr_charCodeAt` is
+ * a defined helper that CLOSES OVER the builtin, not the builtin itself — which
+ * is why the scan below reads both halves.
  */
-const PROVIDED_IDS = ["string.concat", "string.eq", "string.len"] as const;
+const PROVIDED_IDS = ["string.char_code_at", "string.concat", "string.eq", "string.len"] as const;
 const STILL_UNPROVIDED_IDS = NEW_IDS.filter((id) => !(PROVIDED_IDS as readonly string[]).includes(id));
 
 function row(capability: RuntimeHostCapabilityId): RuntimeHostCapabilityRecord {
@@ -409,20 +416,32 @@ describe("#3526 F2-S2 each row's ABI equals its registration site", () => {
 // --------------------------------------------------------------------------
 
 describe("#3526 F2-S2 no provider selects a new row", () => {
-  it("has no provider naming any of the four STILL-unprovided capabilities", () => {
-    // (#3526 F2-S4) Narrowed again, from five to four: `string.len` now HAS a
-    // provider (`host.js.string.len`), which is exactly what this slice moved.
-    // The pin is the regression fence for the NEXT slice, so the correct edit is
-    // to shrink it by the id that landed — not to delete it. The remaining four
-    // are still un-provided and this keeps saying so.
+  it("has no provider naming either of the two STILL-unprovided capabilities", () => {
+    // (#3526 F2-S7) Narrowed again, from three to two: `string.char_code_at` now
+    // HAS a provider, which is exactly what this slice moved. The pin is the
+    // regression fence for the NEXT slice, so the correct edit is to shrink it
+    // by the id that landed — not to delete it. The two `string.const*` ids are
+    // still un-provided and this keeps saying so.
     const named = new Set<string>();
     for (const provider of RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]) {
       if (provider.implementation.kind === "host-callable") named.add(provider.implementation.capability);
       for (const capability of provider.hostCapabilities) named.add(capability);
     }
-    expect(STILL_UNPROVIDED_IDS).toHaveLength(3);
+    expect(STILL_UNPROVIDED_IDS).toHaveLength(2);
     for (const id of STILL_UNPROVIDED_IDS) expect([...named]).not.toContain(id);
     for (const id of PROVIDED_IDS) expect([...named]).toContain(id);
+    // Positively: `string.char_code_at` is reached through a `runtime-callable`
+    // row's capability list, NOT through a `host-callable` capability — the
+    // distinction the widened scan above exists for.
+    const hostCallableCapabilities = (RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[])
+      .filter((provider) => provider.implementation.kind === "host-callable")
+      .map((provider) => (provider.implementation as { capability: string }).capability);
+    expect(hostCallableCapabilities).not.toContain("string.char_code_at");
+    expect(
+      (RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]).filter((provider) =>
+        provider.hostCapabilities.includes("string.char_code_at"),
+      ).length,
+    ).toBe(1);
   });
 
   it("keeps Math-only, async-only and compare-only manifests free of every new row", () => {

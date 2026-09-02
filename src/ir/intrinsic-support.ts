@@ -31,6 +31,7 @@ import {
   STRING_COMPARE_RUNTIME_FEATURES,
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
+  STRING_CHAR_CODE_AT_RUNTIME_FEATURES,
   STRING_CONCAT_RUNTIME_FEATURES,
   STRING_CONCAT_MANY_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
@@ -458,6 +459,40 @@ export function preparedStringConcatProvider(
   throw new Error(`IR string-concat provider ${provider.id} is not a callable implementation`);
 }
 
+/** The one string-charCodeAt feature row; named once so no caller spells it. */
+const STRING_CHAR_CODE_AT_RUNTIME_FEATURE = STRING_CHAR_CODE_AT_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S7) Which arm of the guarded `charCodeAt` seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * The family's fifth twin, and the first whose two arms share ONE
+ * implementation kind: both rows are `runtime-callable`, so the discriminator
+ * is the provider **ID**, not the kind. That is not an accident of spelling —
+ * neither arm is an import. Both are DEFINED helpers minted on demand
+ * (`ensureHostCharCodeAtGuarded` / `ensureNativeCharCodeAtHelper`), which is
+ * why this twin returns no module: there is no import-section position to
+ * locate, and the host arm's `capabilities` are what its helper needs
+ * REGISTERED (`wasm:js-string.charCodeAt` and `.length`), not what it is.
+ */
+export function preparedStringCharCodeAtProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly symbol: string; readonly capabilities: readonly string[] }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_CHAR_CODE_AT_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind !== "runtime-callable") {
+    throw new Error(`IR string-char-code-at provider ${provider.id} is not a charCodeAt implementation`);
+  }
+  return provider.id === "host.js.string.char_code_at"
+    ? { arm: "host", symbol: provider.implementation.symbol, capabilities: provider.hostCapabilities }
+    : { arm: "native", symbol: provider.implementation.symbol };
+}
+
 /** The one batched many-arity feature row; named once so no caller spells it. */
 const STRING_CONCAT_MANY_RUNTIME_FEATURE = STRING_CONCAT_MANY_RUNTIME_FEATURES[0];
 
@@ -619,6 +654,15 @@ export function prepareIrRuntimeManifest(input: {
    */
   readonly stringConcatDemand?: { readonly immutable: boolean; readonly owned: boolean };
   /**
+   * (#3526 F2-S7) True when some function in `functions` performs a guarded
+   * `charCodeAt` read. Same shape and same reason as `stringLenDemand`, but the
+   * scan behind it counts TWO producers: the `string.char_code_at` instruction
+   * AND the plan-path `intrinsic` calls whose symbol already names the lane. An
+   * instr-only demand would freeze a row for a handful of cells and leave every
+   * plan-path call with no row to be verified against.
+   */
+  readonly stringCharCodeAtDemand?: boolean;
+  /**
    * (#3526 F2-S6) Which ARITIES some function in `functions` concatenates in
    * one batched call, sorted and unique.
    *
@@ -674,6 +718,7 @@ export function prepareIrRuntimeManifest(input: {
     !input.stringLenDemand &&
     !input.stringConcatDemand?.immutable &&
     !input.stringConcatDemand?.owned &&
+    !input.stringCharCodeAtDemand &&
     (input.stringConcatManyDemand?.arities.length ?? 0) === 0
   ) {
     return undefined;
@@ -689,6 +734,7 @@ export function prepareIrRuntimeManifest(input: {
   if (input.stringLenDemand) builder.requestFeature(STRING_LEN_RUNTIME_FEATURE);
   if (input.stringConcatDemand?.immutable) builder.requestFeature(STRING_CONCAT_RUNTIME_FEATURE);
   if (input.stringConcatDemand?.owned) builder.requestFeature(STRING_CONCAT_OWNED_RUNTIME_FEATURE);
+  if (input.stringCharCodeAtDemand) builder.requestFeature(STRING_CHAR_CODE_AT_RUNTIME_FEATURE);
   if ((input.stringConcatManyDemand?.arities.length ?? 0) > 0) {
     builder.requestFeature(STRING_CONCAT_MANY_RUNTIME_FEATURE);
   }

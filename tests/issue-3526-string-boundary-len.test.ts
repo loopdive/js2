@@ -67,6 +67,7 @@ import {
   RuntimeManifestInvariantError,
   RUNTIME_PROVIDERS,
   STRING_COMPARE_POLICY_DISABLED,
+  STRING_CHAR_CODE_AT_POLICY_DISABLED,
   STRING_CONCAT_POLICY_DISABLED,
   STRING_CONCAT_MANY_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
@@ -358,6 +359,7 @@ describe("#3526 F2-S4 provider policy", () => {
     expect(frozen.policy.stringCompare).toEqual(STRING_COMPARE_POLICY_DISABLED);
     expect(frozen.policy.stringEq).toEqual(STRING_EQ_POLICY_DISABLED);
     expect(frozen.policy.stringConcat).toEqual(STRING_CONCAT_POLICY_DISABLED);
+    expect(frozen.policy.stringCharCodeAt).toEqual(STRING_CHAR_CODE_AT_POLICY_DISABLED);
     // (#3526 F2-S6) NINE now: the batched many-arity pass policy is a
     // sibling of the concatenation policy, not a field on it.
     expect(frozen.policy.stringConcatMany).toEqual(STRING_CONCAT_MANY_POLICY_DISABLED);
