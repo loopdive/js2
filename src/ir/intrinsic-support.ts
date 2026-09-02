@@ -9,6 +9,7 @@ import {
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
+import type { IrStringConcatMode } from "./string-runtime.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
   forEachInstrDeep,
@@ -28,6 +29,7 @@ import {
   STRING_COMPARE_RUNTIME_FEATURES,
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
+  STRING_CONCAT_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -402,6 +404,57 @@ export function preparedStringLenProvider(
   throw new Error(`IR string-len provider ${provider.id} is not a length implementation`);
 }
 
+/** The two string-concat feature rows, one per mode; named once so no caller spells them. */
+const STRING_CONCAT_RUNTIME_FEATURE = STRING_CONCAT_RUNTIME_FEATURES[0];
+const STRING_CONCAT_OWNED_RUNTIME_FEATURE = STRING_CONCAT_RUNTIME_FEATURES[1];
+
+/** The frozen feature row a concat instruction of `mode` answers to. */
+function stringConcatFeatureFor(mode: IrStringConcatMode): string {
+  return mode === "owned-append" ? STRING_CONCAT_OWNED_RUNTIME_FEATURE : STRING_CONCAT_RUNTIME_FEATURE;
+}
+
+/**
+ * (#3526 F2-S5) Which arm of the string concatenation seam the frozen manifest
+ * selected for `mode`, or `undefined` when no manifest carries that row.
+ *
+ * The family's fourth twin, and the first that takes a second argument: the
+ * policy chose the AUTHORITY, and the instruction's `concatMode` chooses which
+ * of the two helpers on that authority answers. On the host lane both modes
+ * resolve to the SAME `wasm:js-string.concat` record — `wasm:js-string` has no
+ * owned append builtin — and the two feature rows say so explicitly rather than
+ * leaving the collapse implicit at the call site.
+ *
+ * Like {@link preparedStringEqProvider} the host arm returns the record's
+ * MODULE as well as its field: `concat` is a builtin import, so `ctx.funcMap`
+ * cannot name it unambiguously (it is keyed on the bare field, which a
+ * same-named user function shadows — #1072), and the consumer locates it by
+ * import-section position instead.
+ */
+export function preparedStringConcatProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+  mode: IrStringConcatMode,
+):
+  | { readonly arm: "host"; readonly module: string; readonly field: string }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const feature = stringConcatFeatureFor(mode);
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === feature,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol };
+  }
+  if (provider.implementation.kind === "host-callable") {
+    const record = resolveRuntimeHostCapabilityFuncRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, field: record.field };
+  }
+  throw new Error(`IR string-concat provider ${provider.id} is not a callable implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -498,6 +551,14 @@ export function prepareIrRuntimeManifest(input: {
    * with nothing to read.
    */
   readonly stringLenDemand?: boolean;
+  /**
+   * (#3526 F2-S5) Which concat MODES some function in `functions` performs.
+   * Same shape and same reason as `stringLenDemand`, read off the
+   * `string.concat` instruction population — but a PAIR rather than a flag,
+   * because the seam has two feature rows and a module with no builder loop
+   * must not freeze an `owned-append` provider it will never call.
+   */
+  readonly stringConcatDemand?: { readonly immutable: boolean; readonly owned: boolean };
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -536,7 +597,9 @@ export function prepareIrRuntimeManifest(input: {
     !input.generatorNumberBoxDemand &&
     !input.stringCompareDemand &&
     !input.stringEqDemand &&
-    !input.stringLenDemand
+    !input.stringLenDemand &&
+    !input.stringConcatDemand?.immutable &&
+    !input.stringConcatDemand?.owned
   ) {
     return undefined;
   }
@@ -549,6 +612,8 @@ export function prepareIrRuntimeManifest(input: {
   if (input.stringCompareDemand) builder.requestFeature(STRING_COMPARE_RUNTIME_FEATURE);
   if (input.stringEqDemand) builder.requestFeature(STRING_EQ_RUNTIME_FEATURE);
   if (input.stringLenDemand) builder.requestFeature(STRING_LEN_RUNTIME_FEATURE);
+  if (input.stringConcatDemand?.immutable) builder.requestFeature(STRING_CONCAT_RUNTIME_FEATURE);
+  if (input.stringConcatDemand?.owned) builder.requestFeature(STRING_CONCAT_OWNED_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

@@ -84,13 +84,13 @@ const NEW_IDS = [
 const NEW_ID_SET: ReadonlySet<string> = new Set(NEW_IDS);
 
 /**
- * (#3526 F2-S4) The four of those six that STILL have no provider row.
+ * (#3526 F2-S5) The three of those six that STILL have no provider row.
  *
- * `string.eq` left this set in F2-S3 and `string.len` in F2-S4, each when its
- * seam moved under manifest authority; the other four are untouched and the
- * fence below still holds them for F2-S5 and later.
+ * `string.eq` left this set in F2-S3, `string.len` in F2-S4 and `string.concat`
+ * in F2-S5, each when its seam moved under manifest authority; the other three
+ * are untouched and the fence below still holds them for F2-S6 and later.
  */
-const PROVIDED_IDS = ["string.eq", "string.len"] as const;
+const PROVIDED_IDS = ["string.concat", "string.eq", "string.len"] as const;
 const STILL_UNPROVIDED_IDS = NEW_IDS.filter((id) => !(PROVIDED_IDS as readonly string[]).includes(id));
 
 function row(capability: RuntimeHostCapabilityId): RuntimeHostCapabilityRecord {
@@ -375,7 +375,7 @@ describe("#3526 F2-S2 no provider selects a new row", () => {
       if (provider.implementation.kind === "host-callable") named.add(provider.implementation.capability);
       for (const capability of provider.hostCapabilities) named.add(capability);
     }
-    expect(STILL_UNPROVIDED_IDS).toHaveLength(4);
+    expect(STILL_UNPROVIDED_IDS).toHaveLength(3);
     for (const id of STILL_UNPROVIDED_IDS) expect([...named]).not.toContain(id);
     for (const id of PROVIDED_IDS) expect([...named]).toContain(id);
   });
@@ -641,23 +641,13 @@ function integrationSlice(startMarker: string, endMarker: string): string {
 }
 
 describe("#3526 F2-S2 the un-migrated arms still read the lane", () => {
-  it("keeps the CONCAT resolve arm on ctx.nativeStrings and the raw import lookup", () => {
-    // (#3526 F2-S3) F2-S3 lifted `string.eq` out of what was a three-symbol arm,
-    // so this pin is now concat-only and the eq half is INVERTED in
-    // `issue-3526-string-boundary-eq.test.ts` (which asserts the arm reads no
-    // lane discriminator at all). The concat pair is still UNGOVERNED, and
-    // pinning that is what stops F2-S5 from being mistaken for having landed.
-    // The `field` variable went with the eq half — after the split the arm names
-    // its one spelling directly.
-    const arm = integrationSlice(
-      "symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN",
-      "\n  } else if (",
-    );
-    expect(arm).toContain("ctx.nativeStrings");
-    expect(arm).toContain('exactCallableImportIndex(ctx, "wasm:js-string", "concat")');
-    expect(arm).not.toContain("hostCapabilityRecords");
-    expect(arm).not.toContain("IR_STRING_EQUALS_FN");
-  });
+  // (#3526 F2-S5) The CONCAT pin this file carried — "keeps the CONCAT resolve
+  // arm on ctx.nativeStrings and the raw import lookup" — is GONE. Its stated
+  // purpose was "what stops F2-S5 from being mistaken for having landed", and
+  // F2-S5 has landed: the arm now reads the frozen `stringConcat` policy
+  // through `preparedStringConcatProvider`. The assertion is INVERTED into
+  // `issue-3526-string-boundary-concat.test.ts`, which pins that the arm reads
+  // no lane discriminator at all and locates the host import by module+field.
 
   // (#3526 F2-S4) The `string.len` twin of the pin above is GONE, not shrunk.
   // It fenced `prepareStrings`'s `if (usesStringLen) { … }` decision block,

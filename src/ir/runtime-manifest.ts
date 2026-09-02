@@ -42,6 +42,7 @@ import {
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+  EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
@@ -70,7 +71,8 @@ export type RuntimeFeature =
   | GeneratorNumberBoxRuntimeFeature
   | StringCompareRuntimeFeature
   | StringEqRuntimeFeature
-  | StringLenRuntimeFeature;
+  | StringLenRuntimeFeature
+  | StringConcatRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -251,6 +253,38 @@ export const STRING_LEN_POLICY_DISABLED: StringLenPolicy = Object.freeze({
   len: "unsupported",
 });
 
+/**
+ * (#3526 F2-S5) The exact, already-resolved policy for the STRING
+ * CONCATENATION seam (`a + b` on two strings, and the `+=` builder append) —
+ * family 2's fourth sibling, beside {@link StringComparePolicy},
+ * {@link StringEqPolicy} and {@link StringLenPolicy}.
+ *
+ * Same one-flag truth table as all three (`nativeStrings ? native : host`), but
+ * this is the first seam in the catalogue where ONE policy answers TWO
+ * features. The manifest decides WHICH authority answers; the concat MODE —
+ * immutable `a + b` versus the `owned-append` builder-loop license (#3744) —
+ * decides WHICH helper on that authority. The host lane has no owned import at
+ * all and collapses both modes onto the same `wasm:js-string.concat` builtin;
+ * that collapse is a provider-ROW fact, not a policy fact, which is why it is
+ * modelled as two features under one policy rather than a second policy field.
+ * A module with no builder loop then requests no owned provider at all, and its
+ * frozen manifest says so.
+ */
+export interface StringConcatPolicy {
+  /**
+   * `host` selects the `wasm:js-string.concat` builtin import through the
+   * central `string.concat` capability, for BOTH modes; `native` selects the
+   * `__str_concat` / `__str_concat_owned` Wasm helpers
+   * `ensureNativeStringHelpers` registers as one pair.
+   */
+  readonly concat: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string concatenation seam resolve the arm to this. */
+export const STRING_CONCAT_POLICY_DISABLED: StringConcatPolicy = Object.freeze({
+  concat: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -289,6 +323,11 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly stringLen?: StringLenPolicy;
+  /**
+   * Omission resolves to {@link STRING_CONCAT_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringConcat?: StringConcatPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
@@ -300,6 +339,7 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly stringCompare: StringComparePolicy;
   readonly stringEq: StringEqPolicy;
   readonly stringLen: StringLenPolicy;
+  readonly stringConcat: StringConcatPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -435,6 +475,31 @@ export type StringLenRuntimeFeature = (typeof STRING_LEN_RUNTIME_FEATURES)[numbe
 export const STRING_LEN_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.len", "native.js.string.len"] as const);
 export type StringLenRuntimeProviderId = (typeof STRING_LEN_RUNTIME_PROVIDER_IDS)[number];
 
+/**
+ * (#3526 F2-S5) The string concatenation seam's requirements — the first seam
+ * in the catalogue with TWO features, one per concat MODE.
+ *
+ * `string.concat` is an IR instruction like `string.eq` and `string.len`, and
+ * like them it resolves through no `intrinsic`, so the demand is requested at
+ * freeze from a `string.concat` instruction scan. What is new is that the
+ * instruction carries a `concatMode`, and the producer already maps that mode
+ * onto one of two callable symbols (`__ir_string_concat` /
+ * `__ir_string_concat_owned`). The two features mirror that mapping exactly, so
+ * the frozen manifest can say which of the two helpers a module actually needs
+ * instead of pretending every concatenating module needs both.
+ */
+export const STRING_CONCAT_RUNTIME_FEATURES = Object.freeze(["js.string.concat", "js.string.concat.owned"] as const);
+export type StringConcatRuntimeFeature = (typeof STRING_CONCAT_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S5) One provider per admitted arm — two authorities × two modes. */
+export const STRING_CONCAT_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.string.concat",
+  "host.js.string.concat.owned",
+  "native.js.string.concat",
+  "native.js.string.concat.owned",
+] as const);
+export type StringConcatRuntimeProviderId = (typeof STRING_CONCAT_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -445,6 +510,7 @@ export type RuntimeProviderId =
   | StringCompareRuntimeProviderId
   | StringEqRuntimeProviderId
   | StringLenRuntimeProviderId
+  | StringConcatRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -727,7 +793,8 @@ function numberBoundaryProvider(
     | GeneratorNumberBoxRuntimeProviderId
     | StringCompareRuntimeProviderId
     | StringEqRuntimeProviderId
-    | StringLenRuntimeProviderId,
+    | StringLenRuntimeProviderId
+    | StringConcatRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
     | BooleanBoundaryRuntimeFeature
@@ -735,7 +802,8 @@ function numberBoundaryProvider(
     | GeneratorNumberBoxRuntimeFeature
     | StringCompareRuntimeFeature
     | StringEqRuntimeFeature
-    | StringLenRuntimeFeature,
+    | StringLenRuntimeFeature
+    | StringConcatRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -973,6 +1041,79 @@ const STRING_LEN_FEATURE_SET: ReadonlySet<string> = new Set(STRING_LEN_RUNTIME_F
 
 function isStringLenFeature(feature: RuntimeFeature): feature is StringLenRuntimeFeature {
   return STRING_LEN_FEATURE_SET.has(feature);
+}
+
+/**
+ * (#3526 F2-S5) The string concatenation seam's four arms — two authorities
+ * times two concat MODES.
+ *
+ * Both host rows name the SAME `string.concat` capability, and that is the
+ * documented collapse rather than an oversight: `wasm:js-string` has no owned
+ * append builtin, so on the host lane an `owned-append` concatenation is served
+ * by the ordinary `concat` import. The catalogue keys providers by id and
+ * projects host capabilities through a SET, so two rows naming one capability
+ * freeze to a single `string.concat` record and a single import.
+ *
+ * All four rows carry {@link EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE}
+ * — the seam's semantic shape, and the only signature in the catalogue whose
+ * result is a non-null `ref extern`, matching the `string.concat` host record.
+ */
+export const STRING_CONCAT_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.concat",
+    "js.string.concat",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.concat" },
+    ["string.concat"],
+  ),
+  numberBoundaryProvider(
+    "host.js.string.concat.owned",
+    "js.string.concat.owned",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.concat" },
+    ["string.concat"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.concat",
+    "js.string.concat",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_concat" },
+    [],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.concat.owned",
+    "js.string.concat.owned",
+    EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_concat_owned" },
+    [],
+  ),
+]);
+
+/** The `owned-append` half of the concat feature pair; named once here. */
+const STRING_CONCAT_OWNED_RUNTIME_FEATURE = STRING_CONCAT_RUNTIME_FEATURES[1];
+
+/**
+ * The exact provider the admitted string-concat arm selects for `feature`, or
+ * `null` when the caller resolved it to unsupported.
+ *
+ * Takes the FEATURE as well as the policy — the only selector in the family
+ * that does, because the policy picks the authority and the feature picks the
+ * mode's helper on it.
+ */
+function stringConcatProviderId(
+  feature: StringConcatRuntimeFeature,
+  policy: StringConcatPolicy,
+): StringConcatRuntimeProviderId | null {
+  const owned = feature === STRING_CONCAT_OWNED_RUNTIME_FEATURE;
+  if (policy.concat === "host") return owned ? "host.js.string.concat.owned" : "host.js.string.concat";
+  if (policy.concat === "native") return owned ? "native.js.string.concat.owned" : "native.js.string.concat";
+  return null;
+}
+
+const STRING_CONCAT_FEATURE_SET: ReadonlySet<string> = new Set(STRING_CONCAT_RUNTIME_FEATURES);
+
+function isStringConcatFeature(feature: RuntimeFeature): feature is StringConcatRuntimeFeature {
+  return STRING_CONCAT_FEATURE_SET.has(feature);
 }
 
 /** The exact provider the admitted generator-box arm selects, or `null` when
@@ -1236,6 +1377,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...STRING_COMPARE_RUNTIME_PROVIDERS,
     ...STRING_EQ_RUNTIME_PROVIDERS,
     ...STRING_LEN_RUNTIME_PROVIDERS,
+    ...STRING_CONCAT_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -1249,6 +1391,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...STRING_COMPARE_RUNTIME_FEATURES,
   ...STRING_EQ_RUNTIME_FEATURES,
   ...STRING_LEN_RUNTIME_FEATURES,
+  ...STRING_CONCAT_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -1262,6 +1405,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...STRING_COMPARE_RUNTIME_PROVIDER_IDS,
   ...STRING_EQ_RUNTIME_PROVIDER_IDS,
   ...STRING_LEN_RUNTIME_PROVIDER_IDS,
+  ...STRING_CONCAT_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -1470,6 +1614,7 @@ export class RuntimeManifestBuilder {
     const stringCompare = policy.stringCompare ?? STRING_COMPARE_POLICY_DISABLED;
     const stringEq = policy.stringEq ?? STRING_EQ_POLICY_DISABLED;
     const stringLen = policy.stringLen ?? STRING_LEN_POLICY_DISABLED;
+    const stringConcat = policy.stringConcat ?? STRING_CONCAT_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
@@ -1479,6 +1624,7 @@ export class RuntimeManifestBuilder {
       stringCompare: Object.freeze({ compare: stringCompare.compare }),
       stringEq: Object.freeze({ eq: stringEq.eq }),
       stringLen: Object.freeze({ len: stringLen.len }),
+      stringConcat: Object.freeze({ concat: stringConcat.concat }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -1911,7 +2057,25 @@ export class RuntimeManifestBuilder {
                       }
                       return candidates.filter((candidate) => candidate.id === selectedId);
                     })()
-                  : candidates;
+                  : // (#3526 F2-S5) Family 2's fourth policy, and the first in
+                    // the catalogue where ONE policy answers TWO features: the
+                    // policy picks the authority, the feature picks the concat
+                    // MODE's helper on it. The refusal names `string-concat` so
+                    // an operator can tell WHICH string seam a disabled adapter
+                    // refused.
+                    isStringConcatFeature(feature)
+                    ? ((): readonly RuntimeProviderDefinition[] => {
+                        const selectedId = stringConcatProviderId(feature, this.#policy.stringConcat);
+                        if (selectedId === null) {
+                          throw new RuntimeManifestInvariantError(
+                            "provider-target-unavailable",
+                            `runtime feature ${feature} is unavailable under string-concat policy ` +
+                              `concat=${this.#policy.stringConcat.concat}`,
+                          );
+                        }
+                        return candidates.filter((candidate) => candidate.id === selectedId);
+                      })()
+                    : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",
