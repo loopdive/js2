@@ -290,6 +290,32 @@ export const EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Obj
   result: I32_TYPE,
 });
 
+/**
+ * (#3526 F2-S5) A non-null `(ref extern)` result. `wasm:js-string.concat`
+ * returns a non-nullable external reference, not a nullable `externref` — the
+ * distinction the host-capability catalogue's value union had to grow for in
+ * F2-S2, and the reason the concat seam cannot reuse any existing signature.
+ */
+const REF_EXTERN_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "ref_extern" as const }),
+});
+
+/**
+ * `(externref, externref) -> (ref extern)` — the exact ABI of the string
+ * CONCATENATION seam, shared by the `wasm:js-string.concat` builtin import and
+ * the host-free `__str_concat` / `__str_concat_owned` Wasm helpers. The two
+ * native helpers physically take and return `ref $AnyString`; the signature
+ * states the seam's SEMANTIC shape (two strings in, one string out), exactly as
+ * `native.js.string.eq` reuses the externref pair for `__str_equals`.
+ * #3526 F2-S5 made the manifest the authority over which one answers.
+ */
+export const EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
+  result: REF_EXTERN_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
