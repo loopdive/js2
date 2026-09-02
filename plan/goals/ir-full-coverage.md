@@ -102,11 +102,17 @@ milestone. The retirement now follows #3518's dependency spine:
    program, ABI, runtime manifest, and async plans.
 10. **R9 — policy flip:** fail-closed IR-only becomes the sole production mode;
    remove hybrid demotion and every legacy escape hatch. **Its coverage-closure
-   dependency is R4 first, measured 2026-09-02** — on `tests/dogfood/corpus`
-   module-init adoption is 0 of 20 executable units on both lanes, and
-   `<module-init>` accounts for 17 of the 19 `body-shape-rejected` units and 19
-   of 33 single-host rejections overall. `check:ir-only` is green partly because
-   3 of its 5 module-init units are non-executable. Full measurement and the
+   dependency was measured 2026-09-02 and is corpus-dependent — R4 on
+   module-bearing sources, the standalone host surface (R6) on the playground's
+   own uncovered files** — on `tests/dogfood/corpus`
+   module-init adoption is 0 of 20 executable units on both lanes (19 of 33
+   single-host rejections). But on the playground's uncovered eight, all 8
+   module-init units are non-executable and the standalone blocker is
+   `host-surface-unavailable`, 12 of 14 — so R4 is NOT established as the
+   universal first dependency; both it and the standalone surface gate R9, with
+   relative weight unknown until a representative corpus is defined.
+   `check:ir-only` is green partly because 3 of its 5 module-init units are
+   non-executable. Full measurement and the
    correction that produced it: `plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`.
 11. **R10 — subtraction:** re-run #3090 and delete the proven-unreachable
     direct front-end.

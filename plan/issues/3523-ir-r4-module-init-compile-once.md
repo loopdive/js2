@@ -4208,3 +4208,25 @@ Not yet checked, and worth doing before committing to that slice: whether these
 same arms dominate on the playground's own uncovered eight (measured only as
 `body-shape-rejected` there, not split by arm), and whether the standalone lane's
 14 split the same way. Both are one probe each with the same env var.
+
+### Scope correction to the two sections above (same day)
+
+Both sections above were measured on `tests/dogfood/corpus` alone, and the
+second promoted that to "R4 is what gates R9". Measuring the playground's own
+uncovered eight refutes the promotion: **all 8 of their module-init units are
+non-executable**, so module-init blocks nothing there, and their standalone
+blocker is `host-surface-unavailable` (12 of 14), which is R6 territory.
+
+What survives, and it is still substantial: **on module-bearing sources R4 is a
+severe blocker** — zero of twenty executable module-init units emit on dogfood,
+on both lanes — and the `vardecl-module-storage-unrepresentable` slice is 11 of
+17 there. What does not survive is the claim that R4 is R9's universal first
+dependency. The corpora differ structurally in exactly the dimension the claim
+keyed on: playground examples are browser scripts with no executable
+module-init; dogfood files are modules with real top-level code.
+
+So the first-slice recommendation stands **for module-bearing sources** and
+should be read with that qualifier attached. Which population the real R9
+denominator resembles is still the open question.
+
+Full correction, including the method failure that produced it, on `#3518`.

@@ -2263,3 +2263,52 @@ earlier draft pointed at "~20 sites in `src/ir/from-ast.ts`". Those sites are
 `from-ast.ts` for these would cost them the search. The per-arm breakdown is
 obtainable with `JS2WASM_IR_SHAPE_DIAG=1` and no source edit (the #2856 Step-1
 reject-arm recorder), and is recorded on `#3523`.
+
+### CORRECTION — "R4 first" was generalised from one corpus; it does not hold on the other
+
+The sections above concluded that R9's coverage-closure dependency is R4. That
+conclusion was drawn entirely from `tests/dogfood/corpus`. Measuring the
+**playground's own uncovered eight** with the same instruments refutes the
+generalisation:
+
+| | dogfood (20 `.js`) | playground-uncovered (8 `.ts`) |
+| --- | --- | --- |
+| module-init units | 20 | 8 |
+| module-init **non-executable** | 1 (sh) / 4 (sa) | **8 / 8 — all of them** |
+| module-init unsupported | 19 (sh) / 16 (sa) | **0 / 0** |
+
+**On the playground's uncovered files, module-init is not a blocker at all** —
+every one of the eight has no executable module-init body. Their blockers are
+elsewhere entirely:
+
+| corpus / lane | dominant blocker | count | plausible owner |
+| --- | --- | --- | --- |
+| dogfood, both lanes | module-init `vardecl-module-storage-unrepresentable` | 11 sh / 9 sa | R4 (#3523) |
+| playground-uncovered, single-host | function `expr-ident-not-in-scope` | 7 of 8 | not R4 |
+| playground-uncovered, standalone | **`host-surface-unavailable`** | **12 of 14** | R6 (#3526), standalone surface |
+
+So `body-shape-rejected` is not even the leading reason on the playground's
+standalone lane — `host-surface-unavailable` is, by 12 to 1.
+
+**What is actually established, stated at the strength the evidence supports:**
+
+- R4 is a real and severe blocker **on module-bearing sources**: zero of twenty
+  executable module-init units on dogfood, on both lanes. That stands.
+- R4 is **not** established as R9's universal first dependency. The two corpora
+  disagree because they differ structurally in exactly the dimension the
+  conclusion keyed on: playground examples are browser scripts whose module-init
+  is non-executable, dogfood files are modules with real top-level code.
+- R9's denominator needs the **union**, so R4 (module-bearing sources) and the
+  standalone host surface (R6) are both dependencies. Their relative weight is
+  **unknown** until a corpus representative of the real target population is
+  defined — which is the open question the census was for, and it is still open.
+
+**Method, since this is the failure I named two sections earlier and then
+committed myself.** That note said a reason label identifies a demote path, not
+a feature area, and to group by `unitKind` before assigning an owner. I did
+group by `unitKind` — and then generalised from a single corpus without checking
+the second, which was one probe away and already on the list of things I had
+flagged as unchecked. Grouping correctly does not rescue a sample of one. The
+standing instruction should be: **name the corpus in the claim, and do not
+promote a per-corpus finding to a ladder dependency until a second corpus
+agrees.**
