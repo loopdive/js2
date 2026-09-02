@@ -790,7 +790,9 @@ cleared).
   (B.3.3's relaxed treatment is explicitly non-strict), so `ts.isBlock(parent)`
   joins the case/default test. `annexBDeclaringRange` already returns `null` for
   an actual function BODY block, so an ordinary nested function declaration is
-  untouched.
+  untouched. **Narrowed (review F4):** what this changes is the GLOBAL-CODE
+  read. A strict function-NESTED block function called or `typeof`-ed after its
+  block still resolves, byte-identically to the branch base — see F4 below.
 - **`decl-lex-restricted-global`.** §16.1.7 GlobalDeclarationInstantiation step
   5.d: a SCRIPT-goal top-level lexical name that collides with a restricted
   global (`undefined` / `NaN` / `Infinity`) throws SyntaxError before any
@@ -866,3 +868,121 @@ independent blockers measured), and G3 (3, sequenced last by the plan itself).
   `origin/main`'s `src/` into this worktree and re-running:
   `tests/issue-1387-with-diagnostic.test.ts` (2) and
   `tests/issue-1128-dstr-tdz.test.ts` (1) fail identically on `origin/main`.
+
+## 2026-09-02 adversarial review — findings addressed (Opus)
+
+Probes: `/home/user/js2/.tmp/rev5271/` (`probe.mts`, `run.sh`, `watdiff.sh`, `p/`,
+and the merge-base reference tree `mb/`); skeptic repros under
+`/home/user/js2/.tmp/refute-st-F1/` and `refute-st-F2/`.
+
+### F1 (HIGH, regression on BOTH lanes) — FIXED
+
+`hoistFunctionDeclarations` runs at FUNCTION entry and recurses into nested
+`if` / `try` / block statements, PINNING every capture to
+`fctx.localMap.get(name)` as it stands then — the slot `hoistLetConstWithTdz`
+claimed (call it A). Block entry hides that entry
+(`saveBlockScopedShadowsForNames`), and step 2.3's
+`preallocateBlockScopedSlots` then minted a SECOND slot (B) and OVERWROTE the
+`preHoistedLetConstSlots` record. On the base tree `compileVariableStatement`'s
+#2814 Bug-C path realigned the declaration back to A — but it is guarded by
+`!fctx.localMap.has(name)`, and the extra slot made that guard false, so the
+path never fired: the declaration wrote B while the hoisted function kept
+reading A.
+
+Blast radius: every `let`/`const` in a NON-LOOP block that a `function` declared
+one level deeper (inner block, `if`, `try`) reads — `0` / `null` / `"null"` on
+the host lane and a `dereferencing a null pointer` trap in standalone. The
+step-5 skip only covered a `FunctionDeclaration` that is a DIRECT child of the
+block, which is why this survived it.
+
+Fix: `reinstallPreHoistedCapturedSlots` (`index.ts`) re-installs slot A —
+`localMap` plus its TDZ flag — before the block-entry walk, under exactly the
+admission test the Bug-C path uses: a `preHoistedLetConstSlots` record for THIS
+declaration, and a capture by a plain (non-async, non-generator) nested
+function. A declaration the function-entry hoist SKIPPED (because an outer
+same-named binding already claimed the name) has no record and still gets its
+own block-fresh slot — which is what keeps step 2's rows green.
+
+The step-5 direct-child skip is RETAINED, and measured to still be needed: with
+it removed, the three cluster-B2 rows go back to a null-pointer trap, because
+`__module_init` runs no function-entry pre-hoist and so has no record to
+re-install.
+
+Measured (reviewer's repros, both lanes, now matching node):
+
+| repro | node | lane before | lane after |
+|---|---|---|---|
+| `refute-st-F1/r.js` | `5,4` | host `TypeError` · standalone trap | `5,4` |
+| `refute-st-F1/r2.js` | `3,8,four!,9,2,7` | host `2,0,null!,0,0,5` · standalone trap | `3,8,four!,9,2,7` |
+
+`rev5271/p/p21-hoist-if-try.js` is now **byte-identical to the merge-base tree
+on both lanes** (its remaining oddities — the host-lane `bind` artifact, `k5`,
+the trailing trap — are all present on `mb` too, i.e. pre-existing).
+
+Pins: eight shapes (the six from `r2.js` plus the two from `r.js`), both lanes,
+each verified RED on the pre-fix tree, plus a control for the step-2 shape they
+must not undo.
+
+### F2 (MEDIUM, emission regression on ordinary typed code) — FIXED
+
+Step 5's fold gate asked `analyzeTdzAccess`, which answers `"check"` for ANY
+read whose containing function is a `FunctionDeclaration` (hoisting lets a call
+precede the declaration). So `const NAME = "kern"; function label(n) { return
+NAME + ":" + n; }` stopped folding: the module emitted a runtime `__concat_3`
+plus two TDZ-flag guards where the base emitted one
+`string_constants "kern:"`. Same output, worse code — not the
+wasm_sha-neutral change the earlier write-up implied.
+
+Fix: `topLevelConstInitializedBeforeAnyUserCode`
+(`expressions/identifiers.ts`) adds the positional proof the gate was missing.
+Module initialization runs the top-level statements IN ORDER, so if every
+statement ending before this `const` is inert — an import, a type-only
+declaration, a hoisted function declaration, or a variable statement whose
+initializers cannot invoke anything — then the first user code to run is at or
+after the declaration and the read can never be in its TDZ. An importer cannot
+run earlier either: a module body completes before its exports are used.
+Anything else before the declaration (an expression statement, control flow, a
+class with static initializers) answers false and keeps the runtime check.
+Both fold sites — `tryStaticToNumber` and `resolveStrictConstant` — consult it.
+
+Verified with `watdiff.sh`: `refute-st-F2/k.ts` is byte-identical to the
+merge-base tree on BOTH lanes again (host 463 lines, standalone 48847, empty
+diff), and the `string_constants "kern:"` import is back. The B3 row
+`const/global-closure-get-before-initialization` stays fixed — a call statement
+precedes its declaration, so the proof correctly refuses. Controls added: the
+folded-constant assertion (and the absence of `__concat_3`) on the host lane,
+and the call-before-declaration shape.
+
+### F3 (LOW, documented) — local allocation ORDER changes
+
+The block-entry pre-allocation claims a block's `let`/`const` slot at block
+entry rather than at the declaration, so a function that allocates other locals
+in between numbers its locals differently. Module SIZE therefore moves for such
+shapes even though behaviour does not: `rev5271/p/p16-misc-shapes.js` is
+16300 vs 16292 bytes (host) and 279076 vs 279068 (standalone) against the
+merge-base tree, with **byte-identical program output**. Sequential shapes —
+nothing allocated between block entry and the declaration — stay
+byte-identical. This is an accepted, behaviour-neutral consequence of the fix,
+recorded so a future `wasm_sha` comparison against pre-#5271 artifacts is not
+mistaken for a defect.
+
+### F4 (LOW, documented) — the step-8 strict-block rule is narrower than claimed
+
+The strict-block-function change affects **global-code READS only**. A strict
+function-nested block function that is called or `typeof`-ed AFTER its block
+still resolves: `rev5271/p/p07-strict-annexb.js` is byte-identical to the
+merge-base tree on both lanes (`e2 strict block fn after: 1`,
+`e8 strict if fn: function`). The step-8 note above should be read as "a strict
+block function at SCRIPT top level no longer leaks its name", not as a general
+B.3.3 strictness change.
+
+### Re-validation after F1 + F2 (post `git merge origin/main` at `20439bf5d4`)
+
+- `stmt-head.txt` (68 in-scope rows, standalone): **39 pass / 28 fail / 1 CE**
+  (up from 36 — the three extra flips came in with `origin/main`:
+  `eval-code/direct/super-prop-{dot,expr}-no-home` and
+  `function/arguments-with-arguments-fn`, not from these fixes). No row that
+  passed before now fails.
+- `stmt-controls.txt`: **20/20**.
+- `tests/issue-5271-es2015-statements-r2.test.ts`: **61/61**.
+- `pnpm run typecheck` clean; all five ratchet gates 0.
