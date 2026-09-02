@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-02T05:11:43.041Z",
-  "baseline_generated_at": "2026-09-02T05:11:43.042Z",
-  "baseline_sha": "985de5b65b1fac5e350af2d640fadce3cc15042e",
+  "timestamp": "2026-09-02T08:46:58.179Z",
+  "baseline_generated_at": "2026-09-02T08:46:58.180Z",
+  "baseline_sha": "2999d822aa483e873d8ebfdc1d48f881fd5f55c1",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -10,24 +10,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 34218,
-    "fail": 8586,
-    "compile_error": 5400,
-    "compile_timeout": 10,
+    "pass": 34260,
+    "fail": 8548,
+    "compile_error": 5398,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 42804,
-    "host_free_pass": 34218,
+    "compilable": 42808,
+    "host_free_pass": 34260,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 33193,
-        "fail": 8545,
-        "compile_error": 5380,
-        "compile_timeout": 10,
+        "pass": 33235,
+        "fail": 8507,
+        "compile_error": 5378,
+        "compile_timeout": 8,
         "skip": 18,
-        "compilable": 41738,
-        "host_free_pass": 33193,
+        "compilable": 41742,
+        "host_free_pass": 33235,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -57,25 +57,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 34218,
-        "fail": 8586,
-        "compile_error": 5400,
-        "compile_timeout": 10,
+        "pass": 34260,
+        "fail": 8548,
+        "compile_error": 5398,
+        "compile_timeout": 8,
         "skip": 18,
-        "compilable": 42804,
-        "host_free_pass": 34218,
+        "compilable": 42808,
+        "host_free_pass": 34260,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 34453,
-        "fail": 8602,
-        "compile_error": 5556,
-        "compile_timeout": 10,
+        "pass": 34495,
+        "fail": 8564,
+        "compile_error": 5554,
+        "compile_timeout": 8,
         "skip": 114,
-        "compilable": 43055,
-        "host_free_pass": 34453,
+        "compilable": 43059,
+        "host_free_pass": 34495,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -83,35 +83,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 34218,
-    "fail": 8586,
-    "compile_error": 5400,
-    "compile_timeout": 10,
+    "pass": 34260,
+    "fail": 8548,
+    "compile_error": 5398,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 42804,
-    "host_free_pass": 34218,
+    "compilable": 42808,
+    "host_free_pass": 34260,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 34453,
-    "fail": 8602,
-    "compile_error": 5556,
-    "compile_timeout": 10,
+    "pass": 34495,
+    "fail": 8564,
+    "compile_error": 5554,
+    "compile_timeout": 8,
     "skip": 114,
-    "compilable": 43055,
-    "host_free_pass": 34453,
+    "compilable": 43059,
+    "host_free_pass": 34495,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 31986,
-    "fail": 8412,
-    "compile_error": 5296,
-    "compile_timeout": 9,
+    "pass": 32028,
+    "fail": 8373,
+    "compile_error": 5294,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 40398,
-    "host_free_pass": 31986,
+    "compilable": 40401,
+    "host_free_pass": 32028,
     "stale": 0
   },
   "scope_summaries": {
@@ -139,13 +139,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 33193,
-      "fail": 8545,
-      "compile_error": 5380,
-      "compile_timeout": 10,
+      "pass": 33235,
+      "fail": 8507,
+      "compile_error": 5378,
+      "compile_timeout": 8,
       "skip": 18,
-      "compilable": 41738,
-      "host_free_pass": 33193,
+      "compilable": 41742,
+      "host_free_pass": 33235,
       "stale": 0
     }
   },
@@ -208,13 +208,13 @@
     {
       "name": "built-ins/ArrayBuffer",
       "path": "built-ins/ArrayBuffer",
-      "pass": 118,
-      "fail": 87,
+      "pass": 147,
+      "fail": 58,
       "compile_error": 16,
       "compile_timeout": 0,
       "skip": 0,
       "total": 221,
-      "host_free_pass": 118
+      "host_free_pass": 147
     },
     {
       "name": "built-ins/ArrayIteratorPrototype",
@@ -329,13 +329,13 @@
     {
       "name": "built-ins/DataView",
       "path": "built-ins/DataView",
-      "pass": 448,
-      "fail": 65,
-      "compile_error": 48,
+      "pass": 459,
+      "fail": 56,
+      "compile_error": 46,
       "compile_timeout": 0,
       "skip": 0,
       "total": 561,
-      "host_free_pass": 448
+      "host_free_pass": 459
     },
     {
       "name": "built-ins/Date",
@@ -725,13 +725,13 @@
     {
       "name": "built-ins/SharedArrayBuffer",
       "path": "built-ins/SharedArrayBuffer",
-      "pass": 28,
-      "fail": 12,
+      "pass": 29,
+      "fail": 11,
       "compile_error": 64,
       "compile_timeout": 0,
       "skip": 0,
       "total": 104,
-      "host_free_pass": 28
+      "host_free_pass": 29
     },
     {
       "name": "built-ins/String",
@@ -802,13 +802,13 @@
     {
       "name": "built-ins/TypedArray",
       "path": "built-ins/TypedArray",
-      "pass": 773,
+      "pass": 774,
       "fail": 581,
       "compile_error": 90,
-      "compile_timeout": 2,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
-      "host_free_pass": 773
+      "host_free_pass": 774
     },
     {
       "name": "built-ins/TypedArrayConstructors",
@@ -990,9 +990,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8855,
-      "fail": 1147,
+      "fail": 1148,
       "compile_error": 1081,
-      "compile_timeout": 1,
+      "compile_timeout": 0,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8855
@@ -1197,19 +1197,19 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4935,
-    "host_import_leak": 4179,
-    "illegal_cast": 247,
+    "assertion_fail": 4938,
+    "host_import_leak": 4180,
+    "illegal_cast": 237,
     "negative_test_fail": 6,
-    "null_deref": 39,
-    "oob": 6,
-    "other": 2983,
+    "null_deref": 32,
+    "oob": 7,
+    "other": 2981,
     "promise_error": 56,
-    "range_error": 23,
+    "range_error": 22,
     "runtime_error": 203,
     "syntax_error": 20,
-    "type_error": 1430,
-    "wasm_compile": 31
+    "type_error": 1407,
+    "wasm_compile": 28
   },
   "hard_errors": {},
   "skip_reasons": {
@@ -1218,8 +1218,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 14168,
-    "classified": 14168,
+    "total_non_pass_non_skip": 14126,
+    "classified": 14126,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1291,9 +1291,9 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
@@ -1975,31 +1975,30 @@
           "#1654"
         ],
         "label": "Array, TypedArray, DataView, and buffer semantics",
-        "count": 2170,
+        "count": 2129,
         "statuses": {
           "pass": 0,
-          "fail": 1873,
-          "compile_error": 288,
-          "compile_timeout": 9,
+          "fail": 1835,
+          "compile_error": 286,
+          "compile_timeout": 8,
           "skip": 0,
-          "total": 2170,
+          "total": 2129,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1333,
-          "null_deref": 15,
-          "type_error": 322,
-          "illegal_cast": 186,
-          "host_import_leak": 256,
-          "other": 37,
-          "wasm_compile": 7,
-          "range_error": 1,
-          "oob": 4
+          "assertion_fail": 1337,
+          "null_deref": 8,
+          "type_error": 299,
+          "illegal_cast": 176,
+          "host_import_leak": 257,
+          "other": 35,
+          "wasm_compile": 4,
+          "oob": 5
         },
         "by_edition": {
-          "ES2024": 96,
-          "ES2015": 398,
-          "ES2022": 297,
+          "ES2024": 72,
+          "ES2015": 382,
+          "ES2022": 296,
           "ES2023": 101,
           "ES2020": 381,
           "Unclassified (untagged)": 612,
@@ -2533,9 +2532,9 @@
         "count": 490,
         "statuses": {
           "pass": 0,
-          "fail": 481,
+          "fail": 482,
           "compile_error": 8,
-          "compile_timeout": 1,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 490,
           "host_free_pass": 0
@@ -2933,14 +2932,14 @@
           "#1378"
         ],
         "label": "Completion values and control-flow semantics",
-        "count": 70,
+        "count": 69,
         "statuses": {
           "pass": 0,
-          "fail": 11,
+          "fail": 10,
           "compile_error": 59,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 70,
+          "total": 69,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -2948,10 +2947,10 @@
           "type_error": 4,
           "illegal_cast": 2,
           "other": 3,
-          "assertion_fail": 5
+          "assertion_fail": 4
         },
         "by_edition": {
-          "ES2017": 39,
+          "ES2017": 38,
           "ES2021": 24,
           "ES2015": 1,
           "ES2027": 2,
