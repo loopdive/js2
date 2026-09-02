@@ -5,8 +5,8 @@ status: in-progress
 sprint: Backlog
 created: 2026-07-21
 updated: 2026-09-02
-assignee: ttraenkler/codex
-branch: codex/3526-f1-s1-number-boundary
+assignee: ttraenkler/fable-ir-takeover
+branch: claude/issue-3526-f2s4-string-len
 priority: critical
 horizon: xl
 complexity: XL
@@ -64,6 +64,8 @@ files:
   - tests/issue-3526-string-boundary-compare.test.ts
   - tests/issue-3526-string-boundary-schema.test.ts
   - tests/issue-3526-string-boundary-eq.test.ts
+  - tests/issue-3526-string-boundary-len.test.ts
+  - src/ir/string-support.ts
 loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/builder.ts
@@ -181,6 +183,44 @@ loc-budget-allow:
   # F1-S1..F2-S2 grant; this line records the F2-S3 rationale against them and
   # adds no new path. Byte-neutral: 55/55 measured cells identical, WAT text
   # included.
+  #
+  # 2026-09-02 F2-S4 (string.len under manifest policy + the emitStringLen
+  # fallback retirement, +334 net src LOC measured against this branch's base
+  # 33c3afc4 — MORE than the plan's +150 estimate, and the two reasons are
+  # structural rather than incidental, so they are named here: (1) the slice
+  # introduces a new provider IMPLEMENTATION KIND (`carrier-field`), which
+  # costs a union arm plus a THREE-rule validation triad that no previous
+  # family-2 slice needed; (2) `string.len` has no resolve-table arm to edit,
+  # so the migration is a whole new function (`prepareStringLength`) rather
+  # than a rewrite inside an existing branch. Breakdown: the `stringLen`
+  # policy, the `carrier-field` kind, the TWO provider rows on the reused
+  # `(externref) -> i32` signature, their policy-driven selection and the
+  # carrier-field validation rules (runtime-manifest.ts, +164 — the file is
+  # over the 1500-line god-file threshold, 1803 -> 1967, and carries an F1-S1
+  # grant; as in F2-S3 the growth is one more independent policy field beside
+  # six existing ones plus one union arm, i.e. repetition of a settled pattern,
+  # and splitting the file is F2's own tail, not this slice's); the freeze-time
+  # demand hook and `preparedStringLenProvider`, which returns the ABI ROLE and
+  # field index for the native arm because a frozen manifest cannot honestly
+  # carry a physical type index the carrier planner has not chosen yet
+  # (intrinsic-support.ts, +53); the caller policy projection, the `string.len`
+  # instruction-scan demand, the owner-local length partition, the MOVED
+  # attachment (`prepareStringLength`, which runs inside the freeze because
+  # this seam's provider IS the physical choice), the deleted `prepareStrings`
+  # decision block and the retired no-provider `ctx.nativeStrings` fallback in
+  # the WasmGC `emitStringLen` adapter (integration.ts, +113); the explicit
+  # disabled length policies in the linear and self-hosted-stdlib adapters
+  # (+2 each); and the LENGTH-ONLY attachment pass
+  # `attachIrStringLengthProvider` (string-support.ts, +47, the one new path
+  # this slice adds and far under the god-file threshold at 202 lines). That
+  # pass exists because of a MEASURED defect, not a preference: reusing the
+  # omnibus `attachIrStringSupport` a second time re-derives the provider for
+  # five other string seams, which rebinds a counted-native `string.repeat` to
+  # the generic helper and fails 4 corpus cells that the 60-cell byte matrix
+  # cannot see. Every other cited path already carries an F1-S1..F2-S3 grant;
+  # this line records the F2-S4 rationale against them.
+  # Byte-neutral: 60/60 measured matrix cells and 104/104 corpus cells
+  # identical, WAT text included.
   - src/ir/async-plan.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
@@ -4899,3 +4939,301 @@ census surfaced.
 | **F2-S5** | `string.concat` | the last lane read in the resolve table's string block (`:6373-6381`), the `_OWNED` sub-arm, `__concat_N` |
 | later | `charCodeAt` | `host-capability` two-record provider behind a defined helper |
 | later | `string.const` | global kind, derived field, two namespaces, oversized materializer, legacy pre-pass ordering |
+
+### 2026-09-02 F2-S4 checkpoint note — Opus lane
+
+**Branch** `claude/issue-3526-f2s4-string-len`, based on the plan branch
+`claude/docs-r6-f2s4-plan` (`33c3afc4`), whose parent is `origin/main`
+`aaebad2a`. The plan's grounding sha `469fd03e` (= PR #5448's head) carries **no
+`src/`, `scripts/` or `tests/` delta** against that base — only the post-merge
+`loc-budget-baseline.json` / `coercion-sites-baseline.json` refreshes — so the
+preserved BEFORE record is valid here. Slice claim `3526:f2s4`. All four probes
+were measured on this branch's own tree BEFORE any source edit.
+
+#### Probe answers
+
+**P1 — no test pins the `RuntimeProviderImplementation` kind union closed, so
+the new `carrier-field` arm needed no test to be widened.** The two candidates
+the plan named do assert on `implementation.kind`, but both scope the assertion
+to an **async-only frozen manifest's own providers**
+(`issue-4103…:126-140` `every(kind === "native-managed")` over an
+async-feature-only freeze; `issue-4104…:449-453` the same over
+`standalone.manifest.providers` and `fn.asyncRuntime.providers`). A new kind on
+another feature's row is invisible to both. `issue-3526-string-boundary-schema`
+walks `RUNTIME_PROVIDERS` but reads only `host-callable` rows.
+
+**P2 — nothing between `prepareStrings` and the end of the freeze reads
+`string.len.provider`.** The window contains exactly one thing:
+`prepareIrRuntimeManifest`, whose collector short-circuits on
+`instr.kind !== "intrinsic"` and whose `attachProviders` / `attachAsyncRuntime`
+touch only `intrinsic` instructions and `asyncPlan.states`. Every real reader
+runs elsewhere: `lower.ts` (lowering), `prepared-component-dependencies.ts` (via
+`prepared-component-sealing`, called at `integration.ts:3921` — **after** the
+freeze), `verify.ts` (all three WasmGC call sites are at `:3211`/`:3289`/`:3582`
+— **before** the partition, hence before both the old and the new attachment).
+`string.len` is also absent from `callableProviderRef`, so
+`preregisterCallableProviders` never sees it.
+
+**P3 — the emitter no-provider fallback is RETIRED, on a measurement.** A
+temporary `throw` replaced both fallback branches of the WasmGC `emitStringLen`
+adapter and the whole probe was re-run:
+
+- **0 reaches across all 60 byte cells** — and the matrix stayed
+  **byte-identical to the BEFORE record with the throw in place**, which is
+  stronger than "no cell crashed": nothing in any of the 60 modules depended on
+  the branch, not even through a demote.
+- **0 reaches across 21 string suites / 335 passing tests** (`strings`,
+  `native-strings` ×3, `host-string-prefix-suffix-fast-path`, #1558, the #3931
+  hoist pair (#3931/#4517), #3518 string-repeat-ir + counted-string-cutover,
+  #2955, both #3502 suites, #1183, #4550, `issue-1470-standalone-string-imports`,
+  `issue-320`, `imported-string-constants`, and the three #3526 string suites).
+  The only 5 failures were pre-existing reds, unchanged.
+
+**P4 — the BEFORE byte matrix reproduces the planning lane's record exactly.**
+60 cells, **deep** equality (bytes, sha256, ordered import list with func/global
+indices, errors, demotions AND every probe counter), `0` differing. Run twice:
+once instrumented (reproducing `f2s4-matrix-before.md` character-for-character)
+and once clean, to establish that the instrumentation is itself byte-inert
+(60/60 identical either way) — necessary because the AFTER comparison runs
+uninstrumented.
+
+**Pre-existing red controls: 17, exactly the set
+[#5274](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5274-standing-red-tests-string-and-3529-suites)
+names**, measured on this base before the first edit and re-measured after:
+`issue-320` 1, `imported-string-constants` 4,
+`issue-3529-equivalence-error-imports` 8, `issue-3529-dataflow-outcomes` 2,
+`issue-3529-ir-producer-parity` 2. Unchanged; not this slice's, not touched.
+
+#### What landed
+
+- **`src/ir/runtime-manifest.ts`** (+164) — `StringLenPolicy`
+  (`len: "host" | "native" | "unsupported"`), a frozen
+  `STRING_LEN_POLICY_DISABLED`, the optional `stringLen` field canonicalized at
+  construction and published resolved on the frozen manifest, the
+  `js.string.len` feature row, the **`carrier-field` implementation kind**, the
+  two provider rows (`host.…` → `host-callable` on capability `string.len`;
+  `native.…` → `carrier-field` `{carrier:"string", fieldIndex:0}`, both on the
+  existing `EXTERNREF_TO_I32_INTRINSIC_SIGNATURE` — no new signature), the
+  `#selectProvider` branch whose unavailable arm is a typed
+  `provider-target-unavailable` naming `string-len policy len=…`, and the three
+  `carrier-field` validation rules.
+- **`src/ir/intrinsic-support.ts`** (+53) — the `stringLenDemand` input (and its
+  place in the "freeze nothing at all" guard) plus `preparedStringLenProvider`,
+  which returns the ABI **role** and field index for the native arm.
+- **`src/ir/integration.ts`** (+115) — `integrationStringLenPolicy`,
+  `irStringLenDemand`, the owner-local `unsupported` partition in the same pass
+  as the six existing ones, the freeze-time policy + demand arguments, the
+  **moved attachment** (`prepareStringLength`, run inside the freeze), the
+  deleted `prepareStrings` decision block, and the retired `emitStringLen`
+  fallback.
+- **`src/ir/string-support.ts`** (+45) — `attachIrStringLengthProvider`, a
+  length-only attach pass. See divergence 1: this is not in the plan and exists
+  because of a measured defect.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `STRING_LEN_POLICY_DISABLED` explicitly (+2 each).
+- **`tests/issue-3526-string-boundary-len.test.ts`** (new, 31 tests).
+
+`src/ir/from-ast.ts`, `src/ir/lower.ts`, `src/ir/nodes.ts`, `src/ir/builder.ts`,
+`src/ir/backend/wasmgc-emitter.ts`, `src/ir/backend/legality.ts`,
+`src/ir/runtime-host-capabilities.ts` and `src/codegen/registry/imports.ts`
+needed **no edit** — the front end was already lane-free, the `string.len`
+record landed in F2-S2, and no registration moves.
+
+#### The attachment MOVE is the slice, and why it is byte-neutral
+
+Every family-2 predecessor migrated a *resolve-table arm*: the decision is read
+at lowering time, where the prepared manifest is already in scope. `string.len`
+has no such arm — it is not a callable symbol, nothing in
+`resolveAndObserveCallableProvider` names it — so the `IrStringLengthProvider`
+carried on the instruction **is** the physical choice, and it was attached in
+`prepareStrings`, which runs *before* the freeze. The migration therefore had to
+move the attachment itself behind the freeze (`prepareStringLength`, called from
+inside `prepareBuiltFnRuntimeManifest` right after `preparedEntries` is built and
+before the math/async materializers).
+
+That is safe because (P2) nothing in the window reads the provider, and because
+both passes are pure structural maps over disjoint instruction kinds — so
+composing the length attach *after* the intrinsic attach instead of before it
+yields identical IR. Measured, not argued: 60/60 byte cells and 104/104 corpus
+cells identical.
+
+#### Divergences from the plan (recorded, not widened)
+
+1. **The plan's idempotency argument for reusing `attachIrStringSupport` is
+   WRONG, and the corpus caught it.** The plan reasoned about that pass's
+   `string.const` and `string.len` arms and concluded "the pass is idempotent".
+   Its **callable arm is not**: for `string.concat` / `.repeat` / `.eq` /
+   `.char_at` / `.char_code_at` / `forof.string` it re-derives the provider on
+   every run via `irStringCallableProviderRef` and compares. Running it a second
+   time with only `providerForLength` supplied made that helper fall back to the
+   generic `__ir_string_repeat` for instructions the first pass had bound to
+   `__ir_string_repeat_counted_native`, so every module with a counted native
+   `string.repeat` failed with *"IR string.repeat already carries a different
+   prepared provider binding"* — **4 corpus cells**
+   (`website/playground/examples/benchmarks.ts` and `benchmarks/string.ts` on the
+   `gc-native-strings` and `standalone` lanes). The **60-cell byte matrix stayed
+   green throughout**: no fixture in it carries that shape. Smallest faithful
+   fix: a length-only pass, `attachIrStringLengthProvider`, with the same
+   check-don't-overwrite discipline. The alternative — threading
+   `prepareStrings`'s `providerForRepeat` lambda through — was rejected because
+   it would put the *repeat* seam's `ctx.nativeStrings` decision inside the
+   length pass, which has no authority over it. Covered non-vacuously: reverting
+   only this fix fails 3 tests, one of them an end-to-end reduction of the corpus
+   failure.
+2. **The whole-shape frozen-policy pin is in
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts`, not
+   `tests/issue-3526-ir-runtime-manifest.test.ts`** as the plan's test-moves list
+   says. The latter defines its own `policy()` helper but never asserts the whole
+   shape; F2-S3's checkpoint recorded the same fact. Moved the 4104 pin.
+3. **A FIFTH existing pin had to move, and it is a deletion-with-inversion, not
+   a shrink.** `tests/issue-3526-string-boundary-schema.test.ts` carried the
+   F2-S2 fence *"keeps the string.len provider on ctx.nativeStrings and the raw
+   import ref"*, keyed on `prepareStrings`'s `if (usesStringLen) {` block. F2-S4
+   deletes that block outright, so — unlike F2-S3's concat/eq pin, which had a
+   surviving concat half to re-scope — there is nothing left to fence. The pin is
+   removed with a comment naming its replacement, and the assertion is INVERTED
+   into the new suite's (d) section.
+4. **The `carrier-field` validation rules reuse the existing
+   `unknown-runtime-provider` invariant code** rather than adding a new one to
+   `RuntimeManifestInvariantCode`. The plan did not specify a code; the
+   host-capability rule uses `unknown-host-capability` as the plan's test (f)
+   requires, and the carrier/field-index rules reuse the nearest existing code so
+   the union does not grow for two shape checks.
+5. **V-C's third revert behaves the OPPOSITE way to the plan's prediction, and
+   that is the structural point of the slice.** The plan expected *"revert only
+   the manifest rows → the (a)/(b) contract and policy tests fail and the (c)
+   host-lane pin still passes (the physical import is unchanged)"*. Measured:
+   dropping the two provider rows fails **16** tests including every (c)
+   end-to-end pin, because after the attachment move the frozen row is the
+   **only** source of the physical choice — there is no resolve arm to fall back
+   to the way F2-S1/F2-S3 had. The three sub-edits are genuinely interlocked for
+   end-to-end behaviour, and they should be: that is what "the manifest is the
+   authority" means for a seam with no callable symbol.
+6. **Net src LOC is +381, not the plan's +150 estimate.** Two structural reasons,
+   both recorded in the frontmatter grant: the slice introduces a new provider
+   IMPLEMENTATION KIND (a union arm plus a three-rule validation triad no
+   previous family-2 slice needed), and it adds a whole new function rather than
+   editing an existing arm. The F2-S4 rationale block names every path.
+
+#### V-A — measured neutrality: 60 of 60 byte cells, 104 of 104 corpus cells
+
+Twelve fixtures (`LEN`, `LENCMP`, `LENEQ`, `LENLOOP`, `LENIDX`, `TPLLEN`,
+`CONCATLEN`, `LENCONST`, `FOROFLEN`, `LENSTMT`, plus the `EQ` and `CLEAN`
+controls) × five lanes (gc-host, gc-native-strings, standalone, WASI, linear).
+Each cell compares byte length, binary sha256, the **full emitted WAT text**, the
+**ordered import list with func/global indices parsed from the binary import
+section** (`result.imports` covers only `env` func descriptors and is blind to
+`wasm:js-string`), the error list and the `irOutcomes` records — deep equality.
+**60/60 identical**, and `diff -r` over all 60 WAT texts is empty.
+
+The BEFORE half was re-run on this branch's own base before the first edit and
+reproduced the planning lane's record exactly, so the comparison is against a
+base this lane measured.
+
+Corpus: every `.ts` under `website/playground/examples/**` and `examples/**`
+(26 files) × four WasmGC lanes = **104 cells**, comparing sha256, byte length,
+success and the full error list. 0 differing — after the divergence-1 fix; 6
+differing before it, which is how the defect was found.
+
+`FOROFLEN::gc-host` reproduces its pre-existing `property-access-unsupported`
+demote byte-identically (`ch.length` on a for-of character — the host for-of
+plan's business, not this seam's), and `LENLOOP`/`LENIDX` reproduce their
+pre-existing linear compile failures (`.charCodeAt()` / `.charAt()` unsupported
+on that lane). Both are in the matrix precisely so a slice that "fixed" them by
+accident would be caught.
+
+#### V-B — the migrated decision is REACHED, and the retired one is not
+
+With instrumentation re-applied on the AFTER tree, the 60-cell run emits the
+length seam **43** times: **10 host** `callable` and **33 native**
+`struct-field` — identical to the BEFORE run — plus **6** linear
+`__str_length_utf16` calls, also identical. The retired fallback is taken **0**
+times. In every cell the count of attachments that carried a provider equals the
+emit count exactly (`1/1`, `2/2`), as before.
+
+Two probe-column changes are expected and are not byte differences:
+`attachIrStringSupport` now visits each `string.len` with
+`providerForLength: () => undefined` before `prepareStringLength` attaches, so
+the raw attach-visit count doubles while the *with-provider* count is unchanged;
+and the four `CLEAN` WasmGC cells no longer report a decision event at all,
+because a module with no intrinsics, no async plan and no demand freezes no
+manifest and the pass does not run.
+
+**Runtime oracle.** `.length` is checked against JavaScript on **seven** inputs
+through an instantiated host-lane module — `""`, ASCII, a **surrogate pair**
+(which must count 2 UTF-16 code units, not 1 code point), a BMP non-ASCII
+string, a 1000-character string, a concatenation result and a template result —
+over an expression that exercises the direct, template, concat and literal
+receivers in one owner. The same source is compiled and validated on a
+native-strings lane and on linear.
+
+#### V-C — non-vacuity, each sub-edit reverted independently
+
+| revert | tests failing | which |
+| --- | --- | --- |
+| the attachment move (restore `prepareStrings`'s decision, delete `prepareStringLength`) | **5** | exactly the five (d) attachment pins; 103 others green |
+| the retirement (restore the emitter fallback) | **1** | "keeps the retired fallback's lane read out of the emitter" — the discriminator; 107 others green |
+| the length-only attach pass (revert to the omnibus one) | **3** | the (d) pass pin plus the two (e) attach pins, including the reduced-corpus end-to-end one |
+| the manifest provider rows | **16** | see divergence 5 — the whole seam, by design |
+
+As in every family-2 slice, the (d)/(e) pins are deliberately **source-shape**
+assertions: the policy projection reproduces the old truth table exactly, so both
+forms emit identical bytes on every lane — which is the point of the slice and
+why all 60 cells are unchanged. What moved is WHICH authority answers, and on
+this seam that is only observable in source.
+
+#### V-D — gates
+
+Green: `typecheck`; the five ratchets run **bare** and again under
+`LOC_GATE_BASE` pinned to `origin/main` — loc (+381 net src LOC, every grown path
+granted by this file's frontmatter with the dated F2-S4 rationale;
+`runtime-manifest.ts` 1803 → 1967, over the god-file threshold), func,
+coercion-sites, oracle-ratchet, dead-exports. Also green: `lint`,
+`prettier --check` on every touched path, `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:test-vacuity-shapes`,
+`check:ir-kind-neutrality` (after the surgical refresh below), and
+`check:ir-fallbacks` — **diffed against a base-tree run of the same command,
+output byte-identical**. `scripts/linear-ir-baseline.json` and
+`scripts/ir-fallback-baseline.json` are untouched.
+
+**Kind-neutrality refresh: TWO evidence lines, patched surgically.**
+`forof.string` `src/ir/integration.ts` 6410 → 6531 (the policy, demand and
+`prepareStringLength` functions inserted above it) and `string.len`
+`src/ir/backend/linear-integration.ts` 1628 → 1630 (the two-line adapter edit) —
+exactly the two the plan predicted. Established by normalising both JSON
+documents to sorted leaf paths and diffing those: **462 leaves each, exactly 2
+changed**, both evidence strings. No verdict, kind, placement, ratchet count or
+`settledBy` rationale moved, and `string.len`'s verdict stays `unresolved`
+(#4551's call, not this slice's). Patched by hand: committing the regenerator's
+output would have been a **269-line** diff for a 2-line change, and would also
+have left the file prettier-dirty.
+
+The eight `equivalence-gate` shards run locally: no new equivalence regressions.
+
+Focused suites: **all #3526 suites (including the new one, 31 tests), both async
+suites (#4103/#4104), #3520 callable-provider-abi and callable-preregistration,
+#3521 prepared-component-dependencies — 218 passing across 12 files** — plus the
+string set (`strings`, `native-strings` ×3,
+`host-string-prefix-suffix-fast-path`, #1558, #3931, #4517, #3518 ×3, #2955,
+#3502 ×2, #1183, #3167, `for-of-string-generator`, #4550,
+`issue-1470-standalone-string-imports`). The only failures anywhere are the 17
+pre-existing #5274 reds.
+
+**One suite could not be run in this container, on EITHER tree:**
+`tests/issue-3518-multi-prepared-string-leaf-planner.test.ts` OOMs the vitest
+worker (`Reached heap limit`) even at `--max-old-space-size=6144`. Confirmed
+pre-existing by running it on the reverted base tree with the same result, so it
+is an environment limit rather than this slice's; CI runs it with a larger heap.
+
+#### Not touched (per the plan's scope discipline)
+
+`string.concat` / `_OWNED` (F2-S5 — still on the lane read, still pinned),
+`charCodeAt`, `string.const`, `stringMethodPlan`, `stringForOfPlan` /
+`charReadPlan`, `emitStringCharAt`, the #3931 hoist arms, the linear
+`__str_length_utf16` path, the `programAbiTypes`-absent skip (kept verbatim),
+the two linear `.charAt()`/`.charCodeAt()` compile failures and the FOROFLEN host
+demote the census surfaced, `src/ir/from-ast.ts`, the `src/ir/dialect/js.ts`
+placement verdict for `string.len`, and every existing policy —
+`numberBoundary`, `booleanBoundary`, `externIsUndefined`, `generatorNumberBox`,
+`stringCompare`, `stringEq` — all unchanged.
