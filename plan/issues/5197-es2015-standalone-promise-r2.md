@@ -4,7 +4,7 @@ title: "ES2015 standalone promise — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-01
+updated: 2026-09-02
 loc-budget-allow:
   # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
   # metadata carrier. Each grant lives in the module that already OWNS the
@@ -25,12 +25,29 @@ loc-budget-allow:
   # one enumerated brand arm beside the existing Number/Boolean twins.
   - src/codegen/array-object-proto.ts
   - src/codegen/expressions/calls.ts
+  # 2026-09-02 (Slice D): the NewPromiseCapability protocol is generalized in
+  # place rather than forked. `promise-combinators.ts` already owns the #4682
+  # capability record, its GetCapabilitiesExecutor and the construct-then-
+  # validate sequence; selecting `[[Resolve]]` vs `[[Reject]]` is one field
+  # index inside that same emitter. `call-namespace-static.ts` already owns the
+  # `Promise.METHOD.call(C, …)` admission gate; `reject`, the one-argument
+  # spelling and a zero-parameter `C` are three widenings of that one gate, and
+  # splitting them into a new module would leave the gate reading half its own
+  # conditions from elsewhere.
+  - src/codegen/promise-combinators.ts
+  - src/codegen/expressions/call-namespace-static.ts
 func-budget-allow:
   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
   # reservation block, and two three-line guard call sites on the `new` path.
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
+  # 2026-09-02 (Slice D): the widened `Promise.resolve/reject.call(C, …)`
+  # admission is three extra conditions plus a missing-argument default inside
+  # the ONE dispatcher that decides every `Namespace.static(...)` lowering.
+  # The conditions ARE the dispatch decision, so extracting them would move the
+  # gate's own predicate out of the gate.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
 priority: high
 horizon: m
 feasibility: hard
@@ -402,6 +419,132 @@ the same reason: they reach GetCapabilitiesExecutor only via
 | `then/ctor-*`, `then/*-prms-cstm-then.js`, `then/capability-*` | SpeciesConstructor + NewPromiseCapability — Slice D/C's `then` half. |
 | Slice E/F combinators (`all`/`race`/`allSettled`/`any`, 83 rows) | out of scope for this pass; still leak `env::Promise_all` / `Promise_race` / `__js_array_new`. |
 | Slice G (#3371 NewTarget), Slice H (realm) | out of scope by the plan. |
+
+## 2026-09-01 resumed implementation (Opus)
+
+Resumes the suspension handoff below (patches applied with `git am --3way` onto
+`813b828b6`; the only conflict was this file's own References block, resolved by
+keeping both sides). Slice C was committed properly; Slice D was then
+implemented and measured. Worktree
+`/home/user/js2/.claude/worktrees/agent-adaa0534580f31c70`, branch
+`worktree-agent-adaa0534580f31c70`.
+
+### Slice C — committed as landed (no code change)
+
+The suspended snapshot's uncommitted Slice C edits were validated as a commit
+rather than re-derived: TS7 typecheck clean; both focused files green
+(`issue-5197-es2015-promise-r2.test.ts` 8/8, `issue-5197-promise-generic-catch.test.ts`
+4/4, run one file per fork); all five ratchet gates exit 0
+(loc, func, coercion, oracle-ratchet "no net checker-usage growth", dead-exports
+"25 known entries, 0 new"). Commit `6fe2aad08`.
+
+The pre-existing TS5 failure `src/linked-provider-runtime.ts(41,37) TS2694:
+Namespace 'WebAssembly' has no exported member 'Tag'` is **not** from this work —
+that file is untouched by every patch in this lane (`git diff 813b828b6 --stat --
+src/linked-provider-runtime.ts` is empty). TS7 is clean.
+
+### Slice D — generic NewPromiseCapability(C) (LANDED, partial)
+
+The two gaps the previous implementer named were real but narrower than the
+"no receiver slot / no generic Construct" framing suggested. The blocker was
+**not** the reified `Promise.resolve` closure's missing receiver: a syntactic
+`Promise.resolve.call(C, v)` never reaches that closure at all — it is decided
+by `compileNamespaceStaticCall`, which already had a #4682/#4727
+NewPromiseCapability arm (`emitStandalonePromiseCustom{CapabilityCheck,Resolve}`
+in `promise-combinators.ts`: mint the capability record, mint a
+GetCapabilitiesExecutor on the funcref-wrapper carrier, call `C`, apply
+§27.2.1.5 steps 8-9, then `Call` the resolve slot). That arm was simply admitted
+too narrowly. Three widenings, no second protocol:
+
+1. **`reject` joins `resolve`.** §27.2.4.6 and §27.2.4.7 differ only in which
+   capability slot the value is handed to, so the emitter takes a
+   `settle: "resolve" | "reject"` argument and picks field 0 or 1 of the same
+   record. It is now `emitStandalonePromiseCustomSettle`.
+2. **One argument is admitted** (`Promise.resolve.call(C)`), not just two. The
+   protocol reads only `C`; the settled value is `undefined`.
+3. **A zero-parameter `C` is admitted.** The executor then never reaches a
+   formal, both slots stay undefined, and steps 8-9 throw the TypeError the spec
+   requires — which is the whole point of `reject/S25.4.4.4_A3.1_T1.js`.
+
+**The undefined-vs-null trap (#2864), caught by the control, not by the corpus.**
+The absent second argument was first emitted as `ref.null.extern`. Every exact
+row still passed and the host lane passed, because none of them inspects the
+settled value — but in standalone a null externref IS JS `null`, not
+`undefined`, so `Promise.resolve.call(C)` settled with the wrong value. The fix
+is `canonicalUndefinedExternInstrs`, resolved BEFORE the value side-buffer is
+detached (it reserves the `$AnyValue` substrate on first use, and doing that with
+`fctx.body` swapped away would register under a body already being written).
+
+**Measurement** — the WHOLE 140-row corpus, standalone, in process, base =
+Slice C commit `6fe2aad08` (file-copy A/B; both runs executed by this
+implementer, ~10 min each):
+
+| | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (Slices B + C) | 11 | 127 | 2 |
+| after Slice D | **19** | 119 | 2 |
+
+Set-differenced: **8 fail → pass, 0 regressions.** The `before` figure
+reproduces the previous implementer's 11/127/2 exactly, which also confirms the
+two surviving compile errors are still only the #3371 pair. All eight rows were
+re-compiled through `wrapTest` + `compile({target:"standalone"})` and checked
+with the runner's own `standaloneHostImportError`: every one reports an empty
+import list, so no row is claimed on a module that still leaks
+`env::Promise_resolve` / `Promise_reject` (#5272 — the in-process probe does not
+apply that check itself).
+
+- `built-ins/Promise/resolve/capability-invocation-error.js`
+- `built-ins/Promise/resolve/ctx-ctor-throws.js`
+- `built-ins/Promise/reject/capability-invocation-error.js`
+- `built-ins/Promise/reject/ctx-ctor-throws.js`
+- `built-ins/Promise/reject/capability-executor-not-callable.js`
+- `built-ins/Promise/reject/S25.4.4.4_A3.1_T1.js`
+- `built-ins/Promise/executor-function-extensible.js`
+- `built-ins/Promise/executor-function-length.js`
+
+The last two were **not** predicted from the 17-row resolve/reject/settlement
+sub-corpus (which moved 0 → 6) and are the reason the full sweep was worth its
+ten minutes. They are downstream of the same admission: both observe the
+GetCapabilitiesExecutor's own `length` / extensibility, and the only way either
+reaches one is `Promise.resolve.call(NotPromise)` — a ONE-argument call on a
+custom `C`. Slice B had already made that executor a real built-in function
+object; Slice D is what lets the rows reach it. That closes two of the six
+`executor-function-*` rows the previous implementer listed as Slice-D-blocked.
+
+**A file-copy A/B pitfall worth naming**, because it silently reverted a fix
+that had already been validated. The revert copies were captured at the FIRST
+edit (per the CLAUDE.md pattern) and then the `undefined` fix landed on top —
+so `.tmp/new.ts` was stale. Restoring from it after the base measurement put a
+tree back that was *not* the tree the measurement had been taken on, and the
+only thing that caught it was the compiled control returning 5 again. **Refresh
+the "new" copy after every edit that follows it, and re-run the focused control
+after any restore** — a restore is a code change, not a bookkeeping step.
+
+One measurement artifact worth recording: in the first after-run
+`resolve/capability-executor-called-twice.js` scored `compile_error
+(compilation timeout, 15445 ms)` at box load ~13 on 4 cores. Re-run alone it is
+`fail`, the same status it had at baseline — a load artifact, not a regression.
+Any single-row `compile_error` in this corpus should be re-run alone before it
+is believed.
+
+### Slice D — what is still open
+
+| row(s) | why |
+| --- | --- |
+| `{resolve,reject}/capability-executor-called-twice.js` | the arm IS taken, and both throw the capability TypeError: after `executor()` / `executor(undefined, undefined)` the follow-up `executor(fn, fn)` does not leave two callables in the record, so steps 8-9 refuse. The GetCapabilitiesExecutor is reached through the dynamic apply path with a 0-argument call; that padding/store interaction is the next thing to look at. |
+| `{resolve,reject}/ctx-ctor.js` | `class SubPromise extends Promise` — needs a real `Construct(C, «executor»)` with subclass prototype and `instance.constructor`, not the plain call this arm performs. |
+| `reject/capability-invocation.js`, `resolve/resolve-from-promise-capability.js` | need the settle call's `this` (sloppy-mode global) and a real `arguments` object inside the user-supplied resolve/reject function. |
+| `resolve/arg-uniq-ctor.js` | §27.2.4.7 step 3 — `Promise.resolve(x)` must `Get(x, "constructor")` and compare with `C` before the passthrough; today a native `$Promise` is returned unchanged without that read. Self-contained and reachable, just not done here. |
+| `exception-after-resolve-in-{executor,thenable-job}.js`, `resolve-prms-cstm-then-{immed,deferred}.js` | settlement-core rows that fail in the async drive, unrelated to the capability protocol. |
+| Slices E/F (combinators), G (#3371), H (realm) | untouched by this pass. |
+
+A pointer for whoever takes Slice E/F: `all/` and `race/` carry the exact twins
+of the rows just fixed — `{all,race}/ctx-ctor{,-throws}.js`,
+`{all,race}/capability-executor-{called-twice,not-callable}.js`. They fail for a
+different reason (the `.call(C, iter)` arm still admits only an EMPTY array via
+`emitStandalonePromiseCustomCapabilityCheck`, and a non-empty iterable needs the
+per-element pipeline), so the same widening does not simply transfer — but the
+capability half of their work is now done and shared.
 
 ## References
 
