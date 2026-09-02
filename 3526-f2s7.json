@@ -2,10 +2,11 @@
   "id": "3526",
   "slice": "f2s7",
   "assignee": "ttraenkler/opus-3526-f2s7",
-  "requested_by": "ttraenkler/opus-3526-f2s7",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3526-f2s7-char-code-at",
   "claimed_at": "2026-09-02T08:55:48Z",
-  "updated_at": "2026-09-02T08:55:48Z",
-  "write_id": "12424-3t0uii4g"
+  "updated_at": "2026-09-02T11:52:14Z",
+  "write_id": "26969-y9wb1r4f",
+  "released_at": "2026-09-02T11:52:14Z"
 }
