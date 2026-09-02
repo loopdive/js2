@@ -3868,8 +3868,10 @@ Claim `3521:r2-t1g1`, held by `ttraenkler/opus-3521-r2-t1g1` since
 read `origin/issue-assignments`). Every number below names the artifact that
 produced it; all artifacts are under `.tmp/r2-t1g1/` in the lane's container.
 
-**Anchor drift: none.** All 113 plan anchors in the six cited files still match
-by line: `ir-prepared-free-functions.ts` (`:272`, `:364`, `:565`, `:583`,
+**Anchor drift: none found.** The plan cites 113 anchors; this lane re-checked
+by content the ~35 the Contract actually edits or reads, and every one still
+matches at its stated line (the remaining anchors are cited in the census
+narrative and were not re-verified here): `ir-prepared-free-functions.ts` (`:272`, `:364`, `:565`, `:583`,
 `:622`, `:695`, `:705`, `:742`, `:802`, `:856`, `:890`, `:1262`, `:1715`,
 `:1840`, 2,027 lines), `outcomes.ts` (`:250-279`, `:314`, `:345`, `:365`),
 `ir-overlay-outcomes.ts` (`:42-57`, `:280`, `:862-864`, `:927-934`),
