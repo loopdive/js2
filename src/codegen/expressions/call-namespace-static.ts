@@ -2937,7 +2937,26 @@ export function compileNamespaceStaticCall(
                   isPlainJsonCodecObjectLiteral(init) &&
                   !isFlatClosedCodecLiteral(ctx, init)
                 ) {
-                  return undefined;
+                  // (#5269 R2-6) Report the #1599 JSON-provider refusal HERE
+                  // rather than falling through. A bare `return undefined` left
+                  // the call to be re-classified downstream, and the user saw a
+                  // generic `__get_builtin` / #1472 "dynamic-shape object
+                  // operation" error plus a spurious "Host import leak" warning
+                  // about a binary that is never produced — three diagnostics,
+                  // none of them naming JSON. Same message, `sticky` flag and
+                  // `return null` shape as the Phase-1 refusal below, which is
+                  // what base emitted for these shapes.
+                  reportError(
+                    ctx,
+                    expr,
+                    `Codegen error: JSON.${method} of this value is not yet supported by the native JSON provider (#1599). ` +
+                      `A nested object/array value reached through a variable-bound literal needs the Phase 2 pure-Wasm ` +
+                      `codec: the dynamic-replacer route opens only the OUTER struct, so a nested one would be dropped ` +
+                      `from the output. Use a flat value, or a callable/array-literal replacer, for now.`,
+                    "error",
+                    { sticky: true },
+                  );
+                  return null;
                 }
               }
               if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, { materializeClosedStruct: true }))

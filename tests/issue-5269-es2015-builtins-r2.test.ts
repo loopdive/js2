@@ -563,6 +563,10 @@ describe("#5269 F2 — the host binary must not gain the open-object path", () =
     "__make_getter_callback",
     "__new_plain_object",
     "__extern_is_object",
+    // (#5269 R2-7) `__extern_get` was named in the comment above but missing
+    // from the list — the control was checking four of the five markers the
+    // regression added.
+    "__extern_get",
   ];
 
   it("F2 a [Symbol.toPrimitive] literal does not drag in the host-object helpers — host", async () => {

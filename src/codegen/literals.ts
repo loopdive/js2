@@ -1800,7 +1800,15 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       // of the @@toPrimitive result, `"" + o` got hint "string" rather than
       // "default", and every host compile of such a file gained env imports.
       // Host mode's own `_toPrimitive` already handles the closed-struct case.
-      (ctx.standalone && (_hasToPrimitiveComputedKey(expr) || _isToPrimitiveAssignmentTargetInitializer(expr))) ||
+      // (#5269 R2-5) Gated on the NATIVE PROVIDER, not on `standalone` alone.
+      // The justification is "under the native provider a closed struct hides
+      // its @@toPrimitive member from the runtime walker" — and `--target wasi`
+      // and an explicit `semanticProviders: "native-first"` are native-first
+      // without being standalone, so keying it to `ctx.standalone` left the
+      // #5102 fix inert on exactly those targets. The JS-host lane is none of
+      // the three, so F2 stays fixed. Same idiom as the resolver at L1384.
+      ((ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") &&
+        (_hasToPrimitiveComputedKey(expr) || _isToPrimitiveAssignmentTargetInitializer(expr))) ||
       // A colon-form `__proto__` property is not an own data property. It sets
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the

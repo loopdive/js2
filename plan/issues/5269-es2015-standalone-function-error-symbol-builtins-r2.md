@@ -1341,3 +1341,98 @@ tried, each on BOTH trees, all `WebAssembly.validate === true`:
 Filing it as confirmed would be inventing evidence, and dismissing it would be
 ignoring a reviewer who measured something. It needs the review's exact probe +
 epilogue to pin down; the shapes above are ruled out.
+
+## 2026-09-02 round-2 review fixes (Opus)
+
+The round-2 review confirmed F1 and F2 as fully fixed (host rows byte/sha-identical
+to base; reintroducing the deleted F1 gate in a copy of the tree reproduces the
+exact regression, so those pins are genuinely red against their own defect), and
+raised two new blockers plus five smaller items.
+
+| # | severity | outcome |
+|---|---|---|
+| R2-1 | HIGH | **fixed** — the F3 flatness test resolves VALUES, not just kinds |
+| R2-4 | MEDIUM | **fixed** — and it fixes a PRE-EXISTING class, not just the regression |
+| R2-5 | medium | **fixed** — the F2 gate now matches its own justification |
+| R2-6 | low | **fixed** — the accurate #1599 diagnostic is back |
+| R2-7 | low | **fixed** — pin gaps closed; the F2 control's comment/code mismatch corrected |
+| R2-2 | — | **refuted by the skeptic**, no action; recorded below so it is not re-derived |
+| R2-3 | low | **documented** — pre-existing, deserves its own issue |
+
+### R2-1 — flatness must follow the VALUE
+
+The first F3 cut asked only about the property initializer's syntactic KIND, so it
+saw through the BINDING but not the property VALUE. Six spellings still dropped the
+nested key: via an identifier, a shorthand (which was not even reached — the old
+test returned `true` for every non-`PropertyAssignment`), parentheses, a `const`
+binding, a call result, a conditional. All answered `{"a":1}` where node answers
+`{"a":1,"b":{"c":2}}` and base COMPILE_ERRORed.
+
+The test now resolves each value the way the binding is resolved, and — the
+load-bearing half — treats anything it cannot resolve (call result, conditional,
+parameter, import) as NOT flat. Refusing conservatively is right because base
+refused all of these: a false "not flat" costs a refusal that already existed,
+while a false "flat" silently loses data. The FLAT path is untouched and still
+answers `{"a":1,"b":2}`.
+
+### R2-4 — the root cause was pre-existing, and the fix is wider than the report
+
+`[w].join()` returning the empty string was real, but it is NOT the H-1 predicates'
+doing. An array literal whose element is an OPEN object picks a CLOSED `$__anon_N`
+vec carrier the object does not fit, and the element is silently lost. Measured on
+standalone, IDENTICALLY on this branch and on base:
+
+| | before | node |
+|---|---|---|
+| `var g={get a(){return 1}}; String([g][0])` | `"undefined"` | `"[object Object]"` |
+| `[g,g].join("-")` | `"-"` | `"[object Object]-[object Object]"` |
+
+So every literal already forced open — an accessor, a disposal method, a runtime
+computed key, a colon-form `__proto__` — was losing its element before #5269
+existed. H-1 made `[Symbol.toPrimitive]` literals JOIN that class; that is the
+whole of the regression.
+
+The fix is the array-element **lockstep caller** of `objectLiteralForcesHostPath`,
+the sibling of the three that already exist for a binding. It resolves an
+identifier element through `variableInitializerOf` first, because the element is
+usually the BINDING (`var w = {…}; [w]`) — the first cut checked the element
+syntactically and changed nothing, the same trap R2-1 names. After it, all six
+spellings match node, including the two base got wrong.
+
+### R2-5 — the F2 gate now matches its justification
+
+The gate read `ctx.standalone`, but the reason it exists is "under the NATIVE
+PROVIDER a closed struct hides its @@toPrimitive member from the runtime walker".
+`--target wasi` and an explicit `semanticProviders: "native-first"` are native-first
+without being standalone, so the #5102 fix was inert on exactly those targets — an
+under-fix, not a regression. Now gated on
+`ctx.standalone || ctx.wasi || semanticProviders === "native-first"`, the same idiom
+already used at `literals.ts` L1384. The JS-host lane is none of the three, so F2
+stays fixed (63/63 focused, including all four F2 pins).
+
+### R2-6 — the refusal says JSON again
+
+The F3 refusal returned `undefined` and let the call be re-classified downstream, so
+the user saw a generic `__get_builtin` / #1472 "dynamic-shape object operation" error
+PLUS a spurious "Host import leak" warning about a binary that is never produced —
+three diagnostics, none naming JSON. It now reports the #1599 message at the refusal
+site with the same `sticky` flag and `return null` shape as the Phase-1 refusal.
+Measured after: one diagnostic per offending line, and **zero** "Host import leak"
+warnings (was one per file).
+
+### R2-2 — refuted, recorded so nobody re-derives it
+
+The review held that the F3 refusal is wider than the defect, rejecting nested array
+literals and nested empty objects that used to answer correctly. The skeptic showed
+that evidence was an A/B of the lane against ITSELF with the refusal disabled — a
+state that never existed on main. Base compile-errors those shapes too (#1599 rejects
+every non-callable, non-array-literal replacer). Nothing regressed.
+
+### R2-3 — documented, pre-existing, wants its own issue
+
+`"" + o` / `o + 1` on an object with a `[Symbol.toPrimitive]` method pass hint
+`null` (typeof "object") instead of `"default"`. The observation reproduces, but the
+attribution to the F2 gate was rejected by the skeptic: **the base tree exhibits it
+on its own**, so `literals.ts` L1803 did not introduce it. Probe: `f2s.js` n2/n3 and
+`f2q.js` m3 under `/home/user/js2/.tmp/rev5269r2/`. This is a standalone
+`@@toPrimitive` default-hint gap and deserves a separate issue; it is not fixed here.
