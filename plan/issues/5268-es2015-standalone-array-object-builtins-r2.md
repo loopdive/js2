@@ -651,22 +651,60 @@ the reason):
 
 ## 2026-09-02 implementation (Opus)
 
-Steps 1, 2 (partial) and 6 landed. Measured with
+Steps 1, 2 (partial) and 6 landed, plus two pieces of step 3. Measured with
 `npx tsx scripts/run-test262-paths.mts .tmp/es2015/arrobj-head.txt --standalone`
-on branch `worktree-agent-a9c998ea769df422c` (base `ef6aec3322`).
+on branch `worktree-agent-a9c998ea769df422c`.
 
-**Whole 159-row head list: 0 pass / 154 fail / 5 CE → 21 pass / 138 fail.**
-No row that passed before regressed; the before/after non-pass sets differ by
-exactly the flipped rows (`comm` on both sorted lists, empty "NEW non-pass").
+### Integration measurement (the authoritative one)
 
-Two rows in the after-run were reported `compile_error` and are LOAD ARTIFACTS,
-not results: `Object/freeze/abrupt-completion.js` (passes when re-run alone —
-so the real flip count is 21, not the 20 the diff shows) and
-`Array/prototype/filter/create-proto-from-ctor-realm-non-array.js` (an
-out-of-scope X0 realm row that keeps its original `fail` signature alone). The
-box ran at load 6–23 on 4 shared cores throughout; a bare compile of the
-control `concat_spreadable-number-wrapper.js` timed out at 28.7 s on HEAD and
-32.4 s on this tree, i.e. the timeout tracks load, not the change-set.
+Both sides run on the SAME tree — branch tip `47f0973f1e`, which merges
+`origin/main` `f64beb1a03` (so it carries PR #5461's runner standalone-leak
+check, the #5224 buffers wave and PR #5469's post-#5224 regression fix). The
+base side is that tree with this change-set's ten source files checked out from
+`origin/main` and its three new modules moved aside; the after side is the tree
+as committed. Nothing else differs.
+
+| 159-row head list | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| `origin/main` (f64beb1a03) | 1 | 148 | 10 |
+| this branch (47f0973f1e) | **22** | 127 | 10 |
+
+**21 rows flipped, ZERO new non-pass rows, and the compile_error SET is
+identical on both sides** (`comm` over both sorted non-pass lists: 21 lines on
+the base-only side, 0 on the after-only side). The single row `origin/main`
+already passes is one the buffers/for-of waves fixed, not one of ours.
+
+`.tmp/es2015/arrobj-controls.txt`: **20 / 20** on the merged tree.
+
+Equivalence gate on the same tree: 24 failing / 1718 passing / 24
+known-failures in baseline — "No new equivalence regressions", exit 0. All
+five source ratchets (loc / func / coercion-sites / oracle-ratchet /
+dead-exports) green; `pnpm run typecheck` (TS7) clean.
+
+Existing suites for the touched areas were A/B'd rather than merely run, and
+every failure they show is STANDING RED on `origin/main` with an identical
+failure set: `issue-3661-freeze-seal-descriptor-readback` (2),
+`issue-3403-object-integrity-var-key` (1, the host lane),
+`issue-4492-wave5` (5, its three self-declared "residual R1/R2/R3" groups) and
+`issue-4492-builtin-as-value` (1). `es5-array-isarray-arguments`,
+`issue-4616-patched-isarray-recursion`, `issue-2984-species` and
+`issue-3420-species-result-store` are fully green on both sides.
+
+### A note on compile-timeout noise
+
+The box ran at load 6–23 on 4 shared cores throughout, and a slow row is
+reported as `compile_error: compilation timeout`. Every such row in this work
+was re-run ALONE and A/B'd before being believed: `concat_spreadable-number-
+wrapper.js` (a control) timed out at 28.7 s on the base tree and 32.4 s on
+this one, and `splice/create-proto-from-ctor-realm-non-array.js` at 22.7 s
+vs 27.3 s — i.e. the timeouts track load, not the change-set. Do not read a
+`compile_error` in a shared-box run as a compiler refusal without that check.
+
+### Earlier per-step measurement (pre-merge base `ef6aec3322`)
+
+The same 159-row list was 0 pass / 154 fail / 5 CE at the branch point, so the
+per-step numbers below are quoted against that base; they compose to the same
+21 rows.
 
 ### Step 1 — `Object.prototype.__proto__` accessor pair (commit `a7e974ee09`)
 
@@ -779,4 +817,20 @@ NOT done, with the measured reason:
 
 ### Steps 4, 5, 7, 8, 9, 10 — not started
 
-No work was done on clusters D, D2, F, G, H, J, L, M, N, O, P, Q, R, S.
+No work was done on clusters D, D2, F, G, H, J, L, M, N, O, P, Q, R, S. Three
+findings from reconnaissance that a follow-up should not re-derive:
+
+- **Step 5 (cluster G) is bigger than "add classifier arms".** Five of its nine
+  rows want `delete <Builtin>.prototype[Symbol.toStringTag]` to be OBSERVABLE
+  and `symbol-tag-generators-builtin.js` additionally wants
+  `[object GeneratorFunction]` / `[object Generator]` tags plus a
+  configurable-and-deletable `@@toStringTag` on the generator prototype. The
+  classifier arms alone will not flip them.
+- **Cluster M's three rows are an ITERATOR-IDENTITY problem, not a body
+  problem.** Each asserts
+  `Object.getPrototypeOf(iter) === %ArrayIteratorPrototype%`, so giving
+  `keys`/`values`/`entries` a reflective body without a reified
+  `%ArrayIteratorPrototype%` moves the failure rather than fixing it.
+- **The four `Object.assign/Target-*` rows are one shared blocker**, described
+  in the step-3 section above: a DYNAMIC `.valueOf()` on a wrapper `$Object`.
+  Fixing that one seam flips all four at once.
