@@ -1,0 +1,8 @@
+/*---
+description: for-in head destructuring default runs (#5271 probe)
+flags: [noStrict]
+---*/
+var probeDecl;
+for (let [x, _ = probeDecl = function() { return x; }] in { i: 0 }) ;
+assert.sameValue(typeof probeDecl, 'function');
+assert.sameValue(probeDecl(), 'i');

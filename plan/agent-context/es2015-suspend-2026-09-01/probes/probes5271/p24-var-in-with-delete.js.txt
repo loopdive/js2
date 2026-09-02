@@ -1,0 +1,8 @@
+/*---
+description: reference resolved before RHS inside with (#5271 probe)
+flags: [noStrict]
+---*/
+var obj = { test262id: 1 };
+with (obj) { var test262id = delete obj.test262id; }
+assert.sameValue(obj.test262id, true);
+assert.sameValue(test262id, undefined);

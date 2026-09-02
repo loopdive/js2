@@ -1,0 +1,279 @@
+#!/bin/bash
+# Probe generator for #5271 planning (statement-cluster root causes). Writes
+# test262-shaped probes under test262/test/language/probe-5271/ (submodule dir,
+# untracked) so scripts/run-test262-paths.mts judges them by the runner's rules.
+# Usage: bash make-probes.sh <worktree-root>
+set -e
+D="${1:-.}/test262/test/language/probe-5271"
+mkdir -p "$D"
+cd "$D"
+cat > p01-for-head-let-module.js <<'EOF'
+/*---
+description: module-level for-head let must not alias the outer module-level let (#5271 probe)
+flags: [noStrict]
+---*/
+let x = 'outside';
+var probeBefore = function() { return x; };
+for (let x = 'inside'; false; ) {}
+assert.sameValue(x, 'outside', 'after loop');
+assert.sameValue(probeBefore(), 'outside', 'closure before loop');
+{ let x = 'block'; assert.sameValue(x, 'block'); }
+assert.sameValue(x, 'outside', 'after block');
+EOF
+cat > p02-catch-block-let.js <<'EOF'
+/*---
+description: catch-block let shadow of a var (#5271 probe)
+flags: [noStrict]
+---*/
+var probe, x;
+try { throw null; } catch (_) { let x = 'inside'; probe = function() { return x; }; }
+x = 'outside';
+assert.sameValue(x, 'outside');
+assert.sameValue(probe(), 'inside');
+EOF
+cat > p03-tdz-stmt.js <<'EOF'
+/*---
+description: bare identifier read before let in a block inside a function (#5271 probe)
+flags: [noStrict]
+---*/
+assert.throws(ReferenceError, function() { { x; let x; } });
+EOF
+cat > p04-tdz-hoisted-fn-module.js <<'EOF'
+/*---
+description: hoisted function reads module-level const before init (#5271 probe)
+flags: [noStrict]
+---*/
+function f() { return x + 1; }
+assert.throws(ReferenceError, function() { f(); });
+const x = 1;
+EOF
+cat > p05-err-ctor-in-fn.js <<'EOF'
+/*---
+description: caught error keeps .constructor inside a function (#5271 probe)
+flags: [noStrict]
+---*/
+function f() { try { throw new SyntaxError('x'); } catch (e) { return e.constructor === SyntaxError; } }
+assert(f(), 'inside function');
+var g; try { throw new SyntaxError('y'); } catch (e) { g = e.constructor === SyntaxError; }
+assert(g, 'at top level');
+EOF
+cat > p06-with-unscopables.js <<'EOF'
+/*---
+description: with + @@unscopables + proxy has trap (#5271 probe)
+includes: [compareArray.js]
+flags: [noStrict]
+---*/
+var env = { x: 1 };
+env[Symbol.unscopables] = { x: true };
+var x = 2;
+with (env) { assert.sameValue(x, 2, 'unscopables blocks x'); }
+var log = [];
+var penv = new Proxy({}, { has: function(t, k) { log.push('has:' + String(k)); return false; } });
+var y = 3;
+with (penv) { y; }
+assert.compareArray(log, ['has:y']);
+EOF
+cat > p07-forin-let-destructure.js <<'EOF'
+/*---
+description: for (let [x] in obj) destructures the key string (#5271 probe)
+flags: [noStrict]
+---*/
+var v;
+for (let [x] in { key: 1 }) v = x;
+assert.sameValue(v, 'k');
+EOF
+cat > p08-forin-member-lhs.js <<'EOF'
+/*---
+description: for (x.y in obj) writes the member (#5271 probe)
+flags: [noStrict]
+---*/
+var x = {};
+var n = 0;
+for (x.y in { attr: null }) { n++; }
+assert.sameValue(x.y, 'attr');
+assert.sameValue(n, 1);
+EOF
+cat > p09-class-binding-assign.js <<'EOF'
+/*---
+description: class declaration binding is mutable (#5271 probe)
+flags: [noStrict]
+---*/
+class C {}
+C = 5;
+assert.sameValue(C, 5);
+EOF
+cat > p10-elision.js <<'EOF'
+/*---
+description: elision-only array pattern steps the generator once (#5271 probe)
+flags: [noStrict]
+---*/
+var first = 0, second = 0;
+function* g() { first += 1; yield; second += 1; }
+let [,] = g();
+assert.sameValue(first, 1);
+assert.sameValue(second, 0);
+EOF
+cat > p11-args-symbol-iterator.js <<'EOF'
+/*---
+description: arguments has own @@iterator (#5271 probe)
+flags: [noStrict]
+---*/
+(function() {
+  assert.sameValue(arguments[Symbol.iterator], [][Symbol.iterator], 'value');
+  assert(Object.prototype.hasOwnProperty.call(arguments, Symbol.iterator), 'own');
+}());
+EOF
+cat > p12-block-fn-strict.js <<'EOF'
+/*---
+description: strict block-level function declaration is block scoped (#5271 probe)
+flags: [onlyStrict]
+---*/
+{ function f() {} }
+assert.throws(ReferenceError, function() { f; });
+EOF
+cat > p14-const-for-increment.js <<'EOF'
+/*---
+description: for (const i...; i++) throws TypeError (#5271 probe)
+flags: [noStrict]
+---*/
+assert.throws(TypeError, function() { for (const i = 0; i < 1; i++) {} });
+EOF
+cat > p15-forin-head-tdz.js <<'EOF'
+/*---
+description: for-in head let TDZ in a function (#5271 probe)
+flags: [noStrict]
+---*/
+assert.throws(ReferenceError, function() { let x = 1; for (let x in { x }) {} });
+EOF
+cat > p16-forin-lex-open-typeof.js <<'EOF'
+/*---
+description: for-in head expression closure sees head TDZ (#5271 probe)
+flags: [noStrict]
+---*/
+let x = 'outside';
+var probeExpr;
+for (let x in { i: probeExpr = function() { typeof x; } }) ;
+assert.throws(ReferenceError, probeExpr);
+assert.sameValue(x, 'outside');
+EOF
+cat > p17-forin-head-dflt.js <<'EOF'
+/*---
+description: for-in head destructuring default runs (#5271 probe)
+flags: [noStrict]
+---*/
+var probeDecl;
+for (let [x, _ = probeDecl = function() { return x; }] in { i: 0 }) ;
+assert.sameValue(typeof probeDecl, 'function');
+assert.sameValue(probeDecl(), 'i');
+EOF
+cat > p18-indirect-eval-block.js <<'EOF'
+/*---
+description: indirect eval in a shadowing block sees the global (#5271 probe)
+flags: [noStrict]
+---*/
+let x = 'outside';
+var r;
+{ let x = 'inside'; r = (0,eval)('x;'); }
+assert.sameValue(r, 'outside');
+EOF
+cat > p19-per-iter-copy.js <<'EOF'
+/*---
+description: head-initializer closure keeps C0 (#5271 probe)
+flags: [noStrict]
+---*/
+var probeBefore; var run = true;
+for (let x = 'outside', _ = probeBefore = function() { return x; }; run && (x = 'inside'); ) run = false;
+assert.sameValue(probeBefore(), 'outside');
+EOF
+cat > p20-rest-arrow.js <<'EOF'
+/*---
+description: two rest arrows in one module (#5271 probe)
+includes: [compareArray.js]
+flags: [noStrict]
+---*/
+var fn = (a, b, ...c) => c;
+assert.compareArray(fn(), []);
+assert.compareArray(fn(1, 2, 3), [3]);
+assert.compareArray(((...args) => args)(), []);
+EOF
+cat > p21-args-default.js <<'EOF'
+/*---
+description: default param reads arguments (#5271 probe)
+flags: [noStrict]
+---*/
+function f(x = arguments[1], y) { return x; }
+assert.sameValue(f(undefined, 'b'), 'b');
+EOF
+cat > p22-nested-fn-unresolvable.js <<'EOF'
+/*---
+description: block let is not visible to a nested function (#5271 probe)
+flags: [noStrict]
+---*/
+var ok = false;
+try { { let xx = 18; throw 25; } } catch (e) {
+  (function() { try { xx; } catch (e2) { ok = e2 instanceof ReferenceError; } })();
+}
+assert(ok);
+EOF
+cat > p23-get-primitive-proto.js <<'EOF'
+/*---
+description: property get on primitive base through prototype (#5271 probe)
+flags: [noStrict]
+---*/
+Number.prototype.test262 = 'np';
+assert.sameValue(1..test262, 'np', 'number');
+Boolean.prototype.test262 = 'bp';
+assert.sameValue(true.test262, 'bp', 'boolean');
+Symbol.prototype.test262 = 'sp';
+assert.sameValue(Symbol().test262, 'sp', 'symbol');
+EOF
+cat > p24-var-in-with-delete.js <<'EOF'
+/*---
+description: reference resolved before RHS inside with (#5271 probe)
+flags: [noStrict]
+---*/
+var obj = { test262id: 1 };
+with (obj) { var test262id = delete obj.test262id; }
+assert.sameValue(obj.test262id, true);
+assert.sameValue(test262id, undefined);
+EOF
+cat > p25-fn-name-class.js <<'EOF'
+/*---
+description: let cls = class {} names the class (#5271 probe)
+includes: [propertyHelper.js]
+flags: [noStrict]
+---*/
+let cls = class {};
+verifyProperty(cls, 'name', { value: 'cls', writable: false, enumerable: false, configurable: true });
+EOF
+cat > p26-args-named-binding.js <<'EOF'
+/*---
+description: body binding named arguments + default reads arguments (#5271 probe)
+flags: [noStrict]
+---*/
+var args;
+function f(x = args = arguments) { function arguments() {} }
+f();
+assert.sameValue(typeof args, 'object');
+assert.sameValue(args.length, 0);
+EOF
+cat > p27-tdz-stmt-module.js <<'EOF'
+/*---
+description: bare identifier read before let in a module-level block (#5271 probe)
+flags: [noStrict]
+---*/
+var threw = false;
+try { { x; let x; } } catch (e) { threw = e instanceof ReferenceError; }
+assert(threw);
+EOF
+cat > p28-restricted-global.js <<'EOF'
+/*---
+description: let undefined at global is a SyntaxError (#5271 probe)
+negative:
+  phase: runtime
+  type: SyntaxError
+flags: [noStrict]
+---*/
+let undefined;
+EOF
+ls "$D" | wc -l
