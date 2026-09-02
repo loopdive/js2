@@ -49,8 +49,8 @@
   {
     "edition": "ES2015",
     "pass": 9754,
-    "fail": 1531,
-    "ce": 419,
+    "fail": 1530,
+    "ce": 420,
     "skip": 0,
     "total": 11704,
     "pct": 83,
@@ -337,8 +337,8 @@
       {
         "name": "tail-call-optimization",
         "pass": 20,
-        "fail": 13,
-        "ce": 0,
+        "fail": 12,
+        "ce": 1,
         "skip": 0,
         "total": 33,
         "pct": 61
