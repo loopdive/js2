@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile, type CompileResult, type IrObservedOutcome, type IrOutcomePolicy } from "../src/index.js";
+import { r2WithdrawalDefect } from "../src/ir/r2-withdrawal.js";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -318,6 +319,14 @@ export function evaluateIrOnlyReport(
           failures.push(
             `${lane.name}/${entry.entry}: non-legacy function ${outcome.displayName} is absent from irFirstSkipped`,
           );
+        }
+        // (#3521 R2-T1) Compile-twice rows must name WHY they were never
+        // prepared, and no other row may claim a withdrawal reason. Both
+        // directions are malformed evidence, so this is policy-independent: it
+        // fails under `hybrid` and `ir-only` alike.
+        const r2Defect = r2WithdrawalDefect(outcome);
+        if (r2Defect) {
+          failures.push(`${lane.name}/${entry.entry}: terminal ${outcome.displayName}: ${r2Defect}`);
         }
       }
       for (const name of compiled) {

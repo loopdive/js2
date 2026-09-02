@@ -42,6 +42,20 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/builder.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-09-02 R2-T1/G1: the admission chain and the ownership fixed point are
+  # rewritten from two `||` chains into two ordered predicate TABLES read by a
+  # `find`, so the first failing predicate / first crossing edge can be named
+  # (+88 in ir-prepared-free-functions.ts). The remaining growth is the sink and
+  # its plumbing: the ctx map plus the source-level not-attempted default
+  # (+16 in context/types.ts), the selector-withdrawal merge, the
+  # late-feature-preparation default, the ir-first-disabled default and the
+  # multi-source default (+30 in index.ts, of which +4 land in `generateModule`,
+  # already granted below), and the reason's attachment to the compile-twice row
+  # (+15 in ir-overlay-outcomes.ts). The vocabulary, validator and row
+  # projection are NOT added to any of these: they are a new R2-owned
+  # `src/ir/r2-withdrawal.ts` (135 lines, far under the 1,500 threshold), which
+  # is also why #3520's `src/ir/outcomes.ts` is +0. Zero conformance change by
+  # design — 302/302 byte-matrix cells identical.
   - src/codegen/ir-prepared-free-functions.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts

@@ -22,6 +22,7 @@ import type {
   WasmModule,
 } from "../../ir/types.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
+import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
@@ -1541,6 +1542,21 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   irPostClaimErrors: { kind: string; func: string; message: string }[];
   /** #3519 — allocated only when `trackIrOutcomes` is requested. */
   irOutcomes?: IrObservedOutcome[];
+  /**
+   * (#3521 R2-T1) Per-unit reason the R2 selector withdrew a terminal, recorded
+   * by the admission chain, the ownership fixed point and the unsealed-component
+   * deferral. Read once, in `recordObservedIrOutcomes`, and attached only to
+   * compile-twice function rows. Unit ids are source-qualified, so one map spans
+   * every source of a multi-source compile.
+   */
+  irR2WithdrawalsByUnitId?: Map<IrUnitId, IrR2Withdrawal>;
+  /**
+   * (#3521 R2-T1) Source-level fallback for the routes where the R2 selector
+   * never ran at all, so no per-unit record can exist: the multi-source overlay
+   * driver and an IR-first-disabled compile. "Not attempted" is a stage, not the
+   * absence of a reason — without it those rows would be un-attributed.
+   */
+  irR2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
   /**
    * #3000 — names of functions/class-members whose slots were actually patched
    * with an IR-lowered body by `compileIrPathFunctions` (its `report.compiled`).

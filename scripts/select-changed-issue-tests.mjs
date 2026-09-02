@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// (#4448) Print the `tests/issue-*.test.ts` files a PR should run.
+// (#4448) Print the `tests/issue-*.test.ts` and `tests/ir/*.test.ts` files a PR
+// should run.
 //
 // WHY THIS EXISTS: none of the six required checks executes that suite —
 // `equivalence-gate` runs `tests/equivalence/` only, `quality` runs
@@ -10,6 +11,14 @@
 // or go red later (`6203320a` did, silently, for two days) with every gate
 // green. Running the whole suite on every PR is too slow to be worth it, so the
 // cheap 90 % is: run the files the PR itself touches, plus a tiny pinned set.
+//
+// (#3521 R2-T1) `tests/ir/*.test.ts` had the same gap and it cost the same way:
+// `cb733cde37` reddened `tests/ir/fnctor-producer.test.ts` and `0f42c1fde4`
+// reddened `tests/ir/counted-string-append-provenance.test.ts`, both unseen,
+// because no selector mode matched the directory. Admitting the whole directory
+// to the ADVISORY (changed) step makes a file visible the moment a PR touches
+// it; only the six R2-named files are pinned (fatal), which is 44.8 s of wall
+// clock against 140.8 s for all 19 green ones.
 //
 // Deliberately NOT a required check — see docs/ci-policy.md §7. A changed issue
 // test may be red for reasons the PR is not responsible for (the suite is not
@@ -41,9 +50,27 @@ const PINNED = [
   // real over-claim: local-class identity leaking through a parameter/local
   // shadow) sat invisible for two days precisely because nothing ran it.
   "tests/issue-3529-selector-preclaim.test.ts",
+  // #3521 R2: the six R2-named tests/ir suites, verified green one-file-per-run
+  // on the R2-T1/G1 base. A red in any of them is an R2 finding, so it is worth
+  // being fatal; the other 13 green tests/ir files are not pinned (they would
+  // add ~96 s of wall clock per PR and their reds are not R2's).
+  // The Program-ABI fnctor producer's own admission contract.
+  "tests/ir/fnctor-abi.test.ts",
+  // The fnctor admission gate the R2 owner selector's carriers depend on.
+  "tests/ir/fnctor-admission.test.ts",
+  // Argument projection for prepared fnctor callables (63 assertions).
+  "tests/ir/fnctor-argument-projection.test.ts",
+  // The producer whose `:225` cold-tail signal silently reddened at cb733cde37.
+  "tests/ir/fnctor-producer.test.ts",
+  // Small-body inlining, which decides what a prepared owner actually emits.
+  "tests/ir/inline-small.test.ts",
+  // The phase-3c pass pipeline the prepared bodies are lowered through.
+  "tests/ir/phase3c.test.ts",
 ];
 
-const ISSUE_TEST = /^tests\/issue-[^/]*\.test\.ts$/;
+// `tests/issue-<x>.test.ts` and `tests/ir/<x>.test.ts` — the two directories a
+// PR's own changes are matched against in `--changed` (advisory) mode.
+const ISSUE_TEST = /^tests\/(issue-[^/]*|ir\/[^/]*)\.test\.ts$/;
 
 function arg(name) {
   const index = process.argv.indexOf(name);

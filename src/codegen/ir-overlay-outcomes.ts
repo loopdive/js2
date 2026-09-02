@@ -11,6 +11,7 @@ import type {
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
 import { nonExecutableOutcomeDefect } from "../ir/outcomes.js";
+import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { IrDirectFunctionBodyReceiptAudit } from "./legacy-body-audit.js";
@@ -51,6 +52,17 @@ export interface ReconcileIrOverlayOutcomesInput {
    * only for internal callers that did not opt into the physical route audit.
    */
   readonly directFunctionBodyReceiptAudit?: IrDirectFunctionBodyReceiptAudit;
+  /**
+   * (#3521 R2-T1) Per-unit reason the R2 selector withdrew a terminal. Attached
+   * only to compile-twice function rows; absent on every lane that does not
+   * track outcomes.
+   */
+  readonly r2WithdrawalsByUnitId?: ReadonlyMap<IrUnitId, IrR2Withdrawal>;
+  /**
+   * (#3521 R2-T1) Source-level fallback for the routes the selector never ran
+   * on at all, used only where no per-unit record exists.
+   */
+  readonly r2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
   readonly report: IrIntegrationReport;
   readonly existingOutcomes: readonly IrObservedOutcome[];
   readonly target: IrObservedOutcome["target"];
@@ -925,12 +937,25 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
               detail: `${unit.matchName} was unsupported after its legacy slot was skipped: ${evidence.error.message}`,
             });
     } else if (evidence?.kind === "patched") {
+      // (#3521 R2-T1) A row that emitted BOTH bodies is the compile-twice shape
+      // R2 exists to retire; it carries exactly one reason. The per-unit record
+      // wins over the source default, which only covers the routes where the
+      // selector never saw the unit. Attached by spread, so `IrObservedOutcome`
+      // itself is unchanged and no emitter reads the field.
+      const r2Withdrawal =
+        bodyAccounting?.directBodyEmissions === 1 && bodyAccounting.irBodyEmissions === 1
+          ? (input.r2WithdrawalsByUnitId?.get(unit.unitId) ??
+            (input.r2NotAttemptedReason
+              ? ({ stage: "not-attempted", reason: input.r2NotAttemptedReason } as const)
+              : undefined))
+          : undefined;
       outcome = {
         ...base,
         kind: "emitted",
         stage: "patch",
         irBodyEmitted: true,
         ...(evidence.preparedComponentId === undefined ? {} : { preparedComponentId: evidence.preparedComponentId }),
+        ...(r2Withdrawal ? { r2Withdrawal } : {}),
       };
     } else {
       outcome = observedFailure(base, {
