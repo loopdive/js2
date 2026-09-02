@@ -4168,3 +4168,43 @@ unrelated constructs, so it names a demote path, not a feature area.
 This does not change the gap-6b verdict recorded above: that slice stays gated
 on its stated preconditions (P1, P4 and #5276). It raises the value of clearing
 them, it does not remove them.
+
+### The 17 rejected module-inits, by reject arm — a first slice falls out
+
+The section above establishes that module-init is what gates R9. This names the
+work. `src/ir/select.ts` already carries an opt-in reject-arm recorder for the
+`body-shape-rejected` bucket (#2856 Step-1), enabled with
+`JS2WASM_IR_SHAPE_DIAG=1`; no source edit is needed to get the breakdown. On
+`tests/dogfood/corpus`, single-host:
+
+| reject arm | count | site |
+| --- | --- | --- |
+| `vardecl-module-storage-unrepresentable` | **11** | `select.ts:5664` |
+| `expr-ident-not-in-scope` | 2 | `select.ts:9264` |
+| `vardecl-modifier` | 2 | `select.ts:5587` |
+| `vardecl-module-destructuring` | 1 | `select.ts:5597` |
+| `vardecl-module-value-flow` | 1 | `select.ts:5669` |
+
+**Four of the five arms are `vardecl-*`, and they are 15 of the 17.** The whole
+module-init blocker is, to 88%, module-level variable-declaration handling —
+not a diffuse "body shape" problem.
+
+The dominant arm is a single condition (`select.ts:5658-5665`): the subject is a
+module-init, the declaration is direct (`ts.isSourceFile(declarationStatement.parent)`),
+and `currentModuleBindingResolver?.(d.name)` returns `undefined`. Its own comment
+states the constraint — *"The synthetic module-init builder must map every direct
+declaration to an already-allocated legacy slot"* — so the rejection is the
+resolver failing to represent the binding, not the IR failing to lower a shape.
+
+**Suggested first slice, for whoever picks R4 up:** widen the module-binding
+resolver to represent the declarations behind `vardecl-module-storage-unrepresentable`.
+It is 11 of 17 module-init rejections and ~1/3 of the entire single-host gap on
+this corpus, it is one condition at one site, and the remaining four arms are
+independent of it. The three singleton arms
+(`vardecl-module-destructuring`, `vardecl-module-value-flow`,
+`expr-ident-not-in-scope`) are separately scopeable follow-ups.
+
+Not yet checked, and worth doing before committing to that slice: whether these
+same arms dominate on the playground's own uncovered eight (measured only as
+`body-shape-rejected` there, not split by arm), and whether the standalone lane's
+14 split the same way. Both are one probe each with the same env var.

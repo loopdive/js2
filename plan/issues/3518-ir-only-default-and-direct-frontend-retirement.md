@@ -2248,9 +2248,18 @@ permanent red. The class family is the second dependency, not the first.
 
 **Method note, since this is the second time in one session the same mistake
 shape appeared.** The previous section read a reason histogram and named an
-owner from the reason label alone. `body-shape-rejected` is emitted from ~20
-sites in `src/ir/from-ast.ts` spanning entirely different constructs, so the
-label identifies a *demote path*, not a *feature area*. Grouping by
-`unitKind` — one extra field already present in the telemetry — moved the
-conclusion from the wrong lane to the right one. Any future census over these
-outcomes should group by `unitKind` before assigning an owner.
+owner from the reason label alone. `body-shape-rejected` is raised from many
+sites spanning entirely different constructs, so the label identifies a *demote
+path*, not a *feature area*. Grouping by `unitKind` — one extra field already
+present in the telemetry — moved the conclusion from the wrong lane to the right
+one. Any future census over these outcomes should group by `unitKind` before
+assigning an owner.
+
+**Precision correction to the sentence above, added after tracing it.** An
+earlier draft pointed at "~20 sites in `src/ir/from-ast.ts`". Those sites are
+`demoteToLegacy` calls, and `demoteToLegacy` throws at stage **`build`**
+(`src/ir/outcomes.ts:213`). Every module-init rejection measured here is stage
+**`select`**, so it comes from `src/ir/select.ts` instead — sending a reader to
+`from-ast.ts` for these would cost them the search. The per-arm breakdown is
+obtainable with `JS2WASM_IR_SHAPE_DIAG=1` and no source edit (the #2856 Step-1
+reject-arm recorder), and is recorded on `#3523`.
