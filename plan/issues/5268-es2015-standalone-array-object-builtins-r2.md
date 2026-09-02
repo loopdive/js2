@@ -815,6 +815,57 @@ NOT done, with the measured reason:
   serves that read, but only for (brand, member) closures the module has
   ALREADY minted — and these modules never name `Number.prototype.valueOf`.
 
+### 2026-09-02 adversarial review — four findings, all FIXED
+
+An independent skeptic reproduced four defects against the pristine merge-base
+AND `origin/main`, with ~20 A/B probes across both lanes. All four are fixed on
+this branch; none was merely documented. Commits `bc111a1d30` (F1+F2) and
+`b3deafa2f4` (F3+F4). Six new pins, including the first JS-HOST-lane runner in
+the focused test — F1 was a host-lane COMPILE ERROR, which a standalone-only
+pin cannot see.
+
+| # | What was wrong | Resolution |
+| --- | --- | --- |
+| **F1** (high) | The `Object.{keys,values,entries}` Proxy-provenance arm had NO `ctx.standalone` gate, and its body resolves `__object_<method>` from `ctx.funcMap` — a native the JS-host lane lacks. `var p = new Proxy({a:1},{}); var q = p; Object.keys(q)` was a host-lane `Codegen error: absoluteFuncIndex: unresolved call target`; base prints "a". | Gated on `ctx.standalone`. The two sibling sites were gated already; this one was the outlier. |
+| **F2** (medium) | Standalone: routing an ALIAS of a proxy binding to the runtime enumerator answered `[]`, because `var qt = pt` nulls the alias — a widening defect present on `origin/main` too — where base's compile-time expansion still printed the keys without loading the value. | New `isDirectProxyBinding` (expression itself, or ONE identifier hop) replaces the alias-following trace at this site. `Array.isArray` keeps the wider trace deliberately: its target is a runtime predicate correct for every value, and the array-typed twin is not nulled (measured). Repairing the nulling is left alone — it is a value-representation defect, not a conformance one. |
+| **F3** (medium) | `__proxy_set_integrity` forwarded a per-key `[[DefineOwnProperty]]` unconditionally; with no `defineProperty` trap that reaches `__obj_define_from_desc` on the target, which APPENDS on a closed-struct target. `Reflect.ownKeys(t)` read `a,b,a,b`, `getOwnPropertyNames(t).length` 4, and a later `Object.isFrozen(proxy)` threw on the duplicate-key invariant. | The forward now happens only when a `defineProperty` trap exists (without one it is unobservable). The helper stopped claiming the receiver outright — it answers "I did the spec-VISIBLE trap work, now run your ordinary body too", so the level still lands in the #4032 bag where base put it. `__proxy_test_integrity` gained the mirror rule: it runs its loop for the trap calls but VOTES only when a `defineProperty` trap recorded the level per key, else returns a `-1` "not handled" sentinel. Without that second half the fix traded a TypeError for an all-`false` isFrozen/isSealed matrix. |
+| **F4** (low) | The syntactic `o.__proto__ = v` went to the §B.2.2.1 setter native regardless of whether the receiver INHERITS that accessor, so `Object.create(null)` + `preventExtensions` threw where base and a sloppy host ignore it. | Gated on the existing `hasExplicitNullObjectPrototype` proof. Fixed, not documented. |
+
+**Probe A/B after the fixes.** All fourteen review probes (`f3`, `f3b`, `f3c`,
+`f3d`, `f4`, `f2`, `f1b`, `p13` standalone; `v1`/`v3`/`v4`/`v5`/`v6`/`h2` host)
+print BYTE-IDENTICAL output on this branch and on the reviewer's pristine
+`base-main` tree — except the two where the improvement is the point: `f3d`
+fires the `getOwnPropertyDescriptor` trap per key in ownKeys order
+(`0,foo,Symbol(s)`, matching node) where base fires none, and `p13` runs the
+full EnumerableOwnProperties sequence where base silently answers `[]`.
+
+**Re-validated integration** (both sides on the tree that merges `origin/main`
+`1c8ee381a9`; base = that tree with this change-set's ten source files from
+`origin/main` and its three new modules moved aside):
+
+| 179 rows (`arrobj-head.txt` + `arrobj-controls.txt`) | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| `origin/main` | 21 | 148 | 10 |
+| this branch | **42** | 127 | 10 |
+
+21 rows flipped, ZERO new non-pass rows, **identical compile_error set** — so
+the review fixes cost nothing (the non-pass set is unchanged from the
+pre-review measurement) and no standalone host-import leak was introduced. Of
+the 10 shared CEs, 5 are the cluster-G `env::toString` leak that step 5 owns,
+4 are cluster Q's `flat`/`flatMap` refusal, and 1 is the out-of-scope
+`subclass-object-arg`. Controls **20/20**.
+
+Touched-area suites A/B'd again on the new base: an IDENTICAL 9-failure set
+(`issue-3661` ×2, `issue-3403` host lane ×1, `issue-4492-wave5` ×5,
+`issue-4492-builtin-as-value` ×1) — all standing red on `origin/main`.
+
+**Two gaps the review surfaced that remain open on BOTH trees** (measured, and
+stated so they are not mistaken for fixed): `Object.freeze(proxy)` does not
+make the target's own data properties non-writable (`t.a = 99` still lands;
+node throws), and an ordinary `__proto__` write on an extensible
+null-prototype object does not create the own `__proto__` data property node
+reports.
+
 ### Steps 4, 5, 7, 8, 9, 10 — not started
 
 No work was done on clusters D, D2, F, G, H, J, L, M, N, O, P, Q, R, S. Three
