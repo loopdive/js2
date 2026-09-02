@@ -1286,6 +1286,17 @@ const DYN_VIEW_READ_METHODS = new Set<string>([
   // `env::<TA>_findLast[Index]` from the compiled-but-never-run ELSE arm.
   "findLast",
   "findLastIndex",
+  // (#5194 step 3, cluster C2) The three iterator factories. On a dyn view they
+  // returned a value with no callable `next` and a null prototype: the extern
+  // dispatch bound them to `env::<TA>_keys` (a host import, so the standalone
+  // module never instantiated), and the closed dispatcher had no arm. Routing
+  // them through the two-arm materializes the view into the `$__vec_f64` the
+  // #1320 native iterator bridge already understands, so the THEN arm's
+  // re-entry builds the ordinary `$IterRec` over that vec — same record, same
+  // `%ArrayIteratorPrototype%`, same `next` as `[].values()`.
+  "keys",
+  "values",
+  "entries",
 ]);
 
 /**
@@ -1443,11 +1454,40 @@ function shouldWrapDynViewTwoArm(
     // would move `ta.indexOf()` onto a different lowering, which is a lowering
     // change with its own blast radius and no defect behind it. Deliberately
     // left for whoever needs it — same call #5095 made.
-    (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
+    // (#5194 step 3) The four SEARCH/INDEX members named in the note above are
+    // now exempt: they model an absent argument, and keeping them off the
+    // two-arm sent a 0-arg `ta.includes()` / `ta.indexOf()` to the closed
+    // dispatcher's `VEC_SEARCH_METHODS` arm, which reads the view's RAW
+    // `$__vec_base` byte vector — so the answer came from the wrong element
+    // width and `includes()` answered against bytes, not elements
+    // (`includes/no-arg.js`, `indexOf/no-arg.js`, `lastIndexOf/no-arg.js`).
+    // The callback members the clause was written for keep it.
+    (callExpr.arguments.length >= 1 ||
+      methodName === "toLocaleString" ||
+      DYN_VIEW_ABSENT_ARG_SEARCH_METHODS.has(methodName)) &&
     ts.isIdentifier(propAccess.expression) &&
     dynViewReceiverIsExternref(fctx, propAccess.expression.text)
   );
 }
+
+/**
+ * (#5194 step 3) Read-side members whose typed impl models an ABSENT search
+ * argument (`undefined` → `NaN` → the spec's "not found" answer), so a 0-arg
+ * call is safe on the dyn-view two-arm. Everything else in
+ * {@link DYN_VIEW_READ_METHODS} still hard-requires its callback/index.
+ */
+const DYN_VIEW_ABSENT_ARG_SEARCH_METHODS: ReadonlySet<string> = new Set([
+  "at",
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+  // (#5194 step 3, cluster C2) Arity-0 by specification — they take no argument
+  // at all, so the "needs at least one" clause would otherwise keep them off
+  // the two-arm permanently.
+  "keys",
+  "values",
+  "entries",
+]);
 
 const DYN_VIEW_SPECIES_METHODS = new Set<string>(["map", "filter", "slice", "subarray"]);
 
@@ -1851,7 +1891,19 @@ function emitDynViewMethodTwoArm(
   dynViewTwoArmActive.add(callExpr);
   const rElse = compileExpression(ctx, fctx, callExpr, expectedType);
   dynViewTwoArmActive.delete(callExpr);
-  const elseOk = coerceArmToExternref(ctx, fctx, rElse, /* treatNullAsVoid */ true);
+  // (#5194 step 3) The BOOLEAN flag has to reach BOTH arms. It was passed to the
+  // THEN arm only, so a `ta.includes(v)` that took the ELSE re-dispatch (a
+  // statically-carried view, or a 0-arg call before this step) came back as the
+  // f64 `0`/`1` boxed as a NUMBER — `assert.sameValue(ta.includes(x), false)`
+  // then compared «0» against «false» (`includes/samevaluezero.js` and the
+  // per-kind `includes/*` rows).
+  const elseOk = coerceArmToExternref(
+    ctx,
+    fctx,
+    rElse,
+    /* treatNullAsVoid */ true,
+    BOOLEAN_RESULT_METHODS.has(methodName),
+  );
 
   fctx.body = outer;
   fctx.savedBodies.pop(); // elseArm

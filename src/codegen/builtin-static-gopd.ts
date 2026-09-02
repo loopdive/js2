@@ -381,6 +381,11 @@ const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
   "Set",
   "Promise",
   "RegExp",
+  // (#5194 step 2) §23.2.2.4 — the abstract `%TypedArray%` intrinsic owns
+  // `@@species` too. It is not a global identifier, so the receiver is
+  // recovered by the static `isTypedArrayIntrinsicCtorExpr` tracer at the call
+  // site rather than by `resolveBuiltinReceiverName`.
+  "%TypedArray%",
 ]);
 
 /**

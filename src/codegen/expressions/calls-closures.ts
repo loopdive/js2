@@ -59,6 +59,29 @@ import {
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
+
+/**
+ * (#5194 step 3) The non-HOF `%TypedArray%.prototype` members that must also
+ * decline extern-class dispatch on an `any` receiver under `noJsHost`. Every
+ * one of them is declared by at least one ambient TypedArray/extern class in
+ * the lib `.d.ts`, so the first-match loop in {@link tryExternClassMethodOnAny}
+ * binds it to an `env::<Class>_<m>` host import that the standalone runtime
+ * cannot satisfy — a compile-time leak emitted by an arm that never executes.
+ * `subarray`/`slice` are here for the same reason even though their dyn-view
+ * arms already exist: the leak is emitted before the arm is chosen. Kept local
+ * to this module (its only consumer) so the `calls.ts` barrel does not grow.
+ */
+const STANDALONE_TA_DISPATCHED_METHODS: ReadonlySet<string> = new Set([
+  "sort",
+  "keys",
+  "values",
+  "entries",
+  "includes",
+  "at",
+  "toLocaleString",
+  "subarray",
+  "slice",
+]);
 import { tryEmitTransferredNativeProtoMethodCall } from "./transferred-native-proto-call.js";
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
@@ -2428,6 +2451,18 @@ export function tryExternClassMethodOnAny(
   // runtime shape. noJsHost-gated (the `join` precedent below): the HOST lane
   // keeps its extern binding byte-identical — the import is satisfiable there.
   if (noJsHost(ctx) && STANDALONE_TA_SCALAR_HOFS.has(methodName)) return null;
+
+  // (#5194 step 3) The rest of the `%TypedArray%.prototype` surface reached on
+  // an `any` receiver. The first-match loop below binds whichever extern class
+  // declares the name first — a TypedArray — so `env::Uint8ClampedArray_keys` /
+  // `env::IDBKeyRange_includes` and friends are emitted at COMPILE time by an
+  // arm that never runs, and the whole standalone module then fails to
+  // instantiate (the runner reports `host_import_leak`, not a wrong value).
+  // Declining lets the ladder bottom out at the #2151 closed-method dispatcher,
+  // which resolves these by runtime shape. Same `noJsHost` gate and same
+  // rationale as the scalar-HOF decline above; the host lane keeps its
+  // byte-identical extern binding because the import IS satisfiable there.
+  if (noJsHost(ctx) && STANDALONE_TA_DISPATCHED_METHODS.has(methodName)) return null;
 
   // (#3309) Collection methods (`get`/`set`/`has`/`add`/`delete`/`clear`) on an
   // `any` receiver under standalone/wasi. The candidate pool below still

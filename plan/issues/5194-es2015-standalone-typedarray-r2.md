@@ -1086,3 +1086,118 @@ index-coercion helper and retire part of them.
   gap); 16 baseline "CEs" are load-induced compile timeouts — re-run alone.
   #5150 edits neighbouring functions in `dataview-native.ts` — reconcile at
   merge, never rebase. Local probes skip the standalone leak check (#5272).
+
+## 2026-09-02 resumed r2 implementation (Opus)
+
+Resumed from the 2026-09-01 suspension snapshot (`git am` of the two WIP
+patches, base `dc29e1f15`, rebuilt on `0f801557a`). Worktree
+`/home/user/js2/.claude/worktrees/agent-ad914157d74cd7f02`, branch
+`worktree-agent-ad914157d74cd7f02`. All measurements are in-process
+`npx tsx scripts/run-test262-paths.mts <list> --standalone` in this worktree.
+A `pass` from that runner already implies **zero host imports** — the runner
+calls `standaloneHostImportError` on every standalone result and reports a leak
+as `host_import_leak`, never as a pass (`tests/test262-runner.ts` L4944).
+
+### Numbers
+
+| scope | before (2026-09-01 HEAD) | after | target |
+|---|---|---|---|
+| Step 1 — cluster A (63) | 0 pass | **63 pass** | ≥ 55 ✓ |
+| Step 2 — cluster B (31) | 0 pass | **21 pass** (+1 load-timeout row that passes alone ⇒ 22) | ≥ 22 ✓ (marginal) |
+| Step 3 — clusters C1–C5 (61) | 0 pass | **4 pass** (C5 only) | ≥ 45 ✗ PARTIAL |
+| Step 4 — cluster D (16 of the 49) | 0 pass | **2 pass** | ≥ 30 ✗ PARTIAL |
+| whole `typedarray-head.txt` (300) | 0 pass / 271 fail / 28 CE | **84 pass / 180 fail / 36 CE** at the Step-1+2 commit; +6 more from the second commit measured on sub-lists (not a re-run of the head list) | — |
+| controls `ta-controls.txt` (21) | 21 | **21** | 21 ✓ |
+
+Of the 36 CEs, **24 are load-induced compile timeouts** (the box ran at load
+10–22 with five lanes; every one of them re-runs green with `--isolate`, spot-
+checked on `TypedArrayConstructors/prototype/indexOf/inherited.js`,
+`TypedArray/prototype/forEach/length.js` and `keys/invoked-as-method.js`) and
+**12 are the genuine out-of-scope CEs the plan already named** — 6
+`Reflect.set` (#2046) and 6 `Reflect.construct` (#3371). The QuickJS adapter
+artifact was present this session (`d4799bda84cfed0d`), so the 10 rows the
+handoff called locally unmeasurable **were measured**.
+
+### What landed
+
+Commit 1 — Step 1 complete, Step 2 partial (the resumed snapshot):
+per-kind `$parent` link, empty own-member CSV on concrete views + parent-brand
+retry in both readers, `constructor`/`BYTES_PER_ELEMENT` own data properties,
+`__getPrototypeOf` `$NativeProto → $parent` arm, the compile-time
+`Object.getPrototypeOf(<typed view>)` arm, `$__ta_ctor.prototype` own property;
+`%TypedArray%` own `name`/`length`/`prototype`/`@@species`/`from`/`of`,
+`@@toStringTag` getter body, `@@iterator → values` alias.
+
+Commit 2 — Step 2 rest (part), Step 3 (part), Step 4 (part):
+- `%TypedArray%` added to `SPECIES_OWNER_CTORS`, and the species-gOPD receiver
+  is now recovered through `isTypedArrayIntrinsicCtorExpr` (the harness's
+  `var TypedArray = Object.getPrototypeOf(Int8Array)` binding is not a global
+  identifier, so `resolveBuiltinReceiverName` could never name it).
+- `tryExternClassMethodOnAny` declines `sort`/`keys`/`values`/`entries`/
+  `includes`/`at`/`toLocaleString`/`subarray`/`slice` under `noJsHost`
+  (`STANDALONE_TA_DISPATCHED_METHODS`, local to `calls-closures.ts` so the
+  `calls.ts` god-file does not grow).
+- `compileArrayMethodCall` is declined when the receiver statically traces to
+  `%TypedArray%.prototype`, so the call reaches the closed dispatcher's
+  `$NativeProto` arm and the seeded companion closure raises the spec
+  TypeError — **cluster C5 0 → 4** (`keys`/`values`/`entries`/`sort`).
+- `hof-native.ts`: IsCallable(callbackfn) gate before the loop, and
+  `reduce`/`reduceRight` of an empty receiver with no initial value now throws
+  the §23.1.3.24 TypeError instead of returning `undefined` (the documented
+  boundary is retired — the #1839 index-shift justification does not hold,
+  because standalone resolves the throw to the in-module append-only
+  `__new_TypeError`). **Cluster D 0 → 2** (the two `empty-instance-with-no-
+  initialvalue-throws.js` rows).
+- Two-arm gate: the `≥ 1 argument` clause is lifted for
+  `at`/`includes`/`indexOf`/`lastIndexOf` (they model an absent argument) and
+  for the three arity-0 iterator factories; the boolean-result box now reaches
+  the ELSE arm as well as the THEN arm.
+
+### Leftovers — read this before continuing
+
+1. **The dyn-view two-arm in `array-methods.ts` does not serve `any`
+   receivers.** `call-receiver-method.ts` skips the whole array ladder when
+   `ctx.targetProfile.semanticProviders === "native-first"` and the receiver
+   type is `any` — which is exactly the shape every
+   `testWithTypedArrayConstructors(function (TA) { var sample = new TA([…]); … })`
+   row has. So `shouldWrapDynViewTwoArm` (and the C2/C3 edits made through it)
+   is **unreachable for clusters C1–C4**. The working precedent for `any`
+   receivers is the *other* two-arm — the `taFillIdx`/`taSetIdx` block in
+   `call-receiver-method.ts` (~L4034) that serves `set`/`fill`/`copyWithin`/
+   `reverse` through the 5-slot `__ta_dyn_<m>(recv, v1, v2, v3, argc)` ABI.
+   **Steps 3.2–3.5 must be wired there, not in `array-methods.ts`.** This is
+   the single reason cluster C came in at 4/61 instead of ≥45, and it was not
+   visible from the plan's file:function citations.
+2. Cluster C3's 22 rows all answer the NUMBER `0` (`includes(42)` → «0»,
+   `indexOf()` → «0»), both before and after this session — so the closed
+   dispatcher's `VEC_SEARCH_METHODS` arm is not the producer. Find what
+   actually answers `0` before writing the helper. (Excluding
+   `$__ta_dyn_view` from that arm, as plan step 3.4b says, was tried and
+   reverted: it changed nothing measurable, and `$__ta_dyn_view` IS a
+   `$__vec_base` subtype whose `__extern_length`/`__extern_get_idx` reads go
+   through the correct dyn-view MOP arms, so the exclusion removes a path that
+   is not obviously wrong.)
+3. The IsCallable gate in `ensureNativeArrayHof` is in place but the
+   `*-not-callable-throws` rows still do not throw. Probed directly
+   (`.tmp/es2015/probes/cbguard{,2}.mts`): a standalone module doing
+   `sample.find(false)` / `sample.every()` / `sample.reduce()` on a
+   `new TA([42,43,44])` dyn view emits **zero host imports**, contains
+   `__hof_find`, `__typeof_function`, `__call_m_find` and `__new_TypeError` —
+   and still catches nothing (`hits === 0`). So the guard is either compiled
+   out (`ctx.funcMap.get("__typeof_function")` still undefined at the reserve
+   -time moment `ensureNativeArrayHof` runs, even though the native is minted
+   later) or the call never reaches `__hof_find` at runtime. Resolve THAT
+   before writing more callback-protocol code; do NOT reach for
+   `ensureLateImport` inside that helper (#1839).
+4. Cluster B's residual 10: 4 rows need `Function.prototype.call` in
+   standalone (out of scope for #5194 — `getter.call(value)`), 2 need the
+   `length`/`byteLength` getters to be invoked by a DYNAMIC read of
+   `TypedArrayPrototype.length` (the syntactic `<Ctor>.prototype.<getter>` arm
+   already invokes; the var-routed read does not), 2 need
+   `isConstructor(TypedArray.from) === false`, 1 needs `%TypedArray%()` itself
+   to throw, and 1 is `Symbol.toStringTag/invoked-as-func` (the gOPD `.get`
+   symbol-key synthesis of plan step 2.3).
+5. Steps 5, 6 and 7 (clusters F+G, H+I, J) are **not started**.
+6. Measurement cost on a shared box is the binding constraint: the 300-row
+   head list took **48 minutes** in-process at load 10–22. Budget for that, or
+   measure per-cluster only.
