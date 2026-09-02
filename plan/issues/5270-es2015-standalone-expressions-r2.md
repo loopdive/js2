@@ -99,6 +99,10 @@ func-budget-allow:
   # `collectGrowableObjectLiterals`.
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  # 2026-09-02 (Opus implementation, step 10 cluster N): the arrow-`prototype`
+  # route is one predicate call plus its comment inside the static-key fold —
+  # it has to sit beside the other route flags it composes with.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # #5270 — ES2015 standalone: expressions, r2 residual pass
@@ -978,3 +982,56 @@ answers `x[object Object]` in BOTH lanes on HEAD — string-concatenation `+`
 does not run OrdinaryToPrimitive on its object operand. It is not part of any
 row in this issue's 89, and it is a different seam from the `@@toPrimitive`
 GetMethod step 8.1 fixes.
+
+### Step 10 — small clusters (F + G + N, 10 rows): 0 → 2 pass
+
+Only cluster **N** landed, 2 of its 3 rows. F and G were measured and are
+recorded below with what actually blocks them.
+
+**N (3 rows): 0 → 2.** Flipped `arrow-function/prototype-rules` and
+`arrow-function/ArrowFunction_restricted-properties`.
+
+- `"prototype" in (() => {})` folded TRUE. `tsTypeHasProperty`
+  (`binary-ops-in.ts`) reads `checker.getApparentType(…).getProperty(key)`, and
+  TypeScript's `Function` interface declares `prototype: any` for EVERY
+  callable — including the ones that have no such own property. An arrow is
+  never a constructor, so a new `receiverIsArrowFunctionValue` route (the
+  literal form, or an identifier whose initializer is one) answers `false`
+  syntactically and also suppresses the `__extern_has` re-ask, which would
+  otherwise reintroduce the wrong answer for an externref-carried arrow.
+- `arrowFn.caller` / `arrowFn.arguments` must throw %ThrowTypeError%
+  (§10.2.4 AddRestrictedFunctionProperties applies to every non-legacy
+  function). `tryCompileFunctionPoisonRead` poisoned only STRICT source
+  functions, bound functions and the `Function("'use strict';")` product; a new
+  `hasRestrictedProperties` predicate adds arrows. #5195 T owns the
+  method/generator/class twin and should reuse this predicate rather than
+  adding a second one.
+
+Not done: `arrow-function/lexical-this`. `function F() { this.af = _ => this; }`
+then `new F().af()` traps with "dereferencing a null pointer" — the
+constructor's `this.af = <arrow>` write never lands on the fnctor instance, so
+the read is null before `this` is ever consulted. That is the fnctor
+instance-write path, not the arrow's lexical-`this` capture the cluster name
+suggests.
+
+**G (5 rows): NOT done — the descriptor is only half of it.**
+Probe `q08-class-name.js` measures HEAD exactly: `xCls = class x {}` and
+`cls = class {}` already answer the right `.name` VALUE ("x" and "cls") through
+the static fold, and the descriptor flags are already right
+(`writable:false, enumerable:false, configurable:true`). Two things are wrong:
+(a) `Object.getOwnPropertyDescriptor(cls, "name").value` answers the SYNTHETIC
+name `__anonClass_cls_1`, because `collectClassDeclaration`
+(`class-bodies.ts`) sets `esName = decl.name ? decl.name.text : (syntheticName ?? "")`
+and `registerClassExpression`'s NamedEvaluation `nameHint` is never threaded
+into it; and (b) every row in this cluster uses `verifyProperty`, whose
+`configurable: true` check does `delete obj.name` and then re-checks
+`hasOwnProperty` — and that delete answers `true` while leaving the property
+present, because the class-object `name` is the #4770 synthetic MOP VIEW, not a
+real own property (the class-object own-property surface is #5195 B). Fixing
+(a) alone flips no row. Left untouched rather than shipping a change with no
+measured row movement.
+
+**F (2 rows): not attempted** — the budget went to the clusters above. The
+plan's `p56` note (a script-level `var eval` declaration drags the compile to
+~17.6 s, which is over the runner's 15 s budget) still needs measuring before
+the rows can be judged cheap.

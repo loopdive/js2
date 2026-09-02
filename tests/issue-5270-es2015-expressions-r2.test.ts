@@ -368,3 +368,50 @@ describe("#5270 step 8 — ToPrimitive hint and bare expression statements (clus
     expect(await runHostLines(body)).toEqual(expected);
   });
 });
+
+describe("#5270 step 10 — arrow-function surface (cluster N)", () => {
+  // `"prototype" in (() => {})` folded TRUE: `tsTypeHasProperty` reads the
+  // checker's APPARENT type, and TypeScript's `Function` interface declares
+  // `prototype: any` for every callable. An arrow is never a constructor.
+  it('answers `"prototype" in <arrow>` false', async () => {
+    const lines = await runStandaloneLines(`
+      var af = () => {};
+      LOG("literal=" + ("prototype" in (() => {})) +
+          " binding=" + ("prototype" in af) +
+          " typeofArrow=" + (typeof (() => {})));
+    `);
+    expect(lines).toEqual(["literal=false binding=false typeofArrow=function"]);
+  });
+
+  // §10.2.4 AddRestrictedFunctionProperties applies to every non-legacy
+  // function, arrows included — reading `caller` / `arguments` must throw.
+  it("poisons caller/arguments on an arrow", async () => {
+    const lines = await runStandaloneLines(`
+      var arrowFn = () => {};
+      var threw = 0;
+      try { arrowFn.caller; } catch (e) { if (e instanceof TypeError) threw++; }
+      try { arrowFn.arguments; } catch (e) { if (e instanceof TypeError) threw++; }
+      LOG("threw=" + threw +
+          " ownCaller=" + arrowFn.hasOwnProperty("caller") +
+          " ownArguments=" + arrowFn.hasOwnProperty("arguments"));
+    `);
+    expect(lines).toEqual(["threw=2 ownCaller=false ownArguments=false"]);
+  });
+
+  // Controls: an ORDINARY sloppy function keeps `prototype` and its legacy
+  // (non-throwing) `caller` read, and `in` on ordinary receivers is unchanged.
+  it("leaves ordinary functions and ordinary `in` unchanged", async () => {
+    const body = `
+      function ordinary() {}
+      var o = { a: 1 };
+      LOG("fnProto=" + ("prototype" in ordinary) +
+          " protoIsObj=" + (typeof ordinary.prototype) +
+          " inOwn=" + ("a" in o) +
+          " inMissing=" + ("b" in o) +
+          " inInherited=" + ("toString" in o));
+    `;
+    const expected = ["fnProto=true protoIsObj=object inOwn=true inMissing=false inInherited=true"];
+    expect(await runStandaloneLines(body)).toEqual(expected);
+    expect(await runHostLines(body)).toEqual(expected);
+  });
+});

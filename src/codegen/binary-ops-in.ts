@@ -69,6 +69,29 @@ function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): strin
     .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
 }
 
+/**
+ * (#5270 step 10, cluster N) True when the `in` receiver is provably an ARROW
+ * FUNCTION value — the literal form, or an identifier whose (only) initializer
+ * is one. Arrows are never constructors, so they have no `prototype` own
+ * property; TypeScript's `Function` interface declares `prototype: any` for
+ * every callable, which is why the checker-type fold answered `true`.
+ */
+function receiverIsArrowFunctionValue(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  let expr: ts.Expression = receiver;
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isTypeAssertionExpression(expr)
+  ) {
+    expr = expr.expression;
+  }
+  if (ts.isArrowFunction(expr)) return true;
+  if (!ts.isIdentifier(expr)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(expr);
+  return initializer !== undefined && ts.isArrowFunction(initializer);
+}
+
 /** Return true for an approved standalone fnctor instance struct. */
 function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
   if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
@@ -472,10 +495,20 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       !ctx.wasi &&
       ts.isIdentifier(expr.right) &&
       identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
-    const has = terminalAwareObjectPrototypeRoute
+    // (#5270 step 10, cluster N) `"prototype" in (() => {})` folded TRUE
+    // because `tsTypeHasProperty` reads the checker's APPARENT type, and
+    // TypeScript's `Function` interface declares `prototype: any` for every
+    // callable — including the ones that have no `prototype` own property at
+    // all. An arrow is never a constructor (§10.2.4 / §15.3), so it carries no
+    // `prototype`; answering from the syntactic form is exact where the type is
+    // structurally wrong.
+    const arrowPrototypeRoute = staticKey === "prototype" && receiverIsArrowFunctionValue(ctx, expr.right);
+    const has = arrowPrototypeRoute
       ? false
-      : inheritsFromObjectPrototype ||
-        (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
+      : terminalAwareObjectPrototypeRoute
+        ? false
+        : inheritsFromObjectPrototype ||
+          (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -513,6 +546,9 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
     if (
       !has &&
+      // (#5270 step 10) An arrow's missing `prototype` is a syntactic fact, so
+      // never re-ask `__extern_has` about it.
+      !arrowPrototypeRoute &&
       (rightWasm.kind === "externref" ||
         rightWasm.kind === "anyref" ||
         vecNamedKeyRoute ||

@@ -39,6 +39,25 @@ function poisonMember(
   };
 }
 
+/**
+ * (#5270 step 10, cluster N) True when reading or writing `caller` /
+ * `arguments` on this function value must throw %ThrowTypeError%.
+ *
+ * §10.2.4 AddRestrictedFunctionProperties installs the poison accessors on
+ * every function EXCEPT the legacy sloppy-mode ordinary function, so an ARROW
+ * is restricted regardless of the surrounding strictness — arrows have no
+ * `arguments` binding and no `caller` at all. The base predicate only knew
+ * about strict SOURCE functions, so `(() => {}).caller` answered `undefined`
+ * where `ArrowFunction_restricted-properties` requires a TypeError.
+ *
+ * Methods, generators and class bodies are the same family; #5195 T owns those
+ * and should share this predicate rather than adding a second one.
+ */
+function hasRestrictedProperties(ctx: CodegenContext, sourceFunction: ts.FunctionLikeDeclaration): boolean {
+  if (ts.isArrowFunction(sourceFunction)) return true;
+  return isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments);
+}
+
 /** Compile a statically-proven poison get, or decline with `undefined`. */
 export function tryCompileFunctionPoisonRead(
   ctx: CodegenContext,
@@ -57,7 +76,7 @@ export function tryCompileFunctionPoisonRead(
   // (#4221) A bound function poisons `caller`/`arguments` unconditionally
   // (§15.3.4.5 steps 20-21) — the same terminal throw as the strict case.
   const strictFunction =
-    (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
+    (sourceFunction !== undefined && hasRestrictedProperties(ctx, sourceFunction)) ||
     isBoundFunctionValue(ctx, member.receiver) ||
     // (#4464) `var foo = Function("'use strict';")` — a strict function with no
     // source declaration for `sourceFunctionForValue` to find.
@@ -112,7 +131,7 @@ export function tryCompileStrictFunctionPoisonAssignment(
   if (!member || (member.name !== "caller" && member.name !== "arguments")) return undefined;
   const sourceFunction = sourceFunctionForValue(ctx, member.receiver);
   const poisoned =
-    (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
+    (sourceFunction !== undefined && hasRestrictedProperties(ctx, sourceFunction)) ||
     // (#4221) `boundFn.arguments = 12` hits the same [[ThrowTypeError]] setter.
     isBoundFunctionValue(ctx, member.receiver) ||
     // (#4464) …and so does the `Function("'use strict';")` product.
