@@ -12739,6 +12739,126 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-02T14:25:17.131Z",
+      "sourceRevision": "3bcad2e9b2b229f91d2836c3f98229b67ddbfc4e",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHost": {
+            "dynamic": 0.10880755474061614
+          },
+          "standalone": {}
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0012350245247306818
+          },
+          "standalone": {
+            "static": 880.6097144966424,
+            "dynamic": 0.2046197080239617
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.06671562244162436
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.004641937403131107
+          },
+          "standalone": {
+            "static": 17.271274837426436,
+            "dynamic": 0.14474568813730845
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.002338592456885576
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.001595289520406733
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-02T16:25:02.291Z",
+      "sourceRevision": "77ca8fbaaeb8cb981dfe7a344322d5ba8f34a745",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.007824817722095949
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-02T17:42:19.439Z",
+      "sourceRevision": "82b255791f0b09d319186da1135456f8830a7c19",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHost": {
+            "dynamic": 0.10566888473697408
+          },
+          "standalone": {}
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0021968021182338327
+          },
+          "standalone": {
+            "static": 532.2595177976968,
+            "dynamic": 0.21672153145773987
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.05272036056344553
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.0026414172676851332
+          },
+          "standalone": {
+            "static": 15.223311846294843,
+            "dynamic": 0.15727197872881415
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.006374616618315646
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.0020553017386425202
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

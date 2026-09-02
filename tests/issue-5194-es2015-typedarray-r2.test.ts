@@ -229,6 +229,45 @@ const SUBCLASS_FOLD_RESIDUAL_SOURCE = `
   }
 `;
 
+/**
+ * Post-#5479 pin. The merge group attributed one HOST-lane regression to this
+ * wave — `language/statements/class/subclass/class-definition-null-proto-super.js`
+ * pass -> fail with "Maximum call stack size exceeded". It did not reproduce:
+ * the row passes isolated and in-process on this tree, the whole 109-row
+ * `class/subclass/**` neighbourhood has an identical non-pass set against the
+ * pre-#5479 base, and the row's compiled module is byte-identical on both
+ * (wasm_sha `aa0313d0d7f6`). See the issue file for the attribution analysis.
+ *
+ * The shape is pinned here anyway, on the HOST lane, because it is the one
+ * shape that would break if any prototype-graph edge this wave added ever
+ * failed to terminate on a null `[[Prototype]]`: `class C extends null` has no
+ * super constructor, so `super()` must raise a TypeError rather than walk.
+ */
+const NULL_PROTO_SUPER_SOURCE = `
+  let unreachable = 0;
+  let reachable = 0;
+  class C extends (null as any) {
+    constructor() {
+      reachable += 1;
+      super();
+      unreachable += 1;
+    }
+  }
+  export function test(): number {
+    let threw = 0;
+    try {
+      new C();
+    } catch (e) {
+      threw = e instanceof TypeError ? 1 : 2;
+    }
+    // 1 threw TypeError, reachable 1, unreachable 0.
+    if (threw !== 1) return 10 + threw;
+    if (reachable !== 1) return 20 + reachable;
+    if (unreachable !== 0) return 30 + unreachable;
+    return 0;
+  }
+`;
+
 const CONTROL_CASES = [
   { name: "per-kind prototype graph identity and inherited members", source: PROTO_GRAPH_SOURCE },
   { name: "prototype own-property descriptors", source: PROTO_DESCRIPTOR_SOURCE },
@@ -263,6 +302,7 @@ describe("#5194 ES2015 standalone TypedArray r2 — prototype graph + intrinsic 
     { name: "review F1 — user class named like a view", source: USER_CLASS_SHADOW_SOURCE },
     { name: "review F2 — user class prototype.constructor", source: USER_CLASS_CONSTRUCTOR_SOURCE },
     { name: "review F3 — subclass instance prototype", source: SUBCLASS_PROTOTYPE_SOURCE },
+    { name: "post-#5479 pin — class extends null: super() throws, no walk", source: NULL_PROTO_SUPER_SOURCE },
   ] as const) {
     it(`host control: ${name}`, { timeout: CONTROL_TIMEOUT }, async () => {
       expect(await runControl(source, "host")).toBe(0);

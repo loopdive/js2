@@ -21,6 +21,7 @@ import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { dynamicClassKeyGlobalKey, dynamicClassMemberName, isDynamicClassMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
@@ -33,7 +34,7 @@ import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
-import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import type { ClassDynamicMember, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import {
   buildDestructureNullThrow,
   destructureParamArray,
@@ -692,6 +693,60 @@ function emitSetSubclassUserBrand(
     ],
     else: [],
   });
+}
+
+/**
+ * (#5195 Step 1) The kind tag {@link classDynamicMemberKind} answers for the
+ * member kinds that carry an installable value.
+ */
+function classDynamicMemberKind(member: ts.ClassElement): ClassDynamicMember["kind"] | undefined {
+  if (ts.isMethodDeclaration(member)) return "method";
+  if (ts.isGetAccessorDeclaration(member)) return "get";
+  if (ts.isSetAccessorDeclaration(member)) return "set";
+  return undefined;
+}
+
+/**
+ * (#5195 Step 1) The name to register a class METHOD or ACCESSOR under.
+ *
+ * Identical to {@link resolveClassMemberName} except that a ComputedPropertyName
+ * which does not fold yields the synthetic `__cmdyn$<ordinal>` name instead of
+ * `undefined`, and the member is recorded in `ctx.classDynamicMembers` so the
+ * key-evaluation and prototype-install lanes can find it. Every caller is a
+ * collection or emit loop that previously said `continue` on `undefined`; they
+ * keep that behaviour for the shapes this still declines (private names, and
+ * every non-standalone lane).
+ *
+ * Idempotent: the collection and emit passes both call it for the same member.
+ */
+export function resolveInstallableClassMemberName(
+  ctx: CodegenContext,
+  className: string,
+  decl: ts.ClassLikeDeclaration,
+  member: ts.ClassElement,
+): string | undefined {
+  if (!member.name) return undefined;
+  const folded = resolveClassMemberName(ctx, member.name);
+  if (folded !== undefined) return folded;
+  // Only an unfoldable COMPUTED key gets a synthetic name. A private name is
+  // already mangled by `resolveClassMemberName`; anything else that answers
+  // `undefined` is a shape this lane does not model.
+  if (!ctx.standalone || !ts.isComputedPropertyName(member.name)) return undefined;
+  const kind = classDynamicMemberKind(member);
+  if (kind === undefined) return undefined;
+  const ordinal = decl.members.indexOf(member);
+  if (ordinal < 0) return undefined;
+  const syntheticName = dynamicClassMemberName(ordinal);
+  let entries = ctx.classDynamicMembers.get(className);
+  if (entries === undefined) {
+    entries = [];
+    ctx.classDynamicMembers.set(className, entries);
+  }
+  if (!entries.some((e) => e.ordinal === ordinal)) {
+    entries.push({ ordinal, member, kind, isStatic: hasStaticModifier(member), syntheticName });
+    entries.sort((a, b) => a.ordinal - b.ordinal);
+  }
+  return syntheticName;
 }
 
 export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
@@ -1450,7 +1505,7 @@ export function collectClassDeclaration(
   // first in source order.
   for (const member of decl.members) {
     if (!ts.isMethodDeclaration(member) || !member.name || !member.body) continue;
-    const methodName = resolveClassMemberName(ctx, member.name);
+    const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
     if (methodName === undefined) continue;
     const fullName = `${className}_${methodName}`;
     if (hasStaticModifier(member)) ctx.staticMethodSet.add(fullName);
@@ -1458,7 +1513,7 @@ export function collectClassDeclaration(
   }
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name) {
-      const methodName = resolveClassMemberName(ctx, member.name);
+      const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (methodName === undefined) continue; // dynamic computed name — skip
       ownMethodNames.add(methodName);
 
@@ -1629,7 +1684,7 @@ export function collectClassDeclaration(
     }
 
     if (ts.isGetAccessorDeclaration(member) && member.name) {
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const accessorKey = `${className}_${propName}`;
       ctx.classAccessorSet.add(accessorKey);
@@ -1672,7 +1727,7 @@ export function collectClassDeclaration(
     }
 
     if (ts.isSetAccessorDeclaration(member) && member.name) {
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const accessorKey = `${className}_${propName}`;
       ctx.classAccessorSet.add(accessorKey);
@@ -1736,6 +1791,20 @@ export function collectClassDeclaration(
           const suffix = legacyKey.substring(ancestor.length + 1);
           // Skip constructor-related entries
           if (suffix === "new" || suffix.startsWith("new_") || suffix === "init") continue;
+          // (#5195 F1) A parent member registered under the synthetic
+          // `__cmdyn$<ordinal>` name (its computed key is only known at runtime)
+          // must NOT be aliased into the child. The alias is a PROGRAM-ABI
+          // claim — `program-abi-class-callable-planning.ts` resolves it back to
+          // the canonical source member and asks `structuralClassMemberName` for
+          // its spec key, which is `undefined` for an unfoldable computed name;
+          // the planner then throws `no complete exact canonical class-member
+          // authority` and the whole module fails to compile. The ordinal is
+          // also the PARENT's, so the name is meaningless in the child's frame.
+          // Inheritance of these members is a runtime `[[Prototype]]` walk
+          // instead: `emitStandaloneClassProtoObject` links the child prototype
+          // `$Object` to the parent's, and `__class_proto_lookup` covers every
+          // class in such a hierarchy.
+          if (isDynamicClassMemberName(suffix.replace(/^(get|set)_/, ""))) continue;
           // Check if this is a getter/setter (get_X or set_X)
           const getMatch = suffix.match(/^get_(.+)$/);
           const setMatch = suffix.match(/^set_(.+)$/);
@@ -1786,7 +1855,12 @@ export function collectClassDeclaration(
         ts.isSetAccessorDeclaration(member)
       ) {
         if (!member.name) continue;
-        const n = resolveClassMemberName(ctx, member.name);
+        // (#5195 Step 1) A member whose computed key is only known at runtime
+        // is carried under its synthetic name here so the prototype-`$Object`
+        // install walks it in declaration order; the install substitutes the
+        // runtime key. The host `__register_prototype` CSV never sees one —
+        // synthetic names are minted in the standalone lane only.
+        const n = resolveInstallableClassMemberName(ctx, className, decl, member);
         if (n === undefined) continue;
         if (seen.has(n)) continue;
         seen.add(n);
@@ -1794,6 +1868,43 @@ export function collectClassDeclaration(
       }
     }
     ctx.classMethodNames.set(className, protoMethodNames);
+  }
+
+  // (#5195 Step 1) One externref module global per runtime-keyed member, to
+  // carry the ToPropertyKey'd key from ClassDefinitionEvaluation (where the key
+  // expression must run, exactly once, in source order) to the prototype
+  // `$Object` install. Registered after every member loop above so the dynamic
+  // member ledger is complete; byte-inert for a class with no such member.
+  for (const dyn of ctx.classDynamicMembers.get(className) ?? []) {
+    const mapKey = dynamicClassKeyGlobalKey(className, dyn.ordinal);
+    if (ctx.classDynamicKeyGlobals.has(mapKey)) continue;
+    const keyGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__cmkey_${className}_${dyn.ordinal}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classDynamicKeyGlobals.set(mapKey, keyGlobalIdx);
+  }
+
+  // (#5195 Step 2) The static sidecar `$Object`, for a class with a static
+  // member whose key is only known at runtime. Registered here so the global
+  // index is stable before any body bakes a read of it; the object itself is
+  // built lazily at ClassDefinitionEvaluation (`class-static-sidecar.ts`).
+  if (
+    ctx.standalone &&
+    !ctx.classStaticSidecarGlobals.has(className) &&
+    (ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic)
+  ) {
+    const sidecarGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__static_${className}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classStaticSidecarGlobals.set(className, sidecarGlobalIdx);
   }
 
   // (#1395) Collect own static method names — analog of the prototype loop
@@ -2847,7 +2958,7 @@ function compileClassBodiesInner(
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name && member.body) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
-      const methodName = resolveClassMemberName(ctx, member.name);
+      const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (methodName === undefined) continue; // dynamic computed name — skip
       const fullName = `${className}_${methodName}`;
       const isStatic = hasStaticModifier(member);
@@ -3287,18 +3398,34 @@ function compileClassBodiesInner(
     }
   }
 
-  // Compile getter/setter accessor bodies
-  // Track which accessors have been compiled to avoid overwriting when
-  // both static and instance accessors share the same computed property name.
-  const compiledAccessors = new Set<string>();
+  // Compile getter/setter accessor bodies.
+  //
+  // (#5195 Step 1.6) Records the KIND each accessor slot was compiled for, not
+  // merely that it was compiled. Two rules meet on this one funcMap key:
+  //
+  //  - a static and an instance accessor of the same name share it today
+  //    (#5195 cluster B item 5), and the instance one must keep it — that is
+  //    the collision this set was introduced for;
+  //  - two accessors of the SAME kind and key are a legal redefinition, and
+  //    §15.7.14 installs the elements in source order, so the LAST one wins
+  //    (`get b(){throw}` then `get ['b'](){return 'B'}` must answer 'B').
+  //    Skipping the second kept the FIRST body, which is the opposite.
+  //
+  // Recompiling overwrites `func.body`/`func.locals` in the same slot, so the
+  // earlier body simply never ships.
+  const compiledAccessors = new Map<string, "static" | "instance">();
+  const accessorKindOf = (member: ts.ClassElement): "static" | "instance" =>
+    hasStaticModifier(member) ? "static" : "instance";
   for (const member of decl.members) {
     if (ts.isGetAccessorDeclaration(member) && member.name) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const getterName = `${className}_get_${propName}`;
-      if (compiledAccessors.has(getterName)) continue; // already compiled
-      compiledAccessors.add(getterName);
+      const getterKind = accessorKindOf(member);
+      const priorGetterKind = compiledAccessors.get(getterName);
+      if (priorGetterKind !== undefined && priorGetterKind !== getterKind) continue; // other kind owns the slot
+      compiledAccessors.set(getterName, getterKind);
       const getterLocalIdx = funcByName.get(classMemberFuncKey(ctx, getterName)); // (#1983)
       if (getterLocalIdx === undefined) continue;
 
@@ -3409,11 +3536,13 @@ function compileClassBodiesInner(
 
     if (ts.isSetAccessorDeclaration(member) && member.name) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const setterName = `${className}_set_${propName}`;
-      if (compiledAccessors.has(setterName)) continue; // already compiled
-      compiledAccessors.add(setterName);
+      const setterKind = accessorKindOf(member);
+      const priorSetterKind = compiledAccessors.get(setterName);
+      if (priorSetterKind !== undefined && priorSetterKind !== setterKind) continue; // other kind owns the slot
+      compiledAccessors.set(setterName, setterKind);
       const setterLocalIdx = funcByName.get(classMemberFuncKey(ctx, setterName)); // (#1983)
       if (setterLocalIdx === undefined) continue;
 
