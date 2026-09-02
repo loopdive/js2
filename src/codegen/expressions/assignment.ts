@@ -87,6 +87,8 @@ import {
 } from "../shared.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { compileProtoArg } from "./calls.js";
+import { ensureObjectProtoProtoSetNative } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
+import { hasExplicitNullObjectPrototype } from "../object-proto-name-in.js"; // (#5268 review F4)
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
 import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
@@ -4245,17 +4247,46 @@ function compilePropertyAssignment(
     // evaluate the RHS, and leave the assignment value on the stack without
     // invoking the setter.  This is the same silent-refusal posture used by
     // `__object_setPrototypeOf` for standalone non-extensible objects.
-    if (
-      ctx.standalone &&
-      ts.isIdentifier(target.expression) &&
-      ctx.nonExtensibleVars.has(integrityVarKey(ctx, target.expression))
-    ) {
-      const objResult = compileExpression(ctx, fctx, target.expression, externRef);
-      if (!objResult) return null;
-      if (objResult.kind !== "externref") coerceType(ctx, fctx, objResult, externRef);
-      fctx.body.push({ op: "drop" });
-      compileProtoArg(ctx, fctx, value);
-      return externRef;
+    // (#5268 step 1) …but standalone now has the §B.2.2.1 setter native, whose
+    // step 4/5 asks the BOOLEAN `[[SetPrototypeOf]]` predicate first and throws
+    // the TypeError the silent writer swallows. It keeps the #4648 posture for
+    // the closed-shape carrier that motivated the arm above — a struct that is
+    // not a `$Object` fails the native's step-3 "Type(O) is Object" test and
+    // returns undefined without writing — while a real `$Object` marked
+    // non-extensible now throws, which is what §B.2.2.1 step 5 requires.
+    //
+    // (#5268 review F4) …and ONLY when the receiver actually INHERITS that
+    // accessor. `o.__proto__ = v` is the §B.2.2.1 setter because `o`'s
+    // prototype chain reaches `%Object.prototype%`; on a null-prototype
+    // receiver there is no accessor to invoke and the assignment is an
+    // ORDINARY own-property write, which in sloppy mode fails silently on a
+    // non-extensible object. Routing it to the setter native made
+    // `Object.create(null)` + `preventExtensions` throw a TypeError where base
+    // (and a sloppy-mode host) silently ignore it. `hasExplicitNullObjectPrototype`
+    // is the existing proof for the two shapes that can be proven —
+    // `Object.create(null)` and a `{__proto__: null}` literal, through one
+    // variable hop; every unprovable receiver keeps the setter route, which is
+    // the correct answer for an ordinary object.
+    //
+    // Still NOT modelled on either tree (measured, both answer `""`): the
+    // own `__proto__` DATA property such a write creates on an extensible
+    // null-prototype object — node reports `getOwnPropertyNames` `["__proto__"]`.
+    // That is a pre-existing gap in the ordinary write path, unchanged here.
+    const receiverHasNullProto = ctx.standalone && hasExplicitNullObjectPrototype(ctx, target.expression);
+    const protoSetIdx = ctx.standalone && !receiverHasNullProto ? ensureObjectProtoProtoSetNative(ctx) : -1;
+    if (protoSetIdx < 0) {
+      if (
+        ctx.standalone &&
+        ts.isIdentifier(target.expression) &&
+        ctx.nonExtensibleVars.has(integrityVarKey(ctx, target.expression))
+      ) {
+        const objResult = compileExpression(ctx, fctx, target.expression, externRef);
+        if (!objResult) return null;
+        if (objResult.kind !== "externref") coerceType(ctx, fctx, objResult, externRef);
+        fctx.body.push({ op: "drop" });
+        compileProtoArg(ctx, fctx, value);
+        return externRef;
+      }
     }
 
     // obj (externref)
@@ -4279,11 +4310,14 @@ function compilePropertyAssignment(
     const tmpVal = allocTempLocal(fctx, externRef);
     fctx.body.push({ op: "local.tee", index: tmpVal });
     const helperName = ctx.standalone ? "__object_setPrototypeOf" : "__host_set_struct_proto";
-    const idx = ensureLateImport(ctx, helperName, [externRef, externRef], [externRef]);
+    const idx =
+      protoSetIdx >= 0
+        ? (ctx.funcMap.get("__object_proto_set") ?? protoSetIdx)
+        : ensureLateImport(ctx, helperName, [externRef, externRef], [externRef]);
     flushLateImportShifts(ctx, fctx);
     if (idx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: idx });
-      fctx.body.push({ op: "drop" }); // native returns obj; assignment yields the RHS
+      fctx.body.push({ op: "drop" }); // native returns obj/undefined; assignment yields the RHS
     } else {
       // Helper unavailable — discard [obj, proto] left on the stack.
       fctx.body.push({ op: "drop" }); // proto
