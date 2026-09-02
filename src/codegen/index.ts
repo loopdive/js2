@@ -6294,10 +6294,6 @@ export function generateModule(
     unshiftNativeProtoToPrimitiveArm(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructEnumerationArms(ctx); // (#3920) Object.keys / for…in
-    // (#5195 Step 1.7) BEFORE the closed-struct field arms so those are
-    // unshifted in front of it: a declared own field answers without paying for
-    // the prototype consult's own-property guard.
-    fillClassProtoLookupArm(ctx);
     fillClosedStructExternGetArms(ctx);
     // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
     // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
@@ -6496,6 +6492,17 @@ export function generateModule(
     // funcs only (no import shifts). No-op unless standalone AND the
     // scanForDynamicProto prescan marked a class hierarchy — byte-identical
     // otherwise.
+    // (#5195 Step 1.7 / Step 2) Mint `__class_proto_lookup` and prepend its
+    // delegating arms into `__extern_get` / `__extern_get_idx`. Runs HERE, with
+    // the other late prependers, for two reasons: `fillExternGetIdxVecArms`
+    // locates its splice point by `__extern_get_idx`'s 3-instruction preamble
+    // shape, so prepending before it would silently drop every typed-vec arm;
+    // and #802's dynamic-proto arm must keep the front slot of `__extern_get`,
+    // because a class whose instance prototype was mutated at runtime has to
+    // answer through the mutated link, not through this pass's compile-time
+    // prototype singleton. No-op unless the module has a class with a
+    // runtime-keyed member.
+    fillClassProtoLookupArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -10887,8 +10894,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("unshift-native-proto-to-primitive-arm", () => unshiftNativeProtoToPrimitiveArm(ctx));
     profilePhase("fill-closed-struct-own-property-names", () => fillClosedStructOwnPropertyNamesArms(ctx));
     profilePhase("fill-closed-struct-enumeration", () => fillClosedStructEnumerationArms(ctx)); // (#3920) Object.keys / for…in
-    // (#5195 Step 1.7) BEFORE the closed-struct field arms — see the twin site.
-    profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     profilePhase("fill-closed-struct-extern-get", () => fillClosedStructExternGetArms(ctx));
     // (#4194/#4232 reconciliation) Declared-field WRITE-through on `__extern_set`
     // is #4232's fill (closed-struct-extern-set.ts — presence bits, cold tail,
@@ -11010,6 +11015,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // layouts/prototype globals exist. The runtime-eval callable carrier is the
     // last __extern_get fill so its owner-module delegation keeps front
     // precedence over every graph-local receiver arm.
+    // (#5195 Step 1.7 / Step 2) Same position and the same two reasons as the
+    // twin site above: after `fillExternGetIdxVecArms`' preamble-shape probe,
+    // before #802's dynamic-proto arm takes the front slot of `__extern_get`.
+    profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));

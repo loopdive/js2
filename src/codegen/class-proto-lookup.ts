@@ -162,9 +162,10 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
   ctx.funcMap.set(LOOKUP_NAME, lookupIdx);
   pushDefinedFunc(ctx, lookupIdx, { name: LOOKUP_NAME, typeIdx, locals: [], body, exported: false });
 
-  // `__extern_get(externref obj, externref key)` — two params, so the first
-  // appended local sits at 2 + locals.length. Locals are APPENDED, never
-  // renumbered, so every previously-baked index in this body stays valid.
+  // Both helpers take two params, so the first appended local sits at
+  // 2 + locals.length. Locals are APPENDED, never renumbered, so every
+  // previously-baked index in either body stays valid.
+  //
   // (#5195 Step 2) `C[1]` / `new C()[2]` lower to `__extern_get_idx(recv, f64)`,
   // not to `__extern_get` — and that native's `$Object` arm (which delegates to
   // `__extern_get` under the canonical decimal key) is `ref.test $Object`-gated,
