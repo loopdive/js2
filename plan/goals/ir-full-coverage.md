@@ -107,7 +107,7 @@ milestone. The retirement now follows #3518's dependency spine:
    `<module-init>` accounts for 17 of the 19 `body-shape-rejected` units and 19
    of 33 single-host rejections overall. `check:ir-only` is green partly because
    3 of its 5 module-init units are non-executable. Full measurement and the
-   correction that produced it: `plan/issues/3518-...md`.
+   correction that produced it: `plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`.
 11. **R10 — subtraction:** re-run #3090 and delete the proven-unreachable
     direct front-end.
 
