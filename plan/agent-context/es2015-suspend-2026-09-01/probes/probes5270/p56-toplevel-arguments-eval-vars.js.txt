@@ -1,0 +1,11 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var argument, eval;
+var result;
+var vals = [2, 3];
+result = [arguments, eval] = vals;
+assert.sameValue(arguments, 2, 'arguments=' + String(arguments));
+assert.sameValue(eval, 3);

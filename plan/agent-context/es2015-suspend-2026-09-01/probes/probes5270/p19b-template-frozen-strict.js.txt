@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+'use strict';
+var t = null;
+(function(p) { t = p; })``;
+assert.throws(TypeError, function() { 'use strict'; t.test262Prop = true; }, 'strict write throws');

@@ -1,0 +1,64 @@
+// Batch-3 probes for #5270 (follow-ups raised by batch 1's exact-shape misses).
+import { mkdirSync, writeFileSync } from "node:fs";
+const dir = ".tmp/es2015/probes5270";
+mkdirSync(dir, { recursive: true });
+const fm = (inc = [], flags = "noStrict") => `/*---\ndescription: probe\nincludes: [${inc.join(", ")}]\nflags: [${flags}]\n---*/\n`;
+const P = {
+  "p55-arrow-lexical-this-in-bare-strict-fn": { flags: "onlyStrict", body: `var context = null;
+var fn = function() { return () => { context = this; }; };
+fn()\`x\`;
+assert.sameValue(context, undefined, 'arrow lexical this of a bare-called strict fn: ' + String(context));
+context = null;
+fn()();
+assert.sameValue(context, undefined, 'same via plain call: ' + String(context));` },
+  "p56-toplevel-arguments-eval-vars": { body: `var argument, eval;
+var result;
+var vals = [2, 3];
+result = [arguments, eval] = vals;
+assert.sameValue(arguments, 2, 'arguments=' + String(arguments));
+assert.sameValue(eval, 3);` },
+  "p56b-toplevel-arguments-read-after-write": { body: `var argument;
+arguments = 2;
+assert.sameValue(arguments, 2, 'arguments=' + String(arguments));` },
+  "p58-tco-comma-decl": { body: `var callCount = 0;
+function f(n) { if (n === 0) { callCount += 1; return; } return 0, f(n - 1); }
+f(100000);
+assert.sameValue(callCount, 1);` },
+  "p58b-tco-cond-decl": { body: `var callCount = 0;
+function f(n) { if (n === 0) { callCount += 1; return; } return true ? f(n - 1) : 0; }
+f(100000);
+assert.sameValue(callCount, 1);` },
+  "p61-bare-looseeq-statement": { body: `var n = 0; var y = {};
+y[Symbol.toPrimitive] = function() { n++; };
+0 == y;
+assert.sameValue(n, 1, 'bare == statement ran ToPrimitive: ' + n);` },
+  "p62-bare-add-statement": { body: `var log = ''; var left = {}; var right = {};
+left[Symbol.toPrimitive] = function() { log += 'L'; };
+right[Symbol.toPrimitive] = function() { log += 'R'; };
+left + right;
+assert.sameValue(log, 'LR', 'bare + statement ran ToPrimitive: ' + log);` },
+  "p62b-string-eq-object": { body: `var y = {}; var retVal = 'str';
+y[Symbol.toPrimitive] = function() { return retVal; };
+assert.sameValue('str' == y, true, 'string == object via ToPrimitive');
+retVal = Symbol.toPrimitive;
+assert.sameValue(Symbol.toPrimitive == y, true, 'symbol == object via ToPrimitive');` },
+  "p63-template-eval-order-exact": { body: `var tag = function(templateObject, a, b, c) { callCount++; assert.sameValue(a, 0, 'a'); assert.sameValue(b, 1, 'b'); assert.sameValue(c, 2, 'c'); };
+var i = 0; var callCount;
+assert.sameValue(\`a\${ i++ }b\${ i++ }c\${ i++ }d\`, 'a0b1c2d');
+i = 0; callCount = 0;
+tag\`a\${ i++ }b\${ i++ }c\${ i++ }d\`;
+assert.sameValue(callCount, 1);` },
+  "p64-super-method-open-path-call": { body: `var proto = { m(x) { return 'P' + x; } };
+var object = { m(x) { return super.m(x); }, get g() { return 1; } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.m(1), 'P1', 'super call from an accessor-path literal method: ' + String(object.m(1)));` },
+  "p65-fnproto-callable-classified": { body: `assert.sameValue(typeof Function.prototype, 'function', 'typeof Function.prototype=' + typeof Function.prototype);
+assert.sameValue(Function.prototype.hasOwnProperty('prototype'), false, 'no own prototype');` },
+};
+let n = 0;
+for (const [name, spec] of Object.entries(P)) {
+  const inc = spec.inc ?? (/verifyProperty/.test(spec.body) ? ["propertyHelper.js"] : []);
+  writeFileSync(`${dir}/${name}.js`, fm(inc, spec.flags ?? "noStrict") + spec.body + "\n");
+  n++;
+}
+console.log(`wrote ${n} batch-3 probes to ${dir}`);

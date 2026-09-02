@@ -1,0 +1,15 @@
+language/expressions/function/params-dflt-ref-arguments.js
+language/expressions/object/method-definition/params-dflt-meth-ref-arguments.js
+language/expressions/object/method-definition/params-dflt-gen-meth-ref-arguments.js
+language/expressions/function/arguments-with-arguments-fn.js
+language/expressions/function/arguments-with-arguments-lex.js
+language/expressions/function/dflt-params-arg-val-not-undefined.js
+language/expressions/arrow-function/dflt-params-arg-val-not-undefined.js
+language/expressions/object/method-definition/meth-dflt-params-arg-val-not-undefined.js
+language/expressions/object/method-definition/gen-meth-dflt-params-arg-val-not-undefined.js
+language/expressions/function/dstr/ary-ptrn-elem-ary-rest-init.js
+language/expressions/arrow-function/dstr/ary-ptrn-elem-ary-rest-init.js
+language/expressions/object/dstr/meth-ary-ptrn-elem-ary-rest-init.js
+language/expressions/object/dstr/gen-meth-ary-ptrn-elem-ary-rest-init.js
+language/expressions/object/dstr/gen-meth-ary-ptrn-elem-ary-empty-init.js
+language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-elem-ary-empty-init.js

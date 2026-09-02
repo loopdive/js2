@@ -1,0 +1,4 @@
+language/block-scope/leave/outermost-binding-updated-in-catch-block-nested-block-let-declaration-unseen-outside-of-block.js
+language/eval-code/direct/super-prop-method.js
+language/eval-code/direct/super-prop-dot-no-home.js
+language/eval-code/direct/super-prop-expr-no-home.js

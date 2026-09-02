@@ -1,0 +1,11 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var F = {}; var n = 0; var tv; var al;
+F[Symbol.hasInstance] = function(v) { n++; tv = this; al = arguments.length; return true; };
+assert.sameValue(0 instanceof F, true, '@@hasInstance result');
+assert.sameValue(n, 1, 'called once: ' + n);
+assert.sameValue(tv, F, 'this is F');
+assert.sameValue(al, 1, 'one arg');
