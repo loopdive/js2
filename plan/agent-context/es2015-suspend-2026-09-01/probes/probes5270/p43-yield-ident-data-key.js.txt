@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var yield = 'propName';
+var obj = { [yield]: 1 };
+assert(Object.prototype.hasOwnProperty.call(obj, 'propName'), 'keys=' + Object.getOwnPropertyNames(obj).join());

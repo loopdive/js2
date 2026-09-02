@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var obj = { a: 1 };
+var obj = { b: 2 };
+assert.sameValue(obj.b, 2, 'obj.b=' + String(obj.b));
+assert.sameValue(obj.a, undefined, 'obj.a=' + String(obj.a));

@@ -1,0 +1,10 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var y = {}; var n = 0;
+y[Symbol.toPrimitive] = function() { n++; return 86; };
+var r = (86 == y);
+assert.sameValue(n, 1, 'toPrimitive calls=' + n + ' r=' + r);
+assert.sameValue(r, true);

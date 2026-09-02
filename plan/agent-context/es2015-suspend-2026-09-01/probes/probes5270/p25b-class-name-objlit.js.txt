@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var o = { id: class {} };
+var d = Object.getOwnPropertyDescriptor(o.id, 'name');
+assert.sameValue(d && d.value, 'id', 'descriptor value=' + String(d && d.value));

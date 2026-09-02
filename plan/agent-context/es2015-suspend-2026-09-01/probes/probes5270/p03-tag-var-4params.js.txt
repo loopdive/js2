@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var callCount = 0; var i = 0;
+var tag = function(t, a, b, c) { callCount++; assert.sameValue(a, 0); assert.sameValue(b, 1); assert.sameValue(c, 2); };
+tag`a${ i++ }b${ i++ }c${ i++ }d`;
+assert.sameValue(callCount, 1, 'callCount=' + callCount);

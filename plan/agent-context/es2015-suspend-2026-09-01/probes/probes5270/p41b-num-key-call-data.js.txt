@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+function ID(x) { return x; }
+var o = { [ID(2)]: 'D', [1]: 'B' };
+assert.sameValue(o[2], 'D', 'o[2]=' + String(o[2]));
+assert.sameValue(o[1], 'B', 'o[1]=' + String(o[1]));

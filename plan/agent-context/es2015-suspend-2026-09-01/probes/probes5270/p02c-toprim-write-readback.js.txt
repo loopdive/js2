@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var y = {};
+y[Symbol.toPrimitive] = function() { return 1; };
+assert.sameValue(typeof y[Symbol.toPrimitive], 'function', 'readback typeof=' + typeof y[Symbol.toPrimitive]);

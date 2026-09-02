@@ -1,0 +1,2 @@
+language/expressions/assignment/dstr/array-elem-target-simple-no-strict.js
+language/expressions/assignment/dstr/array-elem-init-simple-no-strict.js

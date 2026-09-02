@@ -1,0 +1,13 @@
+#!/bin/bash
+# Batch 3: wait for batch 2 + controls to finish, then run batch-3 probes and
+# a WAT dump of the comma-TCO probe (one heavy process at a time).
+cd "$(dirname "$0")/../.." || exit 1
+while ! grep -q "controls exit=" .tmp/es2015/expr-controls.log 2>/dev/null; do sleep 30; done
+bash .tmp/es2015/run-when-quiet.sh true
+npx tsx .tmp/es2015/probe-one.mts .tmp/es2015/probes5270/p5[5-8]*.js .tmp/es2015/probes5270/p6*.js > .tmp/es2015/probes5270-b3.out 2>&1
+echo "probes3 exit=$?" >> .tmp/es2015/probes5270-b3.out
+mkdir -p .tmp/es2015/wat
+npx tsx src/cli.ts .tmp/es2015/probes5270/p21b-tco-comma.js --target standalone --wat -o .tmp/es2015/wat/p21b > .tmp/es2015/wat/p21b.log 2>&1
+echo "wat exit=$?" >> .tmp/es2015/wat/p21b.log
+npx tsx src/cli.ts .tmp/es2015/probes5270/p21-tco-identity.js --target standalone --wat -o .tmp/es2015/wat/p21 > .tmp/es2015/wat/p21.log 2>&1
+echo "wat exit=$?" >> .tmp/es2015/wat/p21.log
