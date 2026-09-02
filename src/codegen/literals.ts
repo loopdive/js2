@@ -5049,6 +5049,36 @@ export function compileArrayLiteral(
     const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
+  // (#5269 R2-4) An element that is an object literal on the HOST-OBJECT path is
+  // an open `$Object`, not a closed struct — but the first-element heuristic
+  // below still picks a closed `$__anon_N` carrier for it, and the open object
+  // does not fit that slot. The element is silently lost: measured on standalone,
+  // `var g = { get a() { return 1; } }; String([g][0])` answers `undefined` and
+  // `[g,g].join("-")` answers `"-"`, on BOTH this tree and base.
+  //
+  // That is a pre-existing hole — every literal already forced open (an accessor,
+  // a disposal method, a runtime computed key, a colon-form `__proto__`) hits it.
+  // #5269's H-1 predicates made `[Symbol.toPrimitive]` literals join that class,
+  // which is how `[w].join()` regressed from "[object Object]" to "". Widening the
+  // carrier to externref — exactly what `hasDynamicOrCallableElement` already does
+  // for `any`/callable elements — fixes the whole class, not just the new member.
+  //
+  // This is the array-element LOCKSTEP CALLER of `objectLiteralForcesHostPath`;
+  // `statements/variables.ts`, `declarations.ts` and
+  // `statements/nested-declarations.ts` are the same pattern for a binding.
+  const hasHostPathObjectLiteralElement = expr.elements.some((element) => {
+    if (ts.isOmittedExpression(element)) return false;
+    let value: ts.Expression = ts.isSpreadElement(element) ? element.expression : element;
+    // The element is usually the BINDING, not the literal (`var w = {…}; [w]`),
+    // so resolve an identifier to its initializer first — the same resolution
+    // R2-1 needed for the JSON flatness test.
+    if (ts.isIdentifier(value)) {
+      const init = ctx.oracle.variableInitializerOf(value);
+      if (init === undefined) return false;
+      value = init;
+    }
+    return ts.isObjectLiteralExpression(value) && objectLiteralForcesHostPath(ctx, value);
+  });
   let assignmentValue: ts.Expression = expr;
   while (
     ts.isParenthesizedExpression(assignmentValue.parent) ||
@@ -5544,7 +5574,7 @@ export function compileArrayLiteral(
   // coerce every spread value through that primitive representation and can
   // also violate the enclosing callback's `any[]` result ABI. Preserve the
   // source values in the universal carrier, including the spread-first shape.
-  if (hasDynamicOrCallableElement) {
+  if (hasDynamicOrCallableElement || hasHostPathObjectLiteralElement) {
     elemWasm = { kind: "externref" };
   }
   // (#2106 S0) `any[]` element tag-recovery. When the contextual element type is

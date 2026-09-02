@@ -122,6 +122,16 @@ func-budget-allow:
   - src/codegen/json-codec-native.ts::emitJsonStringifyValue
   - src/codegen/literals.ts::objectLiteralForcesHostPath
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  # 2026-09-02 (Opus, round-3 review fix R2-4): +30 lines for the array-element
+  # LOCKSTEP CALLER of `objectLiteralForcesHostPath`. An array literal whose
+  # element is an OPEN object picked a CLOSED `$__anon_N` vec carrier the object
+  # does not fit, and the element was silently LOST — `String([g][0])` answered
+  # "undefined" and `[g,g].join("-")` answered "-" on base as well as here. The
+  # widening lives in this function because that is where the element carrier is
+  # chosen; the three sibling lockstep callers (statements/variables.ts,
+  # declarations.ts, statements/nested-declarations.ts) are the same one-flag
+  # shape for a binding rather than an element.
+  - src/codegen/literals.ts::compileArrayLiteral
   # 2026-09-02 (Opus impl, Step G-5): the InternalizeJSONProperty proxy arm
   # gains the §7.2.2 IsArray step-3 recursion — a loop that unwraps a
   # proxy-of-a-proxy to its first non-proxy [[ProxyTarget]] before the

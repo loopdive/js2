@@ -654,3 +654,42 @@ describe("#5269 F3 — never answer where the base compiler refused", () => {
     expect(await runLane(src, "standalone")).toBeNull();
   });
 });
+
+describe("#5269 R2-4 — an open-object array element keeps its text", () => {
+  // An array literal whose element is an OPEN object (one on the host-object
+  // path) picked a CLOSED `$__anon_N` vec carrier that the open object does not
+  // fit, and the element was silently lost. Measured on standalone BEFORE the
+  // fix, identically on this branch and on base:
+  //
+  //   var g = { get a() { return 1; } };
+  //   String([g][0])      -> "undefined"   (node: "[object Object]")
+  //   [g, g].join("-")    -> "-"           (node: "[object Object]-[object Object]")
+  //
+  // So this is a PRE-EXISTING hole, not one #5269 opened — but H-1 made
+  // `[Symbol.toPrimitive]` literals join that class, which is how `[w].join()`
+  // regressed from "[object Object]" to "". Widening the carrier to externref
+  // fixes the whole class; these pins cover both members.
+  standaloneOnly(
+    "R2-4 j1/j2 — join renders a [Symbol.toPrimitive] element via ToPrimitive",
+    `var w = { [Symbol.toPrimitive](h) { return "P<" + h + ">"; } };
+     ${check("[w].join()", "P<string>")}
+     ${check("[w].join('-')", "P<string>")}`,
+  );
+
+  standaloneOnly(
+    "R2-4 String([w]) and a multi-element join agree",
+    `var w = { [Symbol.toPrimitive](h) { return "P<" + h + ">"; } };
+     ${check("String([w])", "P<string>")}
+     ${check("[w, w].join(',')", "P<string>,P<string>")}`,
+  );
+
+  // The pre-existing member of the same class: an accessor forces the literal
+  // open too, and base lost this element just as thoroughly.
+  standaloneOnly(
+    "R2-4 an accessor-forced open object also keeps its text",
+    `var g = { get a() { return 1; } };
+     ${check("[g].join()", "[object Object]")}
+     ${check("String([g][0])", "[object Object]")}
+     ${check("[g, g].join('-')", "[object Object]-[object Object]")}`,
+  );
+});
