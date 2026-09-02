@@ -11995,6 +11995,44 @@ function prependBuiltinFnObjectSemantics(ctx: CodegenContext, typeIdxs: readonly
       then: [...functionProtoInstrs, { op: "return" }],
     });
   }
+
+  // (#5194 step 1) A `$NativeProto` receiver whose glue declares a parent level
+  // reports THAT object as its `[[Prototype]]`: §23.2.7 makes
+  // `getPrototypeOf(Uint8Array.prototype)` the `%TypedArray%.prototype`
+  // singleton. The link lives in the struct's `$parent` field (index 3), filled
+  // by `buildLazyNativeProtoGetInstrs`, so this arm is a field read, not a
+  // brand table. A NULL `$parent` — every family that declares no parent —
+  // falls through to the untouched body, so the arm is byte-inert for them.
+  const nativeProtoTypeIdx = ctx.nativeProtoTypeIdx;
+  if (getPrototypeFn && nativeProtoTypeIdx !== undefined && nativeProtoTypeIdx >= 0) {
+    const parentLocalIdx = 1 + getPrototypeFn.locals.length;
+    getPrototypeFn.locals.push({ name: "__nproto_parent", type: { kind: "externref" } });
+    getPrototypeFn.body.splice(
+      0,
+      0,
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: nativeProtoTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: nativeProtoTypeIdx },
+          { op: "struct.get", typeIdx: nativeProtoTypeIdx, fieldIdx: 3 },
+          { op: "local.tee", index: parentLocalIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: parentLocalIdx }, { op: "return" }],
+          },
+        ],
+      },
+    );
+  }
 }
 
 /**

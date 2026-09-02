@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2178,
+      "passCount": 2192,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -879,7 +879,7 @@
         },
         {
           "edition": "ES2023",
-          "pass": 78,
+          "pass": 77,
           "total": 131
         },
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1637,
+          "pass": 1652,
           "total": 2250
         }
       ]
@@ -1001,7 +1001,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 413,
+      "passCount": 414,
       "totalCount": 440
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1322,
+      "passCount": 1330,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 793,
+      "passCount": 878,
       "totalCount": 1106
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 721,
+      "passCount": 722,
       "totalCount": 1072
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 465,
+      "passCount": 506,
       "totalCount": 1048
     },
     {
@@ -1312,7 +1312,7 @@
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 84,
+      "passCount": 83,
       "totalCount": 109
     },
     {
@@ -1366,7 +1366,7 @@
     {
       "name": "Iterator helpers (map, filter, take)",
       "testCategories": ["built-ins/Iterator"],
-      "passCount": 144,
+      "passCount": 101,
       "totalCount": 393
     },
     {
