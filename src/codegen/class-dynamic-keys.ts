@@ -86,3 +86,26 @@ export function classHasUnresolvedComputedMemberName(ctx: CodegenContext, decl: 
       resolveComputedKeyExpression(ctx, member.name.expression) === undefined,
   );
 }
+
+/**
+ * (#5195 F1) True when `className` or any ancestor declares a member whose
+ * computed key is only known at runtime.
+ *
+ * A subclass of such a class has no funcMap alias for the inherited member (the
+ * synthetic `__cmdyn$<ordinal>` name is the parent's and carries no spec key,
+ * so aliasing it makes the program-ABI planner reject the module). The member
+ * is reached through the prototype chain instead, and that walk starts at the
+ * SUBCLASS's own prototype `$Object` — which therefore has to exist, and to be
+ * built at ClassDefinitionEvaluation like its parent's.
+ */
+export function classHierarchyHasDynamicMember(ctx: CodegenContext, className: string): boolean {
+  let depth = 0;
+  for (
+    let current: string | undefined = className;
+    current !== undefined && depth < 64;
+    current = ctx.classParentMap.get(current), depth++
+  ) {
+    if ((ctx.classDynamicMembers.get(current)?.length ?? 0) > 0) return true;
+  }
+  return false;
+}

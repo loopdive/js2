@@ -21,7 +21,7 @@ import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
-import { dynamicClassKeyGlobalKey, dynamicClassMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1)
+import { dynamicClassKeyGlobalKey, dynamicClassMemberName, isDynamicClassMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
@@ -1791,6 +1791,20 @@ export function collectClassDeclaration(
           const suffix = legacyKey.substring(ancestor.length + 1);
           // Skip constructor-related entries
           if (suffix === "new" || suffix.startsWith("new_") || suffix === "init") continue;
+          // (#5195 F1) A parent member registered under the synthetic
+          // `__cmdyn$<ordinal>` name (its computed key is only known at runtime)
+          // must NOT be aliased into the child. The alias is a PROGRAM-ABI
+          // claim — `program-abi-class-callable-planning.ts` resolves it back to
+          // the canonical source member and asks `structuralClassMemberName` for
+          // its spec key, which is `undefined` for an unfoldable computed name;
+          // the planner then throws `no complete exact canonical class-member
+          // authority` and the whole module fails to compile. The ordinal is
+          // also the PARENT's, so the name is meaningless in the child's frame.
+          // Inheritance of these members is a runtime `[[Prototype]]` walk
+          // instead: `emitStandaloneClassProtoObject` links the child prototype
+          // `$Object` to the parent's, and `__class_proto_lookup` covers every
+          // class in such a hierarchy.
+          if (isDynamicClassMemberName(suffix.replace(/^(get|set)_/, ""))) continue;
           // Check if this is a getter/setter (get_X or set_X)
           const getMatch = suffix.match(/^get_(.+)$/);
           const setMatch = suffix.match(/^set_(.+)$/);

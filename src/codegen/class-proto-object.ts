@@ -78,9 +78,12 @@
  *    own-key surface. Several tests assert the private name is absent.
  *  - Classes with a builtin parent keep the legacy struct (they have no
  *    `classObjectGlobals` entry, so `constructor` could not be installed).
- *  - The `$Object`'s own `[[Prototype]]` is left null. It was effectively null
- *    before too, so this is behaviour-preserving; wiring `D.prototype.__proto__
- *    === C.prototype` and `%Object.prototype%` is a separate slice.
+ *  - The `$Object`'s own `[[Prototype]]` is left null for a BASE class.
+ *    (#5195 F1) A DERIVED class whose parent also has a prototype `$Object` is
+ *    now linked to it (§15.7.14 step 6) — that chain is the only route to a
+ *    parent member registered under a runtime key, which has no funcMap alias
+ *    in the child to inherit statically. `%Object.prototype%` rooting is still
+ *    a separate slice.
  */
 
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -108,6 +111,13 @@ const METHOD_FLAGS = 0x01 | 0x04;
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
 const PRIVATE_NAME_PREFIX = "__priv_";
+
+/**
+ * (#5195 F1) Classes whose prototype `$Object` is mid-construction on this
+ * call stack. The §15.7.14 step 6 parent link re-enters the builder for the
+ * parent, so this is what bounds that recursion.
+ */
+const protoObjectsInProgress = new Set<string>();
 
 /**
  * The instance methods of `className` that can be installed as own data
@@ -169,8 +179,11 @@ export function standaloneClassProtoObjectApplies(ctx: CodegenContext, className
  * if the object runtime cannot supply the helpers, in which case the caller
  * must fall back to the legacy defaulted-struct path.
  *
- * `emitClassObjectValue` is injected rather than imported to keep this module
- * free of a cycle back into `expressions/extern.ts`.
+ * `emitClassObjectValue` and `emitProtoValue` are injected rather than imported
+ * to keep this module free of a cycle back into `expressions/extern.ts`.
+ * `emitProtoValue` is that file's own `emitLazyProtoGet`, used to materialize
+ * the PARENT prototype for the §15.7.14 step 6 chain link — so a parent whose
+ * prototype has not been touched yet is built on demand, in dependency order.
  */
 export function emitStandaloneClassProtoObject(
   ctx: CodegenContext,
@@ -178,8 +191,15 @@ export function emitStandaloneClassProtoObject(
   className: string,
   protoGlobalIdx: number,
   emitClassObjectValue: (ctx: CodegenContext, fctx: FunctionContext, className: string) => boolean,
+  emitProtoValue: (ctx: CodegenContext, fctx: FunctionContext, className: string) => boolean,
 ): boolean {
   if (!standaloneClassProtoObjectApplies(ctx, className)) return false;
+  // Re-entrancy guard for the parent link below: `emitProtoValue` re-enters
+  // this function for the parent, so a `classParentMap` cycle (which the TDZ
+  // check rejects at source level, but which a synthetic identity could still
+  // produce) would recurse forever. Decline instead — the caller then keeps the
+  // legacy struct, which is the pre-#5195 behaviour.
+  if (protoObjectsInProgress.has(className)) return false;
 
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
@@ -208,8 +228,38 @@ export function emitStandaloneClassProtoObject(
   const savedBody = fctx.body;
   fctx.body = initBody;
   ctx.liveBodies.add(savedBody);
+  protoObjectsInProgress.add(className);
   let ok = true;
   try {
+    // (#5195 F1) §15.7.14 step 6: `D.prototype`'s [[Prototype]] is
+    // `C.prototype`. This was left null (see the module header's "Scope"
+    // note), which was harmless while inheritance was resolved purely
+    // statically — every inherited member had a `D_<name>` funcMap alias. A
+    // member registered under a RUNTIME key cannot have such an alias (its
+    // synthetic `__cmdyn$<ordinal>` name is the parent's and carries no spec
+    // key, so the program-ABI planner rejects it), so the chain walk is now the
+    // only route to it. Linking it also makes every ordinary inherited own-key
+    // question (`gOPD`, `hasOwnProperty`, for-in) answer through the real
+    // chain instead of stopping at the child.
+    //
+    // Only a parent that HAS a prototype `$Object` is linked; a builtin-parent
+    // subclass keeps the legacy defaulted struct and is left alone.
+    const parentClassName = ctx.classParentMap.get(className);
+    if (parentClassName !== undefined && standaloneClassProtoObjectApplies(ctx, parentClassName)) {
+      const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+      if (setProtoIdx === undefined) {
+        ok = false;
+      } else {
+        fctx.body.push({ op: "local.get", index: objLocal });
+        if (!emitProtoValue(ctx, fctx, parentClassName)) {
+          ok = false;
+        } else {
+          fctx.body.push({ op: "call", funcIdx: setProtoIdx });
+          fctx.body.push({ op: "drop" }); // helper returns the target; discard
+        }
+      }
+    }
+
     // §15.7.14 step 8/11: `C.prototype.constructor` is created BEFORE the class
     // elements are defined, so it is the FIRST own key. Installing it last (as
     // this did before #5195 Step 1.3) made
@@ -272,6 +322,7 @@ export function emitStandaloneClassProtoObject(
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    protoObjectsInProgress.delete(className);
   }
   if (!ok) return false;
 

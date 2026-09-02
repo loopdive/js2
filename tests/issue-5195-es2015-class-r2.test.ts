@@ -5,8 +5,8 @@
 // rows it flipped, plus source-level controls in BOTH lanes that keep the
 // mechanism pinned where the rows cannot reach it. Every standalone
 // control asserts an EMPTY import list — the standalone target must stay
-// host-import-free (#5272: the path-runner probe does not apply CI's host-import
-// leak check, so this file is where that invariant is actually enforced).
+// host-import-free (#5272 taught the in-process runner CI's host-import leak
+// check; this file enforces the same invariant at the source level).
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,6 +29,18 @@ const STEP_9K_ROWS = [
   "language/computed-property-names/class/method/constructor-can-be-getter.js",
   "language/computed-property-names/class/method/constructor-can-be-setter.js",
 ] as const;
+
+/**
+ * Rows whose class mechanism IS fixed (the host lane passes) but whose body
+ * needs a carrier standalone does not have yet, so CI scores them as a
+ * host-import leak owned by another issue. Pin the exact leak: the row flips
+ * loudly — and this table shrinks — when that lane closes it.
+ */
+const STANDALONE_LEAK_OWNED_ELSEWHERE: Readonly<Record<string, RegExp>> = {
+  // generator method body → native generator carrier (#680 / #2864)
+  "language/computed-property-names/class/method/constructor-can-be-generator.js":
+    /standalone target emitted host imports: env::__create_generator/,
+};
 
 async function runStandalone(source: string, exportName: string, fileName: string): Promise<unknown> {
   const result = await compile(source, {
@@ -62,7 +74,12 @@ function runHost(source: string, exportName: string): unknown {
 function pinRows(step: string, rows: readonly string[], lanes: "standalone" | "both"): void {
   for (const relativePath of rows) {
     const file = resolve(process.cwd(), "test262", "test", relativePath);
-    const label = lanes === "both" ? "host and standalone" : "standalone";
+    const ownedLeak = STANDALONE_LEAK_OWNED_ELSEWHERE[relativePath];
+    const label = ownedLeak
+      ? "host; standalone pins the leak owned elsewhere"
+      : lanes === "both"
+        ? "host and standalone"
+        : "standalone";
     it.skipIf(!existsSync(file))(
       `${step}: ${relativePath} passes in ${label}`,
       async () => {
@@ -72,7 +89,15 @@ function pinRows(step: string, rows: readonly string[], lanes: "standalone" | "b
             expect({ status: host.status, error: host.error }).toEqual({ status: "pass", error: undefined });
           }
           const standalone = await runTest262File(file, "issue-5195", 60_000, "standalone");
-          expect({ status: standalone.status, error: standalone.error }).toEqual({ status: "pass", error: undefined });
+          if (ownedLeak) {
+            expect(standalone.status).toBe("compile_error");
+            expect(standalone.error).toMatch(ownedLeak);
+          } else {
+            expect({ status: standalone.status, error: standalone.error }).toEqual({
+              status: "pass",
+              error: undefined,
+            });
+          }
         } finally {
           restoreHostBuiltins();
         }
@@ -484,5 +509,235 @@ describe("#5195 Step 2 — static sidecar for runtime-keyed statics", () => {
 
   it("host lane agrees on the folding-static control", () => {
     expect(runHost(STATIC_FOLDED_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 F1 — a subclass of a class with a runtime-keyed member", () => {
+  // The parent's member is registered under a synthetic `__cmdyn$<ordinal>`
+  // name. Aliasing that into the child made the program-ABI planner reject the
+  // whole module ("no complete exact canonical class-member authority"), so
+  // EVERY `class D extends C {}` over such a parent was a hard compile error.
+  // The alias is gone; inheritance is a runtime [[Prototype]] walk instead —
+  // `emitStandaloneClassProtoObject` links the child prototype `$Object` to the
+  // parent's (§15.7.14 step 6) and the static side walks to the parent sidecar.
+  const F1_SHAPES: ReadonlyArray<readonly [string, string]> = [
+    ["method", "class C { [ID('dyn')]() { return 2; } }\nclass D extends C {}\nvar got = new D()[ID('dyn')]();"],
+    ["getter", "class C { get [ID('g')]() { return 2; } }\nclass D extends C {}\nvar got = new D()[ID('g')];"],
+    [
+      // The WRITE through an inherited runtime-keyed setter is F4, still open
+      // (there is no receiver-aware `[[Set]]` chain walk yet — see the issue
+      // file's residual list). What F1 owns is that the subclass COMPILES and
+      // that the member is reachable through D's prototype chain, which is what
+      // this asserts.
+      "setter",
+      "class C { set [ID('s')](v) { this.seen = v; } }\nclass D extends C {}\n" +
+        "var d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(D.prototype), 's');\n" +
+        "var got = d !== undefined && typeof d.set === 'function' ? 2 : 0;",
+    ],
+    ["static", "class C { static [ID('s')]() { return 2; } }\nclass D extends C {}\nvar got = D[ID('s')]();"],
+    [
+      "two levels",
+      "class C { [ID('dyn')]() { return 2; } }\nclass D extends C {}\nclass E extends D {}\nvar got = new E()[ID('dyn')]();",
+    ],
+    [
+      "child overrides",
+      "class C { [ID('dyn')]() { return 9; } }\nclass D extends C { [ID('dyn')]() { return 2; } }\nvar got = new D()[ID('dyn')]();",
+    ],
+  ];
+
+  for (const [label, body] of F1_SHAPES) {
+    const source = `function ID(x) { return x; }\n${body}\nexport function probe() { return got === 2 ? 1 : 0; }`;
+    const slug = label.replace(/\s+/g, "-");
+    it(`standalone: ${label}`, async () => {
+      expect(await runStandalone(source, "probe", `issue-5195-f1-${slug}.js`)).toBe(1);
+    });
+    it(`host lane agrees: ${label}`, () => {
+      expect(runHost(source, "probe")).toBe(1);
+    });
+  }
+
+  // Order-preservation: a plain member of the same class must still inherit
+  // through the ordinary static alias.
+  const PLAIN_THROUGH_DYNAMIC_PARENT = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 2; } plain() { return 5; } }
+    class D extends C {}
+    export function probe() { return new D().plain() === 5 && new D()[ID('dyn')]() === 2 ? 1 : 0; }
+  `;
+
+  it("standalone: a plain inherited member still resolves statically", async () => {
+    expect(await runStandalone(PLAIN_THROUGH_DYNAMIC_PARENT, "probe", "issue-5195-f1-plain.js")).toBe(1);
+  });
+
+  it("host lane agrees on the plain inherited member", () => {
+    expect(runHost(PLAIN_THROUGH_DYNAMIC_PARENT, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 F2 — the class object is not the instance prototype", () => {
+  // `__class_<C>` is itself a `$C` struct, so the lookup's `ref.test` matched
+  // it and handed back the INSTANCE prototype: `C[ID('m')]` answered an
+  // instance method where the spec says `undefined`. The identity test against
+  // the class-object global is now unconditional, and answers the static
+  // sidecar (or nothing) — never the prototype.
+  const CLASS_OBJECT_SOURCE = `
+    function ID(x) { return x; }
+    class C { m() { return 1; } [ID('dyn')]() { return 2; } static [ID('s')]() { return 3; } }
+    export function probe() {
+      return (C[ID('m')] === undefined ? 1 : 0)
+        + (C[ID('dyn')] === undefined ? 2 : 0)
+        + (C[ID('s')]() === 3 ? 4 : 0)
+        + (new C()[ID('dyn')]() === 2 ? 8 : 0);
+    }
+  `;
+
+  it("standalone: instance members are not visible on the class object", async () => {
+    expect(await runStandalone(CLASS_OBJECT_SOURCE, "probe", "issue-5195-f2-class-object.js")).toBe(15);
+  });
+
+  it("host lane agrees on the class object surface", () => {
+    expect(runHost(CLASS_OBJECT_SOURCE, "probe")).toBe(15);
+  });
+
+  // The numeric-key twin: `C[ID(2)]` must miss while `new C()[ID(2)]()` hits.
+  const NUMERIC_KEY_SOURCE = `
+    function ID(x) { return x; }
+    class C { m() { return 1; } [ID(2)]() { return 2; } }
+    export function probe() {
+      return (C[ID(2)] === undefined ? 1 : 0) + (new C()[ID(2)]() === 2 ? 2 : 0);
+    }
+  `;
+
+  it("standalone: a numeric runtime key is an instance member only", async () => {
+    expect(await runStandalone(NUMERIC_KEY_SOURCE, "probe", "issue-5195-f2-numeric.js")).toBe(3);
+  });
+
+  it("host lane agrees on the numeric key", () => {
+    expect(runHost(NUMERIC_KEY_SOURCE, "probe")).toBe(3);
+  });
+});
+
+describe("#5195 F3 — the runtime-keyed call binds its receiver", () => {
+  // The first cut dispatched through `tryEmitInlineDynamicCall`, which invokes
+  // with `this` unbound — so ANY runtime-keyed call into a method that touches
+  // `this` threw, not only the `new C()[k]()` shape. It also built its
+  // candidate set from the closure wrappers registered SO FAR, which made an
+  // INHERITED member's call fold to null or not depending on whether an
+  // unrelated read appeared earlier in source order. Both are gone: the call is
+  // `__apply_closure(__extern_get(recv, key), recv, args)`, with the receiver
+  // compiled exactly once.
+  const RECEIVER_SOURCE = `
+    function ID(x) { return x; }
+    var made = 0;
+    class C {
+      constructor() { made = made + 1; this.x = 41; }
+      [ID('dyn')]() { return this.x + 1; }
+      [ID('add')](a, b) { return this.x + a + b; }
+    }
+    export function probe() {
+      var c = new C();
+      var k = 'dyn';
+      var viaVar = c[ID('dyn')]() === 42;
+      var viaRuntimeKey = c[k]() === 42;
+      var viaNew = new C()[ID('dyn')]() === 42;
+      var withArgs = c[ID('add')](1, 2) === 44;
+      // two constructions: c and the viaNew temporary — i.e. the receiver of
+      // the element call is evaluated exactly once.
+      return viaVar && viaRuntimeKey && viaNew && withArgs && made === 2 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: `this`, arguments and single receiver evaluation", async () => {
+    expect(await runStandalone(RECEIVER_SOURCE, "probe", "issue-5195-f3-receiver.js")).toBe(1);
+  });
+
+  it("host lane agrees on the bound receiver", () => {
+    expect(runHost(RECEIVER_SOURCE, "probe")).toBe(1);
+  });
+
+  // Two unrelated classes with the SAME field shape: WasmGC canonicalizes
+  // struct types structurally, so `ref.test` alone cannot tell them apart and
+  // the first lookup arm swallowed the other's instances. Every arm now tests
+  // the class's `__tag`.
+  const STRUCTURAL_TWINS_SOURCE = `
+    function ID(x) { return x; }
+    class C { constructor() { this.x = 41; } [ID('dyn')]() { return this.x + 1; } }
+    class D { constructor() { this.y = 5; } [ID('add')](a, b) { return this.y + a + b; } }
+    export function probe() {
+      return new C()[ID('dyn')]() === 42 && new D()[ID('add')](1, 2) === 8 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: structurally identical classes keep their own members", async () => {
+    expect(await runStandalone(STRUCTURAL_TWINS_SOURCE, "probe", "issue-5195-f3-twins.js")).toBe(1);
+  });
+
+  it("host lane agrees on the structural twins", () => {
+    expect(runHost(STRUCTURAL_TWINS_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 F4/F5 — `in` and hasOwnProperty over runtime-keyed members", () => {
+  // F4 (partial): `key in obj` on a DYNAMICALLY-typed holder now walks the
+  // class prototype chain. The statically-typed twin and the write side remain
+  // open — see the issue file's residual list, probes `.tmp/es2015/p3/f4-*.js`.
+  const IN_DYNAMIC_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 1; } plain() { return 2; } }
+    function box(v) { return v; }
+    var c = box(new C());
+    export function probe() {
+      return (ID('plain') in c ? 1 : 0) + (ID('dyn') in c ? 2 : 0);
+    }
+  `;
+
+  it("standalone: `in` through a dynamic holder sees the prototype chain", async () => {
+    expect(await runStandalone(IN_DYNAMIC_SOURCE, "probe", "issue-5195-f4-in.js")).toBe(3);
+  });
+
+  it("host lane agrees on `in`", () => {
+    expect(runHost(IN_DYNAMIC_SOURCE, "probe")).toBe(3);
+  });
+
+  // F5: the checker cannot enumerate a runtime-keyed own-key set, so the static
+  // `hasOwnProperty` fold answered `false` while `gOPD` found the property —
+  // two answers about one object. The fold now declines for a prototype or
+  // constructor receiver of such a class and lets the runtime answer.
+  const HASOWN_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 1; } }
+    export function probe() {
+      var viaGopd = Object.getOwnPropertyDescriptor(C.prototype, 'dyn') !== undefined;
+      var viaHasOwn = C.prototype.hasOwnProperty('dyn');
+      var viaBorrowed = Object.prototype.hasOwnProperty.call(C.prototype, 'dyn');
+      return viaGopd && viaHasOwn && viaBorrowed ? 1 : 0;
+    }
+  `;
+
+  it("standalone: hasOwnProperty and gOPD agree on a runtime key", async () => {
+    expect(await runStandalone(HASOWN_SOURCE, "probe", "issue-5195-f5-hasown.js")).toBe(1);
+  });
+
+  it("host lane agrees on hasOwnProperty", () => {
+    expect(runHost(HASOWN_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a class with no runtime keys keeps the static
+  // fold, including its prototype-vs-instance discrimination.
+  const HASOWN_CONTROL_SOURCE = `
+    class C { m() { return 1; } get g() { return 2; } constructor() { this.f = 3; } }
+    export function probe() {
+      var c = new C();
+      return C.prototype.hasOwnProperty('m') && C.prototype.hasOwnProperty('g')
+        && !C.prototype.hasOwnProperty('f') && c.hasOwnProperty('f') && !c.hasOwnProperty('m') ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a class with no runtime keys keeps the static fold", async () => {
+    expect(await runStandalone(HASOWN_CONTROL_SOURCE, "probe", "issue-5195-f5-control.js")).toBe(1);
+  });
+
+  it("host lane agrees on the static fold control", () => {
+    expect(runHost(HASOWN_CONTROL_SOURCE, "probe")).toBe(1);
   });
 });

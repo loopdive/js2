@@ -45,7 +45,7 @@ import {
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
-import { dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1)
+import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -433,8 +433,10 @@ export function emitUnresolvedComputedAccessorNameEffects(
   // rather than at the first `C.prototype` touch — §15.7.14 installs the
   // elements at ClassDefinitionEvaluation, and a later first-touch would read
   // keys that a subsequent write had already changed. Only classes that
-  // actually have a runtime-keyed member pay for this.
-  if (owner !== undefined && (ctx.classDynamicMembers.get(owner)?.length ?? 0) > 0) {
+  // actually have a runtime-keyed member — or INHERIT one (#5195 F1: a
+  // subclass reaches it only through the prototype chain, whose walk starts at
+  // the subclass's own `$Object`) — pay for this.
+  if (owner !== undefined && classHierarchyHasDynamicMember(ctx, owner)) {
     if (emitLazyProtoGet(ctx, fctx, owner)) fctx.body.push({ op: "drop" });
     // (#5195 Step 2) …and the STATIC sidecar, for the same reason: its keys are
     // the ones just written, and a static member with a runtime key is
