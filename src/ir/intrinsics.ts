@@ -316,6 +316,47 @@ export const EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE: IntrinsicSignatur
   result: REF_EXTERN_TYPE,
 });
 
+/**
+ * `(externref, i32) -> f64` — the exact SEMANTIC shape of the guarded
+ * `charCodeAt` read: a string and a UTF-16 index in, a code unit or `NaN` out.
+ *
+ * (#3526 F2-S7) The first row in the catalogue whose signature is deliberately
+ * NOT its capability record's ABI. `wasm:js-string.charCodeAt` is
+ * `(externref, i32) -> i32` and TRAPS out of range (#2003); the seam both
+ * authorities implement is the guarded f64 that answers `NaN` instead, and the
+ * providers are defined helpers over that builtin (`__jsstr_charCodeAt`) or
+ * over the native carrier (`__str_charCodeAt`) rather than the builtin itself.
+ * The native helper physically takes `(ref $AnyString, i32)`; the signature
+ * states the seam's shape, exactly as `native.js.string.eq` reuses the
+ * externref pair for `__str_equals`.
+ */
+export const EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, I32_TYPE]),
+  result: F64_TYPE,
+});
+
+/**
+ * `() -> externref` — the seam shape of a string LITERAL's storage.
+ *
+ * (#3526 F2-S8) The catalogue's first and only signature with NO parameters,
+ * and the one place the family's callable-shaped `IntrinsicSignature` is bent
+ * to describe a VALUE rather than a call: a `string.const` is answered by a
+ * global (an imported `string_constants.<literal>` externref on the host lane,
+ * an interned `__strlit_N` defined global natively), never by a function.
+ *
+ * Nominal, exactly as `native.js.string.len` reuses
+ * {@link EXTERNREF_TO_I32_INTRINSIC_SIGNATURE} for a `struct.get`: the rows it
+ * carries state "one string comes out, nothing goes in". The alternative — a
+ * `valueType` field on `RuntimeProvider` — would have changed every projection
+ * in the catalogue for one seam, and was rejected in the plan for that reason.
+ */
+export const EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([] as readonly IrType[]),
+  result: EXTERNREF_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),

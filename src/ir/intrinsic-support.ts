@@ -4,9 +4,13 @@ import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBi
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import { asAsyncHostAdapter, isAsyncHostCapabilityId, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import {
+  resolveRuntimeHostCapabilityFuncFamilyRecord,
   resolveRuntimeHostCapabilityFuncRecord,
+  resolveRuntimeHostCapabilityGlobalRecord,
   RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityFieldScheme,
   type RuntimeHostCapabilityRecord,
+  type RuntimeHostCapabilityValueType,
 } from "./runtime-host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import type { IrStringConcatMode } from "./string-runtime.js";
@@ -29,7 +33,10 @@ import {
   STRING_COMPARE_RUNTIME_FEATURES,
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
+  STRING_CHAR_CODE_AT_RUNTIME_FEATURES,
   STRING_CONCAT_RUNTIME_FEATURES,
+  STRING_CONCAT_MANY_RUNTIME_FEATURES,
+  STRING_CONST_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -37,6 +44,7 @@ import {
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type RuntimeProviderPlan,
+  type StringConstRuntimeFeature,
 } from "./runtime-manifest.js";
 
 export interface PreparedIrRuntimeManifest {
@@ -455,6 +463,145 @@ export function preparedStringConcatProvider(
   throw new Error(`IR string-concat provider ${provider.id} is not a callable implementation`);
 }
 
+/** The one string-charCodeAt feature row; named once so no caller spells it. */
+const STRING_CHAR_CODE_AT_RUNTIME_FEATURE = STRING_CHAR_CODE_AT_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S7) Which arm of the guarded `charCodeAt` seam the frozen manifest
+ * selected, or `undefined` when no manifest carries the row.
+ *
+ * The family's fifth twin, and the first whose two arms share ONE
+ * implementation kind: both rows are `runtime-callable`, so the discriminator
+ * is the provider **ID**, not the kind. That is not an accident of spelling —
+ * neither arm is an import. Both are DEFINED helpers minted on demand
+ * (`ensureHostCharCodeAtGuarded` / `ensureNativeCharCodeAtHelper`), which is
+ * why this twin returns no module: there is no import-section position to
+ * locate, and the host arm's `capabilities` are what its helper needs
+ * REGISTERED (`wasm:js-string.charCodeAt` and `.length`), not what it is.
+ */
+export function preparedStringCharCodeAtProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+):
+  | { readonly arm: "host"; readonly symbol: string; readonly capabilities: readonly string[] }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_CHAR_CODE_AT_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind !== "runtime-callable") {
+    throw new Error(`IR string-char-code-at provider ${provider.id} is not a charCodeAt implementation`);
+  }
+  return provider.id === "host.js.string.char_code_at"
+    ? { arm: "host", symbol: provider.implementation.symbol, capabilities: provider.hostCapabilities }
+    : { arm: "native", symbol: provider.implementation.symbol };
+}
+
+/** The one batched many-arity feature row; named once so no caller spells it. */
+const STRING_CONCAT_MANY_RUNTIME_FEATURE = STRING_CONCAT_MANY_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F2-S6) Which arm of the BATCHED many-arity concat seam the frozen
+ * manifest selected, at one concrete `arity`, or `undefined` when no manifest
+ * carries the row.
+ *
+ * The family's distinguishing move: one frozen row answers every arity, and
+ * the CONCRETE import or symbol is derived here rather than stored. The host
+ * arm returns the derived module/field AND the derived params, because the
+ * caller mints the import itself (`ensureLateImport`) and the record is the
+ * only authority for its shape; the native arm returns the derived symbol,
+ * range-checked against the row.
+ *
+ * Late minting is deliberate and is the contract, not an accident: the host
+ * import's POSITION in the import section is what the emitted bytes depend on
+ * (the census measured `__concat_5` landing at import index 21 of 27 on the
+ * async fixture), and a freeze-time registration would move every batching
+ * cell by design.
+ */
+export function preparedStringConcatManyProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+  arity: number,
+):
+  | {
+      readonly arm: "host";
+      readonly module: string;
+      readonly field: string;
+      readonly params: readonly RuntimeHostCapabilityValueType[];
+      readonly results: readonly RuntimeHostCapabilityValueType[];
+    }
+  | { readonly arm: "native"; readonly symbol: string }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === STRING_CONCAT_MANY_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable-family") {
+    const { symbolPrefix, arity: range } = provider.implementation;
+    if (arity < range.min || arity > range.max) {
+      throw new Error(`IR string-concat-many provider ${provider.id} does not cover arity ${arity}`);
+    }
+    return { arm: "native", symbol: `${symbolPrefix}${arity}` };
+  }
+  if (provider.implementation.kind === "host-callable-family") {
+    const row = resolveRuntimeHostCapabilityFuncFamilyRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+      arity,
+    );
+    return { arm: "host", module: row.module, field: row.field, params: row.params, results: row.results };
+  }
+  throw new Error(`IR string-concat-many provider ${provider.id} is not a callable family implementation`);
+}
+
+/** The two string-const feature rows, one per import namespace; named once so no caller spells them. */
+const STRING_CONST_RUNTIME_FEATURE = STRING_CONST_RUNTIME_FEATURES[0];
+const STRING_CONST_UTF16_RUNTIME_FEATURE = STRING_CONST_RUNTIME_FEATURES[1];
+
+/** The frozen feature row a literal answers to, by the ONE derivation. */
+export function stringConstFeatureFor(utf16: boolean): StringConstRuntimeFeature {
+  return utf16 ? STRING_CONST_UTF16_RUNTIME_FEATURE : STRING_CONST_RUNTIME_FEATURE;
+}
+
+/**
+ * (#3526 F2-S8) Which arm of the string LITERAL STORAGE seam the frozen
+ * manifest selected for `feature`, or `undefined` when no manifest carries that
+ * row.
+ *
+ * The family's last twin, and the first whose arms are not callables at all.
+ * The host arm returns the import MODULE and the field SCHEME — never a field,
+ * because there is one field per literal and the scheme is what derives it. The
+ * native arm returns the Program-ABI global ROLE, which the consumer resolves
+ * to the interned literal's global; it can never return an index, because the
+ * manifest freezes before `internNativeStringLiteral` allocates one.
+ *
+ * `resolveRuntimeHostCapabilityGlobalRecord` is the fail-closed kind guard, the
+ * mirror of the func one every sibling takes: a callable capability has no
+ * global spelling, so admitting one here would build a nonsense binding.
+ */
+export function preparedStringConstProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+  feature: StringConstRuntimeFeature,
+):
+  | { readonly arm: "host"; readonly module: string; readonly scheme: RuntimeHostCapabilityFieldScheme }
+  | { readonly arm: "native"; readonly role: "native-string-literal" }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === feature,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "native-global") {
+    return { arm: "native", role: provider.implementation.role };
+  }
+  if (provider.implementation.kind === "host-global") {
+    const record = resolveRuntimeHostCapabilityGlobalRecord(
+      prepared!.manifest.hostCapabilityRecords,
+      provider.implementation.capability,
+    );
+    return { arm: "host", module: record.module, scheme: record.field.scheme };
+  }
+  throw new Error(`IR string-const provider ${provider.id} is not a literal-storage implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -559,6 +706,46 @@ export function prepareIrRuntimeManifest(input: {
    * must not freeze an `owned-append` provider it will never call.
    */
   readonly stringConcatDemand?: { readonly immutable: boolean; readonly owned: boolean };
+  /**
+   * (#3526 F2-S7) True when some function in `functions` performs a guarded
+   * `charCodeAt` read. Same shape and same reason as `stringLenDemand`, but the
+   * scan behind it counts TWO producers: the `string.char_code_at` instruction
+   * AND the plan-path `intrinsic` calls whose symbol already names the lane. An
+   * instr-only demand would freeze a row for a handful of cells and leave every
+   * plan-path call with no row to be verified against.
+   */
+  readonly stringCharCodeAtDemand?: boolean;
+  /**
+   * (#3526 F2-S6) Which ARITIES some function in `functions` concatenates in
+   * one batched call, sorted and unique.
+   *
+   * Unlike every sibling demand this is scanned AFTER the producing pass, not
+   * before it: `batchStringConcat` CREATES the demand, so there is nothing to
+   * scan until it has run. An empty list is a module with no fused root, and it
+   * freezes no family row at all — the same "no row when nothing concatenates"
+   * rule the pair arm follows.
+   *
+   * The arities are carried rather than a bare flag because they are the
+   * checkable part: a frozen row that does not cover a demanded arity is a
+   * contract violation the resolve arm can name.
+   */
+  readonly stringConcatManyDemand?: { readonly arities: readonly number[] };
+  /**
+   * (#3526 F2-S8) Which literal-storage NAMESPACES some function in
+   * `functions` needs. Same shape and same reason as `stringConcatDemand` — a
+   * pair, because the seam has two feature rows — but it is load-bearing in a
+   * way no sibling demand is.
+   *
+   * `string.const` has no callable symbol AND no resolve arm: after this slice
+   * the frozen row is the only physical authority, and the attachment runs
+   * INSIDE the freeze. A module carrying literals that froze no manifest would
+   * therefore leave every literal without `storage` and fall silently back to
+   * the raw `stringGlobalMap` lookup — byte-identical on the host lane, and so
+   * invisible to a byte matrix. That is why `literal` is in the "freeze nothing
+   * at all" conjunction below: a module with any `string.const` (or any
+   * `extern.regex`, which occupies host globals too) always freezes.
+   */
+  readonly stringConstDemand?: { readonly literal: boolean; readonly utf16: boolean };
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -599,7 +786,11 @@ export function prepareIrRuntimeManifest(input: {
     !input.stringEqDemand &&
     !input.stringLenDemand &&
     !input.stringConcatDemand?.immutable &&
-    !input.stringConcatDemand?.owned
+    !input.stringConcatDemand?.owned &&
+    !input.stringCharCodeAtDemand &&
+    (input.stringConcatManyDemand?.arities.length ?? 0) === 0 &&
+    !input.stringConstDemand?.literal &&
+    !input.stringConstDemand?.utf16
   ) {
     return undefined;
   }
@@ -614,6 +805,12 @@ export function prepareIrRuntimeManifest(input: {
   if (input.stringLenDemand) builder.requestFeature(STRING_LEN_RUNTIME_FEATURE);
   if (input.stringConcatDemand?.immutable) builder.requestFeature(STRING_CONCAT_RUNTIME_FEATURE);
   if (input.stringConcatDemand?.owned) builder.requestFeature(STRING_CONCAT_OWNED_RUNTIME_FEATURE);
+  if (input.stringCharCodeAtDemand) builder.requestFeature(STRING_CHAR_CODE_AT_RUNTIME_FEATURE);
+  if ((input.stringConcatManyDemand?.arities.length ?? 0) > 0) {
+    builder.requestFeature(STRING_CONCAT_MANY_RUNTIME_FEATURE);
+  }
+  if (input.stringConstDemand?.literal) builder.requestFeature(STRING_CONST_RUNTIME_FEATURE);
+  if (input.stringConstDemand?.utf16) builder.requestFeature(STRING_CONST_UTF16_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

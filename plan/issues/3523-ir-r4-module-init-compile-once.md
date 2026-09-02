@@ -90,16 +90,20 @@ loc-budget-allow:
   # would leave the next reader with the reason the gate is NOT built on. The
   # executable change at the gate itself is one identifier.
   - src/codegen/declarations.ts
-  # 2026-09-02 (gap 6a, module-scope closure pre-lift + discovery-static pass-1
-  # skip): +49 lines in `src/codegen/declarations.ts`. The slice's own logic all
-  # lives in the NEW subsystem module
-  # `declarations/module-init-closure-prelift.ts` (~330 lines); what lands in
+  # 2026-09-02 (gap 6a v2, module-scope closure pre-lift + discovery-static
+  # pass-1 skip, OPT-IN): +51 lines in `src/codegen/declarations.ts`. The slice's
+  # own logic all lives in the NEW subsystem module
+  # `declarations/module-init-closure-prelift.ts` (~460 lines); what lands in
   # `declarations.ts` is the wiring that cannot live anywhere else — the pass-1
-  # condition, the pre-lift branch that replaces it, the pass-2 disjunct, and the
-  # comment recording why `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2` now restores
-  # BOTH passes (it is the A/B baseline every pin in this family compares
-  # against). `compileDeclarations` is the only function that owns the two-pass
-  # sequence, so a slice that removes one of the passes has to edit it.
+  # condition, the pre-lift branch that replaces it under the seam, the pass-2
+  # disjunct, and the comment recording why
+  # `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2` restores BOTH passes (it is the A/B
+  # baseline every pin in this family compares against).
+  # `compileDeclarations` is the only function that owns the two-pass sequence,
+  # so a slice that can remove one of the passes has to edit it. +2 lines over
+  # the first landing's grant: the opt-in seam read and the guard that keeps the
+  # (#4195) dedupe mark in its historic position on the default route — both of
+  # them exist BECAUSE the default flipped off, see the gap-6a v2 repair record.
   - src/codegen/declarations.ts
 func-budget-allow:
   # 2026-09-01 (gap 1b): the same +11 comment lines land inside
@@ -3469,3 +3473,260 @@ count.
 capture INVENTORIES stay out of scope — the measured admission rate (68% of the
 harness sample without them) says they are not the next bottleneck; the nested
 escaping closure is.
+
+## 2026-09-02 gap-6a v2 repair record — Opus lane
+
+Branch `claude/issue-3523-gap6a-v2`, based on `origin/claude/revert-5474-gap6a`
+(`66ca1af6a7`, the revert of the first landing's merge commit `48724f80f6`). The
+slice is re-applied as one commit and then **narrowed to opt-in**: the pre-lift,
+the gate, the census counters and the suite all ship, and the pass-1 skip they
+drive is **OFF by default** behind `JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC=1`.
+A default build takes exactly the two-pass path `origin/main` takes today.
+
+**The correction that frames everything below: compile "success" is not
+instantiation.** The first lane's acceptance evidence was 325 host + 163
+standalone runner-faithful COMPILE samples at 0 error/success divergence. Nine of
+the 76 regressions are `WebAssembly.instantiate()` compile errors on a module the
+compiler reported as successful — an ill-typed module the compile lane cannot
+see, because nothing in it validates the binary. Every runtime figure in this
+record comes from `runTest262File`, which compiles, instantiates, runs, and runs
+the strict rerun.
+
+### R1 — reproduction, base vs candidate, runner-faithful
+
+`runTest262File` (host lane, the runner's own options via
+`assembleOriginalHarness`) over all 87 files the merge-group report names —
+the 76 pass→other rows, the 5 improvements, the 4 `Array/prototype/find*` rows
+and the 3 Temporal rows. Base = this branch's parent (`origin/main` minus
+gap-6a); candidate = the first landing's tree, re-applied:
+
+| | base | candidate |
+| --- | --- | --- |
+| pass | **77** | 5 |
+| fail | 10 | 82 |
+| status divergences vs base | — | **80** (76 pass→fail, 4 fail→pass) |
+
+The 76 pass→fail rows are exactly the merge group's list, reproduced
+deterministically off CI. **Not reproduced locally: the 32 Temporal
+fail→compile_error rows and the 4 `Array/prototype/find*` compile_error→fail
+rows** — the 3 Temporal and 4 find rows sampled here are at parity on both trees
+(the local Temporal provider builds from cache; the CI transitions are most
+likely provider-build/timeout effects at shard level). They are named here rather
+than counted as explained.
+
+**Admission census: 87/87 of those files' populations are ADMITTED**
+(`module-init-prelift = 1, module-init-pass1 = 0, module-init-pass2 = 1`).
+Not one regression is on a population the gate refused, so no refusal was
+mis-stated — the gate admits exactly what it says it admits, and what it admits
+is unsound.
+
+### R2 — the discriminating matrix, and what it rules out
+
+Five files, one per cluster, on four routes:
+
+| route | decodeURI A1.10_T1 | BigInt toString a-z | function/dstr id-init-skipped | function/unscopables-with | do-while S12.6.1_A2 |
+| --- | --- | --- | --- | --- | --- |
+| base | pass | pass | pass | pass | pass |
+| base + `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` | **pass** | **pass** | **pass** | **pass** | **pass** |
+| candidate | fail | fail | fail | fail | fail |
+| candidate + `JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT=1` | fail | fail | fail | fail | fail |
+| candidate + `FORCE_MODULE_INIT_PASS2=1` (kill switch) | pass | pass | pass | pass | pass |
+
+Two things fall out, and they are the whole diagnosis:
+
+1. **Compiling the initializer in the pass-2 slot is not the problem** — row 2 is
+   the two-pass build whose EMITTED init is pass 2's, compiled after the bodies,
+   and it is green. What breaks is compiling it there with **no pass 1 having
+   run**.
+2. **The pre-lift is not the problem either** — row 4 turns the registrations off
+   and the failures are identical. So no amount of widening or narrowing the
+   closure inventory touches these clusters. The kill switch works (row 5).
+
+### R3 — root cause per cluster, and WHICH collections mattered
+
+The gap-6 census asked which of the 45+ `ctx` collections pass 1 mutates are
+decision-changing for the bodies compiled between the passes, and answered
+"exactly one, the closure binding family". **That is false in two independent
+ways, and the census's own table is where each one hides.**
+
+**Family A — `ctx.moduleGlobals` is shifted; a caller's captured copy is not.**
+Clusters 1 (16 decodeURI/decodeURIComponent OOB traps), 2 in part, and the
+`do-while` single. Reduced to 4 lines inside the runner's harness:
+
+```js
+var a = [1, 2];
+var n = 0;
+for (var j = a[0]; j <= 2; j++) { n = n + 1; }   // n === 4, expected 2
+```
+
+`compileForStatement` (`src/codegen/statements/loops.ts`, the module-global arm
+of the for-head `var` declaration) reads `ctx.moduleGlobals.get(name)` into a
+local, calls `compileExpression` on the initializer, and only THEN pushes
+`{ op: "global.set", index }`. Compiling `a[0]` adds the bounds-check error
+path's string constant, `addStringConstantGlobals` runs
+`fixupModuleGlobalIndices`, and that fixup does its job perfectly: it shifts
+`ctx.moduleGlobals`, every already-emitted `global.get/set` reachable from any
+live body, and ~20 cached index maps. It cannot shift a number held in a local
+variable of a caller that has not pushed its instruction yet. Measured in the
+emitted WAT: the for-head writes `global.set 107` while every other reference to
+the same variable in the same function reads `global.get 108`, so `a[0]` lands in
+the PRECEDING global and `j` keeps its default. The same off-by-one writes an
+`f64` into an `externref` slot on a neighbouring shape, which is
+`global.set[0] expected type externref, found if of type f64` at
+`WebAssembly.instantiate` — cluster 2's `invalid Wasm binary`.
+
+This is a **pre-existing latent bug, not one gap-6a introduces**. Pass 1 masks it
+by compiling the whole initializer once, which creates every string-constant
+import the second compile would have needed, so the emitting compile inserts no
+global mid-body and there is nothing to go stale. It deserves its own issue; the
+pass-1 skip is what removes the mask. This is the sixth instance of the
+staleness family already documented inside `fixupModuleGlobalIndices` (#2023,
+#2001, #3032, #3933, #4648) — the first five all fixed a *cache*; this one is a
+value in flight on the stack, which no fixup can reach.
+
+**Family B — the bodies specialize against TYPES the initializer mints.**
+Cluster 3, all 33 array-pattern parameter rows. Reduced to two lines inside the
+harness:
+
+```js
+function f([w]) { return w; }
+var r = f([7]);   // r === undefined
+```
+
+The two-pass build's `$f` opens with a `ref.test (ref 12)` arm against the tuple
+struct that `f([7])`'s argument literal mints, unwraps it with `struct.get 12 0`
+and is done. Pass 1 compiles `f([7])` before `$f`'s body, so that type exists
+when the body asks. With pass 1 gone the body is compiled first, the arm is never
+generated, and every remaining arm mis-handles what the initializer later hands
+it — `w` reads `undefined`, or the iterator arm reports
+`Cannot destructure 'null' or 'undefined'`, or `SameValue(«4», «7»)`.
+
+The collection is the census's **"on-demand caches (order drift only)"** row —
+`structMap` / `structFields` / `anonTypeMap` and `mod.types`. The census
+classified them as re-mintable on demand, and for the INIT they are. They are not
+re-mintable for a body compiled BEFORE the init: a `ref.test` against a type that
+does not exist yet is not a cache miss, it is an arm that never gets emitted.
+**No AST-level inventory can publish this family, because producing it is
+compiling the initializer — that is what pass 1 is.** This is the finding that
+decides the slice.
+
+**Cluster 4 — `with` / `@@unscopables`, 8 rows.** Same route dependency (row 4 of
+the matrix reproduces it with the registrations off), surfacing as
+`null is not a function [in __module_init_chunk_0() ← __module_init]` on the
+sync half and `count` = 2 instead of 6 on the async half. The shape is a
+`globalThis[Symbol.unscopables] = { … }` computed member-set plus a `with` body,
+and its lowering reaches `reserveMemberSetDispatch`, which is one of the
+`addStringConstantGlobal` callers the fixup instrumentation caught inserting
+globals mid-init — i.e. family A's signature (a function-valued global read as
+`null`). **Stated as a classification, not a proof: this cluster was not reduced
+to a minimal case.** It is not explained away and it is not fixed.
+
+**Cluster 5 — the singles.** `do-while/S12.6.1_A2.js` (`illegal cast in
+__module_init`) is family A by shape. `S13.2.2_A13.js` (`eval`-declared function
+called from a constructor), the two `scope-*-param-rest-elem-var-close.js` null
+dereferences and `unary-{minus,plus}/S11.4.{7,6}_A3_T5.js` (`-function(){}`
+should be `NaN`) were **not reduced**; each is a distinct lowering that consumes
+something the init mints. Recorded, not explained.
+
+**Cluster 6 — not reproduced locally**, see R1.
+
+**The five improvements are the same mechanism running the other way**:
+`ary-ptrn-elem-ary-rest-init.js` × 3 and `dflt-obj-ptrn-rest-val-obj.js` gain a
+pass because a DIFFERENT arm wins when the init's type is absent. A family that
+moves rows in both directions is not a bug fix; it is an ordering accident.
+
+### R4 — why the sample said zero
+
+The first landing's runtime evidence was a 90-file runner-faithful sample with
+71 passes and 0 status divergences. The merge group then measured 76 pass→other
+against ~35,400 passes — a **0.21 %** rate. At that rate a 71-pass sample expects
+**0.15** hits and shows zero with probability ≈ **86 %**. The sample did not
+disagree with the merge group; it had no power to see it. The compile samples
+(325 + 163) had less power still, because seven of the nine ill-typed modules
+they covered are reported as successful compiles.
+
+The operative lesson for this family: **a route that reorders when the
+initializer compiles must be measured at a sample size set by the effect it is
+looking for**, and with instantiation counted.
+
+### R5 — the decision, and the measurement behind it
+
+**Option (b): the default is flipped OFF; the inventory and the gate stay as an
+opt-in seam.** Option (a) — a narrowed admission rule — was considered and
+rejected on the measurement, not on taste:
+
+- Every regressing population is ADMITTED (87/87), so the narrowing would have to
+  add refusals, not tighten existing ones.
+- Family B has no syntactic marker short of **"the population contains a
+  top-level function declaration whose body is compiled between the passes and is
+  called from the initializer"**. The runner-faithful harness prelude alone
+  contributes `function Test262Error`, `function $DONE` and the `assert` family
+  to **325/325** sampled populations, and the test bodies call them. A
+  fail-closed rule for family B therefore admits **0** of the harness corpus,
+  which is the corpus the slice exists to serve.
+- The alternative — enumerating the syntactic markers of the six observed
+  clusters — is fitting the gate to the failures we happened to find. That is
+  precisely the move that produced this incident: the first landing already
+  carried one such mixed-population residual risk as "recorded, not asserted
+  away", and it is one of the clusters above.
+
+So the honest rule leaves admission at zero on the population that matters, and
+the pre-lift's premise is wrong in family B. Both of the brief's triggers for (b)
+are met.
+
+**What ships:** `planModuleClosurePreLift` / `moduleInitDiscoveryIsStatic` /
+`applyModuleClosurePreLift`, the `module-init-prelift` and
+`module-init-discovery-static` counters, and the full suite — all inert unless
+`JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC=1`. `compileDeclarations` keeps the
+`pass1DiagnosticMark` in its historic position on the default route and takes it
+early only under the seam, so the (#4195) dedupe window is unchanged for every
+build that does not opt in.
+
+### R6 — verification
+
+- **Runtime, runner-faithful, instantiation counted.** All 87 cited files,
+  default route vs the base tree: **87/87 at status parity, 0 divergences.** Every one of the 76 pass→fail rows
+  is back at `pass`.
+- **Byte neutrality of the default route.** 341-file sample drawn across the
+  required globs (`test/language/statements/**/dstr/**`,
+  `test/built-ins/{decodeURI,decodeURIComponent,encodeURI,encodeURIComponent}/**`,
+  `test/built-ins/Temporal/Duration/**`, all 8
+  `test/language/statements/*/unscopables-with*.js`), assembled by
+  `assembleOriginalHarness` and compiled with the runner's options on both trees,
+  compared by sha256 of the emitted binary (successes) or of the sorted
+  diagnostic set (failures): **341/341 identical** on the host lane (328 successful compiles sha256-identical, 13 compile-failure rows identical by sorted diagnostic set) and **120/120 identical** on the standalone lane over the first 120 files of the same sample.
+- **Under the seam, the route still does what it claims.** The
+  `issue-3523-module-init-discovery-static` suite runs every existing case with
+  the seam ON, and gains two: `(g)` pins that the default is off (every admitted
+  shape reads `pre-lift = 0, pass1 = 1` on all four lanes and still reads its
+  value), and `(g) WHY it is off` turns two runner-faithful files — one per
+  family — from `pass` to not-`pass` by setting the seam, so "this is why the
+  default moved" is a mutation rather than a paragraph.
+- **Pins that no longer move.** `tests/issue-3523-module-init-single-pass.test.ts`
+  is restored byte-for-byte to its pre-slice state: with the route off, gap-1b's
+  `1/0` and `1/1` censuses are the truth again, so the `Shape.discoveryStatic`
+  flag and the two gap-6a-refused witness shapes the first landing added are
+  gone. Byte identity across the pass-1 skip is still NOT a metric — under the
+  seam the initializer compiles in a different slot and on-demand indices reorder
+  by design.
+- Suites, gates and ratchets: see the PR body.
+
+### R7 — follow-ups this record hands on
+
+1. **The `compileForStatement` stale-index bug is real on `main` today** and
+   needs its own issue: a for-head `var` at module scope captures its
+   module-global index before compiling the initializer expression and pushes the
+   `global.set` after it. It is unreachable through the two-pass route, so it
+   costs nothing today; it will bite any future change that moves work out of
+   pass 1. The fix is one line — re-read `ctx.moduleGlobals.get(name)` after
+   `compileExpression` — and it is a no-op whenever no shift happened. It is
+   deliberately NOT in this PR: a repair PR whose whole point is byte-neutrality
+   by default should not also change emitted code.
+2. **The gap-6 census needs its "order drift only" bucket re-read.**
+   `structMap` / `anonTypeMap` / `mod.types` are order-drift-only for the
+   initializer and decision-changing for anything compiled before it. Any future
+   pass-1 retirement has to answer family B first.
+3. **Sample-size discipline for this family**: size the runtime sample to the
+   effect (0.2 % of passes), count instantiation as part of success, and prefer
+   an A/B on the FULL required globs over a spread sample when the change
+   reorders compilation.
