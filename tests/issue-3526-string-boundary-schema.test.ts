@@ -83,6 +83,14 @@ const NEW_IDS = [
 
 const NEW_ID_SET: ReadonlySet<string> = new Set(NEW_IDS);
 
+/**
+ * (#3526 F2-S3) The five of those six that STILL have no provider row.
+ *
+ * `string.eq` left this set when F2-S3 put the equality seam under manifest
+ * authority; the other five are untouched and the fence below still holds them.
+ */
+const STILL_UNPROVIDED_IDS = NEW_IDS.filter((id) => id !== "string.eq");
+
 function row(capability: RuntimeHostCapabilityId): RuntimeHostCapabilityRecord {
   return resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, capability);
 }
@@ -354,13 +362,19 @@ describe("#3526 F2-S2 each row's ABI equals its registration site", () => {
 // --------------------------------------------------------------------------
 
 describe("#3526 F2-S2 no provider selects a new row", () => {
-  it("has no provider naming any of the six capabilities — the byte-identity argument", () => {
+  it("has no provider naming any of the five STILL-unprovided capabilities", () => {
+    // (#3526 F2-S3) Narrowed from six to five: `string.eq` now HAS a provider
+    // (`host.js.string.eq`), which is exactly what this slice moved. The pin was
+    // written as the regression fence for the next slice, so the correct edit is
+    // to shrink it by the id that landed — not to delete it. The remaining five
+    // are still un-provided and this keeps saying so.
     const named = new Set<string>();
     for (const provider of RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]) {
       if (provider.implementation.kind === "host-callable") named.add(provider.implementation.capability);
       for (const capability of provider.hostCapabilities) named.add(capability);
     }
-    for (const id of NEW_IDS) expect([...named]).not.toContain(id);
+    for (const id of STILL_UNPROVIDED_IDS) expect([...named]).not.toContain(id);
+    expect([...named]).toContain("string.eq");
   });
 
   it("keeps Math-only, async-only and compare-only manifests free of every new row", () => {
@@ -624,17 +638,22 @@ function integrationSlice(startMarker: string, endMarker: string): string {
 }
 
 describe("#3526 F2-S2 the un-migrated arms still read the lane", () => {
-  it("keeps the concat/eq resolve arm on ctx.nativeStrings and the raw import lookup", () => {
-    // F2-S3 splits `string.eq` out of this three-symbol arm. Until then the arm
-    // is UNGOVERNED, and pinning that is what stops this slice from being
-    // mistaken for the move it prepares.
+  it("keeps the CONCAT resolve arm on ctx.nativeStrings and the raw import lookup", () => {
+    // (#3526 F2-S3) F2-S3 lifted `string.eq` out of what was a three-symbol arm,
+    // so this pin is now concat-only and the eq half is INVERTED in
+    // `issue-3526-string-boundary-eq.test.ts` (which asserts the arm reads no
+    // lane discriminator at all). The concat pair is still UNGOVERNED, and
+    // pinning that is what stops F2-S5 from being mistaken for having landed.
+    // The `field` variable went with the eq half — after the split the arm names
+    // its one spelling directly.
     const arm = integrationSlice(
       "symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN",
       "\n  } else if (",
     );
     expect(arm).toContain("ctx.nativeStrings");
-    expect(arm).toContain('exactCallableImportIndex(ctx, "wasm:js-string", field)');
+    expect(arm).toContain('exactCallableImportIndex(ctx, "wasm:js-string", "concat")');
     expect(arm).not.toContain("hostCapabilityRecords");
+    expect(arm).not.toContain("IR_STRING_EQUALS_FN");
   });
 
   it("keeps the string.len provider on ctx.nativeStrings and the raw import ref", () => {

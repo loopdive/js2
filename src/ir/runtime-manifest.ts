@@ -68,7 +68,8 @@ export type RuntimeFeature =
   | IntrinsicRuntimeFeature
   | AsyncRuntimeFeature
   | GeneratorNumberBoxRuntimeFeature
-  | StringCompareRuntimeFeature;
+  | StringCompareRuntimeFeature
+  | StringEqRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -195,6 +196,33 @@ export const STRING_COMPARE_POLICY_DISABLED: StringComparePolicy = Object.freeze
   compare: "unsupported",
 });
 
+/**
+ * (#3526 F2-S3) The exact, already-resolved policy for the STRING EQUALITY
+ * seam (`a === b` / `a !== b` on two strings) — family 2's second policy, and a
+ * SIBLING of {@link StringComparePolicy}, never a widening of it.
+ *
+ * The truth table is the same one (`nativeStrings ? native : host`) because both
+ * seams answer to the same lane flag, but the physical pair is different: this
+ * arm's host provider is the `wasm:js-string.equals` BUILTIN import, not an
+ * `env` one. That namespace only became expressible as a capability record in
+ * F2-S2, which is why this seam could not move with the compare. Keeping the two
+ * policies separate means either seam can later be re-pointed — to a self-hosted
+ * helper, say — without dragging the other with it.
+ */
+export interface StringEqPolicy {
+  /**
+   * `host` selects the `wasm:js-string.equals` builtin import through the
+   * central `string.eq` capability; `native` selects the `__str_equals` Wasm
+   * helper `ensureNativeStringHelpers` registers.
+   */
+  readonly eq: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string equality seam resolve the arm to this. */
+export const STRING_EQ_POLICY_DISABLED: StringEqPolicy = Object.freeze({
+  eq: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -223,6 +251,11 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly stringCompare?: StringComparePolicy;
+  /**
+   * Omission resolves to {@link STRING_EQ_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringEq?: StringEqPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
@@ -232,6 +265,7 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly externIsUndefined: ExternIsUndefinedPolicy;
   readonly generatorNumberBox: GeneratorNumberBoxPolicy;
   readonly stringCompare: StringComparePolicy;
+  readonly stringEq: StringEqPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -333,6 +367,22 @@ export const STRING_COMPARE_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type StringCompareRuntimeProviderId = (typeof STRING_COMPARE_RUNTIME_PROVIDER_IDS)[number];
 
+/**
+ * (#3526 F2-S3) The string equality seam's requirement.
+ *
+ * `string.eq` IS an IR instruction, unlike the compare — but the CALLABLE it
+ * resolves through is still a plain `call` on the `__ir_string_equals` sentinel
+ * func-ref, and the `intrinsic` walk that collects uses sees no `intrinsic`
+ * here. So the demand is requested at freeze from a `string.eq` instruction
+ * scan, exactly as the compare's is from a `call` scan.
+ */
+export const STRING_EQ_RUNTIME_FEATURES = Object.freeze(["js.string.eq"] as const);
+export type StringEqRuntimeFeature = (typeof STRING_EQ_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S3) One provider per admitted string-equality policy arm. */
+export const STRING_EQ_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.eq", "native.js.string.eq"] as const);
+export type StringEqRuntimeProviderId = (typeof STRING_EQ_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -341,6 +391,7 @@ export type RuntimeProviderId =
   | ExternBoundaryRuntimeProviderId
   | GeneratorNumberBoxRuntimeProviderId
   | StringCompareRuntimeProviderId
+  | StringEqRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -605,13 +656,15 @@ function numberBoundaryProvider(
     | BooleanBoundaryRuntimeProviderId
     | ExternBoundaryRuntimeProviderId
     | GeneratorNumberBoxRuntimeProviderId
-    | StringCompareRuntimeProviderId,
+    | StringCompareRuntimeProviderId
+    | StringEqRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
     | BooleanBoundaryRuntimeFeature
     | ExternBoundaryRuntimeFeature
     | GeneratorNumberBoxRuntimeFeature
-    | StringCompareRuntimeFeature,
+    | StringCompareRuntimeFeature
+    | StringEqRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -766,6 +819,45 @@ const STRING_COMPARE_FEATURE_SET: ReadonlySet<string> = new Set(STRING_COMPARE_R
 
 function isStringCompareFeature(feature: RuntimeFeature): feature is StringCompareRuntimeFeature {
   return STRING_COMPARE_FEATURE_SET.has(feature);
+}
+
+/**
+ * (#3526 F2-S3) The string equality seam's two arms. Both answer the same
+ * 0/1 code-unit equality: on the host lane through the central `string.eq`
+ * capability record (`wasm:js-string.equals`, one of the five builtins
+ * `addStringImports` registers as a block before Phase 3), on the native-strings
+ * lanes through the `__str_equals` Wasm helper. As with the compare, the
+ * manifest decides WHICH authority answers; it introduces no new spelling and no
+ * second registration path, which is why the migration is byte-neutral.
+ */
+export const STRING_EQ_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.eq",
+    "js.string.eq",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.eq" },
+    ["string.eq"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.eq",
+    "js.string.eq",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_equals" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted string-equality arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function stringEqProviderId(policy: StringEqPolicy): StringEqRuntimeProviderId | null {
+  if (policy.eq === "host") return "host.js.string.eq";
+  return policy.eq === "native" ? "native.js.string.eq" : null;
+}
+
+const STRING_EQ_FEATURE_SET: ReadonlySet<string> = new Set(STRING_EQ_RUNTIME_FEATURES);
+
+function isStringEqFeature(feature: RuntimeFeature): feature is StringEqRuntimeFeature {
+  return STRING_EQ_FEATURE_SET.has(feature);
 }
 
 /** The exact provider the admitted generator-box arm selects, or `null` when
@@ -1027,6 +1119,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
     ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS,
     ...STRING_COMPARE_RUNTIME_PROVIDERS,
+    ...STRING_EQ_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -1038,6 +1131,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
   ...GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   ...STRING_COMPARE_RUNTIME_FEATURES,
+  ...STRING_EQ_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -1049,6 +1143,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS,
   ...STRING_COMPARE_RUNTIME_PROVIDER_IDS,
+  ...STRING_EQ_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -1255,6 +1350,7 @@ export class RuntimeManifestBuilder {
     const externIsUndefined = policy.externIsUndefined ?? EXTERN_IS_UNDEFINED_POLICY_DISABLED;
     const generatorNumberBox = policy.generatorNumberBox ?? GENERATOR_NUMBER_BOX_POLICY_DISABLED;
     const stringCompare = policy.stringCompare ?? STRING_COMPARE_POLICY_DISABLED;
+    const stringEq = policy.stringEq ?? STRING_EQ_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
@@ -1262,6 +1358,7 @@ export class RuntimeManifestBuilder {
       externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
       generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
       stringCompare: Object.freeze({ compare: stringCompare.compare }),
+      stringEq: Object.freeze({ eq: stringEq.eq }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -1634,7 +1731,23 @@ export class RuntimeManifestBuilder {
                   }
                   return candidates.filter((candidate) => candidate.id === selectedId);
                 })()
-              : candidates;
+              : // (#3526 F2-S3) Family 2's second policy, and the compare's exact
+                // sibling: same lane flag, different physical pair. The refusal
+                // names `stringEq` so an operator can tell WHICH string seam a
+                // disabled adapter refused.
+                isStringEqFeature(feature)
+                ? ((): readonly RuntimeProviderDefinition[] => {
+                    const selectedId = stringEqProviderId(this.#policy.stringEq);
+                    if (selectedId === null) {
+                      throw new RuntimeManifestInvariantError(
+                        "provider-target-unavailable",
+                        `runtime feature ${feature} is unavailable under string-eq policy ` +
+                          `eq=${this.#policy.stringEq.eq}`,
+                      );
+                    }
+                    return candidates.filter((candidate) => candidate.id === selectedId);
+                  })()
+                : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",
