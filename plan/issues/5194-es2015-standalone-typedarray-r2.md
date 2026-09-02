@@ -36,6 +36,16 @@ loc-budget-allow:
   - src/codegen/ta-dyn-mop.ts
   - src/codegen/iterator-native.ts
   - src/codegen/closed-method-dispatch.ts
+  # 2026-09-01 r2 IMPLEMENTATION (steps 1-2, Opus). Three readers the plan
+  # named by function but not by file: the static `<Builtin>.prototype.<m>`
+  # value read plus its `.length`/`.name` meta fold (`builtin-value-read.ts`),
+  # the own-CSV resolver that now retries on the declared parent brand
+  # (`native-proto-value-read.ts`), and the `$__ta_ctor` metadata arm that
+  # makes `<View>.prototype` an OWN property of the constructor
+  # (`ta-ctor-meta.ts`) — `verifyProperty`'s first assertion.
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/native-proto-value-read.ts
+  - src/codegen/ta-ctor-meta.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -59,6 +69,10 @@ func-budget-allow:
   - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
   - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  # 2026-09-01 r2 implementation — the `$__ta_ctor` metadata fill gains the
+  # §23.2.6.2 `prototype` get_meta + gOPD arm pair (one splice ladder over one
+  # native, so the arms belong in it rather than in a parallel filler).
+  - src/codegen/ta-ctor-meta.ts::fillTaCtorGetMetaArm
 ---
 
 # #5194 — typedarray r2: cluster and fix the 461 residual failures

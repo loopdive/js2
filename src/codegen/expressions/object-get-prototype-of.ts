@@ -8,6 +8,11 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitLazyNativeProtoGet } from "../native-proto.js";
+import {
+  ensureTypedArrayIntrinsicNativeProtoGlue,
+  ensureTypedArrayViewNativeProtoGlue,
+  isTypedArrayViewProtoName,
+} from "../array-object-proto.js";
 import { tryEnsureNativeProtoBrand } from "../property-access.js";
 import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
@@ -276,6 +281,49 @@ export function tryCompileEs5GetPrototypeOfValue(
     isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
   ) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Error");
+  }
+
+  // (#5194 step 1) The TypedArray family, in TWO shapes that the declared-name
+  // map below cannot tell apart — `Uint8Array.prototype` and
+  // `new Uint8Array(0)` both have the TS type `Uint8Array`.
+  //
+  //   `getPrototypeOf(<View>.prototype)` → `%TypedArray%.prototype` (§23.2.7)
+  //   `getPrototypeOf(<view instance>)`  → `<View>.prototype`      (§23.2.5.6)
+  //
+  // The instance arm MUST stay compile-time: a statically typed view lowers to
+  // a packed carrier that several kinds share (`i8_byte` serves Int8Array,
+  // Uint8Array and Uint8ClampedArray; `f64` serves Float64Array AND
+  // `number[]`), so no runtime test can recover the kind. Dynamic views already
+  // resolve at runtime through the `ta-dyn-mop.ts` `__getPrototypeOf` arm, and
+  // both routes land on the same lazily-materialized glue singleton, so the
+  // identity `getPrototypeOf(new Uint8Array(0)) === Uint8Array.prototype` holds
+  // by `ref.eq` either way.
+  if (ctx.standalone || ctx.wasi) {
+    const protoOfName =
+      ts.isPropertyAccessExpression(arg0) && arg0.name.text === "prototype" && ts.isIdentifier(arg0.expression)
+        ? arg0.expression.text
+        : undefined;
+    if (protoOfName !== undefined && isTypedArrayViewProtoName(protoOfName)) {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+      if (intrinsicBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, intrinsicBrand)) {
+        return { kind: "externref" };
+      }
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    const viewName = ctx.oracle.declaredNameOf(arg0) ?? "";
+    if (protoOfName === undefined && isTypedArrayViewProtoName(viewName)) {
+      const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
+      if (brand !== undefined) {
+        const argType = compileExpression(ctx, fctx, arg0);
+        if (argType) fctx.body.push({ op: "drop" });
+        if (emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+    }
   }
 
   const staticType = ctx.oracle.staticJsTypeOf(arg0);
