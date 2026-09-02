@@ -3365,18 +3365,34 @@ function compileClassBodiesInner(
     }
   }
 
-  // Compile getter/setter accessor bodies
-  // Track which accessors have been compiled to avoid overwriting when
-  // both static and instance accessors share the same computed property name.
-  const compiledAccessors = new Set<string>();
+  // Compile getter/setter accessor bodies.
+  //
+  // (#5195 Step 1.6) Records the KIND each accessor slot was compiled for, not
+  // merely that it was compiled. Two rules meet on this one funcMap key:
+  //
+  //  - a static and an instance accessor of the same name share it today
+  //    (#5195 cluster B item 5), and the instance one must keep it — that is
+  //    the collision this set was introduced for;
+  //  - two accessors of the SAME kind and key are a legal redefinition, and
+  //    §15.7.14 installs the elements in source order, so the LAST one wins
+  //    (`get b(){throw}` then `get ['b'](){return 'B'}` must answer 'B').
+  //    Skipping the second kept the FIRST body, which is the opposite.
+  //
+  // Recompiling overwrites `func.body`/`func.locals` in the same slot, so the
+  // earlier body simply never ships.
+  const compiledAccessors = new Map<string, "static" | "instance">();
+  const accessorKindOf = (member: ts.ClassElement): "static" | "instance" =>
+    hasStaticModifier(member) ? "static" : "instance";
   for (const member of decl.members) {
     if (ts.isGetAccessorDeclaration(member) && member.name) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
       const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const getterName = `${className}_get_${propName}`;
-      if (compiledAccessors.has(getterName)) continue; // already compiled
-      compiledAccessors.add(getterName);
+      const getterKind = accessorKindOf(member);
+      const priorGetterKind = compiledAccessors.get(getterName);
+      if (priorGetterKind !== undefined && priorGetterKind !== getterKind) continue; // other kind owns the slot
+      compiledAccessors.set(getterName, getterKind);
       const getterLocalIdx = funcByName.get(classMemberFuncKey(ctx, getterName)); // (#1983)
       if (getterLocalIdx === undefined) continue;
 
@@ -3490,8 +3506,10 @@ function compileClassBodiesInner(
       const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const setterName = `${className}_set_${propName}`;
-      if (compiledAccessors.has(setterName)) continue; // already compiled
-      compiledAccessors.add(setterName);
+      const setterKind = accessorKindOf(member);
+      const priorSetterKind = compiledAccessors.get(setterName);
+      if (priorSetterKind !== undefined && priorSetterKind !== setterKind) continue; // other kind owns the slot
+      compiledAccessors.set(setterName, setterKind);
       const setterLocalIdx = funcByName.get(classMemberFuncKey(ctx, setterName)); // (#1983)
       if (setterLocalIdx === undefined) continue;
 

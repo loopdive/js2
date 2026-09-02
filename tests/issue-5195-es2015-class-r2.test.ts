@@ -303,3 +303,134 @@ describe("#5195 Step 1.3/1.4 — prototype `constructor` for every class", () =>
     expect(runHost(CTOR_PROP_SOURCE, "probe")).toBe(1);
   });
 });
+
+describe("#5195 Step 1.6 — duplicate accessors are last-definition-wins", () => {
+  // §15.7.14 installs the class elements in source order, so a second accessor
+  // with the same key REPLACES the first. The funcMap guard kept the first
+  // body, which is the opposite answer — and the guard cannot simply go, because
+  // a static and an instance accessor of the same name share that one key.
+  const DUPLICATE_ACCESSOR_SOURCE = `
+    class C {
+      get b() { return 'first'; }
+      get ['b']() { return 'second'; }
+      set c(v) { this.viaFirst = v; }
+      set ['c'](v) { this.viaSecond = v; }
+    }
+    class D {
+      get v() { return 'instance'; }
+      static get v() { return 'static'; }
+    }
+    export function probe() {
+      const c = new C();
+      c.c = 1;
+      return c.b === 'second' && c.viaFirst === undefined && c.viaSecond === 1
+        && new D().v === 'instance' ? 1 : 0;
+    }
+  `;
+
+  it("standalone: the last accessor of a kind wins, and static does not steal instance", async () => {
+    expect(await runStandalone(DUPLICATE_ACCESSOR_SOURCE, "probe", "issue-5195-dup-accessor.js")).toBe(1);
+  });
+
+  it("host lane agrees on duplicate accessors", () => {
+    expect(runHost(DUPLICATE_ACCESSOR_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 9 H/I — accessor writes and the inner class binding", () => {
+  // A top-level `C.staticX = v` / `new C().x = v` calls a SETTER, which is
+  // observable work — but neither writes a named module global, so the whole
+  // statement was dropped from `__module_init` and the setter never ran. The
+  // same write inside a function body always worked.
+  const ACCESSOR_WRITE_SOURCE = `
+    var instanceSeen = 0, staticSeen = 0;
+    class C {
+      set x(v) { instanceSeen = v; }
+      static set y(v) { staticSeen = v; }
+    }
+    new C().x = 5;
+    C.y = 7;
+    export function probe() { return instanceSeen === 5 && staticSeen === 7 ? 1 : 0; }
+  `;
+
+  it("standalone: top-level accessor writes run their setter", async () => {
+    expect(await runStandalone(ACCESSOR_WRITE_SOURCE, "probe", "issue-5195-accessor-write.js")).toBe(1);
+  });
+
+  it("host lane agrees on top-level accessor writes", () => {
+    expect(runHost(ACCESSOR_WRITE_SOURCE, "probe")).toBe(1);
+  });
+
+  // §15.7.14 step 3: the class body sees its own name through an IMMUTABLE
+  // inner binding. The OUTER binding stays mutable, which is the control.
+  const INNER_BINDING_SOURCE = `
+    var thrown = 0;
+    function attempt(f) { try { f(); } catch (e) { if (e instanceof TypeError) thrown++; } }
+    attempt(function () { class A { constructor() { A = 42; } } new A(); });
+    attempt(function () { class B { m() { B = 42; } } new B().m(); });
+    attempt(function () { class C2 { get x() { C2 = 42; } } new C2().x; });
+    attempt(function () { class D2 { set x(_) { D2 = 42; } } new D2().x = 1; });
+    attempt(function () { class E2 { static s() { E2 = 42; } } E2.s(); });
+    // Control: the OUTER binding is not const, so a write to it must not
+    // throw. (Whether the write is then observable is a separate, pre-existing
+    // standalone gap — a top-level class name reads back as the class object —
+    // so this asserts only the half this change governs.)
+    var outerOk = 0;
+    class Outer {}
+    try { Outer = 42; outerOk = 1; } catch (e) { outerOk = -1; }
+    export function probe() { return thrown === 5 && outerOk === 1 ? 1 : 0; }
+  `;
+
+  it("standalone: writing the inner class binding is a TypeError, the outer one is not", async () => {
+    expect(await runStandalone(INNER_BINDING_SOURCE, "probe", "issue-5195-inner-binding.js")).toBe(1);
+  });
+
+  it("host lane agrees on the inner class binding", () => {
+    expect(runHost(INNER_BINDING_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 11 E — derived-constructor return", () => {
+  // §10.2.1.3 step 13: a derived ctor's bare `return;` / `return undefined`
+  // yields `this`; `return null` is a TypeError (null has typeof "object" but
+  // is not an Object). The struct-result derived lane had NO return arm at all,
+  // so the statement fell to the generic value return, pushed `ref.null
+  // <struct>`, and `new Derived()` trapped on a null dereference.
+  const DERIVED_RETURN_SOURCE = `
+    var baseCalls = 0;
+    class Base { constructor() { this.prop = 1; baseCalls++; } }
+    class Empty extends Base { constructor() { super(); return; } }
+    class Undef extends Base { constructor() { super(); return undefined; } }
+    class Nulled extends Base { constructor() { super(); return null; } }
+    export function probe() {
+      const a = new Empty();
+      const b = new Undef();
+      let threw = false;
+      try { new Nulled(); } catch (e) { threw = e instanceof TypeError; }
+      return a.prop === 1 && b.prop === 1 && threw && baseCalls === 3 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: bare and undefined returns yield `this`, null is a TypeError", async () => {
+    expect(await runStandalone(DERIVED_RETURN_SOURCE, "probe", "issue-5195-derived-return.js")).toBe(1);
+  });
+
+  it("host lane agrees on derived-constructor returns", () => {
+    expect(runHost(DERIVED_RETURN_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a BASE constructor's `return null` is still a
+  // silent discard, not a TypeError.
+  const BASE_RETURN_SOURCE = `
+    class B { constructor() { this.prop = 2; return null; } }
+    export function probe() { return new B().prop === 2 ? 1 : 0; }
+  `;
+
+  it("standalone: a base constructor's `return null` still discards", async () => {
+    expect(await runStandalone(BASE_RETURN_SOURCE, "probe", "issue-5195-base-return.js")).toBe(1);
+  });
+
+  it("host lane agrees on the base-constructor control", () => {
+    expect(runHost(BASE_RETURN_SOURCE, "probe")).toBe(1);
+  });
+});

@@ -1,10 +1,10 @@
 ---
 id: 5195
 title: "ES2015 standalone class — r2 residual pass"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-01
+updated: 2026-09-02
 priority: medium
 horizon: l
 feasibility: medium

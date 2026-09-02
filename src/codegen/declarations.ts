@@ -152,7 +152,7 @@ import {
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
-import { compileExpression, compileStatement } from "./shared.js";
+import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
@@ -2291,6 +2291,44 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
+ * (#5195 Step 9 H) A top-level `C.staticX = v` or `new C().x = v` whose target
+ * names a declared class ACCESSOR.
+ *
+ * Both shapes call a SETTER, which is observable work — but neither writes a
+ * named module global, so `shouldCollectTopLevelAssignment` dropped the whole
+ * statement from `__module_init` and the setter never ran. The same write
+ * inside a function body has always worked, which is what made the gap look
+ * like a lowering bug rather than a collection one.
+ *
+ * Deliberately narrow: a DECLARED accessor of a class this module compiled, and
+ * only the two receiver shapes that carry no other observable state (a class
+ * identifier, and a `new C(...)` temporary). Everything else keeps its
+ * historical collection decision, so no module without such a write changes.
+ * `isExactTopLevelClassAccessorWrite` above is the ELEMENT-access twin; it stays
+ * as it is because its own admission rules are narrower still.
+ */
+function isTopLevelClassAccessorPropertyWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.name)) return false;
+  const propName = target.name.text;
+  const receiver = skipTransparentExpressions(target.expression);
+  const classOf = (id: ts.Identifier): string | undefined => {
+    const name = ctx.classExprNameMap.get(id.text) ?? id.text;
+    return ctx.classSet.has(name) ? name : undefined;
+  };
+  if (ts.isIdentifier(receiver)) {
+    const className = classOf(receiver);
+    return className !== undefined && ctx.staticAccessorSet.has(`${className}_${propName}`);
+  }
+  if (ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
+    const className = classOf(receiver.expression);
+    if (className === undefined) return false;
+    const accessorKey = `${className}_${propName}`;
+    return ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey);
+  }
+  return false;
+}
+
+/**
  * Top-level class declarations are byte-inert unless computed-accessor or
  * runtime-heritage effects require source-ordered module initialization. The
  * statement emitter consults the final IR skip set.
@@ -2346,6 +2384,7 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
     // targets only; see top-level-assigned-function-names.ts.
     isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
+    (operator === ts.SyntaxKind.EqualsToken && isTopLevelClassAccessorPropertyWrite(ctx, target)) ||
     createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
   );
 }
