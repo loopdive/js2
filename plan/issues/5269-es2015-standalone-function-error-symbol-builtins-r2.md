@@ -1127,3 +1127,44 @@ first), and the five D rows and eight C rows that are all waiting on the same
 thing: **M-1, `Function.prototype.call`/`apply`.** That is now the highest-value
 remaining item in this wave — thirteen in-scope rows across three clusters block
 on it.
+
+### Final state of the branch
+
+`git merge origin/main` (54 commits, one conflict — see the merge commit), then
+re-measured on the merged tree.
+
+`.tmp/es2015/builtins-head.txt`, 150 rows, `--standalone`:
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| fork point | **0** | 132 | 18 |
+| first pass | 29 | 112 | 9 |
+| **final (post-merge)** | **30** | 113 | **7** |
+
+The extra pass is `Error/prototype/stack/setter-proxy-trap-rejects.js` (D). The
+two remaining `compile_error`s that left are the E cluster's — the
+`env::__new_SuppressedError` leak, now closed, so both rows reach their
+assertions. **No row that was passing at the checkpoint regressed**, verified by
+diffing the two runs' pass sets rather than by comparing totals.
+
+One more flip lands OUTSIDE this list:
+`built-ins/Number/prototype/toPrecision/undefined-precision-arg.js` (the J-1
+follow-up), measured over the 138-row Number-formatting families instead.
+
+Required checks on the merged tree:
+
+- **`pnpm run test:equivalence:gate` — PASS.** 24 failing / 1718 passing, all 24
+  already in `scripts/equivalence-baseline.json`: "No new equivalence
+  regressions", exit 0.
+- five ratchet gates green, including with `LOC_GATE_BASE=origin/main` (CI's
+  merge-preview base);
+- typecheck, biome lint and prettier clean;
+- focused suite 38/38.
+
+A note for whoever runs the gate locally next: it is ~70 min unsharded on this
+4-core box (CI runs it as 8 shards), and it must be launched DETACHED —
+`setsid nohup` — not as a harness background task. Three attempts today were
+reaped mid-run by the task supervisor, and the reap writes a pnpm `ELIFECYCLE`
+line into the log. That line is the KILL, not a gate failure, and the third
+attempt ran to completion with its verdict lost because the reaped wrapper owned
+the redirect.
