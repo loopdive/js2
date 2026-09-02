@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-02",
   "threshold": 1500,
-  "totalCeiling": 814737,
+  "totalCeiling": 814757,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -34,7 +34,7 @@
     "src/codegen/expressions/call-namespace-static.ts": 3326,
     "src/codegen/expressions/call-receiver-method.ts": 4662,
     "src/codegen/expressions/call-tail-dispatch.ts": 2215,
-    "src/codegen/expressions/calls-closures.ts": 2656,
+    "src/codegen/expressions/calls-closures.ts": 2665,
     "src/codegen/expressions/calls.ts": 10552,
     "src/codegen/expressions/eval-inline.ts": 2497,
     "src/codegen/expressions/identifiers.ts": 3188,
@@ -67,7 +67,7 @@
     "src/codegen/parse-number-native.ts": 1924,
     "src/codegen/program-abi-session.ts": 3562,
     "src/codegen/promise-combinators.ts": 1908,
-    "src/codegen/property-access-dispatch.ts": 5129,
+    "src/codegen/property-access-dispatch.ts": 5140,
     "src/codegen/property-access.ts": 6659,
     "src/codegen/proto-index-store.ts": 1818,
     "src/codegen/regexp-standalone.ts": 5938,
