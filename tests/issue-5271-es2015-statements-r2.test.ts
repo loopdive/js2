@@ -404,3 +404,104 @@ describe("#5271 step 3 — `with` HasBinding applies @@unscopables (standalone)"
     );
   });
 });
+
+describe("#5271 step 4 — for-in lexical head (standalone)", () => {
+  // STANDALONE-only. The JS-host lane of THIS pin harness enumerates nothing for
+  // an object-literal receiver (`for (var k in { a: 1 })` prints an empty
+  // accumulator) — verified by a file-copy A/B against the branch base, so it is
+  // pre-existing and unrelated to #5271. Pinning it here would encode that bug.
+  it("an array-pattern head destructures the KEY STRING's code units", async () => {
+    // RED on base: both elements bound `null`.
+    expect(
+      await runStandalone(`
+      var seen = 'none';
+      for (var [a, b] in { ab: null }) { seen = a + '|' + b; }
+      LOG("seen=" + seen);
+    `),
+    ).toEqual(["seen=a|b"]);
+  });
+
+  it("a duplicate name in a `var` head lets the LAST element win", async () => {
+    expect(
+      await runStandalone(`
+      var last = 'none';
+      for (var [x, x] in { ab: null }) { last = x; }
+      LOG("last=" + last);
+    `),
+    ).toEqual(["last=b"]);
+  });
+
+  it("an element past the key's end takes its DEFAULT", async () => {
+    expect(
+      await runStandalone(`
+      var out = 'none';
+      for (let [p, q = 'dflt'] in { z: 0 }) { out = p + '|' + q; }
+      LOG("out=" + out);
+    `),
+    ).toEqual(["out=z|dflt"]);
+  });
+
+  it("the head's bound names are in TDZ while the RECEIVER is evaluated", async () => {
+    // RED on base: `{ x }` read the outer `x` instead of throwing.
+    expect(
+      await runStandalone(`
+      var threw = 'no';
+      try { (function() { let x = 1; for (let x in { x }) {} })(); } catch (e) { threw = e.name; }
+      LOG("threw=" + threw);
+    `),
+    ).toEqual(["threw=ReferenceError"]);
+  });
+
+  it("a lexical head does not leak past the loop over a closed-shape receiver", async () => {
+    // RED on base: the static-unroll path never restored the outer binding.
+    expect(
+      await runStandalone(`
+      let x = 'outside';
+      for (let x in { i: 0 }) ;
+      LOG("x=" + x);
+    `),
+    ).toEqual(["x=outside"]);
+  });
+
+  it("CONTROL — a plain identifier head still enumerates every own key", async () => {
+    expect(
+      await runStandalone(`
+      var acc = '';
+      for (var k in { a: 1, b: 2 }) acc = acc + k;
+      LOG("acc=" + acc);
+    `),
+    ).toEqual(["acc=ab"]);
+  });
+
+  it("CONTROL — a `let` head still binds the key per iteration and is readable in the body", async () => {
+    expect(
+      await runStandalone(`
+      var acc = '';
+      var obj = { p: 1, q: 2 };
+      for (let k in obj) acc = acc + k + obj[k];
+      LOG("acc=" + acc);
+    `),
+    ).toEqual(["acc=p1q2"]);
+  });
+
+  it("CONTROL — a `for…in` over an array still yields its index keys", async () => {
+    expect(
+      await runStandalone(`
+      var acc = '';
+      for (var i in ['a', 'b', 'c']) acc = acc + i;
+      LOG("acc=" + acc);
+    `),
+    ).toEqual(["acc=012"]);
+  });
+
+  it("CONTROL — a nullish receiver still yields zero iterations", async () => {
+    expect(
+      await runStandalone(`
+      var n = 0;
+      for (var k in null) n = n + 1;
+      for (var k2 in undefined) n = n + 1;
+      LOG("n=" + n);
+    `),
+    ).toEqual(["n=0"]);
+  });
+});

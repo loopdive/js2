@@ -684,3 +684,37 @@ It is a defined function, never an import, so the module stays host-import-free.
   nothing seeds `__symbol_desc_table` for well-known ids.
 - D4 (`variable/binding-resolution`, the keyed-destructuring row) and D5 (the
   loud `unscopables-inc-dec` refusal) are unchanged.
+
+### Step 4 — for-in lexical head (cluster C)
+
+`stmt-cl-C.txt`: **0 → 10 pass** (all ten rows). Three defects, two of them not
+where the plan looked:
+
+1. **C2 (key-string patterns).** New `src/codegen/forin-key-destructure.ts`
+   converts the enumerated key to the per-code-unit `string[]` vec
+   (`__str_to_char_vec`, #3100 S4) and runs the ordinary typed-vec
+   `destructureParamArray` over it, so elisions, defaults, nested patterns,
+   rest elements and duplicate names all behave as they do anywhere else. The
+   module-global sync is applied for a `var` head only — a `let`/`const` head
+   that syncs clobbers a same-spelled top-level `let` (caught by
+   `scope-body-lex-open`'s `probeBefore()`).
+2. **The static-unroll path wrote NO head at all.** `emitForInStaticUnroll`
+   took only an `emitCallTargetWrite` callback, so a binding-pattern or member
+   head over a closed-shape receiver (`for (var [a, b] in { ab: null })`) bound
+   nothing. All three lowerings now share one `emitForInHeadWrite`.
+3. **C1 was not `analyzeTdzAccess`.** The §14.7.5.6 step-2 head TDZ environment
+   was installed only on the dynamic-enumerator path; a closed-shape receiver
+   (every `scope-head-lex-*` row uses an object literal) reached the static
+   unroll, which compiled the receiver with no TDZ env — and the unroll's early
+   `return` also skipped the #2705 Slice B outer-binding restore, so the head
+   name leaked past the loop. Install/teardown are now
+   `installForInHeadTdzEnv` / `tearDownForInHeadTdzEnv`, applied on the unroll
+   path too, and `restoreForInHeadBindings` runs on all three early returns.
+   No change to `analyzeTdzAccess` or `compileTypeofExpression` was needed.
+
+Known gap outside the row list: an OBJECT-pattern for-in head
+(`for (var { length } in { abc: 0 })`) still reads `NaN` — the object lane does
+not box the key string as a String object. No in-scope row covers it.
+
+Controls: 20/20. Full 68-row list after steps 1-4: **0 → 29 pass** (floor 28
+cleared).

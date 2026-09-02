@@ -29,6 +29,9 @@ import {
   resolveWasmType,
 } from "../index.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
+// (#5271 step 4, C2) `for…in` array-pattern heads destructure the KEY STRING.
+import type { BindingKind } from "../destructuring-params.js";
+import { emitForInKeyArrayDestructure } from "../forin-key-destructure.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, linearU8ArenaResetInstrs } from "../linear-uint8-arena.js";
 import { emitCollectionIteratorVec, ensureMapHelpers, MAP_LAYOUT } from "../map-runtime.js";
 import { elemGetOp, resolveArrayInfo, typedArraySearchSignedness, unpackedElemType } from "../array-methods.js";
@@ -3446,6 +3449,63 @@ function emitForInMemberTargetWrite(
  * body } incr; br } }` scaffolding with the dynamic-object path so `break` /
  * `continue` / nested-loop depth handling is consistent.
  */
+/**
+ * (#5271 step 4) The binding kind of a `for…in` head, for the decl-mode
+ * destructure helpers (TDZ init fires for `let`/`const`, is a no-op for `var`).
+ */
+function forInHeadBindingKind(init: ts.ForInitializer): BindingKind {
+  if (!ts.isVariableDeclarationList(init)) return "var";
+  if (init.flags & ts.NodeFlags.Const) return "const";
+  if (init.flags & ts.NodeFlags.Let) return "let";
+  return "var";
+}
+
+/**
+ * (#1613/#5271) Write the per-iteration key in `keyLocal` into a NON-identifier
+ * head — a member target, a binding pattern, or the Annex B call target — before
+ * the user body runs.
+ *
+ * Extracted so all THREE `for…in` lowerings (the dynamic enumerator, the array
+ * fast path, and the closed-shape static unroll) perform the same write. The
+ * unroll path previously wrote only the call target, so a binding-pattern or
+ * member head over a closed-shape receiver — `for (var [a, b] in { ab: null })`
+ * — silently bound nothing (#5271 step 4).
+ */
+function emitForInHeadWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForInStatement,
+  keyLocal: number,
+  memberTarget: ts.PropertyAccessExpression | ts.ElementAccessExpression | null,
+  bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null,
+  callTarget: ts.CallExpression | null,
+): void {
+  if (memberTarget) {
+    emitForInMemberTargetWrite(ctx, fctx, memberTarget, keyLocal);
+    return;
+  }
+  if (bindingPattern) {
+    // Spec: the binding pattern destructures the (string) key value. Object
+    // patterns read named properties off the boxed string; array patterns
+    // iterate its code units.
+    if (ts.isArrayBindingPattern(bindingPattern)) {
+      // (#5271 step 4, C2) The externref destructure lane has no `$AnyString`
+      // arm and bound every element `null` (so defaults never fired). Route
+      // through the per-code-unit char vec; it returns false and keeps the old
+      // lowering when the native string substrate is absent.
+      if (!emitForInKeyArrayDestructure(ctx, fctx, keyLocal, bindingPattern, forInHeadBindingKind(stmt.initializer))) {
+        fctx.body.push({ op: "local.get", index: keyLocal });
+        compileExternrefArrayDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
+      }
+    } else {
+      fctx.body.push({ op: "local.get", index: keyLocal });
+      compileExternrefObjectDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
+    }
+    return;
+  }
+  if (callTarget) emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
+}
+
 function emitArrayForIn(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3591,19 +3651,7 @@ function emitArrayForIn(
   fctx.breakStack.push(2);
   fctx.continueStack.push(0);
 
-  if (memberTarget) {
-    emitForInMemberTargetWrite(ctx, fctx, memberTarget, keyLocal);
-  } else if (bindingPattern) {
-    if (ts.isArrayBindingPattern(bindingPattern)) {
-      fctx.body.push({ op: "local.get", index: keyLocal });
-      compileExternrefArrayDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
-    } else {
-      fctx.body.push({ op: "local.get", index: keyLocal });
-      compileExternrefObjectDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
-    }
-  } else if (callTarget) {
-    emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
-  }
+  emitForInHeadWrite(ctx, fctx, stmt, keyLocal, memberTarget, bindingPattern, callTarget);
 
   compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
 
@@ -3962,6 +4010,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // null ref (which trapped / produced invalid Wasm before). `var`-hoisting
   // already ran in the function pre-pass, so nothing is lost by the early exit.
   if (isStaticNullishReceiver(stmt.expression)) {
+    restoreForInHeadBindings(fctx, headSaved);
     return;
   }
 
@@ -3977,6 +4026,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   const recvArrayInfo = resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
   if (recvArrayInfo) {
     emitArrayForIn(ctx, fctx, stmt, recvArrayInfo, keyLocal, memberTarget, bindingPattern, callTarget);
+    restoreForInHeadBindings(fctx, headSaved);
     return;
   }
 
@@ -4037,16 +4087,28 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // unroller avoid runtime enumeration. Its effects (notably the Annex B
     // `stored = a` receiver in `for (var a = init in stored = a, obj)`) are
     // still observable and must run before the first iteration.
+    // (#5271 step 4, C1) §14.7.5.6 step 2: the head's bound names are in a TDZ
+    // environment while the RECEIVER is evaluated. The unroll path compiled the
+    // receiver with no such env, so `for (let x in { x })` read an ordinary
+    // binding instead of throwing.
+    installForInHeadTdzEnv(ctx, fctx, stmt, headNames, isLexicalHead);
     const receiverType = compileExpression(ctx, fctx, stmt.expression);
     if (receiverType) fctx.body.push({ op: "drop" });
+    tearDownForInHeadTdzEnv(ctx, fctx, headSaved, isLexicalHead, init, varName, keyLocal, bindingPattern, memberTarget);
     emitForInStaticUnroll(
       ctx,
       fctx,
       stmt,
       keyLocal,
-      callTarget ? () => emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget) : undefined,
+      // (#5271 step 4) The unroll path used to write ONLY the Annex B call
+      // target, so a binding-pattern or member head over a closed-shape
+      // receiver (`for (var [a, b] in { ab: null })`) bound nothing at all.
+      memberTarget || bindingPattern || callTarget
+        ? () => emitForInHeadWrite(ctx, fctx, stmt, keyLocal, memberTarget, bindingPattern, callTarget)
+        : undefined,
       () => compileStatement(ctx, fctx, stmt.statement),
     );
+    restoreForInHeadBindings(fctx, headSaved);
     return;
   }
 
@@ -4065,80 +4127,14 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // (step 4) before the per-iteration body binds the names to the key. The outer
   // binding was snapshot into `headSaved` (BEFORE the dispatch) and is restored
   // after the loop so the head names do not leak.
-  if (isLexicalHead) {
-    const captured = collectForInHeadClosureCaptures(stmt, new Set(headNames));
-    for (const name of headNames) {
-      if (captured.has(name)) {
-        // Closure-captured head name → box the binding + its TDZ flag so the
-        // closure captures them by reference. The receiver-env cell is NEVER
-        // initialized (TDZ flag stays 0), so a closure built in the receiver
-        // observes a permanent TDZ.
-        const valCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "externref" });
-        const boxLocal = allocLocal(fctx, `__forin_hbox_${name}_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: valCellTypeIdx,
-        });
-        fctx.body.push({ op: "ref.null.extern" }); // placeholder value
-        fctx.body.push({ op: "struct.new", typeIdx: valCellTypeIdx });
-        fctx.body.push({ op: "local.set", index: boxLocal });
-        const flagCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
-        const flagBoxLocal = allocLocal(fctx, `__forin_hflag_${name}_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: flagCellTypeIdx,
-        });
-        fctx.body.push({ op: "i32.const", value: 0 }); // uninitialized
-        fctx.body.push({ op: "struct.new", typeIdx: flagCellTypeIdx });
-        fctx.body.push({ op: "local.set", index: flagBoxLocal });
-        fctx.localMap.set(name, boxLocal);
-        if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-        fctx.boxedCaptures.set(name, { refCellTypeIdx: valCellTypeIdx, valType: { kind: "externref" } });
-        if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-        fctx.tdzFlagLocals.set(name, flagBoxLocal);
-        if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
-        fctx.boxedTdzFlags.set(name, { localIdx: flagBoxLocal, refCellTypeIdx: flagCellTypeIdx });
-      } else {
-        // Not captured — a plain local + a plain (i32, zero-init = uninitialized)
-        // TDZ flag suffice. The value slot is never read (TDZ throws first).
-        const slot = allocLocal(fctx, `__forin_hbind_${name}_${fctx.locals.length}`, { kind: "externref" });
-        const flagLocal = allocLocal(fctx, `__forin_hflag_${name}_${fctx.locals.length}`, { kind: "i32" });
-        fctx.localMap.set(name, slot);
-        if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-        fctx.tdzFlagLocals.set(name, flagLocal);
-        fctx.boxedCaptures?.delete(name);
-        fctx.boxedTdzFlags?.delete(name);
-      }
-      fctx.constBindings?.delete(name);
-    }
-  }
+  installForInHeadTdzEnv(ctx, fctx, stmt, headNames, isLexicalHead);
 
   const exprType = compileExpression(ctx, fctx, stmt.expression);
   if (exprType && exprType.kind !== "externref") {
     coerceType(ctx, fctx, exprType, { kind: "externref" });
   }
 
-  // (#2705 Slice B) Tear down the head TDZ env (HeadEvaluation step 4). The
-  // per-iteration body now binds the head names afresh: a binding-pattern head
-  // re-allocates them via the destructuring path below; a plain-identifier head
-  // uses `keyLocal` (which receives keys[i] each iteration). Remove the TDZ-env
-  // entries so the body reads resolve to the per-iteration binding, not the
-  // never-initialized receiver-env cell.
-  if (isLexicalHead) {
-    for (const s of headSaved) {
-      fctx.localMap.delete(s.name);
-      fctx.tdzFlagLocals?.delete(s.name);
-      fctx.boxedCaptures?.delete(s.name);
-      fctx.boxedTdzFlags?.delete(s.name);
-      fctx.constBindings?.delete(s.name);
-    }
-    if (bindingPattern === null && memberTarget === null) {
-      // Plain-identifier head: `keyLocal` is the per-iteration binding.
-      fctx.localMap.set(varName, keyLocal);
-      if (init.flags & ts.NodeFlags.Const) {
-        if (!fctx.constBindings) fctx.constBindings = new Set();
-        fctx.constBindings.add(varName);
-      }
-    }
-  }
+  tearDownForInHeadTdzEnv(ctx, fctx, headSaved, isLexicalHead, init, varName, keyLocal, bindingPattern, memberTarget);
   const perIterationCells = prepareForInPerIterationCells(ctx, fctx, stmt);
   fctx.body.push({ op: "local.tee", index: objLocal });
   fctx.body.push({ op: "call", funcIdx: keysIdx }); // __for_in_keys(obj) -> keys array
@@ -4178,26 +4174,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
 
   // Non-identifier head (#1613): write the per-iteration key into its real
   // target before the user body runs. keyLocal holds keys[i] at this point.
-  if (memberTarget) {
-    emitForInMemberTargetWrite(ctx, fctx, memberTarget, keyLocal);
-  } else if (bindingPattern) {
-    // Spec: the binding pattern destructures the (string) key value. Reuse the
-    // externref destructuring helpers — array patterns iterate the string's
-    // code units, object patterns read named properties.
-    if (ts.isArrayBindingPattern(bindingPattern)) {
-      fctx.body.push({ op: "local.get", index: keyLocal });
-      compileExternrefArrayDestructuringDecl(ctx, fctx, bindingPattern, {
-        kind: "externref",
-      });
-    } else {
-      fctx.body.push({ op: "local.get", index: keyLocal });
-      compileExternrefObjectDestructuringDecl(ctx, fctx, bindingPattern, {
-        kind: "externref",
-      });
-    }
-  } else if (callTarget) {
-    emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
-  }
+  emitForInHeadWrite(ctx, fctx, stmt, keyLocal, memberTarget, bindingPattern, callTarget);
 
   // Compile the user's loop body — save/restore block-scoped shadows for let/const (#817).
   compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
@@ -4272,6 +4249,21 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // lexical bindings are scoped to the loop). Without this, `let x = 'outside';
   // for (let x in obj) …; x /* === 'outside' */` would observe the loop's last
   // binding instead.
+  restoreForInHeadBindings(fctx, headSaved);
+}
+
+/**
+ * (#2705 Slice B / #5271 step 4) Restore the outer bindings a `for…in` lexical
+ * head shadowed, so the head names do not leak past the loop (§14.7.5.7).
+ *
+ * Extracted because `compileForInStatement` has THREE early returns before its
+ * tail — a statically nullish receiver, the array fast path, and the
+ * closed-shape static unroll — and none of them ran this restore. A
+ * closed-object receiver (`for (let [x] in { i: 0 })`) therefore left the head's
+ * fresh local in `localMap`, and every later read of the same spelling answered
+ * the loop's last binding instead of the enclosing one.
+ */
+function restoreForInHeadBindings(fctx: FunctionContext, headSaved: readonly ForInHeadSaved[]): void {
   for (const s of headSaved) {
     if (s.localMap !== undefined) fctx.localMap.set(s.name, s.localMap);
     else fctx.localMap.delete(s.name);
@@ -4291,5 +4283,110 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
       if (!fctx.constBindings) fctx.constBindings = new Set();
       fctx.constBindings.add(s.name);
     } else fctx.constBindings?.delete(s.name);
+  }
+}
+
+/**
+ * (#2705 Slice B / #5271 step 4, C1) Install the ForIn/OfHeadEvaluation step-2
+ * TDZ environment for a `let`/`const` head, so a read of a head name inside the
+ * RECEIVER — direct (`for (let x in { x })`) or through a closure built there —
+ * throws ReferenceError.
+ *
+ * Extracted so every receiver-compiling path installs it. Only the dynamic
+ * enumerator did; a closed-shape receiver goes to the static unroll, which
+ * compiled the receiver with no TDZ env at all — which is why every
+ * `for-in/scope-head-lex-*` row read the head name as an ordinary binding.
+ */
+function installForInHeadTdzEnv(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.ForInStatement,
+  headNames: readonly string[],
+  isLexicalHead: boolean,
+): void {
+  if (isLexicalHead) {
+    const captured = collectForInHeadClosureCaptures(stmt, new Set(headNames));
+    for (const name of headNames) {
+      if (captured.has(name)) {
+        // Closure-captured head name → box the binding + its TDZ flag so the
+        // closure captures them by reference. The receiver-env cell is NEVER
+        // initialized (TDZ flag stays 0), so a closure built in the receiver
+        // observes a permanent TDZ.
+        const valCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "externref" });
+        const boxLocal = allocLocal(fctx, `__forin_hbox_${name}_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: valCellTypeIdx,
+        });
+        fctx.body.push({ op: "ref.null.extern" }); // placeholder value
+        fctx.body.push({ op: "struct.new", typeIdx: valCellTypeIdx });
+        fctx.body.push({ op: "local.set", index: boxLocal });
+        const flagCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+        const flagBoxLocal = allocLocal(fctx, `__forin_hflag_${name}_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: flagCellTypeIdx,
+        });
+        fctx.body.push({ op: "i32.const", value: 0 }); // uninitialized
+        fctx.body.push({ op: "struct.new", typeIdx: flagCellTypeIdx });
+        fctx.body.push({ op: "local.set", index: flagBoxLocal });
+        fctx.localMap.set(name, boxLocal);
+        if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+        fctx.boxedCaptures.set(name, { refCellTypeIdx: valCellTypeIdx, valType: { kind: "externref" } });
+        if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+        fctx.tdzFlagLocals.set(name, flagBoxLocal);
+        if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+        fctx.boxedTdzFlags.set(name, { localIdx: flagBoxLocal, refCellTypeIdx: flagCellTypeIdx });
+      } else {
+        // Not captured — a plain local + a plain (i32, zero-init = uninitialized)
+        // TDZ flag suffice. The value slot is never read (TDZ throws first).
+        const slot = allocLocal(fctx, `__forin_hbind_${name}_${fctx.locals.length}`, { kind: "externref" });
+        const flagLocal = allocLocal(fctx, `__forin_hflag_${name}_${fctx.locals.length}`, { kind: "i32" });
+        fctx.localMap.set(name, slot);
+        if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+        fctx.tdzFlagLocals.set(name, flagLocal);
+        fctx.boxedCaptures?.delete(name);
+        fctx.boxedTdzFlags?.delete(name);
+      }
+      fctx.constBindings?.delete(name);
+    }
+  }
+}
+
+/**
+ * (#2705 Slice B) Tear down the head TDZ env (HeadEvaluation step 4) and bind
+ * the per-iteration binding for a plain-identifier head.
+ */
+function tearDownForInHeadTdzEnv(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  headSaved: readonly ForInHeadSaved[],
+  isLexicalHead: boolean,
+  init: ts.ForInitializer,
+  varName: string,
+  keyLocal: number,
+  bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null,
+  memberTarget: ts.PropertyAccessExpression | ts.ElementAccessExpression | null,
+): void {
+  // (#2705 Slice B) Tear down the head TDZ env (HeadEvaluation step 4). The
+  // per-iteration body now binds the head names afresh: a binding-pattern head
+  // re-allocates them via the destructuring path below; a plain-identifier head
+  // uses `keyLocal` (which receives keys[i] each iteration). Remove the TDZ-env
+  // entries so the body reads resolve to the per-iteration binding, not the
+  // never-initialized receiver-env cell.
+  if (isLexicalHead) {
+    for (const s of headSaved) {
+      fctx.localMap.delete(s.name);
+      fctx.tdzFlagLocals?.delete(s.name);
+      fctx.boxedCaptures?.delete(s.name);
+      fctx.boxedTdzFlags?.delete(s.name);
+      fctx.constBindings?.delete(s.name);
+    }
+    if (bindingPattern === null && memberTarget === null) {
+      // Plain-identifier head: `keyLocal` is the per-iteration binding.
+      fctx.localMap.set(varName, keyLocal);
+      if (init.flags & ts.NodeFlags.Const) {
+        if (!fctx.constBindings) fctx.constBindings = new Set();
+        fctx.constBindings.add(varName);
+      }
+    }
   }
 }
