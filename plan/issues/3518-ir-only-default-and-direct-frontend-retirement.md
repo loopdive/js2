@@ -2151,3 +2151,61 @@ standalone corpus plus whatever #4522's `retire-at-R9` table enumerates. This
 measurement closes the gap between "5 files" and "the playground", which is the
 first step, not the last. The remaining question for the full census is what the
 denominator is beyond `website/playground/examples/`.
+
+### The denominator beyond the playground — dogfood corpus, measured
+
+The section above closed "five files → the playground" and left open what the
+denominator is beyond `website/playground/examples/`. Measuring the next
+corpus out — `tests/dogfood/corpus`, 20 real JS programs, directly R10-relevant
+because dogfooding is what "the compiler compiles itself" means:
+
+| | playground gate (5 `.ts`) | dogfood (20 `.js`) single-host | dogfood standalone |
+| --- | --- | --- | --- |
+| terminal units | 41 | 35 | 35 |
+| IR bodies emitted | **38** | **1** | **0** |
+| unsupported | 0 | 33 (`@select`) | 31 (30 `@select`, 1 `@build`) |
+| legacy bodies | 0 | 33 | 31 |
+| entries compiling clean | 5/5 | 18/20 | 18/20 |
+
+The IR path covers ~100% of the gate's corpus and **1 of 35 units** on the
+dogfood corpus (0 on standalone). The two entries that fail outright
+(`destructuring.js`, `objects.js`) do so with a fatal diagnostic on both lanes.
+
+**A hypothesis worth stating because it was tested and refuted.** The obvious
+explanation is that the dogfood files are untyped `.js` while the gate corpus is
+annotated `.ts`, and the known IR fallback vocabulary has three type-resolution
+buckets. If that were the cause, type reasons would dominate. They do not —
+exactly **one** of 33 rejections is `return-type-not-resolvable`. The histogram:
+
+| reason | single-host | standalone |
+| --- | --- | --- |
+| `body-shape-rejected` | 19 | 16 |
+| `class-member-unsupported` | 4 | 4 |
+| `class-projection-unsupported` | 2 | 2 |
+| `class-method` | 1 | 1 |
+| `static-class-initialization` | 1 | 1 |
+| `destructuring-param-complex` | 1 | 1 |
+| `async-function` | 1 | 1 |
+| `async-generator` | 1 | 1 |
+| `operand-coercion-unsupported` | 1 | 1 |
+| `param-shape-rejected` | 1 | 1 |
+| `return-type-not-resolvable` | 1 | 1 |
+| `imported-call-planning-unsupported` | — | 1 |
+
+So the wider denominator is gated on **body shape (≈58%) and class coverage
+(8 units across four class reasons)** — that is R3 (#3522) territory plus the
+`body-shape-rejected` bucket the IR fallback budget already flags as
+*unintended* — and **not** on type propagation. A plan that widens the corpus by
+improving TypeMap propagation first would be optimising the 1, not the 19.
+
+**Consequence for the ladder.** R9's fail-closed flip is not a small step past
+the current READY. On the corpus that matters most for R10, IR adoption is
+effectively at zero, and the blocking reasons are the same unintended buckets
+#2855 is already ratcheting. R9 should take an explicit dependency on
+`body-shape-rejected` and the class family reaching zero on a corpus wider than
+the playground, not merely on the current gate staying green.
+
+**Still not settled:** dogfood is 20 files. Neither it nor the playground is the
+full standalone denominator, and #4522's `retire-at-R9` table has not been
+cross-checked against either. Both numbers above are floors on the work, not the
+total.
