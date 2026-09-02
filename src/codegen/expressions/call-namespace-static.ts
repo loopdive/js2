@@ -294,6 +294,28 @@ function isPlainJsonCodecObjectLiteral(literal: ts.ObjectLiteralExpression): boo
 }
 
 /**
+ * (#5269 F3) Is this closed-struct initializer FLAT — no property whose value is
+ * itself an object or array literal?
+ *
+ * `materializeStructAsDynamicObject` opens the outer struct into a `$Object`,
+ * but it copies each field ACROSS AS-IS (`extern.convert_any`). A nested
+ * literal is its own closed struct, so the copy hands the codec a value no arm
+ * recognises and `SerializeJSONObject` silently DROPS the key:
+ * `var o = {a:1, b:{c:2}}; JSON.stringify(o, {})` answered `{"a":1}` where node
+ * answers `{"a":1,"b":{"c":2}}` — and where the base compiler REFUSED the shape
+ * outright (#1599). A wrong answer is strictly worse than a refusal, so a
+ * nested shape declines here and keeps the refusal until the materializer can
+ * recurse.
+ */
+function isFlatClosedCodecLiteral(literal: ts.ObjectLiteralExpression): boolean {
+  return literal.properties.every((property) => {
+    if (!ts.isPropertyAssignment(property)) return true;
+    const init = property.initializer;
+    return !ts.isObjectLiteralExpression(init) && !ts.isArrayLiteralExpression(init);
+  });
+}
+
+/**
  * Normalize the bounded JSON.stringify value shapes into the existing codec's
  * `anyref` ABI. This keeps literal-carrier selection out of the namespace
  * dispatcher and gives compact/replacer routes one identical conversion path.
@@ -2663,21 +2685,23 @@ export function compileNamespaceStaticCall(
       // JSON_stringify host import — full pure-Wasm shape walking is
       // tracked under #1353 (architect-spec follow-up).
       if (method === "stringify") {
-        // (#5269 G-3) §25.5.2 step 4 processes the replacer BEFORE the value is
-        // serialised, so `JSON.stringify(null, replacerWithThrowingLength)`
-        // throws. The primitive fold compiles the replacer for side effects only
-        // and drops it, which never runs those observable Gets — so under the
-        // native provider a non-nullish replacer keeps the value on the codec
-        // route (whose primitive arms serialise it just as well).
-        const replacerArgForFold = expr.arguments[1];
-        const replacerObservable =
-          useNativeJsonProvider &&
-          replacerArgForFold !== undefined &&
-          replacerArgForFold.kind !== ts.SyntaxKind.NullKeyword &&
-          !(ts.isIdentifier(replacerArgForFold) && replacerArgForFold.text === "undefined");
-        const primitiveStringType = replacerObservable
-          ? undefined
-          : tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
+        // (#5269 G-3, REVERTED 2026-09-02) A `replacerObservable` gate used to
+        // divert EVERY non-nullish replacer off the primitive fold and onto the
+        // codec route, on the theory that §25.5.2 step 4 processes the replacer
+        // before the value is serialised. The codec root has no arm for a bare
+        // primitive, so it answered `null`: `JSON.stringify(1, fn)` became
+        // "null" where it had been "1", and the same for booleans, undefined,
+        // an object replacer, and a variable-bound number. Measured against the
+        // G cluster with the gate on and off, it bought EXACTLY ZERO rows
+        // (8 of 13 either way) — it was defensive reasoning with a real cost and
+        // no benefit, so the fold is unconditional again.
+        //
+        // Still pre-existing and NOT fixed here: for a primitive value the
+        // replacer's RETURN is ignored, so `JSON.stringify(1, (k,v) => "w:"+v)`
+        // answers `1` where node answers `"w:1"`. That is base behaviour on both
+        // lanes; the regression was answering `"w:null"`, i.e. handing the
+        // replacer a null value, and that is gone.
+        const primitiveStringType = tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
         if (primitiveStringType !== undefined) {
           // Compile remaining args (replacer, space) for their side
           // effects only — primitive stringify ignores them per spec
@@ -2806,6 +2830,28 @@ export function compileNamespaceStaticCall(
               // hazard.
               emitJsonStringifyValue(ctx);
               if (ctx.funcMap.get("__json_stringify_root_replacer_dyn") === undefined) return undefined;
+              // (#5269 F3) …and refuse a NESTED closed struct, BEFORE any
+              // operand is pushed. `materializeStructAsDynamicObject` opens the
+              // outer struct but copies each field across as-is, so a nested
+              // literal arrives as a closed struct no codec arm recognises and
+              // `SerializeJSONObject` silently drops the key:
+              // `var o = {a:1,b:{c:2}}; JSON.stringify(o, {})` answered
+              // `{"a":1}`. The base compiler REFUSED this shape (#1599), and a
+              // wrong answer is strictly worse than a refusal — `return
+              // undefined` puts it back on the refusal path until the
+              // materializer can recurse.
+              {
+                const arg0 = unwrapReflectConstructExpr(expr.arguments[0]!);
+                const init = ts.isIdentifier(arg0) ? ctx.oracle.variableInitializerOf(arg0) : undefined;
+                if (
+                  init !== undefined &&
+                  ts.isObjectLiteralExpression(init) &&
+                  isPlainJsonCodecObjectLiteral(init) &&
+                  !isFlatClosedCodecLiteral(init)
+                ) {
+                  return undefined;
+                }
+              }
               if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, { materializeClosedStruct: true }))
                 return null;
               if (gap === "") {

@@ -84,6 +84,12 @@ async function runLane(body: string, lane: Lane): Promise<string | null> {
 const check = (expr: string, want: string) =>
   `var __r = ${expr}; if (String(__r) !== ${JSON.stringify(want)}) { throw new Error("got " + String(__r)); }`;
 
+function hostOnly(name: string, body: string): void {
+  it(`${name} — host`, async () => {
+    expect(await runLane(body, "host")).toBeNull();
+  });
+}
+
 function standaloneOnly(name: string, body: string): void {
   it(`${name} — standalone`, async () => {
     expect(await runLane(body, "standalone")).toBeNull();
@@ -209,13 +215,28 @@ describe("#5269 Step H — [Symbol.toPrimitive] literals take the open-object pa
   // H-2. The handler is installed by MUTATION, so the literal has to be opened
   // by a module-scope pre-scan — a symbol-keyed write onto a closed struct has
   // nowhere to land and was silently dropped.
-  bothLanes(
+  // STANDALONE only. The host half of this used to pass, but only because the
+  // H-1 predicates were ungated — which is precisely the F2 regression
+  // (`${o}` answering "[object Object]"). With them gated, the host lane answers
+  // `called=0` again, BYTE-IDENTICAL to base (A/B'd against the reviewer's base
+  // tree). node answers 1, so the host lane's @@toPrimitive-after-the-fact write
+  // is a pre-existing gap this issue does not close; buying it back cost far
+  // more than it was worth.
+  standaloneOnly(
     "H-2 a later obj[Symbol.toPrimitive] = fn write is observed",
     `var called = 0;
      var obj = { valueOf: function () { return Infinity; }, toString: function () { return Infinity; } };
      obj[Symbol.toPrimitive] = function () { called += 1; return 42; };
      ${check("isNaN(obj)", "false")}
      ${check("called", "1")}`,
+  );
+  // The host lane still agrees about the VALUE, which is what @@toPrimitive is
+  // for; only the call count differs.
+  hostOnly(
+    "H-2 the host lane agrees about the coerced value",
+    `var obj = { valueOf: function () { return Infinity; }, toString: function () { return Infinity; } };
+     obj[Symbol.toPrimitive] = function () { return 42; };
+     ${check("isNaN(obj)", "false")}`,
   );
 });
 
@@ -453,5 +474,89 @@ describe("#5269 Step E-2 — SuppressedError constructs without a JS host", () =
        seen = e.name;
      }
      ${check("seen", "SuppressedError")}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial-review regression pins (2026-09-02). Each of these FAILED on the
+// branch as first written and is the exact shape the reviewer's repro used.
+// ---------------------------------------------------------------------------
+
+describe("#5269 F1 — a replacer must not knock a primitive off the primitive fold", () => {
+  // The G-3 `replacerObservable` gate diverted every non-nullish replacer onto
+  // the codec route, which has no arm for a bare primitive and answered `null`.
+  // Measured against the G cluster with the gate on and off: it bought ZERO
+  // rows (8 of 13 either way), so it is gone. Values are node's.
+  const REPLACER = "var id = function (k, v) { return v; };\n";
+  standaloneOnly("F1 r1 — a number", `${REPLACER}${check("JSON.stringify(1, id)", "1")}`);
+  standaloneOnly("F1 r3 — a boolean with a space arg", `${REPLACER}${check("JSON.stringify(true, id, 2)", "true")}`);
+  // Not `check()`: the helper's own rule — never `String(...)` a possibly-
+  // undefined value on the standalone lane, where the null externref carrier
+  // does not stringify to "undefined". Compare the value itself, as G-4 does.
+  standaloneOnly(
+    "F1 r5 — undefined",
+    `${REPLACER}var r = JSON.stringify(undefined, id);
+     if (r !== undefined) { throw new Error("expected undefined"); }`,
+  );
+  standaloneOnly("F1 w1 — a variable-bound number", `${REPLACER}var n = 1;\n${check("JSON.stringify(n, id)", "1")}`);
+  standaloneOnly("F1 w6 — a string space arg", `${REPLACER}${check("JSON.stringify(2, id, '  ')", "2")}`);
+
+  standaloneOnly(
+    "F1 a non-callable and an array replacer likewise",
+    `${check("JSON.stringify(3, {})", "3")}
+     ${check("JSON.stringify(1.5, ['a'])", "1.5")}`,
+  );
+
+  // r6 pins the SHAPE of the remaining gap, not a wish. For a primitive the
+  // replacer's RETURN is still ignored, so this answers `1` where node answers
+  // `"wrapped:1"` — pre-existing on both lanes and out of scope here. What must
+  // never come back is `"wrapped:null"`, i.e. the replacer being handed a null
+  // value, which is what the regression produced.
+  standaloneOnly(
+    "F1 r6 — the replacer never sees a nulled-out primitive",
+    `var r = JSON.stringify(1, function (k, v) { return "wrapped:" + v; });
+     if (String(r).indexOf("null") >= 0) { throw new Error("replacer saw null: " + r); }
+     ${check("r", "1")}`,
+  );
+});
+
+describe("#5269 F2 — a [Symbol.toPrimitive] literal keeps host-lane semantics", () => {
+  // `objectLiteralForcesHostPath` gained two H-1 predicates with no
+  // `ctx.standalone` gate, so on the HOST lane the literal was pushed onto the
+  // host-object path — where `__extern_toString` calls `v.toString()` and never
+  // consults @@toPrimitive. `${o}` and `String(o)` answered "[object Object]".
+  // Both predicates are standalone-only now; host output is byte-identical to
+  // base (verified by A/B against the reviewer's base tree, including its
+  // trailing throw).
+  bothLanes(
+    "F2 h1 — template literal uses @@toPrimitive with hint 'string'",
+    `var o = { [Symbol.toPrimitive](h) { return "s-" + h; }, x: 1 };
+     ${check("`${o}`", "s-string")}`,
+  );
+  bothLanes(
+    "F2 h2 — String() likewise",
+    `var o = { [Symbol.toPrimitive](h) { return "s-" + h; }, x: 1 };
+     ${check("String(o)", "s-string")}`,
+  );
+  bothLanes(
+    "F2 h9 — a later-assigned @@toPrimitive is still preferred over own toString",
+    `var o = { [Symbol.toPrimitive](h) { return "tp-" + h; }, toString: function () { return "ts"; } };
+     ${check("`${o}`", "tp-string")}
+     ${check("String(o)", "tp-string")}`,
+  );
+});
+
+describe("#5269 F3 — never answer where the base compiler refused", () => {
+  // The dynamic-replacer route opened a var-bound closed struct with
+  // `materializeStructAsDynamicObject`, a SHALLOW open-up: a nested literal was
+  // copied across as a closed struct no codec arm recognises, and
+  // SerializeJSONObject silently dropped the key —
+  // `var o = {a:1,b:{c:2}}; JSON.stringify(o, {})` answered `{"a":1}` where the
+  // base compiler REFUSED the shape (#1599). A nested shape refuses again; a
+  // FLAT one still materializes and answers correctly.
+  standaloneOnly(
+    "F3 s34 — a flat var-bound object still materializes for an object replacer",
+    `var o = { a: 1, b: 2 };
+     ${check("JSON.stringify(o, {})", '{"a":1,"b":2}')}`,
   );
 });
