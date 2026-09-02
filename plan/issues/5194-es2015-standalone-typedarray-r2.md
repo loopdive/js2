@@ -1094,9 +1094,16 @@ patches, base `dc29e1f15`, rebuilt on `0f801557a`). Worktree
 `/home/user/js2/.claude/worktrees/agent-ad914157d74cd7f02`, branch
 `worktree-agent-ad914157d74cd7f02`. All measurements are in-process
 `npx tsx scripts/run-test262-paths.mts <list> --standalone` in this worktree.
-A `pass` from that runner already implies **zero host imports** — the runner
-calls `standaloneHostImportError` on every standalone result and reports a leak
-as `host_import_leak`, never as a pass (`tests/test262-runner.ts` L4944).
+**Correction (2026-09-02, after the merge below).** The original text here said
+"a `pass` from that runner already implies zero host imports", citing the
+`standaloneHostImportError` call at `tests/test262-runner.ts` L4944. That was
+**wrong for the lane these measurements actually used**: L4944 guards the
+legacy SYNTHETIC path, while `run-test262-paths.mts` drives
+`runOriginalHarnessVariant`, which had no such check until #5272 (PR #5461,
+`1d0380840a`) — so a row whose standalone module still imported an `env::`
+symbol could be satisfied from the host and scored a pseudo-pass. Every number
+below was **re-verified on the merged tree with the fixed runner**; see
+"#5272 re-verification" at the end of this section.
 
 ### Numbers
 
@@ -1227,3 +1234,40 @@ Commit 2 — Step 2 rest (part), Step 3 (part), Step 4 (part):
   isolates the module graph per file), so that run was repeated end-to-end on
   a quiet tree — the 24/1718/no-regressions figure above is the CLEAN re-run,
   and the contaminated run agreed with it.
+
+### #5272 re-verification (2026-09-02, on the merged tree)
+
+`git merge origin/main` (`7f998ff873`, which carries PR #5461 / `1d0380840a` —
+the #5272 leak check on the original-harness path — and the #5224 buffers
+wave). **The merge was clean: no conflicts**, including in the three files the
+coordinator flagged as overlapping (`builtin-value-read.ts`, `new-indexed.ts`,
+`declarations.ts`); the #5194 markers survive in all touched files and
+`pnpm run typecheck` (TS7) is green on the merged tree.
+
+Armed-check control first: `tests/issue-5272-runner-standalone-leak.test.ts`
+**7/7 on this tree**, so the leak check really is active in the lane these
+measurements use — a negative result below is evidence, not an untested claim.
+
+| re-run (standalone, merged tree, one process at a time) | result |
+|---|---|
+| the 84 claimed head-list passes + the 21 controls (105 rows) | **103 pass / 2 compile timeouts — ZERO `host_import_leak`** |
+| the 52-row list behind the second commit's +6 (`.tmp/es2015/step34-final.txt` = C5 9 + D 16 + C2 6 + controls 21) | C5 **4**/9 (3 in-process + `keys/invoked-as-method.js` passing under `--isolate`), D **2**/16, C2 0/6, controls **21**/21 — no leaks |
+
+**No row was a pseudo-pass.** The corrected before→after is therefore
+**unchanged** from the table above: cluster A 0 → 63, cluster B 0 → 21 (22 with
+the load-timeout row), C5 0 → 4, D 0 → 2, controls 21 → 21, head list
+0 → 84 pass.
+
+Two of the 84 are **unverified rather than disproven** on the merged tree:
+`built-ins/TypedArray/Symbol.species/name.js` and
+`built-ins/TypedArray/from/prop-desc.js` exceed the runner's ~15 s in-process
+compile deadline (measured 19.7–27.2 s across three attempts, including under
+`--isolate`, at box load ~10.6 on 4 cores). They are **compile timeouts, not
+leaks** — the leak check runs before the deadline can matter and reported
+nothing for them — but nobody should claim them as flips until they are
+re-measured on an idle box. Treat the head-list figure as **82 confirmed + 2
+pending** of 84.
+
+Gates re-run on the merged tree, bare with `$?` captured: all five green, and
+green again with `LOC_GATE_BASE=$(git rev-parse origin/main)` (CI's merge-preview
+base). `tests/issue-5194-es2015-typedarray-r2.test.ts` 4/4.
