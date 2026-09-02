@@ -54,7 +54,7 @@ import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descrip
 // `$Object` materialization. Reasoning lives in that module's header.
 import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./define-properties-map.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
-import { tracesToProxyValue } from "./proxy-value-provenance.js"; // (#5268 step 2)
+import { isDirectProxyBinding } from "./proxy-value-provenance.js"; // (#5268 step 2 / review F1+F2)
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -4217,7 +4217,23 @@ export function compileObjectKeysOrValues(
     // then refused with "Object method called on null or undefined"
     // (`{values,entries}/observable-operations.js`). The native enumerator
     // carries the `$Proxy` front-guard, so it runs the traps.
-    tracesToProxyValue(ctx, arg) ||
+    //
+    // (#5268 review F1) `ctx.standalone` is LOAD-BEARING, not defensive. The
+    // arm body resolves `__object_<method>` out of `ctx.funcMap`, and in JS-HOST
+    // mode that native does not exist — the arm reported "native object
+    // enumerator is unavailable" for every host-lane `Object.keys(<proxy>)`
+    // whose argument was not already a `$Object`/`$Proxy` struct. Measured:
+    // `var p = new Proxy({a:1},{}); var q = p; Object.keys(q)` was a host-lane
+    // COMPILE ERROR (`absoluteFuncIndex: unresolved call target`) where base
+    // printed "a". The two sibling sites (`Array.isArray`, the integrity
+    // guards) were standalone-gated already; this one was not.
+    //
+    // (#5268 review F2) …and the predicate is the DIRECT-binding one, not the
+    // alias-following trace — see `isDirectProxyBinding` for the measured
+    // reason (an alias of a proxy-over-literal binding reads back null on this
+    // tree AND on `origin/main`, so routing it to the runtime read turns a
+    // correct compile-time answer into `[]`).
+    (ctx.standalone && isDirectProxyBinding(ctx, arg)) ||
     (objectRuntimeTypes !== undefined &&
       (structTypeIdx === objectRuntimeTypes.objectTypeIdx || structTypeIdx === objectRuntimeTypes.proxyTypeIdx))
   ) {

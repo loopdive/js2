@@ -14,6 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 
 /**
  * Compile `body` as a standalone module and return the lines it printed.
@@ -48,6 +49,42 @@ async function runLines(body: string): Promise<string[]> {
   const lines = sink.split("\n").filter((l) => l.length > 0);
   if (threw) lines.push("THREW");
   return lines;
+}
+
+/**
+ * (#5268 review F1) The JS-HOST twin of {@link runLines}. Every arm this
+ * change-set adds is standalone-gated, so the host lane's job here is to prove
+ * the SAME programs still compile and answer what they answered on base — the
+ * defect F1 found was a host-lane COMPILE ERROR, which a standalone-only pin
+ * cannot see. A compile failure is returned as a `COMPILE_ERROR:` line rather
+ * than thrown, so a pin asserts on it by value.
+ */
+async function runHostLines(body: string): Promise<string[]> {
+  const source = `function LOG(s) { console.log(s); }\n${body}\n`;
+  const result = await compile(source, {
+    allowJs: true,
+    fileName: "issue-5268-host.js",
+    skipSemanticDiagnostics: true,
+  });
+  if (!result.success) {
+    return [`COMPILE_ERROR: ${result.errors.map((e) => `L${e.line}: ${e.message}`).join(" | ")}`];
+  }
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const captured: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => {
+    captured.push(args.map(String).join(" "));
+  };
+  try {
+    const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+    (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
+    const exports = instance.exports as Record<string, () => void>;
+    if (typeof exports.main === "function") exports.main();
+    else exports.__module_init?.();
+  } finally {
+    console.log = original;
+  }
+  return captured;
 }
 
 describe("#5268 step 1 — Object.prototype.__proto__ accessor pair (standalone)", () => {
@@ -214,6 +251,78 @@ describe("#5268 step 2 — the Proxy MOP inside the Object statics (standalone)"
       LOG("len=" + result.length);
     `);
     expect(lines).toEqual(["log=|ownKeys|gopd:a|get:a|gopd:b|get:b|gopd:c|get:c", "len=3"]);
+  });
+});
+
+describe("#5268 review F1/F2 — the Proxy-provenance routing stays inside its lane", () => {
+  // Every one of these was RED after step 2 and is GREEN on `origin/main`; the
+  // expected values below are what base prints, captured with the reviewer's
+  // own probe harness on their pristine `base-main` tree.
+  it("F1 — the JS-HOST lane still COMPILES Object.keys/values/entries over a proxy alias", async () => {
+    // RED: `Codegen error: absoluteFuncIndex: unresolved call target
+    // (funcIdx=undefined)`. The arm resolved `__object_keys` out of funcMap,
+    // which host mode does not have.
+    expect(
+      await runHostLines(`var p = new Proxy({ a: 1 }, {}); var q = p; LOG("keys:" + Object.keys(q).join());`),
+    ).toEqual(["keys:a"]);
+    expect(
+      await runHostLines(`var p = new Proxy({ a: 1 }, {}); var q = p; LOG("values:" + Object.values(q).join());`),
+    ).toEqual(["values:NaN"]);
+    expect(
+      await runHostLines(`var p = new Proxy({ a: 1 }, {}); var q = p; LOG("entries:" + Object.entries(q).join());`),
+    ).toEqual(["entries:[object Object]"]);
+  });
+
+  it("F1 — …through a second-level alias, and inside a function", async () => {
+    expect(
+      await runHostLines(
+        `var p = new Proxy({ a: 1 }, {}); var q = p; var w = q; LOG("deep:" + Object.keys(w).join());`,
+      ),
+    ).toEqual(["deep:a"]);
+    expect(
+      await runHostLines(
+        `function f() { var p = new Proxy({ a: 1 }, {}); var q = p; return Object.keys(q).join(); }\nLOG("fn:" + f());`,
+      ),
+    ).toEqual(["fn:a"]);
+  });
+
+  it("F2 — standalone: an ALIAS of a proxy binding keeps base's answer", async () => {
+    // The alias reads back null on this tree AND on origin/main (a pre-existing
+    // widening defect this slice does not own), so the alias must stay on the
+    // compile-time expansion. `isnull` is pinned to document that, so a future
+    // fix to the nulling shows up here as a deliberate change rather than a
+    // silent one.
+    expect(
+      await runLines(`
+        var t = { a: 1 };
+        var pt = new Proxy(t, {});
+        var qt = pt;
+        LOG("isnull:" + (qt === null));
+        LOG("alias:" + Object.keys(qt).join());
+        LOG("direct:" + Object.keys(pt).join());
+      `),
+    ).toEqual(["isnull:true", "alias:a", "direct:a"]);
+  });
+
+  it("F2 — …while the DIRECT binding still runs the traps", async () => {
+    // The step-2 win must survive the narrowing: a direct `new Proxy` binding
+    // still routes to the native enumerator.
+    expect(
+      await runLines(`
+        var log = "";
+        var proxy = new Proxy({ a: 0, b: 0 }, {
+          get: function (t, k) { log += "|get:" + k; return t[k]; },
+          getOwnPropertyDescriptor: function (t, k) {
+            log += "|gopd:" + k;
+            return Object.getOwnPropertyDescriptor(t, k);
+          },
+          ownKeys: function (t) { log += "|ownKeys"; return Object.getOwnPropertyNames(t); },
+        });
+        var r = Object.values(proxy);
+        LOG("log=" + log);
+        LOG("len=" + r.length);
+      `),
+    ).toEqual(["log=|ownKeys|gopd:a|get:a|gopd:b|get:b", "len=2"]);
   });
 });
 
