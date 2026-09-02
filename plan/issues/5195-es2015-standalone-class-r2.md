@@ -853,6 +853,84 @@ canonicalizes struct types structurally, so two unrelated classes with the same
 field shape are the same type and the first lookup arm swallowed the other's
 instances. Every arm now also tests the class's `__tag`.
 
+
+### Second-round review findings R2-1 – R2-9 (2026-09-02)
+
+A second independent review (~45 probes across js / host / standalone; harness
+`/home/user/js2/.tmp/rev2-5195/batch.mts`, probes under
+`.tmp/refute-cls2-R2-{1,2,3}/`) confirmed three blockers and six lower-severity
+observations. Common-case hierarchies were byte-identical; deep chains,
+overrides, tag discrimination, Proxy/symbol/numeric keys, optional calls,
+aliases, key-once evaluation and derived returns all passed.
+
+| # | Severity | State | Evidence |
+|---|---|---|---|
+| R2-1 | HIGH | **fixed** | `super[k]()` in an override recursed on itself (depth 51). Now js 1 / lane 1; value probe 111 in both lanes |
+| R2-2 | MEDIUM (regression vs base) | **fixed** | `C.hasOwnProperty('sm'/'sf')` flipped true → false. probe1 0 → 11; probe2 → 111111111111, exact js match |
+| R2-3 | MEDIUM (order-dependence) | **fixed** | `new D()[ID('n')]` was undefined until something touched `D.prototype`. r2-notouch 11 → 111, r4-call 1 → 11 |
+| R2-4 | LOW | **documented** | spread argument lists do not take the receiver-binding lane |
+| R2-5 | LOW | **fixed** | callee is now read before the arguments; order probe 12 in both lanes |
+| R2-6 | LOW | **documented** | calling a non-callable member returns instead of throwing TypeError (base parity) |
+| R2-7 | — | **documented** | the host lane is deliberately no longer byte-identical for runtime-keyed programs |
+| R2-8 | — | **documented** | an inherited static reached through the sidecar binds `this` to the declaring class |
+| R2-9 | — | **documented** | the "statically-typed `in`" residual is wider than first stated |
+
+**R2-1.** `super[k](…)` was routed through the F3 member-call lowering, which
+uses one compiled receiver for BOTH the lookup and the `this` — and `super`
+compiles to `this`, so an overriding method calling `super[k]()` re-entered
+itself. The stack overflow escapes the wasm try/catch. §13.3.7.1 splits those
+roles, and the emitter now models the split (separate lookup and receiver
+locals); the super target is the enclosing class's parent prototype `$Object`,
+and the lane declines to the existing super lowering when any part of that is
+unresolvable.
+
+**R2-2.** The F5 decline accepted a bare class identifier, routing CONSTRUCTOR
+receivers to the runtime `__hasOwnProperty`, which has no arm for a
+`$ClassName` class-object's statics. Restricted to `.prototype` receivers.
+
+**R2-3.** The top-level collector inspected a class's OWN members only, so a
+descendant's prototype was never force-built. It now admits a class whose
+hierarchy carries a runtime-keyed member — which is what the force-init comment
+in `nested-declarations.ts` already claimed.
+
+### Residuals after R2 (each with a probe)
+
+- **R2-4, spread argument lists.** `c[ID('m')](...[1, 2])` declines the
+  receiver-binding lane (building the argument vector from a spread needs the
+  iterator protocol) and falls back to the receiver-less dispatch, so a
+  `this`-using method answers wrongly or throws. The commit message's "binds its
+  receiver" holds for non-spread argument lists only. Probe:
+  `.tmp/es2015/p4/r2-456b.js`.
+- **R2-6, calling a non-callable.** `c[ID('nope')]()` — a data field, or a
+  missing key — returns silently instead of throwing TypeError. Base does the
+  same. Probe: same file.
+- **String concatenation of a dynamic-call result.** `'E' + c[ID('m')](1)` traps
+  with "Cannot convert object to primitive value". **Pre-existing and not this
+  issue's**: the identical shape fails on base through the #4252 plain-object
+  dynamic-call path (measured on the base tree,
+  `.tmp/es2015/p4/concat2.js`), and `refute-cls2-R2-1/r3-static-name.js` throws
+  identically on base. It is only more reachable now because the class call
+  actually happens. This is what keeps `refute-cls2-R2-1/r2-value.js` from
+  matching js.
+- **R2-8, inherited static `this`.** `D[ID('s')]()` reached through the parent's
+  sidecar binds `this` to the declaring class C, not D. Pre-existing on the
+  typed static path.
+- **R2-9, statically-typed `in`.** Wider than the earlier note: for a
+  runtime-keyed class that ALSO declares a field, statically-typed `in`
+  compiles to INVALID wasm (`array.set[0] expected type (ref null 1), found
+  local.get of type i32`). Pre-existing — the same failure on base
+  (`rev2-5195/p4-ownfield.js` on the base tree).
+- **R2-2 residual.** A runtime-keyed STATIC still folds `C.hasOwnProperty('s')`
+  to false; widening needs the fold to OR in the sidecar's answer.
+- **F4 write side** and the **class-EXPRESSION inheritance shape** are unchanged
+  from the previous round.
+
+**R2-7 — deliberate host-lane change.** The host lane is NOT byte-identical for
+a program with runtime-keyed class members: a METHOD's computed key is now
+evaluated at ClassDefinitionEvaluation there too. That is a FIX (§15.7.14
+requires the evaluation, and its side effects were previously dropped on both
+lanes), not an accident; classes whose keys all fold are unaffected.
+
 ### Residuals after F1–F5
 
 - **F4 write side.** `c[ID('s')] = 7` neither runs the runtime-keyed setter nor
@@ -962,8 +1040,10 @@ Steps-1.6/9/11E commit, after Step 2, and once more on the final F1–F5 tree wi
 `origin/main` merged): **24 failing / 1718 passing / 24 known-failures in
 baseline — no new equivalence regressions**, every time.
 
-Final validation of the F1–F5 pass, on this branch with `origin/main` merged
-(`f64beb1a03`, carrying #5224 and the PR #5469 follow-up):
+Final validation, re-run in full after the R2 round, on this branch with
+`origin/main` merged (`47e337f3b6`). Both `class-head` lanes, both control
+lanes and the gates are unchanged from the F1–F5 measurement, i.e. the R2 fixes
+cost nothing on the tracked lists:
 
 | run | result |
 |---|---|
@@ -971,7 +1051,7 @@ Final validation of the F1–F5 pass, on this branch with `origin/main` merged
 | `class-head.txt` host | 32 pass / 168 fail / 9 compile_error |
 | `class-controls.txt` standalone | 22/22 |
 | `class-controls.txt` host | 20/22 — the 2 failures are pre-existing on main |
-| `tests/issue-5195-es2015-class-r2.test.ts` | 66/66 |
+| `tests/issue-5195-es2015-class-r2.test.ts` | 76/76 (66 before the R2 round) |
 | five ratchet gates | green |
 | `pnpm run typecheck` (TS7) | clean |
 | `pnpm run test:equivalence:gate` | no new regressions |
