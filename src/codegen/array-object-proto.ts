@@ -31,7 +31,8 @@ import {
   ensureStandaloneNativeMethodClosure,
   type NativeProtoBuiltinGlue,
 } from "./native-proto.js";
-import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { ensureStandaloneSpeciesGetterClosure, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { withSpeculativeCompile } from "./context/speculative.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./expressions/helpers.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS, NATIVE_HOF_REDUCE } from "./hof-native.js"; // (#4394)
 import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody, emitTaCtorValue } from "./dataview-native.js";
@@ -45,6 +46,8 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterTaDynViewType,
   getOrRegisterVecType,
+  TA_CTOR_BYTES,
+  TA_CTOR_KINDS,
   taCtorKindOf,
 } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -455,6 +458,14 @@ const SET_PROTO_METHODS = [
  * are reached through the instance, NOT re-emitted on this proto value.
  */
 const TYPED_ARRAY_PROTO_METHODS = [
+  // (#5194 step 2) §23.2.3.36 — `%TypedArray%.prototype[@@iterator]` IS the
+  // `values` function object (`memberAliasOf` below routes both spellings to
+  // one closure singleton), while staying its own CSV entry so
+  // `hasOwnProperty` / gOPD still see it as an own property.
+  "@@1",
+  // (#5194 step 2) §23.2.3.34 `Symbol.toStringTag` — an accessor GETTER (marked
+  // below), unlike the plain data `symbolTag` other families carry.
+  "@@4",
   "at",
   "copyWithin",
   "entries",
@@ -507,8 +518,18 @@ const TYPED_ARRAY_PROTO_GETTERS: ReadonlySet<string> = new Set(["buffer", "byteL
  * the shared table.
  */
 const TYPED_ARRAY_PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = {
+  // (#5194 step 2) The two INTRINSIC STATICS (§23.2.2.1/.2). They are not
+  // prototype members — they never enter `TYPED_ARRAY_PROTO_METHODS` — but the
+  // intrinsic ctor's own-property seed mints their closures through the same
+  // per-brand factory, which reads its `fn.length` from this table. `from` is 1
+  // by the default anyway; `of ( ...items )` is 0 and needs the entry.
+  from: 1,
+  of: 0,
   copyWithin: 2,
   set: 1,
+  // (#5194 step 2) §23.2.3.27 `slice ( start, end )` — arity 2, not the
+  // table's default 1 (`TypedArray/prototype/slice/length.js`).
+  slice: 2,
   subarray: 2,
   with: 2,
   // Zero-arity (no-arg) members.
@@ -1718,12 +1739,91 @@ function emitTypedArrayAccessorResult(
  * off the view — PR-3) stay a catchable refusal. Float views are unbranded until
  * PR-2. Returns externref (the uniform closure result), or `null` on refusal.
  */
+/**
+ * (#5194 step 2) The `%TypedArray%.prototype` `@@toStringTag` symbol-cell
+ * sentinel (`@@<well-known id>`; `Symbol.toStringTag` is id 4).
+ */
+const TYPED_ARRAY_PROTO_TO_STRING_TAG_MEMBER = "@@4";
+
+/**
+ * (#5194 step 2) §23.2.3.34 `get %TypedArray% [ @@toStringTag ]`.
+ *
+ * ```
+ * 1. Let O be the this value.
+ * 2. If O is not an Object, return undefined.
+ * 3. If O does not have a [[TypedArrayName]] internal slot, return undefined.
+ * 4. … return O.[[TypedArrayName]].
+ * ```
+ *
+ * Never throws — that is the whole point of the four `this-*` /
+ * `invoked-as-func` rows. A `$__ta_dyn_view` receiver reports its runtime
+ * `kind`'s constructor name; every other receiver (including both prototype
+ * objects and any primitive) reports `undefined`. Statically typed view
+ * carriers are deliberately NOT recovered here: several kinds share one packed
+ * carrier (`i8_byte` serves Int8/Uint8/Uint8Clamped), so a `ref.test` cannot
+ * name them — those receivers already answer through the `ta-dyn-mop.ts`
+ * `__extern_get` symbol arm, which switches on the same `kind` field.
+ *
+ * Returns externref (the uniform closure result).
+ */
+function emitTypedArrayProtoToStringTagBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  const dynIdx = getOrRegisterTaDynViewType(ctx);
+  const undef = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr];
+  if (dynIdx < 0) {
+    fctx.body.push(...undef);
+    return { kind: "externref" };
+  }
+  const kindLocal = allocLocal(fctx, `__ta_tag_kind_${fctx.locals.length}`, { kind: "i32" });
+  const tagArm: Instr[] = [];
+  {
+    const saved = fctx.body;
+    fctx.body = tagArm;
+    fctx.body.push({ op: "local.get", index: 1 });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.cast", typeIdx: dynIdx });
+    fctx.body.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: TA_DYN_VIEW_KIND_FIELD_IDX });
+    fctx.body.push({ op: "local.set", index: kindLocal });
+    for (let k = 0; k < TA_CTOR_KINDS.length; k++) {
+      const kindName = TA_CTOR_KINDS[k]!;
+      const then: Instr[] = [];
+      const saved2 = fctx.body;
+      fctx.body = then;
+      addStringConstantGlobal(ctx, kindName);
+      for (const instr of stringConstantExternrefInstrs(ctx, kindName)) fctx.body.push(instr);
+      fctx.body.push({ op: "return" });
+      fctx.body = saved2;
+      fctx.body.push({ op: "local.get", index: kindLocal });
+      fctx.body.push({ op: "i32.const", value: k });
+      fctx.body.push({ op: "i32.eq" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then });
+    }
+    fctx.body = saved;
+  }
+  fctx.body.push({ op: "local.get", index: 1 });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: dynIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: tagArm });
+  fctx.body.push(...undef);
+  return { kind: "externref" };
+}
+
+/** Field index of the immutable `kind` discriminator on `$__ta_dyn_view`. */
+const TA_DYN_VIEW_KIND_FIELD_IDX = 3;
+
 function emitTypedArrayProtoMemberBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
   member: string,
   name: string,
 ): ValType | null {
+  // (#5194 step 2) §23.2.3.34 `get %TypedArray% [ @@toStringTag ]` — the ONE
+  // §23.2.3 accessor that must NOT throw for a non-view `this`: step 3 says
+  // "If O does not have a [[TypedArrayName]] internal slot, return undefined".
+  // Its own body therefore has the inverse shape of the three width getters
+  // below, which is why it is routed before the getter gate.
+  if (member === TYPED_ARRAY_PROTO_TO_STRING_TAG_MEMBER) {
+    return emitTypedArrayProtoToStringTagBody(ctx, fctx);
+  }
   // Only the three width-derivable accessor getters get a native body here.
   // `buffer` needs an ArrayBuffer window off the view (PR-3); methods belong to
   // the #2872 per-member slices — both stay a catchable refusal.
@@ -2382,13 +2482,33 @@ function makeGlue(
  * dispatch, reached via the instance (#2375 caution: never re-emit a body that
  * touches the view's vec/runtime state on the proto value).
  */
-function makeTypedArrayGlue(brand: number, name: string): NativeProtoBuiltinGlue {
+function makeTypedArrayGlue(brand: number, name: string, parentBrand?: number): NativeProtoBuiltinGlue {
+  // (#5194 step 1) §23.2.7: a CONCRETE view prototype owns nothing but
+  // `constructor` and `BYTES_PER_ELEMENT`; all 30 methods and the four accessor
+  // getters are INHERITED from `%TypedArray%.prototype`. Advertising the shared
+  // method CSV on every view made `Uint8Array.prototype.hasOwnProperty("forEach")`
+  // answer `true` (28 `prototype/<m>/inherited.js` rows) and minted a per-view
+  // closure singleton, so `Uint8Array.prototype.forEach !==
+  // TypedArray.prototype.forEach`. A view glue therefore carries an EMPTY member
+  // CSV plus a `parentBrand` link; the value read and the companion walk both
+  // retry on the parent, which resolves to the intrinsic's one singleton.
+  const isIntrinsic = parentBrand === undefined;
+  const bytesPerElement = TA_CTOR_BYTES[taCtorKindOf(name)];
   return {
     brand,
     name,
-    memberCsv: TYPED_ARRAY_PROTO_METHODS.join(","),
-    memberKind: (member) => (TYPED_ARRAY_PROTO_GETTERS.has(member) ? "getter" : "method"),
+    parentBrand,
+    memberCsv: isIntrinsic ? TYPED_ARRAY_PROTO_METHODS.join(",") : "",
+    // §23.2.7.1 — the per-view element width, an own all-false data property.
+    dataProps: isIntrinsic || bytesPerElement === undefined ? undefined : [["BYTES_PER_ELEMENT", bytesPerElement]],
+    memberKind: (member) =>
+      TYPED_ARRAY_PROTO_GETTERS.has(member) || member === TYPED_ARRAY_PROTO_TO_STRING_TAG_MEMBER ? "getter" : "method",
     memberLength: (member) => TYPED_ARRAY_PROTO_METHOD_LENGTH[member] ?? 1,
+    // §23.2.3.36: the `@@iterator` value IS the `values` function object.
+    memberAliasOf: (member) => (member === "@@1" ? "values" : undefined),
+    // §23.2.3.32: `%TypedArray%.prototype.toString` IS `Array.prototype.toString`
+    // — the same built-in function object, so the identity must cross brands.
+    memberBrandAliasOf: (c, member) => (member === "toString" ? ensureArrayNativeProtoGlue(c) : undefined),
     // (#2893 PR-1) The `length`/`byteLength`/`byteOffset` accessor getters now
     // emit real reflective bodies (brand-recover the view → read/compute the
     // field → throw on non-view); `buffer` + all methods stay a catchable refusal.
@@ -2884,13 +3004,25 @@ export function ensureTypedArrayViewNativeProtoGlue(ctx: CodegenContext, viewNam
   if (!TYPED_ARRAY_VIEW_PROTO_NAMES.has(viewName)) return undefined;
   const brand = getBuiltinBrand(ctx, viewName);
   if (brand === undefined) return undefined;
+  // (#5194 step 1) Register the shared intrinsic glue FIRST: the view glue's
+  // `parentBrand` is the §23.2.7 `[[Prototype]]` link, so it must exist before
+  // the view's own registration (the D4 link this comment used to defer).
+  const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeTypedArrayGlue(brand, viewName));
+    registerNativeProtoBuiltin(ctx, makeTypedArrayGlue(brand, viewName, intrinsicBrand));
   }
-  // Also materialize the shared intrinsic glue so the parent member set exists
-  // (D4 links concrete-view protos to it in a later slice; harmless here).
-  ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
   return brand;
+}
+
+/**
+ * (#5194 step 1) True iff `name` is a TypedArray view constructor whose
+ * `<View>.prototype` glue resolves host-free — the 9 wired views plus the two
+ * bigint ones. The predicate `Object.getPrototypeOf` keys its §23.2.5.6 /
+ * §23.2.7 arms on, so the two prototype-graph readers cannot drift from the
+ * glue registry.
+ */
+export function isTypedArrayViewProtoName(name: string): boolean {
+  return TYPED_ARRAY_VIEW_PROTO_NAMES.has(name);
 }
 
 /** (#2901) True iff `name` is a wired (non-bigint) `%TypedArray%` view constructor. */
@@ -2916,6 +3048,52 @@ export function isWiredTypedArrayViewName(name: string): boolean {
  * returns its ValType, or `null` if the `%TypedArray%` glue/runtime is unavailable
  * (caller falls through to the existing getProtoOf behaviour).
  */
+/**
+ * (#5194 step 2) `__defineProperty_value` flag words for the `%TypedArray%`
+ * intrinsic's own properties (bit 0 writable, bit 1 enumerable, bit 2
+ * configurable; omitted attributes default to false per §6.2.6.4) — the same
+ * encoding `builtin-ctor-own-props.ts` uses for every other builtin ctor
+ * carrier.
+ */
+const TA_INTRINSIC_FLAGS_NONE = 0x00;
+const TA_INTRINSIC_FLAGS_CONFIGURABLE = 0x04;
+/** §17 function-valued own property: `{writable:true, …, configurable:true}`. */
+const TA_INTRINSIC_FLAGS_METHOD = 0x05;
+
+/**
+ * (#5194 step 2) Seed `%TypedArray%[@@species]` (§23.2.2.4) as an own accessor
+ * on the intrinsic carrier held in `objLocal`. Stack-neutral, and speculative:
+ * a missing closure factory / symbol carrier leaves the body untouched rather
+ * than stranding a half-pushed define call.
+ */
+function pushTypedArrayIntrinsicSpeciesSeed(ctx: CodegenContext, fctx: FunctionContext, objLocal: number): void {
+  withSpeculativeCompile(ctx, fctx, () => {
+    const closure = ensureStandaloneSpeciesGetterClosure(ctx, "%TypedArray%");
+    if (!closure) return { commit: false, value: undefined };
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    const defineAccessorIdx = ctx.funcMap.get("__defineProperty_accessor");
+    if (boxSymbolIdx === undefined || defineAccessorIdx === undefined) {
+      return { commit: false, value: undefined };
+    }
+    fctx.body.push({ op: "local.get", index: objLocal });
+    fctx.body.push({ op: "i32.const", value: 5 }, { op: "call", funcIdx: boxSymbolIdx }); // Symbol.species
+    fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "ref.null.extern" }); // setter = undefined
+    fctx.body.push({ op: "f64.const", value: TA_INTRINSIC_ACCESSOR_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: defineAccessorIdx }, { op: "drop" });
+    return { commit: true, value: undefined };
+  });
+}
+
+/**
+ * `__defineProperty_accessor`'s flag word for `{ enumerable:false,
+ * configurable:true }` — the §17 accessor attributes, identical to the
+ * `Promise[@@species]` seed in `builtin-ctor-own-props.ts`.
+ */
+const TA_INTRINSIC_ACCESSOR_FLAGS = (1 << 4) | (1 << 5) | TA_INTRINSIC_FLAGS_CONFIGURABLE;
+
 export function emitTypedArrayIntrinsicCtorObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   const brand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
   if (brand === undefined) return null;
@@ -2942,6 +3120,14 @@ export function emitTypedArrayIntrinsicCtorObject(ctx: CodegenContext, fctx: Fun
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
+    // (#5194 step 2) Publish BEFORE seeding, exactly as
+    // `emitBuiltinConstructorIdentity` does: the `prototype` seed materializes
+    // the `%TypedArray%.prototype` companion, whose own seeder now reads
+    // `constructor` back off THIS carrier. Leaving the global null across that
+    // re-entry mints a second carrier and splits the identity
+    // `TypedArray.prototype.constructor === TypedArray`.
+    { op: "local.get", index: objLocal },
+    { op: "global.set", index: globalIdx },
   ];
 
   // (#2182 pattern) `savedBody` is detached during the swap; register it in
@@ -2949,14 +3135,78 @@ export function emitTypedArrayIntrinsicCtorObject(ctx: CodegenContext, fctx: Fun
   const savedBody = fctx.body;
   fctx.body = initBody;
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   let ok = true;
   try {
-    // obj.prototype = %TypedArray%.prototype glue object
+    // (#5194 step 2) §23.2.2 own properties of the `%TypedArray%` INTRINSIC.
+    // The first cut used `__extern_set("prototype", …)`, which cannot carry
+    // attributes — so `verifyProperty(TypedArray, "prototype", {writable:false,
+    // …})` saw a fully-writable, enumerable, configurable property, and `name`
+    // / `length` / `@@species` were simply absent. `__defineProperty_value`
+    // installs the §17 attribute words the harness reads.
+    //
+    // `defineIdx === undefined` (no object runtime descriptor helper) falls
+    // back to the historical `__extern_set` `prototype`-only shape rather than
+    // producing a carrier with no prototype at all.
+    const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+    const boxNumIdx = ctx.funcMap.get("__box_number");
+    const pushKey = (key: string): void => {
+      addStringConstantGlobal(ctx, key);
+      for (const instr of stringConstantExternrefInstrs(ctx, key)) fctx.body.push(instr);
+    };
+    // obj.prototype = %TypedArray%.prototype glue object — §23.2.2.3, all-false.
     fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, "prototype");
-    for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
+    pushKey("prototype");
     if (emitLazyNativeProtoGet(ctx, fctx, brand)) {
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      if (defineValueIdx !== undefined) {
+        fctx.body.push({ op: "f64.const", value: TA_INTRINSIC_FLAGS_NONE });
+        fctx.body.push({ op: "call", funcIdx: defineValueIdx }, { op: "drop" });
+      } else {
+        fctx.body.push({ op: "call", funcIdx: setIdx });
+      }
+      // §23.2.2 / §17: `name` = "TypedArray" and `length` = 0, both
+      // { writable:false, enumerable:false, configurable:true }.
+      if (defineValueIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: objLocal });
+        pushKey("name");
+        pushKey("TypedArray");
+        fctx.body.push({ op: "f64.const", value: TA_INTRINSIC_FLAGS_CONFIGURABLE });
+        fctx.body.push({ op: "call", funcIdx: defineValueIdx }, { op: "drop" });
+        if (boxNumIdx !== undefined) {
+          fctx.body.push({ op: "local.get", index: objLocal });
+          pushKey("length");
+          fctx.body.push({ op: "f64.const", value: 0 }, { op: "call", funcIdx: boxNumIdx });
+          fctx.body.push({ op: "f64.const", value: TA_INTRINSIC_FLAGS_CONFIGURABLE });
+          fctx.body.push({ op: "call", funcIdx: defineValueIdx }, { op: "drop" });
+        }
+      }
+      // §23.2.2.1/.2 `from` / `of` — §17 function-valued own properties
+      // { writable:true, enumerable:false, configurable:true }. Their bodies
+      // are the shared catchable-TypeError degrade (#2984 Phase 3), which is
+      // also the correct answer for a bare `TypedArray.from([])`: §23.2.2.1
+      // step 2 throws when `this` is not a constructor.
+      if (defineValueIdx !== undefined) {
+        for (const method of ["from", "of"] as const) {
+          withSpeculativeCompile(ctx, fctx, () => {
+            const closure = ensureStandaloneNativeMethodClosure(ctx, brand, method, "method", {
+              refusalBodyFallback: true,
+            });
+            if (!closure) return { commit: false, value: undefined };
+            const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
+            fctx.body.push({ op: "local.get", index: objLocal });
+            pushKey(method);
+            fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+            fctx.body.push({ op: "extern.convert_any" });
+            fctx.body.push({ op: "f64.const", value: TA_INTRINSIC_FLAGS_METHOD });
+            fctx.body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
+            return { commit: true, value: undefined };
+          });
+        }
+      }
+      // §23.2.2.4 `get %TypedArray% [ @@species ]` — an own accessor whose
+      // getter returns `this`. Same canonical getter singleton the static gOPD
+      // synthesis uses, so the descriptor and a runtime read agree.
+      pushTypedArrayIntrinsicSpeciesSeed(ctx, fctx, objLocal);
       // `%TypedArray%` is the abstract base CONSTRUCTOR (§23.2.1) — a function,
       // not a plain object. Brand the carrier callable/constructible so
       // `typeof TypedArray === "function"` (the literal testTypedArray.js
@@ -2965,14 +3215,13 @@ export function emitTypedArrayIntrinsicCtorObject(ctx: CodegenContext, fctx: Fun
       // dispatch (a real `%TypedArray%()` invocation must throw TypeError —
       // out of scope here; the brand only fixes classification).
       pushMarkBuiltinCarrierCallable(ctx, fctx, objLocal);
-      fctx.body.push({ op: "local.get", index: objLocal });
-      fctx.body.push({ op: "global.set", index: globalIdx });
     } else {
       ok = false;
     }
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
   if (!ok) return null;
 
