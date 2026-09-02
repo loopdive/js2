@@ -768,7 +768,16 @@ onto `0f801557a`). Four commits on `worktree-agent-aa423580afa75b4c5`.
 | after the resumed patch (Step 3 + 9K) | 9 | 189 | 11 |
 | after Step 1 + 1.7 | 24 | 172 | 13 |
 | after Steps 1.6 / 9 H / 9 I / 11 E | 24 | 172 | 13 |
-| **after Step 2** | **28** | **170** | **11** |
+| after Step 2 | 28 | 170 | 11 |
+| **final (fill-order fix)** | **29** | **167** | **13** |
+
+The two extra `compile_error`s in the final row are
+`subclass/builtin-objects/Function/instance-{length,name}.js` reporting
+`compilation timeout` rather than their usual `fail`: they route to the QuickJS
+runtime-eval provider, which is not built in this container, and the final run
+shared the box with the equivalence gate. They are on the out-of-scope
+environment list either way, and they alternate between the two statuses purely
+with load.
 
 `class-controls.txt` re-run after every step: **22/22**, unchanged throughout.
 Every remaining `compile_error` was already one at baseline (decorators ×6,
@@ -864,3 +873,26 @@ dated rationales. `pnpm run typecheck` (TS7) clean;
 `linked-provider-runtime.ts` `WebAssembly.Tag` errors, which this branch does
 not touch. `tests/issue-5195-es2015-class-r2.test.ts` 38/38, host and
 standalone lanes, with a zero-host-import assertion on every standalone case.
+
+`pnpm run test:equivalence:gate` run twice on this branch (after the
+Steps-1.6/9/11E commit and again on the final tree): **24 failing / 1718
+passing / 24 known-failures in baseline — no new equivalence regressions**,
+both times.
+
+Related vitest files, run in batches: `classes`, `class-methods`,
+`class-expression(s)`, `class-method-calls`, `class-elements-619`,
+`private-class-members`, `abstract-classes`, `class-static-private-this`,
+`nested-class-declarations`, `#5212`, `#5213`, `#802`, `#846`, `#1058`,
+`#1364a/b`, `#1824`, `#2029`, `#2101a`, `#2158`, `#3024`, `#3520` ×2, `#4584`,
+`#4616`, `#4618` ×2, `#4628`, `#4646`, `#4770`, `#5169`, `#5191`, `#5202`,
+`#5237`, `#5239`, `#5242`, `es5-standalone-static-eval-class` — **all pass.**
+Two runs exited non-zero on a vitest `onTaskUpdate` RPC timeout with every test
+green, and one `#5213` row timed out at 35 s in a 3-file batch and passed when
+re-run alone; both are box-load artifacts.
+
+**One pre-existing failure found and confirmed NOT ours**:
+`tests/issue-1965-super-ctor-body.test.ts` fails 4 of 13 with `illegal cast` in
+`B_init` (js-host lane). Verified by an A/B file swap — the same 4 fail at the
+branch point `0f801557a` with this branch's sources removed, and the same 4
+(no more) with them restored. Worth its own issue; it is not in this issue's
+scope and nothing here touches it.
