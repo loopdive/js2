@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: in-progress
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-30
+updated: 2026-09-02
 assignee: ttraenkler/codex
 branch: codex/3526-f1-s1-number-boundary
 priority: critical
@@ -61,6 +61,9 @@ files:
   - tests/issue-3526-ir-linear-math-intrinsics.test.ts
   - tests/issue-4103-ir-async-runtime-providers.test.ts
   - tests/issue-4104-ir-async-plan-runtime-consumer.test.ts
+  - tests/issue-3526-string-boundary-compare.test.ts
+  - tests/issue-3526-string-boundary-schema.test.ts
+  - tests/issue-3526-string-boundary-eq.test.ts
 loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/builder.ts
@@ -118,6 +121,67 @@ loc-budget-allow:
   # linear and self-hosted-stdlib adapters. Every cited path already carries
   # an F1-S1/F1-S2/F1-S3 grant; this line records the F1-S4 rationale against
   # them and adds no new path.
+  #
+  # 2026-09-01 F2-S1 (string.compare under manifest policy + the forof.string
+  # fallback retirement, +301 net LOC measured against origin/main bee8a149):
+  # the `(externref, externref) -> i32` compare signature (intrinsics.ts); the
+  # `string.compare` capability record — family 2's first, and the first record
+  # whose physical import is a BASE import minted by the legacy import
+  # collector rather than a union or late registration
+  # (runtime-host-capabilities.ts); the `stringCompare` policy, its TWO
+  # provider rows and their policy-driven selection (runtime-manifest.ts); the
+  # freeze-time demand hook and the manifest-to-arm derivation
+  # (intrinsic-support.ts); the caller policy projection, the call-population
+  # demand predicate, the owner-local compare partition and the prepared
+  # manifest threaded to the resolve-time provider table in place of its
+  # `ctx.nativeStrings` read (integration.ts); the retired
+  # `?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN)` fallback on the
+  # `forof.string` lowering arm (lower.ts); the explicit disabled compare
+  # policies in the linear and self-hosted-stdlib adapters. Every cited path
+  # already carries an F1-S1..F1-S4 grant; this line records the F2-S1
+  # rationale against them and adds no new path.
+  #
+  # 2026-09-01 F2-S2 (capability-record schema widening, +278 net src LOC
+  # measured against origin/main dc29e1f1): the kind-discriminated record
+  # union — two closed id halves, per-kind module unions, the global field
+  # scheme, the `ref_extern` value type, the `funcRecord`/`globalRecord`
+  # factories, the six new `wasm:js-string` / `string_constants*` rows, the
+  # per-kind validator arms and the shared `asCallableRuntimeHostCapabilityRecord`
+  # guard (runtime-host-capabilities.ts, +239 net — the whole slice); the
+  # `host-callable` capability narrowed to the func id half plus its
+  # `#indexProviders` runtime twin (runtime-manifest.ts, which is over the
+  # 1500-line god-file threshold and carries an F1-S1 grant); the three
+  # func-assuming derivations routed through the func resolver
+  # (intrinsic-support.ts); `AsyncHostAdapter` retargeted to the func arm and
+  # the kind guard placed before the value-type walk
+  # (async-runtime-providers.ts); the one adapter-parity guard
+  # (async-plan.ts, the single new path, 1285 lines and far under the
+  # threshold). This slice moves NO boundary: no provider references a new
+  # row, so every frozen manifest, import and emitted body is byte-identical
+  # (35/35 measured cells).
+  #
+  # 2026-09-02 F2-S3 (string.eq under manifest policy + the emitStringEquals
+  # fallback retirement, +260 net src LOC measured against origin/main
+  # 0f801557): the `stringEq` policy, its TWO provider rows and their
+  # policy-driven selection (runtime-manifest.ts, +113 — the file is over the
+  # 1500-line god-file threshold, 1690 -> 1803, and carries an F1-S1 grant;
+  # the growth is one more independent policy field beside five existing ones,
+  # each row of which is the same nine-part shape, so the file grows by
+  # repetition of a settled pattern rather than by new mechanism — splitting it
+  # is F2's own tail, not this slice's); the freeze-time demand hook and
+  # `preparedStringEqProvider`, which returns the record's MODULE as well as its
+  # field because the host arm is a `wasm:js-string` BUILTIN located by
+  # import-section position, not a `ctx.funcMap` lookup (intrinsic-support.ts,
+  # +58); the SPLIT of the three-symbol concat/eq resolve arm plus the migrated
+  # eq half, the caller policy projection, the `string.eq` instruction-scan
+  # demand, the owner-local eq partition, and the retired no-provider
+  # `ctx.nativeStrings` fallback in the WasmGC `emitStringEquals` adapter
+  # (integration.ts, +85); the explicit disabled eq policies in the linear and
+  # self-hosted-stdlib adapters (+2 each). Every cited path already carries an
+  # F1-S1..F2-S2 grant; this line records the F2-S3 rationale against them and
+  # adds no new path. Byte-neutral: 55/55 measured cells identical, WAT text
+  # included.
+  - src/ir/async-plan.ts
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -3226,3 +3290,1612 @@ boundary work); `stringForOfPlan`/`charReadPlan` strategy queries (stay
 build-time per #2955 — only their provider NAMES could ever be
 manifest-projected); the resolve-table rows beyond compare (`__concat_N`,
 repeat, charAt families — later slices ride on this slice's machinery).
+
+## 2026-09-01 F2-S1 checkpoint note — Opus lane
+
+**Branch** `claude/issue-3526-f2s1-string-compare`, grounded on `origin/main`
+`bee8a149`, slice claim `3526:f2s1`. Implemented from the 2026-09-01 F2-S1 plan.
+All four probe answers were measured on the grounded tree BEFORE any source edit.
+
+### Probe answers
+
+**P1 — mechanism: DEMAND-AT-FREEZE, as recommended. The intrinsic instruction
+was not needed and would have been the wrong shape.** The seam has no
+`intrinsic` to attach to: from-ast emits a plain `call` through the
+`IR_STRING_COMPARE_FN` (`__ir_str_compare`) sentinel func-ref
+(`from-ast.ts:8491`), so the F1-S3 `generatorNumberBoxDemand` route is the exact
+structural match. The demand is requested by `irStringCompareDemand`, a scan of
+the `call` population; the SAME predicate answers the freeze request and the
+owner-local partition, so the two can never disagree.
+
+The seam that reads the selected provider is **not** an attachment pass, and
+that is the one place this slice diverges from the F1-S3 template. The
+`preparedGeneratorNumberBoxProvider` analog is
+`preparedStringCompareProvider(prepared)` (`intrinsic-support.ts`), but it
+returns the ARM CLASSIFICATION plus the physical spelling
+(`{arm:"host",field:"string_compare"}` / `{arm:"native",symbol:"__str_compare"}`)
+rather than an `IrFuncRef` — because the two arms are materialized by different
+existing routines and no single callable reference could carry the decision
+without moving a registration. Its consumer is the resolve-time provider table
+itself (`integration.ts`, the `IR_STRING_COMPARE_FN` arm), which now receives
+the whole `PreparedIrRuntimeManifest` where it previously received only
+`preparedRuntimeManifest?.providers` — the feature row `js.string.compare` is
+not in that intrinsic-keyed map, and the host arm's field name comes from the
+frozen capability records.
+
+**The plan's note about generator-style seams accepting only runtime/intrinsic
+bindings does not bind here, and the import cannot move — for a stronger reason
+than the plan anticipated.** No binding is constructed at all: the arm resolves
+a funcidx directly. And `env.string_compare` is neither an `addUnionImports`
+member nor an `ensureLateImport` registration — it is a **BASE import minted by
+the legacy import collector's pre-pass** (`import-collector.ts:1637-1640`, gated
+on `!ctx.nativeStrings`), long before any IR preparation runs. The migrated host
+arm evaluates `ctx.funcMap.get(record.field)`, which is character-for-character
+the same lookup as the old `ctx.funcMap.get("string_compare")`. There is no
+registration in this slice to reorder, which is why contract item 4 is satisfied
+structurally rather than by measurement alone. The plan's suggested
+`attachedExternIsUndefinedArm`-style preregistration widening was consequently
+**not needed and not added**: that recognition exists because F1's migrations
+removed the raw `call` the detectors keyed on, whereas this slice leaves the
+front-end call shape untouched (`prepareStrings`'s own compare detector at
+`integration.ts:7034-7040` still sees exactly what it saw before). Recorded as a
+divergence below.
+
+**P2 — adapters.** Both take the explicit disabled policy, one line each:
+`linear-integration.ts` `prepareLinearIntrinsicFunctions` and
+`stdlib-selfhost.ts`'s per-definition freeze. Note honestly what that does and
+does not mean: **on the linear lane the disabled policy is inert**, because that
+adapter never passes `stringCompareDemand` and resolves the compare through its
+own resolver (`linear-integration.ts:1502` → `__str_cmp`). The row is stated so
+the frozen policy is total and no adapter inherits a host decision by omission —
+the same status `numberBoundary`/`booleanBoundary` already have there. Budget
+rationale added to this file's frontmatter in the F1-S2/S3/S4 pattern; no new
+path was needed.
+
+**P3 — outcome-pin shift: ONE pin moved, and it is the precedented one.**
+- `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-443` — the
+  whole-shape frozen-policy equality now also sees `stringCompare`. Identical
+  mechanical consequence to F1-S1's `numberBoundary`, F1-S2's `booleanBoundary`,
+  F1-S3's `generatorNumberBox` and F1-S4's `externIsUndefined`.
+- `tests/issue-3520-callable-provider-abi.test.ts` "binds one string-compare
+  intrinsic to the mode-selected import or definition" — **did NOT move.**
+  Measured, not assumed: it passed unchanged. It asserts the resolved Program-ABI
+  slot, and the slot is identical because the physical target is.
+- `tests/issue-3526-ir-runtime-manifest.test.ts` — **did not move**; it carries
+  no whole-shape policy assertion.
+- **The divergence-4 class is EMPTY for this slice.** No owner changes demote
+  site anywhere in the byte matrix: the integration policy resolves the compare
+  to a supported arm on every lane (`nativeStrings ? native : host` is total),
+  so the `"unsupported"` arm is unreachable in production, exactly as F1-S3's and
+  F1-S4's were. Its absence is an assertion here, not an omission — the
+  `irOutcomes` records are byte-compared in all 30 cells below.
+
+**P4 — census: `pnpm run check:ir-fallbacks` output is DIFFED and IDENTICAL.**
+Run on both trees (`git checkout -- src` for the base, patch re-applied after),
+`diff` clean. Neither baseline bucket moved: `unintended: {}` stays empty,
+`deferred: {"string-builder-candidate": 2}` unchanged, module-level and
+post-claim both `(none)`. `scripts/linear-ir-baseline.json` is untouched
+(`git status` clean on `scripts/` apart from the sanctioned two-line citation
+refresh recorded below), so the `tests/issue-4550-linear-ir-census.test.ts`
+byte-exact pin holds — that suite was run and passes.
+
+### What landed
+
+- **`src/ir/intrinsics.ts`** — `EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE`, the
+  `(externref, externref) -> i32` ABI shared by both arms. No new `IntrinsicId`:
+  this family has no intrinsic instruction.
+- **`src/ir/runtime-host-capabilities.ts`** — one record `string.compare` →
+  `env.string_compare`, inserted in capability-ID sort order. Noted in place: the
+  first record whose physical import is a base import, not a union member or a
+  late registration.
+- **`src/ir/runtime-manifest.ts`** — `StringComparePolicy`
+  (`compare: "host" | "native" | "unsupported"`), a frozen
+  `STRING_COMPARE_POLICY_DISABLED`, the optional `stringCompare` field
+  canonicalized at builder construction and published resolved on the frozen
+  manifest, the `js.string.compare` feature row, the two provider rows
+  (`host.…` → `host-callable` on capability `string.compare`; `native.…` →
+  `runtime-callable` on `__str_compare`), and the `#selectProvider` branch whose
+  unavailable arm is a typed `provider-target-unavailable` naming the feature and
+  the resolved policy.
+- **`src/ir/intrinsic-support.ts`** — the `stringCompareDemand` input (and its
+  place in the "freeze nothing at all" guard) plus `preparedStringCompareProvider`.
+- **`src/ir/integration.ts`** — `integrationStringComparePolicy`
+  (`{ compare: ctx.nativeStrings ? "native" : "host" }`, the exact former truth
+  table), `irStringCompareDemand`, the owner-local `unsupported` partition in the
+  same pass as the four F1 ones, the freeze-time policy + demand arguments, the
+  prepared manifest threaded in place of its providers map, and the rewritten
+  resolve arm.
+- **`src/ir/lower.ts`** — the `forof.string` `??` fallback is gone, replaced by
+  `requirePreparedStringProvider`, the string family's twin of F1-S4's
+  `requirePreparedGeneratorProvider`.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `STRING_COMPARE_POLICY_DISABLED` explicitly.
+- **`tests/issue-3526-string-boundary-compare.test.ts`** (new, 21 tests).
+
+`src/ir/from-ast.ts` needed **no edit** — the #2955 gate already holds there and
+the seam was already lane-free in the front-end; this slice governs the
+resolve-time table, not the emission. `src/ir/string-support.ts`,
+`src/ir/backend/legality.ts` and the preregistration trigger needed no edit
+either (see the divergence below).
+
+### Sub-B totality — re-proved, and the linear half is NOT the plan's argument
+
+The plan justified sub-B by "`attachIrStringSupport` attaches the provider
+unconditionally on every adapter that prepares strings, including the linear
+adapter at `linear-integration.ts:735-737`". **The first half holds; the second
+does not, and the retirement is safe for a different reason.** Measured:
+
+- **WasmGC path — total as stated.** `prepareStrings` (`integration.ts:7111-7126`)
+  runs `attachIrStringSupport` over EVERY healthy owner, and
+  `irStringCallableProviderRef` returns a non-`undefined` ref for `forof.string`
+  unconditionally (`string-support.ts:72-73, 132-148`).
+- **Linear path — the plan's citation is conditional.** `linear-integration.ts`
+  calls `attachIrStringSupport` only `if (usesRepeat)` (`:733-740`), so a linear
+  owner with a `forof.string` and no `string.repeat` would get NO attachment.
+  That is harmless only because **`forof.string` is absent from the linear
+  instruction allowlist** (`src/ir/backend/legality.ts:230-320`), so such an owner
+  demotes at the function-lowering boundary and never reaches `lower.ts`. The
+  `FOROFSTR::linear` byte cell is in the matrix precisely to hold that line: it
+  is unchanged.
+- **`stdlib-selfhost.ts`** lowers its own IR with its own resolver and no string
+  attachment pass, but its self-hosted bodies carry no `forof.string`; its cells
+  are covered by the whole-module byte parity below.
+
+### Measured neutrality
+
+**Byte parity — 30 of 30 cells identical, WAT included.** Six fixtures × five
+lanes (gc-host, gc-native-strings, standalone, WASI, linear), compiled before and
+after **on the same tree** (the source patch was captured, reverted with
+`git checkout -- src`, re-measured, and re-applied), compared on byte length,
+binary sha256, import set AND order, full emitted WAT text, the error list, and
+the `irOutcomes` records.
+
+| fixture | gc-host | gc-native-strings | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| `STRCMP` (`a < b`) | 157 ✓ | 22652 ✓ | 22816 ✓ | 22843 ✓ | 4876 ✓ |
+| `STRCMP4` (all four operators) | 270 ✓ | 22540 ✓ | 22704 ✓ | 22731 ✓ | 4988 ✓ |
+| `STRMIX` (compare beside concat/eq/len) | 316 ✓ | 22936 ✓ | 23100 ✓ | 23127 ✓ | 4956 ✓ |
+| `FOROFSTR` (sub-B) | 1351 ✓ | 22669 ✓ | 49119 ✓ | 49146 ✓ | 4960 ✓ |
+| `BOTH` (both sub-slices, one module) | 1504 ✓ | 22902 ✓ | 49352 ✓ | 49379 ✓ | 4989 ✓ |
+| `CLEAN` (control, no strings) | 113 ✓ | 21973 ✓ | 22588 ✓ | 22615 ✓ | 4874 ✓ |
+
+(✓ = bytes, sha256, imports, WAT, errors and IR outcomes all identical
+before/after.) **No purity class appears and none was expected**: this slice adds
+no semantic `intrinsic` instruction, so the effects-aware scheduler sees exactly
+the same call it saw before. Any WAT delta would have been a defect; there is
+none.
+
+**Imports and order.** Identical in all 30 cells. The `STRCMP` gc-host list is
+exactly `["env.string_compare"]` — pinned as an ordered array in the new suite,
+which is the assertion that would catch a late registration before a byte diff
+did. The three native-strings lanes carry no compare import at all
+(`gc-native-strings` carries only the `__str_*` memory-bridge trio; standalone,
+WASI and linear carry none).
+
+**The migrated arm is REACHED — measured, not assumed.** With a temporary probe
+on the arm, the 30-cell run resolves it **15** times: 3 host
+(`{arm:"host",field:"string_compare"}`, the three gc-host compare fixtures) and
+12 native (`{arm:"native",symbol:"__str_compare"}`, four fixtures × three
+native-strings lanes). `BOTH::gc-host` does not reach it because that owner
+demotes at IR selection for an unrelated reason, identically on both trees.
+
+**Runtime oracle.** All four relational operators are checked against JavaScript
+on seven input pairs (`a/b`, `b/a`, `a/a`, `""/a`, `""/""`, `ab/abc`, `Z/a`)
+through an instantiated host-lane module. Nothing about the answers moved.
+
+**Census.** `pnpm run check:ir-fallbacks` output-identical (diffed, not
+eyeballed); unintended, module-level and post-claim buckets all still empty.
+
+### Non-vacuity — each sub-slice reverted independently against the kept schema
+
+- **sub-A**, reverting ONLY the resolve arm to its `ctx.nativeStrings` read:
+  **3 tests fail** — "consults the prepared string-compare provider", "reads NO
+  lane discriminator", and "fails closed rather than falling back to a locally
+  decided symbol". All 10 schema/policy pins and every end-to-end, import-order,
+  runtime-oracle and byte assertion stay green.
+  **Those three pins are deliberately SOURCE-shape assertions, and that is a
+  finding worth stating plainly rather than hiding behind a green suite.** A
+  behavioural pin cannot separate the migrated arm from the one it replaced: the
+  policy projection reproduces the old truth table exactly, so both forms emit
+  identical bytes on every lane — which is the whole point of the slice and the
+  reason all 30 cells are unchanged. What actually moved is WHICH authority
+  answers, and on this seam that is only observable in source. The pins use the
+  established `tests/issue-2955-depolymorph-gate.test.ts` grep-gate idiom, scoped
+  to the one arm. F1-S4's sub-B had a behavioural revert signal available (the
+  reverted arm put a host import into a standalone module); this seam has none,
+  and manufacturing one would have meant changing behaviour.
+- **sub-B**, restoring the `??` fallback: exactly **1** test fails — "refuses to
+  lower an unattached `forof.string`" — while the attachment pin, the
+  already-attached-provider pin and the end-to-end iteration pin stay green.
+
+### Divergences from the plan (recorded, not widened)
+
+1. **No preregistration/attached-target recognition was added.** The plan
+   specified per-demand recognition modeled on `attachedExternIsUndefinedArm`.
+   It is not needed and adding it would have been dead code: that mechanism
+   exists because F1's from-ast migrations DELETED the raw `call` the detectors
+   keyed on, whereas this slice does not touch the front-end at all.
+   `prepareStrings`'s compare detector still matches the identical instruction.
+   Byte-confirmed by the 30 identical cells, including their import order.
+2. **The manifest is threaded to the resolve site, rather than a callable being
+   attached at a preparation seam.** The compare is a plain `call`, not a
+   `string.*` IR instruction, so it has no provider slot to attach to. The
+   threading changes the parameter of `resolveAndObserveCallableProvider`,
+   `makeResolver` and `preregisterCallableProviders` from
+   `preparedRuntimeManifest?.providers` to `preparedRuntimeManifest`; the
+   providers map is re-derived on the first line, so every other arm is untouched.
+3. **`preparedStringCompareProvider` returns an arm classification, not an
+   `IrFuncRef`** — unlike `preparedGeneratorNumberBoxProvider`. The two arms have
+   different existing materializers; see P1.
+4. **The plan's sub-B totality citation for the linear adapter is conditional.**
+   Corrected above with the real argument (the legality allowlist). The
+   retirement is still safe; the reason recorded in the plan was not.
+5. **One test outside the #3526 suites needed a one-field update.**
+   `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` — the precedented
+   whole-shape policy pin.
+6. **`check:ir-kind-neutrality` evidence-line drift**, the sanctioned exception,
+   handled as the four prior checkpoints prescribe. No verdict, kind, placement,
+   ratchet count or `settledBy` rationale changed — established by normalising
+   both JSON documents and diffing those, which isolates exactly **TWO** citation
+   lines (`forof.string` `src/ir/integration.ts` 6243 → 6327; `string.len`
+   `src/ir/backend/linear-integration.ts` 1624 → 1626). Patched surgically:
+   committing the regenerator's output instead would have been a 524-line diff
+   (it reformats every `evidence` array) for a 2-line change.
+
+### Validation run
+
+Green: TypeScript 7 typecheck; `check:ir-fallbacks` (bare, output-identical);
+the ratchet chain bare AND under `LOC_GATE_BASE=$(git rev-parse origin/main)` —
+loc (+301 net src LOC, every path granted by this file's frontmatter), func,
+coercion-sites, oracle-ratchet, dead-exports; `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only`, `check:linear-ir`,
+`check:host-import-policy`, `check:test-vacuity-shapes`,
+`check:ir-kind-neutrality` (after the surgical refresh above), `lint`, and
+`check:standalone-ir-cutover-corpus` (`records=5/5`, `sources=5`, `units=47`).
+Focused suites: **233 passing across 17 files** — all seven #3526 suites
+(including the new one), both async suites (#4103/#4104), #3520, #2955,
+#3518, #3502, #4550 linear-ir census, #1183 and #3167 (the string relational
+suite this seam serves).
+
+### Not touched (per the plan's scope discipline)
+
+The `wasm:js-string` and `string_constants` capability-schema widenings (their
+own slice — `string.concat`/`eq`/`len`/`const` stay un-governed and their
+resolve-table rows keep reading `ctx.nativeStrings`); `stringMethodPlan`;
+`String()` coercion; `stringForOfPlan` / `charReadPlan` strategy queries; the
+`__concat_N`, repeat and charAt resolve-table families; `src/ir/from-ast.ts`;
+the `extern.*` lowering quartet (family 6); and `numberBoundary` /
+`booleanBoundary` / `externIsUndefined` / `generatorNumberBox`, all four
+unchanged. `scripts/*-baseline.json` is untouched apart from the sanctioned
+two-line `check:ir-kind-neutrality` citation refresh.
+
+## 2026-09-01 F2-S2 implementation plan — capability-record schema widening (family 2, slice 2)
+
+Grounded on `origin/main` `dc29e1f15d` (first parent = PR #5433, the merged
+F2-S1). Slice claim: `#3526:f2s2` (`ttraenkler/fable-ir-takeover`). Three
+probe lanes (schema+consumers / boundary sites / test-evidence) ran against
+that commit; every line number below is theirs.
+
+**This slice moves NO boundary.** It widens the central capability-record
+schema so that family 2's remaining host crossings — which live in the
+`wasm:js-string` module and in `string_constants` / `string_constants16`
+GLOBAL imports — become *expressible* as exact-ABI catalogue rows. No policy
+field, no provider row, no resolve/attach/from-ast edit. Byte identity holds
+by construction: no provider references the new rows, so `freeze()`
+(`runtime-manifest.ts:1430-1446`) never selects them and every frozen
+manifest, import and body stays exactly as today. This is what makes the
+issue's anti-vacuity item 10 ("typed projections include intentional
+non-`env` string import namespaces", :856-857) satisfiable at all — today
+the record type cannot spell a non-`env` namespace.
+
+### The frozen schema, measured (`src/ir/runtime-host-capabilities.ts`)
+
+- Record type `:72-83`: `module: "env"` (`:77`), `kind: "func"` (`:79`),
+  `params`/`results` over the value union `"externref" | "i32" | "f64"`
+  (`:54`, set `:56-60`); factory `record()` `:85-101` hardcodes both literals;
+  12 ids `:27-40` (F2-S1's `string.compare` at `:39`, row `:140`);
+  `assertRuntimeHostCapabilityRecord` `:189-223` checks the exact key list
+  (`:204-206`), `module` (`:207-209`), `field` (`:210-212`), `kind`
+  (`:213-215`), value types (`:216-217`), exception policy (`:218-222`);
+  `canonicalizeRuntimeHostCapabilityCatalog` `:236-253` demands completeness
+  (ids ↔ rows). No `Record<Id,…>` table or `never`-check here — completeness
+  is dynamic (`:248-251`).
+- Consumers that ASSUME func-kind (each must gain a kind guard or narrow
+  type): `intrinsic-support.ts` `ADMITTED_CALLABLE_TARGETS` `:84-90`,
+  `providerAttachment` `:229-230`, `preparedGeneratorNumberBoxProvider`
+  `:274-278`, `preparedStringCompareProvider` `:309-313`, async adapters
+  `:521-529`; `async-runtime-providers.ts` `asAsyncHostAdapter` `:90-100`
+  iterates `[...params, ...results]` unguarded (`:94-98`) and the
+  `AsyncHostAdapter` alias `:83`; `runtime-manifest.ts` `host-callable`
+  implementation `:366-376` admits any id; provider index checks
+  `:1484-1509` never verify func-kind; `ir-async-runtime-adapters.ts`
+  `expectedSignature` `:27-33` / `assertImportSignature` `:35-` (typed on the
+  narrow async union — unaffected if `AsyncHostAdapter` is retargeted to the
+  func arm).
+- Two measured facts that shape the design:
+  1. **`wasm:js-string.concat` returns `(ref extern)`**, not `externref`
+     (`imports.ts:628`; binary dump `(result (ref extern))`; `substring`
+     `:649-653` likewise). The value union must grow `"ref_extern"` (already a
+     `ValType` member, `src/ir/types.ts` after `:265`).
+  2. **`string_constants` globals use the literal itself as the import
+     field** (`imports.ts:177` `importName = useSurrogateNs ? hexCodeUnits(value) : value`;
+     measured `string_constants."f"`, `"ab"`, `""`; lone surrogates go to
+     `string_constants16` keyed by `hexCodeUnits`, `STRING_CONSTANTS16_NS`
+     `src/string-surrogate.ts:20`). A closed catalogue cannot enumerate
+     per-literal fields, so a global record carries a **field scheme**, not a
+     field name.
+
+### Contract
+
+1. **Kind-discriminated record union.**
+   ```ts
+   type RuntimeHostCapabilityFuncModule = "env" | "wasm:js-string";
+   type RuntimeHostCapabilityGlobalModule = "string_constants" | "string_constants16";
+   interface RuntimeHostCapabilityFuncRecord<Id, V>   { capability: Id; module: FuncModule;   field: string; kind: "func";   params: readonly V[]; results: readonly V[]; exceptionPolicy?: … }
+   interface RuntimeHostCapabilityGlobalRecord<Id, V> { capability: Id; module: GlobalModule; field: { scheme: "literal" | "literal-utf16-hex" }; kind: "global"; valueType: V; mutable: boolean }
+   type RuntimeHostCapabilityRecord<Id, V> = Func | Global;
+   ```
+   Module unions are **closed** (`as const` tuple → union, the `:27-42`
+   idiom) and live on the kind arm, so `env.<global>` and
+   `wasm:js-string.<global>` are unrepresentable. Value union `:54` grows
+   `"ref_extern"` (+ set `:56-60`). Factories: `funcRecord(capability, module,
+   field, params, results, exceptionPolicy?)` (the 12 existing rows pass
+   `"env"`; `record()` may remain as an `env`-defaulting alias so existing
+   call sites and tests are untouched) and
+   `globalRecord(capability, module, fieldScheme, valueType, mutable)`.
+2. **New ids + rows (sorted; catalogue stays complete):**
+   - `funcRecord("string.char_code_at", "wasm:js-string", "charCodeAt", ["externref","i32"], ["i32"])` (`imports.ts:640-645`)
+   - `funcRecord("string.concat", "wasm:js-string", "concat", ["externref","externref"], ["ref_extern"])` (`:628`)
+   - `funcRecord("string.eq", "wasm:js-string", "equals", ["externref","externref"], ["i32"])`
+   - `funcRecord("string.len", "wasm:js-string", "length", ["externref"], ["i32"])`
+   - `globalRecord("string.const", "string_constants", { scheme: "literal" }, "externref", false)` (matches `addStringConstantGlobal`, `imports.ts:179-183`: `{kind:"global", type:externref, mutable:false}`)
+   - `globalRecord("string.const.utf16", "string_constants16", { scheme: "literal-utf16-hex" }, "externref", false)`
+   Each row's ABI is pinned against the registration site it names
+   (`addStringImports` `imports.ts:627-664`; `addStringConstantGlobal`
+   `:179-183`/`:224-228`) — a catalogue-level equality, no emission.
+3. **Validator grows kind arms**: key list per kind (`func`: today's six ±
+   `exceptionPolicy`; `global`: `capability, field, kind, module, mutable,
+   valueType`); module membership checked against the arm's union (a
+   runtime twin of the type — "unknown host capability module/kind" is a
+   pinnable message, distinct from the equality rejections); `global` arm
+   compares `field.scheme`, `valueType` (via `assertValueTypes`), `mutable`;
+   `exceptionPolicy` is func-only.
+4. **Fail-closed kind guards** at every func-assuming consumer (list above):
+   `kind !== "func"` ⇒ throw naming the capability ("not a callable host
+   capability"). Prefer the type-level narrowing for `host-callable`
+   (`capability: Extract<…, func ids>`) so a global id in a provider row is a
+   compile error; keep the runtime check in `#indexProviders` (`:1484-1509`)
+   as the twin. `asAsyncHostAdapter` gets the guard BEFORE `:94`;
+   `AsyncHostAdapter` (`:83`) retargets to the func arm.
+5. **Nothing else moves**: no `IrIntrinsicProvider` global arm
+   (`nodes.ts:856-860` — a global capability attaches as an `IrGlobalRef` on
+   `IrInstrStringConst.storage`, a later slice's concern), no policy field
+   (the `tests/issue-4104…:432-445` whole-shape pin does not move), no
+   provider row, `integration.ts:6284` / `:7142` keep reading
+   `ctx.nativeStrings` (pin that they do — the F1-S4 grep-gate idiom, so a
+   reviewer cannot mistake this slice for the move).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — un-requested ids**: grep `scripts/` and `src/` for any gate
+  asserting "every capability id is requested by some provider" (none found
+  in `runtime-manifest.ts`; `scripts/` unverified). If one exists, name it
+  and decide: exempt the family-2 rows explicitly or sequence the first
+  provider row (F2-S3) into this PR — do NOT silently weaken the gate.
+- **P2 — `ref_extern` reach**: confirm the widened value type cannot leak
+  into `lowerAdapterType` (`ir-async-runtime-adapters.ts:19-21`, typed on
+  the narrow async union) and that `assertValueTypes` accepts it only where
+  a row declares it.
+- **P3 — key-order canonicalization**: the `semanticView` helper
+  (`tests/issue-3526-ir-runtime-manifest.test.ts:88-97`) serializes
+  `hostCapabilityRecords` verbatim — verify the reversed-catalogue
+  canonicalization pin (`:440-452` idiom) stays byte-equal with the new
+  rows present, i.e. sorting is by id and the new rows land in a stable
+  position.
+- **P4 — F2-S3 handoff**: record the exact split of the eq arm out of
+  `integration.ts:6277-6296` and the `stringEq` policy shape (`{eq: "host" |
+  "native" | "unsupported"}`, projected `nativeStrings ? native : host`) as
+  the next slice's starting point — no code for it in this PR.
+
+### Verification matrix
+
+- **V-A byte cells**: the F2-S1 six fixtures (`STRCMP`, `STRCMP4`,
+  `STRMIX`, `FOROFSTR`, `BOTH`, `CLEAN`) **plus a literal-heavy `CONST`
+  fixture** (so the `string_constants`/`string_constants16` global path is in
+  the matrix) × five lanes (gc-host, gc-native-strings, standalone, WASI,
+  linear), before/after on the same tree: byte length, sha256, import set
+  AND order, full WAT, error list, `irOutcomes` — **100 % identical**; any
+  delta is a defect.
+- **V-B schema pins** (new `tests/issue-3526-string-boundary-schema.test.ts`,
+  the F1/F2 per-slice anatomy, header stating the slice moves no boundary):
+  each new row resolves via `resolveRuntimeHostCapabilityRecord` to the exact
+  literal (whole-shape `toEqual`) and is canonical (`toContain` identity
+  `:282-284` idiom); reversed-catalogue canonicalization byte-equal; async
+  projection excludes the new ids and `asAsyncHostAdapter` throws on a global
+  record; a Math-only / async-only / compare-only manifest's
+  `hostCapabilityRecords` is free of the new rows; validator rejections for
+  `env`+`global`, `wasm:js-string`+`global`, `string_constants`+`func`, wrong
+  `mutable`, wrong `valueType`, wrong scheme, unknown module, unknown kind;
+  every func-assuming consumer throws (not misbehaves) on a global id.
+- **V-C exhaustiveness lives in `src/`**: `tsconfig` excludes `tests/`, so
+  `@ts-expect-error` in a test is unenforced — closedness is enforced by the
+  `as const`-tuple unions and factory parameter types under `pnpm run
+  typecheck` (the `quality` gate), with the runtime membership check as the
+  vitest-pinnable twin.
+- **V-D revert non-vacuity**: reverting the widening fails exactly the new
+  file's pins and **0 tests elsewhere** — record that count as the measured
+  baseline (the probes' Exp 1/2 showed a no-pin revert fails 0 tests, which
+  is why the slice's own pins are its only observability).
+- **V-E** the five ratchet gates chained bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`; `runtime-manifest.ts` is
+  already over the 1500-line god-file threshold (1670), so any growth needs
+  the dated `loc-budget-allow` rationale block (the `:123-140` template; all
+  four likely-touched paths already carry grants at `:78-80`, `:94`);
+  controls run unchanged: `issue-2955-depolymorph-gate`,
+  `issue-3502-string-contract`, `issue-3518-string-repeat-ir`, `issue-3167`,
+  `issue-1183`, `issue-4550-linear-ir-census` (baseline byte-pin), both
+  async suites, all #3526 suites, `#3520` callable-provider-abi.
+
+### After this slice (ranked, from the boundary probe)
+
+| rank | boundary | why |
+| --- | --- | --- |
+| **F2-S3** | `string.eq` | one import, one native symbol (`__str_equals`), no mode sub-arm, ABI in the existing union (only the module axis is new); resolve arm = F2-S1's shape verbatim; demand = `string.eq` instr scan; policy `stringEq` |
+| F2-S4 | `string.len` | host arm trivial; native struct-field arm needs manifest provider vocabulary |
+| F2-S5 | `string.concat` | `owned-append` sub-arm, `__concat_N` late-import sibling, `string-builder-candidate` census bucket |
+| later | `charCodeAt` | `host-capability` two-record provider behind a defined helper (`char-code-at-helpers.ts:173-224`) |
+| later | `string.const` | global kind, derived field, two namespaces, oversized materializer, legacy pre-pass ordering |
+
+Out of scope here: every resolve-table arm (`integration.ts:6186-6347`),
+`stringMethodPlan`, `String()` coercion, `src/ir/from-ast.ts`, the
+`host-import-policy.ts:283-286` classifier (retire once records are typed),
+and `import-manifest.ts:337`'s `env`-only walk.
+
+---
+
+## 2026-09-01 F2-S2 checkpoint note — Opus lane
+
+**Branch** `claude/issue-3526-f2s2-schema-widening`, grounded on `origin/main`
+`dc29e1f1` (the merged F2-S1, PR #5433), slice claim `3526:f2s2`. Implemented
+from the 2026-09-01 F2-S2 plan. **The slice moves no boundary**: not one
+resolve arm, provider row, policy field or emitted import changed, and the
+35-cell byte matrix below is 100 % identical.
+
+### Probe answers
+
+**P1 — un-requested ids: NO such gate exists, in `scripts/` OR `src/`. Nothing
+was weakened, and nothing had to be sequenced forward.** Measured, not assumed:
+the full reference set of the capability catalogue is eleven files
+(`grep -rn "RUNTIME_HOST_CAPABILITY_IDS\|RUNTIME_HOST_CAPABILITY_RECORDS\|isRuntimeHostCapabilityId\|hostCapabilityRecords" src/ scripts/ tests/`),
+and **`scripts/` contributes zero** — no gate reads the catalogue at all. The
+one completeness demand in the codebase is
+`canonicalizeRuntimeHostCapabilityCatalog` (`runtime-host-capabilities.ts`),
+and it is **ids ↔ rows, not ids ↔ providers**: it fails when a catalogue omits
+a declared id, never when a declared id goes un-requested. The frozen
+manifest's `hostCapabilityRecords` is built the other way round — from the
+capabilities that SELECTED providers request (`runtime-manifest.ts`
+`#buildManifest`) — so an un-requested row is structurally invisible to
+`freeze()`. That is exactly why this slice is byte-neutral by construction and
+not by luck, and it is now pinned rather than argued: the new suite asserts
+that no provider row names any of the six ids, and that Math-only, async-only
+and compare-only manifests carry none of them.
+
+**P2 — `ref_extern` cannot reach `lowerAdapterType`, on two independent
+barriers.** `lowerAdapterType` (`src/codegen/ir-async-runtime-adapters.ts:19`)
+is typed on `AsyncHostAdapterValueType`, which stays the narrowed
+`"externref" | "i32"` — the F1-S1 note about `f64` applies verbatim to
+`ref_extern`. The only route into an `AsyncHostAdapter` is
+`asAsyncHostAdapter`, whose value-type loop rejects anything outside that pair
+by name. Separately, `assertValueTypes` admits a value type only when it BOTH
+equals the expected entry positionally and is a member of
+`RUNTIME_HOST_CAPABILITY_VALUE_TYPES`, so `ref_extern` is accepted only where
+a row declares it — today that is `string.concat`'s result and nothing else,
+which the suite pins as an exhaustive scan of the catalogue rather than a
+spot-check.
+
+**P3 — key-order canonicalization holds; the sort is by id and the new rows
+land in a stable position.** `compareCapabilityRecords` sorts on the capability
+string, so the six ids interleave deterministically:
+`number.unbox` < `string.char_code_at` < `string.compare` < `string.concat` <
+`string.const` < `string.const.utf16` < `string.eq` < `string.len`. Pinned two
+ways: `canonicalizeRuntimeHostCapabilityCatalog` of the **reversed** catalogue
+is `JSON.stringify`-equal to the forward one AND element-identical by object
+reference; and the sorted id list is asserted verbatim at 18 entries. The
+`semanticView` helper (`tests/issue-3526-ir-runtime-manifest.test.ts`) is
+unaffected for a different and stronger reason than ordering — it serializes
+`manifest.hostCapabilityRecords`, which contains only requested capabilities,
+and no new row is ever requested. That suite passes unchanged.
+
+**P4 — F2-S3 handoff, recorded exactly.** The eq arm is **not** a standalone
+arm today: `integration.ts:6279-6296` is a THREE-symbol branch
+(`IR_STRING_CONCAT_FN || IR_STRING_CONCAT_OWNED_FN || IR_STRING_EQUALS_FN`)
+whose single `if (ctx.nativeStrings)` picks between
+`nativeStrHelperHandle(ctx, "__str_concat" | "__str_concat_owned" | "__str_equals")`
+and `exactCallableImportIndex(ctx, "wasm:js-string", "concat" | "equals")`.
+F2-S3's first move is therefore a SPLIT, not a rewrite: lift
+`symbol === IR_STRING_EQUALS_FN` into its own `else if` above the concat pair,
+leaving the two concat symbols on the untouched lane read, then migrate only
+the lifted arm. The policy shape is F2-S1's verbatim:
+`StringEqPolicy = { eq: "host" | "native" | "unsupported" }`, projected
+`ctx.nativeStrings ? "native" : "host"` (the exact former truth table), two
+provider rows (`host.js.string.eq` → `host-callable` on capability
+`string.eq`, whose record this slice already provides; `native.js.string.eq` →
+`runtime-callable` on `__str_equals`), demand from a `string.eq` instruction
+scan, and `STRING_EQ_POLICY_DISABLED` passed explicitly by the linear and
+self-hosted-stdlib adapters. No code for any of that is in this PR.
+
+### What landed
+
+- **`src/ir/runtime-host-capabilities.ts`** (+239 net, the whole slice) — the
+  id union split into `RUNTIME_HOST_CAPABILITY_FUNC_IDS` (16) and
+  `RUNTIME_HOST_CAPABILITY_GLOBAL_IDS` (2) with `RUNTIME_HOST_CAPABILITY_IDS`
+  as their sorted merge; closed per-kind module unions
+  (`env | wasm:js-string` for func, `string_constants | string_constants16`
+  for global), a closed kind tuple and a closed field-scheme tuple, each with
+  its runtime `Set` twin; `RuntimeHostCapabilityValueType` grown by
+  `ref_extern`; `RuntimeHostCapabilityFuncRecord` /
+  `RuntimeHostCapabilityGlobalRecord` and their union;
+  `funcRecord` / `globalRecord` factories with `record()` retained as the
+  `env`-defaulting alias so the twelve existing rows are literally unchanged;
+  the six new rows; a per-kind validator (`assertGlobalCapabilityRecord` for
+  the global arm) with kind/module/field-scheme membership checks; and the
+  shared `asCallableRuntimeHostCapabilityRecord` guard plus
+  `resolveRuntimeHostCapabilityFuncRecord`.
+- **`src/ir/runtime-manifest.ts`** (+20) — `host-callable`'s `capability`
+  narrowed from `RuntimeHostCapabilityId` to `RuntimeHostCapabilityFuncId`
+  (the type-level `Extract` the plan asked for, spelled as the id half so it
+  actually narrows), and its runtime twin in `#indexProviders`.
+- **`src/ir/intrinsic-support.ts`** (+3) — `ADMITTED_CALLABLE_TARGETS`,
+  `providerAttachment`, `preparedGeneratorNumberBoxProvider` and
+  `preparedStringCompareProvider` all routed through
+  `resolveRuntimeHostCapabilityFuncRecord`. The file now contains no
+  unguarded `resolveRuntimeHostCapabilityRecord(` call, which the suite
+  ratchets.
+- **`src/ir/async-runtime-providers.ts`** (+13) — `AsyncHostAdapter`
+  retargeted to `RuntimeHostCapabilityFuncRecord<AsyncHostCapabilityId, …>`;
+  `asAsyncHostAdapter` takes the kind guard immediately after the id filter
+  and before the value-type walk.
+- **`src/ir/async-plan.ts`** (+3) — see the divergence below.
+- **`tests/issue-3526-string-boundary-schema.test.ts`** (new, 33 tests).
+
+Nothing else was touched: no policy field, no provider row, no
+`IrIntrinsicProvider` global arm, no resolve/attach/from-ast edit.
+
+### One divergence from the plan (recorded, not widened)
+
+**A sixth guard site the plan's enumeration missed: `async-plan.ts`'s
+adapter-parity loop.** `assertPreparedIrAsyncRuntimeCurrent` filters
+`manifest.hostCapabilityRecords` by the requested capability set and then
+builds `irImportFuncRef(record.module, record.field, record.field)` from the
+result — a func-assuming read on a value typed as the union. It is not in the
+plan's list (which named `intrinsic-support.ts`, `async-runtime-providers.ts`
+and `runtime-manifest.ts`), and leaving it out would have been a type error,
+not a silent gap, so the omission was caught the moment the union landed. Fixed
+in the plan's own idiom — `asCallableRuntimeHostCapabilityRecord(records[index]!)`,
+identity-preserving so the `adapter.record !== record` comparison two lines
+down is unaffected. `src/ir/async-plan.ts` is the one path added to
+`loc-budget-allow`; at 1285 lines it is far under the god-file threshold.
+
+Two things the plan allowed that were **not** needed: no `Extract<>` gymnastics
+on the record type (declaring the id union in two halves narrows
+`host-callable` directly and reads better), and no separate `AsyncHostAdapter`
+compatibility shim (retargeting the alias to the func arm was a one-line
+change that every downstream consumer already satisfied — `pnpm run typecheck`
+is green with **zero** edits outside the five files above).
+
+### V-A — measured neutrality: 35 of 35 cells identical
+
+Seven fixtures (the F2-S1 six plus the plan's literal-heavy `CONST`) × five
+lanes, compiled before and after **on the same tree** (the five source files
+were snapshotted, reverted from `HEAD`, re-measured, and restored; the restored
+files were `diff`-verified byte-equal to the snapshots). Each cell compares
+byte length, binary sha256, the ORDERED import list, the **full emitted WAT
+text**, the error list, the `irOutcomes` records and the string pool — deep
+JSON equality, not a spot-check.
+
+| fixture | gc-host | gc-native-strings | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| `STRCMP` (`a < b`) | 157 ✓ | 22652 ✓ | 22816 ✓ | 22843 ✓ | 4876 ✓ |
+| `STRCMP4` (all four operators) | 270 ✓ | 22540 ✓ | 22704 ✓ | 22731 ✓ | 4988 ✓ |
+| `STRMIX` (compare beside concat/eq/len) | 338 ✓ | 22961 ✓ | 23125 ✓ | 23152 ✓ | 4982 ✓ |
+| `FOROFSTR` | 1351 ✓ | 22669 ✓ | 49119 ✓ | 49146 ✓ | 4960 ✓ |
+| `BOTH` | 1440 ✓ | 22924 ✓ | 49374 ✓ | 49401 ✓ | 4983 ✓ |
+| `CLEAN` (control, no strings) | 113 ✓ | 21973 ✓ | 22588 ✓ | 22615 ✓ | 4874 ✓ |
+| `CONST` (literals + `charCodeAt`) | 619 ✓ | 22855 ✓ | 23019 ✓ | 23046 ✓ | 6007 ✓ |
+
+(The fixture SOURCES are this lane's reconstructions from the F2-S1
+checkpoint's descriptions, not that slice's byte-identical files — three of the
+gc-host numbers differ slightly from its table for that reason. It does not
+weaken the measurement: parity is before/after on the same tree, and the six
+descriptions are reproduced exactly.)
+
+**The `CONST` fixture earns its place — it is the only cell that reaches the
+global path at all.** Its gc-host module imports
+`string_constants."" / "f" / "ab" / "abc" / "de" / "abcde" / …`,
+`string_constants16."d800"` (the lone-surrogate route, #2880), and
+`wasm:js-string.{length,charCodeAt}`; `STRMIX::gc-host` supplies
+`wasm:js-string.{concat,equals}`. So every one of the six new rows has its
+registration site inside the matrix. Note also that `result.imports` covers
+only `env` FUNC descriptors — the `wasm:js-string` and `string_constants*`
+imports appear **only** in the WAT — which is why the WAT text is compared in
+full rather than the import array alone; an import-array-only matrix would
+have been blind to exactly this slice's subject matter.
+
+### V-B / V-C — the pins, and where exhaustiveness actually lives
+
+33 tests in `tests/issue-3526-string-boundary-schema.test.ts`, in eight
+sections: the kind-discriminated schema (disjoint/total id halves, closed
+per-kind module namespaces, the `ref_extern` widening scanned exhaustively);
+the six rows whole-shape plus canonical object identity; the ABI **measured**
+against the registration site; the no-provider-selects-them argument; the
+async projection; the validator's cross-kind rejections; the fail-closed
+guards; and the boundary-did-not-move pins.
+
+**The ABI section is a measurement, not a restatement.** Rather than
+re-typing `addStringImports`'s literals, it compiles a host-lane module through
+`generateModule(analyzeSource(...))` and compares each record against the type
+the compiler actually registers — `module.types[import.desc.typeIdx].params /
+.results` for the four `wasm:js-string` rows, and the full
+`{kind:"global", type:{kind:"externref"}, mutable:false}` descriptor for both
+global namespaces — including that `hexCodeUnits("\uD800") === "d800"` is the
+field the `literal-utf16-hex` scheme actually produces and that a
+surrogate-free literal never lands in `string_constants16`.
+
+**V-C — exhaustiveness is enforced in `src/`, and that was verified by a
+negative probe rather than asserted.** `tsconfig` excludes `tests/`, so a
+`@ts-expect-error` in the suite would prove nothing. A temporary
+`src/zz-f2s2-probe.ts` (deleted; it is not in the diff) asked
+`pnpm run typecheck` for five illegal constructions and got five errors:
+`.params` on the union (TS2339, naming the global arm),
+`{kind:"host-callable", capability:"string.const"}` (TS2820),
+`RuntimeHostCapabilityFuncModule = "string_constants"` and
+`RuntimeHostCapabilityGlobalModule = "env"` (TS2322 each), and
+`RuntimeHostCapabilityValueType = "i64"` (TS2322). The runtime membership
+checks in the validator are the vitest-pinnable twins of those five.
+
+### V-D — non-vacuity: 24 of 33, and 0 elsewhere
+
+Reverting **only** the widening (all five source files back to `HEAD`, the new
+suite kept) fails **24** of the new file's 33 tests and **0 tests anywhere
+else** — the 17 control suites are 233/233 green on the reverted tree, and
+266/266 (233 + 33) with the widening restored.
+
+The **9** that still pass on the reverted tree are named rather than hidden,
+because they are the honest ones:
+
+- three **boundary-did-not-move** pins (`integration.ts` still reads
+  `ctx.nativeStrings` at the concat/eq arm, at the `string.len` provider and in
+  `storageForConst`). These are *supposed* to hold on both trees — they assert
+  what this slice deliberately did NOT do, and they are the pins that will fire
+  in F2-S3/S4 when the arms move. A pin that passes before and after is vacuous
+  only if it was meant to detect the change; this one is meant to detect its
+  absence.
+- `hexCodeUnits`/emission derivation, "the twelve pre-existing rows are `env`
+  func rows", the seven-row async projection, the reversed-catalogue
+  canonicalization, "no provider names the six ids", and "Math/async/compare
+  manifests are free of them" — all true of the 12-row catalogue too, by
+  construction. They are the regression fence for the NEXT slice, which is the
+  one that will add the first provider row.
+
+### V-E — validation run
+
+Green: `pnpm run typecheck` (TS7, the `quality` gate) — and the two
+pre-existing `WebAssembly.Tag` TS5-lib errors in `src/linked-provider-runtime.ts`
+are on `origin/main` too, untouched by this slice. The five ratchet gates, run
+**bare** and again under `LOC_GATE_BASE` pinned to `origin/main`
+(`dc29e1f1`): loc (+278 net src LOC; every grown path granted by this file's
+frontmatter — `runtime-host-capabilities.ts` 264→503, `runtime-manifest.ts`
+1670→1690 over the god-file threshold, `intrinsic-support.ts` 544→547), func,
+coercion-sites, oracle-ratchet, dead-exports. Also green: `lint`,
+`format:check`, `check:ir-dialect`, `check:ir-layering`, `check:ir-only`
+(verdict READY), `check:linear-ir`, `check:host-import-policy`,
+`check:test-vacuity-shapes`, `check:ir-kind-neutrality` (no evidence-line
+drift this time — no cited line moved), and `check:ir-fallbacks` (bare;
+unintended, module-level and post-claim buckets all still empty,
+`string-builder-candidate` still 2).
+
+Focused suites: **266 passing across 18 files** — all eight #3526 suites
+including the new one, both async suites (#4103/#4104), #3520
+callable-provider-abi, #2955, #3502, #3518 string-repeat-ir, #3167, #1183 and
+#4550 linear-ir census. `scripts/*-baseline.json` is untouched.
+
+### Not touched (per the plan's scope discipline)
+
+Every resolve-table arm (`integration.ts:6186-6347`) including the eq/concat
+one this slice's rows describe; `stringMethodPlan`; `String()` coercion;
+`src/ir/from-ast.ts`; the `host-import-policy.ts` classifier;
+`import-manifest.ts`'s `env`-only walk; the `IrIntrinsicProvider` global arm
+(`nodes.ts:856-860`); and every existing policy — `numberBoundary`,
+`booleanBoundary`, `externIsUndefined`, `generatorNumberBox`, `stringCompare`
+— all unchanged. The whole-shape frozen-policy pin at
+`tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-445` did **not**
+move, which is the mechanical signature of a slice that adds no policy field.
+
+## 2026-09-02 F2-S3 implementation plan — string.eq under manifest policy (family 2, slice 3)
+
+Grounded on `origin/main` `351f2bfc6b` (= merged F2-S2, PR #5440). Slice
+claim: `#3526:f2s3` (`ttraenkler/fable-ir-takeover`). Three probe lanes
+(resolve arm + registration / BEFORE-half byte matrix / test surface) ran
+against that commit; every line number below is theirs. The F2-S2 checkpoint's
+P4 handoff (`:3786-3802`) is the starting point and is confirmed by
+measurement.
+
+### What moves and what does not
+
+- **The arm is a THREE-symbol branch today**: `integration.ts:6280-6296`
+  serves `IR_STRING_CONCAT_FN || IR_STRING_CONCAT_OWNED_FN ||
+  IR_STRING_EQUALS_FN` with one raw `ctx.nativeStrings` read (`:6284`) and one
+  symbol→spelling ternary per lane (`:6286-6291` native helpers, `:6294`
+  host field). **First move is a SPLIT, not a rewrite**: lift
+  `symbol === IR_STRING_EQUALS_FN` into its own `else if` directly after the
+  F2-S1 compare arm (`:6256-6279`), above the concat pair; the two concat
+  symbols keep their lane read and raw lookup (`else if` order across
+  disjoint symbols is byte-inert). Then migrate only the lifted arm.
+- **Host arm = `exactCallableImportIndex(ctx, arm.module, arm.field)`, NOT
+  `ctx.funcMap.get`.** `wasm:js-string.equals` is registered by
+  `addStringImports` (`registry/imports.ts:609-700`) as the third of a fixed
+  five-import block (`concat, length, equals, substring, charCodeAt`,
+  `:628-663`), by a base-phase caller (legacy collector pre-pass
+  `import-collector.ts:1668/2142/2157/2175`, or the IR pre-pass
+  `prepareStrings` `:7099-7101` — `instrUsesStrings` already includes
+  `string.eq` at `:7232`), never alone and always ahead of Phase 3. It IS in
+  `funcMap` but under the bare field `"equals"`, subject to #1072 user-function
+  shadowing — which is exactly why the arm has never used `funcMap`.
+  `exactCallableImportIndex` (`:6362-6370`) derives the index from
+  import-section position, mints nothing, and is shift-immune. So
+  `preparedStringEqProvider` returns `{arm:"host", module: record.module,
+  field: record.field}` (a deliberate deviation from F2-S1's `{arm, field}`
+  shape and from its source pin `toContain("ctx.funcMap.get(arm.field)")`).
+  No attached-target recognition is needed (F1-S4's
+  `attachedExternIsUndefinedArm` exists because from-ast deleted the raw call;
+  here from-ast is untouched and the `string.eq` instr still triggers
+  `addStringImports`).
+- **Native arm** = `runtime-callable` on `__str_equals`
+  (`native-strings-basics.ts:433-449`, minted via `ensureNativeStringHelpers`
+  `native-strings.ts:94-140`, resolved by `nativeStrHelperHandle`
+  `func-space.ts:126-133` as a #3909 stable handle). Physical ABI
+  `(ref $str, ref $str) -> i32`; semantic signature
+  `EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE` (`intrinsics.ts:287-291`) — the
+  same relationship F2-S1's `__str_compare` row has. Reuse it; no new
+  signature.
+- **Untouched**: from-ast (`:13178-13183`, `:11410` — lane-free, #2955 gate
+  scoped to from-ast stays green), `string-support.ts` attach (`:57-77`,
+  `:132-148` — unconditional, binding kind stays `intrinsic`), `lower.ts:2275`,
+  `wasmgc-emitter.ts:91-96` (`i32.eqz` on negate), `nodes.ts`, `builder.ts`,
+  `runtime-host-capabilities.ts` (row exists `:303`, func id `:67`),
+  `registry/imports.ts`, `import-collector.ts`, `legality.ts:274` (`string.eq`
+  allowed on linear), `linear-integration.ts:1620-1622` (resolves `__str_eq`
+  ignoring the provider — the disabled policy there is inert, as for compare).
+- **The emitter no-provider fallback `integration.ts:6718-6727`** (the second
+  `ctx.nativeStrings` read in `emitStringEquals`, backed by
+  `computeStringBackend` `:5163-5188`): measured **0 reaches** across all 55
+  BEFORE cells; attach is unconditional on every healthy owner (`:7195-7210`)
+  but conditional on `ctx.programAbiTypes` (`:7137-7138`), and
+  `prepared-component-dependencies.ts:636-642` fails any component whose
+  `string.eq` lacks a provider before lowering. Probe P1 decides
+  retire-vs-pin by measurement (temporary throw over the full matrix), NOT by
+  argument from F2-S1's sub-B (whose linear half was itself corrected).
+
+### Contract (F2-S1's 10-point edit list, with the eq-specific deltas)
+
+1. `StringEqPolicy { eq: "host" | "native" | "unsupported" }` +
+   `STRING_EQ_POLICY_DISABLED` beside `runtime-manifest.ts:184-196`; optional
+   field on `RuntimeManifestPolicy` beside `:221-225`, required on
+   `FrozenRuntimeManifestPolicy` beside `:229-235`; constructor default +
+   refreeze beside `:1257`/`:1264`.
+2. Feature `js.string.eq` (`:326-327`, union `:66-70`); provider ids
+   `host.js.string.eq` / `native.js.string.eq` (`:330-336`); rows beside
+   `:741-756` — host `{kind:"host-callable", capability:"string.eq"}` with
+   `hostCapabilities:["string.eq"]` (type-checks: `string.eq` is a func id),
+   native `{kind:"runtime-callable", symbol:"__str_equals"}`; both with
+   `EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE`; `stringEqProviderId` beside
+   `:760-763`; feature-set predicate beside `:765-769`; splice into
+   `RUNTIME_PROVIDERS` `:1021-1029`; `#selectProvider` branch beside
+   `:1621-1636` throwing `provider-target-unavailable` naming `stringEq`.
+3. `integrationStringEqPolicy(ctx) = { eq: ctx.nativeStrings ? "native" :
+   "host" }` beside `integration.ts:889-891` — the exact former truth table
+   of `:6284`; policy literal beside `:976`; owner-local partition twin of
+   `:3696-3710`; demand `irStringEqDemand` beside `:902-919` — a plain
+   `instr.kind === "string.eq"` scan over blocks + `asyncPlan.states`
+   (simpler than compare's call scan); `stringEqDemand:` beside `:983`;
+   `intrinsic-support.ts` input field beside `:390-398`, the "freeze nothing"
+   guard `:431` (`&& !input.stringEqDemand`), `requestFeature` beside `:440`,
+   feature const beside `:286`; `preparedStringEqProvider` beside `:301-320`
+   using `resolveRuntimeHostCapabilityFuncRecord` and returning
+   `{arm:"host", module, field}` / `{arm:"native", symbol}`.
+4. The resolve arm: split as above, then the lifted eq arm reads
+   `preparedStringEqProvider(prepared)`, throws `selection-preparation-mismatch`
+   when absent, native → `ensureNativeStringHelpers(ctx); nativeStrHelperHandle(ctx, arm.symbol)`,
+   host → `exactCallableImportIndex(ctx, arm.module, arm.field)`. The arm body
+   runs once per module per symbol (registry-cached by
+   `irCallableBindingKey`); the per-instr count equals the attach count.
+5. Adapters: `stringEq: STRING_EQ_POLICY_DISABLED` in
+   `backend/linear-integration.ts:680` and `codegen/stdlib-selfhost.ts:507`
+   (+ import lists `:140` / `:75`).
+6. No edit to `plan.invocation`, no from-ast edit, no new import
+   registration anywhere (contract: import set AND order on every lane
+   unchanged by construction; the matrix confirms rather than establishes).
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — emitter fallback `:6718-6727`**: temporary throw + the full 55-cell
+  matrix + the affected suites; 0 reaches ⇒ retire it fail-closed (F2-S1
+  sub-B shape, with the "refuses to lower an unattached string.eq" pin);
+  any reach ⇒ keep and pin it explicitly as not-moved, naming the lane.
+- **P2 — the import-pruning pass**: at arm time `exactCallableImportIndex`
+  returns 2 (`EQ`/`NEQ`/`TPLEQ`) or 3 (`EQMIX`/`STRMIX`) while the emitted
+  module has `equals` at #0/#1/#3 — unused string imports are dropped before
+  emission and the registry's locator (`program-abi-provider-planning.ts:299-300`)
+  keeps the final index right. The probe could not name the pruning pass;
+  name it, and state why the migrated arm (same lookup, same locator) is
+  unaffected.
+- **P3 — pins that move**, all measured: (a)
+  `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts:432-443` gains
+  `stringEq: { eq: "unsupported" }` (the only whole-shape pin;
+  `issue-3526-ir-runtime-manifest.test.ts` has no policy analog;
+  `compare.test.ts:252-262` asserts fields individually — extend to six); (b)
+  `tests/issue-3526-string-boundary-schema.test.ts:356-363` "no provider
+  names any of the six capabilities" FIRES once `host.js.string.eq` names
+  `string.eq` — narrow `NEW_IDS` (`:75-84`) for that pin to the five still
+  un-provided ids (F2-S2 called this "the regression fence for the NEXT
+  slice"); (c) `schema.test.ts:627-638` "keeps the concat/eq resolve arm on
+  ctx.nativeStrings and the raw import lookup" — keyed on the three-symbol
+  marker and `exactCallableImportIndex(ctx, "wasm:js-string", field)`: after
+  the split the concat arm has no `field` variable, so re-spell to
+  `"concat"` and retitle concat-only; the eq half INVERTS into the new suite;
+  (d) `scripts/ir-kind-neutrality-baseline.json:287` cites
+  `integration.ts:6327` (`forof.string`) — inserting the eq arm above shifts
+  it: the sanctioned one-line citation refresh (normalize-and-diff both JSON
+  documents; never commit the regenerator's 500-line output).
+- **P4 — pre-existing red controls on the grounding sha, NOT this slice's**:
+  `tests/issue-320.test.ts` "no dead imports (no-op)" (WAT now carries
+  `string_constants."add"` module-init globals) and three `issue-3529-*`
+  pins (#4512 `!ref` ToBoolean; array-literal widening `<module-init>` row).
+  Confirm they are red on base BEFORE your first edit and leave them; file
+  or cite an issue for them, do not fix here.
+
+### Verification matrix
+
+- **V-A byte cells — 55/55 identical to the BEFORE record.** The BEFORE
+  half is preserved: `scratchpad/f2s3-matrix-before.{mts,json,md}` + 55 full
+  WAT texts under `wat/` + the 6-site instrumentation patch
+  (`.instrument.py/.diff`). Fixtures (sources verbatim in the JSON): `EQ`,
+  `NEQ`, `EQMIX`, `FOROFEQ`, `TPLEQ`, `CLEAN`, `STRCMP`, `STRCMP4`, `STRMIX`,
+  `FOROFSTR`, `BOTH` × gc-host / gc-native-strings / standalone / wasi /
+  linear: bytes, sha256, WAT sha256, ordered import list WITH func/global
+  indices (parsed from the binary import section — `result.imports` covers
+  only `env` func descriptors and is blind to this seam), errors,
+  `irOutcomes`. Includes reproducing `FOROFEQ::gc-host`'s pre-existing
+  build-stage demote (`operand-coercion-unsupported`, 1513 B, `270e2a6a…`)
+  byte-identically — it is the host `stringForOfPlan() === "iter-host"`
+  binding the loop variable as externref, not the eq seam.
+- **V-B reach**: re-apply the instrumentation on the AFTER tree — host 5 /
+  native 18 / linear 4 eq resolutions, fallback 0, `resolve-entry`
+  fresh+cached per cell as before; runtime oracle for `===`/`!==` on
+  ≥7 input pairs across lanes via instantiation.
+- **V-C import-order pin** on the host lane via the module import section
+  or WAT (`tests/strings.test.ts:69` route) — an `result.imports`-only pin
+  is blind to `wasm:js-string`.
+- **V-D fail-closed**: `provider-target-unavailable` naming `stringEq` at
+  the manifest unit level; the production projection is total (`nativeStrings
+  ? native : host`), the linear lane admits `string.eq` and ignores the
+  provider, so the `unsupported` arm is unreachable on every lane —
+  **divergence-4 class EMPTY** (all `string.eq` producers are guarded before
+  emission at `from-ast.ts:13162-13173` / `:11388-11402`; #3529 pins stay at
+  `build`). Record integration-level reachability as a limit (F1-S2 style)
+  unless a policy-injection seam exists (none does).
+- **V-E revert non-vacuity**: revert only the arm → exactly the new
+  source-shape pins fail (`stringEqArmSource` marker
+  `symbol === IR_STRING_EQUALS_FN) {`, host assertion
+  `exactCallableImportIndex(ctx, arm.module, arm.field)`); revert only the
+  fallback retirement (if P1 retires it) → exactly its pin fails.
+- **V-F**: five ratchet gates chained bare AND under `LOC_GATE_BASE`;
+  `runtime-manifest.ts` (1690 lines, over threshold) needs the dated
+  `loc-budget-allow` rationale; `check:ir-fallbacks` diffed (no bucket
+  moves); controls: `issue-2955-depolymorph-gate`,
+  `issue-3520-callable-preregistration` (`equals` NOT imported on native
+  lanes), `strings`, `host-string-prefix-suffix-fast-path`,
+  `issue-3521-prepared-component-dependencies:1017-1029` (attach binding
+  kind), all #3526 suites, both async suites.
+
+New suite: `tests/issue-3526-string-boundary-eq.test.ts`, anatomy from the
+compare suite (contract `:166-216`, policy `:218-296`, end-to-end
+`:298-337`, demote `:339-358` — but see V-D, the linear trick does not carry
+because `string.eq` is linear-admitted — source-shape arm pins `:361-409`).
+
+### Out of scope
+
+`string.concat` / `_OWNED` (stay on the lane read — F2-S5, with `__concat_N`
+and the `string-builder-candidate` bucket), `string.len` (F2-S4; native
+struct-field arm needs provider vocabulary), `charCodeAt` (two-record
+`host-capability` provider behind a defined helper), `string.const` (global
+kind), `stringForOfPlan` (`:5970-5972` — the FOROFEQ host demote is its
+business, not this slice's), `TPLEQ`'s `env.__concat_3` late import, the
+`:6718-6727` twin reads in the other string emitters.
+
+### 2026-09-02 F2-S3 checkpoint note — Opus lane
+
+**Branch** `claude/issue-3526-f2s3-string-eq`, grounded on `origin/main`
+`0f801557` (which carries no `src/`, `scripts/` or `tests/` delta against the
+plan's grounding `351f2bfc` — verified, so the preserved BEFORE record is valid
+on this base). Slice claim `3526:f2s3`. Implemented from the 2026-09-02 F2-S3
+plan. All four probe answers were measured on the grounded tree BEFORE any
+source edit.
+
+#### Probe answers
+
+**P1 — the emitter no-provider fallback is RETIRED, on a measurement, not an
+argument.** A temporary `throw` replaced the two fallback branches of the WasmGC
+`emitStringEquals` adapter (`integration.ts`) and the whole probe was re-run:
+
+- **0 reaches across all 55 byte cells** — and the matrix stayed **byte-identical
+  to the BEFORE record with the throw in place**, which is a stronger statement
+  than "no cell crashed": nothing in any of the 55 modules depended on the
+  branch, not even indirectly through a demote.
+- **0 reaches across 22 string suites / 337 passing tests** (`strings`,
+  `native-strings` ×3, `issue-2742-native-string-equality`,
+  `issue-2063-switch-strict-equality`, `issue-2191-case-equals`, the two #4208
+  equality suites, `loose-equality`, `issue-3167`, `issue-1183`, the two #3502
+  suites, `issue-3518-string-repeat-ir`, `imported-string-constants`,
+  `for-of-string-generator`, `issue-2880`, `issue-1470-standalone-string-imports`,
+  `host-string-prefix-suffix-fast-path`, both #3526 string suites).
+
+So it is retired fail-closed, with the "refuses to lower an unattached
+`string.eq`" pin plus a source-shape pin. **The plan's argument for why it was
+dead is correct but is NOT what licensed the removal** — `attachIrStringSupport`
+does attach the provider unconditionally for `string.eq` and `prepareStrings`
+runs that pass over every healthy owner, but F2-S1's sub-B taught that the
+second half of such an argument can be wrong in a way the first half hides. The
+throw is the evidence.
+
+**One honest scope note on the retirement's pins.** The behavioural pin
+("refuses to lower an unattached `string.eq`") holds on BOTH trees and is
+deliberately not the non-vacuity signal: a hand-built resolver carries no string
+runtime, so `WasmGcEmitter.emitStringEquals` refuses one frame earlier with its
+own `string.eq runtime is unavailable` and the retired branch is never reached.
+The suite says so in place rather than hiding it behind an alternation regex.
+The discriminator is the source-shape pin, and V-E measures it: reverting only
+the retirement fails exactly that one test.
+
+**P2 — the pruning pass is `eliminateDeadImports`
+(`src/codegen/dead-elimination.ts`), and the migrated arm is unaffected because
+it changes neither the lookup nor the locator.** It is called from
+`eliminateDeadLayoutAndPlanProgramAbi` (`src/codegen/program-abi-finalization.ts`)
+at the `finalize/dead-layout` / `eliminate-dead-layout` phase of
+`src/codegen/index.ts` — i.e. **after** IR resolve. The sequence the probe saw
+but could not name is therefore:
+
+1. `addStringImports` (`codegen/registry/imports.ts`) registers all five
+   `wasm:js-string` builtins as one block, so at arm time `equals` sits at func
+   position 2 (`EQ`/`NEQ`/`TPLEQ`) or 3 (`EQMIX`/`STRMIX` — `env.string_compare`
+   precedes the block).
+2. `exactCallableImportIndex` returns that position, and
+   `ProgramAbi…observe()` immediately converts it into a `ProviderLocator` that
+   holds the **`Import` object itself** (`callableLocatorAt` →
+   `{kind:"import-function", value: imported}`).
+3. `eliminateDeadImports` compacts the section, dropping the four unused
+   builtins; `currentCallableIndex` re-derives the index **by object identity**,
+   which is why the emitted module has `equals` at #0/#1/#3 and the call is still
+   right.
+
+The migration keeps step 2's call site character-for-character (`registry?.observe(ref, index)`)
+and only changes where the module/field strings come from, so the locator sees
+the same object. Confirmed rather than argued: `EQ::gc-host` resolves at arm-time
+index **2** and emits `wasm:js-string.equals` at **#0**, identically before and
+after.
+
+**P3 — the pin moves, all measured.**
+
+- `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` — the whole-shape
+  frozen-policy equality gains `stringEq: { eq: "unsupported" }`. The
+  precedented mechanical consequence, and the only whole-shape pin;
+  `issue-3526-ir-runtime-manifest.test.ts` carries no policy analog and did not
+  move.
+- `tests/issue-3526-string-boundary-schema.test.ts` "no provider names any of
+  the six capabilities" — **fired, exactly as F2-S2 predicted it would.** Its id
+  list is narrowed to the **five still-unprovided** ids (a derived
+  `STILL_UNPROVIDED_IDS`, so the six-row list stays single-sourced) and the pin
+  now also asserts positively that `string.eq` **is** named. Shrinking the fence
+  by the id that landed is the correct edit; deleting it would have thrown away
+  the regression fence for F2-S4/S5.
+- `tests/issue-3526-string-boundary-schema.test.ts` "keeps the concat/eq resolve
+  arm on `ctx.nativeStrings`" — re-scoped to **concat only** and retitled. The
+  `field` variable went with the eq half, so the assertion is re-spelled
+  `exactCallableImportIndex(ctx, "wasm:js-string", "concat")`, plus a new
+  `not.toContain("IR_STRING_EQUALS_FN")` so the pin actively witnesses the split.
+  The eq half is INVERTED into the new suite.
+- `tests/issue-3526-string-boundary-compare.test.ts` — its
+  defaults pin is extended from five policies to six. It asserts fields
+  individually, so it did not *have* to move; it is only worth having if it keeps
+  pace with its own sibling.
+- `scripts/ir-kind-neutrality-baseline.json` — the sanctioned citation refresh,
+  handled as the five prior checkpoints prescribe. **TWO evidence lines moved,
+  not the plan's one**: `forof.string` `src/ir/integration.ts` 6327 → 6410 (the
+  eq arm inserted above it) and `string.len`
+  `src/ir/backend/linear-integration.ts` 1626 → 1628 (the two-line adapter
+  edit). Established by normalising both JSON documents to sorted leaf paths and
+  diffing those: **448 leaves each, exactly 3 changed** — those two evidence
+  arrays and the `generated` date. No verdict, kind, placement, ratchet count or
+  `settledBy` rationale moved. Patched surgically; committing the regenerator's
+  output would have been a **356-line** diff for a 3-line change.
+
+**P4 — pre-existing red controls, measured on the grounding tree BEFORE the first
+edit. There are 17 failing tests across 5 files, not the plan's four.** Left
+untouched; none is this slice's.
+
+| file | failing | what |
+| --- | --- | --- |
+| `tests/issue-320.test.ts` | 1 | "handles programs with no dead imports (no-op)" — the WAT now carries `string_constants."add"` module-init globals |
+| `tests/imported-string-constants.test.ts` | 4 | same class: global-import counts (`5` vs `3`, `2` vs `0`) and two end-to-end reads |
+| `tests/issue-3529-equivalence-error-imports.test.ts` | 8 | the whole Error-family constructor set |
+| `tests/issue-3529-dataflow-outcomes.test.ts` | 2 | unary `!` ToBoolean (#4512) |
+| `tests/issue-3529-ir-producer-parity.test.ts` | 2 | boolean identity across an externref console boundary; array-literal widening |
+
+The four the plan named are in there; the other 13 are not, and the
+`imported-string-constants` four were confirmed red on a **clean** base after an
+instrumented run made them look like new failures. Worth stating because that is
+exactly how a real regression gets waved through: the plan's list read as
+complete, and a longer list of "known reds" is only safe if it was measured
+rather than inherited. Cited here for a follow-up issue; not fixed in this slice.
+
+#### What landed
+
+- **`src/ir/runtime-manifest.ts`** (+113) — `StringEqPolicy`
+  (`eq: "host" | "native" | "unsupported"`), a frozen `STRING_EQ_POLICY_DISABLED`,
+  the optional `stringEq` field canonicalized at builder construction and
+  published resolved on the frozen manifest, the `js.string.eq` feature row, the
+  two provider rows (`host.…` → `host-callable` on capability `string.eq`;
+  `native.…` → `runtime-callable` on `__str_equals`, both on the existing
+  `EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE` — no new signature), and the
+  `#selectProvider` branch whose unavailable arm is a typed
+  `provider-target-unavailable` naming the feature and `string-eq policy eq=…`.
+- **`src/ir/intrinsic-support.ts`** (+58) — the `stringEqDemand` input (and its
+  place in the "freeze nothing at all" guard) plus `preparedStringEqProvider`.
+- **`src/ir/integration.ts`** (+85) — the **split** of the three-symbol
+  concat/eq arm, the migrated eq half, `integrationStringEqPolicy`,
+  `irStringEqDemand`, the owner-local `unsupported` partition in the same pass as
+  the five existing ones, the freeze-time policy + demand arguments, and the
+  retired `emitStringEquals` fallback.
+- **`src/ir/backend/linear-integration.ts`**, **`src/codegen/stdlib-selfhost.ts`**
+  — both pass `STRING_EQ_POLICY_DISABLED` explicitly (+2 each).
+- **`tests/issue-3526-string-boundary-eq.test.ts`** (new, 24 tests).
+
+`src/ir/from-ast.ts`, `src/ir/string-support.ts`, `src/ir/lower.ts`,
+`src/ir/nodes.ts`, `src/ir/builder.ts`, `src/ir/backend/wasmgc-emitter.ts`,
+`src/ir/backend/legality.ts`, `src/ir/runtime-host-capabilities.ts` and
+`src/codegen/registry/imports.ts` needed **no edit** — the front-end was already
+lane-free, the `string.eq` record landed in F2-S2, and no registration moves.
+
+#### The split is the load-bearing first move, and it is byte-inert
+
+The arm served three symbols (`__ir_string_concat`, `__ir_string_concat_owned`,
+`__ir_string_equals`) behind one `ctx.nativeStrings` read and two symbol→spelling
+ternaries. `string.eq` is lifted into its own `else if` **above** the concat pair
+and only the lifted arm is migrated. The lift cannot change behaviour because the
+three symbols are pairwise disjoint: `else if` order decides which branch a symbol
+takes only when two conditions can both hold. The concat pair keeps its lane read
+and its raw lookup, which the re-scoped F2-S2 pin still holds.
+
+#### The one structural difference from F2-S1, and why F2-S2 had to land first
+
+`preparedStringEqProvider` returns `{arm:"host", module, field}` where the
+compare's twin returns `{arm:"host", field}`, and the consumer is
+`exactCallableImportIndex(ctx, arm.module, arm.field)` rather than
+`ctx.funcMap.get(arm.field)`. That is not a stylistic deviation:
+
+- `env.string_compare` is an `env` base import and `funcMap` names it
+  unambiguously.
+- `wasm:js-string.equals` is a **builtin**. `addStringImports` records it in
+  `funcMap` under the **bare field `equals`**, which a user function named
+  `equals` shadows (#1072) — which is why the arm has never used `funcMap` and
+  does not start now. Locating it by import-section position needs both halves of
+  the name, and the module half only became expressible as a capability record in
+  F2-S2.
+
+The new suite pins the module half explicitly, and the arm's source-shape gate
+asserts `not.toContain("funcMap")` so a future edit cannot quietly "simplify" it
+into the shadowable lookup.
+
+#### V-A — measured neutrality: 55 of 55 cells identical
+
+Eleven fixtures (`EQ`, `NEQ`, `EQMIX`, `FOROFEQ`, `TPLEQ`, `CLEAN`, plus F2-S1's
+`STRCMP`, `STRCMP4`, `STRMIX`, `FOROFSTR`, `BOTH`) × five lanes (gc-host,
+gc-native-strings, standalone, WASI, linear). Each cell compares byte length,
+binary sha256, WAT sha256, the **full emitted WAT text**, the **ordered import
+list with func/global indices parsed from the binary import section**, the error
+list and the `irOutcomes` records — deep equality, not a spot-check.
+
+The BEFORE half is the preserved record from the plan's probe lane. **It was
+re-run on this branch's own base before the first edit and reproduced all 55
+cells exactly**, so the comparison below is against a base this lane measured,
+not one it inherited. The AFTER half was then run twice: once on the
+implementation tree, and once more on the exact tree being committed (after
+`prettier` reformatted `runtime-manifest.ts`). Both are 55/55.
+
+| fixture | gc-host | gc-native-strings | standalone | wasi | linear |
+| --- | --- | --- | --- | --- | --- |
+| `EQ` (`a === b`) | 148 ✓ | 22424 ✓ | 22588 ✓ | 22615 ✓ | 4873 ✓ |
+| `NEQ` (`a !== b`) | 153 ✓ | 22664 ✓ | 22828 ✓ | 22855 ✓ | 4876 ✓ |
+| `EQMIX` (eq beside compare) | 247 ✓ | 22944 ✓ | 23108 ✓ | 23135 ✓ | 4933 ✓ |
+| `FOROFEQ` (eq inside a string for-of) | 1513 ✓ | 22944 ✓ | 49394 ✓ | 49421 ✓ | 5016 ✓ |
+| `TPLEQ` (template literal `===` literal) | 240 ✓ | 22743 ✓ | 23523 ✓ | 22934 ✓ | 4972 ✓ |
+| `CLEAN` (control, no strings) | 119 ✓ | 21977 ✓ | 22592 ✓ | 22619 ✓ | 4878 ✓ |
+| `STRCMP` | 157 ✓ | 22652 ✓ | 22816 ✓ | 22843 ✓ | 4876 ✓ |
+| `STRCMP4` | 270 ✓ | 22540 ✓ | 22704 ✓ | 22731 ✓ | 4988 ✓ |
+| `STRMIX` | 360 ✓ | 22982 ✓ | 23146 ✓ | 23173 ✓ | 5022 ✓ |
+| `FOROFSTR` | 1351 ✓ | 22669 ✓ | 49119 ✓ | 49146 ✓ | 4960 ✓ |
+| `BOTH` | 1440 ✓ | 22924 ✓ | 49374 ✓ | 49401 ✓ | 4983 ✓ |
+
+**`FOROFEQ::gc-host` reproduces its pre-existing demote byte-identically**
+(`countX`, `operand-coercion-unsupported`@build, 1513 B, `270e2a6a…`). That demote
+is `stringForOfPlan()` returning `"iter-host"` and binding the loop variable as
+externref — the host for-of's business, not the eq seam's — and the cell is in the
+matrix precisely so a slice that "fixed" it by accident would be caught.
+
+**Imports and order.** Identical in all 55 cells, including the func/global
+INDICES. The measurement parses the binary import section directly because
+`result.imports` covers only `env` func descriptors and is **blind** to
+`wasm:js-string` and `string_constants` — an import-array-only matrix could not
+have seen this slice's subject matter at all. The new suite's order pin
+(V-C) reads the emitted module's import section for the same reason.
+
+#### V-B — the migrated arm is REACHED, and the retired one is not
+
+With the six-site instrumentation re-applied on the AFTER tree, the 55-cell run
+resolves the eq arm **23** times: **5 host** (`EQ`, `NEQ`, `EQMIX`, `TPLEQ`,
+`STRMIX` on gc-host) and **18 native** (six fixtures × three native-strings
+lanes). The linear lane emits `__str_eq` through its own resolver **4** times
+(`EQ`, `NEQ`, `EQMIX`, `STRMIX`). `emitStringEquals` takes the provider path
+**23** times and the fallback **0**. Every one of those counts, and the per-cell
+`resolve-entry` fresh/cached sequences, are **identical to the BEFORE run** — the
+per-cell probe tables `diff` clean.
+
+**Runtime oracle.** `===`, `!==` and `=== "x"` are checked against JavaScript on
+**seven** input pairs (`a/b`, `a/a`, `""/""`, `""/a`, `x/x`, `ab/abc`, `Z/z`)
+through an instantiated host-lane module, and the same source is compiled and
+validated on a native-strings lane and on linear.
+
+#### V-D — fail-closed, and the divergence-4 class is EMPTY
+
+The refusal is pinned at the **manifest unit level**: freezing an eq demand under
+`STRING_EQ_POLICY_DISABLED` throws `provider-target-unavailable` with
+`js.string.eq is unavailable under string-eq policy eq=unsupported`.
+
+**Integration-level reachability is recorded as a LIMIT, not claimed as a test
+(the F1-S2 shape).** The production projection is total (`nativeStrings ? native
+: host`), so no lane resolves `unsupported`; and unlike F2-S1's compare, **the
+linear demote trick does not carry** — `string.eq` IS on the linear instruction
+allowlist (`backend/legality.ts`), so that lane lowers it through its own
+resolver and ignores the frozen provider entirely. Its explicitly disabled
+`stringEq` policy is therefore **inert**, stated only so the frozen policy is
+total and no adapter inherits a host decision by omission. The suite pins that
+inertness behaviourally (a linear module with `a === b` beside a clean co-owner
+compiles and runs), which is what makes the claim falsifiable. No owner changes
+demote site anywhere in the matrix — the `irOutcomes` records are byte-compared
+in all 55 cells — so the divergence-4 class is EMPTY for this slice, as an
+assertion rather than an omission.
+
+#### V-E — non-vacuity, each sub-slice reverted independently
+
+- **sub-A**, reverting ONLY the resolve arm to the three-symbol lane read:
+  **5 tests fail** — the four new source-shape pins ("consults the prepared
+  string-eq provider", "reads NO lane discriminator", "fails closed rather than
+  falling back to a locally decided symbol", "is its OWN branch") **plus** the
+  re-scoped F2-S2 concat pin, which correctly refuses an un-split arm. All 217
+  other tests in that run stay green, including every byte, import-order,
+  runtime-oracle, schema and policy assertion.
+  **Those pins are deliberately SOURCE-shape assertions, for the reason F2-S1
+  recorded and this slice re-confirms:** the policy projection reproduces the old
+  truth table exactly, so both forms emit identical bytes on every lane — which
+  is the point of the slice and why all 55 cells are unchanged. What moved is
+  WHICH authority answers, and on this seam that is only observable in source.
+- **sub-B**, restoring the emitter fallback: exactly **1** test fails — "keeps
+  the retired fallback's lane read out of the emitter" — while the attachment
+  pin, the already-attached-provider pin, the refusal pin and all 179 other tests
+  stay green.
+
+#### Divergences from the plan (recorded, not widened)
+
+1. **The kind-neutrality refresh is TWO citation lines, not one.** The plan
+   anticipated only `integration.ts:6327`; the two-line adapter edit also moved
+   `linear-integration.ts:1626 → 1628`. Normalise-and-diff isolates exactly
+   those two plus the `generated` date.
+2. **P4's pre-existing-red list was incomplete: 17 tests across 5 files, not 4.**
+   Named above.
+3. **The retirement's behavioural pin cannot discriminate**, because
+   `WasmGcEmitter` refuses one frame earlier on a hand-built resolver. Disclosed
+   in the suite rather than papered over; the source-shape pin is the
+   discriminator and V-E measures it at exactly 1.
+4. **`preparedStringEqProvider` returns the record's MODULE as well as its
+   field**, and the host arm uses `exactCallableImportIndex`, not
+   `ctx.funcMap.get`. This is the plan's own instruction; it is recorded here
+   because it is a deliberate divergence from F2-S1's shape AND from that
+   slice's committed source pin, and a reader comparing the two arms should not
+   read it as drift.
+
+#### Validation run
+
+Green: `pnpm run typecheck` (TS7, the `quality` gate); the five ratchet gates run
+**bare** and again under `LOC_GATE_BASE` pinned to `origin/main` (`0f801557`) —
+loc (+260 net src LOC, every grown path granted by this file's frontmatter;
+`runtime-manifest.ts` 1690 → 1803, over the god-file threshold, with the dated
+rationale), func, coercion-sites, oracle-ratchet, dead-exports. Also green:
+`lint`, `prettier --check` on every touched path, `check:ir-dialect`,
+`check:ir-layering`, `check:ir-only` (verdict READY), `check:linear-ir`,
+`check:host-import-policy`, `check:test-vacuity-shapes`,
+`check:ir-kind-neutrality` (after the surgical refresh), and
+`check:ir-fallbacks` — **diffed against a base-tree run of the same command,
+output byte-identical**; unintended, module-level and post-claim buckets all
+still empty, `string-builder-candidate` still 2.
+`scripts/linear-ir-baseline.json` and `scripts/ir-fallback-baseline.json` are
+untouched.
+
+Focused suites: **416 passing across 25 files** — all nine #3526 suites
+(including the new one), both async suites (#4103/#4104), #3520
+callable-provider-abi and callable-preregistration, #3521 prepared-component
+dependencies, #2955, #3502, #3518 string-repeat-ir, #3167, #1183, #4550
+linear-ir census, `strings`, `native-strings` ×2,
+`host-string-prefix-suffix-fast-path`, and the three equality suites this seam
+serves.
+
+#### Not touched (per the plan's scope discipline)
+
+`string.concat` / `_OWNED` (F2-S5 — still on the lane read, still pinned),
+`string.len` (F2-S4), `charCodeAt`, `string.const`, `stringMethodPlan`,
+`String()` coercion, `stringForOfPlan` / `charReadPlan`, `TPLEQ`'s
+`env.__concat_3` late import, the twin no-provider reads in the OTHER string
+emitters (`emitStringConcat`, `emitStringLen` — each belongs to its own slice),
+`src/ir/from-ast.ts`, and every existing policy — `numberBoundary`,
+`booleanBoundary`, `externIsUndefined`, `generatorNumberBox`, `stringCompare` —
+all unchanged.
+
+## 2026-09-02 F2-S4 implementation plan — string.len under manifest policy (family 2, slice 4)
+
+Written by the Fable planning lane against PR #5448's head `469fd03e` (F2-S3
+merged state). Every line number below is from that tree. Implementer: an Opus
+lane, working from this plan; measurements first, edits second.
+
+### What moves and what does not (census, 60 cells)
+
+The seam is `s.length` — the `string.len` IR instruction (`src/ir/nodes.ts:1251-1257`)
+and its two-armed provider `IrStringLengthProvider` (`nodes.ts:1260-1272`):
+`callable` (the host `wasm:js-string.length` builtin import) or `struct-field`
+(native `$AnyString` field 0, the UTF-16 code-unit count). Unlike the compare and
+the eq, **there is no resolve-table arm at all** — `string.len` is not a callable
+symbol, so nothing in `resolveAndObserveCallableProvider` names it. The lane is
+read in exactly two places, and one of them is dead:
+
+| # | site | what it reads | fate |
+| --- | --- | --- | --- |
+| 1 | `src/ir/integration.ts:7225-7237`, inside `prepareStrings` (`:7112`) | `ctx.nativeStrings ? {struct-field, carrierRef, 0} : {callable, irImportFuncRef("wasm:js-string","length","length")}` — with the exact-import check through `catalogProgramAbiCallableImports` | **THE decision.** Moves behind the frozen manifest (sub-A + the attachment move) |
+| 2 | `src/ir/integration.ts:6814-6831`, the `emitStringLen` adapter | the no-provider twin: `ctx.nativeStrings && ctx.anyStrTypeIdx >= 0` → `struct.get`, else `stringBackend.hostImports.get("length")` | **dead** — retire fail-closed (sub-B) |
+| 3 | `src/ir/backend/linear-integration.ts:741` (`providerForLength: () => undefined`) and `:1625-1629` (`emitStringLen` → `__str_length_utf16`, ignores the provider) | no lane read | unchanged; the adapter declares the policy DISABLED (`:677-683`) exactly as it does for `stringEq` |
+| 4 | `src/codegen/stdlib-selfhost.ts:504-510` | policy block | gains `stringLen: STRING_LEN_POLICY_DISABLED` |
+
+**Ordering fact that shapes the whole slice:** `prepareStrings` runs at `:3794`,
+**before** the manifest freeze at `:3797` (`prepareBuiltFnRuntimeManifest`,
+`:1005-1045`). The eq's provider is attached in the same `attachIrStringSupport`
+pass but is only *materialized* later, at resolve time, where `prepared` is in
+scope; `string.len`'s provider is materialized **at attachment** — the
+`IrStringLengthProvider` carried on the instruction IS the physical choice. So
+"read the frozen manifest" here means the attachment itself has to move after
+the freeze. That is the one structural edit of this slice (contract item 12).
+
+Census — 12 fixtures × 5 lanes at `469fd03e`, instrumented at the decision
+(`:7225`), the registry gate (`:7223`), the attach pass
+(`string-support.ts:121`), every `emitStringLen` branch (`:6814`) and the linear
+adapter (`:1625`). Driver and instrumentation:
+`/tmp/claude-0/-home-user-js2/28d6498f-fc64-5f6d-952c-7075f472bc2f/scratchpad/f2s4-matrix.mts`
+and `f2s4-instrument.py`; full table `f2s4-matrix-before.md` / `.json`
+(sha256, bytes, ordered import list with func/global indices, demotions). The
+fixtures, so the matrix can be rebuilt without the scratchpad:
+
+| fixture | source |
+| --- | --- |
+| LEN | `export function len(s: string): number { return s.length; }` |
+| LENCMP | `export function big(s: string): boolean { return s.length > 3; }` |
+| LENEQ | `export function same(a: string, b: string): boolean { return a.length === b.length; }` |
+| LENLOOP | `let n = 0; for (let i = 0; i < s.length; i++) { n = n + s.charCodeAt(i); } return n;` |
+| LENIDX | `export function last(s: string): string { return s.charAt(s.length - 1); }` |
+| TPLLEN | ``export function tpl(a: string): number { return `${a}!`.length; }`` |
+| CONCATLEN | `export function cl(a: string, b: string): number { return (a + b).length; }` |
+| LENCONST | `export function k(): number { return "hello".length; }` |
+| FOROFLEN | `let n = 0; for (const ch of s) { n = n + ch.length; } return n;` |
+| LENSTMT | `const n = s.length; if (n === 0) return -1; return n * 2;` |
+| EQ | F2-S3's `a === b` control |
+| CLEAN | number-only control |
+
+Lanes: `gc-host` `{}`, `gc-native-strings` `{nativeStrings:true}`, `standalone`,
+`wasi`, `linear`.
+
+What it measured:
+
+- **Every WasmGC cell that carries a `string.len` attaches exactly one provider,
+  and its kind is the lane's**: `gc-host` → `callable` on the
+  `wasm:js-string.length` import (func index **0** in nine fixtures, **1** in
+  CONCATLEN where `concat` is registered first — pin that); the three
+  native-strings lanes → `struct-field`. Attach count equals emit count in every
+  cell (LENEQ: 2/2).
+- **The adapter fallback (`:6824-6830`) was reached 0 times in 60 cells.** Only
+  `callable=` / `struct-field=` branches fired. The registry gate never
+  short-circuited (`len-no-registry` 0).
+- The decision fires once per compile and reports `usesStringLen` false on the
+  two controls — the `if (usesStringLen)` guard is the only reason an
+  eq-only/clean module has no length provider.
+- Linear: `__str_length_utf16` fired once in 6 fixtures. The other linear cells
+  are pre-existing and not this slice's: LENLOOP and LENIDX **fail to compile on
+  linear on the grounding tree** (`Unsupported method call: .charCodeAt()` /
+  `.charAt()`), TPLLEN/CONCATLEN/FOROFLEN take no IR `string.len` on linear.
+- FOROFLEN `gc-host` demotes `count` with `property-access-unsupported`
+  (`ch.length` on a for-of character) — pre-existing, 0 attaches in that cell.
+
+Conformance yield is **zero by design**, as for every family-2 slice: the
+manifest decides *which* authority answers, both authorities already exist, and
+the matrix must come back 60/60 byte-identical.
+
+### Why the native arm needs new provider vocabulary
+
+`RuntimeProviderImplementation` (`src/ir/runtime-manifest.ts:397-452`) has two
+callable arms (`host-callable` on a capability record, `runtime-callable` on a
+symbol), three intrinsic-only backend arms (`backend-op` / `backend-sequence` /
+`backend-composite`), `self-hosted`, and the three async arms
+(`host-capability` / `host-managed` / `native-managed`). The native length
+provider is none of these: it is a **field read on the Program-ABI string
+carrier** — `registry.stringCarrierRef()` =
+`irSupportTypeRef(entry, "string-carrier", "__string_carrier")`
+(`src/codegen/program-abi-type-planning.ts:433-435`), whose physical type is
+planned later by `prepareStringCarrier()` (`:445-455`).
+
+Add one kind:
+
+```ts
+| {
+    /** (#3526 F2-S4) A field read on a Program-ABI support carrier. */
+    readonly kind: "carrier-field";
+    readonly carrier: "string";
+    readonly fieldIndex: number;
+  }
+```
+
+Symbolic on purpose: the manifest names the ABI **role** (`"string"`) and the
+field; the consumer resolves the role to `registry.stringCarrierRef()` at
+attachment. Never a raw `ctx.anyStrTypeIdx` — the manifest is frozen before the
+physical carrier is planned, and a type index in a frozen manifest would be a
+lie the next lane has to discover.
+
+Every consumer that switches on `implementation.kind`, enumerated so the lane
+does not have to re-find them:
+
+| site | behaviour with the new kind |
+| --- | --- |
+| `src/ir/intrinsic-support.ts:80-84` (callable pre-registration) | `continue`s on any kind but the two callables — skipped by construction, no edit |
+| `intrinsic-support.ts:220-236` (intrinsic provider binding) | unreachable: `string.len` has no `intrinsic` instruction; the `IntrinsicRuntimeProviderImplementation` `Extract` (`runtime-manifest.ts:459-470`) must NOT list the new kind, so the static type keeps it out |
+| `runtime-manifest.ts:454-457` `MathRuntimeProviderImplementation` | not listed |
+| `runtime-manifest.ts:495-510` `projectRuntimeBackendRequirements` | only the managed kinds matter; falls through `continue` |
+| `intrinsic-support.ts:532-535`, `src/ir/async-plan.ts:418-420` | async projection, managed kinds only |
+| `src/ir/math-runtime-providers.ts:19`, `integration.ts:6205` | `self-hosted` only |
+| `runtime-manifest.ts:1588-1631` validation | **add** three rules: a `carrier-field` provider requests no host capability; `carrier === "string"`; `fieldIndex` is a non-negative safe integer |
+
+### Contract (F2-S3's edit list, with the len-specific deltas)
+
+**A. `src/ir/runtime-manifest.ts`**
+
+1. `StringLenPolicy { readonly len: "host" | "native" | "unsupported" }` and a
+   frozen `STRING_LEN_POLICY_DISABLED`, placed after `STRING_EQ_POLICY_DISABLED`
+   (`:222-224`). Doc: family 2's third sibling; same one-flag truth table; the
+   physical pair is a builtin import vs a struct field — the manifest's first
+   non-callable native arm.
+2. `RuntimeManifestPolicy.stringLen?` (`:258` sibling),
+   `FrozenRuntimeManifestPolicy.stringLen` (`:268`), canonicalization at
+   `:1352-1361` (`stringLen: Object.freeze({ len: stringLen.len })`).
+3. `STRING_LEN_RUNTIME_FEATURES = ["js.string.len"]`,
+   `STRING_LEN_RUNTIME_PROVIDER_IDS = ["host.js.string.len", "native.js.string.len"]`
+   and their types; splice into `RuntimeFeature` (`:72`), `RuntimeProviderId`
+   (`:387-396`), the `numberBoundaryProvider` id/feature unions (`:653-667`),
+   `RUNTIME_PROVIDERS` (`:1122`) and `RUNTIME_FEATURES` (`:1134`).
+4. The `carrier-field` implementation kind (above), on the union at `:397-452`
+   only.
+5. `STRING_LEN_RUNTIME_PROVIDERS`:
+   - `numberBoundaryProvider("host.js.string.len", "js.string.len", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE, { kind: "host-callable", capability: "string.len" }, ["string.len"])`
+   - `numberBoundaryProvider("native.js.string.len", "js.string.len", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE, { kind: "carrier-field", carrier: "string", fieldIndex: 0 }, [])`
+
+   **Signature reuse, not a new constant.** `EXTERNREF_TO_I32_INTRINSIC_SIGNATURE`
+   (`src/ir/intrinsics.ts:275-279`, F1-S4's `__extern_is_undefined`) is exactly
+   the `wasm:js-string.length` record ABI (`runtime-host-capabilities.ts:304`,
+   `["externref"] -> ["i32"]`). The native row reuses it nominally, exactly as
+   `native.js.string.eq` reuses the externref pair for `__str_equals`: the
+   signature is the seam's semantic shape, not the physical `struct.get`.
+6. `stringLenProviderId(policy)`, `isStringLenFeature`, and a `#selectProvider`
+   branch after the eq branch (`:1735-1750`), refusal text
+   `` `runtime feature ${feature} is unavailable under string-len policy len=${this.#policy.stringLen.len}` ``.
+7. The three validation rules (table above) next to `:1607-1631`.
+
+**B. `src/ir/intrinsic-support.ts`**
+
+8. `stringLenDemand?: boolean` on the prepare input (sibling of `:449`), in the
+   early-return conjunction (`:483-489`) and the `requestFeature` line (`:498`);
+   `STRING_LEN_RUNTIME_FEATURE` const beside `:323`.
+9. `preparedStringLenProvider(prepared)` — sibling of `preparedStringEqProvider`
+   (`:341-368`) — returning
+   `{ arm: "host"; module; field } | { arm: "native"; carrier: "string"; fieldIndex } | undefined`.
+   Host via `resolveRuntimeHostCapabilityFuncRecord`; native reads
+   `implementation.kind === "carrier-field"`; anything else throws
+   `` `IR string-len provider ${provider.id} is not a length implementation` ``.
+
+**C. `src/ir/integration.ts`**
+
+10. `integrationStringLenPolicy(ctx)` =
+    `Object.freeze({ len: ctx.nativeStrings ? "native" : "host" })` after
+    `:931-933` — the exact fact `:7226` reads today. Wire into the freeze policy
+    (`:1016` sibling) and into the partition loop: compute it beside `:3683`,
+    and add the block beside `:3759`:
+    `stringLenPolicy.len === "unsupported" && irStringLenDemand([entry.fn])` →
+    `IrUnsupportedError("late-preparation-unsupported", "resolve", "ir/integration: string length has no provider under string-len policy len=…")`.
+11. `irStringLenDemand(fns)` — a `string.len` instruction scan, sibling of
+    `irStringEqDemand` (`:943-959`); passed as `stringLenDemand` beside `:1027`.
+12. **Move the attachment behind the freeze.** `prepareStrings` (`:7112`) keeps
+    everything else — the `usesStringLen` scan (`:7122`, `:7129`), the host
+    import pre-registration, the registry gate (`:7222-7223`), the carrier
+    attach and `prepareStringCarrier()` (`:7295`) — but `providerForLength`
+    (`:7286`) becomes `() => undefined` and the `lengthProvider` block
+    (`:7225-7237`) is deleted. A new `prepareStringLength(ctx, entries, runtime)`
+    runs inside `prepareBuiltFnRuntimeManifest` right after `preparedEntries` is
+    built (`:1031-1041`) and before `materializePreparedMathProviders` (`:1042`):
+    - `const arm = preparedStringLenProvider(runtime)`; `undefined` (no demand)
+      → return `entries` unchanged.
+    - `!ctx.programAbiTypes` → return unchanged (today's `:7223` skip, kept).
+    - host → `target = irImportFuncRef(arm.module, arm.field, arm.field)`, then
+      the SAME exact-import check as today (`catalogProgramAbiCallableImports(ctx).get(irCallableBindingKey(target.binding))`,
+      `desc.kind === "func"`) with the SAME error text
+      `ir/integration: prepared string.len has no exact wasm:js-string.length import`;
+      provider `{ kind: "callable", target }`.
+    - native → `{ kind: "struct-field", ownerType: ctx.programAbiTypes.stringCarrierRef(), fieldIndex: arm.fieldIndex }`.
+    - `attachIrStringSupport(fn, { storageForConst: () => undefined, providerForLength: () => provider })`
+      over every entry — the exact call shape `linear-integration.ts:739-745`
+      already uses. The `string.const` arm is a no-op when storage and
+      materializer are both undefined (`string-support.ts:96-119`); the
+      `string.len` arm attaches only when unattached (`:121-131`), so the pass is
+      idempotent.
+
+    Order-preservation argument: today the provider is attached at `:7283-7293`
+    (before the freeze); after the move it is attached at the end of the
+    freeze. Nothing in between reads `string.len.provider` —
+    `prepareIrRuntimeManifest` collects `intrinsic` uses only
+    (`intrinsic-support.ts:451-476`) and lowering reads the provider at
+    `src/ir/lower.ts:2281-2285`, long after. Probe P2 confirms. Byte-neutral by
+    construction; V-A proves it.
+13. `emitStringLen` (`:6814-6831`): keep the `callable` and `struct-field`
+    branches verbatim; replace the two fallbacks (`:6824-6830`) with
+    `throw new Error("ir/integration: string.len has no prepared runtime provider")`
+    — the F2-S3 sub-B pattern, after P3's zero-reach measurement.
+14. Not touched: every resolve-table arm (`:6186-6410`), `stringMethodPlan`,
+    `stringForOfPlan` / `charReadPlan`, `emitStringCharAt` (`:6832-`), the
+    #3931 hoist arms, `src/ir/from-ast.ts`.
+
+**D. Adapters.** `src/ir/backend/linear-integration.ts:682` gains
+`stringLen: STRING_LEN_POLICY_DISABLED` (import beside `:141`);
+`src/codegen/stdlib-selfhost.ts:509` the same (import beside `:76`). The linear
+freeze passes no demand, so a DISABLED policy refuses nothing there — the linear
+lane keeps lowering `.length` through `__str_length_utf16` exactly as it keeps
+lowering `===` (the F2-S3 "ignores the provider" pin).
+
+**E. `src/ir/runtime-host-capabilities.ts`** — no change; the `string.len` row
+(`:304`) exists since F2-S2.
+
+**F. Tests.** New `tests/issue-3526-string-boundary-len.test.ts`, anatomy from
+the eq suite (`tests/issue-3526-string-boundary-eq.test.ts:194-561`):
+
+- (a) contract — ONE feature row; REUSES `EXTERNREF_TO_I32_INTRINSIC_SIGNATURE`
+  (params `[externref]`, result `I32`); two-armed; carries NO intrinsic
+  instruction (an `.length`-only module freezes no manifest without the demand,
+  and freezes exactly `["js.string.len"]` with it); names the F2-S2 record
+  (`wasm:js-string` / `length` / `["externref"] -> ["i32"]`) and the async
+  projection excludes it by id.
+- (b) policy — host arm through the record, MODULE included; native arm is
+  `carrier-field` `{carrier:"string", fieldIndex:0}` requesting NO host
+  capability (`hostCapabilities` `[]`); refusal names `string-len` and the
+  policy value; omitted policy defaults closed and the frozen manifest publishes
+  it; independent of eq / compare / every family-1 arm; no row when nothing
+  reads `.length`.
+- (c) end-to-end — host lane binds the existing `wasm:js-string.length` import
+  **in the same position** (LEN: func 0; CONCATLEN: func 1 after `concat`);
+  native-strings lanes emit `struct.get` on the string carrier field 0 with no
+  `wasm:js-string` import at all; a runtime oracle for `.length` on seven inputs
+  (`""`, ASCII, a surrogate pair counting **2**, a BMP non-ASCII string, a
+  1000-char string, a concatenation result, a template result) on host,
+  native-strings and linear lanes; linear still lowers `.length` (the policy is
+  DISABLED there, and it does not care).
+- (d) source pins on the NEW attach site — contains
+  `preparedStringLenProvider(`, contains the exact-import error text, contains
+  no `nativeStrings` and no `anyStrTypeIdx`; `prepareStrings`'s source no longer
+  contains `lengthProvider`; the partition block names `string-len policy`.
+- (e) sub-B — the emitter refuses an unattached `string.len`
+  (`ir/integration: string.len has no prepared runtime provider`), accepts an
+  attached one of either kind, and its source contains neither `nativeStrings`
+  nor `hostImports.get("length")`.
+- (f) validation — a `carrier-field` provider that requests a host capability
+  throws `unknown-host-capability`; `fieldIndex: -1` throws; `carrier: "vec"`
+  is a compile error (type-level pin via `@ts-expect-error`).
+
+Existing pins to move (each is a deliberate edit, named in the checkpoint):
+`tests/issue-3526-string-boundary-schema.test.ts:92` `STILL_UNPROVIDED_IDS`
+shrinks by `string.len` and the `:376` pin asserts positively that `string.len`
+IS now named; the defaults pins in `issue-3526-string-boundary-compare.test.ts`
+and `issue-3526-string-boundary-eq.test.ts:289-300` extend to seven policies;
+`tests/issue-3526-ir-runtime-manifest.test.ts`'s whole-shape frozen-policy
+equality gains `stringLen: { len: "unsupported" }`.
+`tests/issue-3521-prepared-component-dependencies.test.ts:832-846` attaches
+`callable` providers by hand and does not move.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1** — does any test pin the `RuntimeProviderImplementation` kind union
+  closed? Candidates: `tests/issue-4103-ir-async-runtime-providers.test.ts`,
+  `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts` (they name
+  `native-managed`). Grep tests for `"host-managed"` / `implementation.kind`
+  enumerations. Expected: none is exhaustive; if one is, extend it, do not
+  weaken it.
+- **P2** — confirm nothing between `:3794` and `:3801`, and nothing inside
+  `prepareIrRuntimeManifest` / `prepareSuspendingIrFunction` (`:464`), reads
+  `string.len.provider`. Grep `provider` in the prepare path of
+  `intrinsic-support.ts` and `async-plan.ts`. Expected: no reader.
+- **P3** — zero-reach of the retired fallback: put a temporary `throw` in place
+  of `:6824-6830`, run the 60-cell matrix (it must stay byte-identical with the
+  throw in) and the string suites: `strings`, `native-strings` ×2,
+  `host-string-prefix-suffix-fast-path`, #1558, the #3931 hoist suites, #3518,
+  #2955, #3502, #1183, #4550, `issue-1470-standalone-string-imports`,
+  `issue-320`, `imported-string-constants`, and the three #3526 string suites.
+  The 17 pre-existing reds [#5274](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5274-standing-red-tests-string-and-3529-suites)
+  names must not grow; measure them on the grounding tree first.
+- **P4** — the BEFORE half of the byte matrix, re-measured on the lane's own
+  base before the first edit (`f2s4-matrix.mts` + `f2s4-instrument.py`; the
+  instrumentation is for the reach counts only — the byte comparison is run
+  WITHOUT it). Expected to reproduce `f2s4-matrix-before.md` exactly.
+
+### Verification matrix
+
+- **V-A** byte neutrality — 60/60 cells identical: bytes, sha256, ordered
+  import list with func/global indices, demotions. Plus `check:ir-fallbacks`
+  diffed against a base-tree run (byte-identical output) and the corpus
+  (`website/playground/examples/**`, `examples/**`) compiled on both trees.
+- **V-B** pins — the new suite in full, the five moved pins.
+- **V-C** non-vacuity, each revert independent against the kept schema: revert
+  only the attachment move (restore `:7225-7237` and `:7286`) → the (d) pins
+  fail and nothing else; revert only the retirement → exactly the (e) refusal
+  pin fails; revert only the manifest rows → the (a)/(b) contract and policy
+  tests fail and the (c) host-lane pin still passes (the physical import is
+  unchanged, which is the point).
+- **V-D** gates — the five ratchets bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`; `typecheck`, `lint`,
+  `prettier --check`; `check:ir-dialect`, `check:ir-layering`, `check:ir-only`,
+  `check:linear-ir`, `check:host-import-policy`, `check:test-vacuity-shapes`,
+  `check:ir-kind-neutrality`. **Evidence lines WILL move**: `string.len`'s
+  `src/ir/backend/linear-integration.ts:1628` (+1 from the policy line) and
+  `forof.string`'s `src/ir/integration.ts:6410` (the policy/demand functions
+  inserted above it). Refresh `scripts/ir-kind-neutrality-baseline.json`
+  surgically, established by a sorted-leaf diff — expect only evidence arrays and
+  `generated` to change, no verdict; the `string.len` verdict stays
+  `unresolved` (its placement is #4551's call, not this slice's).
+- **LOC** — estimate +150 net src LOC (F2-S3 was +265 with a resolve arm this
+  slice does not have). Grant in this file's frontmatter with a dated rationale;
+  never touch `scripts/*-baseline.json` except the neutrality citation refresh
+  above.
+
+### Out of scope
+
+`string.concat` / `_OWNED` (F2-S5 — `owned-append` sub-arm, the `__concat_N`
+late import, the `string-builder-candidate` bucket), `charCodeAt` (two-record
+`host-capability` provider behind a defined helper), `string.const` (global
+kind), the `src/ir/dialect/js.ts:599` placement verdict for `string.len` (core
+vs dialect), `stringForOfPlan`, `src/ir/from-ast.ts`, the linear
+`__str_length_utf16` path, the `programAbiTypes`-absent skip, the two linear
+`.charAt()`/`.charCodeAt()` compile failures and the FOROFLEN host demotion the
+census surfaced.
+
+### After this slice (ranked)
+
+| rank | boundary | why |
+| --- | --- | --- |
+| **F2-S5** | `string.concat` | the last lane read in the resolve table's string block (`:6373-6381`), the `_OWNED` sub-arm, `__concat_N` |
+| later | `charCodeAt` | `host-capability` two-record provider behind a defined helper |
+| later | `string.const` | global kind, derived field, two namespaces, oversized materializer, legacy pre-pass ordering |

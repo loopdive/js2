@@ -1,0 +1,6 @@
+/*---
+description: probe .tmp/es2015/probes5195/dstr-undef.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C { method({ w: [x, y, z] = [4, 5, 6] } = { w: [7, undefined, ] }) { return y; } }
+assert.sameValue(new C().method(), undefined, 'undefined element stays undefined');

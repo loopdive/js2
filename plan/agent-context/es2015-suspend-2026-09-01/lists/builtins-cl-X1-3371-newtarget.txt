@@ -1,0 +1,8 @@
+built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js
+built-ins/Function/prototype/bind/instance-construct-newtarget-self-reflect.js
+built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js
+built-ins/Function/prototype/bind/get-fn-realm-recursive.js
+built-ins/Function/prototype/bind/get-fn-realm.js
+built-ins/Function/prototype/bind/instance-construct-newtarget-self-new.js
+built-ins/Date/subclassing.js
+built-ins/Error/prototype/stack/getter-foreign-new-target.js

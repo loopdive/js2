@@ -1,0 +1,13 @@
+// proxy as [[Prototype]]: Object.create(proxy) must route has/get/set through the traps
+var log = [];
+var proxy = new Proxy({}, {
+  has: function(t, k) { log.push("has:" + k); return false; },
+  get: function(t, k, r) { log.push("get:" + k); return 42; },
+  set: function(t, k, v, r) { log.push("set:" + k); return true; },
+});
+var heir = Object.create(proxy);
+var a = ("x" in heir);
+var b = heir.y;
+heir.z = 1;
+var gp = Object.getPrototypeOf(heir) === proxy;
+if (log.join(",") !== "has:x,get:y,set:z" || gp !== true) throw new Error("chain: " + log.join(",") + " gp=" + gp);

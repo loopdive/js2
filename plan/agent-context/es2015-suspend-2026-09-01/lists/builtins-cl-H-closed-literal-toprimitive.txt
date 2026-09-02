@@ -1,0 +1,11 @@
+annexB/built-ins/escape/to-primitive-observe.js
+built-ins/String/prototype/indexOf/position-tointeger-errors.js
+built-ins/String/prototype/indexOf/searchstring-tostring-wrapped-values.js
+built-ins/String/prototype/indexOf/position-tointeger-toprimitive.js
+built-ins/isNaN/toprimitive-valid-result.js
+built-ins/String/prototype/indexOf/searchstring-tostring-errors.js
+annexB/built-ins/unescape/to-primitive-observe.js
+built-ins/String/prototype/indexOf/searchstring-tostring-toprimitive.js
+annexB/built-ins/escape/to-primitive-err.js
+built-ins/isFinite/toprimitive-valid-result.js
+annexB/built-ins/unescape/to-primitive-err.js

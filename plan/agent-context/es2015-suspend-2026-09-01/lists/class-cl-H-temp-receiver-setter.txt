@@ -1,0 +1,5 @@
+language/computed-property-names/class/accessor/setter-duplicates.js
+language/computed-property-names/class/accessor/setter.js
+language/statements/class/definition/setters-prop-desc.js
+language/statements/class/name-binding/basic.js
+language/statements/class/name-binding/expression.js

@@ -1,0 +1,4 @@
+built-ins/Object/setPrototypeOf/set-failure-cycle.js
+built-ins/Object/prototype/setPrototypeOf-with-non-circular-values-__proto__.js
+built-ins/Object/prototype/setPrototypeOf-with-different-values.js
+built-ins/Object/prototype/setPrototypeOf-with-non-circular-values.js

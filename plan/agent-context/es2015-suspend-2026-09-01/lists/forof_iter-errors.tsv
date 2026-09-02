@@ -1,0 +1,155 @@
+test/built-ins/ArrayIteratorPrototype/next/detach-typedarray-in-progress.js	compile_error/host_import_leak	standalone target emitted host imports: env::Uint8ClampedArray_keys (#2961)
+test/built-ins/Iterator/prototype/windows/next-method-returns-throwing-value.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/SetIteratorPrototype/next/does-not-have-mapiterator-internal-slots.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_entries (#2961)
+test/built-ins/Iterator/prototype/Symbol.iterator/return-val.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:21
+test/built-ins/WeakSet/iterable-with-symbol-values.js	fail/assertion_fail	Test262Error: Actual [101, 102, 2] and expected [Symbol(a description), Symbol(a description), Symbol()] should have the same contents. add() was called 3 times, on the two unregistered and one well-known symbols in order
+test/built-ins/ArrayIteratorPrototype/next/args-unmapped-truncation-before-exhaustion.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/Iterator/prototype/windows/next-method-returns-throwing-value-done.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'next')
+test/built-ins/Iterator/prototype/windows/next-method-returns-throwing-done.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/WeakMap/iterable-with-symbol-keys.js	fail/assertion_fail	Test262Error: Adds object in order - first key, regular symbol Expected SameValue(«101», «Symbol(a description)») to be true
+test/built-ins/Iterator/prototype/windows/get-return-method-throws.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'next')
+test/built-ins/WeakMap/iterator-close-after-set-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/built-ins/ArrayIteratorPrototype/next/length.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/WeakSet/iterable-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakSet_new (#2961)
+test/built-ins/Iterator/prototype/chunks/next-method-returns-throwing-value-done.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'next')
+test/built-ins/WeakSet/iterator-next-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakSet_new (#2961)
+test/built-ins/Iterator/prototype/chunks/next-method-returns-throwing-value.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/SetIteratorPrototype/next/this-not-object-throw-keys.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/ArrayIteratorPrototype/next/Uint32Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/Iterator/prototype/windows/non-constructible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayIteratorPrototype/next/Float32Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/language/statements/for-of/map-expand.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «0») to be true
+test/language/statements/for-of/dstr/array-elem-init-in.js	compile_error/other	L31:16 ',' expected.
+test/built-ins/Iterator/prototype/chunks/iterator-return-method-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/language/statements/for-of/dstr/array-elem-iter-thrw-close-err.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/built-ins/Iterator/prototype/join/not-a-constructor.js	fail/assertion_fail	Test262Error: isConstructor invoked with a non-function value
+test/built-ins/Set/set-iterator-next-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_new (#2961)
+test/built-ins/WeakMap/iterator-item-second-entry-returns-abrupt.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/built-ins/ArrayIteratorPrototype/next/args-unmapped-expansion-after-exhaustion.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/for-of/dstr/obj-prop-name-evaluation-error.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Map/iterator-value-failure.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Map/prototype/entries/returns-iterator-empty.js	fail/type_error	TypeError: Cannot access property on null or undefined at 340:3
+test/built-ins/Map/prototype/entries/returns-iterator.js	fail/type_error	TypeError: Cannot access property on null or undefined at 344:18
+test/built-ins/Set/prototype/Symbol.iterator.js	fail/assertion_fail	Test262Error: Symbol() should be an own property
+test/built-ins/Set/prototype/values/values-iteration-mutable.js	fail/type_error	TypeError: Cannot access property on null or undefined at 337:18
+test/language/statements/for-of/throw-from-finally.js	fail/assertion_fail	Test262Error: Expected SameValue(«2», «1») to be true
+test/built-ins/WeakMap/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/built-ins/Iterator/prototype/windows/result-is-iterator.js	fail/other	ReferenceError: Iterator is not defined
+test/built-ins/SetIteratorPrototype/next/iteration-mutable.js	fail/type_error	TypeError: Cannot access property on null or undefined at 337:18
+test/built-ins/Set/prototype/values/returns-iterator.js	fail/type_error	TypeError: Cannot access property on null or undefined at 336:18
+test/built-ins/Iterator/prototype/windows/exhaustion-does-not-call-return.js	fail/type_error	TypeError: Generator.prototype.next requires that 'this' be a Generator
+test/built-ins/WeakMap/iterator-value-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/built-ins/ArrayIteratorPrototype/next/args-mapped-expansion-after-exhaustion.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/SetIteratorPrototype/next/this-not-object-throw-values.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/Iterator/prototype/windows/get-next-method-only-once.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/for-of/dstr/let-ary-init-iter-get-err-array-prototype.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Set/set-iterator-close-after-add-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_new (#2961)
+test/built-ins/Map/iterator-item-first-entry-returns-abrupt.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/language/statements/for-of/iterator-next-error.js	fail/assertion_fail	Test262Error: Iterator is not closed. Expected SameValue(«1», «0») to be true
+test/built-ins/Map/Symbol.species/symbol-species.js	fail/assertion_fail	Test262Error: Expected obj[5] NOT to be writable, but was.
+test/built-ins/Iterator/prototype/Symbol.iterator/is-function.js	fail/type_error	TypeError: Cannot access property on null or undefined at 329:25
+test/built-ins/MapIteratorPrototype/next/name.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/for-of/dstr/array-rest-iter-thrw-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«11», «0») to be true
+test/built-ins/ArrayIteratorPrototype/next/Uint8Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/Map/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/built-ins/Map/iterator-close-failure-after-set-failure.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Iterator/prototype/windows/next-method-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/SetIteratorPrototype/next/iteration.js	fail/type_error	TypeError: Cannot access property on null or undefined at 337:18
+test/built-ins/Set/prototype/values/returns-iterator-empty.js	fail/type_error	TypeError: Cannot access property on null or undefined at 329:18
+test/built-ins/ArrayIteratorPrototype/next/args-mapped-expansion-before-exhaustion.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/for-of/dstr/array-elision-val-symbol.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Iterator/prototype/chunks/next-method-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/SetIteratorPrototype/next/this-not-object-throw-entries.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_entries (#2961)
+test/built-ins/WeakMap/iterator-item-first-entry-returns-abrupt.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/built-ins/WeakMap/iterator-items-are-not-object-close-iterator.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/language/statements/for-of/array-key-get-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/MapIteratorPrototype/next/this-not-object-throw-prototype-iterator.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/ArrayIteratorPrototype/next/args-mapped-iteration.js	fail/type_error	TypeError: called value is not a function
+test/language/statements/for-of/dstr/const-ary-init-iter-get-err-array-prototype.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Iterator/prototype/chunks/get-next-method-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Set/prototype/size/size.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/WeakMap/iterator-next-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/built-ins/StringIteratorPrototype/next/next-iteration.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/WeakSet/iterator-close-after-add-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakSet_new (#2961)
+test/built-ins/Iterator/prototype/windows/return-is-forwarded-to-underlying-iterator.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'return')
+test/built-ins/ArrayIteratorPrototype/next/Float64Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/Iterator/prototype/windows/return-is-not-forwarded-after-exhaustion.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/ArrayIteratorPrototype/next/iteration-mutable.js	fail/type_error	TypeError: Cannot access property on null or undefined at 339:18
+test/built-ins/ArrayIteratorPrototype/next/name.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Map/iterator-items-are-not-object.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Map/prototype/values/returns-iterator.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:18
+test/built-ins/StringIteratorPrototype/next/next-iteration-surrogate-pairs.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/WeakMap/iterator-items-keys-cannot-be-held-weakly.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/built-ins/SetIteratorPrototype/next/name.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/ArrayIteratorPrototype/next/Uint8ClampedArray.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/Map/prototype/values/returns-iterator-empty.js	fail/type_error	TypeError: Cannot access property on null or undefined at 340:3
+test/built-ins/Map/iterator-item-second-entry-returns-abrupt.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Map/prototype/keys/returns-iterator.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:18
+test/built-ins/Iterator/prototype/chunks/return-is-not-forwarded-after-exhaustion.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/Set/prototype/entries/returns-iterator.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_entries (#2961)
+test/language/statements/for-of/map.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «0») to be true
+test/built-ins/Iterator/prototype/chunks/get-return-method-throws.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'next')
+test/built-ins/SetIteratorPrototype/next/this-not-object-throw-prototype-iterator.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/SetIteratorPrototype/next/length.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/MapIteratorPrototype/next/this-not-object-throw-keys.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/WeakSet/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/language/statements/for-of/iterator-next-result-type.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«11», «1») to be true
+test/built-ins/Iterator/prototype/chunks/exhaustion-does-not-call-return.js	fail/type_error	TypeError: Generator.prototype.next requires that 'this' be a Generator
+test/built-ins/Map/iterator-close-after-set-failure.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/language/statements/for-of/dstr/var-ary-init-iter-get-err-array-prototype.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Iterator/prototype/chunks/get-next-method-only-once.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Set/Symbol.species/symbol-species.js	fail/assertion_fail	Test262Error: Expected obj[5] NOT to be writable, but was.
+test/built-ins/WeakMap/iterable-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakMap_new (#2961)
+test/language/statements/for-of/dstr/array-elem-trlg-iter-rest-thrw-close-err.js	fail/assertion_fail	Test262Error: Expected SameValue(«11», «1») to be true
+test/language/statements/for-of/dstr/array-elem-init-assignment.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «12») to be true
+test/built-ins/Map/prototype/delete/does-not-break-iterators.js	fail/type_error	TypeError: Cannot access property on null or undefined at 347:18
+test/built-ins/ArrayIteratorPrototype/next/args-unmapped-iteration.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/Iterator/prototype/chunks/result-is-iterator.js	fail/other	ReferenceError: Iterator is not defined
+test/language/statements/for-of/dstr/obj-id-init-fn-name-class.js	fail/assertion_fail	Test262Error: name should be an own property
+test/built-ins/Iterator/prototype/Symbol.iterator/name.js	fail/type_error	TypeError: Cannot access property on null or undefined at 854:16
+test/built-ins/Iterator/prototype/chunks/return-is-forwarded-to-underlying-iterator.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'return')
+test/built-ins/WeakSet/iterator-value-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::WeakSet_new (#2961)
+test/built-ins/Iterator/prototype/Symbol.iterator/prop-desc.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Iterator/prototype/windows/iterator-return-method-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/language/statements/for-of/map-contract-expand.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «0») to be true
+test/built-ins/MapIteratorPrototype/next/this-not-object-throw-entries.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/ArrayIteratorPrototype/next/iteration.js	fail/type_error	TypeError: Cannot access property on null or undefined at 334:18
+test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/built-ins/Iterator/prototype/windows/get-next-method-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Map/iterator-is-undefined-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/SetIteratorPrototype/next/does-not-have-mapiterator-internal-slots-set.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_entries (#2961)
+test/language/statements/for-of/dstr/array-rest-lref-err.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/statements/for-of/dstr/obj-prop-elem-init-fn-name-class.js	fail/assertion_fail	Test262Error: name descriptor value should be cls; name value should be cls
+test/language/statements/for-of/dstr/array-elem-iter-thrw-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/statements/for-of/dstr/array-elem-init-fn-name-class.js	fail/assertion_fail	Test262Error: name descriptor value should be cls; name value should be cls
+test/built-ins/Iterator/prototype/chunks/non-constructible.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Map/iterator-items-are-not-object-close-iterator.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayIteratorPrototype/next/property-descriptor.js	fail/assertion_fail	Test262Error: next should be an own property
+test/built-ins/Map/prototype/size/size.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Map/iterable-calls-set.js	fail/assertion_fail	Test262Error: `Map.prototype.set` called twice. Expected SameValue(«0», «2») to be true
+test/built-ins/Set/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:44
+test/built-ins/Map/iterator-next-failure.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Map/prototype/clear/map-data-list-is-preserved.js	fail/type_error	TypeError: Cannot access property on null or undefined at 350:18
+test/built-ins/Set/prototype/entries/returns-iterator-empty.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_entries (#2961)
+test/built-ins/MapIteratorPrototype/next/this-not-object-throw-values.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/language/statements/for-of/iterator-next-result-value-attr-error.js	fail/assertion_fail	Test262Error: Iterator is not closed. Expected SameValue(«1», «0») to be true
+test/built-ins/Iterator/prototype/Symbol.iterator/length.js	fail/type_error	TypeError: Cannot access property on null or undefined at 851:16
+test/built-ins/Map/prototype/keys/returns-iterator-empty.js	fail/type_error	TypeError: Cannot access property on null or undefined at 340:3
+test/built-ins/ArrayIteratorPrototype/next/Int32Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/MapIteratorPrototype/next/length.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/language/statements/for-of/dstr/array-rest-iter-thrw-close-err.js	fail/assertion_fail	Test262Error: Expected SameValue(«11», «0») to be true
+test/language/statements/for-of/iterator-next-reference.js	fail/assertion_fail	Test262Error: Should not access the `next` method after the iteration prologue.
+test/language/statements/for-of/dstr/array-elem-trlg-iter-list-thrw-close-err.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/built-ins/Set/set-iterator-value-failure.js	compile_error/host_import_leak	standalone target emitted host imports: env::Set_new (#2961)
+test/built-ins/ArrayIteratorPrototype/next/Uint16Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/MapIteratorPrototype/next/iteration-mutable.js	fail/type_error	TypeError: Cannot access property on null or undefined at 337:18
+test/built-ins/MapIteratorPrototype/next/does-not-have-mapiterator-internal-slots.js	fail/type_error	TypeError: Cannot read properties of undefined (reading 'call')
+test/built-ins/ArrayIteratorPrototype/next/args-unmapped-expansion-before-exhaustion.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/ArrayIteratorPrototype/next/args-mapped-truncation-before-exhaustion.js	fail/type_error	TypeError: called value is not a function
+test/built-ins/Map/prototype/set/append-new-values.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «"valid"») to be true
+test/built-ins/Iterator/prototype/chunks/next-method-returns-throwing-done.js	fail/assertion_fail	Test262Error: Expected a Test262Error but got a TypeError
+test/built-ins/ArrayIteratorPrototype/next/Int16Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18
+test/built-ins/Map/prototype/Symbol.iterator.js	fail/assertion_fail	Test262Error: Symbol() should be an own property
+test/built-ins/MapIteratorPrototype/next/iteration.js	fail/type_error	TypeError: Cannot access property on null or undefined at 336:18
+test/built-ins/ArrayIteratorPrototype/next/Int8Array.js	fail/type_error	TypeError: Cannot access property on null or undefined at 331:18

@@ -1,0 +1,10 @@
+language/expressions/class/heritage-arrow-function.js
+language/expressions/class/heritage-async-arrow-function.js
+language/statements/class/definition/constructable-but-no-prototype.js
+language/statements/class/definition/invalid-extends.js
+language/statements/class/definition/prototype-getter.js
+language/statements/class/definition/prototype-setter.js
+language/statements/class/definition/side-effects-in-extends.js
+language/statements/class/subclass/builtin-objects/Proxy/no-prototype-throws.js
+language/statements/class/subclass/superclass-arrow-function.js
+language/statements/class/subclass/superclass-generator-function.js

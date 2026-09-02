@@ -1,0 +1,6 @@
+built-ins/Proxy/apply/trap-is-missing-target-is-proxy.js
+built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js
+built-ins/Reflect/deleteProperty/delete-properties.js
+built-ins/Proxy/enumerate/removed-does-not-trigger.js
+built-ins/Proxy/ownKeys/call-parameters-object-getownpropertysymbols.js
+built-ins/Reflect/setPrototypeOf/return-true-if-new-prototype-is-set.js

@@ -33,7 +33,7 @@ import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.j
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
-import { emitStandaloneIterableMaterialize } from "./iterator-native.js"; // (#3100 S5)
+import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation } from "./iterator-native.js"; // (#3100 S5, #5131 provenance)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
@@ -3013,6 +3013,17 @@ function spreadFieldReadWithAbsentFallback(
   return read;
 }
 
+function pushStrictMethodLiteralAllocation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ObjectLiteralExpression,
+  structTypeIdx: number,
+): void {
+  const allocation: Instr = { op: "struct.new", typeIdx: structTypeIdx };
+  recordStrictMethodLiteralAllocation(ctx, allocation, expr);
+  fctx.body.push(allocation);
+}
+
 export function compileObjectLiteralForStruct(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3618,7 +3629,7 @@ export function compileObjectLiteralForStruct(
     }
   }
 
-  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  pushStrictMethodLiteralAllocation(ctx, fctx, expr, structTypeIdx);
 
   // Register and compile getter/setter accessors on the object literal
   for (const prop of expr.properties) {

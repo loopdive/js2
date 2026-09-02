@@ -1,0 +1,10 @@
+built-ins/Iterator/prototype/Symbol.iterator/is-function.js
+built-ins/Iterator/prototype/Symbol.iterator/length.js
+built-ins/Iterator/prototype/Symbol.iterator/name.js
+built-ins/Iterator/prototype/Symbol.iterator/prop-desc.js
+built-ins/Iterator/prototype/Symbol.iterator/return-val.js
+built-ins/Iterator/prototype/chunks/non-constructible.js
+built-ins/Iterator/prototype/chunks/result-is-iterator.js
+built-ins/Iterator/prototype/join/not-a-constructor.js
+built-ins/Iterator/prototype/windows/non-constructible.js
+built-ins/Iterator/prototype/windows/result-is-iterator.js

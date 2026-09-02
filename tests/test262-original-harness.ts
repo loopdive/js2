@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "../scripts/test262-iterator-binding.mjs";
 
 interface HarnessMeta {
   flags?: string[];
@@ -194,15 +195,18 @@ function assembleVariant(
 ): OriginalHarnessVariant {
   if (raw) return { source, bodyLineOffset: 0, strict };
 
+  const iteratorBinding = needsIteratorBinding(source) ? ITERATOR_BINDING_PREAMBLE : "";
+
   // Keep this order byte-for-byte equivalent to test262.fyi/data/runner/read.js:
   // strict directive, async helper, metadata includes, runtime shim, assert.js,
-  // sta.js, and finally the untouched upstream test body.
+  // sta.js, any feature-gated local binding, and finally the untouched upstream
+  // test body.
   // (#3427) Our TS front-end rejects the upstream harness's duplicate top-level
   // helper declarations (e.g. `isPrimitive` in both testTypedArray.js + assert.js)
   // that a JS engine tolerates last-wins. Rename all-but-last in place (line-count
   // preserving) so bodyLineOffset below stays exact.
   let prefix = dedupeTopLevelFunctionDeclarations(
-    (strict ? '"use strict";\n' : "") + assemblePrefixIncludes(meta, async),
+    (strict ? '"use strict";\n' : "") + assemblePrefixIncludes(meta, async) + iteratorBinding,
   );
   // (#4626) A test that DECLARES its own top-level `$262` (harness
   // detachArrayBuffer-host-detachArrayBuffer.js: `var $262 = {

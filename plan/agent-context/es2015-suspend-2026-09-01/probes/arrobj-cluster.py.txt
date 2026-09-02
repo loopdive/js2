@@ -1,0 +1,49 @@
+import re,collections,sys
+paths=[l.strip() for l in open('.tmp/es2015/arrobj-head.txt') if l.strip()]
+A="built-ins/Array/"; O="built-ins/Object/"; AP=A+"prototype/"; OP=O+"prototype/"
+C={}
+def put(cl,*ps):
+    for p in ps:
+        assert p in paths, "not in list: "+p
+        assert p not in C, "dup: "+p+" "+C[p]+" vs "+cl
+        C[p]=cl
+# out of scope
+put("X0-realm",*[p for p in paths if "proto-from-ctor-realm" in p])
+put("X1-newtarget",O+"subclass-object-arg.js")
+put("X2-proxy-invariants",*[p for p in paths if "proxy-invariant-" in p],O+"keys/proxy-non-enumerable-prop-invariant-1.js",O+"keys/proxy-non-enumerable-prop-invariant-2.js")
+put("X3-revoker-call",AP+"slice/create-revoked-proxy.js",AP+"concat/is-concat-spreadable-proxy-revoked.js",AP+"concat/is-concat-spreadable-is-array-proxy-revoked.js")
+# in scope
+put("A-proto-accessor",*[p for p in paths if p.startswith(OP+"__proto__/")])
+put("B-setproto-model",OP+"setPrototypeOf-with-non-circular-values.js",OP+"setPrototypeOf-with-non-circular-values-__proto__.js",OP+"setPrototypeOf-with-different-values.js",O+"setPrototypeOf/set-failure-cycle.js")
+put("C-toobject-assign",O+"assign/OnlyOneArgument.js",O+"assign/Target-Symbol.js",O+"assign/Target-Boolean.js",O+"assign/Target-Number.js",O+"assign/Target-String.js",O+"symbol_object-returns-fresh-symbol.js",O+"getOwnPropertySymbols/non-object-argument-invalid.js",
+    O+"assign/target-is-frozen-data-property-set-throws.js",O+"assign/target-is-non-extensible-property-creation-throws.js",O+"assign/target-is-sealed-property-creation-throws.js",O+"assign/target-is-frozen-accessor-property-set-succeeds.js",O+"assign/target-is-non-extensible-existing-accessor-property.js",O+"assign/Override-notstringtarget.js",O+"assign/ObjectOverride-sameproperty.js")
+put("D-symbol-key-reflection",O+"getOwnPropertySymbols/order-after-define-property.js",O+"getOwnPropertyDescriptors/order-after-define-property.js",O+"getOwnPropertyDescriptors/symbols-included.js",O+"entries/symbols-omitted.js",O+"keys/order-after-define-property-with-function.js",O+"entries/order-after-define-property-with-function.js",O+"getOwnPropertyNames/order-after-define-property.js")
+put("D2-intrinsic-symbol-props",AP+"Symbol.unscopables/prop-desc.js",AP+"Symbol.unscopables/value.js",A+"Symbol.species/symbol-species.js")
+put("E-object-statics-proxy-mop",O+"freeze/abrupt-completion.js",O+"seal/abrupt-completion.js",O+"freeze/proxy-no-ownkeys-returned-keys-order.js",O+"seal/proxy-no-ownkeys-returned-keys-order.js",O+"isFrozen/proxy-no-ownkeys-returned-keys-order.js",O+"isSealed/proxy-no-ownkeys-returned-keys-order.js",O+"freeze/proxy-with-defineProperty-handler.js",O+"seal/proxy-with-defineProperty-handler.js",O+"getOwnPropertyDescriptors/proxy-no-ownkeys-returned-keys-order.js",O+"getOwnPropertyDescriptors/proxy-undefined-descriptor.js",O+"defineProperties/proxy-no-ownkeys-returned-keys-order.js",O+"entries/observable-operations.js",O+"values/observable-operations.js",OP+"isPrototypeOf/arg-is-proxy.js",O+"keys/proxy-non-enumerable-prop-invariant-3.js",O+"keys/property-traps-order-with-proxied-array.js",O+"keys/proxy-keys.js")
+put("F-fn-carrier-symbol-keys",AP+"filter/create-proxy.js",AP+"map/create-proxy.js",AP+"slice/create-proxy.js",AP+"splice/create-proxy.js",AP+"concat/create-proxy.js",AP+"concat/Array.prototype.concat_spreadable-function.js",AP+"concat/Array.prototype.concat_spreadable-reg-exp.js",AP+"concat/Array.prototype.concat_spreadable-boolean-wrapper.js",AP+"concat/Array.prototype.concat_spreadable-string-wrapper.js")
+put("G-tostring-reflective",*[p for p in paths if p.startswith(OP+"toString/")])
+put("H-tolocalestring",*[p for p in paths if "toLocaleString/" in p])
+put("I-isarray-proxy",A+"isArray/proxy-revoked.js",AP+"filter/create-revoked-proxy.js",AP+"map/create-revoked-proxy.js",AP+"splice/create-revoked-proxy.js")
+put("J-concat-residual",AP+"concat/Array.prototype.concat_sloppy-arguments.js",AP+"concat/Array.prototype.concat_strict-arguments.js",AP+"concat/Array.prototype.concat_sloppy-arguments-with-dupes.js",AP+"concat/Array.prototype.concat_spreadable-sparse-object.js",AP+"concat/Array.prototype.concat_array-like-to-length-throws.js",AP+"concat/Array.prototype.concat_array-like-length-to-string-throws.js",AP+"concat/arg-length-exceeding-integer-limit.js",AP+"concat/is-concat-spreadable-get-order.js",AP+"concat/is-concat-spreadable-val-falsey.js",AP+"concat/is-concat-spreadable-proxy.js",AP+"concat/Array.prototype.concat_large-typed-array.js",AP+"concat/Array.prototype.concat_small-typed-array.js")
+put("L-array-from-of",*[p for p in paths if (p.startswith(A+"from/") or p.startswith(A+"of/")) and p not in C])
+put("M-keys-values-entries-reflective",AP+"entries/returns-iterator-from-object.js",AP+"keys/returns-iterator-from-object.js",AP+"values/returns-iterator-from-object.js")
+put("N-array-set-length",*[p for p in paths if p.startswith(A+"length/")])
+put("O-vec-define-index-read",*[p for p in paths if p.endswith("target-array-with-non-writable-property.js") and "/flat/" not in p])
+put("P-species-invalid-len",AP+"map/create-species-undef-invalid-len.js",AP+"splice/create-species-undef-invalid-len.js",AP+"slice/create-proxied-array-invalid-len.js")
+put("Q-flat-native",*[p for p in paths if "/flat/" in p or "/flatMap/" in p])
+put("R-array-mop-traps",AP+"copyWithin/return-abrupt-from-has-start.js",AP+"copyWithin/return-abrupt-from-delete-proxy-target.js",AP+"splice/property-traps-order-with-species.js")
+put("S-hasownproperty-order",OP+"hasOwnProperty/topropertykey_before_toobject.js")
+missing=[p for p in paths if p not in C]
+print("unassigned:",len(missing)); [print("  ",m) for m in missing]
+cnt=collections.Counter(C.values())
+tot=0
+for k in sorted(cnt): print(f"{k:34s} {cnt[k]:3d}"); tot+=cnt[k]
+print("total",tot,"in-scope",sum(v for k,v in cnt.items() if not k.startswith('X')))
+import os
+for k in cnt:
+    short=k.split('-')[0].lower()
+    with open(f'.tmp/es2015/arrobj-cl-{short}.txt','w') as f:
+        for p in paths:
+            if C[p]==k: f.write(p+"\n")
+with open('.tmp/es2015/arrobj-clusters.tsv','w') as f:
+    for p in paths: f.write(f"{p}\t{C[p]}\n")

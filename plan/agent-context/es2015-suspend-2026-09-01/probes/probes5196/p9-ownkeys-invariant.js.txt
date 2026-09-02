@@ -1,0 +1,5 @@
+var target = {}; Object.defineProperty(target, "foo", { configurable: false, value: 1 });
+var p = new Proxy(target, { ownKeys: function() { return []; } });
+var threw = false;
+try { Object.keys(p); } catch (e) { threw = e instanceof TypeError; }
+if (!threw) throw new Error("ownKeys must include non-configurable keys");

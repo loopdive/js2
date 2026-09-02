@@ -1,0 +1,4 @@
+built-ins/Function/prototype/name.js
+built-ins/Function/is-a-constructor.js
+built-ins/Function/prototype/Symbol.hasInstance/prop-desc.js
+built-ins/Function/prototype/Symbol.hasInstance/name.js

@@ -1,0 +1,3 @@
+var d = Object.getOwnPropertyDescriptor(Error.prototype, 'stack');
+if (d === undefined) throw new Test262Error('no stack descriptor');
+if (typeof d.get !== 'function' || typeof d.set !== 'function') throw new Test262Error('get/set: ' + typeof d.get + '/' + typeof d.set);

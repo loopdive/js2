@@ -1,0 +1,4 @@
+built-ins/Array/prototype/slice/target-array-with-non-writable-property.js
+built-ins/Array/prototype/map/target-array-with-non-writable-property.js
+built-ins/Array/prototype/filter/target-array-with-non-writable-property.js
+built-ins/Array/prototype/splice/target-array-with-non-writable-property.js

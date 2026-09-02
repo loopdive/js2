@@ -1,0 +1,4 @@
+language/expressions/class/restricted-properties.js
+language/statements/class/definition/methods-restricted-properties.js
+language/statements/class/restricted-properties.js
+language/statements/class/strict-mode/arguments-callee.js

@@ -265,3 +265,41 @@ the validated Promise behavior.
 ## References
 
 - #5143 (wave-1 plan), PRs #5179, #5213.
+
+## Suspended Work (2026-09-01T21:56Z — user-requested 2-hour pause)
+
+- **Branch**: local lane branch `worktree-agent-ac8409dd2ee533f14` at `df3746897`
+  (WIP snapshot on top of base `d153a0882`; NOT pushed — durable copy is
+  `plan/agent-context/es2015-suspend-2026-09-01/patches/lane-5197.mbox`, 2
+  patches: Slice B commit `772cd49e8` + the snapshot carrying the uncommitted
+  Slice C edits in `array-object-proto.ts`, `expressions/calls.ts`,
+  `tests/issue-5197-es2015-promise-r2.test.ts`, new
+  `tests/issue-5197-promise-generic-catch.test.ts`, and the issue-file section
+  `## 2026-09-01 r2 Slices B–D implementation (Opus)`).
+- **Worktree at suspension**: `/home/user/js2/.claude/worktrees/agent-ac8409dd2ee533f14`
+  (treat as gone).
+- **State**: Slice B LANDED (committed, validated); Slice C landed PARTIAL
+  (uncommitted in the snapshot — validated per the implementer's notes but not
+  gate-run as a commit); Slice D NOT attempted (every row needs a generic
+  NewPromiseCapability(C): mint a GetCapabilitiesExecutor built-in function
+  on the Slice-B carrier, `Construct(C, «executor»)` for an arbitrary runtime
+  `C`, then the §27.2.1.5 steps 8–9 IsCallable checks — see the implementer's
+  section for the two concrete gaps).
+- **Verified so far** (implementer's runs, 140-row corpus, standalone,
+  in-process): before 0 pass / 134 fail / 6 CE → after B + C **11 pass / 127
+  fail / 2 CE (+11, 0 regressions)**; every claimed row re-checked for an empty
+  standalone import list. Slice B +6 (`{resolve,reject}-function-{name,property-order,prototype}.js`),
+  Slice C +5 (`catch/{invokes-then,this-value-then-not-callable,this-value-then-throws,this-value-then-poisoned}.js`,
+  `then/context-check-on-entry.js`). The two surviving CEs are the #3371 pair.
+  Four baseline "CEs" were load-induced compile timeouts; three rows need the
+  QuickJS provider rebuilt for the current bundle
+  (`node --import tsx scripts/build-quickjs-eval-provider.mjs`, ~14 s).
+- **NOT yet verified / next steps**: (1) `pnpm run typecheck` + focused vitest
+  files on the applied patch; (2) five ratchet gates + `pnpm run
+  test:equivalence:gate` for Slice C; (3) commit Slice C properly; (4) Slice D
+  per the gaps above; (5) Slices E/F combinators (the `env::Promise_all`/
+  `Promise_race`/`__js_array_new` leaks, 33 rows).
+- **Traps**: `nativeProtoBrandForInterface` needed the `Promise` brand — without
+  it the direct spelling `Promise.prototype.catch.call(t, f)` fell to the legacy
+  `.call` tail that drops `thisArg`; a hand-probe with the value-erased spelling
+  passed while test262 did not. Merge, never rebase.

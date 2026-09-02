@@ -44,6 +44,7 @@ import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
+import { ensureHostStrictSpreadDispatch, ensureNativeStrictSpreadRuntime } from "../iterator-native.js";
 import { ensureDateDaysFromCivilHelper, ensureDateFormatStringHelper, ensureDateStruct } from "./builtins.js";
 import { emitStandaloneDateTimestamp } from "../standalone-clock-capability.js";
 import { emitObjectCoercion } from "./calls-guards.js";
@@ -67,7 +68,6 @@ import {
 } from "./new-super.js";
 import { tryEmitStandaloneDateCtorValueArg } from "../date-ctor-value-arg.js"; // (#5156) §21.4.2.2 step 4
 import { emitStandaloneBooleanConstructorValue } from "./standalone-primitive-tail.js";
-import { reportError } from "../context/errors.js";
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
@@ -266,10 +266,6 @@ function emitExpandedProxyArguments(
   ];
 
   for (const arg of args) {
-    // The caller proves this invariant before selecting the helper. Keep a
-    // defensive skip rather than treating an unsupported spread as one value;
-    // unsupported dynamic cases are rejected before any body is emitted.
-    if (ts.isSpreadElement(arg)) continue;
     compileValue(arg);
     fctx.body.push({ op: "local.set", index: valueLocal });
     fctx.body.push(...captureValue());
@@ -281,6 +277,120 @@ function emitExpandedProxyArguments(
     count: countLocal,
     value: valueLocal,
     cleanup: [valueLocal, countLocal, handlerLocal, targetLocal],
+  };
+}
+
+/**
+ * Emit Proxy ArgumentListEvaluation for a dynamic/nested spread on the
+ * standalone/native-first lane. This is the consumer for the strict native
+ * GetIterator/IteratorNext provider; the compatibility `__iterator` bridge is
+ * intentionally not used here because it implements GetIteratorFlattenable's
+ * permissive carrier policy.
+ */
+function emitNativeStrictExpandedProxyArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  compileValue: (arg: ts.Expression | undefined) => void,
+): ExpandedProxyArgumentLocals {
+  const targetLocal = allocTempLocal(fctx, { kind: "externref" });
+  const handlerLocal = allocTempLocal(fctx, { kind: "externref" });
+  const countLocal = allocTempLocal(fctx, { kind: "i32" });
+  const valueLocal = allocTempLocal(fctx, { kind: "externref" });
+  const sourceLocal = allocTempLocal(fctx, { kind: "externref" });
+  const iteratorLocal = allocTempLocal(fctx, { kind: "externref" });
+  const doneLocal = allocTempLocal(fctx, { kind: "i32" });
+
+  fctx.body.push(
+    { op: "ref.null.extern" },
+    { op: "local.set", index: targetLocal },
+    { op: "ref.null.extern" },
+    { op: "local.set", index: handlerLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: countLocal },
+  );
+
+  const captureValue = (): Instr[] => [
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: valueLocal },
+        { op: "local.set", index: targetLocal },
+      ],
+      else: [
+        { op: "local.get", index: countLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: valueLocal },
+            { op: "local.set", index: handlerLocal },
+          ],
+          else: [{ op: "local.get", index: valueLocal }, { op: "drop" }],
+        },
+      ],
+    },
+    { op: "local.get", index: countLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: countLocal },
+  ];
+
+  for (const arg of args) {
+    if (!ts.isSpreadElement(arg)) {
+      compileValue(arg);
+      fctx.body.push({ op: "local.set", index: valueLocal });
+      fctx.body.push(...captureValue());
+      continue;
+    }
+
+    compileValue(arg.expression);
+    fctx.body.push({ op: "local.set", index: sourceLocal });
+    flushLateImportShifts(ctx, fctx);
+    const iterIdx = ctx.funcMap.get("__iterator_strict");
+    const nextIdx = ctx.funcMap.get("__iterator_next_strict");
+    if (iterIdx === undefined || nextIdx === undefined) {
+      throw new Error("strict native iterator provider was not registered");
+    }
+    fctx.body.push(
+      { op: "local.get", index: sourceLocal },
+      { op: "call", funcIdx: iterIdx },
+      { op: "local.set", index: iteratorLocal },
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: iteratorLocal },
+              { op: "call", funcIdx: nextIdx },
+              { op: "local.set", index: valueLocal },
+              { op: "local.set", index: doneLocal },
+              { op: "local.get", index: doneLocal },
+              { op: "br_if", depth: 1 },
+              ...captureValue(),
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  return {
+    target: targetLocal,
+    handler: handlerLocal,
+    count: countLocal,
+    value: valueLocal,
+    cleanup: [doneLocal, iteratorLocal, sourceLocal, valueLocal, countLocal, handlerLocal, targetLocal],
   };
 }
 
@@ -310,6 +420,8 @@ function emitHostCanonicalExpandedProxyArguments(
   // Reserve all canonical provider imports before compiling any argument.
   // Later source expressions can register additional imports; the terminal
   // flush and name lookups below keep every emitted call index current.
+  ensureLateImport(ctx, "__iterator", [{ kind: "externref" }], [{ kind: "externref" }]);
+  ensureHostStrictSpreadDispatch(ctx);
   const iterFn = ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
   const lengthFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
   const getFn = ensureLateImport(
@@ -1240,16 +1352,6 @@ export function tryCompileBuiltinGlobalNew(
       const args = expr.arguments ?? [];
       const hasSpread = args.some((arg) => ts.isSpreadElement(arg));
       const proxyArgs = hasSpread ? flattenProxyArguments(args) : args;
-      if (hasSpread && (proxyArgs === null || proxyArgs.some((arg) => ts.isSpreadElement(arg)))) {
-        reportError(
-          ctx,
-          expr,
-          "Proxy spread requires the strict iterator provider; dynamic and nested spreads are not available in standalone (#5131)",
-          "error",
-          { sticky: true },
-        );
-        return null;
-      }
       // `ensureNativeProxyRuntime` mints `__proxy_create` before the argument
       // expressions are visited.  Pre-register the already-supported native
       // Symbol carrier whenever the target or handler can carry one, so the
@@ -1302,7 +1404,18 @@ export function tryCompileBuiltinGlobalNew(
       };
 
       if (hasSpread) {
-        const locals = emitExpandedProxyArguments(fctx, proxyArgs!, (arg) => compileToExternref(arg));
+        const flattenedProxyArgs = flattenProxyArguments(args);
+        const isStaticSpread =
+          flattenedProxyArgs !== null && !flattenedProxyArgs.some((arg) => ts.isSpreadElement(arg));
+        const locals = isStaticSpread
+          ? emitExpandedProxyArguments(fctx, flattenedProxyArgs, (arg) => compileToExternref(arg))
+          : (() => {
+              // Dynamic and nested spreads are the direct consumer of the
+              // strict native provider. Register it before compiling any
+              // source expression so late import shifts cannot stale calls.
+              ensureNativeStrictSpreadRuntime(ctx);
+              return emitNativeStrictExpandedProxyArguments(ctx, fctx, args, (arg) => compileToExternref(arg));
+            })();
         flushLateImportShifts(ctx, fctx);
         const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
         if (proxyCreateIdx !== undefined) {

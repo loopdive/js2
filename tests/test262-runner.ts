@@ -40,6 +40,10 @@ import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // reachable carries the module-level import. Measured on one 162-file ES5 lever:
 // 82 files masked, 18 of them actually passing.
 import { instantiateTest262Module } from "../scripts/test262-import-object.mjs";
+import {
+  ITERATOR_BINDING_PREAMBLE,
+  needsIteratorBinding as sourceNeedsIteratorBinding,
+} from "../scripts/test262-iterator-binding.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
 import { SANDBOX_GLOBAL_NAMES } from "../scripts/test262-sandbox-globals.mjs";
@@ -2296,10 +2300,7 @@ const TypedArray: any = Object.getPrototypeOf(Int8Array.prototype).constructor;`
     // minimal function whose .prototype === %IteratorPrototype% so tests
     // that do `typeof Iterator === 'function'`, `Iterator.prototype.X`, or
     // `class X extends Iterator {}` have a usable binding.
-    p += `
-
-function Iterator(this: any): void {}
-(Iterator as any).prototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));`;
+    p += ITERATOR_BINDING_PREAMBLE;
   }
 
   if (needs262) {
@@ -2996,8 +2997,7 @@ export function wrapTest(
   // shim whose .prototype === %IteratorPrototype% (reachable from
   // [][Symbol.iterator]()'s proto chain). Passes `typeof Iterator ===
   // 'function'` and satisfies `Iterator.prototype.X` lookups.
-  const needsIteratorBinding =
-    /\bIterator\b/.test(body) && !/\b(?:var|let|const|function|class)\s+Iterator\b/.test(body);
+  const needsIteratorBinding = sourceNeedsIteratorBinding(body);
 
   // #1515: detached-buffer test262 harness — inject $DETACHBUFFER shim that
   // sets a sidecar `__detached__` marker the runtime DataView dispatch checks.

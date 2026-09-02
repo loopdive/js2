@@ -1,0 +1,5 @@
+built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js
+built-ins/Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js
+built-ins/Proxy/setPrototypeOf/trap-is-missing-target-is-proxy.js
+built-ins/Reflect/setPrototypeOf/return-false-if-target-is-prototype-of-proto.js
+built-ins/Proxy/setPrototypeOf/toboolean-trap-result-false.js

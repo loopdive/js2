@@ -1,0 +1,15 @@
+var nativeErrors: any[] = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];
+var allErrorConstructors: any[] = (nativeErrors as any[]).slice();
+if (typeof AggregateError !== 'undefined') { allErrorConstructors.push(AggregateError); }
+if (typeof SuppressedError !== 'undefined') { allErrorConstructors.push(SuppressedError); }
+function makeNativeError(Ctor: any, useNew: any): any {
+  if (typeof AggregateError !== 'undefined' && Ctor === AggregateError) {
+    return useNew ? new AggregateError([new Error('inner')], 'msg') : AggregateError([new Error('inner')], 'msg');
+  }
+  if (typeof SuppressedError !== 'undefined' && Ctor === SuppressedError) {
+    return useNew ? new SuppressedError(new Error('inner'), new Error('suppressed'), 'msg') : SuppressedError(new Error('inner'), new Error('suppressed'), 'msg');
+  }
+  return useNew ? new Ctor('msg') : Ctor('msg');
+}
+var e = new nativeErrors[1]('my-message');
+if (!e.hasOwnProperty('message')) throw new Error('message not own');

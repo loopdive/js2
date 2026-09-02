@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-09-01
+updated: 2026-09-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -33,7 +33,7 @@ files:
   - src/ir/array-element-lowering.ts
   - src/ir/passes/batch-string-concat.ts
   - src/codegen/declarations.ts
-  - src/codegen/declarations/module-init-call-free.ts
+  - src/codegen/declarations/module-init-pass2-stable.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/context/types.ts
@@ -46,6 +46,16 @@ files:
   - tests/issue-4110-ir-fetch-all-parallel.test.ts
   - tests/ir/passes.test.ts
 loc-budget-allow:
+  # 2026-09-01 (gap 2b, scalar-statement overlay remainder): +80 lines in
+  # `src/codegen/index.ts`. The slice's whole contract is that both edits stay
+  # inside that file — the widened admission predicate
+  # (`preparedScalarModuleStatementShape` plus the two operator allowlists) and
+  # the retirement of the `sawAssignment` ordering refusal. The predicate is the
+  # gate of the prepared module-init transaction; moving it to a subsystem
+  # module would split the ownership the transaction exists to hold, and the
+  # measured payoff is byte-neutrality on every already-admitted shape (V-A,
+  # 15/15 `cmp`-identical) with no IR-fallback bucket movement (V-D).
+  - src/codegen/index.ts
   # 2026-09-01 (gap 3, WASI prepared module-init adapter): the guard stops being
   # a post-emission splice and becomes invocation-policy-driven, which grows two
   # more prepared-route owners. `multi-prepared-program.ts` gains invariant 7's
@@ -70,7 +80,20 @@ loc-budget-allow:
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/runtime.ts
+  # 2026-09-01 (gap 1b, skip pass 2 for closure-free call-bearing inits): +11
+  # lines in `src/codegen/declarations.ts`, all of them the comment the slice
+  # was asked to correct. The historical text claimed pass 2 exists "so call
+  # sites inside module-level code can see the final inlinable-function
+  # registry"; measured (`JS2WASM_IR_INLINE=0`) the two-pass `__module_init`
+  # still emits a plain `call` for a module-level call, and the registry reaches
+  # only closure BODIES compiled during init. Leaving the old sentence in place
+  # would leave the next reader with the reason the gate is NOT built on. The
+  # executable change at the gate itself is one identifier.
+  - src/codegen/declarations.ts
 func-budget-allow:
+  # 2026-09-01 (gap 1b): the same +11 comment lines land inside
+  # `compileDeclarations`, which is where the pass-2 gate lives; the gate cannot
+  # be documented anywhere else.
   - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
   - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
@@ -2088,3 +2111,695 @@ first carries invariant 7's third arm for M2, the second the one option that
 scopes guard planting to the prepared preparation call. Both are
 reconciliation/routing at the site that owns the prepared module-init
 transaction. `scripts/*-baseline.json` untouched.
+
+## 2026-09-01 gap-2b implementation plan — retire the scalar-statement overlay remainder
+
+Grounded on `origin/main` `0d9bfedeea`. Slice claim: `#3523:gap2b`
+(`ttraenkler/fable-ir-takeover`). Three probe lanes (selector grammar /
+measured shape matrix + corpus frequency / IR-side expressiveness) ran
+against that commit, including a file-copy A/B of the candidate edit. Every
+line number below is theirs.
+
+### What gap 2 still is, measured
+
+A 15-shape × 4-lane matrix (host-start, host-deferred, standalone, wasi; each
+shape with an `export function f()` reader; harness = the
+`issue-3523-module-init-single-pass` pass-counter method) shows the gap-2
+remainder is **exactly three overlay cells**, identical on all four lanes:
+
+| shape | cell today | why |
+| --- | --- | --- |
+| s8 `let n = 0; n++;` | `1·1·1` overlay (p1=1,p2=0) | `isPreparedExactScalarModuleAssignment` requires `BinaryExpression` (`index.ts:4129`) |
+| s9 `let n = 0; n += 2;` | `1·1·1` overlay | requires `EqualsToken` (`:4132`) |
+| s12 `let s = 0; for (…) { s = s + i }` | `1·1·1` overlay | no statement-subtree arm |
+
+For s8/s9 the selector already claims the unit (`reason: null`, arms
+`select.ts:5125-5135` / `:5100-5118`), the semantic plan is byte-for-byte the
+landed `total = total + 1` shape (1 binding `let:mut:tdz`, evaluations
+`variable-initializer[1]`, `statement[0]`, gaps 0, liveSeeds 0), and the IR
+body is what already runs under the overlay. **The refusal is entirely inside
+`isPreparedExactScalarModuleAssignment` (`src/codegen/index.ts:4120-4184`).**
+
+Everything else in the matrix is NOT a prepared-route question: s1–s5
+(string/object/array/template/arrow initializers) are refused by the storage
+resolver at `select.ts:5658-5665` (`vardecl-module-storage-unrepresentable`,
+a value-representation gap); s6 `var` at `:5584-5586`; s7 `export const` at
+`:5587`; s11 `if (a)` at `:6802-6803` (numeric ToBoolean); s10/s13/s14 are
+call-bearing (gap 1, `2·1·x`). Every call-free non-admitted shape is already
+single-pass (gap 1a holds on all lanes).
+
+**Corpus weight is ~zero**: no module-level `++`/`+=`/`for`/`if` anywhere in
+playground/fixtures; in test262 (43,934 runnable files) 98.5 % of module-inits
+are call-bearing and the `++`-style shapes appear in <10 files. Gap 2b is an
+ownership-cleanliness slice that closes the scalar family; the
+conformance-visible R4 item after it is **gap 1** (call-bearing pass-1
+retirement), then the selector's `var` gate and storage representability
+(#2949-shaped, not prepared-route work).
+
+### The A/B that already ran (probe, throwaway edit, base restored + cmp-verified)
+
+Widening only the head of `isPreparedExactScalarModuleAssignment`
+(`:4129-4171`) so `targetIdent`/`readIdent` also come from postfix/prefix
+`++`/`--` on an identifier, `id (+=|-=|*=) NumericLiteral`, and
+`id = id (+|-|*) NumericLiteral` — leaving the evaluation match
+(`:4021-4047`), the oracle same-declaration check (`:4156-4171`) and the
+admitted-`let` check (`:4173-4183`) untouched:
+
+| shape | base (4 lanes) | candidate (4 lanes) | runtime |
+| --- | --- | --- | --- |
+| s8 `n++` | overlay | **`0·0·1` prepared** | 1 ✓ |
+| s9 `n += 2` | overlay | **`0·0·1` prepared** | 2 ✓ |
+| `let n = 5; n -= 2; n *= 3;` | overlay | **prepared** | 9 ✓ |
+| `let n = 5; n = n - 2; n = n * 3;` | overlay | **prepared** | 9 ✓ |
+| `let n = 0; n++; let k = 4; k--;` | overlay | overlay (unchanged) | 13 ✓ |
+| s12 `for` loop | overlay | overlay (unchanged) | 3 ✓ |
+| s15 / landed control | prepared | prepared | ✓ |
+
+The interleaved case stays overlay only because of `sawAssignment`
+(`:4280`, `:4286`, `:4307`) — an order-only rule: bindings are consumed by
+`declarationOrdinal`, evaluations by population ordinal (`:4265-4275`), so
+nothing in the plan requires declarations-first.
+
+### Contract
+
+1. **Sub-A — operator family.** `isPreparedExactScalarModuleAssignment`
+   admits, on an earlier-admitted mutable `let` target with numeric (`f64`)
+   storage: `id++`, `++id`, `id--`, `--id`; `id (+= | -= | *= | /=)
+   NumericLiteral`; `id = id (+ | - | * | /) NumericLiteral` (target and read
+   identifier must resolve to the SAME declaration via
+   `ctx.oracle.declarationsOf`, as today at `:4156-4171`); `id = NumericLiteral`.
+   The evaluation stays `kind:"statement"` at the exact ordinal with
+   `bindingIds: []`. NOT admitted (they are the new near-misses): `**=`,
+   `%=`, bitwise/shift ops, `id = 1 + id` (operand order), parenthesized RHS,
+   string RHS, `const` target, boolean `!flag` (i32 storage — `++` on a
+   boolean-branded binding must stay refused, from-ast.ts:11819-11823), any
+   RHS identifier other than the target.
+2. **Sub-B — drop `sawAssignment`.** Remove the declaration-after-assignment
+   refusal (`:4280`, `:4286`, `:4307`); zip stays by `declarationOrdinal`
+   (declarations) and population ordinal (evaluations); F1 at `:4322-4328`
+   still requires every planned binding consumed.
+3. Both edits are confined to `src/codegen/index.ts`. No change to the plan
+   builder, the overlay, `applyModuleInitGuard`, invocation wiring, the
+   `:4100-4117` reachability scan (it must still run on every admitted
+   initializer), TDZ-elision gating (`wasm-start` only, `:4668`), or
+   `plan.invocation`'s shape (`toEqual` pin at compile-once.test.ts:104).
+4. Every rejection stays a silent `return undefined` before any mutation.
+
+### Pins that move (all in `tests/issue-3523-ir-module-init-compile-once.test.ts`)
+
+- Near-miss controls at `:620-662` that become **positives**: `total += 1`,
+  `total++`, `total = total - 1`, the WASI compound (`:655-657`), and the two
+  `sawAssignment` controls (`total = total + 1; let total = 0` stays a
+  near-miss for the OTHER reason it pins — target not admitted — but
+  `let total=0; total=total+1; let later=2` at `:640` becomes a positive).
+- The host-deferred **overlay control** `let total = 0; total += 1;` at
+  `:677-679` (the `legacyBodyEmitted:true` control for the double-adapter
+  seam) flips to prepared — replace it with a shape that stays overlay
+  (s12's `for` loop, or `total **= 2`) so the seam test keeps a real control.
+- New near-misses added per contract item 1, each proven RED under the poison
+  seam (`JSW…POISON_DIRECT_MODULE_INIT_BODY=1`) while the admitted shapes go
+  GREEN — the existing "fails closed for every near-miss grammar" anatomy.
+- The "is structural rather than allowlisted" positives (`:546-584`) gain the
+  interleaved-declaration case.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — `/` and `id = NumericLiteral`**: the probe A/B covered `+ - *` and
+  `++/--/+=/-=/*=`; before admitting `/=`, `= id / num` and `= num`, A/B each
+  on all four lanes with a runtime value only that statement can produce
+  (e.g. `let n = 8; n /= 2;` → 4). Refuse any operator whose A/B is not
+  `0·0·1` with the right value.
+- **P2 — storage kind guard**: confirm the admitted target's storage is `f64`
+  (or dynamic) for `++/--` and the arithmetic ops — cite the resolver arm
+  (`from-ast.ts:11819-11823` / `select.ts:5125-5135`) and add the boolean-`let`
+  near-miss.
+- **P3 — `for`-loop non-admission**: confirm s12 stays overlay under the final
+  predicate (it must — statement-subtree admission is a later slice) and use
+  it as the replacement overlay control.
+- **P4 — ledger defect, adjacent**: the census found
+  `tests/fixtures/extern-demo.ts` (`declare namespace` = `ModuleDeclaration`)
+  counted in `collectModuleInitPopulation` (`src/ir/module-init.ts:11-24`) and
+  selector-rejected with `legacyBodyEmitted:true` while NO direct pass ran —
+  a truthfulness defect adjacent to gap 4. Do NOT fix here; confirm it with
+  one compile and file it as its own issue (`claim-issue.mjs --allocate`).
+
+### Verification matrix
+
+- **V-A byte neutrality of already-admitted shapes** (file-copy A/B, `cmp`):
+  census shapes (a) `const memo = new Map()`, (b) `let v = 7`, (c)
+  `let total = 0; total = total + 1;` × 4 lanes — 12/12 byte-identical
+  (predicate-only change). Any delta is a defect.
+- **V-B newly admitted shapes**: s8, s9, the four A/B multi-statement
+  variants, plus the P1 shapes — `0·0·1` on all four lanes, pass1=pass2=0,
+  `preparedComponentId` present, poison seam GREEN, double-adapter seam FATAL,
+  runtime values correct, and on the deferred lanes: throw before
+  `__module_init`, correct read after.
+- **V-C non-vacuity by revert**: restore only sub-A → exactly the operator
+  positives fail; restore only sub-B → exactly the interleaved positive fails;
+  the near-miss suite stays green in both.
+- **V-D census diff**: `pnpm run check:ir-fallbacks` output diffed (no bucket
+  moves — the corpus has none of these shapes); `check:ir-only` baseline
+  ceilings unchanged.
+- **V-E** the five ratchet gates chained before commit; affected suites
+  (`issue-3523-*`, `issue-4376`, `issue-1411`, `issue-1789`) green.
+
+### Out of scope (each has its own next step)
+
+Statement-subtree admission (`for`/`while`/`if`/`block`/`try` bodies — a
+recursive predicate, after this lands); multi-declarator statements;
+`export const/let` (`vardecl-modifier`, selector-side); string/object/array
+storage kinds (`IrModuleBindingValueKind` — a value-representation slice, NOT
+byte-neutral across the free-function population, needs the 25-file corpus
+A/B); arrow/function initializers (gap 1's pass-1 purpose); `var`
+(`initialization:"undefined-at-instantiation"` policy); call statements and
+call initializers (**gap 1 — the next R4 slice after this one**, with the
+13th census cell `function h(){…} h(); export function read()` the IR probe
+asked for); gap 5 (R3).
+
+## 2026-09-01 gap-2b checkpoint note — probes P1–P4 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap2b-scalar-statements`, based on `origin/main`
+`d153a08826` with the plan branch `claude/docs-r4-gap2b-plan` merged in.
+Two edits, both confined to `src/codegen/index.ts` as the contract requires.
+
+The base census reproduced the plan's measured facts exactly on a five-lane
+grid (the plan's four plus `standalone-deferred`): the landed
+`total = total + 1` control is `0·0·1` prepared everywhere, and **every**
+shape this slice targets — s8/s9, all four `++`/`--` forms, `-= *= /=`,
+`= id - num`, `= id * num`, `= id / num`, `= num`, both multi-statement
+variants and both interleaved-declaration cases — read `1·0·0` overlay with a
+correct runtime value. Byte figures below are from this grounding, not
+inherited.
+
+### P1 — `/=`, `= id / num` and `= num`: all three admitted, A/B'd on five lanes
+
+The plan's A/B covered `+ - *` and `++/--/+=/-=/*=` only, so these three ran
+their own base/candidate pair before being admitted. All three clear the bar:
+
+| shape | base (5 lanes) | candidate (5 lanes) | runtime |
+| --- | --- | --- | --- |
+| `let n = 8; n /= 2;` | `1·0·0` overlay | **`0·0·1` prepared** | 4 ✓ |
+| `let n = 8; n = n / 2;` | `1·0·0` overlay | **`0·0·1` prepared** | 4 ✓ |
+| `let n = 0; n = 7;` | `1·0·0` overlay | **`0·0·1` prepared** | 7 ✓ |
+
+Each value is one only the statement can produce — initializer-only execution
+returns 8, 8 and 0 — so a silently dropped statement fails on the number. No
+operator was refused: nothing in the contract's admit list failed its A/B.
+
+### P2 — storage kind: guarded positively on `number`, and the guard narrows nothing
+
+The plan asked for confirmation that the target's storage is `f64` or dynamic.
+The measurement changed the shape of the answer: **the dynamic case is already
+refused upstream.** `let x: any = 0; x = x + 1;` reads `1·0·0` overlay on all
+five lanes on BASE — the selector's storage resolver never offers it — so a
+guard admitting only `number` narrows nothing that is admitted today. That is
+what V-A's 15/15 byte-identity then confirms independently.
+
+So the predicate carries a positive guard, `ctx.oracle.staticJsTypeOf(target)
+=== "number"`, rather than a boolean-shaped denial. It is routed through the
+oracle, not the raw checker, so the oracle-ratchet gate stays green. The arm it
+anticipates is `from-ast.ts`'s `!slotValType || slotValType.kind !== "f64"`
+demotion (`compound-assign-unsupported`): deciding it in the predicate keeps
+the refusal a silent non-admission instead of a late demotion.
+
+The boolean near-miss is measured, not assumed: `let flag = true; flag++;` is
+`1·0·0` overlay on base AND candidate, and is now a poison-proven control.
+
+### P3 — the `for` loop stays overlay, and is now the seam's control
+
+`let s = 0; for (let i = 0; i < 3; i++) { s = s + i; }` is `1·0·0` overlay on
+all five lanes under the final predicate, as required — statement-subtree
+admission is a later slice. It therefore replaces `let total = 0; total += 1;`
+as the `legacyBodyEmitted: true` control in the double-adapter seam test. That
+substitution is load-bearing: `total += 1` is admitted by this slice, so
+leaving it in place would have left the seam test asserting `true` against a
+shape that is now prepared, and the control would have silently stopped
+controlling.
+
+### P4 — the `declare namespace` ledger defect: confirmed, filed as #5273
+
+Confirmed with one compile of `tests/fixtures/extern-demo.ts`:
+
+```
+population size: 1
+  kind: ModuleDeclaration "declare namespace Host {\n  class Box {\n "
+direct passes: pass1 = 0  pass2 = 0
+module-init outcome: {"kind":"unsupported","legacyBodyEmitted":true,"irBodyEmitted":false}
+```
+
+`collectModuleInitPopulation` (`src/ir/module-init.ts:9-27`) skips every
+type-only statement kind except `ts.ModuleDeclaration`, so a `declare
+namespace` is counted as runtime work; the row then claims a legacy body while
+`pass1 = pass2 = 0` proves none was emitted. Not fixed here (different file,
+different mechanism, and it moves a module out of the claimable bucket, so it
+needs its own census diff). Filed as
+**[#5273](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5273-module-init-ledger-type-only-declarations)**.
+
+**Reservation caveat, stated because it affects the id's trustworthiness:**
+`gh` is not installed in this implementation container, so
+`claim-issue.mjs --allocate` refused (exit 6, open-PR scan degraded) and the id
+was reserved with the sanctioned `--allow-unscanned`. #5273 is verified on
+`origin/issue-assignments` but **not** against in-flight PRs
+(`pr_scan=degraded`); re-check for a collision before that file merges.
+
+### Verification
+
+- **V-A byte neutrality — 15/15 `cmp`-identical.** Census shapes (a)
+  `const memo = new Map()`, (b) `let v = 7`, (c) `let total = 0; total = total
+  + 1;` × five lanes, base-vs-candidate by file copy captured at the FIRST
+  edit. Zero differing bytes: host-start 255/168/182, host-deferred
+  268/268/282, standalone-start 51287/22642/22656, standalone-deferred
+  51300/49097/49111, wasi 51365/49162/49176.
+- **V-B — every newly admitted shape is `0·0·1` on all five lanes**, pass1 =
+  pass2 = 0, `preparedComponentId` present, correct runtime value, and on the
+  deferred lanes it throws before `__module_init` and reads correctly after.
+  Pinned by "owns the whole scalar-statement operator family on every lane";
+  the poison seam is green for the whole family (the poison test now iterates
+  the family, not just `SOURCE`) and the double-adapter seam stays fatal.
+- **V-C non-vacuity by revert — both sub-edits are independently
+  load-bearing.** Reverting only sub-A: the three operator/family tests fail,
+  the near-miss suite and the double-adapter seam stay green. Reverting only
+  sub-B: `n++` is still `0·0·1` prepared while
+  `let total = 0; total = total + 1; let later = 2;` falls back to `1·0·0`
+  overlay on all five lanes — exactly the interleaved positive, nothing else.
+- **V-D census diff — no movement.** `pnpm run check:ir-fallbacks` output is
+  byte-identical base vs candidate (diff empty; unintended buckets still
+  `(none)`), and `check:ir-only` is identical too (`READY`, 41 terminal units,
+  38 emitted, 0 legacy body emitted). The corpus contains none of these shapes,
+  as the plan measured.
+- **V-E** — the five ratchet gates chained green before the commit, and the
+  affected suites pass: `issue-3523-*` (4 files, 69 tests), `issue-4376`,
+  `issue-1411`, `issue-1789` and the three IR-retirement files (104 tests, 13
+  skipped). One note on honesty: `issue-4376-module-init-chunking` timed out
+  once at 35 s in a heavily parallel combined run; it passes in isolation and
+  on re-run of the same combined command, and the shape it pins
+  (`const locked += (effects = 1)`) is refused twice over by the new predicate
+  (const target, parenthesized non-literal RHS).
+
+### Two deliberate deviations from the plan's letter
+
+- **The new near-misses and the two heavy family tests needed explicit
+  timeouts** (300 s). 16 shapes × 5 lanes is ~80 real compiles per test and the
+  file inherits vitest's 35 s default. The alternative — trimming lanes — would
+  have weakened exactly the V-B claim the plan asks for.
+- **`src/codegen/index.ts` grows 80 lines past its god-file ceiling**, so this
+  change-set restates the `loc-budget-allow` grant with its own dated
+  rationale below. The contract confines both edits to that file; there is no
+  subsystem module to move a prepared-route admission predicate into without
+  splitting the ownership the transaction exists to hold.
+
+## 2026-09-01 gap-1b implementation plan — skip pass 2 for closure-free call-bearing module inits
+
+Grounded on `origin/main` `e36225ee65` (includes gap-2b, PR #5435). Slice
+claim: `#3523:gap1b` (`ttraenkler/fable-ir-takeover`). Three probe lanes
+(mechanism read + two throwaway env seams / 12-shape × 4-lane census + test262
+call-shape ranking / three-candidate A/B on shapes, corpus, and a 319-file
+test262 compile sample + 89-file runner-faithful runtime sample) ran against
+that commit; every line number below is theirs.
+
+### What gap 1 is, measured — and what it is NOT
+
+- **Retiring pass 1 is UNSOUND.** Function bodies compiled between the passes
+  deliberately consume pass 1's END integrity state
+  (`declarations.ts:5672-5674`: `definedPropertyFlags`, `frozenVars`,
+  `sealedVars`, `nonExtensibleVars` snapshot/restore) and its `closureMap`
+  discovery (`arrow-phases.ts:1303-1323`). Seam B (compile bodies first, one
+  init compile in the pass-2 slot) flipped
+  `const o={p:1}; Object.freeze(o); export function read(){ o.p=2; return o.p }`
+  from a correct TypeError to a silent write (`read()=2`, all lanes), changed
+  error identity on defineProperty-then-write, lost `closureMap`-driven
+  `call_ref` codegen (2.7× larger binary on the arrow shape), and produced
+  **6/89 host test262 regressions**, all async (`doneprintHandle.js`'s
+  `__consolePrintHandle__` compiles from a closure-cast body to a bare `call`
+  without pass-1 discovery; `$DONE` inlines it; the runner never sees
+  completion). Pass 1 stays.
+- **Pass 2's stated reason is vacuous for direct init statements.** The
+  `:6180-6182` comment ("so call sites can see the final inlinable-function
+  registry") does not hold: with `JS2WASM_IR_INLINE=0` the two-pass
+  `__module_init` still emits `call 1` for a call to a small local function —
+  all inlining seen is the finalize-time `ir-inline.ts` pass
+  (`index.ts:6690-6691`), which runs after both passes over every function;
+  IR-claimed callees never enter the registry (`declarations.ts:6052-6058`).
+  The registry inliner fires only INSIDE closure bodies compiled during init.
+- **Seam A (skip pass 2 unless chunk/async forced) is byte-identical for the
+  closure-free family.** 13 closure-free call-bearing shapes (local fn call
+  init/stmt, `console.log`, `new Map`+`m.set`, `Object.freeze`, inlinable local
+  call, `new` local class, static-block call, string method, `a.push`,
+  `parseInt`, legacy `h(a:any)`, `arguments` callee) × 4 lanes: **52/52
+  byte-identical** (sole exception: `console.log` on WASI, where the two-pass
+  base carries a duplicate dead `(data … "\n")` segment pass 2 re-registers —
+  one-pass is smaller, code identical). Corpus 26 files × 2 lanes: 50/52
+  identical (the two: closure-bearing). Runtime parity on every shape/lane
+  (7 × 4 × IR on/off = 56 pairs) and 8/8 runner-faithful test262 files.
+- **Closure-bearing populations differ** (arrow/fn-expr initializer, arrow
+  calling a local fn, `var g=function`, closure global reassigned in a fn,
+  legacy callee inside an arrow body): pass 2 mints a dead re-lifted
+  `$__closure_N` twin and gets registry-inlining inside closure bodies; runtime
+  equal, bytes differ. These stay two-pass in this slice.
+- **Gap 1 is NOT conformance-visible through pass-count work.** On a 319-file
+  test262 sample every module-init population is closure-bearing (the harness's
+  `assert.sameValue = function…`, `Test262Error`, `new`), 122–165/319 are
+  chunk-forced anyway, and the IR outcome is `body-shape-rejected` 81/81. The
+  only route that retires those rows is pass-1 REPLACEMENT, which needs a
+  closure-fact inventory ahead of bodies (the facts `registerClosureBindingInfo`
+  writes at `arrow-phases.ts:1291-1322`: struct/lifted type idx, arity,
+  `needsCallSiteArity`) that R2/#4617 do not carry today. That is the design
+  item AFTER this slice, measured against Seam B's failure set
+  (`Promise/allSettled/iter-assigned-undefined-reject.js` et al.) — not the
+  IR-owned call-bearing candidate, which has zero test262 yield until the
+  selector admits harness-shaped populations.
+
+### Contract
+
+1. Replace `moduleInitPopulationIsCallFree`
+   (`src/codegen/declarations/module-init-call-free.ts:52-95`) with a
+   **pass-2-stability** predicate (rename or sibling — keep the fail-closed,
+   no-allowlist, full-subtree shape at `:33-45`): refuse on `ArrowFunction`,
+   `FunctionExpression`, `ClassExpression`, `Decorator`, `AwaitExpression`;
+   ADMIT `CallExpression`, `NewExpression`, `TaggedTemplateExpression`. Scan
+   every `ctx.moduleInitStatements` statement and each `ctx.staticInitExprs`
+   entry's `staticBlock ?? initializer`, as today.
+2. The pass-2 gate at `declarations.ts:6197-6202` keeps
+   `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 || hasAsyncGraphInit ||
+   moduleInitChunkingRequired` and swaps the last disjunct to the new
+   predicate. **No other change**: no selector, prepared-route, adapter,
+   invocation, TDZ (`:5602`), poison-seam (`:5845`) or WASI
+   `__init_done` reservation edit. `0/0` (IR-owned) rows are untouched by
+   construction (the gate sits inside the `full`-mode pass-2 block).
+3. Fix the `:6180-6182` comment to state the measured truth (registry
+   inlining reaches only closure bodies compiled during init; the finalize
+   inliner handles direct statements), and record the async-callee completion
+   shape (`void run()` on an async callee: pass 2 emits `call Promise_resolve`
+   as the try result, pass 1 `ref.null extern / call / drop`; both validate,
+   runtime equal — `nm_js2wasm_wasi_p3.ts`) as a KNOWN byte delta on
+   closure-bearing populations, which remain two-pass.
+
+### Required pre-implementation probes (answers go in the checkpoint note)
+
+- **P1 — scar-family suites under the seam (NOT yet measured).** The census
+  ran the control side of `issue-2965`, `issue-3872`, `issue-4182`,
+  `issue-4195`, `issue-4376-module-init-chunking`,
+  `issue-3523-ir-module-init-compile-once`,
+  `issue-3523-module-init-single-pass`, but the seam-side run was cut by the
+  probe deadline. Run all seven with the new predicate BEFORE writing any pin;
+  any failure is a STOP-and-diagnose (it names a pass-2 dependency the shape
+  matrix missed).
+- **P2 — diagnostics parity.** One test262 file (`for-in/cptn-decl-itr.js`)
+  showed base e1 vs one-pass e2: pass 1 alone emits a duplicate diagnostic
+  that today's `dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark)` (`:6214`)
+  collapses only when pass 2 runs. Determine whether the dedupe must also run
+  on the one-pass route (it should — the mark is taken at `:5698` regardless)
+  and pin error-count parity on that file and on the 319-file sample (expected
+  0 divergence — all sampled populations are closure-bearing and keep two
+  passes).
+- **P3 — the WASI dead data segment.** Confirm the `console.log`-on-WASI delta
+  is exactly the duplicate `"\n"` segment (document it; `WebAssembly.validate`
+  + runtime parity + identical import surface are the WASI acceptance
+  criteria for that shape, not byte identity).
+- **P4 — mutation.** Admitting `ArrowFunction` in the predicate must break the
+  byte-identity pin on the c21 shape (`h(a:any)` called inside an arrow) —
+  proves the closure refusal is load-bearing rather than decorative.
+
+### Verification matrix
+
+- **V-A**: the 13 closure-free call-bearing shapes × {host-start,
+  host-deferred, standalone, wasi} → `1/0` (pass1=1, pass2=0), byte-identical
+  (`cmp`) vs `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` on gc/host-deferred/
+  standalone; WASI per P3. The 6 closure-bearing shapes → `1/1` unchanged. A
+  17-statement population → `1/1` (chunk-forced). IR-owned shapes → `0/0`
+  unchanged, byte-identical.
+- **V-B**: runtime values via instantiation on host/standalone for every
+  shape; runner-faithful `runTest262File` on the 89-file host sample —
+  pass count 62 → 62, zero status divergence.
+- **V-C**: corpus (`website/playground/examples/**`, `examples/**`) host +
+  standalone — 50/52 byte-identical, the two closure-bearing rows unchanged
+  from base (they stay two-pass).
+- **V-D pins that move** (`tests/issue-3523-module-init-single-pass.test.ts`):
+  `:236-250` controls `call-in-initializer`, `new-in-initializer`,
+  `call-in-static-block`, `tagged-template` → `1/0`
+  (`call-in-initializer-arrow-body` stays `1/1`); `:373-384` inline-route pin
+  `1/1` → `1/0` with the byte identity vs forced still holding (measured c8).
+  Add the P4 mutation pin and the P2 diagnostics-parity pin.
+- **V-E**: the five ratchet gates chained; `check:ir-fallbacks` output diffed
+  (no bucket moves); the seven scar-family suites green (P1).
+
+### Out of scope (and the honest sequencing after it)
+
+IR-owned call-bearing admission (selector Gate 2 uses an empty claimed set on
+the production branch, `select.ts:1046-1053`; the prepared reachability scan
+`index.ts:4100-4117` is component-closure for ALL callees, not just closures —
+admitting calls needs the real claimed set, `directCalls` plans, grammar arms,
+and the import-manifest preflight; zero test262 yield today). Pass-1
+replacement (needs the closure pre-lift inventory — the next design item, to be
+planned against Seam B's failure set). Multi-source `"discover"`/`"full"` mode
+split (`index.ts:10667`). Gap 5 (R3).
+
+## 2026-09-01 gap-1b checkpoint note — probes P1–P4 answered (Opus implementation lane)
+
+Branch `claude/issue-3523-gap1b-pass2-skip`, based on `origin/main` `813b828b6e`
+with the plan branch `claude/docs-r4-gap1b-plan` merged in. Three files:
+`src/codegen/declarations/module-init-call-free.ts` renamed to
+`module-init-pass2-stable.ts` (predicate widened), `src/codegen/declarations.ts`
+(+11, all comment) and `tests/issue-3523-module-init-single-pass.test.ts`
+(9 cases → 15). No selector, prepared-route, adapter, invocation, TDZ, poison or
+WASI-guard edit, as the contract requires.
+
+Every figure below is from a run in this worktree, base captured by file copy at
+the first edit (`.tmp/base-declarations.ts`,
+`.tmp/base-module-init-call-free.ts`) and flipped with a two-line `flip.sh`,
+never `git stash`.
+
+### The one deviation that changes the contract: the predicate is a UNION, not a closure refusal
+
+The contract says "refuse on `ArrowFunction`, `FunctionExpression`,
+`ClassExpression`, `Decorator`, `AwaitExpression`; ADMIT `CallExpression`,
+`NewExpression`, `TaggedTemplateExpression`". Implemented literally, that
+**regresses gap-1a**: `const f = (x: number): number => x * 2;` is
+closure-bearing and call-FREE, and the base census measured it at **`1/0` on all
+four lanes** — gap-1a already put it on the one-pass route, and `GATED_SHAPES`
+pins it there (`tests/issue-3523-module-init-single-pass.test.ts:143-165`,
+asserted at `:197-216`). A pure closure refusal sends it back to `1/1`. V-D does
+not list that pin as moving, so the plan's own acceptance criteria require it not
+to.
+
+The shipped predicate is therefore the disjunction the two measurements support:
+
+```
+pass-2-stable  ⇔  no Decorator/Await anywhere
+                  AND NOT (a call AND a closure both appear)
+```
+
+- **call-free** (closure or not) — gap-1a's measured half, 50/50 corpus binaries
+  byte-identical, already on main;
+- **call-bearing, closure-free** — gap-1b's half, measured below;
+- **both** — the only refusal, and it is refused for two independent measured
+  reasons (byte divergence, P4; duplicate diagnostics, P2).
+
+Stated as one sentence: a second compile can only differ through the
+inlinable-function registry (which needs a CALL to consult it) or through
+closure re-lifting (which needs a CLOSURE to lift), so a population missing
+either ingredient is stable. That is a strictly more faithful reading of the
+plan's own measured facts than the node-kind list, and it is why the module and
+its predicate were renamed rather than replaced.
+
+### P1 — the seven scar-family suites: six green, the seventh is the pin file itself
+
+Run before any pin was written, with the new predicate:
+
+| suite | result |
+| --- | --- |
+| `issue-2965` | green |
+| `issue-3872` | green (the 5 failures gap-1a saw on `fe3fe11e52` are gone from main) |
+| `issue-4182-annexb-global-blockfn` | green |
+| `issue-4195-eval-refusal-message-and-dedupe` | green |
+| `issue-4376-module-init-chunking` | green |
+| `issue-3523-ir-module-init-compile-once` | green |
+| `issue-3523-module-init-single-pass` | 5 failures, all pin moves |
+
+**No pass-2 dependency the shape matrix missed.** The five failures are the V-D
+moves plus three sub-assertions V-D did not enumerate (they move for the same
+reason — a call alone no longer disqualifies): the `static-block-call` arm of
+"scans the compile inputs, not the source file", the "earlier source contributes
+a call" arm of the multi-source constraint, and the `control` shape of the
+diagnostics test. All are re-pinned at their new values, and each kept a genuine
+two-pass control by adding the closure ingredient (class-expression method,
+`const make = () => mk()`, `const f = () => h()`).
+
+**On the final artifact all seven suites are green (108 tests).** One
+load-dependent flake appeared in between and is worth naming because it will
+appear again: `issue-4376-module-init-chunking > preserves TDZ ordering for
+const writes and updates` times out at vitest's 35 s default when the box is
+busy, **identically on the reverted base** in isolation (load average ≈5.5,
+another agent active; base run 130.3 s wall, candidate 132.6 s). It passes on a
+quiet box. Not caused by, and not touched by, this slice — the same flake the
+gap-2b checkpoint recorded.
+
+### P2 — the dedupe does NOT move to the one-pass route, and the reason is now causal
+
+The plan expected `dedupeDiagnosticsFrom(ctx, pass1DiagnosticMark)` to be needed
+on the one-pass route because `cptn-decl-itr.js` showed base `e1` vs one-pass
+`e2`. Measured with the shipped predicate, that divergence **does not exist**:
+
+- `language/statements/for-in/cptn-decl-itr.js` through
+  `assembleOriginalHarness` (runner-faithful: `allowJs`, `sourceMap`,
+  `skipSemanticDiagnostics`, `deferTopLevelInit`) reads **`1/1`, one error**,
+  same as forced. Its harness population is closure-bearing AND call-bearing, so
+  the predicate refuses it and pass 2 still runs.
+- **320 runner-faithful test262 files**: 0 error-count mismatches vs forced.
+- **10 constructed error-bearing admitted populations** (call + bad destructure,
+  static-block call + bad, `new` + bad, `console.log` + bad, two identical bad
+  statements, bad inside a `for…of` body, …): 0 mismatches, and no intra-pass
+  duplicate at any location.
+
+The plan's observation is nevertheless REAL, and the mutation names its cause:
+with closures admitted through the test seam, `cptn-decl-itr.js` goes **`1/0`
+and reports the same diagnostic twice** (`errors=2` vs forced `1`). So the
+duplicate is produced by pass 1 alone on a **closure-bearing** population — the
+class the plan's unconditional Seam A admitted and this contract refuses. Adding
+the dedupe to the one-pass route would have been a silent behavior change to
+gap-1a's landed route (collapsing pairs that nothing produces) bought against a
+hazard the predicate already excludes. It is pinned instead: the test262 parity
+case above is exactly what fails if a future widening admits closures.
+
+### P3 — the WASI `console.log` delta is TWO dead segments, not one
+
+The plan called it "the duplicate dead `\n` data segment". Measured, the
+two-pass WASI module carries a dead duplicate of **every** segment the call
+registers:
+
+```
+  (data (i32.const 1024) "\68\69")     <- "hi", live in the one-pass build
+  (data (i32.const 1026) "\0a")        <- "\n",  live in the one-pass build
+- (data (i32.const 1027) "\68\69")     <- dead duplicate, two-pass only
+- (data (i32.const 1029) "\0a")        <- dead duplicate, two-pass only
+```
+
+The only other difference is the two segment-address operands (`1027→1024`,
+`1029→1026`); the code is otherwise identical. 22 848 → 22 833 bytes, both
+validate, identical import surface. Pinned as a segment-count delta of exactly
+2 plus "strictly smaller", not as byte identity.
+
+**A second dead-artifact family the plan did not have: the tagged template.**
+``tag`abc` `` differs on **all four** lanes (−6 bytes) because pass 2 mints a
+second template-object cache global and orphans pass 1's:
+
+```
+   (global $__tt_cache_0 (mut (ref null 5)) (ref.null 5))
+-  (global $__tt_cache_1 (mut (ref null 5)) (ref.null 5))   <- two-pass only, and the LIVE one there
+```
+
+One-pass emits one cache and uses it, so the per-site template identity the cache
+exists for is preserved. Pinned with a global-count assertion (1 vs 2).
+
+### P4 — the closure refusal is load-bearing, mutation-proven
+
+Admitting closures (test-only seam
+`JS2WASM_TEST_ADMIT_CLOSURES_IN_MODULE_INIT_PASS2_GATE=1`, which only ever
+WIDENS admission) breaks byte identity on the c21 shape `h(a: any)` called
+inside an arrow, on every lane:
+
+| shape | host-start | host-deferred | standalone | wasi |
+| --- | --- | --- | --- | --- |
+| `legacy-callee-inside-arrow` mutant vs forced | 4414 / 4412 | 4427 / 4425 | 127 885 / 127 882 | differ at equal length |
+
+The mutation moves 20 further rows (k1–k5 × 4 lanes) from identical to
+differing: 13 differing rows under the shipped predicate, **33 under the
+mutant**. The seam exists so this is a PIN, not a one-off measurement — the plan
+asked for a mutation pin and a test cannot otherwise reach a predicate decision.
+That seam is the third deviation from the plan's letter.
+
+### V-A — census, 4 lanes × the full shape matrix
+
+Base reproduced the plan's table exactly before any edit (13 call-bearing shapes
+`1/1` on all four lanes; IR-owned `0/0`; gap-1a gated `1/0`).
+
+| family | base | candidate |
+| --- | --- | --- |
+| 13 closure-free call-bearing × 4 lanes | 52 × `1/1` | **52 × `1/0`** |
+| 5 closure+call shapes × 4 lanes | 20 × `1/1` | unchanged |
+| call-free arrow initializer × 4 lanes | `1/0` (gap-1a) | unchanged `1/0` |
+| 17-statement chunk-forced × 4 lanes | `1/1` | unchanged (`moduleInitChunkingRequired` wins) |
+| IR-owned / function-only × 4 lanes | `0/0` | unchanged, byte-identical |
+
+**Byte identity vs `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1`: 47/52** on the
+call-bearing family. The 5 exceptions are the two dead-artifact families above
+(tagged template × 4 lanes, `console.log` on WASI × 1) — every one is the
+one-pass build being SMALLER by dropping something dead; all validate, all
+import surfaces equal, all runtime values equal. Across the whole 116-row
+matrix: 103 identical, 13 differing, of which 8 are the pre-existing gap-1a
+arrow-initializer rows (`3757` vs `3786` — pass 2's dead re-lifted closure twin,
+already on main and already accepted there).
+
+### V-B — runtime
+
+- **58/58 runtime pairs** (every shape × {host, standalone}, one-pass vs forced)
+  return the same value, and each equals the value only the init statement can
+  produce.
+- **Runner-faithful `runTest262File`, 89 host files**: `pass=80 fail=9` on base,
+  `pass=80 fail=9` on candidate, **zero status divergence** (per-file compare).
+- **320 runner-faithful test262 compiles**: 320/320 byte-identical vs forced,
+  0 error-count mismatches. Route movement base → candidate: **two files** moved
+  two-pass → one-pass; 270 stay two-pass (their harness population is
+  closure-bearing, exactly as the plan predicted) and 50 have no direct init.
+  This slice's test262 yield is zero, as the plan states.
+- **Async-callee shapes** (the family most likely to depend on pass 2 seeing a
+  compiled body): `void run()`, `const p = run()`, `run().then(…)`, an async call
+  in a static block, and a generator call — all runtime-equal on host and
+  standalone; all byte-identical except the generator, where the one-pass build
+  keeps an inert `(block (result (ref null 8)) …)` wrapper around the same
+  `struct.new` (+5 host / +4 standalone bytes, same value).
+
+### V-C — corpus (`website/playground/examples/**`, `examples/**`), host + standalone
+
+52 rows, **50 byte-identical**, 14 rows newly on the one-pass route. The two
+differing rows are both `examples/native-messaging/nm_js2wasm_wasi_p3.ts`:
+
+- host: the one-pass build emits `ref.null extern / call Promise_resolve / drop`
+  where the two-pass build emits `call Promise_resolve` on the block's result
+  (+3 bytes). The try's result is `drop`ped immediately in BOTH builds, so the
+  difference is only which value is handed to a discarded `Promise.resolve`.
+- standalone: a `drop` ordering swap around a pure `global.get` /
+  `extern.convert_any` pair, identical length.
+
+Both validate; the source's whole init population is `void run();`.
+
+**This corrects the plan's contract item 3**, which files this delta under
+"closure-bearing populations, which remain two-pass". `void run();` is
+call-bearing and closure-FREE, so the predicate ADMITS it — the delta appears on
+the new route, not on a refused one. It is inert (dropped values only), but it is
+not the category the plan put it in.
+
+### V-D — pins
+
+`tests/issue-3523-module-init-single-pass.test.ts`, 9 cases → 15, all green under
+CI's flags (`--pool=forks --poolOptions.forks.singleFork --no-file-parallelism`,
+47 s):
+
+- `:236-250` controls `call-in-initializer`, `new-in-initializer`,
+  `call-in-static-block`, `tagged-template` → `1/0`;
+  `call-in-initializer-arrow-body` stays `1/1` (renamed `arrow-body-calls-local`,
+  now one of four closure+call controls);
+- `:373-384` inline-route pin `1/1` → `1/0`, byte identity vs forced still holds;
+- the eleven-shape closure-free call-bearing family is pinned at `1/0` AND at
+  **byte identity** vs forced on both lanes (a stronger claim than gap-1a made);
+- new: the two dead-artifact pins (template cache global count 1 vs 2; WASI data
+  segment count delta exactly 2), the chunk-forced `1/1` pin, the P4 mutation
+  pin, the P2 test262 diagnostics-parity pin, and a multi-source arm proving a
+  call alone contributed by an earlier source no longer forces pass 2 while a
+  call **plus** a closure still does.
+
+### V-E — gates
+
+`pnpm run typecheck` clean. `pnpm run check:ir-fallbacks` output
+**byte-identical** base vs candidate (`diff` empty; no bucket moves). The five
+ratchet gates run bare and green, and again under
+`LOC_GATE_BASE=$(git rev-parse origin/main)`. LOC `src/codegen/declarations.ts`
++11 and func `compileDeclarations` +11, both granted in this file's frontmatter
+with a dated rationale — the +11 is entirely the corrected comment, which is
+contract item 3.
+
+After merging `origin/main` (`75818e7ac4`) the headline measurements were re-run
+**on the exact artifact being committed**, not inherited from the pre-merge tree:
+census 0/116 rows drifted, A/B still 103 identical / 13 differing, corpus still
+50/52 with 14 rows newly single-pass, and the seven scar suites green (108
+tests).

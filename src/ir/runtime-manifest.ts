@@ -25,9 +25,11 @@ import {
 } from "./async-runtime-providers.js";
 import {
   canonicalizeRuntimeHostCapabilityCatalog,
+  isRuntimeHostCapabilityFuncId,
   resolveRuntimeHostCapabilityRecord,
   RUNTIME_HOST_CAPABILITY_IDS,
   RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityFuncId,
   type RuntimeHostCapabilityId,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
@@ -39,6 +41,7 @@ import {
   F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   F64_TO_U32_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
+  EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
@@ -61,7 +64,12 @@ import {
 
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
-export type RuntimeFeature = IntrinsicRuntimeFeature | AsyncRuntimeFeature | GeneratorNumberBoxRuntimeFeature;
+export type RuntimeFeature =
+  | IntrinsicRuntimeFeature
+  | AsyncRuntimeFeature
+  | GeneratorNumberBoxRuntimeFeature
+  | StringCompareRuntimeFeature
+  | StringEqRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -162,6 +170,59 @@ export const GENERATOR_NUMBER_BOX_POLICY_DISABLED: GeneratorNumberBoxPolicy = Ob
   box: "unsupported",
 });
 
+/**
+ * (#3526 F2-S1) The exact, already-resolved policy for the STRING RELATIONAL
+ * COMPARE seam — family 2's first policy, and a sibling of
+ * {@link ExternIsUndefinedPolicy}, never a widening of it.
+ *
+ * The seam's truth table is `nativeStrings ? native : host`, which is the exact
+ * decision the resolve-time provider table made by reading `ctx.nativeStrings`
+ * directly. It differs from every family-1 table: `numberBoundary` calls the
+ * native-strings lane unsupported, `booleanBoundary` has no native arm at all,
+ * and `externIsUndefined` also goes native on standalone/WASI — which for this
+ * seam are subsumed, because `standalone` and `wasi` both imply `nativeStrings`.
+ */
+export interface StringComparePolicy {
+  /**
+   * `host` selects the `env.string_compare` base import through the central
+   * `string.compare` capability; `native` selects the `__str_compare` Wasm
+   * helper `ensureNativeStringHelpers` registers.
+   */
+  readonly compare: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string relational compare resolve the arm to this. */
+export const STRING_COMPARE_POLICY_DISABLED: StringComparePolicy = Object.freeze({
+  compare: "unsupported",
+});
+
+/**
+ * (#3526 F2-S3) The exact, already-resolved policy for the STRING EQUALITY
+ * seam (`a === b` / `a !== b` on two strings) — family 2's second policy, and a
+ * SIBLING of {@link StringComparePolicy}, never a widening of it.
+ *
+ * The truth table is the same one (`nativeStrings ? native : host`) because both
+ * seams answer to the same lane flag, but the physical pair is different: this
+ * arm's host provider is the `wasm:js-string.equals` BUILTIN import, not an
+ * `env` one. That namespace only became expressible as a capability record in
+ * F2-S2, which is why this seam could not move with the compare. Keeping the two
+ * policies separate means either seam can later be re-pointed — to a self-hosted
+ * helper, say — without dragging the other with it.
+ */
+export interface StringEqPolicy {
+  /**
+   * `host` selects the `wasm:js-string.equals` builtin import through the
+   * central `string.eq` capability; `native` selects the `__str_equals` Wasm
+   * helper `ensureNativeStringHelpers` registers.
+   */
+  readonly eq: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string equality seam resolve the arm to this. */
+export const STRING_EQ_POLICY_DISABLED: StringEqPolicy = Object.freeze({
+  eq: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -185,6 +246,16 @@ export interface RuntimeManifestPolicy {
    * frozen manifest always publishes the explicit resolved value.
    */
   readonly generatorNumberBox?: GeneratorNumberBoxPolicy;
+  /**
+   * Omission resolves to {@link STRING_COMPARE_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringCompare?: StringComparePolicy;
+  /**
+   * Omission resolves to {@link STRING_EQ_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringEq?: StringEqPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
@@ -193,6 +264,8 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly booleanBoundary: BooleanBoundaryPolicy;
   readonly externIsUndefined: ExternIsUndefinedPolicy;
   readonly generatorNumberBox: GeneratorNumberBoxPolicy;
+  readonly stringCompare: StringComparePolicy;
+  readonly stringEq: StringEqPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -274,6 +347,42 @@ export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type GeneratorNumberBoxRuntimeProviderId = (typeof GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS)[number];
 
+/**
+ * (#3526 F2-S1) The string relational compare seam's requirement.
+ *
+ * Like the generator boxing feature this family has NO intrinsic instruction:
+ * from-ast emits a plain `call` through the `__ir_str_compare` sentinel func-ref
+ * (`IR_STRING_COMPARE_FN`), so the demand is requested at manifest freeze rather
+ * than collected from an `intrinsic` use. The feature exists so the frozen
+ * manifest — not a `ctx.nativeStrings` read inside the resolve-time provider
+ * table — is the authority for which helper answers the seam.
+ */
+export const STRING_COMPARE_RUNTIME_FEATURES = Object.freeze(["js.string.compare"] as const);
+export type StringCompareRuntimeFeature = (typeof STRING_COMPARE_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S1) One provider per admitted string-compare policy arm. */
+export const STRING_COMPARE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.string.compare",
+  "native.js.string.compare",
+] as const);
+export type StringCompareRuntimeProviderId = (typeof STRING_COMPARE_RUNTIME_PROVIDER_IDS)[number];
+
+/**
+ * (#3526 F2-S3) The string equality seam's requirement.
+ *
+ * `string.eq` IS an IR instruction, unlike the compare — but the CALLABLE it
+ * resolves through is still a plain `call` on the `__ir_string_equals` sentinel
+ * func-ref, and the `intrinsic` walk that collects uses sees no `intrinsic`
+ * here. So the demand is requested at freeze from a `string.eq` instruction
+ * scan, exactly as the compare's is from a `call` scan.
+ */
+export const STRING_EQ_RUNTIME_FEATURES = Object.freeze(["js.string.eq"] as const);
+export type StringEqRuntimeFeature = (typeof STRING_EQ_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S3) One provider per admitted string-equality policy arm. */
+export const STRING_EQ_RUNTIME_PROVIDER_IDS = Object.freeze(["host.js.string.eq", "native.js.string.eq"] as const);
+export type StringEqRuntimeProviderId = (typeof STRING_EQ_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -281,6 +390,8 @@ export type RuntimeProviderId =
   | BooleanBoundaryRuntimeProviderId
   | ExternBoundaryRuntimeProviderId
   | GeneratorNumberBoxRuntimeProviderId
+  | StringCompareRuntimeProviderId
+  | StringEqRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -312,9 +423,14 @@ export type RuntimeProviderImplementation =
        * `irImportFuncRef` from that record — the semantic identity stays the
        * versioned `IntrinsicId`, the physical target stays the existing import
        * so legacy consumers and import order do not drift.
+       *
+       * (#3526 F2-S2) Typed on the FUNC half of the capability id union: a
+       * global capability (`string.const`) has no callable spelling, so
+       * naming one here is a compile error, not a lowering-time surprise.
+       * `#indexProviders` carries the runtime twin of this narrowing.
        */
       readonly kind: "host-callable";
-      readonly capability: RuntimeHostCapabilityId;
+      readonly capability: RuntimeHostCapabilityFuncId;
     }
   | {
       /**
@@ -539,12 +655,16 @@ function numberBoundaryProvider(
     | NumberBoundaryRuntimeProviderId
     | BooleanBoundaryRuntimeProviderId
     | ExternBoundaryRuntimeProviderId
-    | GeneratorNumberBoxRuntimeProviderId,
+    | GeneratorNumberBoxRuntimeProviderId
+    | StringCompareRuntimeProviderId
+    | StringEqRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
     | BooleanBoundaryRuntimeFeature
     | ExternBoundaryRuntimeFeature
-    | GeneratorNumberBoxRuntimeFeature,
+    | GeneratorNumberBoxRuntimeFeature
+    | StringCompareRuntimeFeature
+    | StringEqRuntimeFeature,
   signature: IntrinsicSignature,
   implementation: RuntimeProviderImplementation,
   hostCapabilities: readonly HostCapabilityId[],
@@ -661,6 +781,84 @@ export const GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS: readonly RuntimeProviderDef
     [],
   ),
 ]);
+
+/**
+ * (#3526 F2-S1) The string relational compare seam's two arms. Both answer the
+ * same -1/0/1 lexicographic sign: on the host lane through the central
+ * `string.compare` capability record (`env.string_compare`, a BASE import the
+ * legacy import collector mints before any IR preparation runs), on the
+ * native-strings lanes through the `__str_compare` Wasm helper. The manifest
+ * decides WHICH authority answers; it introduces no new spelling and no second
+ * registration path, which is why the migration is byte-neutral.
+ */
+export const STRING_COMPARE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.compare",
+    "js.string.compare",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.compare" },
+    ["string.compare"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.compare",
+    "js.string.compare",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_compare" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted string-compare arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function stringCompareProviderId(policy: StringComparePolicy): StringCompareRuntimeProviderId | null {
+  if (policy.compare === "host") return "host.js.string.compare";
+  return policy.compare === "native" ? "native.js.string.compare" : null;
+}
+
+const STRING_COMPARE_FEATURE_SET: ReadonlySet<string> = new Set(STRING_COMPARE_RUNTIME_FEATURES);
+
+function isStringCompareFeature(feature: RuntimeFeature): feature is StringCompareRuntimeFeature {
+  return STRING_COMPARE_FEATURE_SET.has(feature);
+}
+
+/**
+ * (#3526 F2-S3) The string equality seam's two arms. Both answer the same
+ * 0/1 code-unit equality: on the host lane through the central `string.eq`
+ * capability record (`wasm:js-string.equals`, one of the five builtins
+ * `addStringImports` registers as a block before Phase 3), on the native-strings
+ * lanes through the `__str_equals` Wasm helper. As with the compare, the
+ * manifest decides WHICH authority answers; it introduces no new spelling and no
+ * second registration path, which is why the migration is byte-neutral.
+ */
+export const STRING_EQ_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.eq",
+    "js.string.eq",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "host-callable", capability: "string.eq" },
+    ["string.eq"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.eq",
+    "js.string.eq",
+    EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__str_equals" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted string-equality arm selects, or `null` when
+ * the caller resolved it to unsupported. */
+function stringEqProviderId(policy: StringEqPolicy): StringEqRuntimeProviderId | null {
+  if (policy.eq === "host") return "host.js.string.eq";
+  return policy.eq === "native" ? "native.js.string.eq" : null;
+}
+
+const STRING_EQ_FEATURE_SET: ReadonlySet<string> = new Set(STRING_EQ_RUNTIME_FEATURES);
+
+function isStringEqFeature(feature: RuntimeFeature): feature is StringEqRuntimeFeature {
+  return STRING_EQ_FEATURE_SET.has(feature);
+}
 
 /** The exact provider the admitted generator-box arm selects, or `null` when
  * the caller resolved it to unsupported. */
@@ -920,6 +1118,8 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
     ...EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
     ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS,
+    ...STRING_COMPARE_RUNTIME_PROVIDERS,
+    ...STRING_EQ_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -930,6 +1130,8 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
   ...GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
+  ...STRING_COMPARE_RUNTIME_FEATURES,
+  ...STRING_EQ_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -940,6 +1142,8 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS,
+  ...STRING_COMPARE_RUNTIME_PROVIDER_IDS,
+  ...STRING_EQ_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -1145,12 +1349,16 @@ export class RuntimeManifestBuilder {
     const booleanBoundary = policy.booleanBoundary ?? BOOLEAN_BOUNDARY_POLICY_DISABLED;
     const externIsUndefined = policy.externIsUndefined ?? EXTERN_IS_UNDEFINED_POLICY_DISABLED;
     const generatorNumberBox = policy.generatorNumberBox ?? GENERATOR_NUMBER_BOX_POLICY_DISABLED;
+    const stringCompare = policy.stringCompare ?? STRING_COMPARE_POLICY_DISABLED;
+    const stringEq = policy.stringEq ?? STRING_EQ_POLICY_DISABLED;
     this.#policy = Object.freeze({
       ...policy,
       numberBoundary: Object.freeze({ box: numberBoundary.box, unbox: numberBoundary.unbox }),
       booleanBoundary: Object.freeze({ box: booleanBoundary.box }),
       externIsUndefined: Object.freeze({ probe: externIsUndefined.probe }),
       generatorNumberBox: Object.freeze({ box: generatorNumberBox.box }),
+      stringCompare: Object.freeze({ compare: stringCompare.compare }),
+      stringEq: Object.freeze({ eq: stringEq.eq }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -1403,6 +1611,19 @@ export class RuntimeManifestBuilder {
           `host-capability provider ${provider.id} must request at least one host capability`,
         );
       }
+      // (#3526 F2-S2) Runtime twin of the `host-callable` capability type
+      // narrowing. The static type already rejects a global id; this catches a
+      // provider table that arrived through an `unknown`/`as` boundary, where
+      // lowering would otherwise build a callable target out of a global.
+      if (
+        provider.implementation.kind === "host-callable" &&
+        !isRuntimeHostCapabilityFuncId(provider.implementation.capability)
+      ) {
+        throw new RuntimeManifestInvariantError(
+          "unknown-host-capability",
+          `host-callable provider ${provider.id} names non-callable host capability ${String(provider.implementation.capability)}`,
+        );
+      }
       if (!provider.supportedTargets.every((target) => TARGET_SET.has(target))) {
         throw new RuntimeManifestInvariantError(
           "provider-target-unavailable",
@@ -1494,7 +1715,39 @@ export class RuntimeManifestBuilder {
                 }
                 return candidates.filter((candidate) => candidate.id === selectedId);
               })()
-            : candidates;
+            : // (#3526 F2-S1) Family 2's first policy. Like the generator seam it
+              // carries no intrinsic instruction, so the demand arrives through
+              // `requestFeature`; unlike every family-1 table, its native arm is
+              // selected by `nativeStrings` alone (standalone and WASI imply it).
+              isStringCompareFeature(feature)
+              ? ((): readonly RuntimeProviderDefinition[] => {
+                  const selectedId = stringCompareProviderId(this.#policy.stringCompare);
+                  if (selectedId === null) {
+                    throw new RuntimeManifestInvariantError(
+                      "provider-target-unavailable",
+                      `runtime feature ${feature} is unavailable under string-compare policy ` +
+                        `compare=${this.#policy.stringCompare.compare}`,
+                    );
+                  }
+                  return candidates.filter((candidate) => candidate.id === selectedId);
+                })()
+              : // (#3526 F2-S3) Family 2's second policy, and the compare's exact
+                // sibling: same lane flag, different physical pair. The refusal
+                // names `stringEq` so an operator can tell WHICH string seam a
+                // disabled adapter refused.
+                isStringEqFeature(feature)
+                ? ((): readonly RuntimeProviderDefinition[] => {
+                    const selectedId = stringEqProviderId(this.#policy.stringEq);
+                    if (selectedId === null) {
+                      throw new RuntimeManifestInvariantError(
+                        "provider-target-unavailable",
+                        `runtime feature ${feature} is unavailable under string-eq policy ` +
+                          `eq=${this.#policy.stringEq.eq}`,
+                      );
+                    }
+                    return candidates.filter((candidate) => candidate.id === selectedId);
+                  })()
+                : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",

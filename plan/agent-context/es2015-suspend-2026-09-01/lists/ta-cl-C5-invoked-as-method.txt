@@ -1,0 +1,9 @@
+built-ins/TypedArray/prototype/keys/invoked-as-method.js
+built-ins/TypedArray/prototype/lastIndexOf/invoked-as-method.js
+built-ins/TypedArray/prototype/slice/invoked-as-method.js
+built-ins/TypedArray/prototype/values/invoked-as-method.js
+built-ins/TypedArray/prototype/includes/invoked-as-method.js
+built-ins/TypedArray/prototype/sort/invoked-as-method.js
+built-ins/TypedArray/prototype/indexOf/invoked-as-method.js
+built-ins/TypedArray/prototype/entries/invoked-as-method.js
+built-ins/TypedArray/prototype/join/invoked-as-method.js

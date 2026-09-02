@@ -143,5 +143,16 @@ jobs:
           # which had been CLEAN and unenqueued for three hours while the
           # npm-compat dashboard stayed frozen. Naming both forms grants no new
           # trust: it is the same app, spelled the way each API returns it.
-          TRUSTED_AUTHOR_LOGINS: ttraenkler,${{ steps.app-token.outputs.app-slug }},${{ steps.app-token.outputs.app-slug }}[bot]
+          #
+          # `claude` / `claude[bot]` — the Claude GitHub App (project-lead order,
+          # 2026-09-01). Implementation PRs opened by Claude Code sessions the
+          # maintainer dispatches are authored by this app with
+          # `authorAssociation: NONE`, so they matched none of the three layers
+          # and stranded fully green + CLEAN: #5364/#5367 (manual enqueue),
+          # then #5424 (skipped `untrusted-author:NONE (login=claude)` on four
+          # consecutive sweeps and replaced by the hand-reopened #5425). Both
+          # spellings for the same GraphQL-vs-REST reason as above. The trust
+          # delta: only sessions the maintainer runs can make this app author a
+          # PR, and `cla-check` stays the deeper merge gate.
+          TRUSTED_AUTHOR_LOGINS: ttraenkler,${{ steps.app-token.outputs.app-slug }},${{ steps.app-token.outputs.app-slug }}[bot],claude,claude[bot]
         run: node scripts/enqueue-green-prs.mjs

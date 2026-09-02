@@ -1,0 +1,17 @@
+/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:62288
+    return symbol.flags & 6256 /* LateBindingContainer */ ? getResolvedMembersOrExportsOfSymbol(symbol, "resolvedMembers" /* resolvedMembers */) : symbol.members || emptySymbols;
+                  ^
+
+TypeError: Cannot read properties of undefined (reading 'flags')
+    at getMembersOfSymbol (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:62288:19)
+    at getLateBoundSymbol (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:62298:11)
+    at getSymbolOfDeclaration (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:54484:43)
+    at getSymbolOfNode (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:54487:34)
+    at getFunctionExpressionParentSymbolOrSymbol (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:54494:198)
+    at getResolvedMembersOrExportsOfSymbol (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:62253:27)
+    at getExportsOfSymbol (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:54382:61)
+    at resolveAnonymousTypeMembers (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:62861:19)
+    at resolveStructuredTypeMembers (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:63209:11)
+    at getSignaturesOfStructuredType (/home/user/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js:63906:24)
+
+Node.js v22.22.2

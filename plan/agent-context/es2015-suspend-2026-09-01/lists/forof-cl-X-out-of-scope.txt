@@ -1,0 +1,9 @@
+built-ins/Iterator/prototype/chunks/exhaustion-does-not-call-return.js
+built-ins/Iterator/prototype/chunks/get-next-method-only-once.js
+built-ins/Iterator/prototype/windows/exhaustion-does-not-call-return.js
+built-ins/Iterator/prototype/windows/get-next-method-only-once.js
+built-ins/Map/proto-from-ctor-realm.js
+built-ins/Set/proto-from-ctor-realm.js
+built-ins/WeakMap/proto-from-ctor-realm.js
+built-ins/WeakSet/proto-from-ctor-realm.js
+language/statements/for-of/dstr/array-elem-init-in.js

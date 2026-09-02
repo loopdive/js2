@@ -1,0 +1,1 @@
+language/statements/class/name-binding/const.js
