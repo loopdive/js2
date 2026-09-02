@@ -434,3 +434,55 @@ describe("#5195 Step 11 E — derived-constructor return", () => {
     expect(runHost(BASE_RETURN_SOURCE, "probe")).toBe(1);
   });
 });
+
+describe("#5195 Step 2 — static sidecar for runtime-keyed statics", () => {
+  // The class object is a `$ClassName` struct (#3976 blocker), so a static
+  // member installed under a runtime key had nowhere to live and `C[k]()`
+  // folded to `ref.null.extern`. A parallel `$Object` carries it, and the
+  // dynamic lookup is redirected there when the receiver IS the class-object
+  // singleton — instance receivers of the same class still get the PROTOTYPE.
+  const STATIC_SIDECAR_SOURCE = `
+    function ID(x) { return x; }
+    class C {
+      static [ID('d')]() { return 'SD'; }
+      static [ID(2)]() { return 'S2'; }
+      static s() { return 'S'; }
+      [ID('d')]() { return 'ID'; }
+    }
+    export function probe() {
+      const k = 'd';
+      return C.s() === 'S' && C[k]() === 'SD' && C['d']() === 'SD' && C[2]() === 'S2'
+        && new C()[k]() === 'ID' && new C()['d']() === 'ID' ? 1 : 0;
+    }
+  `;
+
+  it("standalone: runtime-keyed statics resolve, and do not shadow the instance member", async () => {
+    expect(await runStandalone(STATIC_SIDECAR_SOURCE, "probe", "issue-5195-static-sidecar.js")).toBe(1);
+  });
+
+  it("host lane agrees on the static sidecar", () => {
+    expect(runHost(STATIC_SIDECAR_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a class with only FOLDING static keys builds no
+  // sidecar and keeps every static lane it had.
+  const STATIC_FOLDED_SOURCE = `
+    class C {
+      static m() { return 1; }
+      static ['n']() { return 2; }
+      static get g() { return 3; }
+      static p = 4;
+    }
+    export function probe() {
+      return C.m() === 1 && C.n() === 2 && C.g === 3 && C.p === 4 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a class with only folding static keys is unchanged", async () => {
+    expect(await runStandalone(STATIC_FOLDED_SOURCE, "probe", "issue-5195-static-folded.js")).toBe(1);
+  });
+
+  it("host lane agrees on the folding-static control", () => {
+    expect(runHost(STATIC_FOLDED_SOURCE, "probe")).toBe(1);
+  });
+});

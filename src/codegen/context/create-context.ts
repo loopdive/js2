@@ -379,6 +379,7 @@ export function createCodegenContext(
     classMethodNames: new Map(),
     classDynamicMembers: new Map(),
     classDynamicKeyGlobals: new Map(),
+    classStaticSidecarGlobals: new Map(),
     classMethodsCsvGlobal: new Map(),
     classObjectGlobals: new Map(),
     classStaticMethodNames: new Map(),

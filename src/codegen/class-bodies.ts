@@ -1874,6 +1874,25 @@ export function collectClassDeclaration(
     ctx.classDynamicKeyGlobals.set(mapKey, keyGlobalIdx);
   }
 
+  // (#5195 Step 2) The static sidecar `$Object`, for a class with a static
+  // member whose key is only known at runtime. Registered here so the global
+  // index is stable before any body bakes a read of it; the object itself is
+  // built lazily at ClassDefinitionEvaluation (`class-static-sidecar.ts`).
+  if (
+    ctx.standalone &&
+    !ctx.classStaticSidecarGlobals.has(className) &&
+    (ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic)
+  ) {
+    const sidecarGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__static_${className}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classStaticSidecarGlobals.set(className, sidecarGlobalIdx);
+  }
+
   // (#1395) Collect own static method names — analog of the prototype loop
   // above. Used by `_staticMethodNames` allowlist so
   // `Object.getOwnPropertyDescriptor(C, "m")` returns the spec descriptor for

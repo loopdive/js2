@@ -3850,6 +3850,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * once at ClassDefinitionEvaluation, read by the prototype-`$Object` install.
    */
   classDynamicKeyGlobals: Map<string, number>;
+  /**
+   * (#5195 Step 2) Class name → global index of the STATIC sidecar `$Object`
+   * (`class-static-sidecar.ts`). The class object itself stays a `$ClassName`
+   * struct (#3976); this parallel object carries its static members so a
+   * runtime-keyed static (`C[x || 1]()`) is reachable at all.
+   */
+  classStaticSidecarGlobals: Map<string, number>;
   /** Map from class name → global idx of the method-name CSV string constant (see #1047) */
   classMethodsCsvGlobal: Map<string, number>;
   /** Map from class name → global index of the class-object externref singleton (#1395). Used so `C` resolves to a real object whose static-method descriptors are queryable. */

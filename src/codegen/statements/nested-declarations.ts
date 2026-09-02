@@ -57,8 +57,10 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  resolveInstallableClassMemberName,
   resolveWasmType,
 } from "../index.js";
+import { emitClassStaticSidecar } from "../class-static-sidecar.js"; // (#5195 Step 2)
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
 import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
@@ -434,6 +436,14 @@ export function emitUnresolvedComputedAccessorNameEffects(
   // actually have a runtime-keyed member pay for this.
   if (owner !== undefined && (ctx.classDynamicMembers.get(owner)?.length ?? 0) > 0) {
     if (emitLazyProtoGet(ctx, fctx, owner)) fctx.body.push({ op: "drop" });
+    // (#5195 Step 2) …and the STATIC sidecar, for the same reason: its keys are
+    // the ones just written, and a static member with a runtime key is
+    // unreachable until the object holding it exists.
+    if (
+      emitClassStaticSidecar(ctx, fctx, owner, (member) => resolveInstallableClassMemberName(ctx, owner, decl, member))
+    ) {
+      fctx.body.push({ op: "drop" });
+    }
   }
 }
 

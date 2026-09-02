@@ -38,6 +38,8 @@ loc-budget-allow:
   - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/index.ts
+coercion-sites-allow:
+  - src/codegen/class-proto-lookup.ts
 func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/statements/nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects
@@ -108,6 +110,15 @@ folded to `ref.null.extern`; `calls.ts` (+3) for exporting the receiver-class
 resolver that clause needs; `index.ts` / `::generateModule` /
 `::generateMultiModule` (+7/+4/+2) for the one finalize call that mints
 `__class_proto_lookup` (new leaf file `class-proto-lookup.ts`).
+
+Coercion-sites allowance (2026-09-02, Step 2): `class-proto-lookup.ts`
+(`number_toString` +1) — `class C { [ID(2)]() {} }` spells its member with a
+NUMERIC key, and `C[2]` / `new C()[2]` lower to `__extern_get_idx(recv, f64)`,
+whose own `$Object` arm converts the index with `number_toString` before
+delegating to `__extern_get` (#2551: the canonical decimal key, not a truncated
+one). The class-receiver arm added here delegates the same way and therefore
+calls the same helper for the same reason — reuse of the existing engine call,
+not a new hand-rolled ToString.
 
 ## Problem
 

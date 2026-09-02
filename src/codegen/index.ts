@@ -499,6 +499,7 @@ import {
   collectDeclaredFuncRefs,
   compileClassBodies,
   resolveClassMemberName,
+  resolveInstallableClassMemberName,
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
@@ -689,6 +690,7 @@ export {
   collectEnumDeclarations,
   collectClassDeclaration,
   compileClassBodies,
+  resolveInstallableClassMemberName,
   destructureParamArray,
   destructureParamObject,
   destructureParamObjectExternref,

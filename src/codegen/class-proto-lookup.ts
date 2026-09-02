@@ -46,6 +46,7 @@ import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
+import { classStaticSidecarApplies } from "./class-static-sidecar.js"; // (#5195 Step 2)
 
 const LOOKUP_NAME = "__class_proto_lookup";
 
@@ -55,6 +56,10 @@ interface ProtoLookupEntry {
   protoGlobalIdx: number;
   /** Inheritance depth — arms are emitted most-derived first (see below). */
   depth: number;
+  /** (#5195 Step 2) The static sidecar `$Object`, when this class has one. */
+  sidecarGlobalIdx?: number;
+  /** The class-object singleton to compare the receiver against, for the above. */
+  classObjectGlobalIdx?: number;
 }
 
 function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
@@ -66,7 +71,19 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
     if (structTypeIdx === undefined || protoGlobalIdx === undefined) continue;
     let depth = 0;
     for (let c = className; ctx.classParentMap.has(c) && depth < 64; c = ctx.classParentMap.get(c)!) depth++;
-    entries.push({ className, structTypeIdx, protoGlobalIdx, depth });
+    const sidecarGlobalIdx = classStaticSidecarApplies(ctx, className)
+      ? ctx.classStaticSidecarGlobals.get(className)
+      : undefined;
+    const classObjectGlobalIdx = ctx.classObjectGlobals.get(className);
+    entries.push({
+      className,
+      structTypeIdx,
+      protoGlobalIdx,
+      depth,
+      ...(sidecarGlobalIdx !== undefined && classObjectGlobalIdx !== undefined
+        ? { sidecarGlobalIdx, classObjectGlobalIdx }
+        : {}),
+    });
   }
   // `ref.test` succeeds for a SUBTYPE too, so a base-class arm placed first
   // would swallow every derived instance and hand back the base prototype.
@@ -92,6 +109,38 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
 
   const body: Instr[] = [];
   for (const entry of entries) {
+    // (#5195 Step 2) The class-OBJECT singleton (`__class_<C>`) is ALSO a `$C`
+    // struct, so it matches the instance test below. Its dynamic member lookup
+    // belongs to the STATIC sidecar, not to the instance prototype — check
+    // reference identity against the singleton first. `global.get` may still be
+    // null (the class object is lazily built); `ref.eq` with a null side is
+    // simply false, which is the right answer for "not that object".
+    const sidecarArm: Instr[] =
+      entry.sidecarGlobalIdx === undefined || entry.classObjectGlobalIdx === undefined
+        ? []
+        : [
+            { op: "global.get", index: entry.classObjectGlobalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: entry.structTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: entry.structTypeIdx },
+                { op: "global.get", index: entry.classObjectGlobalIdx },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: entry.structTypeIdx },
+                { op: "ref.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "global.get", index: entry.sidecarGlobalIdx }, { op: "return" }],
+                },
+              ],
+            },
+          ];
     body.push(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -99,15 +148,10 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
       {
         op: "if",
         blockType: { kind: "empty" },
-        // The class-OBJECT singleton (`__class_<C>`) and, for a class that kept
-        // the legacy defaulted prototype, the prototype singleton are also
-        // `$C` structs. Neither reaches here in practice for a class with a
-        // runtime-keyed member — its prototype is an `$Object`, and a read off
-        // the class object is a STATIC-side lookup that this arm does not
-        // serve — but returning the instance prototype for them would be a
-        // wrong answer rather than a missing one, so the caller's own-property
-        // guard, not this map, is what keeps the two apart.
-        then: [{ op: "global.get", index: entry.protoGlobalIdx }, { op: "return" }],
+        // For a class that kept the legacy defaulted prototype the prototype
+        // singleton is also a `$C` struct, but such a class has no `$Object`
+        // prototype and therefore no entry here at all.
+        then: [...sidecarArm, { op: "global.get", index: entry.protoGlobalIdx }, { op: "return" }],
       },
     );
   }
@@ -121,6 +165,38 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
   // `__extern_get(externref obj, externref key)` — two params, so the first
   // appended local sits at 2 + locals.length. Locals are APPENDED, never
   // renumbered, so every previously-baked index in this body stays valid.
+  // (#5195 Step 2) `C[1]` / `new C()[2]` lower to `__extern_get_idx(recv, f64)`,
+  // not to `__extern_get` — and that native's `$Object` arm (which delegates to
+  // `__extern_get` under the canonical decimal key) is `ref.test $Object`-gated,
+  // so a class receiver fell straight to its undefined miss. Route it back into
+  // `__extern_get` under the same canonical key, where the arm below applies.
+  // Numeric computed keys are exactly how `class C { [ID(2)]() {} }` spells its
+  // member, so without this the whole numeric half of the cluster is unreachable.
+  const externGetIdxFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get_idx");
+  const numberToStringIdx = ctx.funcMap.get("number_toString");
+  if (externGetIdxFn && numberToStringIdx !== undefined) {
+    const idxScratch = 2 + externGetIdxFn.locals.length;
+    externGetIdxFn.locals.push({ name: "__class_proto_target", type: { kind: "externref" } });
+    externGetIdxFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: lookupIdx },
+      { op: "local.tee", index: idxScratch },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: numberToStringIdx },
+          { op: "call", funcIdx: externGetIdx },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
   const scratch = 2 + externGetFn.locals.length;
   externGetFn.locals.push({ name: "__class_proto_target", type: { kind: "externref" } });
   externGetFn.body.unshift(
