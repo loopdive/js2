@@ -442,6 +442,7 @@ describe("#4104 IR async plan runtime consumer", () => {
       stringCompare: { compare: "unsupported" },
       stringEq: { eq: "unsupported" },
       stringLen: { len: "unsupported" },
+      stringConcat: { concat: "unsupported" },
     });
     expect(standalone.manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
     expect(standalone.manifest.hostCapabilities).toEqual([]);
