@@ -1,0 +1,183 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * (#5270) ES2015 standalone expressions, r2 residual pass.
+ *
+ * One `describe` per implementation step. Every standalone pin asserts the
+ * module emits ZERO host imports (`result.imports` empty — the same gate the
+ * test262 runner applies, #2961) and reads its output back through the module's
+ * own `__stdout_prepare` / `__stdout_char` exports (#3469), the only host-free
+ * channel a standalone module has.
+ *
+ * Each pin was verified to FAIL on the pre-change tree (file-copy A/B).
+ */
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+/**
+ * Compile `body` as a standalone module and return the lines it printed.
+ * `LOG(s)` is `console.log`; a module-level throw appends a `THREW` line so a
+ * pin can assert on a refusal without decoding a Wasm-GC payload on the host.
+ */
+async function runStandaloneLines(body: string): Promise<string[]> {
+  const source = `function LOG(s) { console.log(s); }\n${body}\n`;
+  const result = await compile(source, {
+    allowJs: true,
+    fileName: "issue-5270-es2015-expressions-r2.js",
+    skipSemanticDiagnostics: true,
+    target: "standalone",
+    nativeStrings: true,
+    hostBridge: "always",
+    deferTopLevelInit: true,
+  });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+  expect(result.imports.map((i) => `${i.module}::${i.name}`)).toEqual([]);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  const exports = instance.exports as Record<string, (...args: number[]) => number>;
+  let threw = false;
+  try {
+    exports.__module_init!();
+  } catch {
+    threw = true;
+  }
+  const length = exports.__stdout_prepare!() | 0;
+  let sink = "";
+  for (let i = 0; i < length; i++) sink += String.fromCharCode(exports.__stdout_char!(i) & 0xffff);
+  const lines = sink.split("\n").filter((l) => l.length > 0);
+  if (threw) lines.push("THREW");
+  return lines;
+}
+
+/** Compile `body` for the JS-host lane and return the lines it printed. */
+async function runHostLines(body: string): Promise<string[]> {
+  const lines: string[] = [];
+  const source = `function LOG(s) { console.log(s); }\n${body}\n`;
+  const result = await compile(source, {
+    allowJs: true,
+    fileName: "issue-5270-es2015-expressions-r2-host.js",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+  const imports = (result.importObject ?? {}) as WebAssembly.Imports & {
+    __setInstance?: (i: WebAssembly.Instance) => void;
+  };
+  const env = (imports as Record<string, Record<string, unknown>>).env;
+  if (env && typeof env.console_log === "function") {
+    const inner = env.console_log as (...a: unknown[]) => unknown;
+    env.console_log = (...a: unknown[]) => {
+      lines.push(String(a[0]));
+      return inner(...a);
+    };
+  }
+  const original = console.log;
+  console.log = (...a: unknown[]) => void lines.push(String(a[0]));
+  try {
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.__setInstance?.(instance);
+    const init = (instance.exports as Record<string, () => void>).__module_init;
+    init?.();
+  } finally {
+    console.log = original;
+  }
+  return lines;
+}
+
+describe("#5270 step 1 — tail calls in return position", () => {
+  // Cluster A: `canTailCall` refused every externref RESULT under standalone,
+  // so no value-returning standalone JS function was ever tail-call optimised.
+  // A `return undefined` also lowers to an externref result, which is why even
+  // the void-looking probes overflowed.
+  it("promotes a 100000-deep comma tail call in a named function expression", async () => {
+    const lines = await runStandaloneLines(`
+      var callCount = 0;
+      (function f(n) { if (n === 0) { callCount += 1; return; } return 0, f(n - 1); }(100000));
+      LOG("callCount=" + callCount);
+    `);
+    expect(lines).toEqual(["callCount=1"]);
+  });
+
+  it("promotes a 100000-deep tail call through a module-level function value", async () => {
+    const lines = await runStandaloneLines(`
+      var callCount = 0;
+      var f = function (n) { if (n === 0) { callCount += 1; return; } return f(n - 1); };
+      f(100000);
+      LOG("callCount=" + callCount);
+    `);
+    expect(lines).toEqual(["callCount=1"]);
+  });
+
+  it("promotes a conditional tail call whose result is an object", async () => {
+    const lines = await runStandaloneLines(`
+      var callCount = 0;
+      function f(n) { if (n === 0) { callCount += 1; return { done: true }; } return n > 0 ? f(n - 1) : null; }
+      var r = f(100000);
+      LOG("callCount=" + callCount + " done=" + r.done);
+    `);
+    expect(lines).toEqual(["callCount=1 done=true"]);
+  });
+
+  // (step 1.3) The `__fn_tramp_*` forwarder is a PURE forwarder — nothing runs
+  // after its inner call — so its frame must not survive. With a plain `call`
+  // the `f → __fn_tramp_f → f` cycle of a function reached through its own
+  // closure VALUE grew TWO frames per iteration. Shape-pinned rather than
+  // behaviour-pinned because the remaining half of that cycle (the bare-call
+  // `__current_this` save/restore straddling `f`'s own tail call) still blocks
+  // full elimination — see the step-1 note in the issue file.
+  it("emits the funcref trampoline forwarder as return_call", async () => {
+    const result = await compile(
+      `var callCount = 0;
+       (function () {
+         var bump = 1;
+         function f(n) { if (n === 0) { callCount += bump; return; } return f(n - 1); }
+         var alias = f;
+         alias(10);
+       })();`,
+      {
+        allowJs: true,
+        fileName: "issue-5270-tramp.js",
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+        nativeStrings: true,
+      },
+    );
+    expect(result.success).toBe(true);
+    const names = [...result.wat.matchAll(/\(func \$(__fn_tramp_\w+_\d+) /g)].map((m) => m[1]!);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const start = result.wat.indexOf(`(func $${name} `);
+      const end = result.wat.indexOf("\n  (func $", start + 1);
+      const body = result.wat.slice(start, end < 0 ? undefined : end);
+      expect(body, `${name} forwards with a plain call`).toContain("return_call");
+    }
+  });
+
+  // ── Controls for the COMMON case of the mechanism this step touches ──
+
+  it("keeps a NON-tail call non-tail (the addition still needs the frame)", async () => {
+    const lines = await runStandaloneLines(`
+      function sumTo(n) { if (n === 0) return 0; return n + sumTo(n - 1); }
+      LOG("sum=" + sumTo(10));
+    `);
+    expect(lines).toEqual(["sum=55"]);
+  });
+
+  it("keeps ordinary (non-recursive) calls and their return values intact", async () => {
+    const body = `
+      function twice(n) { return n * 2; }
+      function apply(fn, n) { return fn(n); }
+      var obj = { m: function (n) { return this.base + n; }, base: 10 };
+      LOG("a=" + twice(21) + " b=" + apply(twice, 5) + " c=" + obj.m(7));
+    `;
+    expect(await runStandaloneLines(body)).toEqual(["a=42 b=10 c=17"]);
+    // The host lane answers identically — this step changes no host semantics.
+    expect(await runHostLines(body)).toEqual(["a=42 b=10 c=17"]);
+  });
+
+  it("still runs a try/catch around a tail-position call (#1972 stays refused)", async () => {
+    const lines = await runStandaloneLines(`
+      function boom() { throw new Error("x"); }
+      function guarded() { try { return boom(); } catch (e) { return "caught"; } }
+      LOG(guarded());
+    `);
+    expect(lines).toEqual(["caught"]);
+  });
+});

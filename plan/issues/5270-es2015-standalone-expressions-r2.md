@@ -1,7 +1,7 @@
 ---
 id: 5270
 title: "ES2015 standalone: expressions — r2 residual pass (89 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-02
 updated: 2026-09-02
@@ -752,3 +752,74 @@ the reason):
   cluster A (`p21`, `p21b`, `p51`; 2.4 MB each) are not committed — regenerate
   with `npx tsx src/cli.ts <probe.js> --target standalone --wat -o <dir>`
   (the WAT goes to stdout).
+
+## 2026-09-02 implementation (Opus)
+
+Worktree `.claude/worktrees/agent-a7c46b8b6c522fd0e`, branch
+`worktree-agent-a7c46b8b6c522fd0e`, base `77ca8fbaae`.
+
+**Honest base, measured in this worktree** with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-head.txt --standalone`
+(89 in-scope rows): **0 pass · 88 fail · 1 compile_error**. Controls
+(`expr-controls.txt`, 20 rows): **20/20 pass**.
+
+### Step 1 — TCO (cluster A, 11 rows): 0 → 8 pass
+
+`expr-cl-A-tco.txt` before **0 pass / 11 fail**, after **8 pass / 3 fail**.
+Flipped: `call/tco-call-args`, `comma/tco-final`, `conditional/tco-cond`,
+`conditional/tco-pos`, `logical-and/tco-right`, `logical-or/tco-right`,
+`tagged-template/tco-call`, `tagged-template/tco-member`.
+
+1.1 **The externref refusal had no reason and is gone.** `git log -S` on
+`calleeRet.kind === "externref"` finds only the 2026-08-30 tree import
+`c882d1b110`; #822 (argument types / stack setup), #839 (constructor stack
+args) and #1972 (try-with-handler) are all about something else. The only pin
+was `tail-call-optimization.test.ts` "keeps only host-free externref
+boundaries as ordinary calls", which **restates the guard** with no rationale
+of its own. Relaxed, and the pin rewritten to what now matters: both lanes
+promote the externref tail, the standalone module still validates, and
+`test()` still answers 42. Its practical reach was total — `return undefined`
+also lowers to an externref result, so NO value-returning standalone JS
+function was ever tail-call optimised.
+
+1.2 **The param-COUNT equality is gone.** Wasm validates
+`return_call x : [t1* t3*] → [t2*]`, i.e. the operand stack below the callee's
+arguments is polymorphic, so the CALLER's arity is irrelevant. #822 WI1's
+"not enough arguments on the stack" is about the operands the call site
+pushed (a well-formed `call` always has them), and the equality was only a
+proxy for it. Both refusals now live in one shared
+`tailCallResultsMatch(fctx, calleeResults)`.
+
+1.3 **`__fn_tramp_*` forwards with `return_call`** (both emitters in
+`closures/funcref-as-closure.ts`), guarded on the callee's result list
+matching the trampoline's. A pure forwarder's frame must not survive; with a
+plain `call` the `f → __fn_tramp_f → f` cycle grew two frames per iteration.
+
+**Not done in step 1 (3 rows), with reasons:**
+
+- `call/tco-non-eval-function` — `var eval = f; return eval(n-1)` inside a
+  strict function. Step 1.3 removed the trampoline frame (the trace went from
+  `__fn_tramp_f_N ← f ← __fn_tramp_f_N` to `f ← f ← f`), but `f`'s own tail
+  call is a BARE call, and `emitBareCallReceiverReset` (`expressions/calls.ts:143`)
+  wraps it in `global.get $__current_this; local.set $prev; ref.null.extern;
+  global.set $__current_this; <call>; local.get $prev; global.set
+  $__current_this`. The restore sits AFTER the call, so `peelToTailCallIdx`
+  cannot reach it, and peeling through it is **not** the same free move as the
+  #1511 `__argc` reset: the restore is what puts the caller's receiver back for
+  code that runs after `f` RETURNS, one frame up. A statically-called
+  `function outer() { return f() + this.x; }` would read a clobbered
+  `__current_this`. Needs a separate design (e.g. proving the enclosing
+  dispatcher restores, which the method dispatcher does at
+  `closure-exports.ts:1805` but a direct `call` does not) — not worth
+  guessing at inside this step.
+- `call/tco-non-eval-global` and `call/tco-non-eval-with` — the two rows the
+  plan already named as stretch (a script-level `eval = f` assignment must
+  shadow the intrinsic for later call sites; `-with` additionally needs #5271
+  D3). Both keep their pre-change signature (`callCount 0`), unchanged by this
+  step.
+
+**Pre-existing red, NOT caused by this step:** `tests/issue-839.test.ts >
+static async private method via this (sub-pattern 2: type mismatch)` fails on
+HEAD `77ca8fbaae` with both touched files reverted to their base content —
+`C_getDollar failed: call[0] expected type f64, found block of type externref`.
+Verified by A/B file copy.

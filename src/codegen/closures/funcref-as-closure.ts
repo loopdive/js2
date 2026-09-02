@@ -16,7 +16,8 @@ import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
-import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { valTypesMatch } from "../shared.js";
 import {
   observeProgramAbiFunctionValue,
   sourceFunctionDeclarationForHandle,
@@ -41,6 +42,35 @@ function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration
   if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
   const first = declaration.parameters[0];
   return first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
+}
+
+/**
+ * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the
+ * closure ABI's arguments and calls the lifted function, with nothing after the
+ * call. Its frame therefore must not survive: with a plain `call` the recursion
+ * `f → __fn_tramp_f → f` grows two frames per iteration, so a self-recursive
+ * function reached through its closure VALUE (`var eval = f; return eval(n-1)`)
+ * overflows even when `f`'s own tail call is promoted. `return_call` replaces
+ * the trampoline frame with the callee's, which is exactly what the forwarder
+ * means.
+ *
+ * Emitted only when the callee's result list matches the trampoline's own — the
+ * one soundness requirement of `return_call` (the operand stack below the
+ * arguments is polymorphic, so the differing PARAM counts of the two are
+ * irrelevant). Falls back to `call` when the callee's type cannot be resolved.
+ */
+function trampolineForwardCall(ctx: CodegenContext, trampolineTypeIdx: number, funcIdx: number): Instr {
+  const tramp = ctx.mod.types[trampolineTypeIdx];
+  const callee = definedFuncAt(ctx, funcIdx);
+  const calleeType = callee ? ctx.mod.types[callee.typeIdx] : undefined;
+  if (tramp?.kind === "func" && calleeType?.kind === "func") {
+    const a = tramp.results;
+    const b = calleeType.results;
+    if (a.length === b.length && a.every((t, i) => valTypesMatch(t, b[i]!))) {
+      return { op: "return_call", funcIdx };
+    }
+  }
+  return { op: "call", funcIdx };
 }
 
 /**
@@ -519,7 +549,7 @@ export function emitFuncRefAsClosure(
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
-    trampolineBody.push({ op: "call", funcIdx });
+    trampolineBody.push(trampolineForwardCall(ctx, liftedFuncTypeIdx, funcIdx));
 
     const trampolineFuncIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, trampolineFuncIdx, {
@@ -601,7 +631,7 @@ export function emitFuncRefAsClosure(
   for (let i = 0; i < userParams.length; i++) {
     trampolineBody.push({ op: "local.get", index: i + 1 });
   }
-  trampolineBody.push({ op: "call", funcIdx });
+  trampolineBody.push(trampolineForwardCall(ctx, liftedFuncTypeIdx, funcIdx));
 
   const trampolineFuncIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, trampolineFuncIdx, {
