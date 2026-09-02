@@ -4128,3 +4128,43 @@ byte-neutrality evidence is `routes-fixdefault.jsonl` alone, whose 10 shas match
 and `.tmp/r4-gap6b/rev/ca-bytes.mts` (item 4b, the executed Family-A run, and the phase timings).
 Read-only worktree `.claude/worktrees/r4-gap6b-main` detached at `4abfe80e`, clean. No tracked file
 was modified.
+## 2026-09-02 — R4 is what gates R9's coverage closure (measured)
+
+This issue was already `priority: critical`. What was missing was evidence of
+*how much* downstream work waits on it, and that evidence now exists — measured
+against `tests/dogfood/corpus` (20 real programs) using the `check:ir-only`
+gate's own lane observers, which take an entry-list override.
+
+| | dogfood single-host | dogfood standalone |
+| --- | --- | --- |
+| module-init units | 20 | 20 |
+| of those, **emitted** | **0** | **0** |
+| of those, unsupported | 19 | 16 |
+| non-module-init unsupported | 14 | 14 |
+
+**Module-init adoption on that corpus is zero.** `<module-init>` accounts for
+17 of the 19 `body-shape-rejected` units and 19 of the 33 single-host
+rejections overall — roughly 58% of the whole gap on that lane, ~45% on
+standalone. The class family (#3522) is 7 of 33: real, but a third the size.
+
+Two things this implies for how R4 is scheduled:
+
+1. **R9's fail-closed flip cannot be scheduled ahead of this issue.** Widening
+   the IR-only corpus past the five playground files without module-init
+   compile-once converts the majority of the gap into permanent red rather than
+   a ratchet that can close.
+2. **The current green gate does not measure this issue's subject matter.**
+   `check:ir-only`'s five entries hold five module-init units: 2 emitted, **3
+   non-executable**, 0 unsupported. A non-executable module-init has no body by
+   construction, so the gate exercises module-init on exactly two files. That is
+   why R4 can be this far from done while the gate reports READY.
+
+Recorded on `#3518` in full, including the correction that produced it: reading
+the rejection histogram by reason alone pointed at R3, and only grouping by
+`unitKind` — a field already present in the telemetry — moved it to R4.
+`body-shape-rejected` is emitted from ~20 sites in `src/ir/from-ast.ts` spanning
+unrelated constructs, so it names a demote path, not a feature area.
+
+This does not change the gap-6b verdict recorded above: that slice stays gated
+on its stated preconditions (P1, P4 and #5276). It raises the value of clearing
+them, it does not remove them.

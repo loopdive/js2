@@ -101,7 +101,13 @@ milestone. The retirement now follows #3518's dependency spine:
 9. **R8 / #3528 — blocked on R5–R7:** linear consumes the exact same Prepared
    program, ABI, runtime manifest, and async plans.
 10. **R9 — policy flip:** fail-closed IR-only becomes the sole production mode;
-   remove hybrid demotion and every legacy escape hatch.
+   remove hybrid demotion and every legacy escape hatch. **Its coverage-closure
+   dependency is R4 first, measured 2026-09-02** — on `tests/dogfood/corpus`
+   module-init adoption is 0 of 20 executable units on both lanes, and
+   `<module-init>` accounts for 17 of the 19 `body-shape-rejected` units and 19
+   of 33 single-host rejections overall. `check:ir-only` is green partly because
+   3 of its 5 module-init units are non-executable. Full measurement and the
+   correction that produced it: `plan/issues/3518-...md`.
 11. **R10 — subtraction:** re-run #3090 and delete the proven-unreachable
     direct front-end.
 
@@ -168,11 +174,11 @@ evidence.
 | **3518** | IR-only default and direct front-end retirement | current | in-progress | critical |
 | **3519** | IR-only R0: typed preparation outcomes and an honest readiness gate | 74 | done | critical |
 | **3520** | IR-only R1: source-qualified unit identity and whole-program ABI map | current | in-progress | critical |
-| **3521** | IR-only R2: prepare-before-emit free-function ownership | Backlog | blocked | critical |
-| **3522** | IR-only R3: compile-once classes, members, and closures | Backlog | blocked | critical |
-| **3523** | IR-only R4: typed ordered module-init compile-once ownership | Backlog | blocked | critical |
-| **3525** | IR-only R5: whole-program single- and multi-source Prepared ownership | Backlog | blocked | critical |
-| **3526** | IR-only R6: typed semantic runtime contract and frozen feature manifest | Backlog | blocked | critical |
+| **3521** | IR-only R2: prepare-before-emit free-function ownership | current | in-progress | critical |
+| **3522** | IR-only R3: compile-once classes, members, and closures | current | in-progress | critical |
+| **3523** | IR-only R4: typed ordered module-init compile-once ownership | current | in-progress | critical |
+| **3525** | IR-only R5: whole-program single- and multi-source Prepared ownership | current | in-progress | critical |
+| **3526** | IR-only R6: typed semantic runtime contract and frozen feature manifest | Backlog | in-progress | critical |
 | **3527** | IR-only R7: AST-free async suspension plans and canonical Promise ABI | Backlog | blocked | critical |
 | **3528** | IR-only R8: linear consumes the shared Prepared IR program | Backlog | blocked | critical |
 | **3529** | IR R0 prerequisite: typed producer equivalence parity | 74 | done | critical |
