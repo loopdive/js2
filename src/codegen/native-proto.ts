@@ -168,6 +168,20 @@ export interface NativeProtoBuiltinGlue {
    * string constant by the static value read.
    */
   dataProps?: ReadonlyArray<readonly [string, string]>;
+  /**
+   * (#5269 D-1) String-keyed own ACCESSOR properties — a getter/setter PAIR.
+   * `Error.prototype.stack` is the case this exists for (§ error-stack-accessor
+   * proposal): unlike every `memberKind: "getter"` member, it has a real
+   * setter, so the one-sided getter seeding above cannot express it, and unlike
+   * `dataProps` it is not a value.
+   *
+   * `get` / `set` are member names handed to the same closure factory the
+   * methods use, so both halves are ordinary identity-stable function values
+   * with honest `.name` / `.length` and `isConstructor === false`. They are
+   * deliberately NOT in `memberCsv`: a CSV entry would seed the accessor's own
+   * key a second time, as a method.
+   */
+  accessorProps?: ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>;
   /** Which members are accessor getters (`kind:"getter"`) vs data methods
    *  (`kind:"method"`). `@@<id>` symbol members are always `"method"`. */
   memberKind: (member: string) => "getter" | "method";
@@ -466,6 +480,10 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
     // (#5156) Seeded string DATA properties are companion entries too, so
     // `delete Error.prototype.message` / a redefinition must be observable.
     for (const [key] of glue.dataProps ?? []) members.push(key);
+    // (#5269 D-1) Same reasoning as dataProps: the accessor lives in the
+    // companion, so `hasOwnProperty` / `delete` / gOPD must see it — but only
+    // once the accessor seeder is actually available.
+    if (accessorSeederAvailable) for (const { key } of glue.accessorProps ?? []) members.push(key);
     if (members.length > 0) out.set(brand, members);
   }
   return out;
@@ -694,6 +712,30 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     addStringConstantGlobal(ctx, value);
     for (const instr of stringConstantExternrefInstrs(ctx, value)) body.push(instr);
     body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+    body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
+    installed++;
+  }
+
+  // (#5269 D-1) String-keyed own ACCESSOR properties (Error.prototype.stack).
+  // Both halves are minted as real closures — `refusalBodyFallback` is off on
+  // purpose: an accessor whose getter throws on every read would be worse than
+  // the property being absent, so a glue that cannot supply the bodies must
+  // seed nothing at all and leave the prototype as it was.
+  for (const { key, get, set } of glue.accessorProps ?? []) {
+    const defineIdx = ctx.funcMap.get("__defineProperty_accessor") ?? defineAccessorIdx;
+    if (defineIdx === undefined) continue;
+    const getter = ensureStandaloneNativeMethodClosure(ctx, brand, get, "method");
+    const setter = ensureStandaloneNativeMethodClosure(ctx, brand, set, "method");
+    if (!getter || !setter) continue;
+    const body = seedFctx.body;
+    body.push({ op: "local.get", index: 0 });
+    addStringConstantGlobal(ctx, key);
+    for (const instr of stringConstantExternrefInstrs(ctx, key)) body.push(instr);
+    for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, getter)) body.push(instr);
+    body.push({ op: "extern.convert_any" });
+    for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, setter)) body.push(instr);
+    body.push({ op: "extern.convert_any" });
+    body.push({ op: "f64.const", value: PROTO_ACCESSOR_DEFINE_FLAGS });
     body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
     installed++;
   }

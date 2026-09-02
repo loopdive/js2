@@ -378,7 +378,7 @@ import {
   resolveExternrefVecArg,
   type NativeCombinator,
 } from "../promise-combinators.js";
-import { emitWasiErrorConstructor } from "../registry/error-types.js"; // (#2922) native TypeError for not-iterable reject
+import { emitWasiErrorConstructor, ensureNativeSuppressedErrorCtor } from "../registry/error-types.js"; // (#2922) native TypeError for not-iterable reject; (#5269 E-2) host-free SuppressedError
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
   defaultValueInstrs,
@@ -7899,6 +7899,22 @@ function compileCallExpression(
   }
   if (ts.isIdentifier(_suppCallee) && _suppCallee.text === "SuppressedError") {
     const args = expr.arguments ?? [];
+    // (#5269 E-2) Standalone has no `env::__new_SuppressedError` to import, and
+    // asking for one is not free: the import lands in `result.imports` and the
+    // module fails the host-import leak check (#2961/#5272) before it runs. Ask
+    // the native constructor FIRST — before any argument is emitted — so a
+    // decline leaves this arm byte-identical to what it was.
+    let nativeSuppressedIdx: number | undefined;
+    if (noJsHost(ctx)) {
+      // The native ctor stores `error`/`suppressed` on the `$props` sidecar, so
+      // it needs the object runtime's property helpers; ensure them here, above
+      // the registry layer that owns the constructor itself. Ensuring a runtime
+      // can register late imports, which renumbers every funcIdx already baked
+      // into this body — flush before emitting anything else.
+      ensureObjectRuntime(ctx);
+      flushLateImportShifts(ctx, fctx);
+      nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
+    }
     for (let i = 0; i < 4; i++) {
       if (args.length > i) {
         const t = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
@@ -7908,6 +7924,10 @@ function compileCallExpression(
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
+    }
+    if (nativeSuppressedIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nativeSuppressedIdx });
+      return { kind: "externref" };
     }
     const funcIdx = ensureLateImport(
       ctx,

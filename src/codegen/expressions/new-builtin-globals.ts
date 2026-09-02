@@ -31,13 +31,18 @@ import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper, ensureNativeStringBoundaryBridge } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
-import { ensureNativeProxyRuntime } from "../object-runtime.js";
+import { ensureNativeProxyRuntime, ensureObjectRuntime } from "../object-runtime.js";
 import { ensureSymbolCarrier } from "../symbol-native.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { isInertNonCallableLiteral } from "../promise-newtarget.js"; // (#5143)
-import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
+import {
+  emitStandaloneTest262Error,
+  emitWasiErrorConstructor,
+  ensureNativeSuppressedErrorCtor,
+  isWasiErrorName,
+} from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
 import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.js";
@@ -1283,6 +1288,22 @@ export function tryCompileBuiltinGlobalNew(
   // message coercion, so route through the dedicated import like AggregateError.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "SuppressedError") {
     const args = expr.arguments ?? [];
+    // (#5269 E-2) Standalone has no `env::__new_SuppressedError` to import, and
+    // asking for one is not free: the import lands in `result.imports` and the
+    // module fails the host-import leak check (#2961/#5272) before it runs. Ask
+    // the native constructor FIRST — before any argument is emitted — so a
+    // decline leaves this arm byte-identical to what it was.
+    let nativeSuppressedIdx: number | undefined;
+    if (noJsHost(ctx)) {
+      // The native ctor stores `error`/`suppressed` on the `$props` sidecar, so
+      // it needs the object runtime's property helpers; ensure them here, above
+      // the registry layer that owns the constructor itself. Ensuring a runtime
+      // can register late imports, which renumbers every funcIdx already baked
+      // into this body — flush before emitting anything else.
+      ensureObjectRuntime(ctx);
+      flushLateImportShifts(ctx, fctx);
+      nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
+    }
     for (let i = 0; i < 4; i++) {
       if (args.length > i) {
         const t = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
@@ -1292,6 +1313,10 @@ export function tryCompileBuiltinGlobalNew(
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
+    }
+    if (nativeSuppressedIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nativeSuppressedIdx });
+      return { kind: "externref" };
     }
     // (#5161) Third caller of `_errorMessageToString` — kept consistent with
     // the Error / AggregateError sites so the three cannot drift. Unverifiable

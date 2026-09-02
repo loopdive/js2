@@ -383,3 +383,75 @@ describe("#5269 Step J — reflective Number.prototype.toPrecision", () => {
      ${check("caught", "TypeError")}`,
   );
 });
+
+describe("#5269 Step E-2 — SuppressedError constructs without a JS host", () => {
+  // The whole point of this step is the ZERO-`env`-import assertion in
+  // `runLane`: before it, merely writing `new SuppressedError(...)` put
+  // `env::__new_SuppressedError` in a standalone module, and the row died at
+  // the #2961 leak check as a compile_error — no assertion ever ran. So these
+  // cases fail on the import list first and on the semantics second.
+  standaloneOnly(
+    "E-2 new SuppressedError carries error / suppressed / message / name",
+    `var a = new Error("inner");
+     var b = new Error("outer");
+     var e = new SuppressedError(a, b, "both");
+     ${check("e.error === a", "true")}
+     ${check("e.suppressed === b", "true")}
+     ${check("e.message", "both")}
+     ${check("e.name", "SuppressedError")}`,
+  );
+
+  // §20.5.10.1 called WITHOUT `new` constructs just the same.
+  standaloneOnly(
+    "E-2 SuppressedError called as a function constructs too",
+    `var a = new Error("i");
+     var b = new Error("j");
+     var e = SuppressedError(a, b, "m");
+     ${check("e.message", "m")}
+     if (e.error !== a) { throw new Error("error slot"); }
+     if (e.suppressed !== b) { throw new Error("suppressed slot"); }`,
+  );
+
+  // Step 5 — an ABSENT message stores nothing, so the struct's `$message` field
+  // stays null. What that field READS BACK as is a separate, pre-existing
+  // question and NOT asserted here: measured 2026-09-02, an `$Error_struct`
+  // with a null `$message` and a NON-null `$props` sidecar answers the string
+  // "null" through `__extern_get`, where `new Error()` (whose `$props` IS null)
+  // answers undefined. An arbitrary absent key on the same value answers
+  // undefined correctly, so the defect is the `message` arm in
+  // `fillExternGetErrorProps`, not the sidecar — see the issue's findings.
+  // Asserting the spec answer here would fail; asserting "null" would enshrine
+  // the bug. So this case pins only what E-2 itself is responsible for.
+  standaloneOnly(
+    "E-2 an absent message still yields a well-formed SuppressedError",
+    `var a = new Error("i");
+     var b = new Error("j");
+     var e = new SuppressedError(a, b);
+     ${check("e.name", "SuppressedError")}
+     if (e.error !== a) { throw new Error("error slot"); }
+     if (e.suppressed !== b) { throw new Error("suppressed slot"); }`,
+  );
+
+  // Step 6, InstallErrorCause — keyed on HasProperty, not truthiness.
+  standaloneOnly(
+    "E-2 options.cause is installed when present",
+    `var a = new Error("i");
+     var e = new SuppressedError(a, a, "m", { cause: 42 });
+     ${check("e.cause", "42")}
+     var f = new SuppressedError(a, a, "m");
+     ${check("f.cause === undefined", "true")}`,
+  );
+
+  // The harness shape that made this a compile_error: a `typeof` guard plus a
+  // construction, which is all `nativeErrors.js` does.
+  standaloneOnly(
+    "E-2 the nativeErrors.js harness shape compiles host-free",
+    `var seen = "no";
+     if (typeof SuppressedError !== "undefined") {
+       var a = new Error("i");
+       var e = new SuppressedError(a, a, "m");
+       seen = e.name;
+     }
+     ${check("seen", "SuppressedError")}`,
+  );
+});

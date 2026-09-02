@@ -110,6 +110,12 @@ import {
 } from "./builtin-static-globals.js";
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
+import {
+  ERROR_STACK_GETTER_MEMBER,
+  ERROR_STACK_SETTER_MEMBER,
+  emitErrorStackGetterBody,
+  emitErrorStackSetterBody,
+} from "./error-stack-accessor.js";
 import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
 import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
@@ -2271,6 +2277,16 @@ function makeGlue(
           ] as ReadonlyArray<readonly [string, string]>,
         }
       : {}),
+    // (#5269 D-1) `Error.prototype.stack` is an own accessor PAIR on
+    // %Error.prototype% ONLY — every NativeError prototype inherits it, so this
+    // is keyed on the exact name, not on ERROR_PROTO_OWNER_NAMES.
+    ...(name === "Error"
+      ? {
+          accessorProps: [
+            { key: "stack", get: ERROR_STACK_GETTER_MEMBER, set: ERROR_STACK_SETTER_MEMBER },
+          ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2279,11 +2295,18 @@ function makeGlue(
     // only family where `toString` differs from the shared default of 0. Every
     // other family (Array/String/Object/Boolean/Date/…) keeps 0 from the table.
     memberLength: (member) =>
-      name === "Number" && member === "toString"
-        ? 1
-        : name === "String" && (member === "next" || member === "@@1")
-          ? 0
-          : (PROTO_METHOD_LENGTH[member] ?? 1),
+      // (#5269 D-1) The accessor pair's halves: a getter takes nothing, a
+      // setter takes the value. They are not in `memberCsv`, so the table
+      // below would otherwise hand them its default of 1.
+      member === ERROR_STACK_GETTER_MEMBER
+        ? 0
+        : member === ERROR_STACK_SETTER_MEMBER
+          ? 1
+          : name === "Number" && member === "toString"
+            ? 1
+            : name === "String" && (member === "next" || member === "@@1")
+              ? 0
+              : (PROTO_METHOD_LENGTH[member] ?? 1),
     // (#2875 slice 3) String search-family members carry an uncounted optional
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
@@ -2313,6 +2336,11 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
+      // (#5269 D-2) The `Error.prototype.stack` accessor pair. First in the
+      // ladder because its member names are synthetic — no other arm can claim
+      // them — and the setter needs the brand to identify its home object.
+      (name === "Error" && member === ERROR_STACK_GETTER_MEMBER ? emitErrorStackGetterBody(c, fctx) : null) ??
+      (name === "Error" && member === ERROR_STACK_SETTER_MEMBER ? emitErrorStackSetterBody(c, fctx, brand) : null) ??
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
       // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
       // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the
