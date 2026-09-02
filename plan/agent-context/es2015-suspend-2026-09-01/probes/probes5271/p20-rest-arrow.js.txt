@@ -1,0 +1,9 @@
+/*---
+description: two rest arrows in one module (#5271 probe)
+includes: [compareArray.js]
+flags: [noStrict]
+---*/
+var fn = (a, b, ...c) => c;
+assert.compareArray(fn(), []);
+assert.compareArray(fn(1, 2, 3), [3]);
+assert.compareArray(((...args) => args)(), []);

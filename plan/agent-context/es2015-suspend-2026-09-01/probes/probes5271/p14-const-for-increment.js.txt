@@ -1,0 +1,5 @@
+/*---
+description: for (const i...; i++) throws TypeError (#5271 probe)
+flags: [noStrict]
+---*/
+assert.throws(TypeError, function() { for (const i = 0; i < 1; i++) {} });

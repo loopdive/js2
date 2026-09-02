@@ -1,0 +1,5 @@
+/*---
+description: for-in head let TDZ in a function (#5271 probe)
+flags: [noStrict]
+---*/
+assert.throws(ReferenceError, function() { let x = 1; for (let x in { x }) {} });

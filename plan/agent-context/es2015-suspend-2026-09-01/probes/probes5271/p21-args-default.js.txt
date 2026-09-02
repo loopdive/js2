@@ -1,0 +1,6 @@
+/*---
+description: default param reads arguments (#5271 probe)
+flags: [noStrict]
+---*/
+function f(x = arguments[1], y) { return x; }
+assert.sameValue(f(undefined, 'b'), 'b');
