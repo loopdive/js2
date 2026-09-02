@@ -1013,3 +1013,48 @@ conflicts.
   `issue-1128-dstr-tdz` ×1) were re-checked AFTER this merge by checking out
   `origin/main`'s `src/` into the worktree: they fail identically there, so they
   remain not-ours.
+
+### Second-round adversarial review (2026-09-02) — ship-with-notes, no regression
+
+An independent reviewer plus one skeptic per medium finding compared the lane
+against `origin/main` `4abfe80ea1` over ~92 programs on both lanes plus 27
+byte-identity pairs (harness `/home/user/js2/.tmp/r2rev/`). **No regression was
+found**; every base-vs-lane difference is an improvement toward node semantics.
+
+Specifically checked and clean: `reinstallPreHoistedCapturedSlots` does not leak
+a slot across sibling blocks, three-deep re-declarations, loop bodies with
+per-iteration `let` and per-iteration closures, a block `let` against a same-named
+function or catch parameter, a name shadowed inside the hoisted function, or an
+arrow capturing the same name before/after the declaration. TDZ through the
+re-installed slot is not just preserved but improved: `{ console.log(x); let x=5 }`
+goes base `pre:0` → lane `caught:true`, matching node.
+
+Three medium findings were raised and all three **refuted** by the skeptics as
+pre-existing, with the lane and base compiling the cited programs to identical
+bytes:
+
+| # | claim | verdict |
+| --- | --- | --- |
+| R2-1 | the per-declaration record covers only the FIRST binding of a name, so a shadowed or second-sibling block `let` captured by a hoisted function still desyncs | accurate as a description of a **pre-existing** compiler limitation (`z3-outer-same-name.js`, `a1-sibling-blocks.js`, `a4-nested3.js` — base and lane both wrong, identically); not this lane's |
+| R2-2 | a name captured by BOTH a plain hoisted function and a generator/async one refuses the re-install (`cpsCaptured` breaks first), so the declaration writes B while the plain function reads A | same state on base — identical **binaries**, so the re-install provably contributes nothing here |
+| R2-3 | `preallocateBlockScopedSlots` is reached only from the plain-block arm, so try/catch/finally and switch still trap | **evidence false**: the lane adds the call for each of the three try sub-blocks (`exceptions.ts:388/459/614`), and `t43` shows try/catch/finally block `let`s now carry a TDZ flag and throw `ReferenceError` where base did not |
+
+Two low findings are recorded as genuine gaps, neither introduced here:
+
+- **R2-4** — `initializerCannotRunUserCode` (the F2 positional proof) treats a
+  top-level variable statement as inert unless it contains a call, `new`, tagged
+  template, property/element access, function/arrow/class expression. Destructuring
+  (iterator protocol, getters), an implicit `valueOf`/`toString` via method
+  shorthand, and `await` are not in that reject list, so the proof is not sound as
+  stated. **Unconfirmed as a behaviour change** — no base-vs-lane difference could
+  be produced, because the compiler does not fold the reads inside those
+  getters/methods today. Tighten the list before relying on the proof anywhere else.
+- **R2-5** — the proof inspects only the const's own `sourceFile.statements`, and
+  its comment justifies that with "a module's body completes before its exports are
+  used", which is false for an import **cycle**; module init is ordered by
+  first-seen ordinal (`declarations.ts:1920-1932`), not topologically. Base gets the
+  same cycle wrong, so lane == base.
+- **R2-6** — F2's B3 fix makes the const-in-TDZ throw newly reachable on the HOST
+  lane, but the host throw is not a JS `Error` there (`e.name` is null,
+  `e instanceof ReferenceError` false). Standalone is correct. So B3 is fixed on
+  standalone only; a host-lane `assert.throws(ReferenceError, …)` still fails.
