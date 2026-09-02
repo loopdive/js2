@@ -324,6 +324,7 @@ import {
   preparedGeneratorNumberBoxProvider,
   preparedStringCharCodeAtProvider,
   preparedStringCompareProvider,
+  preparedStringConcatManyProvider,
   preparedStringConcatProvider,
   preparedStringEqProvider,
   preparedStringLenProvider,
@@ -352,10 +353,12 @@ import type {
   RuntimeProviderPlan,
   StringCharCodeAtPolicy,
   StringComparePolicy,
+  StringConcatManyPolicy,
   StringConcatPolicy,
   StringEqPolicy,
   StringLenPolicy,
 } from "./runtime-manifest.js";
+import { stringConcatManyArityCap } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -1111,6 +1114,66 @@ function irStringCharCodeAtDemand(fns: readonly IrFunction[]): boolean {
   return false;
 }
 
+/**
+ * (#3526 F2-S6) This caller's already-resolved BATCHED many-arity policy.
+ *
+ * The verbatim projection of the two selector predicates the fusion pass used
+ * to compute inline, consulted once, here, before the pass runs — the pass
+ * CREATES the demand, so unlike every sibling in family 2 this decision cannot
+ * wait for a demand scan.
+ *
+ * Every term is load-bearing and none is a simplification of the others. In
+ * particular `wasi` is NOT redundant with `nativeStrings`: `nativeStrings:
+ * false` is an accepted override on target wasi, and such a module compiles on
+ * the host string backend — measured at 1000 bytes with a pairwise
+ * `wasm:js-string.concat` and no `__concat_`. Only the wasi term keeps the
+ * pass off there.
+ */
+function integrationStringConcatManyPolicy(ctx: CodegenContext): StringConcatManyPolicy {
+  if (ctx.nativeStrings) {
+    return Object.freeze({ batch: ctx.standalone && !ctx.wasi ? ("native" as const) : ("off" as const) });
+  }
+  return Object.freeze({
+    batch: ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? ("off" as const) : ("host" as const),
+  });
+}
+
+/**
+ * (#3526 F2-S6) The sorted unique arities any of `fns` concatenates in one
+ * batched call.
+ *
+ * Scanned AFTER the fusion pass, off the BATCHED IR, which is what makes it
+ * different from its four siblings: there is no instruction kind to look for,
+ * only the `call` targets the pass minted. Both producers are covered — the
+ * `string.concat$arityN` family the pass emits, and the fixed
+ * `async.string.concat$arity5` symbol async planning emits for the prepared
+ * final main, which has its own arm with the identical lowering.
+ *
+ * A module with no fused root returns `[]` and freezes no family row.
+ */
+function irStringConcatManyDemand(fns: readonly IrFunction[]): { readonly arities: readonly number[] } {
+  const arities = new Set<number>();
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+          const symbol = instr.target.binding.symbol;
+          if (symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+            arities.add(5);
+            return;
+          }
+          const arity = parseIrStringConcatManyArity(symbol);
+          if (arity !== null) arities.add(arity);
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { arities: Object.freeze([...arities].sort((left, right) => left - right)) };
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -1171,6 +1234,7 @@ function prepareBuiltFnRuntimeManifest(
       stringLen: integrationStringLenPolicy(ctx),
       stringConcat: integrationStringConcatPolicy(ctx),
       stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
+      stringConcatMany: integrationStringConcatManyPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1197,6 +1261,10 @@ function prepareBuiltFnRuntimeManifest(
     // again — and it must count BOTH producers, or the 35 plan-path cells would
     // reach the verify arms with no frozen row to be checked against.
     stringCharCodeAtDemand: irStringCharCodeAtDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S6) Scanned off the ALREADY-BATCHED functions — the fusion
+    // pass ran on the way to this freeze, so every fused root is visible here
+    // and a module that fused nothing freezes no family row.
+    stringConcatManyDemand: irStringConcatManyDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -3784,6 +3852,9 @@ export function compileIrPathFunctions(
   const readyForLower: BuiltFn[] = [];
   // (#4605/#4608) Re-derive function/global declarations after monomorphization.
   const declsAfterTU = programAbiModuleDeclarations(ctx, modAfterTU);
+  // (#3526 F2-S6) One resolved decision for the whole module, taken before the
+  // pass that creates its demand.
+  const batchPolicy = integrationStringConcatManyPolicy(ctx);
 
   for (const fn of modAfterTU.functions) {
     const before = afterInlineByUnitId.get(fn.unitId);
@@ -3800,13 +3871,13 @@ export function compileIrPathFunctions(
       const changed = before === undefined || fn !== before.fn;
       const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
       // Final synchronous parity pass: fuse only after mono/TU has settled.
-      const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
-      const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
-      const batched = hostBatchedConcat
-        ? batchStringConcat(hygienic, allocRegistry)
-        : standaloneBatchedConcat
-          ? batchStringConcat(hygienic, allocRegistry, 8)
-          : hygienic;
+      // (#3526 F2-S6) Under manifest authority. The four-flag selection and the
+      // hand-copied native ceiling are gone: `batch` is the frozen decision and
+      // the ceiling is derived from the provider rows.
+      const batched =
+        batchPolicy.batch === "off"
+          ? hygienic
+          : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(batchPolicy.batch));
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU);
       if (verifyErrors.length > 0) {
@@ -3913,6 +3984,7 @@ export function compileIrPathFunctions(
   const stringLenPolicy = integrationStringLenPolicy(ctx);
   const stringConcatPolicy = integrationStringConcatPolicy(ctx);
   const stringCharCodeAtPolicy = integrationStringCharCodeAtPolicy(ctx);
+  const stringConcatManyPolicy = integrationStringConcatManyPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -4052,6 +4124,26 @@ export function compileIrPathFunctions(
           "resolve",
           "ir/integration: charCodeAt has no provider under string-char-code-at policy " +
             `charCodeAt=${stringCharCodeAtPolicy.charCodeAt}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S6) The BATCHED many-arity family partitions on the same rule.
+    // Its demand is neither an instruction kind nor a flag but a set of fused
+    // ARITIES, and it is the concatenation authority — not the pass policy —
+    // that can refuse them: `batch` only decides whether the pass ran.
+    const stringConcatManyDemand = irStringConcatManyDemand([entry.fn]);
+    if (stringConcatPolicy.concat === "unsupported" && stringConcatManyDemand.arities.length > 0) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: batched string concatenation has no provider under string-concat policy " +
+            `concat=${stringConcatPolicy.concat}`,
         ),
         "resolve",
       );
@@ -6467,6 +6559,47 @@ function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void
   ctx.programAbiCallableProviders?.observe(irRuntimeFuncRef(symbol), index);
 }
 
+/**
+ * (#3526 F2-S6) The single lowering of a BATCHED many-arity concatenation, for
+ * both of the two symbols that produce one.
+ *
+ * The arm no longer reads `ctx.nativeStrings`: the frozen `stringConcat` policy
+ * already resolved which authority answers, and the family row derives the
+ * concrete import field or helper symbol from the arity. Both routines below
+ * are the same two as before, called with the same arguments, so the migration
+ * is byte-neutral.
+ *
+ * The host arm keeps `ensureLateImport` deliberately — late minting IS the
+ * contract here, not an implementation detail. The emitted bytes depend on the
+ * import's POSITION (measured: `__concat_5` at import index 21 of 27 on the
+ * async fixture, `__concat_N` at index 5 before dead-import elimination on the
+ * small ones), so registering at freeze time would move every batching cell by
+ * design. Its params and results now come from the record rather than being
+ * spelled here.
+ */
+function batchedConcatProviderIndex(
+  ctx: CodegenContext,
+  prepared: PreparedIrRuntimeManifest | undefined,
+  arity: number,
+): number | undefined | null {
+  const arm = preparedStringConcatManyProvider(prepared, arity);
+  if (!arm) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "batched string concatenation has no frozen provider under the string-concat policy",
+    );
+  }
+  if (arm.arm === "native") return ensureNativeBatchedConcat(ctx, arity);
+  return ensureLateImport(
+    ctx,
+    arm.field,
+    arm.params.map((param) => ({ kind: param }) as ValType),
+    arm.results.map((result) => ({ kind: result }) as ValType),
+    arm.module,
+  );
+}
+
 function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
@@ -6524,24 +6657,12 @@ function resolveAndObserveCallableProvider(
       ? (ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null)
       : ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-    index = ctx.nativeStrings
-      ? ensureNativeBatchedConcat(ctx, 5)
-      : ensureLateImport(
-          ctx,
-          "__concat_5",
-          Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
-          [{ kind: "externref" }],
-        );
+    // (#3526 F2-S6) The prepared final main's fixed five-part concat. Same
+    // family, same frozen row, same two routines — only the arity is a
+    // constant here rather than parsed from the symbol.
+    index = batchedConcatProviderIndex(ctx, prepared, 5);
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
-    const arity = parseIrStringConcatManyArity(symbol)!;
-    index = ctx.nativeStrings
-      ? ensureNativeBatchedConcat(ctx, arity)
-      : ensureLateImport(
-          ctx,
-          `__concat_${arity}`,
-          Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
-          [{ kind: "externref" }],
-        );
+    index = batchedConcatProviderIndex(ctx, prepared, parseIrStringConcatManyArity(symbol)!);
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);
