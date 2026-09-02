@@ -4300,7 +4300,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
  * aliased via `classExprNameMap`), or `undefined`. Uses the type oracle
  * (#1930) rather than a raw checker query.
  */
-function elemAccessReceiverClassName(ctx: CodegenContext, elemAccess: ts.ElementAccessExpression): string | undefined {
+export function elemAccessReceiverClassName(
+  ctx: CodegenContext,
+  elemAccess: ts.ElementAccessExpression,
+): string | undefined {
   let name = ctx.oracle.declaredNameOf(elemAccess.expression);
   if (name && !ctx.classSet.has(name)) name = ctx.classExprNameMap.get(name) ?? name;
   return name && ctx.classSet.has(name) ? name : undefined;

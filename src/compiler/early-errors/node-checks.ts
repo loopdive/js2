@@ -1280,7 +1280,14 @@ on([ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.ClassExpression], (ctx, node) 
   if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
     for (const member of node.members) {
       const memberName = getMemberName(member);
-      if (memberName === "constructor") {
+      // (#5195 K) PropName of a ComputedPropertyName is EMPTY (§13.2.5.5), so a
+      // computed key that happens to fold to the string "constructor" is not
+      // the class constructor and carries none of these restrictions:
+      // `get ['constructor']() {}` is legal. `getMemberName` folds string- and
+      // numeric-literal computed keys, which is right for its other callers but
+      // wrong here.
+      const isComputedKey = member.name !== undefined && ts.isComputedPropertyName(member.name);
+      if (memberName === "constructor" && !isComputedKey) {
         const isStaticMember = (member as any).modifiers?.some((m: any) => m.kind === ts.SyntaxKind.StaticKeyword);
         if (isStaticMember) continue; // static "constructor" is fine
         if (ts.isMethodDeclaration(member) && member.asteriskToken) {
