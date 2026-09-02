@@ -264,6 +264,9 @@ export function planModuleClosurePreLift(
   const refusals: ModuleClosurePreLiftRefusal[] = [];
   const sites: ModuleClosurePreLiftSite[] = [];
 
+  // The cheap whole-population questions first. Each one alone decides the
+  // gate, so answering them before the AST walk keeps a refused population's
+  // planning cost at O(statements) rather than O(nodes).
   if (inputs.moduleInitMode !== "full") refusals.push({ reason: "population-not-full-mode" });
   if (inputs.hasAsyncGraphInit) refusals.push({ reason: "population-async-graph-init" });
   if (ctx.staticInitExprs.length > 0) refusals.push({ reason: "population-static-init-expressions" });
@@ -273,6 +276,10 @@ export function planModuleClosurePreLift(
       break;
     }
   }
+  // Refused already: the site walk below would only add reasons nobody reads,
+  // at the cost of a checker query per candidate. The record says so by
+  // reporting no sites.
+  if (refusals.length > 0) return { sites, refusals };
 
   // Full-subtree population scan over exactly the nodes the initializer
   // compiles — the same input set `moduleInitPopulationIsPass2Stable` reads.
@@ -289,6 +296,7 @@ export function planModuleClosurePreLift(
       stack.push(child);
     });
   }
+  if (refusals.length > 0) return { sites, refusals };
 
   for (const candidate of topLevelClosureCandidates(ctx.moduleInitStatements)) {
     const reason = siteRefusal(ctx, candidate.node);

@@ -6009,7 +6009,7 @@ export function compileDeclarations(
   // measured mechanism (the call site casts to the SIGNATURE wrapper, not to
   // the per-closure struct) and for every refusal.
   const preLift =
-    (hasModuleInits || hasStaticInits) && moduleInitMode !== "skip" && moduleInitMode !== "prepared"
+    (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
       ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
       : undefined;
   // `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` means "the unconditional two-pass
@@ -6017,7 +6017,6 @@ export function compileDeclarations(
   // restores pass 1 as well as pass 2, not just the recompile.
   const discoveryStatic =
     preLift !== undefined &&
-    !skipModuleInitBody &&
     process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
     moduleInitDiscoveryIsStatic(preLift);
 
