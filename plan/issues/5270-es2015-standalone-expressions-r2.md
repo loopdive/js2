@@ -229,7 +229,7 @@ without the suffix). Type queries go through `ctx.oracle`
 1. **Find the reason for the externref refusal before removing it.** L114/L136
    of `statements/control-flow.ts` carry no comment and no issue id; `git log
    -S` on the file finds only the 2026-08-30 tree import. Check
-   `plan/issues/822-*.md` and `plan/issues/1972-*.md` (the two guards named in
+   `plan/issues/822-wasm-type-mismatch-compile-errors.md` and `plan/issues/1972-tail-call-inside-try-skips-catch.md` (the two guards named in
    the comments above the peel) and the standalone equivalence pins for a
    `return_call` + externref failure. If nothing names a reason, relax it:
    `return_call` type-checks exactly like `call` followed by `return`, so the
