@@ -1,0 +1,8 @@
+/*---
+description: arguments has own @@iterator (#5271 probe)
+flags: [noStrict]
+---*/
+(function() {
+  assert.sameValue(arguments[Symbol.iterator], [][Symbol.iterator], 'value');
+  assert(Object.prototype.hasOwnProperty.call(arguments, Symbol.iterator), 'own');
+}());

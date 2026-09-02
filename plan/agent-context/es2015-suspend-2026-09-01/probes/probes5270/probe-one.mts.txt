@@ -1,0 +1,9 @@
+// Probe: run one or more test262-style files through the runner's standalone lane.
+//   npx tsx .tmp/es2015/probe-one.mts .tmp/es2015/probes5195/<name>.js [...]
+import { resolve } from "node:path";
+import { runTest262File } from "../../tests/test262-runner.js";
+for (const p of process.argv.slice(2)) {
+  const r = await runTest262File(resolve(p), "probe", undefined, "standalone");
+  const reason = (r as { reason?: string; error?: string }).reason ?? (r as { error?: string }).error ?? "";
+  console.log(`${p}: ${r.status} ${reason.split("\n").slice(0, 3).join(" | ")}`);
+}

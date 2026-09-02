@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+function ID(x) { return x; }
+var object = { a() { return 'A'; }, [ID(2)]() { return 'D'; } };
+assert.sameValue(object.a(), 'A', 'static method call on open literal');
+assert.sameValue(object[2](), 'D');

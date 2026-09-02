@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var n = 0; var y = {};
+y[Symbol.toPrimitive] = function() { n++; };
+0 == y;
+assert.sameValue(n, 1, 'bare == statement ran ToPrimitive: ' + n);

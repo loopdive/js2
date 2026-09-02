@@ -1,0 +1,7 @@
+/*---
+description: for (let [x] in obj) destructures the key string (#5271 probe)
+flags: [noStrict]
+---*/
+var v;
+for (let [x] in { key: 1 }) v = x;
+assert.sameValue(v, 'k');

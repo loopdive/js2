@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var proto = {}; var object = { __proto__: proto };
+assert.sameValue(Object.getPrototypeOf(object), proto, 'colon __proto__ sets [[Prototype]]');
+assert.sameValue(Object.getOwnPropertyDescriptor(object, '__proto__'), undefined, 'no own __proto__');

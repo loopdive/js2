@@ -1,0 +1,12 @@
+// Convert a run-test262-paths.mts log into TSV: path \t status \t reason
+import { readFileSync } from "node:fs";
+const lines = readFileSync(process.argv[2], "utf-8").split("\n");
+const out = [];
+for (let i = 0; i < lines.length; i++) {
+  const m = /^(pass|fail|compile_error|compile_timeout|error|skip)\s+(\S+)\s*$/.exec(lines[i]);
+  if (!m) continue;
+  const reason = (lines[i + 1] ?? "").trim();
+  out.push(`${m[2]}\t${m[1]}\t${reason}`);
+}
+out.sort();
+console.log(out.join("\n"));

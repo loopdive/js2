@@ -1,0 +1,52 @@
+// Pick deterministic control candidates: standalone-baseline PASS rows in the
+// same directories/mechanisms as the #5270 clusters, excluding in-scope rows.
+import { readFileSync } from "node:fs";
+const jsonl = readFileSync(".test262-cache/test262-standalone-current.jsonl", "utf-8").split("\n");
+const inScope = new Set(readFileSync(".tmp/es2015/expr-list.txt", "utf-8").split("\n").filter(Boolean));
+const wantDirs = [
+  "test/language/expressions/object/",
+  "test/language/expressions/assignment/dstr/",
+  "test/language/expressions/tagged-template/",
+  "test/language/expressions/instanceof/",
+  "test/language/expressions/arrow-function/",
+  "test/language/expressions/call/",
+  "test/language/expressions/function/",
+  "test/language/expressions/equals/",
+  "test/language/expressions/addition/",
+  "test/language/computed-property-names/object/",
+  "test/language/expressions/tco-pos.js",
+  "test/language/statements/return/tco.js",
+];
+// Mechanism keywords: prefer rows whose name overlaps the failing rows' themes.
+const themes = [
+  /tco/, /super/, /__proto__/, /fn-name/, /name-/, /iter-/, /close/, /hasinstance|prototype/, /template/, /lexical|this/,
+  /computed|symbol/, /method-definition/, /dflt|arguments/, /coerce|prim/, /evaluation-order|order/,
+];
+const rows = [];
+for (const line of jsonl) {
+  if (!line) continue;
+  let r;
+  try { r = JSON.parse(line); } catch { continue; }
+  if (r.status !== "pass") continue;
+  const f = r.file;
+  if (!wantDirs.some((d) => f.startsWith(d) || f === d)) continue;
+  if (inScope.has(f)) continue;
+  if (/\/dstr\/.*(yield|gen-)/.test(f)) continue; // generator lane noise
+  const score = themes.reduce((s, re) => s + (re.test(f) ? 1 : 0), 0);
+  rows.push({ f, score, strict: r.strict });
+}
+// Deterministic order: score desc, then a stable hash of the path.
+const h = (s) => { let x = 2166136261; for (const c of s) { x ^= c.charCodeAt(0); x = Math.imul(x, 16777619) >>> 0; } return x; };
+rows.sort((a, b) => b.score - a.score || h(a.f) - h(b.f));
+// One per directory-ish bucket first, to spread across mechanisms.
+const seen = new Map();
+const out = [];
+for (const r of rows) {
+  const key = r.f.split("/").slice(0, 4).join("/") + ":" + (r.f.match(/(tco|super|proto|fn-name|iter|close|hasinstance|template|lexical|symbol|method-definition|dflt|coerce|order)/)?.[1] ?? "misc");
+  const n = seen.get(key) ?? 0;
+  if (n >= 2) continue;
+  seen.set(key, n + 1);
+  out.push(r.f);
+  if (out.length >= 28) break;
+}
+console.log(out.join("\n"));

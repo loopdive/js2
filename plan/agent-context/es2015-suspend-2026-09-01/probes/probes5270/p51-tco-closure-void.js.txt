@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var callCount = 0;
+var f = function(n) { if (n === 0) { callCount += 1; return; } return f(n - 1); };
+f(100000);
+assert.sameValue(callCount, 1);

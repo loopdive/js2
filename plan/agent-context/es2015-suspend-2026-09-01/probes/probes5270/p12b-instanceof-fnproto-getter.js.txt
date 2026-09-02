@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var called = 0;
+Object.defineProperty(Function.prototype, 'prototype', { get: function() { called++; return Array.prototype; } });
+assert.sameValue([] instanceof Function.prototype, true, 'walk reaches Array.prototype');
+assert.sameValue(called, 1, 'getter called once: ' + called);

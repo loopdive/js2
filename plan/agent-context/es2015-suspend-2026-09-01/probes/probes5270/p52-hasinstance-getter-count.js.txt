@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var F = {}; var n = 0;
+Object.defineProperty(F, Symbol.hasInstance, { get: function() { n++; return function() { return true; }; } });
+assert.sameValue(0 instanceof F, true);
+assert.sameValue(n, 1, 'getter calls=' + n);
