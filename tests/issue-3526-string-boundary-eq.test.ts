@@ -63,6 +63,7 @@ import {
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
   STRING_COMPARE_POLICY_DISABLED,
+  STRING_CONCAT_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
   STRING_LEN_POLICY_DISABLED,
   STRING_EQ_RUNTIME_FEATURES,
@@ -292,13 +293,14 @@ describe("#3526 F2-S3 provider policy", () => {
     builder.requestFeature("math.sqrt");
     const frozen = builder.freeze();
     expect(frozen.policy.stringEq).toEqual(STRING_EQ_POLICY_DISABLED);
-    // (#3526 F2-S4) SEVEN independent policies now, not one widened field.
+    // (#3526 F2-S5) EIGHT independent policies now, not one widened field.
     expect(frozen.policy.numberBoundary).toEqual(NUMBER_BOUNDARY_POLICY_DISABLED);
     expect(frozen.policy.booleanBoundary).toEqual(BOOLEAN_BOUNDARY_POLICY_DISABLED);
     expect(frozen.policy.externIsUndefined).toEqual(EXTERN_IS_UNDEFINED_POLICY_DISABLED);
     expect(frozen.policy.generatorNumberBox).toEqual(GENERATOR_NUMBER_BOX_POLICY_DISABLED);
     expect(frozen.policy.stringCompare).toEqual(STRING_COMPARE_POLICY_DISABLED);
     expect(frozen.policy.stringLen).toEqual(STRING_LEN_POLICY_DISABLED);
+    expect(frozen.policy.stringConcat).toEqual(STRING_CONCAT_POLICY_DISABLED);
   });
 
   it("resolves independently of the compare and of every family-1 arm", () => {

@@ -1984,6 +1984,11 @@ export function compileArrayMethodCall(
   // receiver identifier; these hold the rebind so we can restore it post-dispatch.
   let taViewRebindName: string | undefined;
   let taViewRebindSaved: number | undefined;
+  // (#5150 follow-up) Set when the `$__ta_view` receiver was a MODULE GLOBAL
+  // spilled into a synthetic local so the two arms below (which are written for
+  // a local receiver) apply. The cleanup DELETES this mapping instead of
+  // restoring it — there was no local binding for this name to go back to.
+  let taViewGlobalSpillName: string | undefined;
   // (#3054 B3) write-through: after a MUTATING method runs on the de-viewed
   // native-vec copy, byte-encode it back into the view's shared buffer. Capture
   // the view typeIdx, the original view local, the native-vec copy local and its
@@ -2054,6 +2059,32 @@ export function compileArrayMethodCall(
       (actualType as { typeIdx: number }).typeIdx !== vecTypeIdx
     ) {
       const actualVecIdx = (actualType as { typeIdx: number }).typeIdx;
+      // (#5150 follow-up) Both `$__ta_view` arms below are written against a
+      // receiver that has a LOCAL slot. Since the module-global view pin landed,
+      // `ta` can be a MODULE GLOBAL carrying the same struct — test262 declares
+      // its bindings at top level — and the locals-only guard sent it to the
+      // generic `else` instead, where the receiver was `ref.cast` to the
+      // checker-typed element vec: `RuntimeError: illegal cast`. Spill the
+      // global into a temp local (the same struct ref, so the shared backing and
+      // the #3054 B3 write-through are unaffected) and let the existing arms run
+      // unchanged. `taViewGlobalSpillName` makes the cleanup below DELETE the
+      // synthetic mapping rather than restore it — leaving it in place would
+      // shadow the global for the rest of the function.
+      if (
+        isTaViewTypeIdx(ctx, actualVecIdx) &&
+        ts.isIdentifier(receiverExpr) &&
+        !fctx.localMap.has(receiverExpr.text) &&
+        ctx.moduleGlobals.has(receiverExpr.text)
+      ) {
+        const spill = allocLocal(fctx, `__tav_grecv_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: actualVecIdx,
+        });
+        compileExpression(ctx, fctx, receiverExpr);
+        fctx.body.push({ op: "local.set", index: spill });
+        fctx.localMap.set(receiverExpr.text, spill);
+        taViewGlobalSpillName = receiverExpr.text;
+      }
       // A buffer-backed TypedArray must keep `subarray` on the SAME byte buffer.
       // Materializing it into the ordinary element vec first (the generic method
       // bridge below) makes the subview alias that temporary copy and resets its
@@ -2064,7 +2095,9 @@ export function compileArrayMethodCall(
         ts.isIdentifier(receiverExpr) &&
         fctx.localMap.has(receiverExpr.text)
       ) {
-        return compileTaViewSubarray(ctx, fctx, propAccess, callExpr, actualVecIdx);
+        const subarrayResult = compileTaViewSubarray(ctx, fctx, propAccess, callExpr, actualVecIdx);
+        if (taViewGlobalSpillName !== undefined) fctx.localMap.delete(taViewGlobalSpillName);
+        return subarrayResult;
       }
       // (#3054 B1 Option A) `$__ta_view` receiver: materialize into the native
       // element-typed vec (`vecTypeIdx`, from `resolveArrayInfo`) and rebind the
@@ -2201,6 +2234,9 @@ export function compileArrayMethodCall(
         ...callExpr.arguments.slice(0, symbolIndexArg),
       ])
     ) {
+      // Drop the synthetic module-global mapping before this early return, or
+      // it would shadow the global for the rest of the function.
+      if (taViewGlobalSpillName !== undefined) fctx.localMap.delete(taViewGlobalSpillName);
       return methodName === "includes" ? { kind: "i32" } : { kind: "externref" };
     }
   }
@@ -2551,9 +2587,12 @@ export function compileArrayMethodCall(
   // is still the `$__ta_view` (its buffer aliasing is intact for later element
   // access); only this method call saw the de-viewed copy.
   if (taViewRebindName !== undefined) {
-    if (taViewRebindSaved !== undefined) fctx.localMap.set(taViewRebindName, taViewRebindSaved);
-    else fctx.localMap.delete(taViewRebindName);
+    if (taViewRebindSaved !== undefined && taViewRebindName !== taViewGlobalSpillName) {
+      fctx.localMap.set(taViewRebindName, taViewRebindSaved);
+    } else fctx.localMap.delete(taViewRebindName);
   }
+  // …and drop the synthetic module-global mapping, whichever arm consumed it.
+  if (taViewGlobalSpillName !== undefined) fctx.localMap.delete(taViewGlobalSpillName);
 
   return result;
 }
