@@ -664,9 +664,11 @@ export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
   // [[Configurable]]: true }` — the `__create_descriptor` flag word.
   const MESSAGE_DESC_FLAGS = 0x01 | 0x04;
   const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
 
   for (const name of ["__hasOwnProperty", "__object_hasOwn", "__getOwnPropertyDescriptor", "__delete_property"]) {
-    if (name === "__getOwnPropertyDescriptor" && createDescriptorIdx === undefined) continue;
+    if (name === "__getOwnPropertyDescriptor" && (createDescriptorIdx === undefined || externGetIdx === undefined))
+      continue;
     const fn = ctx.mod.functions.find((f) => f.name === name);
     if (!fn) continue;
     // params 0=obj 1=key; APPEND locals so every baked index keeps its meaning.
@@ -681,9 +683,15 @@ export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
     const answer: Instr[] =
       name === "__getOwnPropertyDescriptor"
         ? [
-            { op: "local.get", index: anyL },
-            { op: "ref.cast", typeIdx: errTypeIdx },
-            { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 1 },
+            // The VALUE comes from `__extern_get`, not from the field directly:
+            // a `err.message = x` write lands in the `$props` sidecar, which
+            // `fillExternGetErrorProps` reads BEFORE the field. Reading the
+            // field here would make the descriptor disagree with the read the
+            // moment anything wrote. `__extern_get` already carries the Error
+            // arm, so this is one source of truth, not a second walk.
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: externGetIdx! },
             { op: "i32.const", value: MESSAGE_DESC_FLAGS },
             { op: "call", funcIdx: createDescriptorIdx! },
             { op: "return" },
@@ -693,14 +701,15 @@ export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
               // `[[Configurable]]: true` is only true if the property can
               // actually be deleted — `verifyProperty` PROVES it by deleting.
               // `$message` is the one mutable intrinsic field (§20.5.1.1 allows
-              // `error.message = "x"`), so clearing it makes the presence and
-              // descriptor arms above answer "absent" on the next query.
+              // `error.message = "x"`), so clear it and then FALL THROUGH: a
+              // prior write put a shadowing entry in the `$props` sidecar, and
+              // only the ordinary body removes that. Returning here left the
+              // sidecar entry behind, so `hasOwnProperty` still answered true
+              // after the delete and `isConfigurable` reported false.
               { op: "local.get", index: anyL },
               { op: "ref.cast", typeIdx: errTypeIdx },
               { op: "ref.null.extern" },
               { op: "struct.set", typeIdx: errTypeIdx, fieldIdx: 1 },
-              { op: "i32.const", value: 1 },
-              { op: "return" },
             ]
           : [{ op: "i32.const", value: 1 }, { op: "return" }];
     const arm: Instr[] = [

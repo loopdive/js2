@@ -298,3 +298,33 @@ describe("#5269 Step C — Proxy in the callable ToString cascade", () => {
      ${check('String(p).indexOf("native code") >= 0', "true")}`,
   );
 });
+
+describe("#5269 Step L — an Error instance's own `message`", () => {
+  // §20.5.1.1 step 4 creates `message` as an own data property, but the value
+  // lives in `$Error_struct` field 1, not in the `$props` bag — so the own walk
+  // could not see it and `hasOwnProperty` answered false while `err.message`
+  // read the string. The arm is narrow by construction: an `$Error_struct`
+  // receiver, the key `"message"`, and a non-null field.
+  standaloneOnly(
+    "L presence, descriptor and delete all agree about message",
+    `function ho(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+     var err = new Error("my-message");
+     ${check("ho(err, 'message')", "true")}
+     var d = Object.getOwnPropertyDescriptor(err, "message");
+     ${check("d.value", "my-message")}
+     ${check("d.writable", "true")}
+     ${check("d.enumerable", "false")}
+     ${check("d.configurable", "true")}
+     delete err["message"];
+     ${check("ho(err, 'message')", "false")}`,
+  );
+
+  // `new Error()` passes no argument, so §20.5.1.1 step 4 does not run and there
+  // is NO own `message` — the arm must fall through for a null field.
+  standaloneOnly(
+    "L PRECONDITION: new Error() has no own message",
+    `function ho(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+     var err = new Error();
+     ${check("ho(err, 'message')", "false")}`,
+  );
+});
