@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9864,
-    "fail": 1776,
-    "ce": 64,
+    "pass": 9886,
+    "fail": 1757,
+    "ce": 61,
     "skip": 0,
     "total": 11704,
     "pct": 84,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2067,
-        "fail": 407,
+        "pass": 2069,
+        "fail": 405,
         "ce": 12,
         "skip": 0,
         "total": 2486,
@@ -138,8 +138,8 @@
       },
       {
         "name": "class",
-        "pass": 306,
-        "fail": 92,
+        "pass": 309,
+        "fail": 89,
         "ce": 12,
         "skip": 0,
         "total": 410,
@@ -426,12 +426,12 @@
       },
       {
         "name": "super",
-        "pass": 13,
-        "fail": 6,
+        "pass": 15,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 68
+        "pct": 79
       },
       {
         "name": "Symbol.unscopables",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4397,
-    "fail": 902,
+    "pass": 4398,
+    "fail": 901,
     "ce": 146,
     "skip": 0,
     "total": 5445,

@@ -44,7 +44,8 @@ import {
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
-import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
+import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
+import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -56,8 +57,10 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  resolveInstallableClassMemberName,
   resolveWasmType,
 } from "../index.js";
+import { emitClassStaticSidecar } from "../class-static-sidecar.js"; // (#5195 Step 2)
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
 import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
@@ -378,7 +381,7 @@ function emitNestedDeclarationStaticInitializers(
 }
 
 /**
- * Emit the runtime evaluation of unresolved computed accessor names.
+ * Emit the runtime evaluation of unresolved computed member names.
  *
  * Class shape preparation must never execute the source expression: assignments
  * and other effects belong in the enclosing function at
@@ -386,24 +389,61 @@ function emitNestedDeclarationStaticInitializers(
  * this emitter, while their distinct evaluation owners invoke it exactly once.
  * Walking `decl.members` preserves source order and evaluates a getter/setter
  * pair's two computed names independently, as JavaScript requires.
+ *
+ * (#5195 Step 1) METHODS are walked too — their key expression used to be
+ * dropped on the floor entirely, so `class C { [x = 1]() {} }` left `x` at 0 —
+ * and the ToPropertyKey'd result is STORED into the member's `__cmkey_` global
+ * when one exists (`ctx.classDynamicKeyGlobals`), instead of being dropped. The
+ * prototype-`$Object` install reads it back as the property key. A member whose
+ * key folds is untouched; a member with no key global (the host lane, or a
+ * class whose prototype takes no `$Object`) keeps the evaluate-and-drop
+ * behaviour, which is what makes the effect observable at all.
  */
 export function emitUnresolvedComputedAccessorNameEffects(
   ctx: CodegenContext,
   fctx: FunctionContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
+  className?: string,
 ): void {
+  const owner = className ?? ctx.anonClassExprNames.get(decl) ?? decl.name?.text;
   for (const member of decl.members) {
     if (
-      (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) ||
+      (!ts.isGetAccessorDeclaration(member) &&
+        !ts.isSetAccessorDeclaration(member) &&
+        !ts.isMethodDeclaration(member)) ||
+      !member.name ||
       !ts.isComputedPropertyName(member.name) ||
       resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
     ) {
       continue;
     }
+    const keyGlobalIdx =
+      owner === undefined
+        ? undefined
+        : ctx.classDynamicKeyGlobals.get(dynamicClassKeyGlobalKey(owner, decl.members.indexOf(member)));
     const resultType = compileExpression(ctx, fctx, member.name.expression, { kind: "externref" });
     if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) {
       if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
       emitToPropertyKeyOnce(ctx, fctx);
+      if (keyGlobalIdx !== undefined) fctx.body.push({ op: "global.set", index: keyGlobalIdx });
+      else fctx.body.push({ op: "drop" });
+    }
+  }
+  // The keys are live now, so force the prototype singleton to materialize HERE
+  // rather than at the first `C.prototype` touch — §15.7.14 installs the
+  // elements at ClassDefinitionEvaluation, and a later first-touch would read
+  // keys that a subsequent write had already changed. Only classes that
+  // actually have a runtime-keyed member — or INHERIT one (#5195 F1: a
+  // subclass reaches it only through the prototype chain, whose walk starts at
+  // the subclass's own `$Object`) — pay for this.
+  if (owner !== undefined && classHierarchyHasDynamicMember(ctx, owner)) {
+    if (emitLazyProtoGet(ctx, fctx, owner)) fctx.body.push({ op: "drop" });
+    // (#5195 Step 2) …and the STATIC sidecar, for the same reason: its keys are
+    // the ones just written, and a static member with a runtime key is
+    // unreachable until the object holding it exists.
+    if (
+      emitClassStaticSidecar(ctx, fctx, owner, (member) => resolveInstallableClassMemberName(ctx, owner, decl, member))
+    ) {
       fctx.body.push({ op: "drop" });
     }
   }
@@ -511,7 +551,7 @@ export function compileNestedClassDeclaration(
         }
       }
     }
-    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl);
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl, className);
     emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
     return;
   }
@@ -570,7 +610,7 @@ export function compileNestedClassDeclaration(
     // A declaration's computed accessor names execute in this enclosing frame
     // at ClassDefinitionEvaluation. Class-expression owners emit the same
     // shared effect from their own expression route below.
-    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl);
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl, className);
 
     // Compile constructor and method bodies
     compileClassBodies(ctx, decl, funcByName, syntheticName, ctx.irClassBodyRouting);
