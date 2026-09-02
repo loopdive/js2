@@ -105,13 +105,17 @@ export function tracesToProxyValue(ctx: CodegenContext, expr: ts.Expression, dep
  * representation fix inside a conformance slice.
  */
 export function isDirectProxyBinding(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const direct = (e: ts.Expression): boolean => {
-    if (ts.isNewExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Proxy") return true;
-    if (ts.isPropertyAccessExpression(e) && e.name.text === "proxy") {
-      return tracesToRevocableHandle(ctx, e.expression, 0);
-    }
-    return false;
-  };
+  // (#5268 review R2-3) `new Proxy(…)` ONLY — a `<handle>.proxy` read is
+  // excluded for exactly the reason the alias chain is. `var r =
+  // Proxy.revocable({a:1},{}); var proxy = r.proxy` binds through the same
+  // widening seam, so `proxy === null` is true (measured on this tree AND on
+  // `origin/main`) and routing it to the runtime enumerator turned base's
+  // correct `Object.keys(proxy)` → "a" into a silent `[]`. A silent wrong
+  // answer is the worst of the three outcomes, so the hop stays out until the
+  // nulling itself is repaired. `tracesToProxyValue` keeps accepting it: its
+  // consumer is a runtime predicate that is correct for every value.
+  const direct = (e: ts.Expression): boolean =>
+    ts.isNewExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Proxy";
   const e = unwrap(expr);
   if (direct(e)) return true;
   if (ts.isIdentifier(e)) {

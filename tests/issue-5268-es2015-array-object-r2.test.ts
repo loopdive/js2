@@ -304,6 +304,21 @@ describe("#5268 review F1/F2 — the Proxy-provenance routing stays inside its l
     ).toEqual(["isnull:true", "alias:a", "direct:a"]);
   });
 
+  it("R2-3 — a `Proxy.revocable(…).proxy` hop is excluded for the same reason", async () => {
+    // RED: routing this hop to the runtime enumerator turned base's correct
+    // "a" into a silent `[]` — the handle binding is nulled by the same
+    // widening defect as the alias, on this tree AND on origin/main. `isnull`
+    // is pinned so a future repair of the nulling shows up here deliberately.
+    expect(
+      await runLines(`
+        var r = Proxy.revocable({ a: 1 }, {});
+        var proxy = r.proxy;
+        LOG("isnull:" + (proxy === null));
+        LOG("keys:" + Object.keys(proxy).join());
+      `),
+    ).toEqual(["isnull:true", "keys:a"]);
+  });
+
   it("F2 — …while the DIRECT binding still runs the traps", async () => {
     // The step-2 win must survive the narrowing: a direct `new Proxy` binding
     // still routes to the native enumerator.
