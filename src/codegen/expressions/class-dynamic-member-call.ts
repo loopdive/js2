@@ -47,11 +47,12 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression } from "../shared.js";
+import { coerceType, compileExpression, resolveEnclosingClassName } from "../shared.js";
 import { allocLocal } from "../context/locals.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { classHierarchyHasDynamicMember } from "../class-dynamic-keys.js";
+import { standaloneClassProtoObjectApplies } from "../class-proto-object.js";
 import { elemAccessReceiverClassName } from "./calls.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -61,10 +62,51 @@ const EXTERNREF: ValType = { kind: "externref" };
  * dispatch: a standalone class receiver whose hierarchy carries a member no
  * static ladder can name.
  */
-export function classDynamicMemberCallApplies(ctx: CodegenContext, elemAccess: ts.ElementAccessExpression): boolean {
+function classDynamicMemberCallApplies(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemAccess: ts.ElementAccessExpression,
+): boolean {
   if (!ctx.standalone) return false;
+  // (#5195 R2-1) `super[k](...)` is a DIFFERENT operation and must not be
+  // lowered as an ordinary member call. §13.3.7.1 reads the member off the HOME
+  // OBJECT's [[Prototype]] and invokes it with the CURRENT `this`; compiling
+  // `super` as the receiver yields `this`, so an overriding
+  // `E[ID('m')]() { return super[ID('m')]() }` re-entered ITSELF — unbounded
+  // self-recursion whose stack overflow escapes the wasm try/catch (measured
+  // depth 51 with a guard). The receiver-class gate did not catch it because
+  // `declaredNameOf(super)` answers the PARENT class name, which is in
+  // `classSet`. It gets its own lane below; here it only has to be recognised.
+  if (elemAccess.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    return superElementCallTarget(ctx, fctx) !== undefined;
+  }
   const className = elemAccessReceiverClassName(ctx, elemAccess);
   return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
+}
+
+/**
+ * (#5195 R2-1) The `super[k]` lookup target for the method being compiled: the
+ * home object's [[Prototype]], i.e. the PARENT class's prototype `$Object`.
+ *
+ * Returns the parent's proto global index, or `undefined` when this frame has
+ * no resolvable enclosing class, no compiled parent, no parent `$Object`
+ * prototype, or no `this` to invoke with — in each case the caller declines and
+ * the existing super lowering runs unchanged.
+ */
+function superElementCallTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): { protoGlobalIdx: number; thisLocal: number } | undefined {
+  const enclosing = resolveEnclosingClassName(fctx);
+  if (enclosing === undefined) return undefined;
+  const parent = ctx.classParentMap.get(enclosing);
+  if (parent === undefined) return undefined;
+  if (!classHierarchyHasDynamicMember(ctx, enclosing)) return undefined;
+  if (!standaloneClassProtoObjectApplies(ctx, parent)) return undefined;
+  const protoGlobalIdx = ctx.protoGlobals.get(parent);
+  const thisLocal = fctx.localMap.get("this");
+  if (protoGlobalIdx === undefined || thisLocal === undefined) return undefined;
+  return { protoGlobalIdx, thisLocal };
 }
 
 /**
@@ -84,7 +126,7 @@ export function tryEmitClassDynamicMemberCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
-  if (!classDynamicMemberCallApplies(ctx, elemAccess)) return undefined;
+  if (!classDynamicMemberCallApplies(ctx, fctx, elemAccess)) return undefined;
   if (elemAccess.argumentExpression === undefined) return undefined;
   if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
 
@@ -104,9 +146,26 @@ export function tryEmitClassDynamicMemberCall(
     return true;
   };
 
+  // `super[k]` splits the two roles an ordinary call fuses: the LOOKUP happens
+  // on the home object's [[Prototype]], the INVOCATION on the current `this`.
+  const superTarget =
+    elemAccess.expression.kind === ts.SyntaxKind.SuperKeyword ? superElementCallTarget(ctx, fctx) : undefined;
+  const isSuper = elemAccess.expression.kind === ts.SyntaxKind.SuperKeyword;
+  if (isSuper && superTarget === undefined) return undefined;
+
+  const lookupLocal = allocLocal(fctx, `__cdyn_lookup_${fctx.locals.length}`, EXTERNREF);
   const recvLocal = allocLocal(fctx, `__cdyn_recv_${fctx.locals.length}`, EXTERNREF);
-  if (!pushExtern(elemAccess.expression)) return undefined;
-  fctx.body.push({ op: "local.set", index: recvLocal });
+  if (superTarget !== undefined) {
+    fctx.body.push({ op: "global.get", index: superTarget.protoGlobalIdx });
+    fctx.body.push({ op: "local.set", index: lookupLocal });
+    fctx.body.push({ op: "local.get", index: superTarget.thisLocal });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "local.set", index: recvLocal });
+  } else {
+    if (!pushExtern(elemAccess.expression)) return undefined;
+    fctx.body.push({ op: "local.tee", index: recvLocal });
+    fctx.body.push({ op: "local.set", index: lookupLocal });
+  }
 
   const keyLocal = allocLocal(fctx, `__cdyn_key_${fctx.locals.length}`, EXTERNREF);
   if (!pushExtern(elemAccess.argumentExpression)) return undefined;
@@ -115,6 +174,19 @@ export function tryEmitClassDynamicMemberCall(
   // ToPropertyKey.
   emitToPropertyKeyOnce(ctx, fctx);
   fctx.body.push({ op: "local.set", index: keyLocal });
+
+  // (#5195 R2-5) The CALLEE is read before the arguments are evaluated.
+  // §13.3.6.1 evaluates the MemberExpression and performs GetValue on it before
+  // ArgumentListEvaluation, which is observable whenever the member is an
+  // accessor or sits behind a Proxy `get` trap: its side effects must come
+  // first. Reading it into a local here (rather than leaving it on the stack)
+  // keeps that order while still letting `__apply_closure` receive its operands
+  // in the order it wants.
+  const calleeLocal = allocLocal(fctx, `__cdyn_callee_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.get", index: lookupLocal });
+  fctx.body.push({ op: "local.get", index: keyLocal });
+  fctx.body.push({ op: "call", funcIdx: externGetIdx });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
 
   const argsLocal = allocLocal(fctx, `__cdyn_args_${fctx.locals.length}`, EXTERNREF);
   fctx.body.push({ op: "call", funcIdx: newIdx });
@@ -125,11 +197,10 @@ export function tryEmitClassDynamicMemberCall(
     fctx.body.push({ op: "call", funcIdx: pushIdx } satisfies Instr);
   }
 
-  // callee = __extern_get(recv, key) — the read that already consults the class
-  // prototype chain; then apply it WITH the receiver as `this`.
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push({ op: "local.get", index: keyLocal });
-  fctx.body.push({ op: "call", funcIdx: externGetIdx });
+  // Apply the already-read callee WITH the receiver as `this`. For an ordinary
+  // call the lookup object and the receiver are the same; for `super[k]` they
+  // are not, which is the whole point.
+  fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "local.get", index: argsLocal });
   fctx.body.push({ op: "call", funcIdx: applyIdx });
