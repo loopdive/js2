@@ -1349,3 +1349,70 @@ green. `typecheck:ts5` still fails only on `src/linked-provider-runtime.ts`
 
 `pnpm run test:equivalence:gate` on this tree: **24 failing / 1718 passing, all
 24 in the baseline — no new regressions.**
+
+### Post-#5479 park: the attributed host-lane regression (2026-09-02)
+
+PR #5479 was auto-parked for exactly one host-lane regression —
+`language/statements/class/subclass/class-definition-null-proto-super.js`
+pass → fail, "Maximum call stack size exceeded" (`range_error`), reported with
+a changed wasm hash — and then landed on `main` anyway at 12:25 UTC through the
+skipped-shard-group path that #5275 documents.
+
+**It does not reproduce, and the artifact is byte-identical.** Measured in this
+worktree on the merged tree, host lane, against the pre-#5479 base
+(`0d1582f5dd^1`, restored with `git checkout <sha> -- src`; no `git stash`):
+
+| check | base (pre-#5479) | lane |
+|---|---|---|
+| the row, `--isolate` | pass | pass |
+| the row, in-process | pass | pass |
+| the row's `wasm_sha` | `aa0313d0d7f6` | `aa0313d0d7f6` (identical) |
+| the whole 109-row `language/statements/class/subclass/**` tree | 67 pass / 42 fail | 67 pass / 42 fail, **identical non-pass set** (`diff` clean) |
+
+So this wave changes neither the compiled output of that test nor any verdict in
+its neighbourhood. Two independent facts make the attribution implausible on its
+face: the row's module is byte-identical, and every prototype-graph edge this
+wave added is standalone-gated (`fillBuiltinFnMeta` only fills when
+`__builtinfn_get_meta` exists, which `ensureObjectRuntime` registers under
+`--target standalone`), so none of them can reach a host-lane module at all.
+#5275's mechanism — a failed predecessor's merge commit riding into a
+green skipped-shard group — is the likely source; that is the shepherd's call,
+not this issue's.
+
+**What was fixed anyway.** Reviewing every walk this wave added for the failure
+mode the park describes (a chain that does not terminate) found one real, if
+latent, hole: `buildLazyNativeProtoGetInstrs` guarded only a SELF-parent
+(`parentBrand !== brand`). A future pair of glues declaring each other — or any
+longer cycle — would recurse until the COMPILER's own stack overflowed, which is
+exactly a "Maximum call stack size exceeded" with no useful diagnostic. The
+parent chain is now walked with an explicit in-progress set, and a cycle
+terminates the link at null exactly as an unregistered parent already did.
+
+This is **defensive, not the observed cause**, and it is emission-neutral: with
+and without the guard the `wasm_sha` is identical on
+`TypedArrayConstructors/prototype/forEach/inherited.js` (`7394c5b14326`),
+`TypedArrayConstructors/Uint8Array/prototype.js` (`76a80bda2426`) and the parked
+row (`aa0313d0d7f6`). No cycle exists today — the only declared links are the 11
+view protos → `%TypedArray%.prototype`, which declares no parent.
+
+The `class extends null` shape is now pinned on the HOST lane in
+`tests/issue-5194-es2015-typedarray-r2.test.ts`: it is the one shape that breaks
+if any prototype-graph edge ever fails to terminate on a null `[[Prototype]]`,
+since `super()` there has no super constructor and must raise a TypeError rather
+than walk.
+
+**Re-validation (merged tree, one heavy process at a time):**
+
+- `ta-passing-all.txt` + `ta-controls.txt` standalone: **104 pass / 1 compile
+  timeout / 0 leaks**. The single non-pass is
+  `built-ins/TypedArray/Symbol.species/name.js`, a chronically marginal row —
+  17.1 s against the runner's ~15 s deadline at box load ~7.6, and the
+  pre-#5479 base times the SAME row out at 19.5 s under the same load, so it is
+  the box, not this change. It passed in the quieter 10:34 run.
+- Focused test **11/11** (adds the null-proto-super host pin).
+- `pnpm run typecheck` (TS7) green; five ratchet gates green, bare with `$?`
+  captured.
+
+The same row on the STANDALONE lane fails identically on the pre-#5479 base
+(`Expected a TypeError to be thrown but no exception was thrown at all`), so
+that lane is a pre-existing gap and not part of this park.
