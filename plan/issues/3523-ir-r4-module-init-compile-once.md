@@ -3044,9 +3044,19 @@ pins in `tests/issue-3523-module-init-single-pass.test.ts`, and this file. No
 `src/ir/**` edit, no selector, no prepared route, no `"discover"`/`"skip"`
 change — as the contract requires.
 
-Every figure below is from a run in this worktree. The base was captured by file
+Every figure below is from a run on this branch. The base was captured by file
 copy at the first edit (`.tmp/base-declarations.ts`, `.tmp/base-closures.ts`,
 `.tmp/base-arrow-phases.ts`) and flipped with `cp`, never `git stash`.
+**Interrupted and resumed:** a container restart killed the session at ~09:10
+UTC on 2026-09-02 mid-verification, and work resumed in a second worktree from
+the same branch tip, the same uncommitted diff and the same `.tmp/` artifacts.
+**Every figure below is post-narrowing** — no first-cut number was left
+standing. Provenance splits two ways: the compile samples (V-C), the corpus
+bytes (V-B), the 90-file runtime sample, the mutation and the eight equivalence
+shards are the pre-restart session's completed second-round runs (`.tmp/g6b-*`,
+08:19–09:07 UTC); the nine suites, the `#4376` A/B, the five ratchets,
+`check:ir-fallbacks` and the `#5274` standing-red set were re-measured after the
+resume on the final tree.
 
 ### The mechanism the slice is actually built on — and how it differs from the plan
 
@@ -3149,8 +3159,10 @@ suggested, and **x6 is ADMITTED**, not refused; its runtime parity is pinned.
 
 Because the registration is wrapper-derived, none of this needed a refusal.
 
-**Admission rate**: 222/325 runner-faithful test262 harness populations (68.3%)
-on the host lane. 0/56 on the corpus (`website/playground/examples/**` +
+**Admission rate** under the shipped keyed-site rule: **223/325** runner-faithful
+test262 harness populations on the host lane (68.6%) and **24/163** on the
+standalone lane (14.7%) — the two lanes differ by a factor of five for a reason
+named in V-C. 0/56 on the corpus (`website/playground/examples/**` +
 `examples/**` × host/standalone) — those programs all carry a class expression,
 a static block, an integrity call or a nested closure.
 
@@ -3210,7 +3222,7 @@ dead twin's index shift) — character-identical otherwise. `x5`'s `$read` is 94
 lines on both routes and **282** without the inventory (module 3 211 → 12 659
 bytes), so the plan's "x5 must not grow" holds with room to spare.
 
-### The one family that survived — recorded, not widened
+### The two families that survived — recorded, not widened
 
 A module-scope closure whose body mints a nested closure that ESCAPES is not
 servable by an AST-level inventory: `const mk = () => { const inner = () => 5;
@@ -3228,6 +3240,62 @@ analysis is not this slice's job. Cost, measured: 4 of the 21 variants
 (`v4`, `v11`, `v12`, `v19`) are refused that need not be, and each is
 byte-identical to its two-pass control when refused. After the refusal: **0
 divergences across 21 variants × 2 lanes.**
+
+**The second family was found by a GATE, not by a probe, and it is the one that
+changed the contract.** The pre-push hook's `#3765 numeric-locals` check went
+red on `tests/issue-3765-numeric-locals.test.ts > is off under the kill switch,
+restoring the boxed carrier` — 18/18 on the base tree, 17/18 with the first cut.
+Its fixture's whole init population is
+
+```js
+Tok.prototype.nextCode = function () { … };
+Tok.prototype.run      = function () { … };
+```
+
+a pair of **write-once fnctor prototype methods**. `admitTypedThisTwin`
+(`typed-this.ts:224`) and `recordDirectCallGeneric` (`:1009`) both gate on
+`resolveEnclosingFnctorOwner(...).viaPrototype`, so compiling those closures is
+what mints the #3683 typed-`this` twin and the #3765 direct-call carrier that
+the bodies compiled BETWEEN the passes consume. Moving that compile to pass 2
+changed the twin's emitted body.
+
+The fix is a narrowing of what counts as a SITE: **only the two shapes
+`registerClosureBindingInfo` actually KEYS in `closureMap`** — `var/let/const
+<ident> = <closure>` and `<ident> = <closure>`. A `<obj>.<prop> = <closure>`
+publishes no `closureMap` entry, so pre-lifting it buys nothing; and because the
+gate additionally requires at least one site, a population whose closures are
+ALL property assignments (the pure-fnctor shape) is refused outright and keeps
+pass 1. `#3765` is green again at 18/18.
+
+Two narrower rules were tried first and MEASURED to be unusable, both because
+the runner-faithful harness carries the shapes they refuse:
+
+| rule | admission on an 82-file host-lane harness sample |
+| --- | --- |
+| refuse any unkeyed function-like in the population | **0/82** — the `$262` runtime shim is an object literal of methods |
+| also refuse any `.prototype` member access | **0/82** — `sta.js` has `Test262Error.prototype.toString = function …` |
+| refuse a closure nested in ANY population closure | **0/82** — the shim has `function () { return function (msg) { this.message = msg; }; }` |
+| **shipped**: keyed sites only, nesting refused inside a SITE's body | **58/82** |
+
+**Residual risk, stated plainly:** a MIXED population — one that has a keyed
+site AND a fnctor prototype method, which is exactly the test262 harness — is
+still admitted, so that prototype method's twin still moves from pass 1 to
+pass 2. It is measured at parity on everything this slice can measure (0
+error-count / 0 success divergence over 325 host + 163 standalone compiles, 0
+status divergence over 90 runtime files, 8/8 equivalence shards) but it is NOT
+pinned, because a twin-body difference is invisible to status and error counts.
+The `merge_group` standalone floor is the backstop.
+
+The in-source comments were corrected on the resume to say that, because the
+first cut left the STRICT rule's wording standing next to code that enforces
+neither half of it — "EVERY function-like or class-like node in that subtree
+must be one of the keyed sites", and "those closures therefore REFUSE the
+population". Neither is true of the shipped gate: `populationRefusal` never looks
+at unkeyed function-likes, and the only thing that keeps the pure-fnctor shape on
+pass 1 is `sites.length === 0`. A comment asserting an invariant the code does
+not hold is worse than no comment, because the next reader builds on it — so
+both now state the actual rule, name the 0/82 measurement that rules the strict
+one out, and point here for the mixed-population risk.
 
 ### Known difference, named rather than hidden
 
@@ -3279,43 +3347,79 @@ no-op there.
 
 Every Nth official file under `test/language`, `test/built-ins`, `test/annexB`,
 harness assembled via `assembleOriginalHarness`, compiled with the runner's
-options, candidate vs the forced two-pass build:
+options, candidate vs the forced two-pass build. **Both lanes re-run after the
+keyed-site narrowing** — these are the shipped rule's numbers, not the first
+cut's:
 
 | | host (deferred) | standalone |
 | --- | --- | --- |
 | measured | 325 / 325 | 163 / 163 |
-| admitted (discovery-static) | **222 (68.3%)** | **111 (68.1%)** |
+| admitted (discovery-static) | **223 (68.6%)** | **24 (14.7%)** |
 | error-count divergence | **0** | **0** |
 | success divergence | **0** | **0** |
-| admitted modules smaller / equal / bigger | **222 / 0 / 0** | **109 / 2 / 0** |
+| admitted modules smaller / equal / bigger | **223 / 0 / 0** | **22 / 2 / 0** |
+
+**The standalone lane is where the narrowing was paid for, and the bill is
+visible: admission fell 111 → 24 there while the host lane went 222 → 223.**
+Both moves follow from the one rule change. `<obj>.<prop> = <closure>` used to be
+a CANDIDATE carrying an undefined binding, so `siteRefusal` could reject it and
+take the whole population down with it — the host lane loses exactly one such
+refusal, hence +1. It is now not a candidate at all, so a population whose
+closures are ALL property assignments has zero sites and is refused by
+`population-has-no-pre-liftable-closure`; the standalone harness is dominated by
+that shape, hence −87. **Divergence stayed at 0 on both lanes across the
+narrowing**, so this is a payoff loss, not a correctness signal — and since the
+residual fnctor risk lives in the standalone lane, that is the side to lose
+payoff on. It also means gap-6b's inventories, if they are ever wanted, are
+worth more to standalone than the 68% host figure alone suggests.
 
 ### V-E — gates and suites
 
 - Five ratchets bare: `check-loc-budget` `check-func-budget`
   `check-coercion-sites` `check:oracle-ratchet` `check:dead-exports` — all exit
   0, and again under `LOC_GATE_BASE=$(git rev-parse origin/main)`.
-- LOC `src/codegen/declarations.ts` 6404 → 6453 (+49) and func
-  `compileDeclarations` 1316 → 1359 (+43), both granted in this file's
-  frontmatter with a dated rationale.
+- LOC `src/codegen/declarations.ts` **6478 → 6526 (+48)** against the merge-base
+  and **6496 → 6526 (+30)** against `origin/main` at `c91ac6ea` (main moved that
+  file underneath the branch), func `compileDeclarations` **1316 → 1358 (+42)**
+  — both granted in this file's frontmatter with a dated rationale. The new
+  subsystem module is not a budgeted file.
 - `pnpm run typecheck` clean. `npm run lint` exit 0. `prettier --check` clean on
   every file this PR touches (the one repo-wide warning,
   `tests/dogfood/setup-lit-upstream-suite.mjs`, is untouched and pre-existing on
   `main`).
-- `check:ir-fallbacks` output **byte-identical** base vs candidate (`diff`
-  empty).
+- `check:ir-fallbacks` exit 0, and its output **byte-identical** between the
+  candidate and the forced two-pass control (`diff` empty) — re-run on the final
+  tree through the `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2` seam rather than a
+  file-copy base, so the comparison isolates this slice from main's drift.
 - **All eight `equivalence-gate` shards exit 0** — "No new equivalence
   regressions" on every one (1 718 passing, 24 known-failures per shard's
   baseline).
-- The seven scar-family suites green: `issue-2965`, `issue-3872`,
-  `issue-4182-annexb-global-blockfn`,
-  `issue-4195-eval-refusal-message-and-dedupe`,
-  `issue-4376-module-init-chunking`, `issue-3523-ir-module-init-compile-once`
-  (93 tests) plus `issue-3523-module-init-single-pass` (15) and the new
-  `issue-3523-module-init-discovery-static` (11) — **119 tests**.
+- **Nine scar-family suites green on the final tree, re-run after the keyed-site
+  narrowing: 137 tests, 0 failures.**
+  `issue-3523-ir-module-init-compile-once` (20), `issue-3872` (28),
+  `issue-2965` (11), `issue-4182-annexb-global-blockfn` (9),
+  `issue-4195-eval-refusal-message-and-dedupe` (6),
+  `issue-4376-module-init-chunking` (19), `issue-3765-numeric-locals` (18),
+  `issue-3523-module-init-single-pass` (15) and the new
+  `issue-3523-module-init-discovery-static` (11). (The first cut of this note
+  wrote "93 tests" next to the `issue-3523-ir-module-init-compile-once` name;
+  93 was the SUM of a six-suite run and that suite is 20. Corrected by
+  re-measuring, not by re-parenthesising.)
+- **`#4376`'s `preserves TDZ ordering for const writes and updates` sits within
+  ~2 s of vitest's 35 s default timeout on this 4-core box — on BOTH routes.**
+  It timed out once at 35 142 ms in a run sharing the box with other work, which
+  is the check the resumed session had been about to redo. Quiet box, same `-t`
+  filter, isolated A/B: candidate **28 452 ms** vs forced-two-pass control
+  **31 304 ms**, and the whole file is **19/19 in 87.9 s**. The pass-1 skip makes
+  that test faster, so the timeout was ambient load, not gap-6a — but the margin
+  is thin enough that a loaded CI runner can flake it independently of this
+  slice, which is worth knowing before the next person blames a diff for it.
 - The 17 standing reds of
   [#5274](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5274-standing-red-tests-string-and-3529-suites)
   measured on THIS base tree: **17 failed / 47 passed before the edit and 17 /
-  47 after, the same 17 by name.** No growth.
+  47 after, the same 17 by name.** Re-measured once more on the final tree after
+  the keyed-site narrowing: still 17 / 47, still the same 17 by name (`diff` of
+  the sorted FAIL lists is empty). No growth.
 
 ### Pins that MOVED, deliberately
 

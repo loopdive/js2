@@ -57,6 +57,8 @@
  * | generator / async | own lowering machinery; the async activation REWRITES `closureReturnType` to `externref` after the sig is computed |
  * | concise body with a boxed (`externref`) declared return | the #concise-body return repair can re-mint `liftedFuncTypeIdx` while compiling the body — a type the pre-lift cannot know |
  * | no shared wrapper for the signature | defensive: the real mint would produce an unrelated private struct |
+ * | a nested closure inside a SITE's body | it is minted while that site's LIFTED body compiles, and there is no lifted frame at pre-lift time — measured, `const mk = () => { const inner = () => 5; return inner }` made a between-pass `mk()()` answer `0` instead of `5` |
+ * | population has NO KEYED site (every closure in it is `<obj>.<prop> = …`) | nothing to publish. This is also what keeps the pure-fnctor shape on pass 1: `Tok.prototype.nextCode = function () { … }` mints the #3683 typed-`this` twin and the #3765 direct-call carrier the between-pass bodies consume, and moving that compile changed the twin's emitted body |
  * | population carries an integrity call | `Object.freeze`/`defineProperty`/`Reflect.*` — the bodies deliberately consume pass 1's END integrity state (#2965 snapshot), which only a first compile produces |
  * | population carries a decorator / await / class expression / class static block | gap-1b's refusals, unchanged: their lowerings are order- and pass-sensitive |
  * | population reaches beyond this source | `"discover"` mode exists to run pass 1 for the whole graph; a multi-source population is out of scope |
@@ -87,8 +89,8 @@ export const PRELIFT_DISABLE_SEAM = "JS2WASM_TEST_DISABLE_MODULE_INIT_PRELIFT";
 /** A module-scope closure whose declare half can be reproduced ahead of the bodies. */
 export interface ModuleClosurePreLiftSite {
   readonly node: ts.ArrowFunction | ts.FunctionExpression;
-  /** The binding `registerClosureBindingInfo` will key, when it keys one. */
-  readonly binding: string | undefined;
+  /** The `ctx.closureMap` key `registerClosureBindingInfo` will write. */
+  readonly binding: string;
 }
 
 /** Why a candidate — or the population as a whole — is not pre-liftable. */
@@ -174,21 +176,42 @@ function populationRefusal(node: ts.Node): ModuleClosurePreLiftRefusalReason | u
   }
 }
 
-/** The two binding shapes `registerClosureBindingInfo` can key, at TOP LEVEL only. */
-function topLevelClosureCandidates(
+/**
+ * The two binding shapes `registerClosureBindingInfo` KEYS in `ctx.closureMap`,
+ * at TOP LEVEL only: `var/let/const <ident> = <closure>` and
+ * `<ident> = <closure>`.
+ *
+ * The keying is the whole point. A top-level closure the registration would not
+ * key contributes no discovery a between-pass body can NAME, so pre-lifting it
+ * buys nothing — and compiling it still moves from pass 1 to pass 2, which IS
+ * observable: `Tok.prototype.nextCode = function () { … }` is a write-once
+ * fnctor prototype method, so its compile mints the #3683 typed-`this` twin and
+ * the #3765 direct-call carrier that the bodies between the passes consume.
+ * Measured 2026-09-02, moving that compile changes the twin's emitted body.
+ *
+ * An unkeyed closure is therefore NOT a site. What that buys is exact, and
+ * narrower than "it is refused": a population whose closures are ALL unkeyed
+ * yields zero sites and is refused by `population-has-no-pre-liftable-closure`,
+ * which is what keeps the pure-fnctor shape (`#3765`'s fixture) on pass 1. A
+ * MIXED population — one keyed site plus a fnctor prototype method, which is
+ * exactly the test262 harness — is still ADMITTED, so that method's compile
+ * still moves. Refusing it outright was measured at 0/82 admission on the
+ * runner-faithful harness sample, i.e. it retires the slice; the mixed case is
+ * carried as recorded residual risk instead (see the gap-6a checkpoint note in
+ * `plan/issues/3523-ir-r4-module-init-compile-once.md`).
+ */
+function topLevelKeyedClosureSites(
   statements: readonly ts.Statement[],
-): Array<{ node: ts.ArrowFunction | ts.FunctionExpression; binding: string | undefined }> {
-  const found: Array<{ node: ts.ArrowFunction | ts.FunctionExpression; binding: string | undefined }> = [];
+): Array<{ node: ts.ArrowFunction | ts.FunctionExpression; binding: string }> {
+  const found: Array<{ node: ts.ArrowFunction | ts.FunctionExpression; binding: string }> = [];
   for (const statement of statements) {
     if (ts.isVariableStatement(statement)) {
       for (const declarator of statement.declarationList.declarations) {
         const initializer = declarator.initializer;
         if (!initializer) continue;
         if (!ts.isArrowFunction(initializer) && !ts.isFunctionExpression(initializer)) continue;
-        found.push({
-          node: initializer,
-          binding: ts.isIdentifier(declarator.name) ? declarator.name.text : undefined,
-        });
+        if (!ts.isIdentifier(declarator.name)) continue;
+        found.push({ node: initializer, binding: declarator.name.text });
       }
       continue;
     }
@@ -197,7 +220,8 @@ function topLevelClosureCandidates(
     if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
     const right = expression.right;
     if (!ts.isArrowFunction(right) && !ts.isFunctionExpression(right)) continue;
-    found.push({ node: right, binding: ts.isIdentifier(expression.left) ? expression.left.text : undefined });
+    if (!ts.isIdentifier(expression.left)) continue;
+    found.push({ node: right, binding: expression.left.text });
   }
   return found;
 }
@@ -230,15 +254,12 @@ function siteRefusal(
     if (node.asteriskToken !== undefined) return "generator";
   }
   if (node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return "async";
-  // (measured 2026-09-02, `.tmp/g6a-variants`) The ONE family where the
-  // declare-half inventory is not enough. `const mk = () => { const inner = ()
-  // => 5; return inner; }` compiles `inner` while pass 1 compiles `mk`'s LIFTED
-  // BODY — a fact no AST-level pre-lift can publish — and a between-pass body
-  // that calls `mk()()` loses the second-level dispatch and answers `0` instead
-  // of `5` on both lanes. Only escaping nested closures actually break (`v4`,
-  // `v11`, `v12`, `v19` in that probe are all fine), but escape analysis is not
-  // this slice's job: refuse every nested function-like, fail-closed. This is
-  // the "next inventory family" the gap-6 plan says to record and stop at.
+  // (measured 2026-09-02) A closure nested in THIS site's body is minted while
+  // this site's LIFTED body compiles, and there is no lifted frame at pre-lift
+  // time: `const mk = () => { const inner = () => 5; return inner; }` loses the
+  // second-level dispatch and a between-pass `mk()()` answers `0` instead of
+  // `5` on both lanes. Only ESCAPING nested closures actually break, but escape
+  // analysis is not this slice's job — refuse them all, fail-closed.
   if (containsNestedFunctionLike(node)) return "nested-function-like-in-body";
   // The concise-body return repair (`closures.ts`, the `else if` inside the
   // non-block arm) re-mints `liftedFuncTypeIdx` when the expression lowers to
@@ -283,6 +304,23 @@ export function planModuleClosurePreLift(
 
   // Full-subtree population scan over exactly the nodes the initializer
   // compiles — the same input set `moduleInitPopulationIsPass2Stable` reads.
+  //
+  // A closure the pre-lift does not publish still has its COMPILE moved from
+  // pass 1 to pass 2, and two measured mechanisms observe that move — a nested
+  // closure that escapes its parent's lifted body (`const mk = () => { const
+  // inner = () => 5; return inner; }`, where a between-pass `mk()()` answered
+  // `0` instead of `5`), and a write-once fnctor prototype method
+  // (`Tok.prototype.nextCode = function () { … }`), whose compile mints the
+  // #3683 typed-`this` twin and the #3765 direct-call carrier that the
+  // between-pass bodies consume.
+  //
+  // The first is refused per SITE (`nested-function-like-in-body`). The second
+  // is NOT refused per population: requiring every function-like in the subtree
+  // to be a keyed site was measured at 0/82 admission on the runner-faithful
+  // harness sample. What the keyed-site rule does buy is that an ALL-unkeyed
+  // population yields no sites and is refused; a mixed one is admitted and its
+  // residual risk is recorded, not asserted away.
+  const candidates = topLevelKeyedClosureSites(ctx.moduleInitStatements);
   const seenPopulationRefusals = new Set<ModuleClosurePreLiftRefusalReason>();
   const stack: ts.Node[] = [...ctx.moduleInitStatements];
   while (stack.length > 0) {
@@ -298,10 +336,10 @@ export function planModuleClosurePreLift(
   }
   if (refusals.length > 0) return { sites, refusals };
 
-  for (const candidate of topLevelClosureCandidates(ctx.moduleInitStatements)) {
+  for (const candidate of candidates) {
     const reason = siteRefusal(ctx, candidate.node);
     if (reason !== undefined) {
-      refusals.push(candidate.binding === undefined ? { reason } : { reason, binding: candidate.binding });
+      refusals.push({ reason, binding: candidate.binding });
       continue;
     }
     sites.push(candidate);

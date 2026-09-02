@@ -287,6 +287,30 @@ const REFUSAL_PAIRS: readonly RefusalPair[] = [
     },
   },
   {
+    name: "population-has-no-pre-liftable-closure (fnctor prototype methods only)",
+    reason:
+      "a write-once fnctor prototype method is never KEYED in closureMap, so there is nothing to publish — and its compile mints the #3683 typed-`this` twin and the #3765 direct-call carrier that the between-pass bodies consume",
+    refused: {
+      name: "prototype-methods-only",
+      source:
+        `function Tok(input: any) { (this as any).input = input; (this as any).pos = 0; }\n` +
+        `(Tok as any).prototype.nextCode = function (this: any): number { const c = this.input.charCodeAt(this.pos); this.pos = this.pos + 1; return c; };\n` +
+        `function drive(s: string): number { const t: any = new (Tok as any)(s); return t.nextCode(); }\n` +
+        `export function read(): number { return drive("A"); }\n`,
+      read: 65,
+      closures: 1,
+    },
+    admittedTwin: {
+      name: "one-keyed-binding-instead",
+      source:
+        `const nextCode = function (s: string): number { return s.charCodeAt(0); };\n` +
+        `function drive(s: string): number { return nextCode(s); }\n` +
+        `export function read(): number { return drive("A"); }\n`,
+      read: 65,
+      closures: 1,
+    },
+  },
+  {
     name: "population-integrity-call",
     reason: "bodies deliberately consume pass 1's END integrity state (the #2965 snapshot)",
     refused: {
