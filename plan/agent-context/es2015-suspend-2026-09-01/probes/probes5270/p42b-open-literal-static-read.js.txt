@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var s = Symbol();
+var object = { a: 'A', [s]: 'B' };
+assert.sameValue(object.a, 'A', 'static read on open literal: ' + String(object.a));

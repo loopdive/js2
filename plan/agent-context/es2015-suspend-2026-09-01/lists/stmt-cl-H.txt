@@ -1,0 +1,3 @@
+language/global-code/decl-lex.js
+language/global-code/block-decl-strict.js
+language/global-code/decl-lex-restricted-global.js

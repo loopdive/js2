@@ -1,0 +1,224 @@
+// Generate the #5270 minimal probes into .tmp/es2015/probes5270/<name>.js.
+// Each probe is a test262-shaped file (frontmatter + harness includes) so the
+// runner's standalone lane judges it exactly like a conformance row. A PASS
+// falsifies the "bug" hypothesis named in the file; a FAIL's reason line
+// carries the observed value.
+import { mkdirSync, writeFileSync } from "node:fs";
+const dir = ".tmp/es2015/probes5270";
+mkdirSync(dir, { recursive: true });
+const fm = (inc = []) => `/*---\ndescription: probe\nincludes: [${inc.join(", ")}]\nflags: [noStrict]\n---*/\n`;
+const P = {
+  // --- method-shorthand `this` when extracted and called bare
+  "p01-meth-this-strict": `var thisValue = 'unset';
+var method = { method() { 'use strict'; thisValue = this; } }.method;
+method();
+assert.sameValue(thisValue, undefined, 'strict method shorthand this: ' + typeof thisValue + ' ' + String(thisValue));`,
+  "p01b-fnprop-this-strict": `var thisValue = 'unset';
+var method = { method: function() { 'use strict'; thisValue = this; } }.method;
+method();
+assert.sameValue(thisValue, undefined, 'strict fn-valued prop this: ' + typeof thisValue + ' ' + String(thisValue));`,
+  // --- Symbol.toPrimitive installed AFTER literal creation
+  "p02-toprim-add": `var left = {}; var right = {}; var log = '';
+left[Symbol.toPrimitive] = function(h) { log += 'L' + h; return 1; };
+right[Symbol.toPrimitive] = function(h) { log += 'R' + h; return 2; };
+var r = left + right;
+assert.sameValue(log, 'LdefaultRdefault', 'log=' + log + ' r=' + r);`,
+  "p02b-toprim-looseeq": `var y = {}; var n = 0;
+y[Symbol.toPrimitive] = function() { n++; return 86; };
+var r = (86 == y);
+assert.sameValue(n, 1, 'toPrimitive calls=' + n + ' r=' + r);
+assert.sameValue(r, true);`,
+  "p02c-toprim-write-readback": `var y = {};
+y[Symbol.toPrimitive] = function() { return 1; };
+assert.sameValue(typeof y[Symbol.toPrimitive], 'function', 'readback typeof=' + typeof y[Symbol.toPrimitive]);`,
+  // --- tag with 4 params on a module-level var closure
+  "p03-tag-var-4params": `var callCount = 0; var i = 0;
+var tag = function(t, a, b, c) { callCount++; assert.sameValue(a, 0); assert.sameValue(b, 1); assert.sameValue(c, 2); };
+tag\`a\${ i++ }b\${ i++ }c\${ i++ }d\`;
+assert.sameValue(callCount, 1, 'callCount=' + callCount);`,
+  // --- sloppy `yield` identifier as computed key
+  "p04-yield-ident-key": `var yield = 'propName';
+var obj = { [yield]() {} };
+assert(Object.prototype.hasOwnProperty.call(obj, 'propName'), 'keys=' + Object.getOwnPropertyNames(obj).join());`,
+  // --- runtime symbol / call-computed keys in data + method literals
+  "p05-sym-call-key-data": `function ID(x) { return x; }
+var sym1 = Symbol(); var sym2 = Symbol();
+var object = { a: 'A', [sym1]: 'B', c: 'C', [ID(sym2)]: 'D' };
+assert.sameValue(object[sym1], 'B', 'sym1=' + String(object[sym1]));
+assert.sameValue(object[sym2], 'D', 'sym2=' + String(object[sym2]));
+assert.sameValue(Object.getOwnPropertySymbols(object).length, 2, 'symbols=' + Object.getOwnPropertySymbols(object).length);`,
+  "p06-num-call-key-method": `function ID(x) { return x; }
+var object = { a() { return 'A'; }, [1]() { return 'B'; }, [ID(2)]() { return 'D'; } };
+assert.sameValue(object[1](), 'B');
+assert.sameValue(object[2](), 'D');
+assert.sameValue(Object.getOwnPropertyNames(object).join(), '1,2,a', 'names=' + Object.getOwnPropertyNames(object).join());`,
+  "p06b-sym-key-method": `var s = Symbol();
+var object = { a() { return 'A'; }, [s]() { return 'B'; } };
+assert.sameValue(object[s](), 'B');
+assert.sameValue(Object.getOwnPropertyNames(object).join(), 'a', 'names=' + Object.getOwnPropertyNames(object).join());`,
+  // --- [[Prototype]] of a plain literal, and __proto__ forms
+  "p07-gpo-plain": `var o; o = { a: 1 };
+assert.sameValue(Object.getPrototypeOf(o), Object.prototype, 'gpo({a:1}) is Object.prototype: ' + (Object.getPrototypeOf(o) === null ? 'null' : 'other'));`,
+  "p07b-gpo-empty-decl": `var o = {};
+assert.sameValue(Object.getPrototypeOf(o), Object.prototype, 'gpo({}) === Object.prototype');`,
+  "p07c-proto-colon-obj": `var proto = {}; var object = { __proto__: proto };
+assert.sameValue(Object.getPrototypeOf(object), proto, 'colon __proto__ sets [[Prototype]]');
+assert.sameValue(Object.getOwnPropertyDescriptor(object, '__proto__'), undefined, 'no own __proto__');`,
+  "p07d-proto-computed": `var sample = {}; var obj = { ['__proto__']: sample };
+assert(obj.hasOwnProperty('__proto__'), 'computed __proto__ is own');
+assert.sameValue(obj.__proto__, sample);
+assert.sameValue(Object.getPrototypeOf(obj), Object.prototype, 'gpo unchanged');`,
+  // --- super.toString (builtin inherited via Object.prototype) in objlit method
+  "p08-super-builtin-body": `var obj = { method() { return super.toString; } };
+obj.toString = null;
+assert.sameValue(obj.method(), Object.prototype.toString, 'super.toString=' + String(obj.method()));`,
+  "p08b-super-call-method": `var proto = { method(x) { return 'proto' + x; } };
+var object = { method(x) { return super.method(x); } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.method(42), 'proto42', 'super.method(42)=' + String(object.method(42)));`,
+  "p08c-super-getter": `var proto = { _x: 42, get x() { return 'proto' + this._x; } };
+var object = { get x() { return super.x; } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.x, 'proto42', 'getter super.x=' + String(object.x));`,
+  "p08d-super-param-default": `var obj = { method(x = super.toString) { return x; } };
+obj.toString = null;
+assert.sameValue(obj.method(), Object.prototype.toString, 'param-default super.toString=' + String(obj.method()));`,
+  // --- var redeclaration with different literal shapes
+  "p09-var-redecl-shape": `var obj = Object.defineProperty({}, 'attr', { get: function() {} });
+var obj = { method(a = obj) { return 1; } };
+assert.sameValue(obj.method(), 1, 'obj.method typeof=' + typeof obj.method);`,
+  // --- arrow lexical this from a fnctor instance, borrowed via apply
+  "p10-arrow-lexical-this-apply": `function F() { this.af = _ => { return this; }; }
+var usurper = {}; var f = new F();
+assert.sameValue(f.af(), f, 'direct');
+assert.sameValue(f.af.apply(usurper), f, 'apply');`,
+  // --- arrows have no prototype, and their [[Prototype]] is Function.prototype
+  "p11-arrow-no-prototype": `assert.sameValue('prototype' in (() => {}), false, 'prototype in arrow');
+assert.sameValue(Object.getPrototypeOf(() => {}), Function.prototype, 'gpo(arrow)');`,
+  "p11b-arrow-restricted": `var arrowFn = () => {};
+assert.sameValue(arrowFn.hasOwnProperty('caller'), false, 'own caller');
+assert.throws(TypeError, function() { return arrowFn.caller; }, 'get caller');`,
+  // --- instanceof: RHS Function.prototype with poisoned/getter prototype; @@hasInstance on an object RHS
+  "p12-instanceof-fnproto-poison": `Function.prototype.prototype = '';
+assert.throws(TypeError, function() { [] instanceof Function.prototype; }, 'non-object prototype must throw');`,
+  "p12b-instanceof-fnproto-getter": `var called = 0;
+Object.defineProperty(Function.prototype, 'prototype', { get: function() { called++; return Array.prototype; } });
+assert.sameValue([] instanceof Function.prototype, true, 'walk reaches Array.prototype');
+assert.sameValue(called, 1, 'getter called once: ' + called);`,
+  "p13-instanceof-hasinstance-obj": `var F = {}; var n = 0; var tv; var al;
+F[Symbol.hasInstance] = function(v) { n++; tv = this; al = arguments.length; return true; };
+assert.sameValue(0 instanceof F, true, '@@hasInstance result');
+assert.sameValue(n, 1, 'called once: ' + n);
+assert.sameValue(tv, F, 'this is F');
+assert.sameValue(al, 1, 'one arg');`,
+  "p13b-instanceof-hasinstance-getter-throw": `var F = {};
+Object.defineProperty(F, Symbol.hasInstance, { get: function() { throw new Test262Error(); } });
+assert.throws(Test262Error, function() { 0 instanceof F; }, 'getter abrupt propagates');`,
+  // --- tagged template: this for a call-expression tag, member tag, and arguments.length
+  "p14-tag-callexpr-this-strict": `var context = null;
+var fn = function() { return function() { 'use strict'; context = this; }; };
+fn()\`x\`;
+assert.sameValue(context, undefined, 'this=' + String(context));`,
+  "p15-tag-member-this": `var context; var obj = { fn: function() { context = this; } };
+obj.fn\`x\`;
+assert.sameValue(context, obj, 'member tag this');`,
+  "p16-tag-zero-param-arguments": `var n = -1;
+(function() { n = arguments.length; })\`NoSub\`;
+assert.sameValue(n, 1, 'arguments.length=' + n);`,
+  "p16b-tag-6-args": `var n = -1; var number = 5;
+(function(site, a, b) { n = arguments.length; })\`a\${number}b\${number}c\${number}d\`;
+assert.sameValue(n, 4, 'arguments.length=' + n);`,
+  // --- script-top-level `arguments`/`eval` as sloppy assignment targets
+  "p18-toplevel-arguments-target": `var vals = [2, 3];
+var result = [arguments, eval] = vals;
+assert.sameValue(arguments, 2, 'arguments=' + String(arguments));
+assert.sameValue(eval, 3);`,
+  // --- template object frozen + raw
+  "p19-template-frozen": `var t = null;
+(function(p) { t = p; })\`\`;
+t.test262Prop = true;
+assert.sameValue(t.test262Prop, undefined, 'frozen template object: ' + String(t.test262Prop));
+assert.notSameValue(t.raw, undefined, 'raw present');
+assert.sameValue(Object.isFrozen(t), true, 'isFrozen');`,
+  "p19b-template-frozen-strict": `'use strict';
+var t = null;
+(function(p) { t = p; })\`\`;
+assert.throws(TypeError, function() { 'use strict'; t.test262Prop = true; }, 'strict write throws');`,
+  // --- `new tag\`\``
+  "p20-new-tagged": `var arg = null; var templateObject;
+function Constructor(x) { arg = x; }
+var tag = function(x) { templateObject = x; return Constructor; };
+var instance = new tag\`first\`;
+assert(instance instanceof Constructor, 'instance');
+assert.sameValue(templateObject[0], 'first');
+assert.sameValue(arg, undefined);`,
+  // --- TCO in return position, plain identity call (control) and dynamic callee
+  "p21-tco-identity": `var callCount = 0;
+(function f(n) { if (n === 0) { callCount += 1; return; } return f(n - 1); }(100000));
+assert.sameValue(callCount, 1);`,
+  "p21b-tco-comma": `var callCount = 0;
+(function f(n) { if (n === 0) { callCount += 1; return; } return 0, f(n - 1); }(100000));
+assert.sameValue(callCount, 1);`,
+  "p21c-tco-getf": `var callCount = 0;
+(function f(n) { if (n === 0) { callCount += 1; return; } function getF() { return f; } return getF()(n - 1); }(100000));
+assert.sameValue(callCount, 1);`,
+  "p21d-tco-externref-ret": `var callCount = 0;
+(function f(n) { if (n === 0) { callCount += 1; return {}; } return f(n - 1); }(100000));
+assert.sameValue(callCount, 1);`,
+  // --- accessor with computed keys: boolean-valued and symbol-valued runtime keys
+  "p22-accessor-bool-key": `var empty = Object.create(null); var value;
+var obj = { get ['x' in empty]() { return 'via get'; } };
+assert.sameValue(obj.false, 'via get', 'obj.false=' + String(obj.false));`,
+  "p23-accessor-symbol-key": `var s = Symbol(); var calls = 0;
+var A = { get [s]() { return s; }, set [s](_) { calls++; } };
+assert.sameValue(A[s], s, 'getter on symbol key');
+A[s] = 1;
+assert.sameValue(calls, 1, 'setter on symbol key: ' + calls);`,
+  "p23b-accessor-num-key": `var A = { get [1]() { return 1; } };
+assert.sameValue(A[1], 1, 'A[1]=' + String(A[1]));`,
+  // --- destructuring assignment: lref-first + IteratorClose on abrupt
+  "p24-dstr-lref-first-close": `var nextCount = 0; var returnCount = 0;
+var iterable = {}; var iterator = { next: function() { nextCount++; return { done: true }; }, return: function() { returnCount++; } };
+var thrower = function() { throw new Test262Error(); };
+iterable[Symbol.iterator] = function() { return iterator; };
+assert.throws(Test262Error, function() { 0, [ {}[thrower()] ] = iterable; });
+assert.sameValue(nextCount, 0, 'next=' + nextCount);
+assert.sameValue(returnCount, 1, 'return=' + returnCount);`,
+  "p24b-dstr-rest-member": `var iterable = {}; var iterator = { next: function() { return { done: true }; } };
+iterable[Symbol.iterator] = function() { return iterator; };
+var obj = {};
+var result = [...obj['a' + 'b']] = iterable;
+assert(!!obj.ab, 'rest member target written: ' + String(obj.ab));
+assert.sameValue(obj.ab.length, 0);`,
+  // --- class NamedEvaluation in assignment / objlit positions
+  "p25-class-name-assign": `var cls; cls = class {};
+var d = Object.getOwnPropertyDescriptor(cls, 'name');
+assert.sameValue(cls.name, 'cls', 'fold');
+assert.sameValue(d && d.value, 'cls', 'descriptor value=' + String(d && d.value));`,
+  "p25b-class-name-objlit": `var o = { id: class {} };
+var d = Object.getOwnPropertyDescriptor(o.id, 'name');
+assert.sameValue(d && d.value, 'id', 'descriptor value=' + String(d && d.value));`,
+  // --- delete of a method-shorthand property (verifyProperty configurable cycle)
+  "p31-delete-method": `var obj = { method() {} };
+assert.sameValue(delete obj.method, true);
+assert.sameValue(obj.hasOwnProperty('method'), false, 'still own after delete');`,
+  // --- generator method extracted + called bare (this), and generator method descriptor
+  "p32-gen-meth-this-strict": `var thisValue = 'unset';
+var method = { *method() { 'use strict'; thisValue = this; } }.method;
+method().next();
+assert.sameValue(thisValue, undefined, 'gen method this: ' + String(thisValue));`,
+  // --- with + objlit shorthand: @@unscopables getter throw propagates
+  "p33-with-unscopables-throw": `var obj = { attr: null, get [Symbol.unscopables]() { throw new Test262Error(); } };
+assert.throws(Test262Error, function() { with (obj) { ({ attr }); } });`,
+  // --- var redeclaration control: same shape twice
+  "p09b-var-redecl-control": `var obj = { a: 1 };
+var obj = { method() { return 1; } };
+assert.sameValue(obj.method(), 1);`,
+};
+let n = 0;
+for (const [name, body] of Object.entries(P)) {
+  const inc = /verifyProperty/.test(body) ? ["propertyHelper.js"] : [];
+  writeFileSync(`${dir}/${name}.js`, fm(inc) + body + "\n");
+  n++;
+}
+console.log(`wrote ${n} probes to ${dir}`);

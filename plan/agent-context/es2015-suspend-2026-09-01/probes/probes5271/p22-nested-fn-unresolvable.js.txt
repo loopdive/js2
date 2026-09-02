@@ -1,0 +1,9 @@
+/*---
+description: block let is not visible to a nested function (#5271 probe)
+flags: [noStrict]
+---*/
+var ok = false;
+try { { let xx = 18; throw 25; } } catch (e) {
+  (function() { try { xx; } catch (e2) { ok = e2 instanceof ReferenceError; } })();
+}
+assert(ok);

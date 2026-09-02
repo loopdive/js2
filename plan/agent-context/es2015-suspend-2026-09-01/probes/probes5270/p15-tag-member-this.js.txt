@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var context; var obj = { fn: function() { context = this; } };
+obj.fn`x`;
+assert.sameValue(context, obj, 'member tag this');

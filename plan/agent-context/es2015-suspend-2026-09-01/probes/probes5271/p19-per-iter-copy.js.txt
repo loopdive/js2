@@ -1,0 +1,7 @@
+/*---
+description: head-initializer closure keeps C0 (#5271 probe)
+flags: [noStrict]
+---*/
+var probeBefore; var run = true;
+for (let x = 'outside', _ = probeBefore = function() { return x; }; run && (x = 'inside'); ) run = false;
+assert.sameValue(probeBefore(), 'outside');

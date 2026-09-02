@@ -1,0 +1,9 @@
+language/expressions/object/concise-generator.js
+language/expressions/object/method-definition/gen-yield-spread-arr-single.js
+language/expressions/object/method-definition/gen-yield-spread-arr-multiple.js
+language/expressions/object/method-definition/yield-as-yield-operand.js
+language/expressions/object/method-definition/gen-yield-identifier-non-strict.js
+language/expressions/object/method-definition/generator-prototype-prop.js
+language/expressions/object/method-definition/generator-invoke-ctor.js
+language/expressions/object/method-definition/generator-prop-name-yield-expr.js
+language/expressions/object/method-definition/name-prop-name-yield-expr.js

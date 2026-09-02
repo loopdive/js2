@@ -67,6 +67,7 @@ import {
   RuntimeManifestInvariantError,
   RUNTIME_PROVIDERS,
   STRING_COMPARE_POLICY_DISABLED,
+  STRING_CHAR_CODE_AT_POLICY_DISABLED,
   STRING_CONCAT_POLICY_DISABLED,
   STRING_EQ_POLICY_DISABLED,
   STRING_LEN_POLICY_DISABLED,
@@ -357,6 +358,7 @@ describe("#3526 F2-S4 provider policy", () => {
     expect(frozen.policy.stringCompare).toEqual(STRING_COMPARE_POLICY_DISABLED);
     expect(frozen.policy.stringEq).toEqual(STRING_EQ_POLICY_DISABLED);
     expect(frozen.policy.stringConcat).toEqual(STRING_CONCAT_POLICY_DISABLED);
+    expect(frozen.policy.stringCharCodeAt).toEqual(STRING_CHAR_CODE_AT_POLICY_DISABLED);
   });
 
   it("resolves independently of the eq, the compare, and every family-1 arm", () => {

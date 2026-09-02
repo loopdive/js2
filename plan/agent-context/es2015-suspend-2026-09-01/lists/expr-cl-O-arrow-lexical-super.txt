@@ -1,0 +1,4 @@
+language/expressions/arrow-function/lexical-super-property.js
+language/expressions/arrow-function/lexical-super-property-from-within-constructor.js
+language/expressions/arrow-function/lexical-super-call-from-within-constructor.js
+language/expressions/arrow-function/lexical-supercall-from-immediately-invoked-arrow.js
