@@ -1822,6 +1822,17 @@ export function tryGlobalThisAndProcessRead(
       // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
       else if (procProp === "stdout") hostImport = "__get_process_stdout";
       else if (procProp === "stderr") hostImport = "__get_process_stderr";
+      // Standalone has no process to read: `process.env` is the host-free
+      // empty object the JS-host import also answers when no `process` exists
+      // (react's / redux's `process.env.NODE_ENV === "production"` gate kept a
+      // `__get_process_env` import and failed the standalone npm-compat lane).
+      if (ctx.standalone && procProp === "env") {
+        const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
+        else fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
