@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var obj = { method() {} };
+assert.sameValue(delete obj.method, true);
+assert.sameValue(obj.hasOwnProperty('method'), false, 'still own after delete');

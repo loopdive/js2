@@ -1,0 +1,9 @@
+/*---
+description: for-in head expression closure sees head TDZ (#5271 probe)
+flags: [noStrict]
+---*/
+let x = 'outside';
+var probeExpr;
+for (let x in { i: probeExpr = function() { typeof x; } }) ;
+assert.throws(ReferenceError, probeExpr);
+assert.sameValue(x, 'outside');

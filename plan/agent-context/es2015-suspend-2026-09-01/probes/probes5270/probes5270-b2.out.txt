@@ -1,0 +1,20 @@
+.tmp/es2015/probes5270/p40-lexical-this-strict-apply.js: fail RuntimeError: dereferencing a null pointer in __module_init() at source L10 | at L8: assert.sameValue(f.af(), f, 'direct');
+.tmp/es2015/probes5270/p41-sym-key-call-vs-ident.js: fail Test262Error: identifier holding a call result: undefined Expected SameValue(«undefined», «"D"») to be true | at L9: assert.sameValue(o1[sym2], 'D', 'identifier holding a call result: ' + String(o1[sym2]));
+.tmp/es2015/probes5270/p41b-num-key-call-data.js: pass 
+.tmp/es2015/probes5270/p42-open-literal-static-method-call.js: pass 
+.tmp/es2015/probes5270/p42b-open-literal-static-read.js: pass 
+.tmp/es2015/probes5270/p43-yield-ident-data-key.js: pass 
+.tmp/es2015/probes5270/p43b-ident-computed-key-control.js: fail Test262Error: keys= | at L8: assert(Object.prototype.hasOwnProperty.call(obj, 'propName'), 'keys=' + Object.getOwnPropertyNames(obj).join());
+.tmp/es2015/probes5270/p44-var-redecl-two-shapes.js: fail Test262Error: obj.a=2 Expected SameValue(«2», «undefined») to be true | at L8: assert.sameValue(obj.b, 2, 'obj.b=' + String(obj.b));
+.tmp/es2015/probes5270/p45-instanceof-fnproto-plain.js: compile_error compilation timeout (15187.64ms)
+.tmp/es2015/probes5270/p46-template-raw-frozen.js: fail Test262Error: isFrozen(template) Expected SameValue(«false», «true») to be true | at L8: assert.sameValue(Object.isFrozen(t), true, 'isFrozen(template)');
+.tmp/es2015/probes5270/p47-tag-member-arguments-length.js: compile_error standalone target emitted host imports: env::__js_array_new, env::__js_array_push, env::__tagged_template (#2961)
+.tmp/es2015/probes5270/p48-tag-callexpr-this-sloppy.js: pass 
+.tmp/es2015/probes5270/p49-class-name-dstr-default.js: fail Test262Error: descriptor value=undefined Expected SameValue(«undefined», «"cls"») to be true | at L9: assert.sameValue(d && d.value, 'cls', 'descriptor value=' + String(d && d.value));
+[test262-in-process] runtime-eval tier: QUICKJS (artifact 7511c866105d, adapter key d4799bda84cfed0d) — DEFAULT engine (#4242); JS2WASM_EVAL_ENGINE=interpreter selects the kept native bytecode engine; TEST262_FULL_RUNTIME_EVAL is ignored under this engine
+.tmp/es2015/probes5270/p50-tco-local-eval-alias.js: fail RangeError: Maximum call stack size exceeded in f() at source L310 (via __fn_tramp_f_63@L7 ← f@L7 ← __fn_tramp_f_63@L7) | at L12: assert.sameValue(callCount, 1);
+.tmp/es2015/probes5270/p51-tco-closure-void.js: fail RangeError: Maximum call stack size exceeded in __closure_64() at source L310 (via __closure_64@L6 ← __closure_64@L6 ← __closure_64@L6) | at L9: assert.sameValue(callCount, 1);
+.tmp/es2015/probes5270/p52-hasinstance-getter-count.js: fail TypeError: Right-hand side of 'instanceof' is not callable | at L8: assert.sameValue(0 instanceof F, true);
+.tmp/es2015/probes5270/p53-delete-method-open.js: fail Test262Error: still own after delete (open literal) Expected SameValue(«true», «false») to be true | at L8: assert.sameValue(delete obj.method, true);
+.tmp/es2015/probes5270/p54-super-literal-path.js: fail Test262Error: super.m() on an accessor-path literal: onull Expected SameValue(«"onull"», «"oP"») to be true | at L9: assert.sameValue(object.m(), 'oP', 'super.m() on an accessor-path literal: ' + String(object.m()));
+probes2 exit=0

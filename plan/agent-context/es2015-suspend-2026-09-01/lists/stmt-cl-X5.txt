@@ -1,0 +1,6 @@
+language/global-code/script-decl-var.js
+language/global-code/script-decl-func.js
+language/global-code/script-decl-lex.js
+language/global-code/script-decl-var-collision.js
+language/global-code/script-decl-lex-restricted-global.js
+language/global-code/script-decl-func-err-non-configurable.js

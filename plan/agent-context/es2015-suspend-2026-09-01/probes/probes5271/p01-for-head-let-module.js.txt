@@ -1,0 +1,11 @@
+/*---
+description: module-level for-head let must not alias the outer module-level let (#5271 probe)
+flags: [noStrict]
+---*/
+let x = 'outside';
+var probeBefore = function() { return x; };
+for (let x = 'inside'; false; ) {}
+assert.sameValue(x, 'outside', 'after loop');
+assert.sameValue(probeBefore(), 'outside', 'closure before loop');
+{ let x = 'block'; assert.sameValue(x, 'block'); }
+assert.sameValue(x, 'outside', 'after block');

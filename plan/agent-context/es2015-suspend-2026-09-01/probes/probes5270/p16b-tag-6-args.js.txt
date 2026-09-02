@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var n = -1; var number = 5;
+(function(site, a, b) { n = arguments.length; })`a${number}b${number}c${number}d`;
+assert.sameValue(n, 4, 'arguments.length=' + n);

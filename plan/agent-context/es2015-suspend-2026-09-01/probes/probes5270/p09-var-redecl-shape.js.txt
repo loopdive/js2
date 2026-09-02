@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var obj = Object.defineProperty({}, 'attr', { get: function() {} });
+var obj = { method(a = obj) { return 1; } };
+assert.sameValue(obj.method(), 1, 'obj.method typeof=' + typeof obj.method);

@@ -1,0 +1,5 @@
+language/expressions/object/__proto__-value-obj.js
+language/expressions/object/__proto__-value-null.js
+language/expressions/object/__proto__-value-non-object.js
+language/expressions/object/__proto__-duplicate-computed.js
+language/expressions/object/computed-__proto__.js

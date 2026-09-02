@@ -1,0 +1,9 @@
+language/expressions/object/method.js
+language/expressions/object/getter-super-prop.js
+language/expressions/object/setter-super-prop.js
+language/expressions/object/method-definition/name-super-prop-body.js
+language/expressions/object/method-definition/name-super-prop-param.js
+language/expressions/object/method-definition/generator-super-prop-param.js
+language/computed-property-names/object/method/super.js
+language/computed-property-names/object/accessor/getter-super.js
+language/computed-property-names/object/accessor/setter-super.js

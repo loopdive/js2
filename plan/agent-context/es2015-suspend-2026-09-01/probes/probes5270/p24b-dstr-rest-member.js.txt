@@ -1,0 +1,11 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var iterable = {}; var iterator = { next: function() { return { done: true }; } };
+iterable[Symbol.iterator] = function() { return iterator; };
+var obj = {};
+var result = [...obj['a' + 'b']] = iterable;
+assert(!!obj.ab, 'rest member target written: ' + String(obj.ab));
+assert.sameValue(obj.ab.length, 0);

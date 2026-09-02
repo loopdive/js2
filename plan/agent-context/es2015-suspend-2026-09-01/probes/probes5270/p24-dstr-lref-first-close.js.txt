@@ -1,0 +1,12 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var nextCount = 0; var returnCount = 0;
+var iterable = {}; var iterator = { next: function() { nextCount++; return { done: true }; }, return: function() { returnCount++; } };
+var thrower = function() { throw new Test262Error(); };
+iterable[Symbol.iterator] = function() { return iterator; };
+assert.throws(Test262Error, function() { 0, [ {}[thrower()] ] = iterable; });
+assert.sameValue(nextCount, 0, 'next=' + nextCount);
+assert.sameValue(returnCount, 1, 'return=' + returnCount);

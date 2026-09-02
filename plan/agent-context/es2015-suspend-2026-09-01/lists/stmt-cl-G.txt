@@ -1,0 +1,7 @@
+language/statements/function/dstr/ary-ptrn-elem-ary-rest-init.js
+language/statements/function/dstr/dflt-obj-ptrn-prop-ary.js
+language/statements/function/dflt-params-arg-val-not-undefined.js
+language/statements/const/syntax/const-invalid-assignment-next-expression-for.js
+language/statements/let/fn-name-class.js
+language/statements/const/fn-name-class.js
+language/statements/variable/fn-name-class.js
