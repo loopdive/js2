@@ -81,6 +81,7 @@ import {
   type IrPreparationStage,
   type IrUnsupportedCode,
 } from "../ir/outcomes.js";
+import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -2525,6 +2526,8 @@ function recordObservedIrOutcomes(
     preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
     skippedBodyUnitIds,
     ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
+    ...(ctx.irR2WithdrawalsByUnitId ? { r2WithdrawalsByUnitId: ctx.irR2WithdrawalsByUnitId } : {}),
+    ...(ctx.irR2NotAttemptedReason ? { r2NotAttemptedReason: ctx.irR2NotAttemptedReason } : {}),
     report,
     existingOutcomes,
     target,
@@ -4646,7 +4649,23 @@ function planIrFirstBodyRouting(
     : {
         freeFunctionNames: new Set<string>(),
         classMemberUnitIds: classIds,
+        withdrawals: new Map<IrUnitId, IrR2Withdrawal>(),
       };
+  // (#3521 R2-T1) One reason per compile-twice row. The selector's own
+  // withdrawals are per-unit; a name the timer routing never handed it was
+  // never a candidate at all, so it gets the `not-attempted` stage instead of
+  // an invented admission reason.
+  const r2Withdrawals = (ctx.irR2WithdrawalsByUnitId ??= new Map<IrUnitId, IrR2Withdrawal>());
+  for (const [unitId, withdrawal] of preliminaryOwnerPopulation.withdrawals) {
+    if (!r2Withdrawals.has(unitId)) r2Withdrawals.set(unitId, withdrawal);
+  }
+  for (const legacyName of preliminarySelection.funcs) {
+    if (freeNames?.has(legacyName)) continue;
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName);
+    if (!r2Withdrawals.has(unitId)) {
+      r2Withdrawals.set(unitId, { stage: "not-attempted", reason: "late-feature-preparation" });
+    }
+  }
   const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
   const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
   withdrawClassMembersOutsidePreparedOwnerClosure(plan, classIds, preliminaryClassMemberUnitIds);
@@ -5631,6 +5650,10 @@ export function generateModule(
     // `undefined`. The ordinary IR overlay (`experimentalIR`) still runs.
     const irFirst =
       !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST);
+    // (#3521 R2-T1) The R2 selector only runs on the IR-first route, so with it
+    // off no per-unit withdrawal can exist. Record the source-level reason here,
+    // where the decision is actually made — `irPlan` is still null at this point.
+    if (!irFirst) ctx.irR2NotAttemptedReason = "ir-first-disabled";
     let irPlan: IrOverlayPlan | null = null;
     let requestedSkipProjection: ReturnType<typeof buildIrRequestedFunctionSkipProjection> | undefined;
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
@@ -10181,6 +10204,13 @@ function compileMultiPreparedProgramOverlays(
   ctx: CodegenContext,
   authority: IrPlanningAuthority | undefined,
 ): void {
+  // (#3521 R2-T1) The multi-source lane never runs the R2 owner selector, on
+  // EITHER outcome of the gate below, so every compile-twice row it produces is
+  // "not attempted" rather than withdrawn. Set before the early return: the
+  // reason is a property of the driver, not of the gate's verdict. This is the
+  // multi overlay ENTRY (called unconditionally from `generateMultiModule`'s
+  // tail) — #3525's `multi-prepared-callable-orchestration.ts` stays untouched.
+  ctx.irR2NotAttemptedReason = "multi-source-driver";
   // Multi-source targets can have legacy callers, so fast-mode's i32 `number`
   // ABI cannot safely be replaced by the current f64 IR ABI.
   if (!options?.experimentalIR || ctx.fast || !authority) return;
