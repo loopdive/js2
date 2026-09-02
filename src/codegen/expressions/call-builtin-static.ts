@@ -124,6 +124,7 @@ import {
   classStaticOwnPropertyNames,
   hasClassStaticMethod,
 } from "../class-static-metadata.js";
+import { standaloneClassProtoObjectApplies } from "../class-proto-object.js";
 import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
 import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -322,6 +323,30 @@ function emitObjectCreateDynamicProperties(
     coerceType(ctx, fctx, descType, { kind: "externref" });
   }
   fctx.body.push({ op: "call", funcIdx: dpIdx });
+}
+
+/**
+ * (#5195 Step 1) True when `receiver` is a `<Class>.prototype` whose standalone
+ * lowering is a REAL `$Object` (#3976 / `class-proto-object.ts`) rather than a
+ * `$ClassName` struct.
+ *
+ * The checker types `C.prototype` as the class, so `resolveStructName` hands
+ * back the instance struct and the literal-key `getOwnPropertyDescriptor` fast
+ * path answers from the INSTANCE field set. `constructor` is not an instance
+ * field, so `gOPD(C.prototype,"constructor")` folded to `undefined` even though
+ * the prototype object carries it as a real own data property. Callers use this
+ * to decline the struct fast path (and its non-literal-key twin) and let the
+ * dynamic `__getOwnPropertyDescriptor` read the `$Object`, which is the
+ * authoritative own-property surface for that receiver.
+ */
+function isStandaloneClassProtoObjectReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  return (
+    ctx.standalone === true &&
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "prototype" &&
+    ts.isIdentifier(receiver.expression) &&
+    standaloneClassProtoObjectApplies(ctx, receiver.expression.text)
+  );
 }
 
 export function compileBuiltinStaticCall(
@@ -2764,7 +2789,9 @@ export function compileBuiltinStaticCall(
       return { kind: "externref" };
     }
 
-    if (structName && propLiteral !== undefined) {
+    const standaloneProtoObjectReceiver = isStandaloneClassProtoObjectReceiver(ctx, arg0);
+
+    if (structName && propLiteral !== undefined && !standaloneProtoObjectReceiver) {
       const structTypeIdx = ctx.structMap.get(structName);
       const fields = ctx.structFields.get(structName);
 
@@ -3180,6 +3207,7 @@ export function compileBuiltinStaticCall(
       ctx.standalone &&
       propLiteral === undefined &&
       structName &&
+      !standaloneProtoObjectReceiver &&
       tryEmitStandaloneStructGopdKeyDispatch(ctx, fctx, arg0, arg1, structName)
     ) {
       return { kind: "externref" };
