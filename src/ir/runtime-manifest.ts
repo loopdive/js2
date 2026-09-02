@@ -27,12 +27,14 @@ import {
   canonicalizeRuntimeHostCapabilityCatalog,
   isRuntimeHostCapabilityFuncFamilyId,
   isRuntimeHostCapabilityFuncId,
+  isRuntimeHostCapabilityGlobalId,
   resolveRuntimeHostCapabilityFuncFamilyRecord,
   resolveRuntimeHostCapabilityRecord,
   RUNTIME_HOST_CAPABILITY_IDS,
   RUNTIME_HOST_CAPABILITY_RECORDS,
   type RuntimeHostCapabilityFuncFamilyId,
   type RuntimeHostCapabilityFuncId,
+  type RuntimeHostCapabilityGlobalId,
   type RuntimeHostCapabilityId,
   type RuntimeHostCapabilityRecord,
 } from "./runtime-host-capabilities.js";
@@ -46,6 +48,7 @@ import {
   F64_UNARY_INTRINSIC_SIGNATURE,
   EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
   EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+  EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
   EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
@@ -78,7 +81,8 @@ export type RuntimeFeature =
   | StringLenRuntimeFeature
   | StringConcatRuntimeFeature
   | StringCharCodeAtRuntimeFeature
-  | StringConcatManyRuntimeFeature;
+  | StringConcatManyRuntimeFeature
+  | StringConstRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -357,6 +361,41 @@ export const STRING_CONCAT_MANY_POLICY_DISABLED: StringConcatManyPolicy = Object
   batch: "off",
 });
 
+/**
+ * (#3526 F2-S8) The exact, already-resolved policy for the STRING LITERAL
+ * STORAGE seam (`string.const`) — family 2's last policy, and the only one in
+ * the catalogue whose arms are VALUES rather than callables.
+ *
+ * Same one-flag truth table as its five siblings (`nativeStrings ? native :
+ * host`), and the same reason: `standalone` and `wasi` both imply
+ * `nativeStrings`. What differs is what the decision buys.
+ *
+ * **It governs the LABEL, not the mint.** On the host lane the physical global
+ * a literal binds to is minted by the legacy import collector's finalize pass,
+ * not by the IR seam — measured at the census grounding, 38 of 39 host
+ * `string_constants` mints came from there and the IR pre-registration was a
+ * no-op on every required fixture. What the frozen row decides is which
+ * `IrGlobalRef` the instruction CARRIES: an imported `string_constants` /
+ * `string_constants16` global named by the host capability record, or the
+ * interned `__strlit_N` Program-ABI global the native lanes materialize. It
+ * decides neither mint time nor import order, and this slice moves neither.
+ */
+export interface StringConstPolicy {
+  /**
+   * `host` binds each literal to its imported global through the
+   * `string.const` / `string.const.utf16` capability records; `native` binds it
+   * to the interned Program-ABI `native-string-literal` global (or, for a
+   * literal past the array-new-fixed ceiling, leaves the oversized
+   * materializer to answer).
+   */
+  readonly storage: "host" | "native" | "unsupported";
+}
+
+/** Adapters that expose no string literal storage seam resolve the arm to this. */
+export const STRING_CONST_POLICY_DISABLED: StringConstPolicy = Object.freeze({
+  storage: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -410,6 +449,11 @@ export interface RuntimeManifestPolicy {
    * manifest always publishes the explicit resolved value.
    */
   readonly stringConcatMany?: StringConcatManyPolicy;
+  /**
+   * Omission resolves to {@link STRING_CONST_POLICY_DISABLED}; the frozen
+   * manifest always publishes the explicit resolved value.
+   */
+  readonly stringConst?: StringConstPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
@@ -424,6 +468,7 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly stringConcat: StringConcatPolicy;
   readonly stringCharCodeAt: StringCharCodeAtPolicy;
   readonly stringConcatMany: StringConcatManyPolicy;
+  readonly stringConst: StringConstPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -637,6 +682,35 @@ export type StringConcatManyRuntimeProviderId = (typeof STRING_CONCAT_MANY_RUNTI
  */
 export const STRING_CONCAT_MANY_NATIVE_ARITY = Object.freeze({ min: 3, max: 8 } as const);
 
+/**
+ * (#3526 F2-S8) The string LITERAL STORAGE seam's requirements — TWO features,
+ * one per import NAMESPACE, not one per authority.
+ *
+ * `js.string.const` is the surrogate-free literal (`string_constants."hello"`,
+ * field = the literal text); `js.string.const.utf16` is the lone-surrogate
+ * literal (#2880), which cannot be its own import field name and is keyed by
+ * the hex of its UTF-16 code units in `string_constants16`.
+ *
+ * Two features rather than one host row requesting both capabilities, because
+ * the frozen manifest's `hostCapabilityRecords` is a claim about what the
+ * module imports: a surrogate-free module freezes only `js.string.const` and
+ * names exactly the one namespace it needs. One row asking for both would make
+ * every host module claim `string_constants16`. The utf16 split stays a
+ * per-literal DERIVATION inside the host arm — requested as a feature, never
+ * offered as an ARM — exactly as F2-S5 keeps `owned-append` a row fact.
+ */
+export const STRING_CONST_RUNTIME_FEATURES = Object.freeze(["js.string.const", "js.string.const.utf16"] as const);
+export type StringConstRuntimeFeature = (typeof STRING_CONST_RUNTIME_FEATURES)[number];
+
+/** (#3526 F2-S8) One provider per admitted arm — two authorities × two namespaces. */
+export const STRING_CONST_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.js.string.const",
+  "host.js.string.const.utf16",
+  "native.js.string.const",
+  "native.js.string.const.utf16",
+] as const);
+export type StringConstRuntimeProviderId = (typeof STRING_CONST_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -650,6 +724,7 @@ export type RuntimeProviderId =
   | StringConcatRuntimeProviderId
   | StringCharCodeAtRuntimeProviderId
   | StringConcatManyRuntimeProviderId
+  | StringConstRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -743,6 +818,35 @@ export type RuntimeProviderImplementation =
       readonly kind: "carrier-field";
       readonly carrier: "string";
       readonly fieldIndex: number;
+    }
+  | {
+      /**
+       * (#3526 F2-S8) A VALUE answered by one exact central host capability of
+       * GLOBAL kind — the catalogue's first non-callable host arm.
+       *
+       * Typed on the GLOBAL half of the capability id union, the mirror of
+       * `host-callable`'s func narrowing: naming a callable capability here is
+       * a compile error, and `#indexProviders` carries the runtime twin. The
+       * record names the import MODULE and the field SCHEME that derives each
+       * literal's field; it can never name a field, because there is one field
+       * per literal and the manifest freezes before the literals are known.
+       */
+      readonly kind: "host-global";
+      readonly capability: RuntimeHostCapabilityGlobalId;
+    }
+  | {
+      /**
+       * (#3526 F2-S8) The native twin: a VALUE answered by a Program-ABI global
+       * ROLE, with no import at all.
+       *
+       * Symbolic in the same way {@link RuntimeProviderImplementation}'s
+       * `carrier-field` arm is: the manifest names the ABI role, and the
+       * consumer resolves it to the concrete global at attachment time. It can
+       * never carry an index — the manifest is frozen BEFORE
+       * `internNativeStringLiteral` allocates one.
+       */
+      readonly kind: "native-global";
+      readonly role: "native-string-literal";
     }
   | {
       /** Scheduling is supplied by the host Promise job queue, with no import. */
@@ -965,7 +1069,8 @@ function numberBoundaryProvider(
     | StringLenRuntimeProviderId
     | StringConcatRuntimeProviderId
     | StringCharCodeAtRuntimeProviderId
-    | StringConcatManyRuntimeProviderId,
+    | StringConcatManyRuntimeProviderId
+    | StringConstRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
     | BooleanBoundaryRuntimeFeature
@@ -976,7 +1081,8 @@ function numberBoundaryProvider(
     | StringLenRuntimeFeature
     | StringConcatRuntimeFeature
     | StringCharCodeAtRuntimeFeature
-    | StringConcatManyRuntimeFeature,
+    | StringConcatManyRuntimeFeature
+    | StringConstRuntimeFeature,
   // (#3526 F2-S6) Optional: the batched many-arity family answers a free-form
   // intrinsic SYMBOL rather than a closed `IntrinsicId`, and `IntrinsicSignature`
   // is fixed-arity, so its two rows deliberately carry none.
@@ -1403,6 +1509,75 @@ function stringConcatManyProviderId(policy: StringConcatPolicy): StringConcatMan
   return null;
 }
 
+/**
+ * (#3526 F2-S8) The string literal storage seam's four arms — two authorities
+ * times two import NAMESPACES.
+ *
+ * The two host rows name the two GLOBAL capability records, and that pairing is
+ * the point of the split: `string.const` publishes module `string_constants`
+ * with field scheme `literal`, `string.const.utf16` publishes
+ * `string_constants16` with `literal-utf16-hex`. A module freezes whichever
+ * rows its literals demand, so its `hostCapabilityRecords` names exactly the
+ * namespaces it imports.
+ *
+ * The two NATIVE rows deliberately name the SAME Program-ABI role: natively a
+ * lone surrogate is a plain u16 code unit in an interned literal, so there is
+ * no second namespace to select. They differ only in which feature they answer,
+ * which keeps the demand honest on both lanes with one policy.
+ *
+ * All four carry {@link EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE} — the catalogue's
+ * only empty-parameter signature, and the one place a row states a VALUE shape
+ * instead of a call.
+ */
+export const STRING_CONST_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "host.js.string.const",
+    "js.string.const",
+    EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+    { kind: "host-global", capability: "string.const" },
+    ["string.const"],
+  ),
+  numberBoundaryProvider(
+    "host.js.string.const.utf16",
+    "js.string.const.utf16",
+    EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+    { kind: "host-global", capability: "string.const.utf16" },
+    ["string.const.utf16"],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.const",
+    "js.string.const",
+    EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+    { kind: "native-global", role: "native-string-literal" },
+    [],
+  ),
+  numberBoundaryProvider(
+    "native.js.string.const.utf16",
+    "js.string.const.utf16",
+    EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+    { kind: "native-global", role: "native-string-literal" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted storage arm selects for `feature`, or `null`
+ * when the caller resolved the seam to unsupported. */
+function stringConstProviderId(
+  feature: StringConstRuntimeFeature,
+  policy: StringConstPolicy,
+): StringConstRuntimeProviderId | null {
+  if (policy.storage === "unsupported") return null;
+  const utf16 = feature === "js.string.const.utf16";
+  if (policy.storage === "host") return utf16 ? "host.js.string.const.utf16" : "host.js.string.const";
+  return utf16 ? "native.js.string.const.utf16" : "native.js.string.const";
+}
+
+const STRING_CONST_FEATURE_SET: ReadonlySet<string> = new Set(STRING_CONST_RUNTIME_FEATURES);
+
+function isStringConstFeature(feature: RuntimeFeature): feature is StringConstRuntimeFeature {
+  return STRING_CONST_FEATURE_SET.has(feature);
+}
+
 const STRING_CONCAT_MANY_FEATURE_SET: ReadonlySet<string> = new Set(STRING_CONCAT_MANY_RUNTIME_FEATURES);
 
 function isStringConcatManyFeature(feature: RuntimeFeature): feature is StringConcatManyRuntimeFeature {
@@ -1695,6 +1870,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...STRING_CONCAT_RUNTIME_PROVIDERS,
     ...STRING_CHAR_CODE_AT_RUNTIME_PROVIDERS,
     ...STRING_CONCAT_MANY_RUNTIME_PROVIDERS,
+    ...STRING_CONST_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -1711,6 +1887,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...STRING_CONCAT_RUNTIME_FEATURES,
   ...STRING_CHAR_CODE_AT_RUNTIME_FEATURES,
   ...STRING_CONCAT_MANY_RUNTIME_FEATURES,
+  ...STRING_CONST_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -1727,6 +1904,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...STRING_CONCAT_RUNTIME_PROVIDER_IDS,
   ...STRING_CHAR_CODE_AT_RUNTIME_PROVIDER_IDS,
   ...STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS,
+  ...STRING_CONST_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -1938,6 +2116,7 @@ export class RuntimeManifestBuilder {
     const stringConcat = policy.stringConcat ?? STRING_CONCAT_POLICY_DISABLED;
     const stringCharCodeAt = policy.stringCharCodeAt ?? STRING_CHAR_CODE_AT_POLICY_DISABLED;
     const stringConcatMany = policy.stringConcatMany ?? STRING_CONCAT_MANY_POLICY_DISABLED;
+    const stringConst = policy.stringConst ?? STRING_CONST_POLICY_DISABLED;
     // (#3526 F2-S6) The two concat policies are not independent: whatever the
     // pass fuses is lowered through the CONCATENATION authority, so a running
     // pass whose batch authority disagrees with `stringConcat.concat` would
@@ -1965,6 +2144,7 @@ export class RuntimeManifestBuilder {
       stringConcat: Object.freeze({ concat: stringConcat.concat }),
       stringCharCodeAt: Object.freeze({ charCodeAt: stringCharCodeAt.charCodeAt }),
       stringConcatMany: Object.freeze({ batch: stringConcatMany.batch }),
+      stringConst: Object.freeze({ storage: stringConst.storage }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -2306,6 +2486,46 @@ export class RuntimeManifestBuilder {
           );
         }
       }
+      // (#3526 F2-S8) A `host-global` provider names a GLOBAL capability and
+      // imports one global per literal, so BOTH halves are checked: the kind
+      // (the runtime twin of the type narrowing, for a table that arrived
+      // through an `unknown`/`as` boundary) and the DECLARATION — the row must
+      // also request that capability, or the freeze would resolve a record the
+      // module never claimed and the published `hostCapabilityRecords` would
+      // understate what the module imports.
+      if (provider.implementation.kind === "host-global") {
+        const capability = provider.implementation.capability;
+        if (!isRuntimeHostCapabilityGlobalId(capability)) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-host-capability",
+            `host-global provider ${provider.id} names non-global host capability ${String(capability)}`,
+          );
+        }
+        if (!provider.hostCapabilities.includes(capability)) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-host-capability",
+            `host-global provider ${provider.id} does not request its own host capability ${String(capability)}`,
+          );
+        }
+      }
+      // (#3526 F2-S8) The native twin names a Program-ABI global ROLE and
+      // imports nothing, so a host capability request would let a native arm
+      // drag an import into a host-free lane — the `carrier-field` and
+      // `runtime-callable-family` rules above, for the same reason.
+      if (provider.implementation.kind === "native-global") {
+        if (provider.hostCapabilities.length > 0) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-host-capability",
+            `native-global provider ${provider.id} cannot request concrete host capabilities`,
+          );
+        }
+        if (provider.implementation.role !== "native-string-literal") {
+          throw new RuntimeManifestInvariantError(
+            "unknown-runtime-provider",
+            `native-global provider ${provider.id} names unknown ABI role ${String(provider.implementation.role)}`,
+          );
+        }
+      }
       if (!provider.supportedTargets.every((target) => TARGET_SET.has(target))) {
         throw new RuntimeManifestInvariantError(
           "provider-target-unavailable",
@@ -2497,7 +2717,26 @@ export class RuntimeManifestBuilder {
                             }
                             return candidates.filter((candidate) => candidate.id === selectedId);
                           })()
-                        : candidates;
+                        : // (#3526 F2-S8) Family 2's last policy, and the only
+                          // one whose arms are VALUES: the policy picks the
+                          // authority, the FEATURE picks the import namespace on
+                          // it (the lone-surrogate split is a per-literal
+                          // derivation, never an arm). The refusal names
+                          // `string-const` so an operator can tell WHICH string
+                          // seam a disabled adapter refused.
+                          isStringConstFeature(feature)
+                          ? ((): readonly RuntimeProviderDefinition[] => {
+                              const selectedId = stringConstProviderId(feature, this.#policy.stringConst);
+                              if (selectedId === null) {
+                                throw new RuntimeManifestInvariantError(
+                                  "provider-target-unavailable",
+                                  `runtime feature ${feature} is unavailable under string-const policy ` +
+                                    `storage=${this.#policy.stringConst.storage}`,
+                                );
+                              }
+                              return candidates.filter((candidate) => candidate.id === selectedId);
+                            })()
+                          : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",

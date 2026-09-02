@@ -143,6 +143,7 @@ import {
   STRING_CONCAT_POLICY_DISABLED,
   STRING_CHAR_CODE_AT_POLICY_DISABLED,
   STRING_CONCAT_MANY_POLICY_DISABLED,
+  STRING_CONST_POLICY_DISABLED,
   NUMBER_BOUNDARY_POLICY_DISABLED,
 } from "../runtime-manifest.js";
 import type { TypeConverter } from "./contract.js";
@@ -688,6 +689,7 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
         stringConcat: STRING_CONCAT_POLICY_DISABLED,
         stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED,
         stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED,
+        stringConst: STRING_CONST_POLICY_DISABLED,
       },
     })?.functions ?? functions
   );
