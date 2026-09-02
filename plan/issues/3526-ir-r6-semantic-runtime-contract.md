@@ -9548,6 +9548,7 @@ has no record field (deferred (d)) and gained none here. `plan.invocation`,
 `calendar-selection-support.ts`, the closure-environment subtype choice
 (F3-S4) and the unmatched-callee host fallback (F3-S6) are untouched.
 
+<<<<<<< HEAD
 
 #### 2026-09-02 review findings — three shape notes handed to F3-S2
 
@@ -9579,3 +9580,29 @@ F3-S2 inherits them rather than rediscovering them:
    `declarations/import-collector.ts:2010`/`:2053` and `async-frame.ts:165`
    still spell the maker by hand. Bringing them under the record is F3-S2's
    `callback.wrap.*` sibling row.
+=======
+#### Re-measured after `git merge origin/main` (`4abfe80ea`)
+
+The merge brought in the family-2 close-out and the family-3 census sections of
+this file (kept in full, above, with this note appended after them — the docs PR
+landed while the slice was in review) plus 24 hours of unrelated `main`, and it
+moved **two absolute byte figures** in the V-A table: `09/gc-strict-no-host`
+93598 → **93766** and `09b/gc-strict-no-host` 93602 → **93770**, both +168.
+
+**That is `main`'s stdlib growth, not this slice's, and it was measured rather
+than assumed.** The whole 21-cell A/B was re-run on the MERGED tree — my eight
+source files replaced with `origin/main`'s, matrix recorded, files restored,
+matrix recorded again: **21/21 identical, 0 differing fields, `diff -r` over all
+21 WAT texts empty.** Every other cell's bytes and sha256 are unchanged from the
+pre-merge table, including both callback cells on gc-host (852 / 908) and the
+exact standalone-DOM cell (69282 / `232d3c9ec8af`). The two moved figures are
+the same on both sides of the merged base; only the pre-merge table's absolute
+numbers for those two cells are stale, and they are left as measured rather than
+retro-edited.
+
+All five ratchet gates, `check:ir-kind-neutrality`, `check:ir-layering`,
+`typecheck` and `format:check` were re-run on the merged tree: green, bare and
+under `LOC_GATE_BASE=$(git rev-parse origin/main)`. The kind-neutrality baseline
+needed no further edit — the four evidence lines this slice shifted are the same
+after the merge.
+>>>>>>> origin/claude/issue-3526-f3s1-host-callback-maker
