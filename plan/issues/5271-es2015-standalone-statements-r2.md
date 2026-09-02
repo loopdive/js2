@@ -32,6 +32,8 @@ loc-budget-allow:
   - src/codegen/statements.ts
   - src/codegen/forin-key-destructure.ts
   - src/codegen/with-has-binding-native.ts
+  - src/codegen/context/types.ts
+  - src/codegen/annexb-cancel.ts
   - src/codegen/statements/shared.ts
   - src/codegen/statements/variables.ts
   - src/codegen/statements/destructuring.ts
@@ -70,6 +72,8 @@ coercion-sites-allow:
 func-budget-allow:
   - src/codegen/statements.ts::compileStatementInner
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/statements/exceptions.ts::compileTryStatement
   - src/codegen/statements/loops.ts::compileForStatement
   - src/codegen/statements/loops.ts::compileForInStatement
@@ -778,3 +782,45 @@ cleared).
 
 `stmt-cl-G.txt`: **0 → 4 pass**. Controls 20/20. Full list after steps 1-5 + 7:
 **0 → 34 pass**.
+
+### Step 8 — Script-goal semantics (cluster H, 2 of 3)
+
+- **`block-decl-strict`.** `annexb-cancel.ts` recorded the unbound-read site only
+  for a strict SWITCH-case function; a strict BLOCK function is the same rule
+  (B.3.3's relaxed treatment is explicitly non-strict), so `ts.isBlock(parent)`
+  joins the case/default test. `annexBDeclaringRange` already returns `null` for
+  an actual function BODY block, so an ordinary nested function declaration is
+  untouched.
+- **`decl-lex-restricted-global`.** §16.1.7 GlobalDeclarationInstantiation step
+  5.d: a SCRIPT-goal top-level lexical name that collides with a restricted
+  global (`undefined` / `NaN` / `Infinity`) throws SyntaxError before any
+  statement runs. `noteRestrictedGlobalLexicalName` records the first collision
+  during declaration collection and `compileModuleInitBody` opens with the
+  throw. Not a compile diagnostic — the runner wants a runtime throw for
+  `phase: runtime`. A source with an import/export indicator (module goal) is
+  skipped.
+- **`decl-lex` (1 row) NOT done.** `class C {}; C = 5` still reads back the
+  class: the binding needs a live externref module global seeded at declaration
+  time, the twin of `liveFuncBindingGlobals` for reassigned functions, plus the
+  identifier read/write routing. Left for a follow-up.
+
+Note on the pin file: the `let undefined` shape could not be reproduced inside
+`tests/issue-5271-…` (that harness's module-init routing prints before the
+throw); the test262 row is the evidence and it passes.
+
+`stmt-cl-H.txt`: **0 → 2 pass**.
+
+### Step 9 — property reference on a primitive base (cluster I): NOT done
+
+Both rows are blocked upstream of the `with`/reference lowering. Reduced to a
+4-line probe: `Symbol.prototype.test262 = 'sp'; Symbol().test262` answers `null`
+because the WRITE does not land where a symbol receiver's consult can see it —
+that is the Symbol wrapper/prototype identity the plan names as #5269 cluster
+B1, not the reference walk. A `$Symbol` arm in `__protoidx_brand_off` was
+written and MEASURED to flip nothing on its own, so it was reverted rather than
+shipped unmeasured.
+
+### Steps 6 and 10 (clusters F and J): not attempted in this pass
+
+No work was done on `arguments`/rest (F, 7 rows) or the direct-eval seams (J,
+4 rows); they are untouched and still fail exactly as the baseline records.

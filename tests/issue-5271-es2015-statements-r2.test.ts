@@ -506,6 +506,77 @@ describe("#5271 step 4 — for-in lexical head (standalone)", () => {
   });
 });
 
+describe("#5271 step 8 — Script-goal semantics", () => {
+  it("a strict BLOCK function does not leak its name outside the block", async () => {
+    // RED on base: only a strict SWITCH-case function recorded the unbound-read
+    // site, so `f` outside the block read the hoisted binding. (The `use strict`
+    // directive has to open a FUNCTION here — this harness prepends a `LOG`
+    // helper, so a file-level directive would not be a prologue. The
+    // global-scope shape is `global-code/block-decl-strict.js`.)
+    expect(
+      await runStandalone(`
+      function strictOuter() {
+        'use strict';
+        var t = 'no';
+        try { f; } catch (e) { t = e.name; }
+        { function f() {} }
+        return t;
+      }
+      LOG("t=" + strictOuter());
+    `),
+    ).toEqual(["t=ReferenceError"]);
+  });
+
+  it("CONTROL — a SLOPPY block function still leaks per Annex B B.3.3", async () => {
+    expect(
+      await runStandalone(`
+      { function bf() { return 1; } }
+      LOG("typeof=" + typeof bf);
+    `),
+    ).toEqual(["typeof=function"]);
+  });
+
+  it("CONTROL — a strict block function is still callable INSIDE its block", async () => {
+    expect(
+      await runStandalone(`
+      'use strict';
+      { function g() { return 7; } LOG("inside=" + g()); }
+    `),
+    ).toEqual(["inside=7"]);
+  });
+
+  it("CONTROL — an ordinary nested function declaration in a function body is unchanged", async () => {
+    await expectBothLanes(
+      `
+      function outer() { function inner() { return 3; } return inner(); }
+      LOG("outer=" + outer());
+    `,
+      ["outer=3"],
+    );
+  });
+
+  it("CONTROL — an ordinary top-level `let`/`const` is not a restricted global", async () => {
+    await expectBothLanes(
+      `
+      let notRestricted = 1;
+      const alsoFine = 2;
+      LOG("sum=" + (notRestricted + alsoFine));
+    `,
+      ["sum=3"],
+    );
+  });
+
+  it("CONTROL — a `var undefined` (not lexical) is NOT a SyntaxError", async () => {
+    await expectBothLanes(
+      `
+      var undefined;
+      LOG("ok=1");
+    `,
+      ["ok=1"],
+    );
+  });
+});
+
 describe("#5271 step 7 — declaration-lane residue", () => {
   it("a `const` for-head still guards its incrementor", async () => {
     // RED on base: the i32-counter fast path wrote the slot without the guard.
