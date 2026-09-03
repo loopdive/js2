@@ -660,6 +660,7 @@ import {
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
+import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -12470,6 +12471,20 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       tsType.getCallSignatures().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)
     ) {
+      return { kind: "externref" };
+    }
+
+    // (#5269 R3-2) An object-literal type carrying `[Symbol.toPrimitive]`.
+    // `objectLiteralForcesHostPath`'s H-1 arm builds that literal as an open
+    // `$Object`; this is where every consumer of the value learns the same
+    // fact. Without it only the three syntactic lockstep callers agreed, so an
+    // alias / property slot / array element / parameter kept the inferred
+    // closed struct and the open object null-cast into it. Standalone-only, in
+    // lockstep with the value-side gate. See `typeTakesToPrimitiveOpenPath` —
+    // it answers for BOTH producer arms: the H-1 member the checker propagates
+    // into every derived type, and the H-2 mutation case, which leaves no
+    // member and is carried by the literal type's own identity.
+    if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
 

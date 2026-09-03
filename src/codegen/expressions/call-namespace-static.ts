@@ -2950,9 +2950,11 @@ export function compileNamespaceStaticCall(
                     ctx,
                     expr,
                     `Codegen error: JSON.${method} of this value is not yet supported by the native JSON provider (#1599). ` +
-                      `A nested object/array value reached through a variable-bound literal needs the Phase 2 pure-Wasm ` +
-                      `codec: the dynamic-replacer route opens only the OUTER struct, so a nested one would be dropped ` +
-                      `from the output. Use a flat value, or a callable/array-literal replacer, for now.`,
+                      `The dynamic-replacer route opens only the OUTER struct of a variable-bound object literal, so it ` +
+                      `is taken only when every property value is provably a flat primitive; a value this pass cannot ` +
+                      `resolve to one — a nested object or array, a call result, a conditional — would be dropped from ` +
+                      `the output, so the shape is refused instead. Use a literal with flat primitive property values, ` +
+                      `or a callable/array-literal replacer, for now.`,
                     "error",
                     { sticky: true },
                   );

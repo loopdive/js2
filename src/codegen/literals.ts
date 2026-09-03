@@ -29,6 +29,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
@@ -1687,103 +1688,6 @@ function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr
   return true;
 }
 
-/**
- * (#5269 H-1) The well-known `Symbol.toPrimitive` id — see WELL_KNOWN_SYMBOLS.
- * Named rather than spelled `3` at the use site so the one-id narrowness of the
- * host-path rule below is visible where it is enforced.
- */
-const TO_PRIMITIVE_SYMBOL_ID = 3;
-
-/**
- * (#5269 H-1) True when the literal carries a `[Symbol.toPrimitive]` key —
- * property form or method form.
- *
- * `_hasRuntimeComputedKey` deliberately keeps well-known-symbol keys on the
- * CLOSED-struct path: `[Symbol.iterator]() {}` becomes an `@@1` struct field
- * that the iterator arm reads directly, and moving every well-known key to the
- * open object would give that up. `Symbol.toPrimitive` is the one id whose only
- * consumer is the RUNTIME ToPrimitive probe (#5102, `object-runtime.ts`), which
- * looks the method up as `__box_symbol(3)` on `$Object`s and cannot see an
- * `@@3` struct field at all — so on the closed path `escape(obj)` / `isNaN(obj)`
- * / `"" + obj` skipped `@@toPrimitive` entirely and fell through to `toString`.
- * Narrow to id 3 on purpose; widening this would undo the `@@1` layout.
- */
-function _hasToPrimitiveComputedKey(expr: ts.ObjectLiteralExpression): boolean {
-  return expr.properties.some((p) => {
-    if (!ts.isPropertyAssignment(p) && !ts.isMethodDeclaration(p)) return false;
-    if (!ts.isComputedPropertyName(p.name)) return false;
-    const inner = p.name.expression;
-    return (
-      ts.isPropertyAccessExpression(inner) &&
-      ts.isIdentifier(inner.expression) &&
-      inner.expression.text === "Symbol" &&
-      getWellKnownSymbolId(inner.name.text) === TO_PRIMITIVE_SYMBOL_ID
-    );
-  });
-}
-
-/** (#5269 H-2) Per-file cache for {@link toPrimitiveAssignmentTargets}. */
-const TO_PRIMITIVE_ASSIGN_TARGET_CACHE = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
-
-/**
- * (#5269 H-2) The identifier names this module writes `[Symbol.toPrimitive]`
- * onto — `obj[Symbol.toPrimitive] = function () { … }`.
- *
- * The handler is installed by MUTATION, so no static type of the binding
- * records it and there is no expression-local fact to consult; the only sound
- * question is whether the module performs such a write at all. That is the same
- * shape (and the same rationale) as `moduleInstallsCallableHasInstance`
- * (#4484 A) in `native-ordinary-instanceof.ts`.
- *
- * Matching is by NAME, so a shadowing binding of the same name is included too.
- * That is deliberate: the cost of a false positive is one literal taking the
- * open-object path, while a false negative silently DROPS the write (a
- * symbol-keyed set on a closed struct has nowhere to land) and the runtime
- * ToPrimitive walker then falls through to `valueOf`/`toString`. Modules that
- * never mention `Symbol.toPrimitive` — effectively all of them — are untouched.
- */
-function toPrimitiveAssignmentTargets(file: ts.SourceFile): ReadonlySet<string> {
-  const cached = TO_PRIMITIVE_ASSIGN_TARGET_CACHE.get(file);
-  if (cached !== undefined) return cached;
-  const names = new Set<string>();
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(node.left) &&
-      ts.isIdentifier(node.left.expression)
-    ) {
-      const key = node.left.argumentExpression;
-      if (
-        ts.isPropertyAccessExpression(key) &&
-        ts.isIdentifier(key.expression) &&
-        key.expression.text === "Symbol" &&
-        key.name.text === "toPrimitive"
-      ) {
-        names.add(node.left.expression.text);
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  TO_PRIMITIVE_ASSIGN_TARGET_CACHE.set(file, names);
-  return names;
-}
-
-/**
- * (#5269 H-2) Is this literal the initializer of a binding the module later
- * writes `[Symbol.toPrimitive]` onto? Such a literal must be the OPEN object,
- * so the later `__extern_set` with a `__box_symbol(3)` key has somewhere to
- * land and the #5102 ToPrimitive probe can find it.
- */
-function _isToPrimitiveAssignmentTargetInitializer(expr: ts.ObjectLiteralExpression): boolean {
-  const decl = expr.parent;
-  if (decl === undefined || !ts.isVariableDeclaration(decl)) return false;
-  if (decl.initializer !== expr || !ts.isIdentifier(decl.name)) return false;
-  const targets = toPrimitiveAssignmentTargets(expr.getSourceFile());
-  return targets.size > 0 && targets.has(decl.name.text);
-}
-
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
@@ -1800,15 +1704,18 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       // of the @@toPrimitive result, `"" + o` got hint "string" rather than
       // "default", and every host compile of such a file gained env imports.
       // Host mode's own `_toPrimitive` already handles the closed-struct case.
-      // (#5269 R2-5) Gated on the NATIVE PROVIDER, not on `standalone` alone.
-      // The justification is "under the native provider a closed struct hides
-      // its @@toPrimitive member from the runtime walker" — and `--target wasi`
-      // and an explicit `semanticProviders: "native-first"` are native-first
-      // without being standalone, so keying it to `ctx.standalone` left the
-      // #5102 fix inert on exactly those targets. The JS-host lane is none of
-      // the three, so F2 stays fixed. Same idiom as the resolver at L1384.
-      ((ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") &&
-        (_hasToPrimitiveComputedKey(expr) || _isToPrimitiveAssignmentTargetInitializer(expr))) ||
+      // (#5269 R3-1) REVERTED to `ctx.standalone`. R2-5 widened this to
+      // `standalone || wasi || semanticProviders === "native-first"` on the
+      // reasoning that the #5102 fix was "inert on exactly those targets".
+      // Measured against the merge-base d7f23a80bf, that is factually wrong
+      // for `--target wasi`: base wasi ALREADY answered `String(w)`,
+      // `var v = w; String(v)`, `String(hmod.w)` and `v.x` correctly by a
+      // different route. The widening bought 2 rows there and cost 12 —
+      // including `null` for a plain alias, a TypeError on `v.x`, and a
+      // `dereferencing a null pointer` trap at module init. Widen again only
+      // after the wasi lane is measured to need it and the open-object
+      // consumers on that target are shown to agree.
+      (ctx.standalone && objectLiteralTakesToPrimitiveOpenPath(expr)) ||
       // A colon-form `__proto__` property is not an own data property. It sets
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the

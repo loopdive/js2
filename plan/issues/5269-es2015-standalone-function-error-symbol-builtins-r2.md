@@ -148,6 +148,22 @@ func-budget-allow:
   # in registry/error-types.ts.
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # 2026-09-03 (Opus, round-3 review fix R3-2): +14 lines in `resolveWasmType`
+  # for the TYPE-LEVEL twin of the `[Symbol.toPrimitive]` open-object gate. The
+  # value-side H-1 arm makes such a literal an open `$Object`, so every CONSUMER
+  # of the value must carry it as externref; before this the only agreement was
+  # three syntactic lockstep callers keyed on the initializer BEING the literal,
+  # so an alias / property slot / array element / parameter kept the closed
+  # struct TypeScript infers and the open object null-cast into it (measured
+  # against merge-base d7f23a80bf: `var v = w; String(v)` answered "null" where
+  # base answered "P<string>", `v.x` answered NaN where base answered 41, and at
+  # module scope the store trapped "dereferencing a null pointer"). The arm is a
+  # one-predicate early return in exactly the shape of the pure-index-signature
+  # and foreign-return-fnctor arms immediately above it, and the predicate
+  # itself lives in its own file (`to-primitive-open-object.ts`). This is the
+  # fix that REPLACES per-spelling callers; adding a fourth one instead is what
+  # the review rejected.
+  - src/codegen/index.ts::resolveWasmType
 ---
 
 # #5269 — ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins (r2)
@@ -1436,3 +1452,130 @@ attribution to the F2 gate was rejected by the skeptic: **the base tree exhibits
 on its own**, so `literals.ts` L1803 did not introduce it. Probe: `f2s.js` n2/n3 and
 `f2q.js` m3 under `/home/user/js2/.tmp/rev5269r2/`. This is a standalone
 `@@toPrimitive` default-hint gap and deserves a separate issue; it is not fixed here.
+
+### Round-3 fixes (2026-09-03)
+
+The round-3 adversarial review put this lane on hold with three HIGH findings
+(R3-1/R3-2/R3-3) and one LOW (R3-4). All four are addressed. **Route taken:
+PROPAGATE (Route A) for the value defect, plus an outright revert of R2-5.**
+
+**The one defect behind all three HIGH findings.** Step H-1 makes a
+`[Symbol.toPrimitive]` object literal an OPEN `$Object` (externref) so the
+#5102 runtime probe can find the handler under `__box_symbol(3)`. That makes
+"open" a property of the **value**. The only agreement about it, though, lived
+in three syntactic lockstep callers, each guarded by
+`ts.isObjectLiteralExpression(initializer)` — so the moment the value reached
+anything through an indirection (an alias, a property slot, an array element
+spelled any other way, a parameter, a return) the consumer still believed it
+was a closed struct, the open object null-cast into it, and the value was
+destroyed. Two more per-spelling callers would not have closed it; that pattern
+had already failed three rounds running.
+
+**The fix answers at the TYPE.** `src/codegen/to-primitive-open-object.ts` is
+now the single owner of the question, in two directions:
+
+- producer — `objectLiteralTakesToPrimitiveOpenPath(expr)`, which
+  `objectLiteralForcesHostPath` calls (the H-1/H-2 predicates moved here
+  verbatim);
+- consumer — `typeTakesToPrimitiveOpenPath(tsType)`, a new arm in
+  `resolveWasmType` (standalone-gated, same shape as the pure-index-signature
+  and foreign-return-fnctor arms beside it).
+
+TypeScript already carries the fact for us. H-1's member symbol propagates into
+every derived type (the alias binding, the enclosing literal's field, the
+array's element type, an inferred parameter/return). H-2's mutation form
+(`o[Symbol.toPrimitive] = f`) leaves nothing on the type, so it is carried by
+the literal type's own **identity** instead: `var v = o` gets the very same
+`ts.Type` object, while a structurally identical `{ x: 1 }` elsewhere in the
+module gets a different one — so the widening reaches every alias and leaks to
+nothing else. There is no per-spelling caller anywhere in this fix.
+
+**R3-1 — R2-5 reverted outright.** The gate is `ctx.standalone` again. R2-5's
+justification ("the #5102 fix was inert on exactly those targets") is factually
+wrong for `--target wasi`: measured against the merge-base, base wasi already
+answered `String(w)`, `var v = w; String(v)`, `String(holder.w)` and `v.x`
+correctly by a different route. Widening bought 2 rows there and cost 12. Every
+wasi row is now byte-for-byte back to base behaviour.
+
+**R3-4 — refusal text corrected.** The message no longer claims a nested
+object/array; it says the route is taken only when every property value is
+provably a flat primitive, and names the call-result / conditional cases it
+also refuses.
+
+#### Measured, three targets, node as the oracle
+
+Base tree = `git archive d7f23a80bf` at `/home/user/js2/.tmp/base5269r3fix`
+(materialised for this round, not reused). Probes and the full 94-row table:
+`/home/user/js2/.tmp/r3fix/` (`a.js` alias/object family, `b.js` array
+elements, `c.js` module-scope, `d.js` the H-2 and accessor-control families,
+`e.js` the 20-row ordinary-shape blast-radius control, `j1.js` JSON refusal;
+`final-table.txt`). Every row was run on all three of node, base and the lane,
+on the host lane, `{target:"standalone", nativeStrings:true}` and
+`{target:"wasi", nativeStrings:true}`.
+
+| target | rows | vs base |
+| --- | --- | --- |
+| host | 46 (+20 control) | **byte-identical** binaries, base vs fixed lane, every row |
+| wasi | 46 | **identical values**, base vs fixed lane, every row (R2-5 revert) |
+| standalone | 46 | 22 better (all now match node), 23 identical, 1 differently-wrong (`n5`) |
+
+Representative rows (`var w = { [Symbol.toPrimitive](h) { return "P<"+h+">"; }, x: 41 }`), standalone:
+
+| row | node | BASE d7f23a80bf | LANE 4152ff5256 | FIXED |
+| --- | --- | --- | --- | --- |
+| `var v=w; String(v)` | `P<string>` | `P<string>` | `null` | `P<string>` |
+| `var v=w; v.x` | `41` | `41` | `NaN` | `41` |
+| `String(holder.w)` | `P<string>` | `P<string>` | `null` | `P<string>` |
+| `holder.w.x` | `41` | `41` | TypeError | `41` |
+| module-scope `var holder={w:w}` | runs | runs | TRAP null pointer (7/9 rows die) | runs |
+| `[(w)].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `[holder.w].join()` | `P<string>` | `[object Object]` | TRAP null pointer | `P<string>` |
+| `[mk()].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `[cond?w:w].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `[...arr0].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `var v=w; [v][0].x` | `41` | `41` | `NaN` | `41` |
+| `[w,holder.w].join("~")` | `P<..>~P<..>` | `[oO]~[oO]` | `P<string>~` | `P<..>~P<..>` |
+| H-2 `var v=o; String(v)` | `Q<string>` | `[object Object]` | `null` | `Q<string>` |
+| H-2 `var v=o; v.x` | `1` | `1` | `NaN` | `1` |
+
+No `env::` import appears in any of the 66 standalone probe modules (`envN=0`
+throughout), so nothing here trades value loss for an import leak.
+
+#### What was given up, plainly
+
+- **6 rows on `--target wasi`** — the only gains R2-5 bought there
+  (`String(idf(w))`, `var v; v=w; String(v)`, `[w].join()`, a parameter
+  element, and the two H-2 rows). They are back to base's `[object Object]`.
+  Reason: on that target base was already correct for the aliased and direct
+  spellings, and the open-object consumers there were never measured. Widening
+  the gate again is a separate, measured change — not a side effect of this one.
+- **Nothing on standalone.** All six of the lane's own standalone gains are
+  kept, and 16 more rows now match node that did not before.
+
+#### Known residual, stated rather than shaded
+
+- `var v = w; "" + v` on standalone answers `P<null>` where base answered
+  `[object Object]` and node answers `P<default>`. Both are wrong; the fixed
+  lane is the only one that actually invokes the user's handler, and the wrong
+  part is the **hint string**, not the value. This is R2-3 above — the runtime's
+  null-hint convention is overloaded (`__to_primitive`'s callers pass
+  `ref.null.extern` for BOTH "number" (ToLength) and "default" (concat)), so it
+  cannot be fixed at the `@@toPrimitive` call site without picking one of them
+  wrongly. Still wants its own issue; deliberately not fixed here.
+- R2-4's array-element caller keeps its one-hop, no-paren-unwrap shape. For the
+  `@@toPrimitive` family it is now redundant — the type carrier answers every
+  spelling — and for the pre-existing open families (accessors, `__proto__`,
+  empty-string keys) it fixes the direct spelling and leaves the others exactly
+  as base has them. The R3-3 asymmetry note (its sibling in
+  `call-namespace-static.ts` unwraps parens and treats unresolvable as *refuse*)
+  is therefore no longer load-bearing for this issue, but it is real and
+  unresolved.
+- 14 test failures across 7 `Symbol.toPrimitive`-adjacent test files reproduce
+  **identically on the merge-base** (`.tmp/r3fix/base-tp.log`), on the lane
+  before this fix, and after it — pre-existing, not this lane's and not this
+  fix's. The lane un-skips 8 of those files' tests and passes them (53 passing
+  vs base's 45 + 8 skipped).
+- Not run here: the full equivalence suite and test262. Scoped evidence only —
+  `tests/issue-5269-es2015-builtins-r2.test.ts` is 68/68 green (63 existing +
+  5 new R3-2/R3-1 pins), and the 20-row ordinary-shape control shows zero blast
+  radius on all three targets.

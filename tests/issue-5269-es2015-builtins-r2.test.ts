@@ -84,6 +84,14 @@ async function runLane(body: string, lane: Lane): Promise<string | null> {
 const check = (expr: string, want: string) =>
   `var __r = ${expr}; if (String(__r) !== ${JSON.stringify(want)}) { throw new Error("got " + String(__r)); }`;
 
+/**
+ * (#5269 R3-2) `check` mints a `var __r`; several of them in ONE body collapse
+ * into a single hoisted binding whose representation is decided once for the
+ * whole function, so a numeric row read back through a string-typed slot. Give
+ * every row its own scope.
+ */
+const iife = (expr: string, want: string) => `(function () { ${check(expr, want)} })();`;
+
 function hostOnly(name: string, body: string): void {
   it(`${name} — host`, async () => {
     expect(await runLane(body, "host")).toBeNull();
@@ -695,5 +703,97 @@ describe("#5269 R2-4 — an open-object array element keeps its text", () => {
      ${check("[g].join()", "[object Object]")}
      ${check("String([g][0])", "[object Object]")}
      ${check("[g, g].join('-')", "[object Object]-[object Object]")}`,
+  );
+});
+
+describe("#5269 R3-2 — an open @@toPrimitive object survives every indirection", () => {
+  // H-1 builds a `[Symbol.toPrimitive]` literal as an OPEN `$Object` so the
+  // #5102 runtime probe can find the handler. That makes "open" a property of
+  // the VALUE, so every consumer has to agree. Before R3-2 only the three
+  // syntactic lockstep callers agreed — each keyed on the initializer BEING the
+  // literal — so the moment the value reached anything through an indirection
+  // the consumer still believed it was a closed struct, the open object
+  // null-cast into it, and the value was destroyed. Measured on standalone
+  // against merge-base d7f23a80bf, where every one of these answered correctly:
+  //
+  //   var v = w; String(v)   -> "null"   (base and node: "P<string>")
+  //   var v = w; v.x         -> NaN      (base and node: 41)
+  //   var holder = {w:w} at module scope -> TRAP "dereferencing a null pointer"
+  //
+  // The fix answers at the TYPE (`typeTakesToPrimitiveOpenPath`), which the
+  // checker propagates into the alias binding, the enclosing literal's field,
+  // the array's element type, and inferred parameter/return types alike.
+  standaloneOnly(
+    "R3-2 an alias, a let/const alias, and a re-assigned binding all keep the handler",
+    `var w = { [Symbol.toPrimitive](h) { return "P<" + h + ">"; }, x: 41 };
+     ${iife("(function(){ var v = w; return String(v); })()", "P<string>")}
+     ${iife("(function(){ let v = w; return String(v); })()", "P<string>")}
+     ${iife("(function(){ const v = w; return String(v); })()", "P<string>")}
+     ${iife("(function(){ var v; v = w; return String(v); })()", "P<string>")}
+     ${iife("(function(){ var v = w; return v.x; })()", "41")}`,
+  );
+
+  standaloneOnly(
+    "R3-2 a property slot and a function boundary keep it too",
+    `var w = { [Symbol.toPrimitive](h) { return "P<" + h + ">"; }, x: 41 };
+     var holder = { w: w };
+     function idf(a) { return a; }
+     function mkw() { return w; }
+     ${iife("String(holder.w)", "P<string>")}
+     ${iife("holder.w.x", "41")}
+     ${iife("String(idf(w))", "P<string>")}
+     ${iife("String(mkw())", "P<string>")}`,
+  );
+
+  // The array-element spellings R2-4's per-caller predicate could not reach —
+  // parentheses, a property access, a call, a conditional, a spread, an element
+  // access, a two-hop identifier, an assign-after-declare. Each answered the
+  // EMPTY string (or trapped, for `[holder.w]`) before R3-2, where base at
+  // least returned a stable "[object Object]".
+  standaloneOnly(
+    "R3-2 every array-element spelling renders the element",
+    `var w = { [Symbol.toPrimitive](h) { return "P<" + h + ">"; }, x: 41 };
+     var holder = { w: w };
+     var arr0 = [w];
+     var cond = true;
+     function mk() { return w; }
+     ${iife("[(w)].join()", "P<string>")}
+     ${iife("[holder.w].join()", "P<string>")}
+     ${iife("[mk()].join()", "P<string>")}
+     ${iife("[cond ? w : w].join()", "P<string>")}
+     ${iife("[...arr0].join()", "P<string>")}
+     ${iife("[arr0[0]].join()", "P<string>")}
+     ${iife("(function(){ var v = w; return [v].join(); })()", "P<string>")}
+     ${iife("(function(){ var q; q = w; return [q].join(); })()", "P<string>")}
+     ${iife("(function(){ var v = w; return [v][0].x; })()", "41")}
+     ${iife("[w, holder.w].join('~')", "P<string>~P<string>")}`,
+  );
+
+  // H-2's mutation form leaves NOTHING on the type — the handler is installed
+  // by assignment — so the alias is carried by the literal type's own identity
+  // instead. `var v = o` answered "null" / NaN before R3-2.
+  standaloneOnly(
+    "R3-2 the later-assigned @@toPrimitive form survives an alias too",
+    `var o = { x: 1 };
+     o[Symbol.toPrimitive] = function (h) { return "Q<" + h + ">"; };
+     ${iife("String(o)", "Q<string>")}
+     ${iife("(function(){ var v = o; return String(v); })()", "Q<string>")}
+     ${iife("(function(){ var v = o; return v.x; })()", "1")}
+     ${iife("[o].join()", "Q<string>")}`,
+  );
+
+  // R3-1: the gate stays on `ctx.standalone`. `--target wasi` answered these
+  // correctly by a DIFFERENT route on base; R2-5's widening routed them onto
+  // the open-object path and turned six correct answers into "null", a
+  // TypeError and a module-init trap. This pins the host lane's own behaviour
+  // (unchanged since F2) so a future widening has to re-measure first.
+  hostOnly(
+    "R3-1 the host lane keeps its closed-struct @@toPrimitive semantics",
+    `var w = { [Symbol.toPrimitive](h) { return "P<" + h + ">"; }, x: 41 };
+     var holder = { w: w };
+     ${iife("String(w)", "P<string>")}
+     ${iife("(function(){ var v = w; return String(v); })()", "P<string>")}
+     ${iife("(function(){ var v = w; return v.x; })()", "41")}
+     ${iife("String(holder.w)", "P<string>")}`,
   );
 });
