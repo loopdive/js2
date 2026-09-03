@@ -4,7 +4,7 @@ title: "ES2015 standalone promise — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-02
+updated: 2026-09-03
 loc-budget-allow:
   # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
   # metadata carrier. Each grant lives in the module that already OWNS the
@@ -36,6 +36,23 @@ loc-budget-allow:
   # conditions from elsewhere.
   - src/codegen/promise-combinators.ts
   - src/codegen/expressions/call-namespace-static.ts
+  # 2026-09-03 (r3 plan, steps R3-1..R3-10): every r3 step extends a mechanism
+  # that already lives in one of these files, and the plan forbids forking a
+  # second protocol beside it. Expected growth per step is stated in the step
+  # itself; the totals are roughly:
+  #   promise-combinators   ~+420 (R3-2 generic element pipeline + resolve-element
+  #                          builtin-fn closures, R3-3 `.call(C, iter)` widening,
+  #                          R3-4 interleaved iterator drive, R3-1/R3-9 executor)
+  #   async-scheduler        ~+150 (R3-5 own-`then` capture in Resolve, R3-6
+  #                          SpeciesConstructor read in `then`, R3-8 boolean box)
+  #   call-namespace-static  ~+120 (R3-2 observable Get(C,"resolve") gate,
+  #                          R3-3 admission widening — the gate IS the dispatch)
+  #   closed-method-dispatch ~+60  (R3-5 bag-`then` arms in the two fills)
+  #   calls.ts               ~+30  (R3-2 f64-vec boxing arm in the dynamic path)
+  #   array-object-proto     ~+40  (R3-7 `p.then` value read → proto closure)
+  #   property-access-dispatch ~+30 (R3-7, if the read site is there instead)
+  - src/codegen/closed-method-dispatch.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
   # reservation block, and two three-line guard call sites on the `new` path.
@@ -48,6 +65,21 @@ func-budget-allow:
   # The conditions ARE the dispatch decision, so extracting them would move the
   # gate's own predicate out of the gate.
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  # 2026-09-03 (r3 plan): the four functions below are UNDER the 300-line
+  # threshold today (measured at bee5ddd535: emitStandalonePromiseThen 250,
+  # buildPromiseResolveValueBody 213, fillPromiseThenableHelpers 209,
+  # emitStandalonePromiseCombinatorRuntime 166) and the r3 steps that extend
+  # them (R3-6, R3-5, R3-5, R3-2/R3-4) may push each past it. The growth is one
+  # more arm inside the SAME decision ladder (an own-`then` / own-`constructor`
+  # bag consult before the native arm); pulling that arm out would split the
+  # ladder's predicate from the ladder. Prefer a helper for any new body >40
+  # lines (the plan names them: buildCombinatorElementStep,
+  # buildCombinatorElemFnClosureInstrs, emitPromiseSpeciesConstructorRead); the
+  # grant is for the residual in-place growth only.
+  - src/codegen/async-scheduler.ts::emitStandalonePromiseThen
+  - src/codegen/async-scheduler.ts::buildPromiseResolveValueBody
+  - src/codegen/closed-method-dispatch.ts::fillPromiseThenableHelpers
+  - src/codegen/promise-combinators.ts::emitStandalonePromiseCombinatorRuntime
 priority: high
 horizon: m
 feasibility: hard
@@ -631,3 +663,714 @@ capability half of their work is now done and shared.
   it the direct spelling `Promise.prototype.catch.call(t, f)` fell to the legacy
   `.call` tail that drops `thisArg`; a hand-probe with the value-erased spelling
   passed while test262 did not. Merge, never rebase.
+
+## Implementation Plan — r3 (2026-09-03)
+
+Base for every line number below: upstream `main` `bee5ddd535` (the census
+sha; HEAD `9c23347f57` adds only docs commits, `src/` is identical). Census:
+118 non-pass ES2015 rows in `.tmp/census0903/promise.tsv` — 50
+`compile_error` (all but 4 are `host_import_leak`), 68 `fail`, 0 timeout.
+Previous plan slices E–H map onto R3-2/R3-3/R3-4 (E, F1, F2), the deferred
+block (G, H); F3 (`allSettled`/`any`) has only the 4 class-`C` rows left and is
+deferred with them.
+
+### Root-cause groups (118 rows, by mechanism — not by path)
+
+| # | Root cause (one defect each) | Rows | Step |
+| --- | --- | ---: | --- |
+| G1 | The native combinators never do the observable `Get(C, "resolve")` / per-element `Call(resolve, C, v)` / `Invoke(next, "then", …)` — `Promise.resolve = f`, `defineProperty(Promise, "resolve", {get})` and an own `then` on a native element are all ignored. Includes the 4 `number[]`-argument rows that still leak `env::Promise_all` (the documented f64-vec gap). | 29 | R3-2 (23), R3-4 (6 `-close` rows) |
+| G2 | `Promise.all/race.call(C, iterable)` is admitted ONLY for `function C(){…}` declarations + an EMPTY `[]` (call-namespace-static.ts L2411-L2470); every other shape leaks `env::Promise_all`/`Promise_race` + `__js_array_new`. | 28 | R3-3 (27), R3-4 (1) |
+| G3 | Iterator abrupt completion / `IteratorClose` — the argument is drained to a vec BEFORE any element work, so `return()` is never called and a throwing `next()` surfaces as "argument is not iterable". | 6 (+1 in G2) | R3-4 (conditional — see the probe) |
+| G4 | `$__promise_custom_capability_executor` treats the canonical `undefined` singleton as "stored" (`ref.is_null` guard, promise-combinators.ts L186-L194), so `executor()` / `executor(undefined, undefined)` followed by `executor(f, g)` throws. | 4 | R3-1 |
+| G5 | `__promise_resolve_value` short-circuits on `ref.test $Promise` (async-scheduler.ts L1648-L1650) and never consults an own `then` written onto a native promise; the thenable job also re-reads `then` at job time instead of using the value captured at Resolve time. | 7 | R3-5 |
+| G6 | `then` never reads `constructor` / `@@species`; `Promise.resolve(x)` never reads `x.constructor`. | 5 (+2 subclass rows in G9) | R3-6 |
+| G7 | `p.then` / `p.catch` read as a VALUE off a `$Promise` instance answers `undefined` (probe C below). | 2 | R3-7 |
+| G8 | `.then` handler returning a `boolean` is boxed as a NUMBER (`coerceStackValueToExternref` L1828-L1835 ignores the i32 `boolean` brand). | 2 | R3-8 |
+| G9 | `class X extends Promise` used as `C` — standalone has no `Construct(C, «executor»)` for a compiled class and the host `__promise_subclass_ctor` leaks; 2 of these are the invalid-binary CEs. | 10 | DEFERRED |
+| G10 | `class C { static resolve(){throw} }` as `C` (needs G9's class construct) — the 8 `resolve-throws-iterator-return-*` rows across all four combinators. | 8 | DEFERRED |
+| G11 | GetCapabilitiesExecutor is minted on the bare funcref wrapper (L160-L176), not the builtin-fn metadata carrier Slice B gave the settle closures. | 3 | R3-9 |
+| G12 | `provablyNullishReceiver` (builtin-prototype-brand.ts L582-L587) takes TypeScript's control-flow narrowing of an initializer-less `var` as a PROOF of `undefined`, so `hasOwnProperty.call(resolveFunction, …)` compiles to a static TypeError. | 3 | R3-10 (2), 1 deferred |
+| G13 | #3371 arbitrary NewTarget (2), cross-realm prototype (1), global-object own `Promise` descriptor (1), `catch` on a primitive receiver / ToObject (1), `Promise.all("")` result-vec type mismatch (1), executor throw after `resolve(thenable)` (2), `Array.prototype.then` on the RESULT array (2), reaction FIFO order (1) | 11 | DEFERRED |
+
+29+28+6+4+7+5+2+2+10+8+3+3+11 = 118.
+
+### Verification on current main (do not skip — the baseline can be a day stale)
+
+15-row sample, one process, box load 1.2:
+
+```
+$ npx tsx scripts/run-test262-paths.mts .tmp/p5197r3/sample.txt --standalone
+=== counts ===
+{ compile_error: 3, fail: 12 }
+compile_error  built-ins/Promise/all/call-resolve-element.js
+                 standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+compile_error  built-ins/Promise/all/ctx-ctor-throws.js
+                 standalone target emitted host imports: env::Promise_all (#2961)
+compile_error  built-ins/Promise/all/invoke-resolve-on-promises-every-iteration-of-promise.js
+                 standalone target emitted host imports: env::Promise_all (#2961)
+fail  all/invoke-resolve.js            `resolve` invoked once for each iterated value Expected SameValue(«0», «3»)
+fail  all/invoke-then.js               `then` invoked once for every iterated value Expected SameValue(«0», «3»)
+fail  all/invoke-resolve-error-close.js  Expected SameValue(«0», «1»)
+fail  race/invoke-resolve-get-error.js   Expected SameValue(«TypeError: Promise.race argument is not iterable», «[object Object]»)
+fail  prototype/then/ctor-custom.js    The constructor is invoked exactly once Expected SameValue(«0», «1»)
+fail  prototype/then/ctor-null.js      Expected a TypeError to be thrown but no exception was thrown at all
+fail  prototype/catch/S25.4.5.1_A2.1_T1.js  The value of !!(p.catch instanceof Function) is expected to be true
+fail  resolve/arg-uniq-ctor.js         Expected SameValue(«true», «false»)
+fail  resolve/capability-executor-called-twice.js  TypeError | at L33
+fail  all/S25.4.4.1_A5.1_T1.js         reason … Expected SameValue(«TypeError: Promise.all argument is not iterable», «Test262Error: »)
+fail  race/resolve-self.js             async completion marker not observed
+fail  prototype/then/capability-executor-not-callable.js  CompileError: … extern.convert_any[0] expected type anyref, found call of type externref
+```
+
+All 15 reproduce the baseline status AND error string; nothing in the sample has
+been fixed by the merges since 09:07 UTC. Every group above has at least one
+member in the sample except G8/G9/G11/G12 (whose error strings are
+distinctive enough to trust).
+
+Mechanism probes (`.tmp/p5197r3/probe-carrier.mts`, three small standalone
+programs, `imports=[]` for all three):
+
+| probe | program | result | what it proves |
+| --- | --- | --- | --- |
+| A | `Promise.resolve = mine; Promise.resolve === mine; Promise.resolve(5) === 42` | `101` | the assignment lands on the `$Object` ctor carrier (`__builtin_ctor_Promise`, builtin-static-globals.ts L172) and a later `Promise.resolve(5)` CALL already dispatches to it — only the combinators ignore it |
+| B | `Object.defineProperty(Promise,'resolve',{get(){n++; return f}})`, two reads | `23` (2 gets, both return `f`) | accessor defines on the carrier work; `__extern_get(carrier, "resolve")` runs the getter |
+| C | `p.constructor = null; p.constructor === null` / `typeof Promise.resolve(2).then === "function"` | `1` (+0) | the `$Promise` bag round-trips `constructor` (R3-6 can read it); the instance member VALUE read of `then` is not a function (G7) |
+
+### Shared design constraints (apply to every step)
+
+- **Type info via `ctx.oracle` only** (`valueDeclarationOf`, `typeFactOf`,
+  `signatureOf`); no `ctx.checker.getTypeAtLocation` — the oracle-ratchet gate
+  fails otherwise. The only checker call already present in the touched region
+  (call-namespace-static.ts L2095, Set/Map probe) stays as it is.
+- **No new host import, anywhere.** Every arm is standalone-native
+  (`isStandalonePromiseActive`), and the host/gc lane must stay byte-identical:
+  the acceptance for every step includes a host-lane compile of the named
+  control programs and a `result.binary` byte comparison against the base tree.
+- **Registration-before-bake** (#2918/#2919): every `ensure*`/`reserve*` call
+  a step adds runs BEFORE any `ref.func`/`call` operand is pushed into a
+  detached buffer; and keep `fctx.savedBodies`/`ctx.liveBodies` discipline
+  exactly as the existing arms do (see the comment block at
+  call-namespace-static.ts L2056-L2068).
+- **`undefined` is not `ref.null.extern`** (#2864): any value that is
+  semantically `undefined` is `canonicalUndefinedExternInstrs(ctx)`
+  (any-helpers.ts L167), resolved BEFORE the body is swapped to a side buffer.
+- **`FunctionContext` literals** carry `labelMap: new Map()` and
+  `isGenerator?: boolean`; none of the steps should need a new one, but if a
+  helper function is minted through a fresh `FunctionContext`, include both.
+- **Every new callable that escapes to user code** (resolve-element functions,
+  GetCapabilitiesExecutor) is a subtype of the builtin-fn metadata carrier
+  (`ensureBuiltinFnMetaType`, builtin-fn-meta.ts L261) exactly like
+  `$__promise_settle_cap` (async-scheduler.ts L1044-L1075), never a second
+  representation.
+- **Probe command** for every row claim:
+  `npx tsx scripts/run-test262-paths.mts <list> --standalone` (≤15 paths per
+  batch, `--isolate` on a hang). Any single-row `compile_error (compilation
+  timeout …)` is re-run alone before it is believed. The in-process runner now
+  applies the host-import leak check (#5461); a row is claimed only when its
+  status is `pass`.
+
+### Steps, in execution order
+
+#### R3-1 — capability executor: `undefined` is "not yet stored" (4 rows, S, low risk)
+
+**Root cause.** `__promise_custom_capability_executor` (promise-combinators.ts
+L183-L215) decides "a slot was already stored" with `ref.is_null` on fields 0/1
+of `$__promise_custom_capability`. `executor(undefined, undefined)` and the
+zero-argument `executor()` (padded by `__apply_closure`) store the canonical
+`$AnyValue` `undefined` singleton, which is a NON-null externref, so the
+spec-legal second call `executor(f, g)` throws the TypeError meant for
+`(undefined, function)`.
+
+**Edits.**
+1. In `ensureCustomCapabilityRuntime` replace the two `ref.is_null` / `i32.eqz`
+   pairs (L186-L194) by "slot is nullish": `ref.is_null` OR the flagged
+   is-undefined predicate. Use the existing native the object runtime already
+   fills from `buildIsUndefinedExternBody` (any-helpers.ts, callers at
+   object-runtime.ts L2709 / L6404 and registry/imports.ts L1823 — read those
+   three to pick the registered `(externref) -> i32` name and call it; do NOT
+   inline a second copy of the predicate). If that native is not registered in
+   the module, fall back to `ref.is_null` (today's behaviour).
+2. The post-construction validation in `emitStandalonePromiseCustomCapabilityCheck`
+   (L311-L322) and `emitStandalonePromiseCustomSettle` (L410-L426) already
+   uses `ref.test wrapperRoot` (a stored `undefined` fails it) — unchanged.
+
+**Rows (4).** `built-ins/Promise/{all,race,resolve,reject}/capability-executor-called-twice.js`.
+Growth: promise-combinators.ts +15, no function crosses 300.
+
+**Order constraint.** The executor still stores BOTH arguments on every
+admitted call (spec GetCapabilitiesExecutor step 5-6 store, not merge).
+
+**Acceptance.** (a) the 4 rows `pass`; (b) PASSING shapes at risk — the six
+`capability-executor-not-callable` subcases (`tests/issue-4682.test.ts` "passes
+the six …" and `tests/issue-5197-promise-generic-capability.test.ts` 10/10) must
+still throw for `(undefined, function)` / `(function, undefined)` / a
+non-callable pair — run both files; (c) `reject/capability-executor-not-callable.js`,
+`reject/S25.4.4.4_A3.1_T1.js` (Slice-D rows) re-probed `pass`; (d) host lane:
+`tests/issue-4682.test.ts` "keeps the gc/host custom-constructor path unchanged"
+green.
+
+#### R3-2 — observable `resolve`/`then` pipeline on the intrinsic receiver over VEC arguments (23 rows, L, medium risk)
+
+**Root cause.** `emitStandalonePromiseCombinator` (L1199) and
+`emitStandalonePromiseCombinatorRuntime` (L1345) feed every element straight to
+`__combinator_subscribe` (L749), which normalizes through `__promise_resolve_value`
+and attaches raw microtask reaction FUNCS. Spec §27.2.4.1.1/§27.2.4.3.1 requires,
+per call: (1) `promiseResolve = Get(C, "resolve")` ONCE, before GetIterator,
+TypeError if not callable — IfAbruptRejectPromise; (2) per element
+`nextPromise = Call(promiseResolve, C, «value»)`; (3)
+`Invoke(nextPromise, "then", «resolveElement, capability.[[Reject]]»)` where
+`resolveElement` is a real built-in function object (`length` 1, `name` "",
+`[[AlreadyCalled]]`). Today `Promise.resolve = f` / a getter on the carrier /
+an own `then` on a native element promise are invisible, and an f64-backed
+`number[]` argument still falls through to the `env::Promise_all` host import
+(`resolveExternrefVecArg` L1297 returns null for f64 vecs; call-namespace-static.ts
+L2151-L2169).
+
+**Design — one generic step function, a fast path that stays byte-identical.**
+
+1. **Compile-time gate `promiseResolveObservable(ctx, node)`** (new, in
+   promise-combinators.ts, cached per source file like
+   `sourceHasMethodReassignment` at calls.ts L3131): true iff the source file
+   contains (a) an assignment whose LHS is `<X>.resolve` (reuse
+   `sourceHasMethodReassignment(ctx, node, "resolve")`), or (b) a call
+   `Object.defineProperty(<X>, "resolve"|…)` / `Object.defineProperties(<X>, …)`
+   whose first argument is the identifier `Promise`, or (c) any `.then` /
+   `"then"` assignment or defineProperty target (`sourceHasMethodReassignment(…, "then")`
+   plus the defineProperty scan). When FALSE the existing emitters run
+   unchanged — this is the byte-identity guarantee for every module that never
+   touches those properties (all of `tests/promise-combinators.test.ts`,
+   `deno-safe-promise-combinators.test.ts`, the async equivalence corpus).
+2. **`__combinator_get_resolve(C) -> externref`** (new defined func, registered
+   by `ensureCombinatorFunctions` only when the gate is true): `__extern_get(C,
+   "resolve")` on the carrier (`emitBuiltinConstructorIdentity(ctx, fctx,
+   "Promise")` pushes the carrier; getters run inside `__extern_get`), then
+   IsCallable via `buildClosureRefTestArms` (closed-method-dispatch.ts, the
+   #2175 classifier) → TypeError (`emitWasiErrorConstructor(ctx,"TypeError",1)`,
+   `__new_TypeError`) when not callable. The emit site wraps the call in
+   `buildTargetTaggedTry` and on catch rejects the result promise
+   (`rt.rejectFuncIdx`) and SKIPS the element loop — this is what
+   `invoke-resolve-get-error.js` observes (Get happens BEFORE GetIterator, so
+   emit it before the `__combinator_to_vec` call in `emitDynamicCombinatorArg`,
+   calls.ts L10480, and before the element buffers are spliced in the literal
+   arm).
+3. **Intrinsic fast path check.** Compare the fetched value with the intrinsic
+   singleton (`ensureStandaloneBuiltinStaticMethodClosure(ctx, "Promise",
+   "resolve")` + `pushBuiltinFnSingletonValueInstrs`, `ref.eq` after
+   `any.convert_extern`). Identical ⇒ the existing `__combinator_subscribe`
+   path (unchanged bytes, unchanged microtask count). Different ⇒ the generic
+   element step below.
+4. **`__combinator_element_step(next, state, index, C, fulfillFn, rejectFn)`**
+   (new, `buildCombinatorElementStep`): `next = __apply_closure(resolveFn, C,
+   [value])` is done by the CALLER (so the loop can catch and reject); this
+   helper implements `Invoke(next, "then", «resolveElem, rejectElem»)`:
+   - mint the two element functions as REAL closures (see 5) into an objvec
+     (`ensureObjVecBuilders`), then
+   - if `next` is a native `$Promise` AND (`__carrier_bag_has` is registered
+     AND `__carrier_bag_has(next, "then")` is 1) → `__apply_closure(
+     __extern_get(next, "then"), next, args)` — the same override branch
+     `emitStandalonePromiseThen` uses at async-scheduler.ts L4475-L4534;
+   - else if `next` is a native `$Promise` → the native subscribe (today's
+     `__combinator_subscribe` body) — but with the element closures' inner
+     funcs, so `[[AlreadyCalled]]` semantics are shared;
+   - else → `__call_m_then_vararg(next, args)` (the vararg dispatcher the
+     thenable job already uses, async-scheduler.ts L1205) preceded by
+     `__promise_has_callable_then(next)`; a 0 answer throws the §7.3.14 step-2
+     TypeError — same pairing Slice C used for `catch`.
+   Throws propagate to the caller's try, which rejects the aggregate.
+5. **Resolve-element / reject-element closures** (`buildCombinatorElemFnClosureInstrs`,
+   new): a struct `$__combinator_elem_fn` subtyping
+   `ensureBuiltinFnMetaType(ctx, wrapper.structTypeIdx, wrapper.closureInfo,
+   "promise:elem", "", 1)` (the `(externref)->()` wrapper, exactly as
+   `$__promise_settle_cap` at async-scheduler.ts L1044-L1075), adding fields
+   `caps: externref` (the `$CombinatorElemCaps`) and `called: mut i32`. Its
+   lifted trampoline: if `called` → return; set `called`; call the existing
+   reaction func (`reaction.fulfillIdx` / `reaction.rejectIdx` — the
+   `__combinator_all_fulfill` family, L889) with `(caps, value)`. Field order
+   is fixed by `ensureBuiltinFnMetaType`'s layout — copy
+   `buildPromiseSettleClosureInstrs` (L999) and NEVER hard-code the capture
+   index. `race`'s two functions are the capability's own resolve/reject (spec:
+   `Invoke(next, "then", «capability.[[Resolve]], capability.[[Reject]]»)`), so
+   for `race` reuse the Slice-B `$__promise_settle_cap` pair minted for the
+   RESULT promise (`ensurePromiseExecutorClosures` + `buildPromiseSettleClosureInstrs`)
+   — that is what `race/resolve-self.js` and `race/same-resolve-function.js`
+   assert (identity across elements).
+6. **f64-vec argument admission** (the 4 `every-iteration-of-promise` rows):
+   in `emitDynamicCombinatorArg` (calls.ts L10451) or a sibling arm at
+   call-namespace-static.ts L2151, when the probed argument type is a
+   `$Vec` whose element type is `f64`, loop it into a fresh externref `$Vec`
+   boxing each element with `__box_number` (late import registered BEFORE the
+   loop is built — `flushLateImportShifts`) and hand that vec to the runtime
+   emitter. Keep the `isDynamicCombinatorArgEligible` refusal for native
+   generators/strings as is.
+7. `emitStandalonePromiseCombinator` / `…Runtime` gain one parameter
+   `{ observable: { resolveLocal, ctorLocal } | undefined }`; when set they
+   emit the per-element `__apply_closure(resolve, C, [v])` + step-4 call
+   inside a `buildTargetTaggedTry` whose catch rejects `resultLocal` and
+   breaks the loop. `remaining` accounting stays in `$CombinatorState`
+   (the `all` fulfil still fires when the last element resolves; for the
+   spec's "resolve before loop exit" shape — elements settling synchronously
+   inside `then` — the state's `remaining` starts at n as today, which already
+   models step 4.h's +1/−1 bookkeeping for a fixed-length vec).
+
+**Order-preservation constraints (must not break).**
+- Element evaluation order: array-literal element expressions are compiled
+  into buffers FIRST (L2069-L2085) and only spliced after every `ensure*` —
+  keep that; the `Get(C,"resolve")` is emitted AFTER the element buffers are
+  evaluated (spec evaluates the argument expression before the call).
+- Microtask count for the intrinsic path must not change: a program with
+  `Promise.resolve = undefined`-free source must produce byte-identical wasm.
+- `Get(C, "resolve")` happens exactly ONCE per combinator call, before the
+  iterator is touched (`invoke-resolve-get-once-*`).
+- Rejection of the aggregate on a thrown `resolve`/`then` must use the
+  one-shot `rt.rejectFuncIdx` on `resultLocal`, never `__promise_reject` on a
+  fresh promise.
+
+**Rows (23).**
+`built-ins/Promise/all/{invoke-resolve,invoke-then,invoke-resolve-error-reject,invoke-resolve-get-error-reject,invoke-resolve-get-error,invoke-resolve-get-once-multiple-calls,invoke-resolve-get-once-no-calls,resolve-not-callable-reject-with-typeerror,invoke-resolve-on-promises-every-iteration-of-promise,invoke-resolve-on-values-every-iteration-of-promise,invoke-then-error-reject,invoke-then-get-error-reject}.js` (12),
+`built-ins/Promise/race/{invoke-resolve,invoke-then,invoke-resolve-get-error-reject,invoke-resolve-get-error,invoke-resolve-get-once-multiple-calls,invoke-resolve-get-once-no-calls,invoke-resolve-on-promises-every-iteration-of-promise,invoke-resolve-on-values-every-iteration-of-promise,invoke-then-error-reject,invoke-then-get-error-reject,resolve-self}.js` (11).
+
+**Growth grant.** promise-combinators.ts +300 (new helpers
+`promiseResolveObservable`, `buildCombinatorElementStep`,
+`buildCombinatorElemFnClosureInstrs`, `__combinator_get_resolve` body);
+call-namespace-static.ts +60 inside `compileNamespaceStaticCall` (granted);
+calls.ts +30 (`emitDynamicCombinatorArg` f64 arm); async-scheduler.ts +10
+(export `ensurePromiseExecutorClosures` is already exported; add
+`COMBINATOR_FUNC_IDX_KEYS` entries for every new funcIdx field — L5222, the
+late-import lockstep shift, or a `ref.func` baked from a stale index will
+silently target the wrong function).
+
+**Acceptance.**
+(a) the 23 rows `pass` with `imports=[]`;
+(b) PASSING shapes at risk — byte-identity: compile `tests/promise-combinators.test.ts`'s
+four sources and `tests/deno-safe-promise-combinators.test.ts` sources with
+`target:"standalone"` on base and on the branch and `Buffer.compare` the
+binaries (== 0, gate is false for them); run `tests/promise-combinators.test.ts`,
+`deno-safe-promise-combinators.test.ts`, `issue-2671-promise-capability.test.ts`
+(its one pre-existing failure stays exactly one), `issue-3125.test.ts`,
+`issue-3125-widen.test.ts` on BOTH lanes;
+(c) already-passing test262 controls re-probed: build the passing set with
+`ls test262/test/built-ins/Promise/{all,race}/*.js | grep -v -f <(cut -f1 .tmp/census0903/promise.tsv)`,
+probe 15 of them (all `S25.4.4.*` rows plus every `iter-arg-*` and `resolve-*`
+row in that set) and require every one still `pass`;
+(d) equivalence gate `pnpm run test:equivalence:gate` — 24 known failures, no
+new ones;
+(e) a NEW control in `tests/issue-5197-promise-generic-capability.test.ts`
+(or a new `tests/issue-5197-promise-observable-resolve.test.ts`, one fork):
+`Promise.resolve = spy; Promise.all([1,2])` counts 2 calls and
+`Promise.race([p])` on an own-`then` promise invokes that `then` — run on both
+lanes; the host lane compiles to the host `Promise` and must give the same
+observable counts.
+
+#### R3-3 — `Promise.{all,race}.call(C, iterable)` for ordinary-function `C` (27 rows, M, medium risk)
+
+**Root cause.** The `.call` arm (call-namespace-static.ts L2411-L2470) admits
+only `ts.isFunctionDeclaration(ctorDecl)` + `expr.arguments.length === 2` +
+an EMPTY array literal + `paramTypes.length === 1`. Slice D already widened the
+sibling `resolve/reject.call` arm (L2280-L2409) to function-EXPRESSION
+initializers (`ctorInit`), 1-or-2 arguments and a 0-parameter `C`; the
+combinator arm was left narrow because it had no per-element pipeline. R3-2
+supplies that pipeline.
+
+**Edits.**
+1. Lift the ctor-resolution block of the resolve/reject arm (L2299-L2312,
+   `unwrapReflectConstructExpr` → `ctx.oracle.valueDeclarationOf` →
+   `ctorInit` → `isOrdinaryCtorDecl`) into one helper
+   `resolveOrdinaryCapabilityCtor(ctx, arg): {ctorArg, isOrdinary}` and use it
+   in BOTH arms (do not duplicate the predicate; the two arms must admit the
+   same `C`). Also admit an inline `function(executor){…}` expression argument
+   (`race/capability-executor-not-callable.js` passes it directly).
+2. Admit `expr.arguments.length === 1` (`Promise.all.call(CustomPromise)`):
+   NewPromiseCapability runs first (C throws → propagates, `ctx-ctor-throws`);
+   then `GetIterator(undefined)` → TypeError → the result promise is
+   REJECTED (`rt.rejectFuncIdx`), not thrown — spec IfAbruptRejectPromise.
+   Admit `paramTypes.length === 0` (the `ZeroArgConstructor` rows expect the
+   steps 8-9 TypeError, which `emitStandalonePromiseCustomCapabilityCheck`
+   already raises once the executor is never invoked).
+3. Replace `emitStandalonePromiseCombinator(ctx, fctx, methodName, [])` at
+   L2464 by: capability check (unchanged) → `resolveFn = __combinator_get_resolve(C)`
+   (R3-2 step 2, with `C` = `ctorLocal` boxed via `extern.convert_any`, and the
+   IsCallable TypeError → REJECT via the capability's `[[Reject]]` slot, spec
+   step 6 IfAbruptRejectPromise — `all/capability-executor-called-twice.js`
+   fn3/fn4 expect a THROWN TypeError for the steps-8-9 failure, which happens
+   before the Get, so keep those two orders distinct) → for an array-literal
+   iterable, the R3-2 generic element loop with `observable` set and the
+   RESULT being the value returned by `C` (`resultLocal` of
+   `emitStandalonePromiseCustomSettle`'s pattern, L400-L404), settled through
+   the captured `[[Resolve]]`/`[[Reject]]` closures (`__apply_closure(slot,
+   undefined, [values])`) instead of `rt.fulfillFuncIdx`. The aggregate state
+   (`$CombinatorState`) still carries the results array; only the terminal
+   settle changes. Non-literal iterables (`Set`, vec vars, dynamic) reuse the
+   same R3-2 arms with `observable` set; custom iterables with `return` wait
+   for R3-4.
+4. `race` with custom `C`: the two element functions are the capability's
+   resolve/reject SLOTS (the closure values C stored), passed through unchanged
+   — identity is asserted by `race/same-{resolve,reject}-function.js`.
+
+**Rows (27).**
+`all/{call-resolve-element,call-resolve-element-after-return,call-resolve-element-items,capability-resolve-throws-reject,ctx-ctor-throws,invoke-resolve-return,new-resolve-function,resolve-before-loop-exit,resolve-before-loop-exit-from-same,resolve-element-function-extensible,resolve-element-function-length,resolve-element-function-name,resolve-element-function-nonconstructor,resolve-element-function-property-order,resolve-element-function-prototype,resolve-from-same-thenable,same-reject-function,S25.4.4.1_A4.1_T1}.js` (18),
+`race/{S25.4.4.3_A3.1_T1,capability-executor-not-callable,ctx-ctor-throws,invoke-resolve-error-reject,invoke-resolve-return,reject-from-same-thenable,resolve-from-same-thenable,same-reject-function,same-resolve-function}.js` (9).
+`resolve-element-function-nonconstructor.js` additionally needs `new fn()` on
+the element closure to throw — Slice B's `__builtinfn_is_builtin` `new`-site
+guard covers any builtin-fn-meta subtype, so it comes free with R3-2 step 5.
+
+**Growth grant.** call-namespace-static.ts +60 in `compileNamespaceStaticCall`
+(granted) — the admission conditions ARE the dispatch; promise-combinators.ts
++80 (`emitStandalonePromiseCustomCombinator` terminal-settle variant).
+
+**Order constraints.** Spec order for `Promise.all.call(C, iter)`: (1)
+NewPromiseCapability(C) — construct C, steps 8-9 TypeError THROWN; (2)
+`Get(C, "resolve")` — abrupt ⇒ REJECT the capability; (3) GetIterator —
+abrupt ⇒ REJECT; (4) per element. Today's empty-array arm skips (2) and (3)
+entirely; `all/capability-executor-called-twice.js` fn3 (`resolve` getter
+throws, expects the steps-8-9 TypeError, i.e. (1) wins) pins that (1) precedes
+(2).
+
+**Acceptance.** (a) the 27 rows `pass`, `imports=[]`; (b) PASSING shapes at
+risk — the 6 `capability-executor-not-callable` subcases and the empty-array
+`.call(fn, [])` rows (`tests/issue-4682.test.ts` all three tests, including
+"keeps the non-empty custom-constructor fallback unchanged" which must be
+REWRITTEN to assert the native result rather than the host fallback — say so
+in the test's comment), `tests/issue-4727.test.ts`, `tests/issue-5197-promise-generic-capability.test.ts`
+10/10; `all/{ctx-ctor-throws → already-passing twins} resolve/{ctx-ctor-throws,capability-invocation-error}`,
+`reject/{ctx-ctor-throws,capability-executor-not-callable,S25.4.4.4_A3.1_T1}`
+re-probed `pass`; (c) host lane: `tests/promise-combinators.test.ts`
+"compiled-fn capability constructor (#1694 A.i)" describe block green — those
+four tests run the host `Promise.all.call(fn, …)` path and must be
+byte-identical (compare binaries on base vs branch).
+
+#### R3-4 — interleaved iterator drive + IteratorClose (7 rows firm, 6 conditional, M, medium-high risk)
+
+**Root cause.** `emitDynamicCombinatorArg` drains the whole iterable into a
+`$Vec` via `__combinator_to_vec` (finalize-filled at promise-combinators.ts
+L1734-L1908) BEFORE any element work. Spec interleaves `IteratorStep` with
+`Call(promiseResolve)` and `Invoke(then)`, and on an abrupt element step
+performs `IteratorClose(iteratorRecord)` (calls `return`). The six `*-close`
+rows have a `next()` that NEVER reports `done` — the drain loops forever and
+the compile lane times out or the row fails on `callCount` — and
+`capability-resolve-throws-no-close.js` asserts `return` is NOT called when
+the abrupt step is the capability's own `resolve` throwing (spec: IfAbruptRejectPromise
+inside the loop only closes on `promiseResolve`/`then` abrupts, not on step
+4.h's `Call(capability.[[Resolve]])`).
+
+**Conditional rows — probe FIRST.** `all/{S25.4.4.1_A5.1_T1,iter-step-err-reject,iter-next-val-err-reject}.js`
+and the three `race/` twins reject with "argument is not iterable" today, which
+means `__combinator_to_vec` returned NULL, not that the throw escaped. Two
+hypotheses, different fixes: (H1) `__call_@@iterator` does not see a
+SYMBOL-keyed expando written as `obj[Symbol.iterator] = fn` on a `$Object`
+(for-of works on the same object only because it takes the compile-time #2162
+projection); (H2) the throw inside `__call_next` is caught and mapped to null
+somewhere in the `__call_*` dispatcher. Decide with a 3-line standalone probe
+that prints `typeof it[Symbol.iterator]` through `__extern_get` vs the
+dispatcher; fix H1 in `emitIteratorMethodExport`'s user arm, H2 in the
+dispatcher. Claim these 6 only if the fix is inside the combinator/iterator
+files named here; otherwise record them as a separate issue and leave them.
+
+**Edits.**
+1. Add `__combinator_drive(iterable, state, C, resolveFn, fulfillFn, rejectFn) -> i32`
+   (new, reserved at compile time beside `ensureCombinatorToVec`, filled at
+   finalize in `fillCombinatorToVec`'s slot right after it — same
+   `__call_@@iterator`/`__call_next`/`__sget_done`/`__sget_value` reads, same
+   bare-`next` fallback). Body: acquire iterator (null ⇒ return 0 = not
+   iterable); loop { `res = __call_next(it)` inside try → abrupt ⇒ reject
+   aggregate, return 1 (no close — spec 4.b/4.c set `[[Done]]` true); `done`
+   ⇒ break; `value` ⇒ `remaining++`; try { `next = __apply_closure(resolveFn, C,
+   [value])`; `__combinator_element_step(next, …)` (R3-2 step 4) } catch ⇒
+   `IteratorClose`: `__extern_get(it, "return")` — undefined/null ⇒ skip;
+   not callable ⇒ TypeError but the ORIGINAL throw wins (spec IteratorClose
+   step 5/6: a throw completion is returned as is); else call it and ignore
+   its result — then reject the aggregate with the original reason, return 1 }.
+   `$CombinatorState.remaining` becomes the spec's counter: start at 1, +1 per
+   element, −1 at loop end; when it reaches 0 at loop end the aggregate
+   fulfils with the results vec (which must be GROWABLE here — reuse the
+   `TOVEC_*` grow pattern L1781-L1797 on the state's `resultsArr`).
+2. `emitDynamicCombinatorArg` (calls.ts L10451): when `promiseResolveObservable`
+   OR the call is a custom-`C` `.call` (R3-3), emit `__combinator_drive`
+   instead of `__combinator_to_vec` + the runtime loop; otherwise unchanged
+   (byte-identity for every module without observable resolve — the six
+   `-close` rows all reassign `Promise.resolve` or define `then`, so they take
+   the new path).
+3. `remaining` starting at 1 changes `buildAllFulfillBody` (L889) only for
+   drive-mode states; add an `i32` `mode` field to `$CombinatorState`
+   (registerStruct L481) rather than branching on magic counts.
+
+**Rows (7 firm).** `all/{invoke-resolve-error-close,invoke-then-error-close,invoke-then-get-error-close,capability-resolve-throws-no-close}.js`,
+`race/{invoke-resolve-error-close,invoke-then-error-close,invoke-then-get-error-close}.js`.
+**Conditional (6).** `all/{S25.4.4.1_A5.1_T1,iter-step-err-reject,iter-next-val-err-reject}.js`,
+`race/{S25.4.4.3_A4.1_T1,iter-step-err-reject,iter-next-val-err-reject}.js`.
+
+**Growth grant.** promise-combinators.ts +150 (`buildCombinatorDriveBody`, the
+state `mode` field, grow helper); calls.ts +10.
+
+**Order constraints.** `Get(C,"resolve")` precedes GetIterator; `next()` is
+called at most once per element and NOT again after an abrupt step; `return`
+is called exactly once on an abrupt `resolve`/`then` step and never on an
+abrupt `next`/`done`/`value` read; the aggregate settles at most once.
+
+**Acceptance.** (a) firm rows `pass`; conditional rows `pass` or recorded as a
+separate issue with the probe result; (b) PASSING shapes at risk — every
+existing custom-iterable combinator row: `built-ins/Promise/all/iter-arg-is-*`,
+`race/iter-arg-is-*` (probe the full glob, ≤15 per batch), the async-generator
+`for await` corpus is untouched (no shared code), `tests/issue-2922*.test.ts`
+(if present) and `tests/promise-combinators.test.ts` on both lanes; byte-identity
+for a module with a custom iterable argument and NO resolve/then reassignment
+(compile `Promise.all(customIter)` on base and branch, compare binaries).
+
+#### R3-5 — own `then` on a native `$Promise` inside Resolve, captured at Resolve time (7 rows, S, low-medium risk)
+
+**Root cause.** `buildPromiseResolveValueBody` (async-scheduler.ts L1511)
+tests `ref.test $Promise` on the peeled value (L1648-L1650) and adopts the
+native state directly, so `thenable.then = f` on a native promise is never
+`Get`; spec §27.2.1.3.2 steps 8-13 `Get(resolution, "then")` runs for EVERY
+object. Additionally `__promise_thenable_job` (L1246-L1275) re-dispatches
+`__call_m_then_vararg(thenable, …)` at job time, whereas the spec captures
+`then` at Resolve time (`resolve-prms-cstm-then-immed.js` reassigns `then`
+after `resolve()` and asserts the LATE function is never called).
+
+**Edits.**
+1. In `buildPromiseResolveValueBody`'s `$Promise` arm (L1648-L1720), after
+   `selfCheck`, add: if `__carrier_bag_has` is registered in the module
+   (`ctx.funcMap.get(CARRIER_BAG_HAS)`, carrier-bag-visibility.ts L23) AND
+   `__carrier_bag_has(peeled, "then")` → `thenVal = __extern_get(peeled,
+   "then")`; if `thenVal` passes `buildClosureRefTestArms` → enqueue
+   `__promise_thenable_job` with caps `$__then_caps{callback: thenVal,
+   chained: promise}` (today `callback` is null for this job — L1274) and
+   return; else fall through to direct fulfil with `value` (a non-callable
+   own `then` ⇒ step 11). When the bag natives are not registered the arm is
+   absent — byte-identical for every module without promise expandos.
+2. In `__promise_thenable_job`'s try body (L1246-L1275): if `caps.callback`
+   is non-null → `__apply_closure(caps.callback, peeled thenable, argvec)`;
+   else the existing `__call_m_then_vararg` call. Nothing else changes.
+3. `fillPromiseThenableHelpers` (closed-method-dispatch.ts L1818): add a
+   `ref.test $Promise` + `__carrier_bag_has` arm BEFORE the `$Object` arm so a
+   `then`-bearing native promise answers 1 to `__promise_has_callable_then`
+   when reached through the non-promise path (an `$AnyValue`-boxed promise).
+   Gate it on `ctx.funcMap.get(CARRIER_BAG_HAS) !== undefined`.
+
+**Rows (7).** `prototype/then/resolve-{pending,settled}-{fulfilled,rejected}-prms-cstm-then.js` (4),
+`resolve-prms-cstm-then-{immed,deferred}.js` (2), `race/resolve-prms-cstm-then.js` (1).
+
+**Growth grant.** async-scheduler.ts +60 (the two functions, both granted
+above); closed-method-dispatch.ts +25.
+
+**Order constraints.** `Get(then)` runs synchronously inside Resolve (step 9),
+the CALL runs as a job (step 14); a throwing `then` getter on the native
+promise rejects synchronously via the existing `poisonedLocal` path — route the
+new Get through the same `buildTargetTaggedTry` (L1536-L1554) rather than a
+second try.
+
+**Acceptance.** (a) 7 rows `pass`; (b) PASSING shapes at risk — every
+native-promise adoption: `tests/issue-3125.test.ts` (all 6), `issue-3125-widen`,
+`promise-expando-standalone.test.ts` (which writes expandos onto promises and
+must NOT make plain adoption take the job path — assert its binaries only grow
+by the new arm, and that `Promise.resolve(p)` for an expando-free `p` still
+adopts synchronously), `issue-4167-test262.test.ts`, `issue-2623-promise-subclass-identity`,
+`issue-2867-gap4`; test262 controls `prototype/then/resolve-{pending,settled}-{fulfilled,rejected}-prms.js`
+(the non-custom twins — must stay `pass`) and `resolve-self`/`resolve-settled-*-self`;
+host lane byte-identical (the whole body is standalone/wasi-gated).
+
+#### R3-6 — `SpeciesConstructor` read in `then`; `x.constructor` check in `Promise.resolve` (5 rows, S, medium risk)
+
+**Root cause.** `emitStandalonePromiseThen` (L4286) never performs
+§27.2.5.4 step 3 `SpeciesConstructor(promise, %Promise%)`; `emitStandalonePromiseResolve`
+(L4164) skips §27.2.4.7.1 step 2.a `Get(x, "constructor")` and returns a
+native promise unchanged (`arg-uniq-ctor.js` sets `constructor = null` and
+expects a NEW promise).
+
+**Edits.**
+1. New `emitPromiseSpeciesConstructorRead(ctx, fctx, promiseLocal) -> {ctorLocal}`
+   (async-scheduler.ts, beside `emitStandalonePromiseThen`), emitted only when
+   `promiseSpeciesObservable(ctx, node)` — a per-file scan (same cache shape as
+   `sourceHasMethodReassignment`) for: an assignment/defineProperty whose key
+   is `constructor`, any `Symbol.species` token, or `defineProperty(Promise, …)`.
+   Body: `c = bag has "constructor" ? __extern_get(p, "constructor") : <Promise carrier>`
+   (`emitBuiltinConstructorIdentity(ctx, fctx, "Promise")`); `undefined` ⇒
+   default; not an object (null/primitive — use the object runtime's
+   is-object classifier, not `ref.is_null` alone) ⇒ TypeError; `s =
+   __extern_get(c, @@species)` (`ensureSymbolCarrier` + `__box_symbol` 5 as in
+   builtin-ctor-own-props.ts L307-L322); `s` undefined/null ⇒ default; `s`
+   `ref.eq` the Promise carrier ⇒ default (native path); anything else ⇒ if
+   IsConstructor fails ⇒ TypeError; if it IS a constructor, this pass has no
+   `Construct(S, «executor»)` for it (G9), so fall through to the native path
+   AFTER the Get/IsConstructor side effects ran, and say so in a code comment
+   naming G9 (`ctor-custom` / `deferred-is-resolved-value` are the rows that
+   need the real construct).
+2. Call it at the top of the `nativeBody` arm of `emitStandalonePromiseThen`
+   (after `promiseLocal` is set, L4363), so the override-`then` branch (an own
+   `then`) is unaffected. Throws propagate synchronously out of `then` — that
+   is what `ctor-null`/`ctor-poisoned`/`ctor-throws` assert.
+3. `emitStandalonePromiseResolve` L4182-L4187: in the `then` (native promise)
+   arm, when `__carrier_bag_has` is registered: if `bag has "constructor"` AND
+   `__extern_get(v, "constructor")` is not `ref.eq` the Promise carrier ⇒ take
+   the ELSE arm (new pending promise adopting `v`). Gate on the same
+   `promiseSpeciesObservable` scan for byte-identity.
+
+**Rows (5).** `prototype/then/{ctor-null,ctor-poisoned,ctor-throws,ctor-access-count}.js`,
+`resolve/arg-uniq-ctor.js`.
+
+**Growth grant.** async-scheduler.ts +80 (`emitPromiseSpeciesConstructorRead`
+new; `emitStandalonePromiseThen` +10, granted).
+
+**Order constraints.** `Get(constructor)` exactly once (`ctor-access-count`);
+it precedes the reaction attach; it is NOT performed on the own-`then`
+override branch (spec: `p.then` override means `Promise.prototype.then` was
+never entered).
+
+**Acceptance.** (a) 5 rows `pass`; (b) PASSING shapes at risk — every
+`p.then(...)` in a module that mentions `Symbol.species` or `constructor`:
+`tests/issue-2984-species.test.ts`, `issue-2984-ctor-carrier-own-props`,
+`issue-5197-es2015-promise-r2.test.ts` 8/8 (Slice A species rows), `issue-2623-promise-subclass-identity`,
+`issue-4746.test.ts` (Promise order rows); test262: every currently-passing
+`prototype/then/*.js` row (the glob minus the census rows, ≤15 per batch) and
+`Symbol.species/*.js`; byte-identity
+for a module with `then` but no `constructor`/species mention (compile
+`tests/issue-3125.test.ts` source 1 on base vs branch).
+
+#### R3-7 — `p.then` / `p.catch` / `p.finally` as VALUES on a `$Promise` instance (2 rows, S, low risk)
+
+**Root cause.** A member VALUE read of `then` off a `$Promise`-typed receiver
+answers `undefined` (probe C). The reflective closure for
+`Promise.prototype.then` exists (`ensurePromiseNativeProtoGlue`, brand
+registered by Slice C; value read of `Promise.prototype.<m>` goes through
+builtin-value-read.ts L616 / native-proto.ts `emitLazyNativeProtoGet`), but the
+instance read never consults the prototype.
+
+**Edits.** Find the site by compiling probe C with a breakpoint: the receiver
+is `ref $Promise` and the name is `then` — the read resolves in
+property-access-dispatch.ts (the struct-receiver member ladder) and falls to
+the bag miss ⇒ `undefined`. Add, in the standalone `$Promise` receiver arm:
+if the bag has no own `then`/`catch`/`finally` ⇒ push the SAME proto member
+closure the `Promise.prototype.<m>` read yields (call the glue's member
+closure getter; do not mint a second closure — identity `p.then ===
+Promise.prototype.then` is a spec fact and `S25.4.5.3_A1.1_T2` may compare).
+Reads of any OTHER member keep today's answer.
+
+**Rows (2).** `prototype/catch/S25.4.5.1_A2.1_T1.js`, `prototype/then/S25.4.5.3_A1.1_T2.js`.
+
+**Growth grant.** property-access-dispatch.ts +30 OR array-object-proto.ts
++40 (whichever owns the site; both granted).
+
+**Acceptance.** (a) 2 rows `pass`; (b) PASSING shapes at risk — the own-`then`
+override (`promise-expando-standalone.test.ts`: `p.then = f; p.then` must
+read `f`, and `emitStandalonePromiseThen`'s override branch must still fire);
+`then/context-check-on-entry.js`, `catch/{invokes-then,this-value-*}.js`
+(Slice C rows) re-probed `pass`; a compiled control `typeof p.then ===
+"function" && p.then === Promise.prototype.then` on both lanes.
+
+#### R3-8 — boolean results of `.then` handlers (2 rows, S, low risk)
+
+**Root cause.** `coerceStackValueToExternref` (async-scheduler.ts L1810) boxes
+every `i32` with `f64.convert_i32_s` + `__box_number` (L1828-L1835). The
+canonical i32→externref rule (type-coercion.ts L3396-L3407) honours the i32
+`boolean` brand (`from.boolean === true` ⇒ `__box_boolean`). `checkSequence`
+returns `boolean`, so `Promise.all([...]).then(r => compareArray(r, [true,true,true]))`
+sees `[1,1,1]`.
+
+**Edits.** In the `i32` case, if `from.boolean === true` and `__box_boolean`
+is registered (`addUnionImports` registers it in both modes; call
+`ensureUnionHelpersForThenWrapper`'s existing pre-registration path to make
+sure it is present BEFORE the wrapper body bakes the call), emit
+`call __box_boolean`; otherwise today's number box. Symbol-branded i32 is not
+reachable here (a handler returning a symbol is `externref` already) — assert
+that with a comment, not code.
+
+**Rows (2).** `race/resolved-sequence.js`, `race/resolved-sequence-with-rejections.js`.
+
+**Growth grant.** async-scheduler.ts +8.
+
+**Acceptance.** (a) 2 rows `pass`; (b) PASSING shapes at risk — handlers
+returning `number` (`tests/issue-2867*.test.ts`, `promise-combinators.test.ts`
+"Promise.all with resolved values"), handlers returning `boolean` consumed
+by `===` downstream; equivalence gate unchanged; host lane: the wrapper is
+standalone-only (`emitThenWrapperFunction` is reached only under
+`isStandaloneThenChainNativeActive`) — verify with a binary compare of
+`tests/promise-combinators.test.ts` source 1 on the host lane.
+
+#### R3-9 — GetCapabilitiesExecutor on the builtin-fn metadata carrier (3 rows, S, low risk)
+
+**Root cause.** `$__promise_custom_capability_executor` (promise-combinators.ts
+L160-L176) subtypes the bare `(externref, externref)->()` wrapper, so it has
+no `name`/`length`/prototype metadata; Slice B moved the settle closures onto
+`ensureBuiltinFnMetaType` for exactly this reason (`executor-function-length.js`
+passes only because `closureArityField()` happens to answer 2).
+
+**Edits.** Re-parent the struct onto
+`ensureBuiltinFnMetaType(ctx, wrapper.structTypeIdx, wrapper.closureInfo,
+"promise:capexec", "", 2)`; read the carrier's fields to place `$capability`
+AFTER them (`capMetaFields.length`, as L1055-L1058 does); factor the two
+`struct.new` mint sites (L262-L269 and L378-L387) into one
+`buildCustomCapabilityExecutorInstrs(runtime, stateLocal)` so the operand
+order lives in one place; the executor body's `ref.cast executorTypeIdx` +
+`struct.get CLOSURE_CAPTURE_FIELD_BASE` (L188-L190) must read the NEW
+capture index (`runtime.capabilityFieldIdx`), never the constant.
+
+**Rows (3).** `executor-function-{name,property-order,prototype}.js`.
+
+**Growth grant.** promise-combinators.ts +25 net.
+
+**Acceptance.** (a) 3 rows `pass`; (b) PASSING shapes at risk —
+`executor-function-{length,extensible}.js`, all Slice-D rows, `tests/issue-4682.test.ts`,
+`issue-4727.test.ts`, `issue-5197-promise-generic-capability.test.ts` (the
+executor is called from compiled `C` bodies through the wrapper `ref.test` —
+the subtype chain must still pass `getFuncRefWrapperRootTypeIdx`); the
+finalize `fillBuiltinFnMeta` arms must not double-register the
+`(name:"", length:2)` entry (it is keyed by identity — check the entry count
+in a compiled module before/after).
+
+#### R3-10 — an initializer-less `var` is not a proof of `undefined` (2 rows, S, low risk)
+
+**Root cause.** `provablyNullishReceiver` (builtin-prototype-brand.ts L582-L587)
+accepts `ctx.oracle.typeFactOf(e).kind === "undefined"`. For `var
+resolveFunction;` assigned only inside a nested function, TypeScript's
+control-flow analysis narrows the top-level use to `undefined` (an evolving
+`any`), which is a narrowing, not a proof; the borrowed-prototype arm then
+compiles `Object.prototype.hasOwnProperty.call(resolveFunction, "prototype")`
+to a static TypeError.
+
+**Edits.** Before trusting the fact, if `e` is an identifier whose
+`ctx.oracle.valueDeclarationOf(e)` is a `VariableDeclaration` with neither an
+initializer nor a type annotation (or a parameter), return false. Keep the
+`null` keyword and explicit `undefined`-typed declarations as proofs.
+
+**Rows (2).** `resolve-function-nonconstructor.js`, `reject-function-nonconstructor.js`
+(`hasOwnProperty.call(settleFn, "prototype")` then answers through the
+builtin-fn-meta gOPD arm — `false` — and Slice B's `new fn()` guard supplies the
+TypeError). `executor-function-not-a-constructor.js` also passes this gate but
+then needs `isConstructor()` = `Reflect.construct(function(){}, [], fn)` →
+#3371; record its new failure text, do not claim it.
+
+**Growth grant.** none needed (builtin-prototype-brand.ts is under threshold;
++10 lines).
+
+**Acceptance.** (a) 2 rows `pass`; (b) PASSING shapes at risk — every row that
+RELIES on the static nullish throw: probe `built-ins/Object/prototype/hasOwnProperty/*.js`,
+`built-ins/Object/prototype/isPrototypeOf/*.js`, `built-ins/Function/prototype/{call,apply}/*` (≤15 per
+batch, currently-passing set) and `tests/issue-4623*.test.ts` if present; the
+`null` literal and a `let x: undefined` receiver must still take the static
+throw (add a compiled control asserting the TypeError text).
+
+### DEFERRED (30 rows) — with the reason
+
+| rows | why not in this pass |
+| --- | --- |
+| G9 (10): `{all,race,resolve,reject}/ctx-ctor.js`, `then/ctor-custom.js`, `then/deferred-is-resolved-value.js`, `then/capability-executor-{called-twice,not-callable}.js`, `{all,race}/invoke-resolve-on-promises-every-iteration-of-custom.js` | need `Construct(C, «executor»)` for a compiled `class extends Promise` with a wasm-held executor argument — the `new`-site arms are AST-driven (`emitDynamicNewFallback`, new-super.ts L3290) and the host `__promise_subclass_ctor` is unsatisfiable (`class-bodies.ts` L175-L200). The two `then/capability-executor-*` CEs are an invalid-binary bug (`extern.convert_any` on an externref call result in `__module_init_chunk_0`) in the anonymous `new class extends Promise{…}(fn)` lowering — file it as its own issue; it blocks nothing here because the rows need G9 anyway. |
+| G10 (8): `{all,allSettled,any,race}/resolve-throws-iterator-return-{is-not-callable,null-or-undefined}.js` | `class BadPromise { static resolve(){throw} }` as `C` — same class-construct gap. |
+| #3371 (2): `get-prototype-abrupt{,-executor-not-callable}.js` | arbitrary NewTarget — Slice G, unchanged. |
+| `proto-from-ctor-realm.js` | Slice H (cross-realm), unchanged. |
+| `promise.js` | `verifyProperty(this, "Promise", …)` — global-object own-property reflection, cross-cutting (#4444's global-object blocker). |
+| `catch/this-value-obj-coercible.js` | §7.3.2 GetV ToObject for a primitive receiver (`Boolean.prototype.then`) — a wrapper-prototype expando lookup, separate mechanism. |
+| `all/iter-arg-is-string-resolve.js` | the handler's `v.length` is typed `string[]` by TS while the native result is an externref `$Vec` → illegal cast; a type-mapping fix in the combinator's RESULT typing, not a Promise-semantics fix. |
+| `exception-after-resolve-in-{executor,thenable-job}.js` | the executor-throw catch (promise-executor.ts L163-L205) rejects on PROMISE state, but `resolve(thenable)` leaves the promise pending; fixing it needs an `[[AlreadyResolved]]` record shared by the settle closures (or a new PENDING_RESOLVED state that the job's settle path is allowed to cross) — touches every settle path for 2 rows; own issue. |
+| `all/resolve-thenable.js`, `all/resolve-poisoned-then.js` | Resolve of the RESULT array must `Get(array, "then")` through `Array.prototype`'s expando; `__promise_has_callable_then` has no vec arm and the array-proto expando lookup is a different substrate. |
+| `then/S25.4.5.3_A5.1_T1.js` | reaction order: pending callbacks are PREPENDED (`emitStandalonePromiseThen` L4514-L4524, "FIFO append can be added later") so two `then`s on one pending promise fire LIFO. Real semantic bug worth its own issue; too much blast radius to bundle here. |
+| `executor-function-not-a-constructor.js` | after R3-10 it still needs the harness `isConstructor` (`Reflect.construct` with a NewTarget) — #3371. |
+
+### Expected yield
+
+Firm claims: R3-1 4 + R3-2 23 + R3-3 27 + R3-4 7 + R3-5 7 + R3-6 5 + R3-7 2 +
+R3-8 2 + R3-9 3 + R3-10 2 = **82 rows**; conditional +6 (R3-4 probe);
+deferred 30. Measure the WHOLE 118-row list before and after each step
+(file-copy A/B, refresh the "new" copy after every edit — see the Slice-D
+pitfall above), and re-probe the currently-passing `built-ins/Promise/**`
+ES2015 rows (the set `ls test262/test/built-ins/Promise -R` minus the census
+list, ~110 rows, ≤15 per batch) once after R3-4 and once at the end — that
+sweep, not the row list, is what catches a broken passing shape.
