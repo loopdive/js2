@@ -1,8 +1,11 @@
 {
   "id": "3791",
   "assignee": "ttraenkler/codex-ir-regexp",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3791-ir-native-regexp-test",
   "claimed_at": "2026-07-30T04:21:05Z",
-  "updated_at": "2026-07-30T04:21:05Z"
+  "updated_at": "2026-09-03T09:43:25Z",
+  "write_id": "30227-d58jvgvq",
+  "released_at": "2026-09-03T09:43:25Z"
 }
