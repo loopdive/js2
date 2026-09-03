@@ -2751,3 +2751,91 @@ fail-fast path read as a survey; the July tree was a fetch boundary read as
 absent history; this is a hardcoded label read as an analysis result. Each time
 the instrument was assumed to answer the question being asked of it, and each
 time one look at the source settled it in under a minute.
+
+## 2026-09-03 — is the R9 denominator representative? Measured, and the answer is no
+
+The open half of the R9 denominator question was never "how many units fail" but
+"**fail on what corpus, and does that corpus stand for what R9 will actually be
+asked to compile?**" Both numbers this session quotes come from the playground
+examples (13 files) and the dogfood corpus (20 files). Neither had been checked
+against anything.
+
+Method: AST node-kind frequency histograms for each corpus, compared by L1
+distance over the union of kinds (0 = identical shape mix, 2 = disjoint).
+Reference is a deterministic stride sample of test262 — 1,534 files of 47,533
+(`test/language` + `test/built-ins`, stride 31), 147,346 nodes.
+Probe: `.tmp/corpus-representativeness.mjs`.
+
+### Result
+
+| corpus | files | nodes | L1 distance to test262 |
+| --- | --: | --: | --: |
+| playground | 13 | 5,171 | **0.576** |
+| dogfood | 20 | 1,289 | **0.705** |
+| *playground vs dogfood* | | | *0.631* |
+
+**Two things fall out, and the second is the sharper one.**
+
+1. **Neither corpus is close.** 0.58 and 0.71 on a 0–2 scale is a large mismatch
+   in shape mix, not a rounding difference.
+2. **The two corpora disagree with each other about as much as either disagrees
+   with test262** (0.631, sitting between 0.576 and 0.705). So they are not two
+   samples of one population — they are two different populations, and a
+   conclusion measured on one does not transfer to the other. That is the
+   *mechanism* behind this session's earlier "R4 first" retraction, which was
+   generalised from a single corpus and had to be withdrawn: it was not bad
+   luck, it is what these numbers predict.
+
+### Shapes our denominators barely contain
+
+| kind | test262 | playground | dogfood |
+| --- | --: | --: | --: |
+| `PrivateIdentifier` | 4.58% | 0.21% | 0.23% |
+| `PropertyDeclaration` | 4.29% | 0.06% | 0.23% |
+| `PropertyAccessExpression` | 7.22% | 5.92% | 2.79% |
+| `ArrayLiteralExpression` | 1.59% | 0.17% | 0.54% |
+| `PropertyAssignment` | 1.59% | 0.00% | 0.54% |
+| `NewExpression` | 1.31% | 0.12% | 0.47% |
+| `ObjectLiteralExpression` | 1.13% | 0.00% | 0.39% |
+| `FunctionExpression` | 0.87% | **0.00%** | **0.00%** |
+| `ThrowStatement` | 0.76% | 0.00% | 0.08% |
+
+`FunctionExpression` is **exactly zero in both** — an entire syntactic form with
+no coverage in either denominator. `PrivateIdentifier` + `PropertyDeclaration`
+together are **8.9% of test262 nodes against 0.4% of ours**: class bodies are the
+single largest blind spot, by an order of magnitude.
+
+**That has a direct consequence for the blocker ranking.** R3 (classes) is
+already the second-largest blocker in tonight's census — measured on corpora that
+contain almost no class fields. **R3 is very likely under-counted**, and the
+class family's true weight cannot be read off these corpora at all.
+
+### Two corrections this forces, one of them to my own plan
+
+- **R9-D1 proposed the DOGFOOD corpus as the new CI `baseline` lane.** On this
+  measurement dogfood is the *worse* of the two candidates (0.705 vs 0.576).
+  That plan should not be implemented as written; at minimum the lane should
+  carry both corpora, and the choice should be argued rather than inherited.
+- **Every per-corpus figure in this file needs its corpus in the sentence.**
+  Already the standing rule from the earlier retraction; this quantifies why —
+  the corpora are 0.631 apart, so the qualifier is load-bearing, not pedantry.
+
+### Limits, stated plainly
+
+- **Node-kind frequency is a proxy for shape coverage, not for IR
+  representability.** A corpus could match the histogram exactly and still miss
+  every hard case. This says our corpora are *unrepresentative*; it does not say
+  how much conformance R9 would lose.
+- **test262 is not automatically the right target either.** It is an adversarial
+  conformance suite, deliberately unlike application code. If R9's target
+  population is real-world JS, the correct reference is closer to the npm-compat
+  package set than to test262. What the measurement establishes is narrower and
+  still decisive: **the two corpora we are quoting do not agree with each other,
+  so at most one of them can be representative of anything.**
+- The sample is 3.2% of test262 by stride, deterministic and re-runnable; it is
+  not a random sample and directory ordering could bias it.
+
+**Next step this suggests**, ahead of implementing R9-D1: run the same
+comparison against the npm-compat package sources, which are the closest thing
+the repo has to real application code. If playground and dogfood are both far
+from *that* too, the R9 denominator needs to be built rather than chosen.
