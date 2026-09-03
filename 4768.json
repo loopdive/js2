@@ -1,10 +1,11 @@
 {
   "id": "4768",
   "assignee": "ttraenkler/codex-4768-es6-step-errors",
-  "requested_by": "ttraenkler/codex-4768-es6-step-errors",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4768-es6-step-errors",
   "claimed_at": "2026-08-27T12:43:46Z",
-  "updated_at": "2026-08-27T12:43:46Z",
-  "write_id": "7683-8e12snrv"
+  "updated_at": "2026-09-03T09:51:10Z",
+  "write_id": "22004-bs5ixhj8",
+  "released_at": "2026-09-03T09:51:10Z"
 }
