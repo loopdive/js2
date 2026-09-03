@@ -1,8 +1,11 @@
 {
   "id": "3502",
   "assignee": "ttraenkler/codex-3502-shared-string-build-method-lowering",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3502-shared-string-build-method-lowering",
   "claimed_at": "2026-07-20T16:24:57Z",
-  "updated_at": "2026-07-20T16:24:57Z"
+  "updated_at": "2026-09-03T09:39:56Z",
+  "write_id": "22830-wa9glp8d",
+  "released_at": "2026-09-03T09:39:56Z"
 }
