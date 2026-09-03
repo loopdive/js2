@@ -24,6 +24,25 @@ It does not implement. It also owns the merge-queue shepherding for its own PRs.
 
 ## Open PRs and exactly what unblocks each
 
+**FINDING from the 02:15 sweep — four non-mergeable checkpoint PRs are neither
+draft nor `hold`-labelled.** #5390, #5393, #5397 and #5400 (all `ttraenkler`
+codex-lane checkpoints) each say in their own body that they must not merge —
+*"remains draft"*, *"not mergeable"*, *"intentionally red"*, *"keep this PR
+draft until…"* — yet the API reports `draft: false` and no label on any of them.
+Nothing but red CI is keeping them out of the queue: `auto-enqueue.yml` takes
+any `CLEAN`, non-draft, non-held PR, and it does not read prose. If someone
+fixes CI on one of these intending only to unblock a check, it merges.
+
+**Not acted on deliberately** — these are the project lead's own PRs, and
+labelling four of them unilaterally at 02:00 is an outward-facing change to
+someone else's work that costs nothing to defer. Urgency is genuinely low
+(they have sat since 2026-09-01 without being taken, which is itself evidence
+they are not `CLEAN`). The fix is one `hold` label each, or `draft: true`,
+whichever the author prefers — **`hold` is the safer of the two**, because
+`auto-refresh-prs` SKIPS drafts, so marking them draft would also stop them
+being rebased and let them rot behind main the way #3919 did at 177 commits.
+
+
 **#5511 arrived after suspend and is REVIEWED — verdict release, no blocker.**
 `feat(ir)`: string module bindings on both string backends (#3523 R4-M1), the
 largest R9 blocker. Reviewed at
