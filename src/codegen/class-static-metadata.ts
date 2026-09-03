@@ -10,6 +10,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { fnInstanceNameOf } from "./function-instance-meta.js";
+import { fnctorAncestorOfClass } from "./class-member-keys.js";
 
 /** The own keys created by a class constructor before static declarations. */
 export const CLASS_CONSTRUCTOR_OWN_KEYS = ["length", "name", "prototype"] as const;
@@ -80,4 +81,55 @@ export function classObjectDisplayName(ctx: CodegenContext, classIdentity: strin
     if (synthetic === classIdentity) return fnInstanceNameOf(declaration);
   }
   return "";
+}
+
+/**
+ * (#5195 r3-7) True when `<Class>.<propName>` names one of the §10.2.4
+ * restricted function properties AND the class declares nothing under that
+ * name.
+ *
+ * A class object is a strict function, so `C.caller` / `C.arguments` resolve to
+ * the %ThrowTypeError% accessor inherited from %Function.prototype%: both
+ * reading and writing throw. A DECLARED `static caller` shadows the inherited
+ * accessor and keeps its value, which is why every declaration surface is
+ * consulted here.
+ *
+ * Standalone only — the host lane's class objects reach the real
+ * %Function.prototype% accessors and must stay byte-identical.
+ *
+ * DECLINED for a class with a plain-FUNCTION ancestor: `function F(){}` is
+ * sloppy, so V8 gives it OWN `caller`/`arguments` data properties valued
+ * `null`, and `class G extends F {}` inherits them — node answers `null`, not
+ * a throw (measured 2026-09-03). Poisoning that chain would turn a stable
+ * value into an exception. A BUILTIN ancestor (`extends Error`/`Array`) does
+ * throw in node, so it stays poisoned.
+ *
+ * Shared by the READ arm (`property-access-dispatch.ts::emitClassStaticMemberRead`)
+ * and the WRITE arm (`expressions/assignment.ts::compilePropertyAssignment`) so
+ * the two cannot disagree about which names are poisoned — the failure mode a
+ * per-site copy invites.
+ */
+export function classObjectRestrictedProperty(ctx: CodegenContext, className: string, propName: string): boolean {
+  if (ctx.standalone !== true) return false;
+  if (propName !== "caller" && propName !== "arguments") return false;
+  if (fnctorAncestorOfClass(ctx, className) !== undefined) return false;
+  // Statics are INHERITED along the class chain, so a `static caller` declared
+  // on an ancestor shadows the accessor for every descendant too. Walk the
+  // chain over all four declaration surfaces rather than testing the own class
+  // and then only the FIELD half of the ancestors.
+  const seen = new Set<string>();
+  let cls: string | undefined = className;
+  while (cls !== undefined && !seen.has(cls)) {
+    seen.add(cls);
+    if (
+      ctx.staticProps.has(`${cls}_${propName}`) ||
+      ctx.staticMethodSet.has(`${cls}_${propName}`) ||
+      ctx.staticAccessorSet.has(`${cls}_get_${propName}`) ||
+      ctx.staticAccessorSet.has(`${cls}_set_${propName}`)
+    ) {
+      return false;
+    }
+    cls = ctx.classParentMap.get(cls);
+  }
+  return true;
 }

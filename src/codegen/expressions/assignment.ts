@@ -145,6 +145,7 @@ import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
+import { classObjectRestrictedProperty } from "../class-static-metadata.js"; // (#5195 r3-7)
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
 import { isForeignEvalNode } from "./eval-source.js";
@@ -4566,6 +4567,22 @@ function compilePropertyAssignment(
       if (setterIdx !== undefined) {
         return emitSetterCallWithDummy(ctx, fctx, clsName, setterName, setterIdx, value);
       }
+    }
+    // (#5195 r3-7) §10.2.4: `C.caller = v` / `C.arguments = v` hit the
+    // %ThrowTypeError% accessor inherited from %Function.prototype%, whose
+    // [[Set]] throws. Same predicate as the READ arm in
+    // `property-access-dispatch.ts`, so the two cannot disagree; a class that
+    // DECLARES the name keeps its storage (the checks above already answered).
+    if (classObjectRestrictedProperty(ctx, clsName, propName)) {
+      const rhs = compileExpression(ctx, fctx, value);
+      if (rhs) fctx.body.push({ op: "drop" });
+      emitThrowTypeError(
+        ctx,
+        fctx,
+        "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions",
+      );
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
     }
     const globalIdx = ctx.staticProps.get(fullName);
     if (globalIdx !== undefined) {

@@ -49,6 +49,7 @@ loc-budget-allow:
   - src/codegen/ast-modifiers.ts
   - src/codegen/destructuring-params.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/class-static-metadata.ts
 coercion-sites-allow:
   - src/codegen/class-proto-lookup.ts
 func-budget-allow:
@@ -2101,3 +2102,67 @@ forms and need r3-1. 22/22 controls; controls2 unchanged; `ctl-plain`,
 byte-identical to base on both lanes. `tests/issue-4618*` + `tests/issue-3045*`:
 3 failures, identical set on base (pre-existing, re-measured by reverting the
 file).
+
+### r3-7 — `caller` / `arguments` on a class object (2 rows) `[byte-inert]`
+
+Picked up from the previous implementer's uncommitted work-in-progress (a
+`classObjectRestrictedProperty` predicate plus the two arms, missing its import
+in `property-access-dispatch.ts`, so every class module was an internal
+compile error). Finished, corrected and measured here.
+
+Landed as the plan wrote it — one shared predicate
+`class-static-metadata.ts::classObjectRestrictedProperty` behind
+`ctx.standalone`, consulted by the READ arm
+(`property-access-dispatch.ts::emitClassStaticMemberRead`) and the WRITE arm
+(`assignment.ts::compilePropertyAssignment`) so the two cannot disagree about
+which names are poisoned — with **two narrowings the plan did not name, both
+found by checking node before trusting the shape**:
+
+1. **A plain-FUNCTION ancestor is NOT poisoned.** `function F(){}` is sloppy,
+   so V8 gives it OWN `caller`/`arguments` data properties valued `null`;
+   `class G extends F {}` inherits them and node answers `null`, not a throw
+   (measured 2026-09-03). The plan's predicate would have turned a stable value
+   into an exception — the ship gate's exact prohibition. Declined via
+   `class-member-keys.ts::fnctorAncestorOfClass`. A BUILTIN ancestor
+   (`extends Error` / `extends Array`) *does* throw in node, so it stays
+   poisoned. Standalone still answers `undefined` for `G.caller` on base AND
+   lane (wrong the same way — recorded, not claimed).
+2. **The declaration check walks the whole class chain over all four static
+   surfaces** (field, method, getter, setter), not the own class plus only the
+   FIELD half of the ancestors (`resolveInheritedStaticProp`, which is what the
+   WIP had). Statics are inherited, so `class A { static caller(){} } class B
+   extends A {}` must keep `B.caller` — it did not, before this correction.
+
+**Measured against base `91d4999050`, standalone, in-process runner:**
+
+| | base | lane |
+|---|---|---|
+| claimed rows (`language/{statements,expressions}/class/restricted-properties.js`) | 0/2 | **2/2** |
+| the two enclosing directories, non-recursive (515 rows) | 176 non-pass | **161 non-pass** |
+
+The 515-row sweep is the cumulative r3 delta (r3-3 + r3-4 + r3-2 + r3-7): **15
+rows flip to pass, ZERO new non-pass, and no row shared by both trees changes
+status class** (`join` on the two non-pass listings reports no differing
+status). The 15: 12 `cpn-class-expr-computed-property-name-from-*` (r3-2), 1
+`cpn-class-decl-…-assignment-expression-assignment` (r3-3), 2
+`restricted-properties.js` (this step).
+
+`strict-mode/arguments-callee.js` is the fnctor-VALUE poison pill the step
+explicitly does not claim; unchanged. `methods-restricted-properties.js` does
+not exist in this test262 checkout, so the plan's conditional row is void.
+
+**Order preservation.** 22/22 controls; controls2 7/9 — the 2 failures are the
+`computed-property-names/class/method/{string,symbol}.js` rows already recorded
+above as failing on base. `ctl-plain`, `ctl-static`, `ctl-fnctor` and
+`ctl-classexpr` byte-identical to base on BOTH the standalone and host lanes
+(8 modules, `diff -r`). Probes vs node: the 5-site poison shape base fail →
+lane pass; declared-static (`static caller = 1`) and inherited-static
+(`class B extends A` where A has `static caller(){}`) pass on base AND lane.
+
+**Pin:** `tests/issue-5195-r3-restricted-properties.test.ts` — 9 tests, every
+standalone module asserting an empty import list; 3 of them verified to FAIL on
+the base tree.
+
+**Growth:** `class-static-metadata.ts` +52 · `property-access-dispatch.ts` +16
+· `expressions/assignment.ts` +17. All five ratchet gates green bare, and the
+two budget gates green again with `LOC_GATE_BASE=origin/main`.
