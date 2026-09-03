@@ -1,12 +1,11 @@
 {
   "id": "4786",
   "assignee": "ttraenkler/codex-es2015-next-bounded-fix-8",
-  "requested_by": "ttraenkler/codex-es2015-next-bounded-fix-8",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es2015-next-bounded-fix-8",
-  "reserved_at": "2026-08-27T18:37:57Z",
   "claimed_at": "2026-08-27T18:37:57Z",
-  "updated_at": "2026-08-27T18:37:57Z",
-  "write_id": "94086-y62ynxif",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:51:32Z",
+  "write_id": "22206-8hp8ctiv",
+  "released_at": "2026-09-03T09:51:32Z"
 }
