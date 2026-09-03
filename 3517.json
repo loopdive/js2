@@ -1,8 +1,11 @@
 {
   "id": "3517",
   "assignee": "ttraenkler/codex-3517-map",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "symphony/3517-ir-map-module-init",
   "claimed_at": "2026-07-21T11:47:11Z",
-  "updated_at": "2026-07-21T11:47:11Z"
+  "updated_at": "2026-09-03T09:40:06Z",
+  "write_id": "23873-aa6nru49",
+  "released_at": "2026-09-03T09:40:06Z"
 }
