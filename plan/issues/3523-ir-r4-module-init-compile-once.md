@@ -4468,3 +4468,78 @@ that reads as a clean, surprising, actionable result rather than as a
 tautology. The tell was available for free: the claim "no file mixes
 categories" across 13 independent files is far too tidy to be a property of real
 source, and one `grep` of any file in the table would have shown it.
+
+### 2026-09-03 — the census, measured non-short-circuiting (replaces the retracted table)
+
+Done statically rather than waiting for #5285: parse every dogfood corpus file
+with `ts.createSourceFile` and enumerate **every** top-level variable
+declaration, classifying each by initializer shape. No compile, no source edit,
+no fail-fast path to read. Probe: `.tmp/census-all-decls.mjs`,
+`.tmp/census-collapse.mjs`.
+
+**Three findings the old instrument could not have produced.**
+
+**1. It is 14 files, not 13.** `destructuring.js` carries a blocker and was
+invisible: top-level destructuring throws at `integration.ts:5831-5836` —
+`"top-level destructuring has no one-to-one legacy global mapping"` — **before
+`inspectDirectBinding` is ever called**, so the recorder sits downstream of it.
+A whole file was missing from the denominator, not just miscategorised.
+
+**2. Files mix, and the pessimistic reading is confirmed.** 10 of 14 carry ≥2
+distinct blocker categories syntactically. Because a syntactic category can
+*collapse* under the checker's type view, the honest floor is the most
+aggressive plausible collapse (`PropertyAccess`/`call`/`BinaryExpression`/
+`conditional`/`Parenthesized` → one `any`; every `new(...)` → class-instance;
+template-substitution + tagged-template → string): **4 of 14 still mix**, and
+those four cannot collapse further —
+
+| file | irreducibly mixed categories |
+| --- | --- |
+| `escapes-unicode.js` | object · `identifier(café)` |
+| `literals.js` | bigint · null/undefined |
+| `regex.js` | regexp · `any` |
+| `spread-rest.js` | array · object · `any` |
+
+So "each extension's payoff is independent and additive" is false under *any*
+refinement of the categories, not merely under this one.
+
+**3. R4's slice order was pointing at the wrong extension.** The retracted table
+ranked `string` first (2 files). Measured, `string` unlocks **zero** files on its
+own — it does not enter the best set until position 9. The real ordering:
+
+| categories covered | files unlocked | the set |
+| --: | --: | --- |
+| 1 | **4** | `any` |
+| 2 | 6 | + function |
+| 3 | 7 | + destructuring |
+| 4 | 8 | + object |
+| 5 | 9 | + `identifier(café)` |
+| 6 | 10 | + class-instance |
+| 7 | 11 | + regexp |
+| 8 | 12 | + array |
+| 9 | 13 | + **string** |
+| 11 | 14 | + bigint, null-ish |
+
+`any` alone is worth twice what the whole retracted table credited to the
+extension that was actually dispatched. This is also the cleanest possible
+confirmation that R4-M1 was correct to move no file to `emitted` — string is
+ninth, so a string-only slice **could not** have unlocked a file, and the
+prediction it was briefed against was unreachable by construction.
+
+**Two limits, stated so this table is not over-read the way the last one was.**
+
+- **It is a syntactic survey; the resolver asks a type question.** `const x =
+  f()` is `call` here and whatever `f` returns to the checker. So the *ranking*
+  is indicative and #5285's checker-based survey is what makes it authoritative.
+  The two structural findings — 14 files, and irreducible mixing — do not depend
+  on that, since neither can be undone by refining categories.
+- **Storage is necessary, not sufficient.** "Unlocked" above means *no remaining
+  storage blocker*, not `emitted`. R4-M1 demonstrated the difference: it cleared
+  `templates.js`'s storage blocker and the file moved to a **shape** gap
+  (`template-substitution-unsupported`), not to `emitted`. Every row above is an
+  upper bound on files reaching compile-once.
+
+**What this changes for R4.** The next slice should be the `any`/dynamic carrier,
+not another concrete type — and it should be specified against the checker-based
+survey (#5285) rather than this one, because `any` is precisely the category
+whose membership a syntactic probe is least able to settle.
