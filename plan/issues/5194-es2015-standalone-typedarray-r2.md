@@ -54,6 +54,11 @@ loc-budget-allow:
   - src/codegen/ta-dyn-proto-methods.ts
   # one import + one finalize call + the profiled twin.
   - src/codegen/index.ts
+  # r3-2: the reserve-time mint for the search trio and the boolean widening
+  # both live at the ONE site an `any`-receiver includes/indexOf/lastIndexOf
+  # reaches — the string-flavoured lowering, which claims the call before
+  # `compileReceiverMethodCall` sees it.
+  - src/codegen/string-ops.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -2027,3 +2032,100 @@ ctor arms, from-arraylike), `iterator-native.ts` (2-arg mapper),
 `object-runtime.ts` (`$IterRec` prototype arm if missing). The frontmatter
 lists exactly these; r2's entries that r3 no longer touches are left in place
 (the gate only reads presence).
+
+## 2026-09-03 r3 implementation — steps r3-1 and r3-2 (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_16f0b7f5-bf0-1`, base
+`4a0ed71a39` (= `origin/main` at dispatch). Every number below is a run in this
+worktree against a `git archive` copy of that base in `.tmp/basetree`, one
+compile process at a time, `npx tsx scripts/run-test262-paths.mts <list>
+--standalone`. Probe sources are in `.tmp/probes/`; node is the oracle for each.
+
+### Plan corrections (facts the r3 plan got wrong)
+
+1. **The r3 section was never in this file.** It existed only as
+   `.tmp/census0903/r3-section.md`; it is appended above verbatim now.
+2. **Step r3-1.3's reserve hook is at the wrong site for the search trio.** The
+   plan puts the mint in `compileReceiverMethodCall` next to `taFillIdx`.
+   Traced with a debug print: an `any`-receiver `sample.includes(42)` NEVER
+   reaches that function — `string-ops.ts:compileGuardedNativeStringMethodCall`
+   claims the call first (the string-flavoured lowering the plan itself
+   identifies in cluster C5, at a different site than it expected). The mint
+   for `includes`/`indexOf`/`lastIndexOf` therefore lives at
+   `string-ops.ts` L~3925. The `call-receiver-method.ts` hook is kept for the
+   shapes that do reach it.
+3. **`__extern_method_call` is not the convergence point for these three.**
+   The plan's step r3-1.2 arm is real and shipped, but for the search trio the
+   call converges one level earlier, on the closed dispatcher
+   `__call_m_<m>_<arity>` — whose generic `$__vec_base` arm claims a dyn view
+   before `__extern_method_call` is ever reached (a `$__ta_dyn_view` IS a
+   `$__vec_base` subtype). The dispatch arm for them is therefore in
+   `fillClosedMethodDispatch`, ahead of that vec arm.
+4. **Cluster C3's "answers the NUMBER 0/1" is not a search defect at all.**
+   r2 leftover 2 recorded the symptom and could not find the producer. It is a
+   REPRESENTATION defect: both arms of the string-flavoured lowering produce a
+   bare `i32`, and an `i32` whose static type is `any` is boxed back as a
+   NUMBER (`f64.convert_i32_s` + `__box_number`), so `sample.includes(42)`
+   reached `assert.sameValue(…, true)` as «1». Fixing the search without fixing
+   the representation left 12 of 22 rows red; keeping the dispatcher's box and
+   widening the construct to `externref` fixed all of them. This is the
+   "carry the decision on the VALUE" rule: the booleanness has to survive the
+   call, not be re-derived by each consumer.
+5. **`for (x of view)` and `[...view]` do NOT currently pass** on the base tree
+   (measured, `.tmp/probes/p-behave.mjs`, both kinds) — the r3-4 acceptance
+   notes list them as at-risk passing shapes. They are pre-existing failures,
+   unchanged by this wave.
+6. **`__hasOwnProperty(view, key)` does not report a dyn view's own expando
+   keys.** The shadow test in the dispatcher arm therefore reads the expando
+   field directly. Using the plan's obvious spelling silently claimed calls the
+   program had shadowed — caught by probe, not by any row.
+
+### What landed
+
+Commit 1 (r3-1) — `ta-dyn-mop.ts:buildStringKeyArm` walks
+`__getPrototypeOf(recv)` on the ordinary STRING-key miss for `get`/`has`, with
+an own-expando `__hasOwnProperty` test in front of it (delegating a miss to the
+expando answered from `Object.prototype` and hid `%TypedArray%.prototype`
+entirely); new `ta-dyn-method-call.ts` unshifts a `$__ta_dyn_view` arm onto
+`__extern_method_call`, a `ref.eq` ladder over interned names that claims only
+methods whose `__ta_dyn_<m>` helper exists.
+
+Commit 2 (r3-2) — new `ta-dyn-proto-methods.ts` with
+`ensureTaDynSearchHelper` (`includes`/`indexOf`/`lastIndexOf`, §23.2.3.16–.18:
+validate → internal length → empty-before-fromIndex → Symbol/abrupt/±∞/−0
+handling in f64 → SameValueZero vs strict → boxed boolean/number); the reserve
+mint and the boxed-result widening in `string-ops.ts`; the dyn-view arm ahead
+of the `$__vec_base` search arm in `fillClosedMethodDispatch`; the zero-argument
+call now reaches the dispatcher instead of the arity-gate sentinel.
+
+### Numbers
+
+| scope | base (4a0ed71a39) | lane |
+|---|---|---|
+| `HasProperty/{inherited-property,key-is-not-canonical-index}.js` | 0 / 2 | **2 / 2** |
+| `ta-cl-C3-search.txt` (22 rows) | 0 / 22 | **22 / 22** |
+| `ta-passing-all.txt` (the 84 r2 flips) | 84 / 84 | **84 / 84** |
+| `ta-controls.txt` (21) | 21 / 21 | **21 / 21** |
+| `arrobj-controls.txt` (20) | 20 / 20 | **20 / 20** |
+
+Probes, all standalone with ZERO `env::` imports, base / lane / node:
+
+- `p-shapes` (13 resolution facts) 8148 / **8191** / 8191
+- `p-search` (32 search facts, two kinds) −1762681105 / **−134217729** / −134217729
+- `p-bool` (12 boolean-consumer facts incl. plain-array and string `includes`)
+  4095 / **4095** / 4095
+- `p-behave` (37 already-passing shapes) 132741297151 / **132741297151** / —
+  (six of the 37 are the pre-existing `for-of` / spread / `hasOwnProperty("0")`
+  gaps of item 5 above; identical on both trees)
+- `p-armfill`, `p-exp` unchanged between trees.
+
+### Residual / not done
+
+- Steps r3-3 … r3-11 are **not started**.
+- The three `detached-buffer.js` rows of the search trio and the three
+  `invoked-as-method.js` rows were not measured (they sit in `ta-cl-E` /
+  `ta-cl-C5`, not in the C3 list).
+- The dispatcher arm is scoped to the search trio; the four #2872 mutators keep
+  their call-site two-arm and are deliberately not routed through it.
+- A method name built at runtime (a rope) misses the `ref.eq` ladder in
+  `ta-dyn-method-call.ts` and keeps today's behaviour — documented residual.

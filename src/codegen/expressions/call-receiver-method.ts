@@ -71,6 +71,7 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
+import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
@@ -4055,6 +4056,16 @@ export function compileReceiverMethodCall(
           else if (arity <= 3 && methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
           else if (arity <= 3 && methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
           else if (arity <= 3 && methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
+          else if (hasTaDynProtoMethodHelper(methodName)) {
+            // (#5194 r3-1.3) MINT ONLY. The read-side helpers dispatch through
+            // the finalize-time `__extern_method_call` arm
+            // (ta-dyn-method-call.ts), which can only ladder over helpers that
+            // already exist in `funcMap` — and nothing else mints them, because
+            // this call site does not lower to a direct call. The four mutators
+            // above keep their faster call-site two-arm, so their bytes do not
+            // move.
+            ensureTaDynProtoMethodHelper(ctx, methodName);
+          }
         }
         const taDynMethodIdx = taSetIdx ?? taFillIdx;
         if (taDynMethodIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {

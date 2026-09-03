@@ -7321,7 +7321,7 @@ export function ensureTaDynSetHelper(ctx: CodegenContext): number | undefined {
  * results in the passed locals; pushes nothing net. Byte-move methods
  * (copyWithin/reverse) need only these — no per-element decode/encode.
  */
-function pushTaDynMethodPreamble(
+export function pushTaDynMethodPreamble(
   ctx: CodegenContext,
   fctx: FunctionContext,
   dynIdx: number,
@@ -7404,7 +7404,7 @@ function pushTaDynRelativeIndex(
   fctx.body.push({ op: "local.set", index: outLocal });
 }
 
-function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
+export function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
   return {
     name: helperName,
     params,
