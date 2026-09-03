@@ -10,7 +10,7 @@ pr: 4733
 last_merged_pr: 4733
 sprint: current
 created: 2026-07-21
-updated: 2026-08-22
+updated: 2026-09-03
 priority: critical
 horizon: l
 complexity: L
@@ -4509,3 +4509,97 @@ own cohort and its own PR; that is why it is not folded in here.
 **Item 4 of the `## Resume checkpoint` "Remaining, in order" list is NOT
 discharged by this slice.** W1-D closes 6 of 16; clusters B, C, D and F remain
 before any R1 acceptance claim.
+
+### W1-D cluster A — landed (2026-09-03)
+
+Test-only, six assertions across five files, one commit. Base
+`2510fae02a`; the plan's table was measured at `42a0adf7d4`, so every number
+below was **re-measured on this base**, not carried over.
+
+**Probe (re-measured, not inherited).** Outcome kinds over the five
+`SINGLE_HOST_ENTRIES`: `calendar.ts {emitted:10}`, `algorithms.ts
+{emitted:7}`, `async.ts {unsupported:5, non-executable:1}`, `builtins.ts
+{emitted:4, non-executable:1}`, `classes.ts {emitted:11, non-executable:1}` —
+**40 rows, 3 `non-executable`, 0 malformed** (`nonExecutableOutcomeDefect`
+returned `undefined` on all three). Identical to the plan's figures.
+
+**Per-file, one `npx vitest run` invocation each, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`,
+exit codes read bare:**
+
+| file (`tests/issue-3520-…`) | before | after |
+| --------------------------- | ------ | ----- |
+| `closure-host-bridge-abi` | 1 failed \| 19 passed (exit 1) | 20 passed (exit 0) |
+| `data-struct-host-bridge-abi` | 1 failed \| 14 passed (exit 1) | 15 passed (exit 0) |
+| `date-civil-support-abi` | 1 failed \| 6 passed (exit 1) | 7 passed (exit 0) |
+| `vec-support-callable-abi` | 1 failed \| 18 passed (exit 1) | 19 passed (exit 0) |
+| `context-integration` | 2 failed \| 2 passed (exit 1) | 4 passed (exit 0) |
+
+**Whole set: 16 red → 10 red**, measured by running all 62
+`tests/issue-3520-*.test.ts` one file per invocation at the branch tip. 8 files
+red, 54 green. The 10 remaining are **exactly** rows 2, 7, 8, 9, 10, 11, 12, 13,
+14, 15 of the measurement table above — no new red anywhere, and no row moved
+cluster:
+
+| row | file · test | cluster |
+| --- | ----------- | ------- |
+| 2 | `compiler-support-abi` · leaves no compiler-support callable on the positional fallback (`expected 2 to be +0`) | D |
+| 7 | `date-host-bridge-export-provenance` · C39 provenance (`Test timed out in 35000ms`) | F |
+| 8 | `lifted-program-abi` · publishes two lifted closures by exact provenance | B |
+| 9 | `lifted-program-abi` · does not reuse an empty same-labelled source slot | B |
+| 10 | `module-init-callable-abi` · keeps a same-named user function distinct | E (**#5283 owns it**) |
+| 11 | `monomorph-program-abi` · publishes clone ordinal zero | B |
+| 12 | `program-abi-type-remap` · post-DCE capture-ref signatures | B |
+| 13 | `support-callable-abi` · resolves a misleading support label | C |
+| 14 | `support-callable-abi` · publishes no support callable on collision | C |
+| 15 | `type-class-abi` · publishes every retained type exactly once | C (R3/#3522) |
+
+**One finding the plan's table could not contain.**
+`vec-support-callable-abi` carried a **second** occurrence of the same cause,
+at `:938` — the five-entry census loop, structurally identical to
+`closure-host-bridge-abi`'s. The plan cited only `:852`/`:857` because vitest
+stops at the first failed assertion in a test, so the later one was invisible
+until `:852` was fixed. It is the same cluster-A cause and the same
+prescription (partition + positive check), so it was fixed identically rather
+than deferred; the file is now 19/19.
+
+**Non-vacuity — measured, not asserted.** A scratch probe replays the widened
+census over a synthetic ledger containing a hand-built **malformed**
+`non-executable` row (one that borrows a terminal `unitId` and claims
+`legacyBodyEmitted`). Run twice:
+
+| configuration | exit | meaning |
+| ------------- | ---- | ------- |
+| positive `nonExecutableOutcomeDefect` check present | **1 (red)** — `expected 'carries terminal unit identity probe:…' to be undefined` | the added check catches the malformed row |
+| positive check removed, widened partition only | **0 (green)** | the widening ALONE green-washes it |
+
+So the positive half is load-bearing: without it, widening the partition would
+have been exactly the "resolve a red test by accepting an observed wrong value"
+move the `$v0` section forbids.
+
+**Byte identity.** The diff contains no `src/` file, so compiler output is
+bit-identical **by construction** — the cohort table in the plan is trivially
+satisfied and no per-row `sha256` pair carries information. Stated rather than
+theatrically re-measured. What *was* run is the gate that would notice any
+behavioural drift: `check:ir-only` is **READY** with the same five counters as
+the base (`terminal units 41 / emitted 38 / unsupported 0 / invariants 0 /
+non-executable 3`, both lanes).
+
+**Gates**, all bare, all exit 0: `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`; both LOC
+and func budgets re-run with `LOC_GATE_BASE=$(git rev-parse origin/main)`;
+`check:ir-dialect`, `check:ir-kind-neutrality`, `check:ir-fallbacks` (no
+`--update`; "no unintended/post-claim/module-level increases vs. baseline"),
+`check:ir-only` (READY). No `scripts/*-baseline.json` is in the diff.
+
+**Still open.** W1-D closes 6 of 16. Clusters B, C, D and F remain before any
+R1 acceptance claim, and item 4 of the `## Resume checkpoint` list is not
+discharged. Next up is cluster D (row 2, `compiler-support-abi`), which is not
+byte-neutral and needs its own cohort and PR.
+
+**Re-verified after merging `origin/main` at `986bbf7705`**, which brought in
+PR #5540 (#5283, `legacyBodyEmitted` requires a physical direct-body root) —
+the one in-flight change that touches module-init outcome rows. All five files
+still exit 0 (20/15/7/19/4 passed), `check:ir-only` still READY with the same
+five counters, and every ratchet gate re-run clean on the merged state. None of
+the five files asserts `legacyBodyEmitted` on `extern-demo.ts` or
+`import-attributes.module.js`, so no expectation had to move.
