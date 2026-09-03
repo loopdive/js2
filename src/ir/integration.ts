@@ -5736,6 +5736,20 @@ function resolveModuleBindingGlobal(
       storageType = { kind: "i32" };
       break;
     case "dynamic":
+      // (#4208 S2 / #5289) The dual-LANE arm, and the exact counterpart of the
+      // `string` arm below. The IR type stays the lane-AGNOSTIC `dynamic`; what
+      // differs per lane is only the legacy GLOBAL's ValType, and BOTH sides of
+      // that boundary derive it from `ctx.fast` alone:
+      //   compatibility → `(mut externref)`
+      //   fast          → `(mut (ref null $AnyValue))`
+      // `resolveWasmType`'s `Any | Unknown` branch allocates the slot;
+      // `resolveIrDynamicCarrierType` resolves the IR one. Measured agreement,
+      // 2026-09-03, `(global $__mod_a …)` out of the emitted WAT with the same
+      // type index on both sides: gc 34/34, standalone 45/45. Naming the ACTIVE
+      // lane's carrier keeps `storageMatches` below a real agreement test — a
+      // lane whose slot was widened for some other reason (a module `var`, which
+      // the admission arm excludes by construction) disagrees loudly instead of
+      // being reinterpreted.
       type = irDynamic();
       storageType = resolveIrDynamicCarrierType(ctx);
       break;

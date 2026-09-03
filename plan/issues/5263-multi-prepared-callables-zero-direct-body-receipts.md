@@ -1,10 +1,19 @@
 ---
 id: 5263
 title: "Standalone multi-source prepared callables record ZERO direct body receipts — `body-emission-evidence` invariants red on main (6 tests skipped in issue-3525)"
-status: ready
+status: done
+completed: 2026-09-03
 sprint: current
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-03
+# 2026-09-03 (#5263): +11 lines in the barrel are the `ownedElsewhereUnitIds`
+# set construction and the comment naming why reconcile must not see these
+# units. The set is assembled from two `ctx.irProgram*` fields that live only on
+# the codegen context, at the single call site that owns the reconcile inputs —
+# moving it to a subsystem module would export context plumbing to buy back
+# eleven lines. Measured: 14740 -> 14751.
+loc-budget-allow:
+  - src/codegen/index.ts
 priority: high
 horizon: m
 complexity: M
@@ -262,3 +271,64 @@ non-vacuity argument depend on the other.
    where a non-prepared `unsupported` free function with zero direct receipts
    still produces a `body-emission-evidence` invariant. If that fixture goes
    green too, the fix is in the wrong place.
+
+---
+
+## Resolution
+
+Landed 2026-09-03 with #5262 in one PR, this change applied first. The plan's
+root cause held on every point; nothing in it needed correcting.
+
+### What changed
+
+- `ReconcileIrOverlayOutcomesInput` gained `ownedElsewhereUnitIds`, and
+  `reconcileIrOverlayOutcomes` `continue`s past those units at the top of its
+  per-unit loop — skipping the whole unit, not just the diagnostic push.
+- `recordObservedIrOutcomes` builds that set from
+  `ctx.irProgramCallablePreparedUnitIds` ∪ the prepared module-init id. The
+  existing post-filters were **kept**: they are now no-ops for these ids but
+  still guard the `existingOutcomes` duplicate check.
+
+### Measured
+
+| measurement | before | after |
+| --- | --- | --- |
+| `tests/issue-3525-…` (all six un-skipped) | 6 failed / 46 passed | **52 passed** |
+| `check:ir-only` verdict | READY | READY (both lanes measured) |
+| `scripts/ir-only-baseline.json` | — | unchanged |
+| published outcome rows, 34-case corpus | 188 | 188, **zero row deltas** |
+| corpus compiles succeeding | 31 / 34 | **34 / 34** |
+| `body-emission-evidence` errors on corpus | 9 | **0** (none added) |
+| wasm sha256 over cases that produced bytes on base | — | **31 / 31 identical** |
+
+The zero row-delta is the confirmation of the diagnosis: reconcile's rows for
+these units were **already** discarded by the filters at the call site, so
+publication never saw them. Only the diagnostic leaked, and only the diagnostic
+disappears. The three cases that moved off `<no-binary>` are compiles that
+previously failed outright and now emit; no case that produced bytes on base
+produced different bytes after.
+
+**Non-vacuity (measured):** dropping the `continue` alone returns exactly the
+same six tests to red with the identical `observed 0` message.
+
+**Anti-greenwash (measured):** `tests/issue-5262-accounting-precedence.test.ts`
+pins that a non-prepared `unsupported` row with zero direct receipts is still
+REPLACED with a `body-emission-evidence` invariant — the detector was not
+weakened. The pre-existing duplicate/foreign/missing-receipt pins in
+`tests/issue-3520-outcome-correlation-identity.test.ts` also stay green.
+
+### Follow-up found and deliberately NOT fixed here (measured)
+
+Published prepared-callable rows carry **no `(prepareAttempts,
+directBodyEmissions, irBodyEmissions)` triple at all** — the field is absent,
+not zero — even though the truthful values are `(1, 0, 1)`. This is an
+**R9-denominator gap**: every ratio computed over the R2 population silently
+omits these units. The fix belongs in
+`src/codegen/multi-prepared-callable-publication.ts`, a different file and a
+different owner, and doing it here would have made this PR's diff unreviewable
+against the six red tests.
+
+**It has no issue id yet.** `claim-issue.mjs --allocate` reported its open-PR
+scan DEGRADED (gh unauthenticated in this container), and a reservation made off
+a degraded scan must not be handed out as clean — so no id was burned. Filing it
+needs one `--allocate` from an authenticated lane.
