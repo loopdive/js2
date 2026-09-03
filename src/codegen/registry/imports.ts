@@ -374,6 +374,15 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   // (#4648) And for the `globalThis.<fn> =` override slots (#4630). Fifth
   // instance of the same cache-staleness bug; see `shiftFnShadowSlots`.
   shiftFnShadowSlots(ctx, threshold, delta);
+  // (#5276) Sixth instance, and the first this function CANNOT repair: the
+  // for-head `var` arm of `compileForStatement` held its index in a local
+  // across `compileExpression(initializer)`, so the shift below fixed every
+  // emitted instruction while the un-pushed `global.set` kept the pre-shift
+  // slot (`global.set N` against `global.get N+1` everywhere else — the
+  // initializer lands in the preceding global). A value in flight on the stack
+  // is out of reach of any fixup; that arm now re-reads `ctx.moduleGlobals` at
+  // the push, and any caller capturing an index across a subexpression compile
+  // owes itself the same — this list cannot grow to cover them.
 
   const visitedInstrs = new WeakSet<object>();
   const visitedArrays = new WeakSet<Instr[]>();

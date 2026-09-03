@@ -258,6 +258,8 @@ import {
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
   type IrModuleBindingIdentity,
+  type IrModuleBindingInspection,
+  type IrModuleBindingRefusal,
   type IrModuleBindingResolver,
   type IrRetainedFunctionMethodPlan,
   type IrStaticNumericArrayPlan,
@@ -322,6 +324,7 @@ import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-gl
 import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
+  preparedHostCallbackWrapProvider,
   preparedStringCharCodeAtProvider,
   preparedStringCompareProvider,
   preparedStringConcatManyProvider,
@@ -352,6 +355,7 @@ import type {
   BooleanBoundaryPolicy,
   ExternIsUndefinedPolicy,
   GeneratorNumberBoxPolicy,
+  HostCallbackWrapPolicy,
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
   StringCharCodeAtPolicy,
@@ -363,6 +367,7 @@ import type {
   StringLenPolicy,
 } from "./runtime-manifest.js";
 import { stringConcatManyArityCap } from "./runtime-manifest.js";
+import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -1083,6 +1088,80 @@ function integrationStringConstPolicy(ctx: CodegenContext): StringConstPolicy {
 }
 
 /**
+ * (#3526 F3-S1) This caller's already-resolved HOST CALLBACK MAKER policy.
+ *
+ * The verbatim projection of the two facts the crossing has always been
+ * decided by, consulted once, here, before freeze:
+ *
+ *  * the EXACT standalone-DOM predicate — the same five terms
+ *    `hasStandaloneDomDispatcher` (`src/codegen/index.ts`) and the
+ *    `standaloneDomCapability` gate above spell, plus the `native-first` term
+ *    the latter carries; on that lane the reserved dispatcher owns the
+ *    crossing and no maker exists; and
+ *  * `jsHostExterns`, which is `irTargetProfile.allowHostImports` inlined —
+ *    the exact flag `makeCalendarIrSelectionSupport` gates certification on.
+ *
+ * The two arms are disjoint by construction (the DOM lane has
+ * `environment: "none"`, so it can never be `ambient-js`), and everything else
+ * is `unsupported` — not as a refusal of live traffic but because the selection
+ * gate never certifies an arrow there, so the demand scan below finds nothing
+ * to partition. That is why the disabled arm is unreachable on every real lane
+ * and the migration is byte-neutral.
+ */
+function integrationHostCallbackWrapPolicy(ctx: CodegenContext): HostCallbackWrapPolicy {
+  if (
+    ctx.requiresStandaloneDomInteractionCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.environment === "none" &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  ) {
+    return Object.freeze({ wrap: "native-dispatch" as const });
+  }
+  const jsHostExterns =
+    ctx.targetProfile.environment === "javascript" && ctx.targetProfile.capabilityPolicy === "ambient-js";
+  return Object.freeze({ wrap: jsHostExterns ? ("host" as const) : ("unsupported" as const) });
+}
+
+/**
+ * (#3526 F3-S1) Which host callback MAKER arms any of `fns` crosses.
+ *
+ * Read off `closure.new`, which is the ONLY lane-free place both arms are
+ * visible: `hostOneShot` is set exclusively by `lowerHostVoidCallbackExpression`
+ * for a certified void callback that is NOT `standaloneDomReusable`, and
+ * `domCallbackAuthority` exclusively for one that is. The maker `call` itself
+ * cannot serve as the demand, because on the exact standalone-DOM lane there is
+ * no call to find — the packed closure goes straight to the DOM import — and a
+ * demand only the host arm can produce would leave the dispatcher lane with no
+ * frozen row for the manifest to admit it by.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irHostCallbackWrapDemand(fns: readonly IrFunction[]): {
+  readonly host: boolean;
+  readonly nativeDispatch: boolean;
+} {
+  let host = false;
+  let nativeDispatch = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "closure.new") return;
+          if (instr.hostOneShot === true) host = true;
+          if (instr.domCallbackAuthority !== undefined) nativeDispatch = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { host, nativeDispatch };
+}
+
+/**
  * (#3526 F2-S8) Which literal-storage namespaces any of `fns` needs.
  *
  * TWO producers, exactly the enumeration `prepareStrings`' own literal scan
@@ -1294,6 +1373,7 @@ function prepareBuiltFnRuntimeManifest(
       stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
       stringConcatMany: integrationStringConcatManyPolicy(ctx),
       stringConst: integrationStringConstPolicy(ctx),
+      hostCallbackWrap: integrationHostCallbackWrapPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1333,6 +1413,11 @@ function prepareBuiltFnRuntimeManifest(
     // therefore invisible to a byte matrix. This line is what guarantees a
     // module with any literal always freezes.
     stringConstDemand: irStringConstDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F3-S1) Same predicate the partition scan above runs, same reason
+    // again — and it must count BOTH arms, or the exact standalone-DOM lane
+    // (which emits no maker call at all) would freeze no row and the manifest
+    // would not be the authority that admits its dispatcher.
+    hostCallbackWrapDemand: irHostCallbackWrapDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -2441,6 +2526,30 @@ export function compileIrPathFunctions(
     selected.moduleInit && selected.moduleInit.reason === null && selected.moduleInit.stmtCount > 0
       ? selected.moduleInit
       : undefined;
+  // (#5285) Census hook, gated on the EXISTING `JS2WASM_IR_SHAPE_DIAG` opt-in
+  // (#2856 Step-1) — read here, at the call site, so a production run never
+  // enters the survey at all and nothing below this line changes with the flag
+  // off.
+  //
+  // Deliberately NOT at the `buildModuleBindingsMap` call site the plan named.
+  // That site sits inside `if (moduleInitClaim && …)`, and a file whose module
+  // init the SELECTOR already refused
+  // (`vardecl-module-storage-unrepresentable`) never reaches it — which is
+  // every file the census is about. Surveying there would report an empty
+  // multiset for exactly the population being measured. Here both the resolver
+  // and the population are in scope whether or not the unit was claimed.
+  if (ctx.irOutcomes !== undefined && process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+    const refusals = surveyModuleBindingRefusals(
+      integrationPopulation?.moduleInitPopulation ?? collectModuleInitPopulation(sourceFile),
+      moduleBindingResolver,
+      ctx.checker,
+    );
+    // Last write wins: integration can run more than once per source (prepared
+    // route, then the late overlay), and the final pass is the population the
+    // compiler actually concluded with. Measured on `tests/dogfood/corpus`
+    // (2026-09-03): every repeated pass agreed, so this picks no side.
+    (ctx.irModuleBindingRefusalsBySourceFile ??= new Map()).set(sourceFile, refusals);
+  }
   const requireTerminalOwner = (legacyName: string): IrLegacyUnitProjectionEntry => {
     const owner = activeOwnerProjection.getByLegacyName(legacyName);
     if (!owner) {
@@ -4174,6 +4283,7 @@ export function compileIrPathFunctions(
   const stringCharCodeAtPolicy = integrationStringCharCodeAtPolicy(ctx);
   const stringConcatManyPolicy = integrationStringConcatManyPolicy(ctx);
   const stringConstPolicy = integrationStringConstPolicy(ctx);
+  const hostCallbackWrapPolicy = integrationHostCallbackWrapPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
     if (unsupported !== undefined) {
@@ -4357,6 +4467,38 @@ export function compileIrPathFunctions(
       );
       continue;
     }
+    // (#3526 F3-S1) The host callback MAKER partitions on the same rule, in the
+    // same pass. Its demand is a PAIR of arms and the check is two-sided: an
+    // `unsupported` policy refuses either crossing, and a policy that selected
+    // the OTHER arm refuses too — a `native-dispatch` manifest cannot answer a
+    // maker call, and a `host` manifest cannot license a dispatcher that was
+    // never reserved. In-tree the projections can produce neither mismatch
+    // (the two lane predicates are disjoint and each decides both the policy
+    // and the closure shape), so this guards HAND-BUILT policies and adapters,
+    // which is exactly where a wrong pair would otherwise reach lowering
+    // unchallenged.
+    const hostCallbackWrapDemand = irHostCallbackWrapDemand([entry.fn]);
+    const refusedCallbackArm =
+      hostCallbackWrapDemand.host && hostCallbackWrapPolicy.wrap !== "host"
+        ? "host"
+        : hostCallbackWrapDemand.nativeDispatch && hostCallbackWrapPolicy.wrap !== "native-dispatch"
+          ? "native-dispatch"
+          : undefined;
+    if (refusedCallbackArm !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: ${refusedCallbackArm} callback boundary has no provider under host-callback-wrap policy ` +
+            `wrap=${hostCallbackWrapPolicy.wrap}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
     // (#3526 F1-S2) The boolean boundary partitions on the SAME rule and in the
     // same pass, so one demoting owner still cannot fail an unrelated one
     // through the aggregate manifest below.
@@ -4439,7 +4581,9 @@ export function compileIrPathFunctions(
     return finishReport();
   }
   if (!runGlobalPreparation(() => preregisterExceptionSupport(ctx, healthyForLower))) return finishReport();
-  if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower))) return finishReport();
+  if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower, preparedRuntimeManifest))) {
+    return finishReport();
+  }
   if (
     !runGlobalPreparation(() => {
       const registry = ctx.programAbiTypes;
@@ -5624,6 +5768,34 @@ function resolveModuleBindingGlobal(
       type = { kind: "val", val: storageType };
       break;
     }
+    case "string": {
+      // (#3523 R4-M1 / #679) The dual-backend arm. The IR type stays the
+      // backend-AGNOSTIC `string` — the same marker `IrLowerResolver.
+      // resolveString` answers — so module-init value flow keeps real string
+      // semantics instead of an opaque carrier. What differs per backend is
+      // only the legacy GLOBAL's ValType:
+      //   host strings   → `(mut externref)`
+      //   nativeStrings  → `(mut (ref null $AnyString))`
+      // Both are what `resolveWasmType`'s string arm produced, run through
+      // `registerModuleGlobal`'s `ref` → `ref_null` global-slot relaxation.
+      // Naming the ACTIVE backend's carrier here makes the `storageMatches`
+      // check below a real agreement test: a lane whose slot was widened for
+      // some other reason disagrees loudly rather than being reinterpreted.
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0) {
+          throw new IrInvariantError(
+            "unknown-type-ref",
+            "build",
+            `module-init: native-string binding '${name}' has no registered $AnyString array`,
+          );
+        }
+        storageType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+      } else {
+        storageType = { kind: "externref" };
+      }
+      type = { kind: "string" };
+      break;
+    }
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
@@ -5738,6 +5910,86 @@ function buildModuleBindingsMap(
     }
   }
   return map;
+}
+
+/**
+ * (#5285) The non-short-circuiting twin of {@link buildModuleBindingsMap}, and
+ * the ONLY instrument that can answer "which categories does this file carry".
+ *
+ * `buildModuleBindingsMap` above is on the production path and correctly stops
+ * at the first refusal; the `JS2WASM_IR_SHAPE_DIAG` reject-arm recorder in
+ * `select.ts` is first-wins for the same reason. Read as a survey, either one
+ * reports "exactly one blocker" for every file regardless of the corpus — which
+ * is how a 13-file census concluded "no file mixes categories" and a slice
+ * ranking got built on it. This function asks `inspectDirectBinding` the same
+ * question and **records and continues**.
+ *
+ * It is INERT by construction: it never calls `resolveModuleBindingGlobal`, so
+ * it mutates no `ctx`, registers no global, and plans no Program ABI entry. Its
+ * only caller is gated on `JS2WASM_IR_SHAPE_DIAG=1`.
+ *
+ * Refusals come back in SOURCE ORDER. Every historical measurement recorded the
+ * FIRST blocker, so preserving the order is what lets those numbers be
+ * reconciled with these instead of discarded.
+ */
+function surveyModuleBindingRefusals(
+  population: readonly ts.Statement[],
+  resolveModuleBinding: IrModuleBindingResolver,
+  checker: ts.TypeChecker,
+): readonly IrModuleBindingRefusal[] {
+  const refusals: IrModuleBindingRefusal[] = [];
+  const record = (name: string, declaration: ts.VariableDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
+    let declaredType = "<unresolved>";
+    try {
+      declaredType = checker.typeToString(checker.getTypeAtLocation(declaration.name));
+    } catch {
+      // A census must survive a checker failure; the arm still names the refusal.
+    }
+    refusals.push({
+      name,
+      declaredType,
+      initializerKind: declaration.initializer ? ts.SyntaxKind[declaration.initializer.kind] : undefined,
+      arm,
+    });
+  };
+  for (const stmt of population) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const d of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(d.name)) {
+        // Same refusal `buildModuleBindingsMap` throws for, kept as a category
+        // rather than a stop: a destructured top-level binding has no
+        // one-to-one legacy global. Leaf `.text` names, never a source slice.
+        record(moduleBindingPatternLabel(d.name), d, "destructuring-pattern");
+        continue;
+      }
+      let inspected: IrModuleBindingInspection;
+      try {
+        inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+      } catch {
+        record(d.name.text, d, "inspection-threw");
+        continue;
+      }
+      if (inspected.kind !== "unsupported") continue;
+      record(d.name.text, d, inspected.arm);
+    }
+  }
+  return refusals;
+}
+
+/** Leaf binding names of a top-level destructuring pattern, in source order. */
+function moduleBindingPatternLabel(pattern: ts.BindingPattern): string {
+  const names: string[] = [];
+  const visit = (node: ts.BindingName): void => {
+    if (ts.isIdentifier(node)) {
+      names.push(node.text);
+      return;
+    }
+    for (const element of node.elements) {
+      if (ts.isBindingElement(element)) visit(element.name);
+    }
+  };
+  visit(pattern);
+  return names.join(",");
 }
 
 /**
@@ -8192,10 +8444,14 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
   flushLateImportShifts(ctx, null);
 }
 
-function preregisterDynamicAndForInSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+function preregisterDynamicAndForInSupport(
+  ctx: CodegenContext,
+  fns: readonly BuiltFnRef[],
+  prepared: PreparedIrRuntimeManifest | undefined,
+): void {
   preregisterForInSupport(ctx, fns);
   preregisterInOperatorSupport(ctx, fns);
-  preregisterDynamicSupport(ctx, fns);
+  preregisterDynamicSupport(ctx, fns, prepared);
 }
 
 /**
@@ -8376,7 +8632,47 @@ function attachedExternIsUndefinedArm(instr: IrInstr): "host" | "native" | undef
   return undefined;
 }
 
-function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+/**
+ * (#3526 F3-S1) Admit — or refuse — one attached host callback MAKER crossing.
+ *
+ * It sets NO flag and runs NO materializer, and that is the whole contract: the
+ * `env.__make_callback` import was minted by the legacy pre-pass
+ * (`declarations/import-collector.ts`) long before any IR preparation, so the
+ * crossing already owns its funcMap index and registering anything here would
+ * move import order on the one lane this slice must keep byte-identical.
+ *
+ * What it does instead is ADMIT. The maker is recognised by the FROZEN
+ * provider's own `module`.`field`, never by a name written at this seam, and a
+ * maker call that reaches emission without a `host` arm behind it is refused
+ * rather than lowered. In-tree that refusal is unreachable — the owner-local
+ * partition already demoted such an owner before the freeze — so this is the
+ * invariant backstop for a hand-built policy or an adapter that froze the other
+ * arm. `attachedExternIsUndefinedArm` cannot serve here: it matches only
+ * `intrinsic` instrs, and the maker is a plain `call`.
+ */
+function admitAttachedHostCallbackMaker(
+  instr: IrInstr,
+  arm: ReturnType<typeof preparedHostCallbackWrapProvider>,
+): void {
+  if (instr.kind !== "call" || instr.target.binding.kind !== "import") return;
+  const { module, field } = instr.target.binding;
+  if (arm?.arm === "host" && module === arm.module && field === arm.field) return;
+  if (field !== HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field) return;
+  throw new IrInvariantError(
+    "selection-preparation-mismatch",
+    "resolve",
+    `ir/integration: host callback maker ${module}.${field} has no host arm in the frozen manifest ` +
+      `(arm=${arm?.arm ?? "none"})`,
+  );
+}
+
+function preregisterDynamicSupport(
+  ctx: CodegenContext,
+  fns: readonly BuiltFnRef[],
+  prepared: PreparedIrRuntimeManifest | undefined,
+): void {
+  // (#3526 F3-S1) The frozen maker arm, read ONCE — see `admitAttachedHostCallbackMaker`.
+  const hostCallbackWrapArm = preparedHostCallbackWrapProvider(prepared);
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
@@ -8463,6 +8759,8 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           if (i.kind === "call" && i.target.binding.kind === "import" && i.target.binding.module === "env") {
             if (UNION_IMPORT_FUNC_NAMES.has(i.target.binding.field)) usesNamedUnionImport = true;
             else if (i.target.binding.field === "__extern_is_undefined") usesExternIsUndefined = true;
+            // (#3526 F3-S1) The maker's own arm — see `admitAttachedHostCallbackMaker`.
+            else admitAttachedHostCallbackMaker(i, hostCallbackWrapArm);
           }
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {

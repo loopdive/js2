@@ -81,6 +81,16 @@ export interface BlockScopeSave {
    * binding became active. Direct-eval state may shadow that outer capture,
    * but never the active block binding with the same spelling. */
   directEvalOuterBindings: Map<string, boolean> | null;
+  /**
+   * (#5271 step 2.2) EVERY block-scoped name this scope introduced, saved or
+   * not. `locals`/`tdzFlags` only carry names that had an OUTER entry to hide,
+   * so a block name whose outer twin was a module GLOBAL left its block-fresh
+   * local in `localMap` after the block closed — later top-level reads kept
+   * hitting the dead local while writes went to the global (probe p02:
+   * `x === null` after the catch). Restore deletes the entries of every name
+   * that had nothing saved.
+   */
+  blockNames: readonly string[];
 }
 
 function collectBindingPatternNames(pattern: ts.BindingPattern, names: string[]): void {
@@ -232,6 +242,7 @@ export function saveBlockScopedShadowsForNames(
     nullGuardAliases: savedNullGuardAliases,
     boxedCaptures: savedBoxedCaptures,
     directEvalOuterBindings: savedDirectEvalOuterBindings,
+    blockNames,
   };
 }
 
@@ -265,6 +276,16 @@ export function discardBlockScopedShadows(
  */
 export function restoreBlockScopedShadows(fctx: FunctionContext, saved: BlockScopeSave | null): void {
   if (!saved) return;
+  // (#5271 step 2.2) A block name with NO saved outer entry got a block-fresh
+  // local; the block's end must forget it, or the dead slot keeps answering
+  // reads of a same-spelled module global after the block. Names that DO have
+  // a saved entry are overwritten by the restore loops below.
+  const savedLocalNames = saved.locals;
+  for (const name of saved.blockNames) {
+    if (savedLocalNames?.has(name)) continue;
+    fctx.localMap.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+  }
   if (saved.locals) {
     for (const [name, idx] of saved.locals) {
       fctx.localMap.set(name, idx);

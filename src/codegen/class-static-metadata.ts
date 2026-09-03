@@ -9,6 +9,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { fnInstanceNameOf } from "./function-instance-meta.js";
 
 /** The own keys created by a class constructor before static declarations. */
 export const CLASS_CONSTRUCTOR_OWN_KEYS = ["length", "name", "prototype"] as const;
@@ -56,4 +57,27 @@ export function classStaticOwnPropertyNames(ctx: CodegenContext, className: stri
  */
 export function hasClassStaticMethod(ctx: CodegenContext, className: string, propertyName: string): boolean {
   return ctx.staticMethodSet.has(`${className}_${propertyName}`);
+}
+
+/**
+ * (#5271 step 7, G2) The OBSERVABLE `name` of a class object.
+ *
+ * `classIdentity` is the compiler's registry key. For an anonymous class
+ * EXPRESSION that key is the synthetic `__anonClass_<n>` id assigned during
+ * collection — a compiler-internal identifier that must never surface as a
+ * property value. `Object.getOwnPropertyDescriptor(class {}, 'name').value`
+ * reported exactly that (`"__anonClass_0"` where §10.2.9 NamedEvaluation says
+ * the binding's name, `"cls"`).
+ *
+ * `fnInstanceNameOf` is the shared §10.2.9 answer: a named class expression
+ * keeps its own name, an anonymous one takes the binding it is defined into,
+ * and anything unresolvable answers `""` — which is also the spec answer for a
+ * genuinely anonymous class value.
+ */
+export function classObjectDisplayName(ctx: CodegenContext, classIdentity: string): string {
+  if (!classIdentity.startsWith("__anonClass_")) return classIdentity;
+  for (const [declaration, synthetic] of ctx.anonClassExprNames) {
+    if (synthetic === classIdentity) return fnInstanceNameOf(declaration);
+  }
+  return "";
 }
