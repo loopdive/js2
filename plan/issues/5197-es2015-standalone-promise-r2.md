@@ -1401,3 +1401,23 @@ Measured, same 8-row batch, `--standalone`:
 Controls green on both lanes: `tests/issue-4682.test.ts` (3/3, including the
 gc/host path), `tests/issue-5197-promise-generic-capability.test.ts` (10/10),
 `tests/issue-4727.test.ts`.
+
+### R3-8 — boolean results of `.then` handlers (LANDED, +2)
+
+`coerceStackValueToExternref`'s `i32` arm boxed every i32 with
+`f64.convert_i32_s` + `__box_number`, ignoring the i32 `boolean` brand that the
+canonical i32→externref rule in `type-coercion.ts` already honours. A handler
+returning `boolean` therefore arrived as the number 1. The arm now picks
+`__box_boolean` when `from.boolean === true` and `__box_boolean` is registered;
+everything else is the previous body unchanged. The decision rides on the
+ValType's own brand, so it is taken identically at all three call sites of
+`coerceStackValueToExternref`, not per syntactic position.
+
+Measured, same 2-row batch, `--standalone`: base 2 fail (`Actual [1, 1, 1] and
+expected [true, true, true]`) -> branch 2 pass.
+
+Controls green: `tests/promise-combinators.test.ts`,
+`deno-safe-promise-combinators.test.ts`, `issue-3125.test.ts`,
+`issue-3125-widen.test.ts`, `issue-4746.test.ts` (26 tests), plus a 15-row
+currently-passing `Promise/{all,race,prototype/then}` standalone control
+sample, 15/15 pass.

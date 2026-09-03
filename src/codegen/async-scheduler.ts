@@ -1826,6 +1826,20 @@ function coerceStackValueToExternref(ctx: CodegenContext, body: Instr[], from: V
       return;
     }
     case "i32": {
+      // (#5197 R3-8) `i32` is overloaded — it backs `number` AND `boolean`
+      // (1/0) — so the box helper is chosen by the value's BRAND, exactly as
+      // the canonical i32→externref rule in type-coercion.ts does. A
+      // type-blind `__box_number` turned a handler returning `true` into the
+      // number 1, which is what `race/resolved-sequence.js` observed. A
+      // symbol-branded i32 cannot reach here: a handler returning a symbol is
+      // already `externref` at this boundary.
+      if (from.boolean === true) {
+        const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+        if (boxBoolIdx !== undefined) {
+          body.push({ op: "call", funcIdx: boxBoolIdx });
+          return;
+        }
+      }
       const boxIdx = ctx.funcMap.get("__box_number");
       if (boxIdx !== undefined) {
         body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
