@@ -2,10 +2,11 @@
   "id": "3522",
   "slice": "w1a-private-method",
   "assignee": "ttraenkler/opus-3522-w1a",
-  "requested_by": "ttraenkler/opus-3522-w1a",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3522-w1a-private-method",
   "claimed_at": "2026-09-03T17:18:36Z",
-  "updated_at": "2026-09-03T17:18:36Z",
-  "write_id": "32257-mrce1hgh"
+  "updated_at": "2026-09-03T20:18:55Z",
+  "write_id": "15644-rqm3qzlx",
+  "released_at": "2026-09-03T20:18:55Z"
 }
