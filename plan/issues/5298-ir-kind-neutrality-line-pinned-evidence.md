@@ -1,10 +1,12 @@
 ---
 id: 5298
 title: "check:ir-kind-neutrality baselines derived `file:line` cites, so any edit above a quote breaks `quality` on unrelated PRs"
-status: ready
+status: done
 sprint: current
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
+assignee: ttraenkler/opus-5298
 priority: medium
 horizon: s
 feasibility: easy
@@ -147,3 +149,64 @@ oracle sites. Run `check:ir-kind-neutrality` itself, `check:ir-dialect`,
 and the biome lint. No baseline JSON other than
 `scripts/ir-kind-neutrality-baseline.json` is touched, and that one only
 through the tool.
+
+## Test Results
+
+Measured 2026-09-03 on branch `claude/issue-5298-kind-neutrality-stable-evidence`,
+base `origin/main` `4fa179f85f`. Every exit code below was read bare (no pipe).
+
+### Measurement order (the plan's four steps, in order)
+
+| # | step | command | exit | result |
+| --- | --- | --- | --- | --- |
+| 0 | control, base | `node scripts/check-ir-kind-neutrality.mjs` | 0 | OK — 85 kinds, 55 neutral / 27 js / 3 unresolved |
+| 1 | **base reproduction**: one comment line inserted at `src/ir/integration.ts:5740` | same | **1** | `the verdict table no longer matches …` — the `forof.string` cite moved `src/ir/integration.ts:7347 → :7348` |
+| 2 | fix applied, baseline migrated, **same inserted line** | same | 0 | green; `--json` table **byte-identical** to the clean run (`cmp` = 0), console report identical too |
+| 3 | `Code-point extraction intent` deleted from `src/ir/dialect/js.ts` | same | **1** | `"forof.string": the cited evidence is gone from src/ir/dialect/js.ts …` — R2 not weakened |
+| 4 | `--update-on-decrease` then `prettier --check` on the written file | two commands | 0 / **0** | writer output is prettier-clean unaided (the old `JSON.stringify` shape fails the same check with **1**) |
+
+Diagnostics still carry the live position: `--verbose` printed
+`evidence: … src/ir/integration.ts:7348` under the inserted line and `:7347`
+after restoring it, while the persisted record did not move.
+
+### Baseline migration — field-by-field
+
+Written by the tool (`--update` on the fixed script), never by hand.
+
+| field | before → after |
+| --- | --- |
+| top-level keys | identical |
+| `populationRule` | identical |
+| `ratchet` | identical — `{unresolved: 3, jsInCore: 0}` |
+| `counts` | identical — total 85 / neutral 55 / js 27 / unresolved 3 / core 58 / dialect 27 / jsInCore 0 / residuals 8 |
+| kind set | identical, 85 kinds |
+| `verdict`, `where`, `why`, `settledBy`, `residual` | identical for all 85 |
+| `declaredAt` | **shape only**, all 85: `src/ir/nodes.ts:1026` → `src/ir/nodes.ts#IrInstrBinary` |
+| `evidence` | **shape only**, all 85: `src/ir/integration.ts:7347` → `src/ir/integration.ts#<12-hex sha1(quote)>`; arity preserved per kind; the one absence claim carried verbatim |
+
+No `file:line` string remains anywhere in the record.
+
+### Pinned test
+
+`tests/issue-5298-kind-neutrality-stable-evidence.test.ts` — 5 cases, run
+against a sandbox copy of `src/ir/` + the two script files.
+
+| case | on base | after fix |
+| --- | --- | --- |
+| control (untouched sandbox green) | pass | pass |
+| (a) line inserted above a cited quote → green | **fail** | pass |
+| (b) cited quote deleted → still R2-red | pass | pass |
+| (c) record carries no `file:line` cite | **fail** | pass |
+| (d) `--update-on-decrease` output is prettier-clean | **fail** | pass |
+
+(b) is green on both sides deliberately: it is the guard that (a) was not
+bought by weakening R2.
+
+### Gates
+
+`check-loc-budget` 0 · `check-func-budget` 0 · `check-coercion-sites` 0 ·
+`check:oracle-ratchet` 0 · `check:dead-exports` 0 · `check:ir-dialect` 0 ·
+`check:ir-kind-neutrality` 0 · `check:ir-fallbacks` 0 ·
+`check:ir-only` 0 (**READY**, 41 terminal units / 38 emitted / 0 unsupported) ·
+`prettier --check` on all four changed files 0 · `npm run lint` (biome) 0.
+With `LOC_GATE_BASE=4fa179f85f`: LOC 0, func 0 — "0 changed src file(s), net +0 LOC".

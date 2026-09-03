@@ -4167,3 +4167,345 @@ repository workflow, rerun the entire matrix and hooks, push once, then obtain
 an independent Sol exact-byte/SHA review. Only that reviewed pushed head may be
 marked ready and entered into the protected merge queue. Close #5301 as
 superseded only after the replacement PR preserves its historical discussion.
+
+## Measurement 2026-09-03 — current red set of `tests/issue-3520-*`
+
+**Base: `origin/main` `42a0adf7d47579e4632c7ddd4b82f6e5732cb7bf`** ("Merge pull
+request #5535"). This supersedes the *Remaining 18 red* table above, which was
+taken on 2026-08-22 at `81edcbcaa` — **before** C36 (PR #5294), C37 (PR #5295),
+C38 (PR #5342), C39 (PR #5345), the structural Program-ABI ownership slice
+(PR #5233) and the census follow-up `7c38ab8b7b`. That table is now a
+historical record, not the live red set.
+
+**Method.** All 62 `tests/issue-3520-*.test.ts` files, **one file per `npx
+vitest run` invocation** (never in parallel — two other Opus lanes were active
+on the box), `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, exit codes read bare (no
+pipe). Per-file logs and the exit-code ledger were retained.
+
+**Headline: 16 red tests in 13 files** (49 of 62 files exit 0). The 2026-08-22
+figure was 18 in 15 — but **the composition changed almost completely**: 10 of
+those 18 are now green and 8 of today's 16 are new. Reading the count alone
+("18 → 16, small progress") would be wrong.
+
+### Raw red list, measured at `42a0adf7d4`
+
+| # | file (`tests/issue-3520-…`) | test | symptom (verbatim) |
+| - | --------------------------- | ---- | ------------------ |
+| 1 | `closure-host-bridge-abi` | C31 … derives the exact five-entry census from terminal and allocator ownership | `async.ts structural outcome ids: expected false to be true` (`:638`) |
+| 2 | `compiler-support-abi` | C35 … leaves no compiler-support callable on the positional fallback across the five host entries | `expected 2 to be +0` (`:130`) |
+| 3 | `context-integration` | builds one inventory for a tracked single-source overlay and its outcome ledger | one extra received row, `kind: "non-executable"`, `displayName: "<module-init>"` (`:90`) |
+| 4 | `context-integration` | builds one whole-program inventory shared by every multi-source overlay | `[ '<module-init>', …(3) ]` vs `[ 'main', 'twice' ]` (`:112`) |
+| 5 | `data-struct-host-bridge-abi` | C33 … owns every emitted data-struct bridge across the five host entries | `expected 37 to be 40` (`:397`) |
+| 6 | `date-civil-support-abi` | C32 … owns every emitted civil-date helper across the five host entries | `expected 37 to be 40` (`:310`) |
+| 7 | `date-host-bridge-export-provenance` | C39 … keeps provider-created Date publication policy, descriptors, import census, binary parity, and runtime independent of source order | `Test timed out in 35000ms` (`:706`) |
+| 8 | `lifted-program-abi` | publishes two lifted closures by exact provenance despite a same-labelled source function | `expected undefined to match object` (`:64`) |
+| 9 | `lifted-program-abi` | does not reuse an empty same-labelled source slot for a lifted artifact | `ProgramAbiInvariantError: binding … was not planned` (`src/ir/program-abi.ts:833`) |
+| 10 | `module-init-callable-abi` | keeps a same-named user function distinct from the exact IR-patched initializer | `legacyBodyEmitted` received `false`, expected `true` (`:264`) |
+| 11 | `monomorph-program-abi` | publishes clone ordinal zero beneath two real lifted parents in provenance order | `[]` vs 2 expected clone unit ids (`:153`) |
+| 12 | `program-abi-type-remap` | publishes post-DCE capture-ref signatures for a lifted callable and its exact clone | `[]` vs 1 expected clone unit id (`:322`) |
+| 13 | `support-callable-abi` | resolves a misleading support label and publishes the exact post-DCE trampoline signature | IR-FALLBACK: `planned support resolver probe did not preserve the exact allocator slot` (`:70`) |
+| 14 | `support-callable-abi` | publishes no support callable when a source-name collision demotes the owner | unexpected `{ kind: 'build', … }` error row, expected `[]` |
+| 15 | `type-class-abi` | publishes every retained type exactly once and binds class layouts by exact class ID | IR-first internal throw `Cannot read properties of undefined (reading 'kind')` on a `class-implicit-constructor` unit (`:51`) |
+| 16 | `vec-support-callable-abi` | keeps tracked output and structural ownership stable across the exact five-entry corpus | kinds `['emitted','unsupported','non-executable']` vs `['emitted','unsupported']` (`:852`) |
+
+### Delta against the 2026-08-22 table
+
+**Fixed since 2026-08-22 — 10 of the 18** (old row numbers):
+
+| old row | test | note |
+| ------- | ---- | ---- |
+| 1, 2 | `vec-support-callable-abi` · preserves all six same-labelled public exports / terminates all six prefix-only physical families | **the `$v0` cluster is GREEN.** The C30 vec export-displacement defect characterised at length above no longer reproduces |
+| 3 | `closure-host-bridge-abi` · composes vec and closure collision projections | same cluster, also green |
+| 8, 9 | `class-member-alias-abi`, `class-method-alias-abi` | both files now exit 0 |
+| 10 | `module-binding-class-identity` | file exits 0 |
+| 11 | `lowering-plan-identity` | file exits 0 |
+| 12, 13 | `callable-provider-abi` ×2 | file exits 0 |
+| 15 | `integration-population-identity` | file exits 0 |
+
+The `$v0` cluster closing is the single largest change and it **retires the
+gate hazard recorded above** — the warning that touching
+`vec-support-callable-abi.test.ts` or `closure-host-bridge-abi.test.ts` drags
+long-red tests into required `quality` no longer applies to *those three*
+tests. Both files are still red on other tests (rows 1 and 16 here), so the
+hazard is not gone, only re-pointed.
+
+**Survived — 6 of the 18**, unchanged assertions: old rows 4, 5 (`lifted-program-abi`
+×2 → new 8, 9), 6 (`monomorph-program-abi` → new 11), 7 (`program-abi-type-remap`
+→ new 12), 17 (`support-callable-abi` misleading label → new 13), 18
+(`type-class-abi` → new 15). **Both "probable compiler defects on main" (old 17,
+18) survive**, and neither has been investigated further here.
+
+**Two old rows resolved into a different failure in the same file** — do not
+read these as "still red":
+
+- old row 14 (`context-integration` · *one linear inventory*, built 2×): the
+  named test **`shares one linear inventory across propagation and recursive
+  evidence` now PASSES**. The file's two current reds (new 3, 4) are different
+  tests with a different cause.
+- old row 16 (`module-init-callable-abi` · *cumulative multi-source passes*):
+  that test name no longer exists in the file. The file's current red (new 10)
+  is a different assertion in the same legacy-module-init receipt family.
+
+**Not in the 2026-08-22 table — 10 of today's 16**: rows 1, 2, 3, 4, 5, 6, 7,
+10, 14, 16. (Three of those — 3, 4, 10 — are in files that were red then, but
+under test names that are now green or gone; see the two re-pointed rows above.)
+The arithmetic closes both ways: 10 fixed + 6 survived + 2 re-pointed = the old
+18; 6 survived + 10 new = today's 16.
+
+**Six of the ten new rows (1, 3, 4, 5, 6, 16) share one cause**, dated below.
+
+### Clusters, by measured cause
+
+| cluster | rows | tests | cause | fixable inside W1-D's file set? |
+| ------- | ---- | ----- | ----- | ------------------------------- |
+| **A — `non-executable` observational row not modelled** | 1, 3, 4, 5, 6, 16 | **6** in 5 files | `22a72e500a` (2026-08-31, *feat(3523): record a truthful non-executable module-init outcome row*) added a 4th `IrObservedOutcome` kind. R1's C30–C35 census assertions enumerate only three kinds and require every outcome to carry a `unitId` | **YES — test-only.** No source file changes |
+| **B — derived-unit rows absent** | 8, 9, 11, 12 | 4 in 3 files | lifted-closure / monomorphization-clone units are not published at all. **Not investigated** (grouping inherited from 2026-08-22 as a hypothesis) | partly — `src/ir/program-abi.ts` is outside W1-D's stated four-file set |
+| **C — IR-fallback compiler defects** | 13, 14, 15 | 3 in 2 files | (13) support-resolver allocator-slot probe; (15) IR-first internal throw on a `class-implicit-constructor` — this one is R3/#3522 territory, not R1 | no — needs real codegen work in unowned files |
+| **D — positional-fallback ownership regression** | 2 | 1 | **measured**: `__vec_set_elem` and `__vec_set_len` on `async.ts` sit on `retained-module-function` ordinals `0x80`/`0x81`. C35's terminal state was **0** rows; it is now **2**. A vec-mutation helper family gained members with no structural owner role | **YES** — `src/codegen/compiler-support-abi.ts` is in W1-D's set |
+| **E — legacy-body receipt** | 10 | 1 | `legacyBodyEmitted` false where the test expects true — this is exactly **#5283**'s subject | **NO — conflict.** #5283 is in flight and owns this |
+| **F — 35 s timeout** | 7 | 1 | C39's own provenance test exceeds the default `testTimeout`. **Reproduced twice** on this box (both runs ≈93 s wall for the file). Whether it is red on CI hardware is *not* established here | no — needs a timing decision, not an ABI fix |
+
+Cluster A is the largest single cause and the only one that is both
+conflict-free and closable without touching a source file.
+
+## Implementation Plan — W1-D red-test closure (2026-09-03)
+
+**Scope: cluster A only.** Six red tests in five files, one cause, one commit.
+Test-only. Byte-neutral by construction.
+
+### Root cause
+
+`22a72e500a` (2026-08-31) added a fourth `IrObservedOutcome` kind,
+`non-executable`, for a source whose module-init plan is `executable: false`
+(`src/ir/outcomes.ts:290-310`). It is an **observational** row: it deliberately
+carries `sourceId` and **no `unitId`**, and that restriction is enforced at
+runtime by `nonExecutableOutcomeDefect` (`src/ir/outcomes.ts:315-345`), which
+rejects any such row that carries terminal identity, body evidence or emission
+counters.
+
+R1's C30–C35 census assertions predate the arm and encode a three-kind world:
+
+1. they sum `emitted + unsupported + invariants` and compare it to the **total
+   number of outcome rows** (a counter misleadingly named `terminalUnits`), so
+   the sum is short by exactly the `non-executable` count; and
+2. they require **every** outcome row to carry a defined `unitId`.
+
+**Measured on the five `SINGLE_HOST_ENTRIES` at `42a0adf7d4`** (probe, not
+inference): outcome kinds are `calendar.ts {emitted:10}`, `algorithms.ts
+{emitted:7}`, `async.ts {unsupported:5, non-executable:1}`, `builtins.ts
+{emitted:4, non-executable:1}`, `classes.ts {emitted:11, non-executable:1}` —
+40 rows total, 3 of them `non-executable`, which is precisely the `37` vs `40`
+in rows 5 and 6. `async.ts` is the entry named in row 1's failure message and is
+one of the three carrying the new row.
+
+**This is stale test expectation, not a miscompile — and that distinction is
+load-bearing.** The issue's own `$v0` section forbids resolving a red test by
+asserting an observed wrong value. That prohibition does not apply here and the
+reviewer must be able to see why: the `non-executable` row is *correct by
+design*, is validator-enforced, and the **canonical gate already models it**.
+`scripts/check-ir-only.ts` counts these rows in every denominator and subtracts
+them from the compile-once equation (`:105-118` and `:403-416`, comment: *"A
+non-executable module init has none by construction, so it is subtracted here
+rather than counted as a missing IR body — while still being a recorded row in
+every denominator above"*). `pnpm run check:ir-only` is **READY** on this base
+and reports `terminal units 41 / emitted 38 / non-executable 3`. W1-D makes the
+R1 census tests agree with the gate that already owns this partition.
+
+### Changes — follow `scripts/check-ir-only.ts:403-416` in every file
+
+**Do not weaken an assertion to make it pass.** In each case, keep the property
+the test was written to defend and partition the rows explicitly.
+
+**`tests/issue-3520-date-civil-support-abi.test.ts`**
+- Counting loop `:290-295`: add a `nonExecutable` counter alongside
+  `emitted`/`unsupported`/`invariants`; rename `terminalUnits` to `outcomeRows`
+  (it counts rows, and the current name is what made this failure read as an
+  ownership bug).
+- Assertion `:310`: replace with
+  `expect(emitted + unsupported + invariants).toBe(outcomeRows - nonExecutable)`.
+  Keep `expect(invariants).toBe(0)` (`:311`) unchanged.
+- Add, in the loop: for every `non-executable` row assert
+  `nonExecutableOutcomeDefect(outcome)` is `undefined`. This is what stops the
+  widened assertion from being satisfiable by a malformed row.
+
+**`tests/issue-3520-data-struct-host-bridge-abi.test.ts`** — identical edit at
+`:381-384` (loop) and `:397` (assertion).
+
+**`tests/issue-3520-closure-host-bridge-abi.test.ts`** (`:628-641`)
+- Partition first: `ownershipOutcomes = outcomes.filter(o => o.kind !== "non-executable")`.
+- `:634-638` every-`unitId`-defined → assert over `ownershipOutcomes` only.
+- `:639` unique-ids → `new Set(ownershipIds).size === ownershipOutcomes.length`.
+- `:640-642` terminal-outcome-closure → compare `ownershipIds.sort()` against
+  `inventory.terminalUnits.map(u => u.id).sort()` (unchanged intent: the
+  inventory mints no unit for an empty module-init population, so the
+  observational rows must be excluded from *this* side too, which is exactly
+  why the equality broke).
+- Add the positive half: assert each `non-executable` row has
+  `unitId === undefined`, `unitKind === "module-init"`, and
+  `nonExecutableOutcomeDefect(...) === undefined`.
+
+**`tests/issue-3520-vec-support-callable-abi.test.ts`** (`:852` and `:857`)
+- Both `toEqual(["emitted","unsupported"])` assertions compare a per-compile
+  kind list. Filter observational rows out before comparing, then assert
+  separately that the observational rows are well-formed. Do **not** simply
+  append `"non-executable"` to the literal — the list is order-sensitive and
+  that would pin an emission order this test does not own.
+
+**`tests/issue-3520-context-integration.test.ts`**
+- `:90-92`: the ledger for a single tracked source now legitimately contains the
+  `add` row **and** a `<module-init>` observational row. Assert the ownership
+  projection (`filter(o => o.kind !== "non-executable")`) equals the existing
+  one-element expectation, and add an explicit expectation for the
+  observational row (`kind: "non-executable"`, `unitKind: "module-init"`,
+  `stage: "select"`, `unitId: undefined`).
+- `:112`: `map(displayName).sort()` → apply the same filter, keeping
+  `["main","twice"]`.
+
+**Files this slice must NOT touch** (all in flight or out of lane):
+`src/codegen/ir-overlay-outcomes.ts`, `src/ir/module-init.ts`,
+`src/codegen/legacy-body-audit.ts` (#5283), `src/ir/prepared-dynamic-support.ts`,
+`src/ir/prepared-component-sealing.ts`, `src/ir/compiler-timer-shim-preparation.ts`
+(#5297), `src/ir/imported-functions.ts` (#5300), `src/codegen/index.ts`,
+`src/ir/integration.ts`. **The whole slice is test-only, so none of these is
+even reachable** — that is the reason cluster A was chosen over the larger-blast
+alternatives.
+
+### Order-preservation constraints
+
+- **No production code changes at all.** Emission order, allocator slots,
+  function indices, export order and the outcome-ledger order are untouched.
+- **Do not sort the outcome ledger** to make an assertion pass. Where order is
+  compared, the existing `.sort()` calls (closure-host-bridge `:640`,
+  context-integration `:112`) stay; where there is none (vec-support `:852`,
+  `:857`), do not add one — filter instead.
+- The `non-executable` row's **position** in the ledger is not a property this
+  slice pins. Assert its presence and well-formedness, never its index.
+
+### Tests that flip (red on base by construction)
+
+All six are red at `42a0adf7d4` today (measured above) and green after:
+
+| file | test |
+| ---- | ---- |
+| `closure-host-bridge-abi` | derives the exact five-entry census from terminal and allocator ownership |
+| `data-struct-host-bridge-abi` | owns every emitted data-struct bridge across the five host entries |
+| `date-civil-support-abi` | owns every emitted civil-date helper across the five host entries |
+| `vec-support-callable-abi` | keeps tracked output and structural ownership stable across the exact five-entry corpus |
+| `context-integration` | builds one inventory for a tracked single-source overlay and its outcome ledger |
+| `context-integration` | builds one whole-program inventory shared by every multi-source overlay |
+
+**Gate consequence — read before pushing.** `quality` runs
+`pnpm run test:changed-root`, which selects only root test files the branch
+ADDS or MODIFIES. This PR modifies `vec-support-callable-abi.test.ts` and
+`closure-host-bridge-abi.test.ts`, so **their whole files enter required
+`quality`**. Both are green on every other test in this measurement (18/19 and
+19/20 respectively, with the only red being the one this slice fixes), so the
+PR is expected to leave both files fully green — but verify per-file before
+enqueue, because this is the same mechanism that made the `$v0` cluster
+suddenly visible on 2026-08-22.
+
+### Byte-identity cohort
+
+Test-only ⇒ compiler output must be **bit-identical**. Prove it, do not assert
+it. For each row below, `sha256` the emitted binary at the merge base and at the
+branch tip and require equality:
+
+| row | corpus | lane |
+| --- | ------ | ---- |
+| 1 | `website/playground/examples/dom/calendar.ts` | `gc` (JS host) |
+| 2 | `website/playground/examples/js/algorithms.ts` | `gc` |
+| 3 | `website/playground/examples/js/async.ts` | `gc` |
+| 4 | `website/playground/examples/js/builtins.ts` | `gc` |
+| 5 | `website/playground/examples/js/classes.ts` | `gc` |
+| 6–10 | the same five entries | `standalone` |
+| 11–n | the dogfood corpus entries already covered by `check:ir-only`'s two lanes | `gc` + `standalone` |
+
+Capture the base copies **before the first edit** (`git show <merge-base>:<path>`
+into `.tmp/`), per the project's file-copy A/B rule — a delta claimed without a
+base run you executed is attribution, not measurement. Rows 3, 4 and 5 are the
+load-bearing ones: they are the three entries that actually carry a
+`non-executable` row.
+
+### Gates
+
+Run bare, never piped, chained so a failure blocks:
+
+```bash
+node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
+  && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet \
+  && npm run -s check:dead-exports
+```
+
+Then, simulating CI's base:
+
+```bash
+LOC_GATE_BASE=$(git rev-parse origin/main) node scripts/check-loc-budget.mjs
+LOC_GATE_BASE=$(git rev-parse origin/main) node scripts/check-func-budget.mjs
+```
+
+`check-loc-budget.mjs` filters on `isSrcTs` (`:152`, `src/**.ts` only), so a
+test-only change cannot trip it — **no growth allowance is needed and none
+should be added.**
+
+IR gates, all expected unchanged:
+
+```bash
+pnpm run check:ir-dialect
+pnpm run check:ir-kind-neutrality
+pnpm run check:ir-fallbacks          # NOT --update; buckets must not move
+pnpm run check:ir-only               # must still print: ir-only verdict: READY
+```
+
+`check:ir-only` is **READY** on this base (`terminal units 41 / emitted 38 /
+unsupported 0 / invariants 0 / non-executable 3`, both lanes). A change in any of
+those five numbers means the slice touched behaviour and is out of scope.
+
+Per-file test runs, **one file per invocation**, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`.
+Do not use `--poolOptions.forks.singleFork=true`: the repo pins forks to a 512 MB
+old space and that mode OOMs regardless of the change under test.
+
+### Acceptance criteria
+
+1. The six tests above are green; the five files exit 0 in isolation.
+2. **Red count 16 → 10**, and the remaining 10 are exactly rows 2, 7, 8, 9, 10,
+   11, 12, 13, 14, 15 of the measurement table — no new red anywhere in the 62.
+3. Byte identity holds for every cohort row; the per-row `sha256` pairs are
+   posted in the PR body.
+4. `check:ir-only` still prints `ir-only verdict: READY` with the same five
+   counters.
+5. `check:ir-fallbacks` baseline is **unmodified** (`scripts/ir-fallback-baseline.json`
+   not in the diff), as are `scripts/ir-kind-neutrality-baseline.json` and
+   every `scripts/*-baseline.json`.
+6. The diff contains **no `src/` file**. If a source change turns out to be
+   necessary, the slice is misdiagnosed — stop and re-plan rather than widening.
+7. No assertion in the diff pins an observed wrong value, and no assertion is
+   deleted; each widened assertion gains a matching positive check on the
+   observational rows (`nonExecutableOutcomeDefect(...) === undefined`).
+
+### Deliberately left red
+
+Ten tests stay red and that is the intended end state of W1-D. Naming them so a
+reviewer does not read the PR as an R1 acceptance claim:
+
+| rows | cluster | why not here |
+| ---- | ------- | ------------ |
+| 10 | E — legacy-body receipt | **#5283 owns it** and is in flight over `ir-overlay-outcomes.ts` / `module-init.ts` / `legacy-body-audit.ts`. Touching it would collide |
+| 8, 9, 11, 12 | B — derived-unit rows absent | different cause, and the fix reaches `src/ir/program-abi.ts`, outside W1-D's four-file set |
+| 13, 14, 15 | C — IR-fallback compiler defects | real codegen defects; row 15 is R3/#3522 territory (`class-implicit-constructor`), not R1 |
+| 2 | D — positional-fallback regression | **the next cluster** (below) |
+| 7 | F — timeout | needs a timing decision; not established as red on CI hardware |
+
+**Next cluster after W1-D: cluster D**, row 2 — `compiler-support-abi` ·
+*leaves no compiler-support callable on the positional fallback across the five
+host entries*. It is one test, it is a **genuine regression of R1's own
+property** (C35 drove the positional `retained-module-function` fallback to 0
+rows and it is now 2), and its mechanism is already measured here:
+`__vec_set_elem` and `__vec_set_len` on `async.ts`, ordinals `0x80`/`0x81`. The
+fix is a structural owner role for the vec-mutation helper family in
+`src/codegen/compiler-support-abi.ts` — a W1-D-owned file, disjoint from every
+in-flight PR. It is **not** byte-neutral (it moves ABI rows), so it needs its
+own cohort and its own PR; that is why it is not folded in here.
+
+**Item 4 of the `## Resume checkpoint` "Remaining, in order" list is NOT
+discharged by this slice.** W1-D closes 6 of 16; clusters B, C, D and F remain
+before any R1 acceptance claim.

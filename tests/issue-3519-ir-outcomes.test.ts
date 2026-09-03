@@ -245,25 +245,25 @@ export function readSeed(): number { return seed; }
     expect(new Set(outcomes.map((outcome) => outcome.key)).size).toBe(outcomes.length);
   });
 
-  // STILL SKIPPED — and NOT for the reason the old comment gave (#5262).
+  // UN-SKIPPED BY #5300 — and it was never the #5262 accounting failure.
   //
   // The block that used to stand here blamed the R2 body-emission accounting
   // check for masking this test's root cause, alongside the four below. #5262
-  // fixed that masking and the four below now run. This one does not, because
-  // its cause was never accounting at all. Measured 2026-09-03 with #5262's fix
-  // applied, this test fails with:
+  // fixed that masking and the four below now run. This one was a different
+  // cause entirely. Measured 2026-09-03 with #5262's fix applied, it failed
+  // with:
   //
   //   ir/from-ast: direct call to "overloaded" has no exact AST-site plan in run
   //   IR-first (#2138): run failed after its legacy body was skipped [unpatched-slot]
   //   IR outcome invariant [unpatched-slot] for run
   //
-  // `run` calls an OVERLOADED function; the IR from-AST lowering cannot resolve
-  // the call site to the implementation signature, the legacy slot was already
-  // skipped, and the row fails closed as `unpatched-slot`. Nothing in
-  // `functionBodyAccountingFailure` participates. This is a from-ast overload
-  // call-site planning gap and needs its own issue and owner — do not send the
-  // next reader back to #5262.
-  it.skip("counts only executable overload implementations and ignores ambient signatures", async () => {
+  // `run` calls an OVERLOADED function; the direct-call resolver refused every
+  // overload set (`imported-functions.ts` `targetForSymbol`,
+  // `functions.length !== 1`), so the call site got no lowering plan, the legacy
+  // slot was already skipped, and the row failed closed as `unpatched-slot`.
+  // Nothing in `functionBodyAccountingFailure` participated. #5300 admits a
+  // compatible overload set as a direct-call target, so this runs again.
+  it("counts only executable overload implementations and ignores ambient signatures", async () => {
     const result = await compile(
       `
 declare function ambient(value: number): number;

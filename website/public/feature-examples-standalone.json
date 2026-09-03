@@ -93,7 +93,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 983,
+      "passCount": 982,
       "totalCount": 1083,
       "editionSpread": [
         {
@@ -103,7 +103,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 41,
+          "pass": 40,
           "total": 48
         },
         {
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4307,
+      "passCount": 4308,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -604,7 +604,7 @@
         },
         {
           "edition": "ES2019",
-          "pass": 7,
+          "pass": 8,
           "total": 25
         },
         {
@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1117,
+      "passCount": 1125,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -657,7 +657,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 248,
+          "pass": 249,
           "total": 277
         },
         {
@@ -667,7 +667,7 @@
         },
         {
           "edition": "ES2019",
-          "pass": 32,
+          "pass": 38,
           "total": 46
         },
         {
@@ -677,7 +677,7 @@
         },
         {
           "edition": "ES2021",
-          "pass": 18,
+          "pass": 19,
           "total": 40
         },
         {
@@ -705,7 +705,7 @@
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 635,
+      "passCount": 637,
       "totalCount": 667,
       "editionSpread": [
         {
@@ -715,7 +715,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 202,
+          "pass": 203,
           "total": 204
         },
         {
@@ -745,7 +745,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 162,
+          "pass": 163,
           "total": 180
         }
       ]
@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 100,
+      "passCount": 112,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -763,7 +763,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 14,
+          "pass": 22,
           "total": 28
         },
         {
@@ -783,7 +783,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 22,
+          "pass": 26,
           "total": 60
         }
       ]
@@ -796,7 +796,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 133,
+      "passCount": 142,
       "totalCount": 234,
       "editionSpread": [
         {
@@ -806,12 +806,12 @@
         },
         {
           "edition": "ES2015",
-          "pass": 86,
+          "pass": 88,
           "total": 106
         },
         {
           "edition": "ES2021",
-          "pass": 7,
+          "pass": 6,
           "total": 24
         },
         {
@@ -826,7 +826,7 @@
         },
         {
           "edition": "ES2027",
-          "pass": 5,
+          "pass": 13,
           "total": 46
         },
         {
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2194,
+      "passCount": 2195,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -849,7 +849,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 165,
+          "pass": 166,
           "total": 263
         },
         {
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1676,
+      "passCount": 1677,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -907,7 +907,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 147,
+          "pass": 148,
           "total": 278
         },
         {
@@ -1031,7 +1031,7 @@
     {
       "name": "Computed property names",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 90,
+      "passCount": 91,
       "totalCount": 133
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1342,
+      "passCount": 1372,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 878,
+      "passCount": 879,
       "totalCount": 1106
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 734,
+      "passCount": 742,
       "totalCount": 1072
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2455,
+      "passCount": 2456,
       "totalCount": 3812
     },
     {
@@ -1306,7 +1306,7 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 7,
+      "passCount": 8,
       "totalCount": 25
     },
     {
@@ -1489,7 +1489,7 @@
     {
       "name": "escape() / unescape()",
       "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
-      "passCount": 31,
+      "passCount": 35,
       "totalCount": 35,
       "editionSpread": [
         {
@@ -1499,7 +1499,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 25,
+          "pass": 29,
           "total": 29
         },
         {
