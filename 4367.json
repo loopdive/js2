@@ -1,12 +1,11 @@
 {
   "id": "4367",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/jest-parenthesized-descriptor-import",
-  "reserved_at": "2026-08-11T18:45:59Z",
   "claimed_at": "2026-08-11T18:45:59Z",
-  "updated_at": "2026-08-11T18:45:59Z",
-  "write_id": "78109-70unn21y",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:46:04Z",
+  "write_id": "9166-647lvram",
+  "released_at": "2026-09-03T09:46:04Z"
 }
