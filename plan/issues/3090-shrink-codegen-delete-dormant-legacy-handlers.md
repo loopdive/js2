@@ -324,4 +324,29 @@ has something to diff against. A headline number whose provenance is a
 gitignored file in a container that no longer exists is exactly the artifact-
 inherited-as-measurement pattern this project keeps getting bitten by.
 
+### Provenance, now committed
+
+The recommendation above is applied here rather than left as advice:
+**`plan/log/3090-legacy-reachability-2026-09-03.json`** (16 KB) records this
+run's bucket totals, the audit's cut set, and per-file
+`legacyLoc`/`sharedLoc`/`totalLines` for all 107 files of the **frontend**
+bucket — the bucket R10 acts on. Other buckets are summarised rather than
+enumerated, which is what keeps it small enough to live in git.
+
+That file is a **dated record, not a ratchet baseline.** Nothing gates on it and
+no CI job writes it, so it does not fall under the "never edit
+`scripts/*-baseline.json`" rule; it sits beside the 2026-07-10 table in this
+directory for the same reason that table does. The next re-run diffs against it
+with:
+
+```bash
+node scripts/audit-legacy-reachability.mjs --json .tmp/legacy-reachability.json
+# then compare bucket totals and frontendFiles against the committed record
+```
+
+This is the piece the July measurement lacked. Its number survived only as prose
+in two files while the JSON behind it expired with a container, which is why the
+discrepancy above cannot be attributed today. One 16 KB artifact would have
+answered it in seconds.
+
 Cross-referenced from `#3518`'s R10 row.
