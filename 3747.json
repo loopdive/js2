@@ -1,10 +1,11 @@
 {
   "id": "3747",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3995-upstream-gap-fixes",
   "claimed_at": "2026-08-12T06:58:13Z",
-  "updated_at": "2026-08-12T06:58:13Z",
-  "write_id": "44934-8pwev616"
+  "updated_at": "2026-09-03T09:41:55Z",
+  "write_id": "9561-n1x6yup5",
+  "released_at": "2026-09-03T09:41:55Z"
 }
