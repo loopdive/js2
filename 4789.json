@@ -1,12 +1,11 @@
 {
   "id": "4789",
   "assignee": "ttraenkler/codex-es2015-residual-20260827",
-  "requested_by": "ttraenkler/codex-es2015-residual-20260827",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es2015-residual-20260827",
-  "reserved_at": "2026-08-27T20:12:29Z",
   "claimed_at": "2026-08-27T20:12:29Z",
-  "updated_at": "2026-08-27T20:12:29Z",
-  "write_id": "74219-7j78jqhq",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:51:43Z",
+  "write_id": "22307-8szeq2zh",
+  "released_at": "2026-09-03T09:51:43Z"
 }
