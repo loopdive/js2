@@ -2268,3 +2268,24 @@ kept, 0 given up. `tests/issue-5194-es2015-typedarray-r3.test.ts` 10/10,
 and with `LOC_GATE_BASE=origin/main`; two new grants above
 (`context/types.ts`, `ensureObjectRuntime`).
 
+
+### Integration fix (2026-09-03, Fable lane) — F1's brand missed the second mint site
+
+The round-3 F1 fix added a `brand` field to `$__ta_ctor` and updated the
+mint in `getOrRegisterTaCtorSingleton` ("the single struct.new site"). It is
+not the single site: `dataview-native.ts` also mints a `$__ta_ctor` inline
+for a dynamic `new <TA>(anyArg)` (the `descTypeIdx` carrier that feeds
+`emitTaDynCtorConstructFromLocals`), and that site still pushed one operand.
+Every module taking that path failed Wasm validation — `not enough arguments
+on the stack for struct.new (need 2, got 1)` — which is a compile_error on
+every such test262 row, not a wrong answer. Caught on the integrated tree by
+`tests/issue-5194-es2015-typedarray-set-r2.test.ts` (3 of its 59 controls,
+all using `new Float64Array(identity([...]))`; 59/59 on both a pre-#5550 and
+a post-#5550 archive of main), i.e. by a suite the lane's own control lists
+did not include. Fix: push `TA_CTOR_BRAND` at that site too; a grep for
+`struct.new` against `getOrRegisterTaCtorType` / `taCtorTypeIdx` /
+`descTypeIdx` now finds exactly the two branded sites. Lesson recorded in
+the wave pipeline: "the single site" claims get grepped, not trusted, and the
+targeted step runs every `issue-<id>*.test.ts` file at the CI fork heap
+(`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, single fork), since the set suite
+OOMs at the 512 MB default and reads as a false failure.

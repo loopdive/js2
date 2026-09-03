@@ -3145,6 +3145,7 @@ export function emitDynamicTypedArrayConstructFromAny(
   const descTypeIdx = getOrRegisterTaCtorType(ctx);
   const descLocal = allocLocal(fctx, `__dyn_ta_ctor_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   fctx.body.push({ op: "i32.const", value: kind });
+  fctx.body.push({ op: "i32.const", value: TA_CTOR_BRAND }); // (#5194 r3 F1) shape brand — the SECOND mint site, see getOrRegisterTaCtorType
   fctx.body.push({ op: "struct.new", typeIdx: descTypeIdx });
   fctx.body.push({ op: "local.set", index: descLocal });
   emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
