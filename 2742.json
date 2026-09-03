@@ -1,10 +1,11 @@
 {
   "id": "2742",
   "assignee": "ttraenkler/codex-es5-string",
-  "requested_by": "ttraenkler/codex-es5-string",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/2742-es5-string-generic-receiver",
   "claimed_at": "2026-08-12T20:56:49Z",
-  "updated_at": "2026-08-12T20:56:49Z",
-  "write_id": "29360-gevsvaxt"
+  "updated_at": "2026-09-03T09:38:10Z",
+  "write_id": "10142-i2qicmkf",
+  "released_at": "2026-09-03T09:38:10Z"
 }
