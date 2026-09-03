@@ -1,10 +1,11 @@
 {
   "id": "4208",
   "assignee": "ttraenkler/codex-4208",
-  "requested_by": "ttraenkler/codex-4208",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4208-ordinary-to-primitive-ir",
   "claimed_at": "2026-08-11T17:07:40Z",
-  "updated_at": "2026-08-11T17:07:40Z",
-  "write_id": "48471-d5q7jag5"
+  "updated_at": "2026-09-03T09:45:02Z",
+  "write_id": "8331-e2slzts3",
+  "released_at": "2026-09-03T09:45:02Z"
 }
