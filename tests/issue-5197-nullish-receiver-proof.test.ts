@@ -95,3 +95,79 @@ describe("#5197 R3-10 — evolving `var` is not a nullish proof", () => {
     });
   }
 });
+
+// (#5197 round-3 review F1) The `.ts` control above is blind to the defect the
+// review found: in a `.ts` file `var settleFn;` is a plain `any`, so the read
+// takes the externref runtime path anyway. Under `allowJs` (the test262 shape)
+// the checker NARROWS the same declaration to `undefined` at the use, and the
+// lowering then fell into `compilePropertyIntrospection`'s struct-field fold — a
+// constant `false` that never read the receiver. Two consequences this file
+// now pins with JS input: a genuinely-undefined `var` must still throw the
+// §20.1.3 TypeError (it did on base), and the executor-filled `var` must
+// answer for an EXISTING own key (`length`/`name` → true), not only for the
+// absent `prototype` whose correct answer coincides with the constant.
+const JS_SOURCE = `
+  export function test() {
+    var resolveFunction;
+    new Promise(function (resolve) { resolveFunction = resolve; });
+    if (typeof resolveFunction !== "function") return 1;
+    if (Object.prototype.hasOwnProperty.call(resolveFunction, "prototype") !== false) return 2;
+    if (Object.prototype.hasOwnProperty.call(resolveFunction, "length") !== true) return 3;
+    if (Object.prototype.hasOwnProperty.call(resolveFunction, "name") !== true) return 4;
+    if (Object.prototype.propertyIsEnumerable.call(resolveFunction, "length") !== false) return 5;
+
+    var u;
+    var threw = false;
+    try { Object.prototype.hasOwnProperty.call(u, "a"); } catch (e) { threw = e instanceof TypeError; }
+    if (!threw) return 6;
+    var pe;
+    threw = false;
+    try { Object.prototype.propertyIsEnumerable.call(pe, "a"); } catch (e) { threw = e instanceof TypeError; }
+    if (!threw) return 7;
+
+    var later;
+    threw = false;
+    try { Object.prototype.hasOwnProperty.call(later, "a"); } catch (e) { threw = e instanceof TypeError; }
+    if (!threw) return 8;
+    later = { a: 1 };
+    if (Object.prototype.hasOwnProperty.call(later, "a") !== true) return 9;
+    if (Object.prototype.hasOwnProperty.call(later, "b") !== false) return 10;
+    return 0;
+  }
+`;
+
+async function runJsControl(lane: Lane): Promise<number> {
+  try {
+    const result = await compile(JS_SOURCE, {
+      fileName: "issue-5197-nullish-receiver-proof-control.js",
+      ...(lane === "standalone" ? { target: "standalone" as const, nativeStrings: true } : {}),
+    });
+    expect(
+      result.success,
+      result.success ? "" : result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n"),
+    ).toBe(true);
+    if (!result.success) return -1;
+    if (lane === "standalone") {
+      expect(result.imports?.length ?? 0, "standalone control must remain host-free").toBe(0);
+    }
+    const built = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await instantiateWasm(
+      result.binary,
+      built.env,
+      built.string_constants,
+      built.string_constants16,
+    );
+    built.setInstance?.(instance);
+    return (instance.exports as { test: () => number }).test();
+  } finally {
+    restoreHostBuiltins();
+  }
+}
+
+describe("#5197 round-3 F1 — the JS-input (narrowed) spelling reads the receiver", () => {
+  for (const lane of ["host", "standalone"] as const) {
+    it(`${lane}: existing own keys answer true, a nullish var throws, a later-filled var answers`, async () => {
+      await expect(runJsControl(lane)).resolves.toBe(0);
+    });
+  }
+});

@@ -107,7 +107,7 @@
 import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { compileExpression } from "./shared.js"; // (#4556)
 
 /** WasmGC `none` bottom heap type (signed LEB −18) — `ref.null none`, the
@@ -579,7 +579,7 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
  * function with no `return` infers `void`, but nothing prevents it from
  * returning a value at run time, so `void` is not a proof.
  */
-function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
+function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression, dynamicFallback: boolean): boolean {
   const e = skipParens(expr);
   if (e.kind === ts.SyntaxKind.NullKeyword) return true;
   // (#5197 R3-10) An initializer-less, annotation-less `var`/`let` is an
@@ -591,19 +591,86 @@ function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression): bool
   // of compiling `hasOwnProperty.call(resolveFunction, "prototype")` to a
   // static TypeError. An explicit `undefined`/`null` type annotation, and the
   // `null` keyword above, remain proofs.
-  if (ts.isIdentifier(e)) {
-    const decl = ctx.oracle.valueDeclarationOf(e);
-    if (
-      decl !== undefined &&
-      (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) &&
-      decl.type === undefined &&
-      decl.initializer === undefined
-    ) {
-      return false;
-    }
-  }
+  //
+  // (#5197 round-3 review F1) Declining is only right when the lowering the
+  // call falls into READS the receiver and raises the nullish TypeError at run
+  // time. The caller says whether that dynamic path exists for this method
+  // (`dynamicFallback`); where it does not, the static fold is kept — a wrong
+  // static throw on a later-filled `var` is the base behaviour, whereas a
+  // constant `false` that never looks at the receiver is a silent non-throw.
+  if (dynamicFallback && isEvolvingVarIdentifier(ctx, e)) return false;
   const fact = ctx.oracle.typeFactOf(e);
   return fact.kind === "undefined" || fact.kind === "null";
+}
+
+/** An initializer-less, annotation-less `var`/`let`/parameter — the evolving-`any` declaration shape. */
+function isEvolvingVarIdentifier(ctx: CodegenContext, e: ts.Expression): boolean {
+  if (!ts.isIdentifier(e)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(e);
+  return (
+    decl !== undefined &&
+    (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) &&
+    decl.type === undefined &&
+    decl.initializer === undefined
+  );
+}
+
+/**
+ * (#5197 round-3 review F1) The `Object.prototype` methods whose no-host
+ * borrowed lowering is a genuine runtime own-property query over an externref
+ * receiver (`compilePropertyIntrospection` → `__hasOwnProperty` /
+ * `__propertyIsEnumerable`, object-runtime.ts) with the nullish TypeError
+ * raised at run time. Only for these does the static nullish gate DECLINE for
+ * an evolving `var`. `isPrototypeOf` and `valueOf` are deliberately NOT here:
+ * their borrowed `.call` lowers through the builtin method-value carrier,
+ * whose native body does not perform §20.1.3 `ToObject(this)`, so declining
+ * would turn the static TypeError into a silent non-throw (measured 2026-09-03:
+ * `var w; Object.prototype.isPrototypeOf.call(w, {})` returned `false`). They
+ * keep base's static fold, as does every `Function.prototype` method.
+ */
+const EVOLVING_VAR_DYNAMIC_METHODS: ReadonlySet<string> = new Set(["hasOwnProperty", "propertyIsEnumerable"]);
+
+/**
+ * (#5197 round-3 review F1) Is `expr` an evolving `var` that the checker has
+ * narrowed to `undefined`/`null` at this use? This is exactly the shape the
+ * static gate above declines: the receiver's STATIC type is nullish, so a
+ * struct-field fold would answer a constant without ever reading the value.
+ * The dynamic lowerings consult this to (a) take the runtime query instead of
+ * the fold and (b) raise §20.1.3 `RequireObjectCoercible`'s TypeError at run
+ * time when the value really is nullish — see `emitEvolvingNullishReceiverGuard`.
+ */
+export function evolvingVarNullishNarrowed(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const e = skipParens(expr);
+  if (!isEvolvingVarIdentifier(ctx, e)) return false;
+  const fact = ctx.oracle.typeFactOf(e);
+  return fact.kind === "undefined" || fact.kind === "null";
+}
+
+/**
+ * (#5197 round-3 review F1) Runtime half of the R3-10 decline: with the
+ * receiver held as an externref in `recvLocal`, throw the same TypeError the
+ * static gate would have compiled when the value IS nullish at run time. Uses
+ * the object runtime's own nullish predicate under the undefined-singleton
+ * regime (where `undefined` is a non-null externref); under the legacy regime
+ * `undefined` is the null bit pattern, so `ref.is_null` is exact there.
+ */
+export function emitEvolvingNullishReceiverGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  method: string,
+  recvLocal: number,
+): void {
+  const throwInstrs = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `TypeError: Object.prototype.${method} called on null or undefined`,
+    { flush: fctx },
+  );
+  const nullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  if (nullishIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishIdx });
+  else fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
 }
 
 function skipParens(expr: ts.Expression): ts.Expression {
@@ -645,7 +712,7 @@ const ARGUMENT_MUST_BE_OBJECT: ReadonlyMap<string, ReadonlySet<string>> = new Ma
  * deliberately NOT accepted — under `allowJs` its type is routinely `any`, and
  * a wrong throw here is catchable and therefore observable.
  */
-function provablyObjectValuedArgument(expr: ts.Expression | undefined): boolean {
+export function provablyObjectValuedArgument(expr: ts.Expression | undefined): boolean {
   if (expr === undefined) return false;
   const e = skipParens(expr);
   return (
@@ -726,8 +793,10 @@ export function tryBorrowedPrototypeNullishThisThrow(
   // primitive receiver is perfectly legal there (`hasOwnProperty.call("ab","0")`
   // is `true`). Function.prototype: step 2 is `IsCallable`, so a syntactically
   // non-callable literal fails it too.
+  const dynamicFallback = ctor === "Object" && EVOLVING_VAR_DYNAMIC_METHODS.has(method);
   const invalidThis =
-    provablyNullishReceiver(ctx, receiver) || (ctor === "Function" && syntacticallyNotCallable(receiver));
+    provablyNullishReceiver(ctx, receiver, dynamicFallback) ||
+    (ctor === "Function" && syntacticallyNotCallable(receiver));
   if (!invalidThis) return undefined;
   // (#4623) …and, for the methods whose earlier step answers for a non-object
   // argument, the argument must be provably an object or the throw is not the

@@ -53,6 +53,12 @@ loc-budget-allow:
   #   property-access-dispatch ~+30 (R3-7, if the read site is there instead)
   - src/codegen/closed-method-dispatch.ts
   - src/codegen/property-access-dispatch.ts
+  # 2026-09-03 (round-3 review F1): the evolving-`var` receiver must take the
+  # RUNTIME own-property query instead of the struct-field fold, and that fold
+  # lives in `compilePropertyIntrospection` (object-ops.ts). The predicate and
+  # the runtime TypeError guard live in builtin-prototype-brand.ts beside the
+  # static gate they complete; object-ops gains only the route (+~16).
+  - src/codegen/object-ops.ts
 func-budget-allow:
   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
   # reservation block, and two three-line guard call sites on the `new` path.
@@ -80,6 +86,11 @@ func-budget-allow:
   - src/codegen/async-scheduler.ts::buildPromiseResolveValueBody
   - src/codegen/closed-method-dispatch.ts::fillPromiseThenableHelpers
   - src/codegen/promise-combinators.ts::emitStandalonePromiseCombinatorRuntime
+  # 2026-09-03 (round-3 review F1): `compilePropertyIntrospection` gains the
+  # evolving-`var` route into its existing runtime arm (+~15 lines: one
+  # predicate, one `local.tee`, one guard call) — the route IS the arm's
+  # admission condition, so it cannot live outside the function.
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
 priority: high
 horizon: m
 feasibility: hard
@@ -1581,3 +1592,99 @@ base.
 Every gate run bare before every commit: LOC, function, coercion-sites,
 oracle-ratchet, dead-exports — plus `LOC_GATE_BASE=origin/main` simulations of
 CI's base for the LOC and function budgets. TS7 typecheck clean.
+
+### Round-3 review fixes (2026-09-03)
+
+Two findings from the adversarial review of the r3 pass (both reproduced
+independently by a skeptic against a `git archive 91d4999050` base, node as
+oracle). The other four steps (R3-1, R3-8, R3-9, R3-5 main path) are untouched.
+
+**F1 (high) — R3-10 landed on a constant-false lowering.** Declining the static
+nullish proof for an initializer-less JS `var` did NOT make the receiver
+dynamic in standalone: the checker still narrows the use to `undefined`, so
+`compilePropertyIntrospection` (object-ops.ts) took its struct-field fold and
+answered a constant `false` without reading the receiver. (The producer named
+by the review, `call-object-builtins.ts`' refused-import fallback, is not the
+path — `__hasOwnProperty` is a native define in standalone; the constant came
+from the fold.) Consequences: a genuinely-undefined `var` stopped throwing
+(base: TypeError), and the executor-filled `var` answered `false` for
+`"length"`/`"name"` (node: true).
+
+Fix:
+- `provablyNullishReceiver` now declines the evolving-`var` shape ONLY for
+  `Object.prototype.{hasOwnProperty,propertyIsEnumerable}` — the two whose
+  borrowed lowering is the runtime own-property query. `isPrototypeOf` and
+  `valueOf` go back to base's static fold: their borrowed `.call` lowers through
+  the builtin method-value carrier whose native body does not perform
+  `ToObject(this)`, so declining there would be a silent non-throw (measured:
+  `var w; Object.prototype.isPrototypeOf.call(w, {})` returned `false`).
+- `compilePropertyIntrospection` routes an evolving `var` the checker narrowed
+  to nullish (`evolvingVarNullishNarrowed`, builtin-prototype-brand.ts) into
+  its existing externref runtime arm (`__hasOwnProperty` /
+  `__propertyIsEnumerable`) and precedes the call with a runtime nullish guard
+  (`emitEvolvingNullishReceiverGuard`: `__extern_is_nullish` under the
+  singleton regime, `ref.is_null` otherwise) that throws the same
+  `TypeError: Object.prototype.<m> called on null or undefined` the static gate
+  compiles. No-host lanes only; host is byte-identical.
+
+Given up: nothing from the two claimed R3-10 rows. `isPrototypeOf`/`valueOf` on
+an evolving `var` return to base behaviour (static TypeError) — no test262 row
+depended on them.
+
+| probe (standalone, JS input) | node | base | lane before | lane now |
+| --- | --- | --- | --- | --- |
+| p23 `var u; hasOwnProperty.call(u,"a")` | TypeError | TypeError | `false`, no throw | TypeError |
+| p9 nullish-var bitmask (6 borrowed methods + later-filled var) | 0 | 0 | 5381 | 0 |
+| p18 (hOP/isPrototypeOf/pIE/valueOf on undefined var) | 0 | 0 | 85 | 0 |
+| p24b executor-filled var `[prototype,length,name,pIE,isProtoOf,typeof]` | 111111 | 222221 | 133111 | 111111 |
+| synthetic t262 `undef-var-throws.js` | pass | pass | FAIL | pass |
+| synthetic t262 `own-length.js` | pass | fail (TypeError) | fail (false≠true) | pass |
+
+wasi: lane == base on p9/p18/p24b before and after (the wasi borrowed arm
+never reached the fold). host: identical binaries.
+
+**F2 (medium) — IsCallable(thenAction) missed bound functions.** The R3-5 arm
+decided callability with one `ref.test <funcref-wrapper root>`; a bound
+function (`$__bound_fn`) and the runtime-eval carrier failed it and the outer
+promise was fulfilled with the promise OBJECT. Fix: the arm now calls
+`__typeof_function`, the classifier predicate filled at finalize from
+`buildClosureRefTestArms` (closures, bound functions, runtime-eval carrier,
+boundary callable) — so it also sees carriers minted after the resolve body is
+built. The root `ref.test` remains only as the fallback when the predicate
+cannot be registered.
+
+| own `then` = | node | base | lane before | lane now (standalone) |
+| --- | --- | --- | --- | --- |
+| bound function (p_f2) | 77 | 1 (adopted) | promise object | 77 |
+| bound / plain / closure / arrow (p_diag `<digit><called>`) | 11/11/11/11 | 20/20/20/20 | 30/11/11/11 | 11/11/11/11 |
+| plain, arrow, bound, class method, `Math.max`, `{}`, 42, null | 11110333 | — | — | 11110333 |
+
+Residual on **wasi only** (pre-existing, reproduced on base): a bound `then`
+whose body reads `this.k` as a call argument in a function compiled before any
+`{k}` shape is registered reads `undefined` on wasi — `var f = (function(r){
+r(this.k) }).bind({k:77}); f(cb)` gives `undefined` on BASE wasi too
+(p_bt3 row C = 144 base and lane), and seeding a `{k:0}` literal earlier makes
+the own-`then` row answer 77 (p_bt5). So on wasi the bound own-`then` is now
+CALLED (spec) but may settle with `undefined` where base adopted the native
+state (1). Standalone is unaffected (77). Not fixed here: it is the wasi
+order-dependent dynamic read on `this`, not the callability decision.
+
+wasi, per kind (base → lane): plain 2→1, arrow 2→1, class method 2→1,
+`{}`/42/null 2→3 (step 11, node 3), bound 2→4 (the residual above),
+`Math.max` TRAP→TRAP (identical on base — a pre-existing wasi trap on the
+`Math.max` value read, not this arm).
+
+Verification (standalone runner, this worktree): the 25 rows the pass touched
+are 23 pass / 2 fail, the two failures being the two rows the pass never
+claimed (`executor-function-prototype.js`, `race/resolve-prms-cstm-then.js`)
+— all 16 claimed rows kept. The 174-row currently-passing `built-ins/Promise`
+ES2015 control pool: 171 pass; the 3 non-passes (`all/ctx-non-ctor.js`,
+`race/ctx-non-ctor.js`, `prototype/then/S25.4.5.3_A1.1_T1.js`) fail with the
+identical "quickjs provider is not built" harness error on the base tree in
+this container (eval-dependent rows, no built quickjs artifact) — not a
+compiler result.
+
+Controls: `tests/issue-5197-nullish-receiver-proof.test.ts` gains a JS-input
+(`.js` fileName) row asserting an EXISTING own key and the nullish throw;
+`tests/issue-5197-own-then-indirection.test.ts` gains the eight-kind
+callability matrix (node oracle 11110333).

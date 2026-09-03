@@ -173,3 +173,53 @@ describe("#5197 R3-5 — own `then` on a native promise, through every indirecti
     ).toBe(1);
   });
 });
+
+// (#5197 round-3 review F2) IsCallable(thenAction) is the CLASSIFIER's answer,
+// not one `ref.test` against the funcref-wrapper root: a bound function lives
+// in its own `$__bound_fn` carrier and was judged "own but not callable", so
+// the outer promise was fulfilled with the promise OBJECT (a spec-impossible
+// state). Every callable kind must reach the job; every non-callable must
+// fulfil with the promise itself (step 11). node's answer: 11110333.
+//   digit 1 = the own `then` ran and delivered 77
+//   digit 0 = the own `then` ran but never settled (a native builtin such as
+//             `Math.max` returns a number and calls neither argument — the
+//             outer promise stays pending, exactly as in node)
+//   digit 3 = fulfilled with the promise object itself
+const CALLABLE_KINDS = `
+  var got: any = 0;
+  class C { m(r: any): void { r(77); } }
+  function digit(p: any): number {
+    if (got === 77) return 1;
+    if (got === 1) return 2;
+    if (got === p) return 3;
+    if (got === undefined) return 4;
+    if (got === 0) return 0;
+    return 6;
+  }
+  function row(kind: number): number {
+    got = 0;
+    var p: any = Promise.resolve(1);
+    if (kind === 0) p.then = function (r: any) { r(77); };
+    else if (kind === 1) p.then = (r: any) => { r(77); };
+    else if (kind === 2) p.then = (function (this: any, r: any) { r(this.k); }).bind({ k: 77 });
+    else if (kind === 3) p.then = C.prototype.m;
+    else if (kind === 4) p.then = Math.max;
+    else if (kind === 5) p.then = {};
+    else if (kind === 6) p.then = 42;
+    else if (kind === 7) p.then = null;
+    new Promise(function (res: any) { res(p); }).then(function (v: any) { got = v; });
+    __drain_microtasks();
+    return digit(p);
+  }
+  export function test(): number {
+    var out: number = 0;
+    for (var i: number = 0; i < 8; i++) out = out * 10 + row(i);
+    return out;
+  }
+`;
+
+describe("#5197 round-3 F2 — IsCallable(then) uses the closure classifier", () => {
+  it("standalone: plain / arrow / bound / class method / native builtin / object / number / null", async () => {
+    await expect(runStandalone(CALLABLE_KINDS)).resolves.toBe(11110333);
+  });
+});

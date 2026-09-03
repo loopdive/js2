@@ -1699,9 +1699,34 @@ function buildPromiseResolveValueBody(
   const bagThenLocal = 8;
   const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
   const externGetIdx = ctx.funcMap.get("__extern_get");
+  // (#5197 round-3 review F2) IsCallable(thenAction) is the CLASSIFIER's
+  // question, not a single root-wrapper `ref.test`: a bound function
+  // (`$__bound_fn`), the runtime-eval carrier and the boundary callable are
+  // callable and live outside the funcref-wrapper root. `__typeof_function`
+  // is filled at finalize from the shared closure classifier
+  // (closure-classifier.ts / typeof-natives-finalize.ts), so it also sees
+  // callable carriers minted AFTER this body is built. The root test is kept
+  // only as the fallback when the predicate cannot be registered.
+  if (thenable !== null && !ctx.indexSpaceFrozen) {
+    ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  const typeofFunctionIdx = thenable === null ? undefined : ctx.funcMap.get("__typeof_function");
   const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const isCallableThen: Instr[] =
+    typeofFunctionIdx !== undefined
+      ? [
+          { op: "local.get", index: bagThenLocal },
+          { op: "call", funcIdx: typeofFunctionIdx },
+        ]
+      : callableRootTypeIdx === undefined
+        ? []
+        : [
+            { op: "local.get", index: bagThenLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: callableRootTypeIdx },
+          ];
   const ownThenArm: Instr[] =
-    thenable === null || bagHasIdx === undefined || externGetIdx === undefined || callableRootTypeIdx === undefined
+    thenable === null || bagHasIdx === undefined || externGetIdx === undefined || isCallableThen.length === 0
       ? []
       : [
           { op: "local.get", index: peeledLocal },
@@ -1715,9 +1740,7 @@ function buildPromiseResolveValueBody(
               ...stringConstantExternrefInstrs(ctx, "then"),
               { op: "call", funcIdx: externGetIdx },
               { op: "local.set", index: bagThenLocal },
-              { op: "local.get", index: bagThenLocal },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: callableRootTypeIdx },
+              ...isCallableThen,
               {
                 op: "if",
                 blockType: { kind: "empty" },
