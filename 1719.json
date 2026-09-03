@@ -1,10 +1,11 @@
 {
   "id": "1719",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/1719-cpr-standalone-normalizer",
   "claimed_at": "2026-08-27T19:03:32Z",
-  "updated_at": "2026-08-27T19:03:32Z",
-  "write_id": "71911-gmvz7l35"
+  "updated_at": "2026-09-03T09:37:54Z",
+  "write_id": "3372-qu5jwf0p",
+  "released_at": "2026-09-03T09:37:54Z"
 }
