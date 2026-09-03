@@ -1,10 +1,11 @@
 {
   "id": "5124",
   "assignee": "ttraenkler/codex-5124-es2015-prototype-method-zero-arity",
-  "requested_by": "ttraenkler/codex-5124-es2015-prototype-method-zero-arity",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5124-es2015-prototype-method-zero-arity",
   "claimed_at": "2026-08-28T06:29:20Z",
-  "updated_at": "2026-08-28T06:29:20Z",
-  "write_id": "71322-8mcr3wj9"
+  "updated_at": "2026-09-03T09:52:34Z",
+  "write_id": "22758-r0cs49te",
+  "released_at": "2026-09-03T09:52:34Z"
 }
