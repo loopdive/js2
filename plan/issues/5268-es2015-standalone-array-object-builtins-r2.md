@@ -1,7 +1,8 @@
 ---
 id: 5268
 title: "ES2015 standalone: Array + Object built-ins — r2 residual pass (136 rows)"
-status: in-progress
+status: done
+completed: 2026-09-03
 sprint: current
 created: 2026-09-01
 updated: 2026-09-03
