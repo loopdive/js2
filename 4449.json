@@ -1,10 +1,11 @@
 {
   "id": "4449",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4449-typedarray-es2015-residual",
   "claimed_at": "2026-08-24T07:54:16Z",
-  "updated_at": "2026-08-24T07:54:16Z",
-  "write_id": "43361-w2qap41m"
+  "updated_at": "2026-09-03T09:48:07Z",
+  "write_id": "14997-9hyy14az",
+  "released_at": "2026-09-03T09:48:07Z"
 }
