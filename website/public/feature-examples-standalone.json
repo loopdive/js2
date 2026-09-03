@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2193,
+      "passCount": 2194,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1652,
+          "pass": 1653,
           "total": 2250
         }
       ]
@@ -1384,7 +1384,7 @@
     {
       "name": "Upsert (Map.getOrInsert)",
       "testCategories": [],
-      "passCount": 56,
+      "passCount": 58,
       "totalCount": 72
     },
     {

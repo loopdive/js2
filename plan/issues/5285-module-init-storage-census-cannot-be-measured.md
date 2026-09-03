@@ -1,9 +1,10 @@
 ---
 id: 5285
 title: "The module-init storage census cannot be measured — the diagnostic reads a fail-fast path, so every file reports exactly one blocker"
-status: ready
+status: done
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
 sprint: current
 priority: high
 horizon: s
@@ -13,6 +14,28 @@ area: ir
 goal: backend-agnostic-ir
 requested_by: ttraenkler/fable-ir-takeover
 related: [3523, 3518, 2856]
+loc-budget-allow:
+  # 2026-09-03 (#5285, the survey itself): restated here as well as in #3523,
+  # so the grant is not stranded if a later change-set touches only this file.
+  # +106 `src/ir/integration.ts`, +44 `src/ir/module-bindings.ts`, +10 each
+  # `src/codegen/context/types.ts` and `src/codegen/index.ts`, +3
+  # `src/index.ts`. All additive and inert — the survey runs only under the
+  # existing `JS2WASM_IR_SHAPE_DIAG=1` gate and 66/66 playground + dogfood
+  # compiles are byte-identical on both lanes with the flag off. The survey
+  # lives beside `buildModuleBindingsMap` because the reviewer's question is
+  # "do these two ask `inspectDirectBinding` the same question, and does only
+  # one of them stop?" (Implementation Plan, step 1).
+  - src/ir/integration.ts
+  - src/ir/module-bindings.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  - src/index.ts
+func-budget-allow:
+  # 2026-09-03 (#5285): +24 lines in `compileIrPathFunctions` — the gated survey
+  # call and the comment recording why it is not at the `buildModuleBindingsMap`
+  # call site. The resolver and the module-init population are in scope only
+  # inside this function.
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 ## Problem
