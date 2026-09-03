@@ -105,7 +105,7 @@ loc-budget-allow:
   # (#4195) dedupe mark in its historic position on the default route — both of
   # them exist BECAUSE the default flipped off, see the gap-6a v2 repair record.
   - src/codegen/declarations.ts
-  # 2026-09-03 (R4-M1, string module-binding storage): +55 lines in
+  # 2026-09-03 (R4-M1, string module-binding storage): +51 lines in
   # `src/ir/module-bindings.ts` and +28 in `src/ir/integration.ts`. The slice
   # adds ONE storage kind, and both edits sit beside the arm they mirror:
   # `isModuleStringStorageType` + the `inspectDirectBinding` arm next to
@@ -4273,11 +4273,31 @@ opposite of their own names, so they were repointed rather than relaxed:
 
 ### Pre-existing, NOT caused by this slice
 
-`tests/issue-2856-module-bindings.test.ts` has **10 failures on `0946527`
-itself** (reproduced by reverting this worktree's `src/ir` files to the base
-copies and re-running). They are stale expectations — e.g. "shares one slot from
-a legacy writer to an IR reader" asserts `writer` is NOT IR-compiled and it now
-is. Out of scope here; flagged so the next lane does not attribute them to R4-M1.
+A targeted sweep of the 108 test files mentioning module-init / module-binding
+found a red set on `0946527` **itself**. Every one of these was A/B'd by
+`git checkout origin/main -- src/ir/{module-bindings,module-binding-value-kinds,integration}.ts`
+and re-running: the failure sets are **character-identical** base vs. new.
+
+| file | state on main |
+| --- | --- |
+| `tests/issue-2856-calendar-residuals.test.ts` | 16 failed / 12 passed |
+| `tests/issue-2856-module-bindings.test.ts` | 10 failed / 45 passed |
+| `tests/issue-2856-builtins-component.test.ts` | 3 failed / 9 passed |
+| `tests/issue-2900.test.ts` | 2 failed / 1 passed |
+| `tests/issue-3142.test.ts` | 2 failed / 13 passed |
+| `tests/issue-3324.test.ts` | does not load at all |
+
+They are stale expectations of the same shape — the IR now claims more than the
+test was written against (e.g. "shares one slot from a legacy writer to an IR
+reader" asserts `writer` is NOT IR-compiled, and it now is). `issue-3324` is
+different: it fails at import with `TypeError: Cannot read properties of
+undefined (reading 'MAP')` in `src/codegen/collections-brand.ts:100`, reached
+from `src/codegen/expressions/calls.ts:36` — a module-initialization cycle in
+the compiler source, not a test expectation.
+
+Out of scope here; recorded so the next lane does not attribute them to R4-M1.
+None of these files is in the `equivalence-gate` population, which is why the
+required checks do not see them.
 
 ### Still out of scope after this slice
 
