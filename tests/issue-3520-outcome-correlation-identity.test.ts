@@ -7,6 +7,7 @@ import {
   type IrOverlayIdentityPlan,
 } from "../src/codegen/ir-overlay-identity.js";
 import { auditIrSkippedFunctionSlots, reconcileIrOverlayOutcomes } from "../src/codegen/ir-overlay-outcomes.js";
+import { bodyAccountingFailureOf } from "../src/ir/body-accounting-note.js";
 import type { IrDirectFunctionBodyReceiptAudit } from "../src/codegen/legacy-body-audit.js";
 import { buildIrUnitInventory, type IrUnitId } from "../src/ir/identity.js";
 import type { IrIntegrationError, IrIntegrationReport, IrIntegrationTerminalEvidence } from "../src/ir/integration.js";
@@ -384,16 +385,28 @@ describe("#3520 exact-ID terminal outcome correlation", () => {
       irBodyEmissions: 1,
     });
 
+    // (#5262) This row's ROOT CAUSE is already an invariant — the duplicate
+    // terminal is a more specific diagnosis than the accounting evidence it
+    // also trips. Accounting no longer overwrites it; the evidence rides
+    // alongside as an attached note and keeps its own diagnostic line.
     const duplicateIr = reconcile(planned, [patched(ownerId, "owner"), patched(ownerId, "owner")], {
       directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map()),
     });
-    expect(outcomeFor(duplicateIr.outcomes, ownerId)).toMatchObject({
+    const duplicateIrRow = outcomeFor(duplicateIr.outcomes, ownerId);
+    expect(duplicateIrRow).toMatchObject({
       kind: "invariant",
-      code: "body-emission-evidence",
+      code: "duplicate-unit-outcome",
       prepareAttempts: 1,
       directBodyEmissions: 0,
       irBodyEmissions: 2,
     });
+    expect(bodyAccountingFailureOf(duplicateIrRow)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+    });
+    expect(duplicateIr.diagnostics.some((line) => line.startsWith("IR body-emission accounting note for owner:"))).toBe(
+      true,
+    );
 
     const fallback = fixture(
       new Map([["/repo/missing-direct.ts", "export function fallback(value: number = 1): number { return value; }"]]),
@@ -411,16 +424,24 @@ describe("#3520 exact-ID terminal outcome correlation", () => {
       irBodyEmissions: 0,
     });
 
+    // (#5262) Another already-invariant root cause: the unit was never selected,
+    // which `selection-preparation-mismatch` says precisely. Note the attached
+    // failure is UNDEFINED here — `(1 direct, 1 IR)` trips no surviving
+    // accounting arm at all. This row is therefore direct evidence that the
+    // DELETED arm (`invariant && directBodyEmissions !== 0`) was the masker: it
+    // fired on a legal shape and cost the ledger a precise diagnosis.
     const patchedFallback = reconcile(fallbackPlan, [patched(fallbackId, "fallback")], {
       directFunctionBodyReceiptAudit: directReceiptAudit(fallbackPlan, new Map([[fallbackId, 1]])),
     });
-    expect(outcomeFor(patchedFallback.outcomes, fallbackId)).toMatchObject({
+    const patchedFallbackRow = outcomeFor(patchedFallback.outcomes, fallbackId);
+    expect(patchedFallbackRow).toMatchObject({
       kind: "invariant",
-      code: "body-emission-evidence",
+      code: "selection-preparation-mismatch",
       prepareAttempts: 1,
       directBodyEmissions: 1,
       irBodyEmissions: 1,
     });
+    expect(bodyAccountingFailureOf(patchedFallbackRow)).toBeUndefined();
   });
 
   it("publishes replacement accounting invariants and suppresses only unchanged report-visible failures", () => {
@@ -437,18 +458,36 @@ describe("#3520 exact-ID terminal outcome correlation", () => {
       },
     ]);
 
-    for (const evidence of [outcomeOnlyFailed(ownerId, "owner"), failed(ownerId, "owner")]) {
-      const replaced = reconcile(planned, [evidence], {
-        directFunctionBodyReceiptAudit: corruptedAudit,
-      });
-      expect(outcomeFor(replaced.outcomes, ownerId)).toMatchObject({
-        kind: "invariant",
-        code: "body-emission-evidence",
-      });
-      expect(replaced.diagnostics).toEqual([
-        expect.stringContaining("IR outcome invariant [body-emission-evidence] for owner"),
-      ]);
-    }
+    // (#5262) Replacement is asymmetric. A NON-invariant root cause (here the
+    // `unsupported` outcome-only failure) is still REPLACED by the accounting
+    // invariant — that arm is the only detector for a unit that took neither
+    // body route or both, so it must keep the `code` slot.
+    const replacedUnsupported = reconcile(planned, [outcomeOnlyFailed(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: corruptedAudit,
+    });
+    expect(outcomeFor(replacedUnsupported.outcomes, ownerId)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+    });
+    expect(replacedUnsupported.diagnostics).toEqual([
+      expect.stringContaining("IR outcome invariant [body-emission-evidence] for owner"),
+    ]);
+
+    // An ALREADY-invariant root cause keeps its diagnosis. The receipt
+    // corruption must still be visible in `diagnostics` — it just arrives as
+    // the accounting note rather than as the headline, and the report-visible
+    // dedup correctly suppresses the duplicate invariant line because the row
+    // is unchanged from the reported evidence.
+    const retained = reconcile(planned, [failed(ownerId, "owner")], {
+      directFunctionBodyReceiptAudit: corruptedAudit,
+    });
+    const retainedRow = outcomeFor(retained.outcomes, ownerId);
+    expect(retainedRow).toMatchObject({ kind: "invariant", code: "verifier-failure" });
+    expect(bodyAccountingFailureOf(retainedRow)).toMatchObject({
+      kind: "invariant",
+      code: "body-emission-evidence",
+    });
+    expect(retained.diagnostics).toEqual([expect.stringContaining("IR body-emission accounting note for owner")]);
 
     const unchanged = reconcile(planned, [failed(ownerId, "owner")], {
       directFunctionBodyReceiptAudit: directReceiptAudit(planned, new Map()),
