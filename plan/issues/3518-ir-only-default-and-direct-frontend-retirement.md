@@ -2396,10 +2396,24 @@ records the promotion), so there is precedent in this file for both directions.
 3. Seed their floors/ceilings with `--policy=hybrid --update`. Today's measured
    values, which the seed must reproduce or the lane is mis-wired:
 
-   | lane | terminal units | emitted | unsupported | legacy bodies | IR bodies |
-   | --- | --: | --: | --: | --: | --: |
-   | `dogfood-single-host` | 35 | 16 | 8 | 10 | 1 |
-   | `dogfood-standalone` | 35 | 10 | 14 | 14 | 0 |
+   | lane | entries | terminal units | emitted | unsupported | non-executable | IR bodies | legacy (real) |
+   | --- | --: | --: | --: | --: | --: | --: | --: |
+   | `dogfood-single-host` | 20 | 35 | 1 | 33 | 1 | 1 | 7 |
+   | `dogfood-standalone` | 20 | 35 | 0 | 31 | 4 | 0 | 8 |
+
+   **These replace an earlier version of this table that was wrong in four
+   columns.** It carried `16 / 8 / 10` and `10 / 14 / 14` for emitted /
+   unsupported / legacy — those are the **playground-uncovered** figures, pasted
+   under dogfood labels; only `terminal units` and `IR bodies` were right. An
+   implementer following it would have seeded floors that describe a different
+   corpus, and the lane would then ratchet against fiction — the precise failure
+   a baseline gate exists to prevent. Re-measured directly for this table.
+
+   The `legacy (real)` column counts `legacyBodyEmitted === true &&
+   directBodyEmissions > 0`, **not** the raw flag, which is phantom on 26 of 33
+   single-host rows (`#5283`). If the gate's own summariser reads the raw flag,
+   seed what it reads and record the discrepancy in the lane's `notes` — do not
+   silently seed a different number from the one the tool computes.
 
 **The one real obstacle, stated up front.** Seeding writes
 `scripts/ir-only-baseline.json`, and CLAUDE.md says never to edit
