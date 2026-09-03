@@ -1,8 +1,11 @@
 {
   "id": "3762",
   "assignee": "ttraenkler/codex-es5-string-replace",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3762-string-replace-coercion-order",
   "claimed_at": "2026-07-28T16:18:14Z",
-  "updated_at": "2026-07-28T16:18:14Z"
+  "updated_at": "2026-09-03T09:42:05Z",
+  "write_id": "12013-pwla2l2k",
+  "released_at": "2026-09-03T09:42:05Z"
 }
