@@ -81,7 +81,7 @@ function isCompilerTimerShimTerminalEntry(
   );
 }
 
-function isDynamicInstruction(instr: IrInstr): boolean {
+export function isDynamicInstruction(instr: IrInstr): boolean {
   if (instr.kind === "box") return instr.toType.kind === "dynamic";
   if (instr.kind === "unbox" || instr.kind === "tag.test") return instr.tagId !== undefined;
   return (
@@ -93,7 +93,7 @@ function isDynamicInstruction(instr: IrInstr): boolean {
   );
 }
 
-function exactPreparedDynamicHelperRef(
+export function exactPreparedDynamicHelperRef(
   ctx: CodegenContext,
   callableImports: ReadonlyMap<string, Import>,
   name: PreparedTimerDynamicHelperName,
