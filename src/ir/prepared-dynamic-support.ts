@@ -26,9 +26,12 @@
 // slice cannot name to an exact physical symbol is left exactly as the base
 // tree leaves it, and no ABI binding is minted for it.
 
-import { resolveIrDynamicCarrierType } from "../codegen/any-helpers.js";
-import type { CodegenContext } from "../codegen/context/types.js";
-import { exactPreparedDynamicHelperRef, isDynamicInstruction } from "./compiler-timer-shim-preparation.js";
+import {
+  exactPreparedDynamicHelperRef,
+  isDynamicInstruction,
+  resolveIrDynamicCarrierType,
+  type CodegenContext,
+} from "./compiler-timer-shim-preparation.js";
 import type { IrUnitId } from "./identity.js";
 import {
   asVal,

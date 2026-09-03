@@ -56,6 +56,13 @@ export interface CompilerTimerShimLoweringBoundary<Entry extends { readonly term
   prepare(entry: Entry): boolean;
 }
 
+// (#5297) The IR layer must not grow a NEW `src/ir/ -> src/codegen/` edge
+// (`scripts/check-ir-layering.mjs`, #3113 S1). This file already holds that
+// edge for the dynamic-support vocabulary, so `prepared-dynamic-support.ts`
+// consumes both symbols THROUGH it rather than opening a second edge.
+export { resolveIrDynamicCarrierType };
+export type { CodegenContext };
+
 export function compilerTimerShimTerminalUnitIds(inventory: IrUnitInventory): ReadonlySet<IrUnitId> {
   return new Set(
     inventory.terminalUnits
