@@ -2676,3 +2676,78 @@ buckets under one cut set, not a compile-tested deletion plan — the audit prov
 what is reachable only from `compileStatement`/`compileExpression`, not that
 removing it leaves a building compiler. Every count above is a floor on the work
 and an upper bound on the deletion.
+
+### CORRECTION (same session) — the "frontend bucket" is an assertion, not a measurement
+
+Two sections above I wrote that the frontend share of legacy-only fn-lines went
+**48.5% → 51.9%** and concluded "the deletion target is being outpaced." **That
+framing is wrong, and I should have read `bucketOf` before publishing a share.**
+
+```js
+function bucketOf(fileRel) {
+  const short = fileRel.replace("src/codegen/", "");
+  if (BUCKET_FILE[short]) return BUCKET_FILE[short];      // hand-maintained map
+  for (const [pre, b] of BUCKET_PREFIX) if (fileRel.startsWith(pre)) return b;
+  return "stays";
+}
+```
+
+The bucket is a **hardcoded editorial label on the file path**. It takes no
+input from the reachability analysis at all — that analysis independently
+produces the per-function `legacy-only` / `shared` / `unreferenced` classes.
+And two of the six prefixes are directories:
+
+```js
+["src/codegen/expressions/", "frontend"],
+["src/codegen/statements/",  "frontend"],
+```
+
+**So every file added under `expressions/` or `statements/` joins "frontend"
+automatically.** Of today's 107 frontend files, **100 are there by prefix** and
+only **7 by name** (`expressions.ts`, `statements.ts`, `binary-ops.ts`,
+`literals.ts`, `typeof-delete.ts`, `closures.ts`, `new-target.ts`).
+
+What survives and what does not:
+
+- **Survives — the growth is real.** `legacy-only fn-lines` is a per-function
+  reachability class, unaffected by bucketing. 60,126 → 85,823 stands, and so
+  does the conclusion that R10 estimates sized on 59,676 understate.
+- **Withdrawn — the share comparison.** 48.5% → 51.9% compares two boundaries
+  that are *not the same boundary*: the frontend set expanded as
+  `expressions/` and `statements/` grew, so part of that rise is files joining
+  the set rather than the front end outgrowing anything. "The deletion target is
+  being outpaced" is not supported by this instrument. The file-count rise
+  47 → 107 has the same defect, and is mostly those two directories.
+
+**The mis-bucketing hypothesis is confirmed — in the strongest possible form.**
+I had guessed `closures.ts` and `nested-declarations.ts` were "probably
+mis-bucketed rather than mixed." They are, and not by a judgement call:
+
+| file | how it became `frontend` | legacy-only | shared |
+| --- | --- | --: | --: |
+| `closures.ts` | a **hand-written entry** in `BUCKET_FILE` | 125 | 3,872 |
+| `statements/nested-declarations.ts` | the `statements/` **directory prefix** | 285 | 3,157 |
+
+Neither is a front-end file by any measured property. `closures.ts` is 97%
+shared and someone typed it into the frontend list; `nested-declarations.ts` is
+92% shared and was swept in by living in a directory. **7,029 shared lines are
+counted as front-end deletion scope on the strength of a hardcoded string.**
+
+**This does not weaken the R10 sizing in the section above — it sharpens it.**
+That table was built from `sharedLoc == 0`, a measured property, not from the
+bucket. Its A/B split (78 whole-file-deletable / 29 requiring a split) is
+unaffected. What changes is the reading of the 29: some are not "mixed files
+needing surgery" but **files that do not belong in the bucket at all**, and
+re-labelling them is a text edit rather than a refactor.
+
+**Actionable, and cheaper than any code change.** Re-bucket by the measured
+ratio instead of by path — e.g. a file whose `sharedLoc` dominates its
+`legacyLoc` is not a front-end deletion candidate whatever its directory. Until
+then, **quote `legacyLoc`/`sharedLoc`, never bucket totals**, and never a share
+across two dates.
+
+**Method note, third of the night and the same root.** The census was a
+fail-fast path read as a survey; the July tree was a fetch boundary read as
+absent history; this is a hardcoded label read as an analysis result. Each time
+the instrument was assumed to answer the question being asked of it, and each
+time one look at the source settled it in under a minute.
