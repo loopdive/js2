@@ -1,8 +1,11 @@
 {
   "id": "3763",
   "assignee": "ttraenkler/codex-es5-string-indexof",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3763-string-indexof-undefined-search",
   "claimed_at": "2026-07-28T16:39:40Z",
-  "updated_at": "2026-07-28T16:39:40Z"
+  "updated_at": "2026-09-03T09:42:12Z",
+  "write_id": "13066-uni6xirw",
+  "released_at": "2026-09-03T09:42:12Z"
 }
