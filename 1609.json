@@ -1,10 +1,11 @@
 {
   "id": "1609",
   "assignee": "ttraenkler/codex-es6-new-spread",
-  "requested_by": "ttraenkler/codex-es6-new-spread",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/1609-new-expression-spread",
   "claimed_at": "2026-08-27T09:42:27Z",
-  "updated_at": "2026-08-27T09:42:27Z",
-  "write_id": "99239-8lhpptmd"
+  "updated_at": "2026-09-03T09:37:45Z",
+  "write_id": "31532-tzx6aa9l",
+  "released_at": "2026-09-03T09:37:45Z"
 }
