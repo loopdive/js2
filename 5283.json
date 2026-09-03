@@ -1,10 +1,11 @@
 {
   "id": "5283",
   "assignee": "ttraenkler/opus-5283",
-  "requested_by": "ttraenkler/opus-5283",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5283-legacy-body-receipt",
   "claimed_at": "2026-09-03T11:41:49Z",
-  "updated_at": "2026-09-03T11:41:49Z",
-  "write_id": "13848-tbwuzs2f"
+  "updated_at": "2026-09-03T17:55:12Z",
+  "write_id": "9603-mzj1hre6",
+  "released_at": "2026-09-03T17:55:12Z"
 }
