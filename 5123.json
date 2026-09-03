@@ -1,10 +1,11 @@
 {
   "id": "5123",
   "assignee": "ttraenkler/codex/5123-es2015-escape-symbol-tostring",
-  "requested_by": "ttraenkler/codex/5123-es2015-escape-symbol-tostring",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5123-es2015-escape-symbol-tostring",
   "claimed_at": "2026-08-28T05:29:26Z",
-  "updated_at": "2026-08-28T05:29:26Z",
-  "write_id": "17784-49o8m7oq"
+  "updated_at": "2026-09-03T09:52:28Z",
+  "write_id": "22708-yf7miheb",
+  "released_at": "2026-09-03T09:52:28Z"
 }
