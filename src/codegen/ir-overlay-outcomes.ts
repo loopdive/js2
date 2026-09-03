@@ -893,10 +893,29 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
           })
         : undefined;
     // R2 function rows derive compatibility booleans from exact production
-    // receipts. Class/member and module-init rows retain their established
-    // dispatcher-specific accounting until their own bounded migrations.
+    // receipts. Every other unit kind now REQUIRES a physical direct-body root
+    // as well (#5283): "a legacy body was available and we did not skip it" is
+    // a prediction about what the direct front end would do, and it read `true`
+    // on units where no direct pass ran at all — measured on
+    // `tests/fixtures/extern-demo.ts` and
+    // `tests/dogfood/corpus/import-attributes.module.js`, both of which the
+    // route audit already flagged with `missing-legacy-entry-evidence`.
+    //
+    // The root is a NECESSARY condition, not a sufficient one, so this can only
+    // ever turn a `true` into a `false`. A root attributed to a unit can be the
+    // dispatcher entering for a sibling obligation: measured on the implicit
+    // constructor of a class with a static block, `compileClassBodies` records
+    // a root against `Counter_new` while that constructor's own body is skipped
+    // and IR-patched. Reading the root alone would report compile-twice on a
+    // unit that compiled once — the exact inflation this issue is about, in the
+    // other direction. Callers that did not opt into the route audit have no
+    // receipts to read and keep the prediction unchanged.
+    const physicalRootUnitIds = input.directFunctionBodyReceiptAudit?.physicalRootUnitIds;
     const legacyBodyEmitted =
-      bodyAccounting?.legacyBodyEmitted ?? (unit.legacyBodyAvailable && !input.skippedBodyUnitIds.has(unit.unitId));
+      bodyAccounting?.legacyBodyEmitted ??
+      (unit.legacyBodyAvailable &&
+        !input.skippedBodyUnitIds.has(unit.unitId) &&
+        (physicalRootUnitIds?.has(unit.unitId) ?? true));
     const base = {
       key: unit.key,
       sourceId: unit.sourceId,
