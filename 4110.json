@@ -1,10 +1,11 @@
 {
   "id": "4110",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4110-ir-fetch-all-parallel",
   "claimed_at": "2026-08-02T20:13:48Z",
-  "updated_at": "2026-08-02T20:13:48Z",
-  "write_id": "56378-m3wi4zyl"
+  "updated_at": "2026-09-03T09:44:35Z",
+  "write_id": "5790-yiyrxn63",
+  "released_at": "2026-09-03T09:44:35Z"
 }
