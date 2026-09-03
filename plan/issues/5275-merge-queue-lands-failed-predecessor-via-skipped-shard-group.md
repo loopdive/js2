@@ -88,3 +88,81 @@ measured. A docs-only PR is only safe to skip when its group's base is a
 - The fast path for docs-only PRs whose base IS a measured green `main` tip
   must stay — that is the whole point of #2519.
 - `scripts/enqueue-green-prs.mjs` is not involved; the enqueue side is sound.
+
+## 2026-09-03 — the live queue config, read from the ruleset API (thread closed)
+
+This issue's mechanism section attributes four same-day landings of a failed
+predecessor to **speculative group building** (`max_entries_to_build > 1`), and
+I escalated "set it to 1" to the project lead twice. `docs/ci-policy.md:189-190`
+says the canonical value **already is** 1, and `:253-258` says that setting makes
+this issue's mechanism impossible. Both could not be true alongside four
+observed instances, and I recorded the thread as **blocked because `gh` is not
+installed in this container** — `scripts/set-merge-queue-config.sh --show` shells
+out to it.
+
+**That was the same mistake as three others tonight: a missing tool read as an
+unanswerable question.** The config lives in the repo *ruleset*, which is plain
+REST, and a token is present:
+
+```bash
+curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://api.github.com/repos/loopdive/js2/rules/branches/main   # http 200
+```
+
+**Live values, 2026-09-03 02:5x UTC:**
+
+```json
+{ "merge_method": "MERGE",
+  "max_entries_to_build": 1,
+  "min_entries_to_merge": 2,
+  "max_entries_to_merge": 5,
+  "min_entries_to_merge_wait_minutes": 5,
+  "grouping_strategy": "HEADGREEN",
+  "check_response_timeout_minutes": 120 }
+```
+
+### Two corrections, one of them to this issue
+
+**1. This issue's mechanism section is WRONG, and my escalation was a no-op.**
+`max_entries_to_build` is **1**, and has been. Speculation is off, so the
+"queued PRs eject and a base built on an ejected PR carries phantom commits"
+story cannot be what produced the four instances. `docs/ci-policy.md:253-258` is
+correct and this issue is not. The four observations are real and still need a
+cause — but it is **not** speculation, and the acceptance criteria that ask for
+`max_entries_to_build: 1` are asking for the status quo. Re-open the root cause;
+do not re-escalate the setting.
+
+**2. `docs/ci-policy.md` is wrong on a different line.** It states the canonical
+`min_entries_to_merge: 1`, and at `:242` that "**`min_entries_to_merge` is back
+to 1 — #3914 Step 2 was tried and reverted**." **It is live at 2.** The revert
+never landed, or landed only in the doc.
+
+### Why the stale line costs something rather than nothing
+
+The doc's own analysis of floor 2 (`:253-258`) concludes it is a no-op *except*
+for "added latency on quiet-queue fast merges (docs-only runs go green in ~2-3
+min, inside the timer)." With `min_entries_to_merge: 2` and
+`min_entries_to_merge_wait_minutes: 5` live, **every fast merge waits out the
+full 5-minute timer before the floor is waived** — because
+`max_entries_to_build: 1` guarantees a second entry can never be green
+simultaneously to satisfy it. This project merges a lot of docs-only PRs; each
+one pays that timer.
+
+So the doc's reasoning was right and its status line was stale, which is the
+worst combination: a reader who checks `:253-258` correctly concludes "harmless"
+and never learns the setting is still on.
+
+### Actions
+
+- **Do not re-escalate `max_entries_to_build`.** It is already 1. (My two
+  escalations were no-ops; recorded so the lead does not act on them.)
+- **Decide the floor deliberately**: either revert `min_entries_to_merge` to 1
+  as the doc claims, or update the doc to say 2 is live and intended. It is
+  currently neither.
+- **Re-open this issue's root cause.** Four instances are documented and the
+  named mechanism is excluded. `grouping_strategy: HEADGREEN` and
+  `check_response_timeout_minutes: 120` are the unexamined parameters.
+- **`scripts/set-merge-queue-config.sh --show` is not the only reader.** The
+  ruleset REST endpoint answers the same question without repo-admin `gh`, and
+  `docs/ci-policy.md` already warns that the script's output went six weeks
+  stale. Prefer the API and quote the response.
