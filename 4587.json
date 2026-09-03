@@ -1,12 +1,11 @@
 {
   "id": "4587",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/npm-compat-o4-refresh",
-  "reserved_at": "2026-08-21T01:43:02Z",
   "claimed_at": "2026-08-21T01:43:02Z",
-  "updated_at": "2026-08-21T01:43:02Z",
-  "write_id": "44041-ewzobgj9",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:49:09Z",
+  "write_id": "15935-0kwq854v",
+  "released_at": "2026-09-03T09:49:09Z"
 }
