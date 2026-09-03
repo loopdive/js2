@@ -45,7 +45,11 @@ import {
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
-import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
+import {
+  classHierarchyHasDynamicMember,
+  classMemberComputedKeyIsRuntime,
+  dynamicClassKeyGlobalKey,
+} from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1 / r3-3)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -413,7 +417,10 @@ export function emitUnresolvedComputedAccessorNameEffects(
         !ts.isMethodDeclaration(member)) ||
       !member.name ||
       !ts.isComputedPropertyName(member.name) ||
-      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
+      // (#5195 r3-3) `classMemberComputedKeyIsRuntime` is the single predicate
+      // the collector, the name resolver and this effect emitter all share; a
+      // fold-that-drops-a-write (`[x = 1]`) counts as runtime-keyed here too.
+      !classMemberComputedKeyIsRuntime(ctx, member)
     ) {
       continue;
     }

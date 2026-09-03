@@ -44,3 +44,20 @@ export function findConstructorImplementation(
     (member): member is ts.ConstructorDeclaration => ts.isConstructorDeclaration(member) && member.body !== undefined,
   );
 }
+
+/**
+ * (#5195 r3-3) True when a computed-key expression performs a write whose effect
+ * is observable after class definition evaluation. `literals.ts::resolveConstantExpression`
+ * folds `x = 1` to its RHS for callers that only want the value; used as a KEY
+ * that fold silently drops the assignment (`let x = 0; class C { [x = 1]() {} }`
+ * left `x` at 0).
+ *
+ * Consulted ONLY by `class-bodies.ts::resolveInstallableClassMemberName` (the
+ * METHOD/ACCESSOR lane, standalone). Class FIELDS and object literals keep the
+ * fold: their install lanes cannot take a runtime key today, so declining there
+ * turns a wrong-`x` program into a missing-property one — strictly worse.
+ */
+export function computedKeyPerformsWrite(expr: ts.Expression): boolean {
+  if (ts.isParenthesizedExpression(expr)) return computedKeyPerformsWrite(expr.expression);
+  return ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+}

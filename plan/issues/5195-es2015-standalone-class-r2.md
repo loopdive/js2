@@ -1989,3 +1989,59 @@ time): `class.tsv` paths minus the four out-of-scope groups → expect ≥ 62
 new passes and **no row moving to a WORSE class** (a `fail` must not become
 `compile_error`/`timeout`), plus the 22 controls at 22/22 and the r2-landed
 rows listed under "Standing rules" still green.
+
+## 2026-09-03 r3 implementation pass (Opus)
+
+Base for every measurement below: `91d4999050` (= `origin/main` at dispatch).
+Base tree materialised at `.tmp/basetree`; every "before" number was produced
+by reverting the touched files to that tree and re-running the same command.
+
+### Plan facts corrected on measurement
+
+- The plan's "r2-landed rows that must stay green" list names
+  `computed-property-names/class/method/{string,symbol}.js` as passing. On
+  `91d4999050` they **already fail** (`«null», «"D"»` / `Cannot access property
+  on null`). Pre-existing on base, not caused by this pass; recorded so the
+  next lane does not read them as a regression.
+- r3-3 claims 4 rows. Only **1** flips from r3-3 alone
+  (`cpn-class-decl-computed-property-name-from-assignment-expression-assignment`).
+  The other 3 are the class-EXPRESSION form (needs r3-2) and the two
+  accessor forms (need r3-1's static accessor surface) — they are *also* K
+  rows, but K is not their only blocker.
+
+### r3-3 — an assignment-shaped computed key is a runtime key (1 row)
+
+Implemented **narrower than the plan wrote it**, on measurement. The plan said
+to delete the `=` arm of `literals.ts::resolveConstantExpression`. Doing that
+literally regressed a shape that works on base: `class D { [y = 1] = 2 }` went
+from `new D()[1] === 2` (with `y` wrongly 0) to `new D()[1] === undefined` —
+the class FIELD install lane cannot take a runtime key, so declining the fold
+there trades a wrong-`y` program for a missing-property one. The plan
+anticipated exactly this under "PASSING shapes at risk (b)" and authorised the
+narrowing.
+
+What landed instead: a new shared predicate
+`class-dynamic-keys.ts::classMemberComputedKeyIsRuntime(ctx, member)` — true
+for a METHOD/ACCESSOR whose computed key either does not fold at all or folds
+only because `resolveConstantExpression` drops an assignment's write
+(standalone only, `ast-modifiers.ts::computedKeyPerformsWrite`). It is now the
+single source of truth for the three places that must agree:
+`class-dynamic-keys.ts::classHasUnresolvedComputedMemberName` (does the class
+reach `__module_init` at all), `class-bodies.ts::resolveInstallableClassMemberName`
+(mint the synthetic `__cmdyn$<n>` name) and
+`nested-declarations.ts::emitUnresolvedComputedAccessorNameEffects` (evaluate
+the key). Fixing only the first two left the row still failing — the effect
+emitter had its own copy of the fold test; that is why the predicate is
+shared rather than duplicated.
+
+Class FIELDS and object literals keep the old fold, so
+`var o = { [_ = 'k']: 1 }` is unchanged from base (still fails the `_` assert
+on both trees — pre-existing, not claimed).
+
+Verified: probe `[x = 1]() {}` → `x === 1` and `new C()[1]() === 2` (node
+agrees); 22/22 controls; the 9 r2-landed control rows unchanged (7 pass, the
+2 noted above still fail); `ctl-plain.js` / `ctl-static.js` / `ctl-fnctor.js`
+byte-identical on BOTH the standalone and host lanes (6 modules, `diff -r`).
+
+Growth: `class-bodies.ts` +10, `nested-declarations.ts` +7 (both already in
+`loc-budget-allow`), `class-dynamic-keys.ts` +24, `ast-modifiers.ts` +17.
