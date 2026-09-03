@@ -84,5 +84,36 @@ it("…", () => { m.use({ hooks: { preprocess(md) { … } } }); … });
 ```
 
 That form still throws `Cannot convert object to primitive value`, while the
-identical code with a function-LOCAL `m` now passes. So the closure-held
-receiver is the next thing to chase; this issue does not close marked.
+identical code with a function-LOCAL `m` now passes.
+
+Bisected to **three lines, with no marked involved**:
+
+```js
+class C { use(...e) { return e.length; } }
+let g; g = new C();
+g.use({});          // → "Cannot convert object to primitive value"
+```
+
+The ingredients are exactly two, and both are required:
+
+| receiver binding | method | result |
+| ---------------- | ------ | ------ |
+| `let g; g = new C()` | `use(...e)` | **throws** |
+| `const g = new C()`  | `use(...e)` | ok |
+| `let g; g = new C()` | `use(e)` (no rest) | ok |
+| `let g; g = new C()` | `use(e)` with `forEach` + `this` | ok |
+
+A `let` binding puts the receiver in a live-binding global, so it reads back as
+`externref` rather than the concrete struct. `call-receiver-method.ts` then
+*deliberately* declines the closed method dispatcher for it — `hasUserRestMethod`
+clears `hasUniformUserMethodAbi`, with the comment "a rest vec would be mistaken
+for one positional argument" — and the call falls to the generic
+`__extern_method_call` host path. That path passes the arguments positionally,
+but the compiled callee's ABI expects the rest **vec**, so the callee reads a
+plain object where the vec belongs and the first thing that stringifies it
+throws.
+
+marked's `use(...e)` is that method, and its tests hold the instance in a
+`beforeEach` closure, so every one of the 30 hits it. Teaching the host bridge
+the rest ABI (or giving the closed dispatcher a rest arm) is the fix; it is
+squarely runtime-bridge work, not a narrowing of this issue.
