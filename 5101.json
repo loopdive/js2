@@ -1,10 +1,11 @@
 {
   "id": "5101",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5101-ir-math-atan",
   "claimed_at": "2026-08-27T22:29:30Z",
-  "updated_at": "2026-08-27T22:29:30Z",
-  "write_id": "20852-cbgqr0sn"
+  "updated_at": "2026-09-03T09:52:00Z",
+  "write_id": "22457-1e1w6kbf",
+  "released_at": "2026-09-03T09:52:00Z"
 }
