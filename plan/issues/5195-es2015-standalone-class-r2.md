@@ -2078,3 +2078,26 @@ but it IS a hole a follow-up must close together with r3-1).
 Verified: 22/22 controls; duplicate-constructor early error still fires
 (`class Z { constructor(){} constructor(){} }`); the three plan controls
 byte-identical to base on both lanes.
+
+### r3-2 — top-level class EXPRESSIONS with runtime-keyed members (9 rows) `[byte-inert]`
+
+Edit (1) only. `declarations.ts::collectDeclarations` now also collects a
+variable statement whose initializer is a class EXPRESSION that has, or
+inherits, a member keyed only at runtime — the same two predicates
+`collectPreparedTopLevelClassComputedNameEffects` already uses for the
+DECLARATION form. Without it the historical skip meant the key was never
+evaluated, the prototype `$Object` and the static sidecar were never
+force-built, and `new C()[k]()` folded to `ref.null.extern`.
+
+Edit (2) of the plan (`calls.ts::elemAccessReceiverClassName` for a `new C()`
+receiver) was **not needed** — the plan told me to verify with probe p3 first
+and skip it if the instance assert already passed. It does, and so does p3's
+STATIC assert, which the plan expected to need r3-1.
+
+Measured: `B-class-expr.txt` **9/9 pass** (base 0/9). Probe p3 passes on both
+asserts. K rows now 2/4 (r3-3 + r3-2); the remaining two are the accessor
+forms and need r3-1. 22/22 controls; controls2 unchanged; `ctl-plain`,
+`ctl-static`, `ctl-fnctor` AND a folding-key `const K = class {…}` all
+byte-identical to base on both lanes. `tests/issue-4618*` + `tests/issue-3045*`:
+3 failures, identical set on base (pre-existing, re-measured by reverting the
+file).
