@@ -107,10 +107,13 @@ milestone. The retirement now follows #3518's dependency spine:
    own uncovered files** — on `tests/dogfood/corpus`
    module-init adoption is 0 of 20 executable units on both lanes (19 of 33
    single-host rejections). But on the playground's uncovered eight, all 8
-   module-init units are non-executable and the standalone blocker is
-   `host-surface-unavailable`, 12 of 14 — so R4 is NOT established as the
-   universal first dependency; both it and the standalone surface gate R9, with
-   relative weight unknown until a representative corpus is defined.
+   module-init units are non-executable. Their standalone blocker is
+   `host-surface-unavailable` (12 of 14) — but all 12 are DOM (`document` is the
+   only host global those files name), i.e. browser demos compiled for a
+   host-free target, a corpus/target mismatch rather than compiler work. So R4
+   remains the leading dependency, with the caveat that the ordering is only as
+   good as the corpus and no corpus measured so far was chosen to represent the
+   R9 target population.
    `check:ir-only` is green partly because 3 of its 5 module-init units are
    non-executable. Full measurement and the
    correction that produced it: `plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`.

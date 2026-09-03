@@ -140,33 +140,35 @@ process-global, so two same-named classes with DIFFERENT non-null parents in one
 worker still collide. `extends null` was the case that could not self-correct;
 a non-null heritage at least overwrites.
 
-### 1b. A fourth park, and why the "wasm-hash change" counter-evidence is unsound here
+### 1b. Why the "wasm-hash change" line cannot settle this row
 
-**#5498 (run 33701148752, 2026-09-03 01:12) is a FOURTH park on the same row and
-the same signature** — a fifth hand diagnosis and a fifth re-admission, after
-this issue was already filed. It is the direct cost of piece 2 not existing yet.
+"Fourth instance" and "How to tell this flake from a REAL failure" below record
+the #5498 park and the triage order; this notes the mechanism behind the one
+signal both of them flag as unreliable.
 
-That diagnosis, and the #5412 precedent it cites (2026-09-01, where this same
-row WAS a real PR-caused regression), both weighed this line:
+`Regressions with wasm-hash change: 1` is not a weakened hash comparison on this
+row — it is **no hash comparison at all**. `diff-test262.ts` sets `wasmUnchanged`
+only when BOTH sides carry a string `wasm_sha`:
 
+```ts
+const wasmUnchanged = typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha;
 ```
-=== Regressions with wasm-hash change: 1 ===
-=== Wasm-identical noise (pass → other, same wasm_sha): 0 ===
-```
 
-**For this row that line carries no information.** `diff-test262.ts` sets
-`wasmUnchanged` only when BOTH sides have a string `wasm_sha`
-(`typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha`),
-and the failing candidate row **has no `wasm_sha` field at all** — verified on
-the parked run 33683869984's own merged JSONL. So the row falls into
-"wasm-hash change" by default, without any hash ever being compared. The
-"binaries differ ⇒ PR-caused" inference therefore does not hold for a FAILING
-row of this shape, in either direction: it did not support #5498 being real, and
-it should not have been the ground on which #5412 was called real either. That
-one is worth re-reading against the code path, not against this line.
+and the failing candidate row **has no `wasm_sha` field whatsoever** — verified
+directly on the parked run 33683869984's merged JSONL. The row therefore lands
+in "wasm-hash change" by default, whatever the bytes did. So the cause is not
+only "the merge group tests the merged state and main's other changes move
+bytes"; for a FAILING row of this shape the line is vacuous even when nothing
+moved.
 
-This is also why #5480's "identical `wasm_sha aa0313d0d7f6` on both sides" was
-measuring something else entirely — that sha comes from `runTest262File`, which
+That cuts both ways, and it reaches the #5412 row of the table below: that call
+rested on "the test's wasm hash moved", which this line cannot establish for a
+failing row. #5412's diff-reachability argument stands on its own and is the
+sound half; the hash half should not be relied on. Worth a re-read by whoever
+owns that call — not reopened here.
+
+It is also why #5480's "identical `wasm_sha aa0313d0d7f6` on both sides" was
+measuring something else entirely: that sha comes from `runTest262File`, which
 compiles the witness without the dynamic class-parent imports at all.
 
 ### 2. Cross-PR signature check — now load-bearing
@@ -207,3 +209,95 @@ Deliberate limits, so the gate is not weakened:
 
 Unit tests: `tests/issue-5280-signature-ledger.test.ts` (7 cases, including the
 literal #5479/#5480/#5486 shapes).
+
+## Fourth instance, 2026-09-03 01:12 — and the strongest evidence yet
+
+PR #5498 parked on the same signature, 27 minutes after being released.
+
+| PR | what its diff changes | run |
+| --- | --- | --- |
+| #5479 | #3523 gap-6a | 33626922676 |
+| #5480 | #3523 gap-6a v2 | 33642323854 |
+| #5486 | #3521 R2 admission telemetry | 33683869984 |
+| **#5498** | **one expression in `loops.ts`** | **33701148752** |
+
+Verbatim from the fourth run:
+
+```
+⚠️  === Regressions (pass → other): 1 ===
+  test/language/statements/class/subclass/class-definition-null-proto-super.js:
+      pass → fail (Maximum call stack size exceeded)
+=== Regression bucket signature: 96690aa5e0efb4ff (1 non-CT files) ===
+=== GATE FAIL: net_per_test -1 < 0 (0 improvements − 1 regressions) ===
+```
+
+**Why this instance is the strongest argument for making the check
+load-bearing.** #5498's entire source change is
+`index: ctx.moduleGlobals.get(name) ?? moduleGlobalIdx` — a module-global index
+re-read inside a `for`-head `var` arm. There is no mechanism by which that
+produces unbounded recursion in `class C extends null`'s SuperCall, and by the
+time it parked, #5506 had already root-caused the overflow to a process-global
+class-parent registry leaking across files within a shard worker. So the fourth
+instance lands on a diff that is *provably* incapable of causing it, against a
+root cause that was *already known*.
+
+**And the gate argued the opposite, correctly-in-general.** Its footer read:
+
+> ❌ LIKELY-REAL REGRESSION (baseline content-current, #2562) … the baseline
+> reflects current src, so these regressions are far more likely PR-caused than
+> baseline drift. Do not dismiss them.
+
+That heuristic is sound — a content-current baseline genuinely cannot be the
+drift source — but it reasons from **one PR's data**. The discriminating
+evidence is **cross-PR**, and the gate cannot see the other three runs. It
+printed the signature and the hint ("Same signature on another PR ⇒ identical
+cluster") on all four, and on all four a human had to be the one to notice.
+Four parks, four manual diagnoses, four re-admissions: that is the cost of an
+advisory hint, and it is the whole argument for the second work item in this
+issue.
+
+Re-admitted once, per the auto-park rules, with a note that a second park on
+this signature escalates rather than repeating. #5506 is in the queue; once it
+lands, both halves of this issue close.
+
+## How to tell this flake from a REAL failure on the same test
+
+`class-definition-null-proto-super.js` is not exclusively a flake row. On
+2026-09-01 it parked PR #5412 and that **was** a genuine, PR-caused regression:
+the diff changed generator/IR lowering and the test's **wasm hash moved**, which
+is what identified it. Anyone hitting this test needs to separate the two cases,
+and neither signal alone is sufficient:
+
+| signal | flake (tonight ×4) | real (#5412) |
+| --- | --- | --- |
+| bucket signature `96690aa5e0efb4ff` | yes | yes |
+| same message, `range_error` | yes | yes |
+| wasm hash changed | **sometimes yes** (see below) | yes |
+| the PR's diff can reach the failing file | **no** | yes |
+
+**The bucket signature is necessary but not sufficient**, and — the trap —
+**`Regressions with wasm-hash change: 1` does not settle it either.** #5498's
+park printed exactly that line while being collateral, because the merge group
+tests the *merged* state and main's other landed changes move bytes too.
+
+**The decisive question is whether the PR's diff can execute while compiling the
+failing file.** For #5498 it provably cannot: the test contains no `for`
+statement at all (`grep -cE '^\s*for\s*\(\s*var '` → 0), and that PR's only
+source change lives inside `compileForStatement`'s module-global for-head `var`
+arm, behind `if (moduleGlobalIdx !== undefined)`. For #5412 the diff changed
+lowering reachable from any class body, so it could.
+
+**Recommended order when this parks your PR:**
+
+1. Check whether your diff's changed code paths can be reached while compiling
+   `class-definition-null-proto-super.js`. Read the test — it is 20 lines. If
+   the answer is no, it is collateral regardless of the wasm-hash line.
+2. Only if it *can* reach: reproduce locally on the merged state and byte-compare
+   against a clean `origin/main` build, per the #5412 procedure.
+3. Cross-check the signature against other open PRs' runs. Four disjoint diffs
+   with one signature is strong corroboration — but it is corroboration, not the
+   primary test.
+
+This ordering is the useful output of four manual diagnoses. Building it into
+the cross-PR signature check (this issue's second work item) is what stops the
+fifth person re-deriving it.

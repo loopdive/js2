@@ -1,0 +1,676 @@
+{
+  "schemaVersion": 1,
+  "generatedFrom": "scripts/audit-legacy-reachability.mjs",
+  "measuredOn": "2026-09-03",
+  "cut": ["src/codegen/statements.ts#compileStatement", "src/codegen/expressions.ts#compileExpression"],
+  "buckets": {
+    "deferred": {
+      "files": 3,
+      "legacyLoc": 2534,
+      "sharedLoc": 2951,
+      "deadLoc": 0
+    },
+    "frontend": {
+      "files": 107,
+      "legacyLoc": 85609,
+      "sharedLoc": 15956,
+      "deadLoc": 0
+    },
+    "runtime": {
+      "files": 61,
+      "legacyLoc": 39791,
+      "sharedLoc": 56261,
+      "deadLoc": 312
+    },
+    "stays": {
+      "files": 619,
+      "legacyLoc": 37167,
+      "sharedLoc": 163532,
+      "deadLoc": 198
+    }
+  },
+  "frontendFiles": [
+    {
+      "file": "src/codegen/expressions/calls.ts",
+      "totalLines": 10553,
+      "legacyLoc": 8756,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/new-super.ts",
+      "totalLines": 7287,
+      "legacyLoc": 6299,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/assignment.ts",
+      "totalLines": 6333,
+      "legacyLoc": 5799,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/literals.ts",
+      "totalLines": 6347,
+      "legacyLoc": 4879,
+      "sharedLoc": 766
+    },
+    {
+      "file": "src/codegen/expressions/call-receiver-method.ts",
+      "totalLines": 4663,
+      "legacyLoc": 4346,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/call-builtin-static.ts",
+      "totalLines": 4355,
+      "legacyLoc": 4096,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/loops.ts",
+      "totalLines": 4263,
+      "legacyLoc": 3929,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/call-identifier.ts",
+      "totalLines": 3993,
+      "legacyLoc": 3751,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/operator-assignment.ts",
+      "totalLines": 3739,
+      "legacyLoc": 3435,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/binary-ops.ts",
+      "totalLines": 3825,
+      "legacyLoc": 3391,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/call-namespace-static.ts",
+      "totalLines": 3327,
+      "legacyLoc": 3162,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/builtins.ts",
+      "totalLines": 3967,
+      "legacyLoc": 2197,
+      "sharedLoc": 1488
+    },
+    {
+      "file": "src/codegen/expressions/new-builtin-globals.ts",
+      "totalLines": 2541,
+      "legacyLoc": 2151,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/typeof-delete.ts",
+      "totalLines": 2500,
+      "legacyLoc": 2147,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/calls-closures.ts",
+      "totalLines": 2666,
+      "legacyLoc": 2133,
+      "sharedLoc": 221
+    },
+    {
+      "file": "src/codegen/expressions/call-tail-dispatch.ts",
+      "totalLines": 2216,
+      "legacyLoc": 2099,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/for-of-destructuring.ts",
+      "totalLines": 2955,
+      "legacyLoc": 2041,
+      "sharedLoc": 660
+    },
+    {
+      "file": "src/codegen/statements/variables.ts",
+      "totalLines": 2630,
+      "legacyLoc": 1891,
+      "sharedLoc": 440
+    },
+    {
+      "file": "src/codegen/statements/control-flow.ts",
+      "totalLines": 2032,
+      "legacyLoc": 1756,
+      "sharedLoc": 49
+    },
+    {
+      "file": "src/codegen/expressions/unary-updates.ts",
+      "totalLines": 1903,
+      "legacyLoc": 1669,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions.ts",
+      "totalLines": 1709,
+      "legacyLoc": 1381,
+      "sharedLoc": 3
+    },
+    {
+      "file": "src/codegen/expressions/new-indexed.ts",
+      "totalLines": 921,
+      "legacyLoc": 884,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/identifiers.ts",
+      "totalLines": 3189,
+      "legacyLoc": 831,
+      "sharedLoc": 1980
+    },
+    {
+      "file": "src/codegen/statements/exceptions.ts",
+      "totalLines": 811,
+      "legacyLoc": 681,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/destructuring.ts",
+      "totalLines": 1487,
+      "legacyLoc": 626,
+      "sharedLoc": 604
+    },
+    {
+      "file": "src/codegen/statements.ts",
+      "totalLines": 797,
+      "legacyLoc": 621,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/misc.ts",
+      "totalLines": 693,
+      "legacyLoc": 590,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/extern.ts",
+      "totalLines": 1154,
+      "legacyLoc": 554,
+      "sharedLoc": 436
+    },
+    {
+      "file": "src/codegen/expressions/calls-guards.ts",
+      "totalLines": 808,
+      "legacyLoc": 537,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/helpers.ts",
+      "totalLines": 795,
+      "legacyLoc": 471,
+      "sharedLoc": 9
+    },
+    {
+      "file": "src/codegen/expressions/logical-ops.ts",
+      "totalLines": 518,
+      "legacyLoc": 461,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/calls-optional.ts",
+      "totalLines": 483,
+      "legacyLoc": 446,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/runtime-eval-provider.ts",
+      "totalLines": 1042,
+      "legacyLoc": 440,
+      "sharedLoc": 412
+    },
+    {
+      "file": "src/codegen/expressions/stored-member-closure-call.ts",
+      "totalLines": 586,
+      "legacyLoc": 407,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/object-get-prototype-of.ts",
+      "totalLines": 510,
+      "legacyLoc": 383,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/virtual-dispatch.ts",
+      "totalLines": 457,
+      "legacyLoc": 359,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/eval-early-errors.ts",
+      "totalLines": 367,
+      "legacyLoc": 287,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/nested-declarations.ts",
+      "totalLines": 4057,
+      "legacyLoc": 285,
+      "sharedLoc": 3157
+    },
+    {
+      "file": "src/codegen/expressions/unresolvable-assign.ts",
+      "totalLines": 321,
+      "legacyLoc": 258,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/member-override-scan.ts",
+      "totalLines": 368,
+      "legacyLoc": 239,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/host-bigint-updates.ts",
+      "totalLines": 248,
+      "legacyLoc": 215,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/standalone-primitive-tail.ts",
+      "totalLines": 297,
+      "legacyLoc": 215,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/fnctor-prototype.ts",
+      "totalLines": 569,
+      "legacyLoc": 212,
+      "sharedLoc": 125
+    },
+    {
+      "file": "src/codegen/expressions/unary.ts",
+      "totalLines": 242,
+      "legacyLoc": 206,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/eval-comment-peephole.ts",
+      "totalLines": 228,
+      "legacyLoc": 204,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/call-object-builtins.ts",
+      "totalLines": 226,
+      "legacyLoc": 199,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/inline-iife-scope.ts",
+      "totalLines": 245,
+      "legacyLoc": 193,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/identifier-assignment.ts",
+      "totalLines": 230,
+      "legacyLoc": 176,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/shared.ts",
+      "totalLines": 307,
+      "legacyLoc": 175,
+      "sharedLoc": 48
+    },
+    {
+      "file": "src/codegen/expressions/builtin-prototype-constructor.ts",
+      "totalLines": 189,
+      "legacyLoc": 154,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/new-non-constructable-value.ts",
+      "totalLines": 258,
+      "legacyLoc": 153,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/internal-call-argument.ts",
+      "totalLines": 154,
+      "legacyLoc": 129,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/closures.ts",
+      "totalLines": 4679,
+      "legacyLoc": 125,
+      "sharedLoc": 3872
+    },
+    {
+      "file": "src/codegen/expressions/late-imports.ts",
+      "totalLines": 900,
+      "legacyLoc": 125,
+      "sharedLoc": 590
+    },
+    {
+      "file": "src/codegen/expressions/class-dynamic-member-call.ts",
+      "totalLines": 209,
+      "legacyLoc": 122,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/transferred-native-proto-call.ts",
+      "totalLines": 199,
+      "legacyLoc": 109,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/object-method-rest-abi.ts",
+      "totalLines": 133,
+      "legacyLoc": 106,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/transferred-proto-assignment.ts",
+      "totalLines": 202,
+      "legacyLoc": 96,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/sloppy-this-toobject.ts",
+      "totalLines": 178,
+      "legacyLoc": 95,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/is-prototype-of-call-arm.ts",
+      "totalLines": 216,
+      "legacyLoc": 93,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/argc-extras.ts",
+      "totalLines": 113,
+      "legacyLoc": 90,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/promise-static-call-typeerror.ts",
+      "totalLines": 120,
+      "legacyLoc": 87,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/non-constructable.ts",
+      "totalLines": 186,
+      "legacyLoc": 80,
+      "sharedLoc": 7
+    },
+    {
+      "file": "src/codegen/statements/for-await-helpers.ts",
+      "totalLines": 156,
+      "legacyLoc": 79,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/implicit-global-binding.ts",
+      "totalLines": 193,
+      "legacyLoc": 78,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/realm-global-member-call.ts",
+      "totalLines": 129,
+      "legacyLoc": 76,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/eval-annexb.ts",
+      "totalLines": 90,
+      "legacyLoc": 74,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/error-prototype-tostring.ts",
+      "totalLines": 98,
+      "legacyLoc": 73,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/shadowed-error-ctor.ts",
+      "totalLines": 138,
+      "legacyLoc": 73,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/static-callable-field.ts",
+      "totalLines": 77,
+      "legacyLoc": 65,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/closure-sig-match.ts",
+      "totalLines": 104,
+      "legacyLoc": 64,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/proto-override.ts",
+      "totalLines": 475,
+      "legacyLoc": 64,
+      "sharedLoc": 218
+    },
+    {
+      "file": "src/codegen/expressions/runtime-eval-assignment.ts",
+      "totalLines": 98,
+      "legacyLoc": 64,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/eval-completion-value.ts",
+      "totalLines": 213,
+      "legacyLoc": 60,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/computed-member-reference.ts",
+      "totalLines": 92,
+      "legacyLoc": 59,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/inline-iife-arguments.ts",
+      "totalLines": 113,
+      "legacyLoc": 56,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/for-in-static-unroll.ts",
+      "totalLines": 120,
+      "legacyLoc": 49,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/null-guard-alias.ts",
+      "totalLines": 68,
+      "legacyLoc": 49,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/test262-error-ctor.ts",
+      "totalLines": 87,
+      "legacyLoc": 44,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/eval-alias.ts",
+      "totalLines": 59,
+      "legacyLoc": 43,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/host-call-fallback.ts",
+      "totalLines": 85,
+      "legacyLoc": 40,
+      "sharedLoc": 24
+    },
+    {
+      "file": "src/codegen/expressions/promise-subclass.ts",
+      "totalLines": 280,
+      "legacyLoc": 40,
+      "sharedLoc": 125
+    },
+    {
+      "file": "src/codegen/expressions/dynamic-element-host-call.ts",
+      "totalLines": 49,
+      "legacyLoc": 37,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/counted-string-append.ts",
+      "totalLines": 49,
+      "legacyLoc": 36,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/runtime-eval-callable-result.ts",
+      "totalLines": 43,
+      "legacyLoc": 31,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/array-constructor-carrier.ts",
+      "totalLines": 46,
+      "legacyLoc": 29,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/element-access-callee-normalization.ts",
+      "totalLines": 128,
+      "legacyLoc": 29,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/typed-array-host-carrier.ts",
+      "totalLines": 111,
+      "legacyLoc": 28,
+      "sharedLoc": 31
+    },
+    {
+      "file": "src/codegen/expressions/valueof-fallback.ts",
+      "totalLines": 39,
+      "legacyLoc": 28,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/inlined-call-receiver.ts",
+      "totalLines": 140,
+      "legacyLoc": 27,
+      "sharedLoc": 3
+    },
+    {
+      "file": "src/codegen/expressions/new-builtin-static-alias.ts",
+      "totalLines": 65,
+      "legacyLoc": 24,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/new-target.ts",
+      "totalLines": 98,
+      "legacyLoc": 23,
+      "sharedLoc": 19
+    },
+    {
+      "file": "src/codegen/statements/var-slot-reuse.ts",
+      "totalLines": 62,
+      "legacyLoc": 23,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/undeclared-callee.ts",
+      "totalLines": 71,
+      "legacyLoc": 21,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/for-of-rest-object-default.ts",
+      "totalLines": 38,
+      "legacyLoc": 21,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/plain-object-dynamic-receiver-call.ts",
+      "totalLines": 73,
+      "legacyLoc": 19,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/void-operand.ts",
+      "totalLines": 28,
+      "legacyLoc": 19,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/apply-arguments-vector.ts",
+      "totalLines": 30,
+      "legacyLoc": 16,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/dynamic-function-ctor-value.ts",
+      "totalLines": 43,
+      "legacyLoc": 11,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/spread-arguments-call.ts",
+      "totalLines": 220,
+      "legacyLoc": 10,
+      "sharedLoc": 140
+    },
+    {
+      "file": "src/codegen/expressions/builtin-class-names.ts",
+      "totalLines": 65,
+      "legacyLoc": 0,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/expressions/eval-source.ts",
+      "totalLines": 16,
+      "legacyLoc": 0,
+      "sharedLoc": 3
+    },
+    {
+      "file": "src/codegen/expressions/identifier-module-storage.ts",
+      "totalLines": 309,
+      "legacyLoc": 0,
+      "sharedLoc": 254
+    },
+    {
+      "file": "src/codegen/expressions/this-keyword.ts",
+      "totalLines": 207,
+      "legacyLoc": 0,
+      "sharedLoc": 178
+    },
+    {
+      "file": "src/codegen/statements/functions.ts",
+      "totalLines": 4,
+      "legacyLoc": 0,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/index.ts",
+      "totalLines": 4,
+      "legacyLoc": 0,
+      "sharedLoc": 0
+    },
+    {
+      "file": "src/codegen/statements/tdz.ts",
+      "totalLines": 133,
+      "legacyLoc": 0,
+      "sharedLoc": 94
+    }
+  ]
+}
