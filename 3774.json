@@ -1,8 +1,11 @@
 {
   "id": "3774",
   "assignee": "ttraenkler/codex-es5-regexp-backref-progress",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3774-regexp-backref-empty-progress",
   "claimed_at": "2026-07-28T19:05:43Z",
-  "updated_at": "2026-07-28T19:05:43Z"
+  "updated_at": "2026-09-03T09:43:03Z",
+  "write_id": "23780-91froupv",
+  "released_at": "2026-09-03T09:43:03Z"
 }
