@@ -58,6 +58,7 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
+import { parameterMayBeOmitted } from "../declarations.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
@@ -1886,6 +1887,22 @@ export function compileIdentifierCall(
           const paramName =
             paramDecl && ts.isParameter(paramDecl) ? (paramDecl.name as ts.BindingName | undefined) : undefined;
           if (paramName && (ts.isObjectBindingPattern(paramName) || ts.isArrayBindingPattern(paramName))) {
+            sigParamWasmTypes.push({ kind: "externref" });
+            continue;
+          }
+          // An OMITTABLE parameter (`size?: number`, `@param {number=} size`,
+          // `@param {number} [size]`) is widened to externref by the callee —
+          // see `parameterMayBeOmitted` in declarations.ts, whose whole purpose
+          // is that a caller which omits the argument must deliver `undefined`
+          // and not a padded `0`. This call site builds its wrapper signature
+          // from the DECLARED types, so without the same widening it asks for a
+          // scalar the compiled callee never declared, and the missing-argument
+          // pad below re-introduces the `0` the callee's widening exists to
+          // prevent. Witness: webpack's `formatSize()` answered `"0 bytes"`
+          // instead of `"unknown size"` whenever the function reached a caller
+          // through this path (a default export), while the byte-identical
+          // named export was correct.
+          if (paramDecl && ts.isParameter(paramDecl) && parameterMayBeOmitted(paramDecl)) {
             sigParamWasmTypes.push({ kind: "externref" });
             continue;
           }

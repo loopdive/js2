@@ -2047,10 +2047,20 @@ export function computeClosureWrapperSig(
     // `undefined`. Keep the closure boundary dynamic unless the source has an
     // initializer (whose existing default sentinel is handled below).
     const jsdocType = p.type === undefined ? ts.getJSDocType(p) : undefined;
+    // The two JSDoc spellings of "optional" are independent, not alternatives:
+    // `@param {number=} size` puts the optionality in the TYPE, while
+    // `@param {number} [size]` puts it in the TAG and leaves the type a plain
+    // `number`. Testing the tag only when there is no type node therefore
+    // missed every bracketed parameter that also carries a type — which is all
+    // of them — so the bracketed spelling kept its scalar ABI. That is not just
+    // the `0`-instead-of-`undefined` pad: the `typeof` lowering takes an
+    // externref, so a bracketed parameter guarded by `typeof` emitted an
+    // INVALID module (`call[0] expected type externref, found local.get of
+    // type f64`). `parameterMayBeOmitted` in declarations.ts has always ORed
+    // the two; this aligns the closure boundary with it.
     const jsdocOptional =
-      jsdocType !== undefined
-        ? ts.isJSDocOptionalType(jsdocType)
-        : ts.getJSDocParameterTags(p).some((tag) => tag.isBracketed === true);
+      (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
+      ts.getJSDocParameterTags(p).some((tag) => tag.isBracketed === true);
     if (
       preservesRawArguments &&
       p.type === undefined &&
