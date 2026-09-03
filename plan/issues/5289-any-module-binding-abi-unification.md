@@ -231,3 +231,45 @@ would have caught #2 automatically (a global's carrier is never a `func`), and
 "which axis did I vary, and is it the axis the claim is about" would have
 caught #1. Neither costs anything; both were skipped because the output looked
 like data.
+
+
+## Sub-question 1 ANSWERED — from the source, not a probe
+
+`src/codegen/index.ts`, inside `resolveWasmType`:
+
+```ts
+// any/unknown -> ref_null $AnyValue (boxed any) when available.
+if (ctx.fast && tsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
+  ensureAnyValueType(ctx);
+```
+
+- **The fast carrier for `any` IS `$AnyValue`, on both targets.**
+  `ensureAnyValueType(ctx)` is one per-module allocator, so the differing WAT
+  indices (34 gc / 45 standalone) are per-module numbering, nothing more.
+- **The branch is gated on `ctx.fast` alone — no target term.** That confirms
+  the four-cell measurement from an unrelated direction: same axis, same
+  conclusion, two methods that share no machinery.
+- Compatibility falls through to `externref`.
+
+**Why this reading is trustworthy where the probe was not**, which is the part
+worth carrying forward: it is a *single conditional naming both the flag and
+the type*, not a value recovered through an index space I had to reconstruct.
+The failure mode that produced two wrong answers earlier — a real value from
+the wrong space — has no room to occur in a direct read of the deciding
+branch. **Prefer the deciding line of source over an artifact of the output
+whenever the question is "what does the compiler decide".** The artifact is
+downstream of exactly the reconstruction that can go wrong.
+
+### What it narrows for step 2
+
+The two carriers are `(ref null $AnyValue)` versus `externref` — they differ by
+**the presence of a tagged box, not by spelling**. That is `unifiable`-shaped,
+not `irreducible`: compatibility adopting `$AnyValue` is a real option, since
+the type already exists and `src/codegen/any-helpers.ts` carries the full
+box/unbox surface (`ensureAnyValueType` has 6+ call sites there).
+
+**Still the lane's decision, and still not free.** Either direction is a
+Program-ABI change and owes its own byte-neutrality argument under criterion 2.
+But the space is now one plausible direction plus its cost, rather than three
+open options — and `irreducible` should not be adopted without arguing against
+this specific finding.
