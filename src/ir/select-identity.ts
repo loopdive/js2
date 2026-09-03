@@ -1289,7 +1289,16 @@ export function planIrCompilationByIdentity(
         if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
           if (
             !member.name ||
-            (!exactAccessorClass && (phase1MemberName(member.name) === null || classElementIsStatic(member)))
+            (!exactAccessorClass &&
+              // (#3522 W1-A) `phase1MemberName` now names a `PrivateIdentifier`,
+              // which admits private METHODS. Private ACCESSORS are a separate,
+              // out-of-scope shape (their descriptor projection has its own
+              // exact-placement rules), so this arm keeps refusing them
+              // explicitly — preserving its pre-slice verdict byte for byte
+              // rather than inheriting the widened predicate.
+              (phase1MemberName(member.name) === null ||
+                ts.isPrivateIdentifier(member.name) ||
+                classElementIsStatic(member)))
           ) {
             if (trackFallbacks) reasons.set(unit.unitId, "class-method");
             continue;

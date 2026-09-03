@@ -18,6 +18,7 @@ import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
@@ -380,7 +381,11 @@ export function tryCompileEs5GetPrototypeOfValue(
   if (ts.isArrayLiteralExpression(arg0)) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
   }
-  if (ts.isObjectLiteralExpression(arg0)) {
+  // (#5270 step 2) A colon-form `__proto__` key REPLACES the literal's
+  // [[Prototype]] during evaluation, so folding to `%Object.prototype%` here
+  // would answer the wrong object (`__proto__-value-obj`, `-value-null`). Let
+  // the runtime `__getPrototypeOf` read the field the literal actually wrote.
+  if (ts.isObjectLiteralExpression(arg0) && !objectLiteralHasColonProto(ctx, arg0)) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   if (ts.isIdentifier(arg0)) {
@@ -391,7 +396,7 @@ export function tryCompileEs5GetPrototypeOfValue(
     if (initializer && ts.isArrayLiteralExpression(initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
     }
-    if (initializer && ts.isObjectLiteralExpression(initializer)) {
+    if (initializer && ts.isObjectLiteralExpression(initializer) && !objectLiteralHasColonProto(ctx, initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
     }
     if (initializer && (ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer))) {
@@ -452,7 +457,9 @@ function hasProvablyNonNullOrdinaryPrototype(ctx: CodegenContext, expr: ts.Expre
     seen.add(current);
     if (
       isTopLevelThis(current) ||
-      ts.isObjectLiteralExpression(current) ||
+      // (#5270 step 2) `{ __proto__: null }` is an object literal whose
+      // prototype IS null — the one literal shape this fold must not claim.
+      (ts.isObjectLiteralExpression(current) && !objectLiteralHasColonProto(ctx, current)) ||
       ts.isArrayLiteralExpression(current) ||
       ts.isFunctionExpression(current) ||
       ts.isArrowFunction(current)

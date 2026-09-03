@@ -261,19 +261,30 @@ describe("#3520 imported target identity", () => {
     );
   });
 
-  it("preserves overload and live-reassignment rejection while retaining stable IDs", () => {
+  // (#5300) This case asserted that EVERY overload set is rejected. The
+  // resolver now admits a set with one bodied implementation whose signatures
+  // all lower the same way — the imported path shares `targetForSymbol` with
+  // the same-file direct-call path, so it widens with it. A set whose
+  // signatures diverge (`divergent` below) is still rejected, as is a live
+  // reassignment.
+  it("admits a compatible overload set, keeps divergent-overload and live-reassignment rejection", () => {
     const graph = fixture({
       "/repo/provider.ts": `
         function overloaded(value: number): number;
         function overloaded(value: number): number { return value; }
         export { overloaded };
+        function divergent(value: number): number;
+        function divergent(value: number, extra: number): number;
+        function divergent(value: number, extra?: number): number { return value + (extra ?? 0); }
+        export { divergent };
         export function live(value: number): number { return value + 1; }
         [live] = [function (value: number): number { return value + 2; }];
         export function stable(value: number): number { return value + 3; }
       `,
       "/repo/entry.ts": `
-        import { overloaded, live, stable } from "./provider";
+        import { overloaded, divergent, live, stable } from "./provider";
         overloaded(1);
+        divergent(1);
         live(1);
         stable(1);
       `,
@@ -282,7 +293,16 @@ describe("#3520 imported target identity", () => {
     const provider = graph.byName.get("/repo/provider.ts")!;
     const resolver = makeIrIdentityImportedFunctionResolver(graph.checker, graph.sourceFiles, graph.context);
 
-    expect(resolver.resolveImportedFunctionTarget(callIdentifier(entry, "overloaded"))).toBeUndefined();
+    // `functionDeclaration` returns the BODIED member: the implementation is
+    // the target, never one of the bodiless signatures.
+    const overloadedDeclaration = functionDeclaration(provider, "overloaded");
+    expect(resolver.resolveImportedFunctionTarget(callIdentifier(entry, "overloaded"))).toMatchObject({
+      targetUnitId: functionId(graph.context, overloadedDeclaration),
+      targetName: "overloaded",
+      declaration: overloadedDeclaration,
+      legacyProjection: "unambiguous",
+    });
+    expect(resolver.resolveImportedFunctionTarget(callIdentifier(entry, "divergent"))).toBeUndefined();
     expect(resolver.resolveImportedFunctionTarget(callIdentifier(entry, "live"))).toBeUndefined();
     const stableDeclaration = functionDeclaration(provider, "stable");
     expect(resolver.resolveImportedFunctionTarget(callIdentifier(entry, "stable"))).toMatchObject({
@@ -293,7 +313,11 @@ describe("#3520 imported target identity", () => {
     });
 
     const legacy = makeIrImportedFunctionResolver(graph.checker, graph.sourceFiles);
-    expect(legacy.resolveImportedFunction(callIdentifier(entry, "overloaded"))).toBeUndefined();
+    expect(legacy.resolveImportedFunction(callIdentifier(entry, "overloaded"))).toEqual({
+      targetName: "overloaded",
+      declaration: overloadedDeclaration,
+    });
+    expect(legacy.resolveImportedFunction(callIdentifier(entry, "divergent"))).toBeUndefined();
     expect(legacy.resolveImportedFunction(callIdentifier(entry, "live"))).toBeUndefined();
     expect(legacy.resolveImportedFunction(callIdentifier(entry, "stable"))).toEqual({
       targetName: "stable",

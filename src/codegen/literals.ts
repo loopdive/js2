@@ -1137,6 +1137,37 @@ function compileObjectLiteralWithAccessors(
           fctx.body.push({ op: "local.set", index: objLocal });
         }
       }
+    } else if (
+      // (#5270 step 2) §B.3.1 `__proto__` Property Names in Object
+      // Initializers: a NON-computed `__proto__:` key is NOT an own property —
+      // it runs `object.[[SetPrototypeOf]](value)` when Type(value) is Object
+      // or Null, and is otherwise silently ignored (no property, no error).
+      // `__extern_set(obj, "__proto__", v)` used to store it as an ordinary own
+      // data property in standalone, so `Object.getPrototypeOf` answered the
+      // literal's own prototype and `getOwnPropertyDescriptor` found a
+      // descriptor where the spec wants `undefined`.
+      //
+      // `__object_setPrototypeOf` already implements the whole rule: it
+      // canonicalizes a CALLABLE value to its `$Object` proto-view, coerces any
+      // other non-`$Object` value to a null field, and sets
+      // `OBJ_FLAG_NULL_PROTO` only for a raw JS `null` — so a number / string /
+      // boolean / symbol / undefined value leaves the fresh literal exactly as
+      // it was, with its implicit `%Object.prototype%` terminal. Gated on the
+      // native's presence, so the JS-host lane keeps its `__extern_set` route
+      // (where the host object's real `__proto__` setter does the same job).
+      ts.isPropertyAssignment(prop) &&
+      !ts.isComputedPropertyName(prop.name) &&
+      resolvePropertyNameText(ctx, prop) === "__proto__" &&
+      ctx.funcMap.get("__object_setPrototypeOf") !== undefined
+    ) {
+      fctx.body.push({ op: "local.get", index: objLocal });
+      const protoType = compileExpression(ctx, fctx, prop.initializer, { kind: "externref" });
+      if (!protoType) fctx.body.push({ op: "ref.null.extern" });
+      else if (protoType.kind !== "externref") coerceType(ctx, fctx, protoType, { kind: "externref" });
+      // Resolved AFTER the value compile: it may have pulled a late import,
+      // which shifts every function index captured before it.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_setPrototypeOf")! });
+      fctx.body.push({ op: "drop" }); // returns `obj`
     } else if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
       // __extern_set(obj, key, value)
       let propName: string | undefined;
@@ -1688,6 +1719,24 @@ function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr
   return true;
 }
 
+/**
+ * §B.3.1: a NON-computed `__proto__:` key in an object literal is not an own
+ * property at all — it runs `object.[[SetPrototypeOf]](value)` during literal
+ * evaluation. `['__proto__']: v` and `__proto__() {}` are ordinary own
+ * properties and are deliberately excluded.
+ *
+ * (#5270 step 2) Shared so the `Object.getPrototypeOf(<literal>)` static fold
+ * declines exactly the literals whose [[Prototype]] the colon form changes.
+ */
+export function objectLiteralHasColonProto(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  return expr.properties.some(
+    (p) =>
+      ts.isPropertyAssignment(p) &&
+      !ts.isComputedPropertyName(p.name) &&
+      resolvePropertyNameText(ctx, p) === "__proto__",
+  );
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
@@ -1720,14 +1769,10 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the
       // struct to a dynamic consumer makes its fields invisible as ordinary
-      // own properties. Build the open object instead; `__extern_set` performs
-      // the required prototype setter operation in both runtime profiles.
-      expr.properties.some(
-        (p) =>
-          ts.isPropertyAssignment(p) &&
-          !ts.isComputedPropertyName(p.name) &&
-          resolvePropertyNameText(ctx, p) === "__proto__",
-      ) ||
+      // own properties. Build the open object instead; the PropertyAssignment
+      // arm of `compileObjectLiteralWithAccessors` routes it to
+      // `__object_setPrototypeOf` rather than `__extern_set` (#5270 step 2).
+      objectLiteralHasColonProto(ctx, expr) ||
       // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
       // — a legal JS property) cannot be a struct field: the field-name
       // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)

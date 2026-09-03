@@ -213,6 +213,7 @@ export function createCodegenContext(
     staticInitExprs: [],
     classExpressionStaticInitExprs: new Map(),
     closureCounter: 0,
+    trampolineForwarders: new Set(),
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),
     closureMinimumArgumentCountByFuncTypeIdx: new Map(),
