@@ -1,10 +1,11 @@
 {
   "id": "5298",
   "assignee": "ttraenkler/opus-5298",
-  "requested_by": "ttraenkler/opus-5298",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5298-kind-neutrality-stable-evidence",
   "claimed_at": "2026-09-03T10:43:09Z",
-  "updated_at": "2026-09-03T10:43:09Z",
-  "write_id": "30767-6vwyx9je"
+  "updated_at": "2026-09-03T12:26:10Z",
+  "write_id": "31180-u5405sym",
+  "released_at": "2026-09-03T12:26:10Z"
 }
