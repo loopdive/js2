@@ -2427,3 +2427,46 @@ has to re-measure by hand, which is how the 59,676 figure became unverifiable.
 standalone population than the playground (see the corpus-mismatch correction
 above), and it is *a* measured population under CI, which is strictly better
 than none. Choosing the representative corpus remains open.
+
+### CORRECTION — the dogfood legacy-body counts above are inflated ~4x (see `#5283`)
+
+Every "legacy bodies" figure this file quotes for `tests/dogfood/corpus` — 33
+single-host, 31 standalone — is built on `IrObservedOutcome.legacyBodyEmitted`,
+and that flag is set on units where **no direct pass ran**. Counting rows with
+`legacyBodyEmitted === true` and `(directBodyEmissions ?? 0) === 0`:
+
+| corpus / lane | quoted above | of which phantom | real direct emissions |
+| --- | --: | --: | --: |
+| dogfood, single-host | 33 | 26 | **7** |
+| dogfood, standalone | 31 | 23 | **8** |
+| playground uncovered, single-host | 10 | 0 | 10 |
+| playground uncovered, standalone | 14 | 0 | 14 |
+
+**The playground figures stand; the dogfood ones do not.** Filed as `#5283`,
+confirmed on `tests/fixtures/extern-demo.ts` where the row reads
+`legacyBodyEmitted: true` with `directBodyEmissions` **absent**.
+
+**What this does and does not change in the sections above.** It touches only
+the legacy-body rows. Everything else was read from different fields and stands
+unchanged:
+
+- `unsupported` counts (33 / 31 dogfood, 8 / 14 playground) come from `kind` —
+  unaffected.
+- `emitted` / IR-body counts (1 and 0 on dogfood) come from `kind` and
+  `irBodyEmitted` — unaffected.
+- **"module-init adoption is 0 of 20 executable units"** was derived from
+  module-init `kind` (`unsupported` / `non-executable` / `emitted`), not from
+  this flag — **unaffected, and it remains the load-bearing R4 finding.**
+- The reject-arm breakdown (`code`), the per-file blocking-category table, and
+  the `scalarKind` root cause are all independent of it.
+
+So the R4 conclusion survives; what shrinks is the claim about how much the
+direct front end is still *emitting* on that corpus.
+
+**Method, for the fifth time tonight and the sharpest instance.** This was found
+by executing gap-6b's own P4 item — an instruction sitting in this repo to
+"confirm it with one compile and file it as its own issue" — rather than by
+re-reading my own numbers. The telemetry I spent the session counting had a
+field whose name and meaning disagree, and nothing in re-checking my arithmetic
+would ever have surfaced it. **A measurement is only as good as the field it
+reads, and the field is worth one compile of scepticism.**
