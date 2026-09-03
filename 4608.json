@@ -1,10 +1,11 @@
 {
   "id": "4608",
   "assignee": "ttraenkler/codex-ir-lead",
-  "requested_by": "ttraenkler/codex-ir-lead",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4608-declared-globals-producer",
   "claimed_at": "2026-08-22T02:35:47Z",
-  "updated_at": "2026-08-22T02:35:47Z",
-  "write_id": "58624-32m575mj"
+  "updated_at": "2026-09-03T09:49:35Z",
+  "write_id": "16312-kw01bdu1",
+  "released_at": "2026-09-03T09:49:35Z"
 }
