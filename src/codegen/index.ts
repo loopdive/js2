@@ -29,6 +29,7 @@ import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -6788,6 +6789,9 @@ export function generateModule(
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
     profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
+    // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
+    // types. Nothing after this retypes a function or edits a body.
+    promoteTrampolineTailCalls(ctx);
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);

@@ -67,7 +67,14 @@ loc-budget-allow:
   # halves of the decision cannot drift apart.
   - src/codegen/module-init-collection.ts
   - src/codegen/index.ts
+  # 2026-09-03 (merge-queue park fix): `ctx.trampolineForwarders` — the set of
+  # `__fn_tramp_*` handles that `promoteTrampolineTailCalls` re-checks against
+  # FINAL callee types at finalize (+6 lines of doc-comment + field).
+  - src/codegen/context/types.ts
 func-budget-allow:
+  # 2026-09-03 (merge-queue park fix): one initialiser line for
+  # `trampolineForwarders` in the context literal (+1).
+  - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/statements/control-flow.ts::canTailCall
   - src/codegen/statements/control-flow.ts::canTailCallRef
   - src/codegen/statements/control-flow.ts::compileReturnStatement
@@ -1472,3 +1479,88 @@ this issue already records as pre-existing red on `origin/main`.
 Standalone and wasi compiles of the F1/F2 probe shapes carry **no `env::`
 imports**. All five source-ratchet gates pass, including with
 `LOC_GATE_BASE=origin/main`.
+
+### Merge-queue park (2026-09-03) — trampoline `return_call` fails Wasm validation on async shapes
+
+PR #5534 was auto-parked by the `merge_group` re-validation: **Standalone
+pass-count high-water floor (#2097)** measured the merged state at
+**34,508** against mark 34,771 / floor 34,721 (delta −263), while `main`'s own
+promoted baseline (a full run at 15:26 UTC) is **34,833** — so the PR cost
+roughly **325 standalone rows** after three review rounds and a green 8-shard
+equivalence gate. `main` itself was confirmed healthy: #5540's full
+`merge_group` run at 17:32 UTC passed the same floor.
+
+**Localisation.** The merged-report artifact is on a host the container's
+egress proxy blocks, and a full local standalone sweep measured at ~33
+rows/min (~24 h), so a **random 1,200-row sample of baseline-passing rows**
+was run through the CI-equivalent vitest harness instead. In the first 338
+rows it produced exactly one genuine family (5 hits) — every other candidate
+was A/B'd against a clean `main` tree and shown to fail there too (the local
+runner scores `regexp-modifiers` and two async-generator early-error
+negatives differently from CI; those are environment artifacts, not this
+PR's). Four other hypotheses were probed and eliminated first: the
+`testTypedArray.js` harness `Object.getPrototypeOf(Int8Array)` (50/50 pass),
+ES5 `caller`/`arguments` poison rows and `getPrototypeOf` on ordinary
+objects (100/100 pass), harness `var` symbol collisions with the
+shape-widening collector (the harness declares no object-literal `var` at
+all), and compile-time blow-up (median lane/base `compile_ms` ratio 1.08).
+
+**The defect.** Step 1.3 changed the closure trampoline's forwarding
+instruction from `call` to `return_call` whenever `valTypesMatch` said the
+lifted func type's results agreed with the callee's. That decision was made
+at **mint time**, and at mint time an async function's registered type is
+still the `() -> ()` placeholder — `rewriteFuncResultType` rewrites it to
+`() -> externref` only after the body compiles. So the guard compared against
+a type that was not the callee's final type, and the validator rejected the
+module:
+
+```
+test/language/statements/for-await-of/async-func-dstr-const-ary-ptrn-elision-exhausted.js
+  base: pass
+  lane: compile_error — WebAssembly.Module(): Compiling function #106:"__fn_tramp_fn_28"
+        failed: return_call: tail call type error @+116367
+```
+
+The family it hits is `for-await-of` / async destructuring: the baseline has
+**1,554 passing standalone rows** in the async families (for-await-of 735,
+expressions/async-generator 507, statements/async-generator 87,
+expressions/async-function 84, statements/async-function 67,
+async-arrow-function 55, await 13) — all ES2017+, so **none was in any list
+this lane, its plan, or its three adversarial reviews measured**, and the
+equivalence gate has no async rows either. A row list drawn from ES2015
+failures is blind by construction to an ES2018 family that used to pass.
+
+**The fix** (`src/codegen/closures/funcref-as-closure.ts`,
+`promoteTrampolineTailCalls`). The trampoline is emitted with a plain `call`
+and its handle recorded in `ctx.trampolineForwarders`; a finalize pass in
+`generateModule` — after `rewriteFuncResultType`, inlining, late-import
+shifts, `stackBalance` and the `extern.convert_any` repair — re-reads the
+**final** module and rewrites that one trailing opcode to `return_call` only
+when the callee's result list is identical to the trampoline's own declared
+results (same kind, same `typeIdx`, `ref` vs `ref null` distinguished).
+Because the `call` is the last instruction of a body that already validates,
+the operand stack there is exactly the callee's parameters, and `return_call`
+ignores everything below — so identical results make the swap
+type-preserving with no further condition. Anything else keeps the plain
+`call`, exactly as before this wave. The guard is the Wasm tail-call typing
+rule itself; there is deliberately no per-shape exclusion list.
+
+**Verified on the fixed tree** (node oracle, base = `git archive` of
+`origin/main` 2510fae02a):
+
+| check | result |
+| --- | --- |
+| the two repro rows | compile_error → pass; base still pass |
+| all 1,242 baseline-passing rows in `for-await-of/` + `expressions/async-generator/` | **1,240 pass**, 2 early-error negatives fail identically on base (environment) |
+| the 18 baseline-passing `tco-*` rows that motivated step 1.3 | **18/18 pass** — the promotion still lands where it is valid |
+| host lane, 3 closure-heavy programs, sha256 of the emitted binaries | **byte-identical** lane vs base |
+| TS7 typecheck; five ratchet gates; both budget gates with `LOC_GATE_BASE=origin/main` | all green |
+
+**Process note.** This is the seventh reviewed wave and the seventh
+regression that the lane's own measurements could not see, but it is the
+first one the *reviews* also missed — three rounds probed tail calls
+(try/catch, try/finally, iterator close, generators and async functions in
+tail position) and found them "identical to base", because every probe was a
+shape the reviewer wrote, not a corpus family. The random sample of
+baseline-passing rows found it in 78 rows. That sample should run **before**
+the wave PR, not after the park.

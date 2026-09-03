@@ -54,23 +54,49 @@ function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration
  * the trampoline frame with the callee's, which is exactly what the forwarder
  * means.
  *
- * Emitted only when the callee's result list matches the trampoline's own — the
- * one soundness requirement of `return_call` (the operand stack below the
- * arguments is polymorphic, so the differing PARAM counts of the two are
- * irrelevant). Falls back to `call` when the callee's type cannot be resolved.
+ * The promotion is NOT decided here (merge-queue park of PR #5534, 2026-09-03):
+ * at mint time the callee's registered type can still be a placeholder — an
+ * async function's `() -> ()` record is rewritten to `() -> externref` by
+ * `rewriteFuncResultType` only after its body compiles — so a result match read
+ * now is not a result match at emission. The trampoline is emitted with a plain
+ * `call` and recorded in `ctx.trampolineForwarders`; `promoteTrampolineTailCalls`
+ * re-decides against the FINAL types once the index spaces are frozen.
  */
-function trampolineForwardCall(ctx: CodegenContext, trampolineTypeIdx: number, funcIdx: number): Instr {
-  const tramp = ctx.mod.types[trampolineTypeIdx];
-  const callee = definedFuncAt(ctx, funcIdx);
-  const calleeType = callee ? ctx.mod.types[callee.typeIdx] : undefined;
-  if (tramp?.kind === "func" && calleeType?.kind === "func") {
-    const a = tramp.results;
+function trampolineForwardCall(funcIdx: number): Instr {
+  return { op: "call", funcIdx };
+}
+
+/**
+ * (#5270 step 1.3, finalize) Promote each recorded trampoline's trailing
+ * `call` to `return_call` when that is provably valid under the Wasm tail-call
+ * rule: the callee's result list is IDENTICAL to the trampoline's own declared
+ * results (same kind, same typeIdx, `ref` vs `ref null` distinguished). Because
+ * the `call` is the LAST instruction of a body that already validates, the
+ * operand stack at that point is exactly the callee's parameters over whatever
+ * lies below — and `return_call` ignores everything below — so identical
+ * results make the swap type-preserving with no further condition. Anything
+ * else keeps the plain `call`, exactly as before #5270.
+ *
+ * Must run after every pass that can retype a function or edit a body
+ * (`rewriteFuncResultType`, inlining, late-import shifts, `stackBalance`, the
+ * extern.convert_any repair): it reads the final module and only rewrites the
+ * opcode of one instruction.
+ */
+export function promoteTrampolineTailCalls(ctx: CodegenContext): void {
+  for (const trampIdx of ctx.trampolineForwarders) {
+    const tramp = definedFuncAt(ctx, trampIdx);
+    const last = tramp?.body[tramp.body.length - 1];
+    if (!tramp || !last || last.op !== "call") continue;
+    const callee = definedFuncAt(ctx, last.funcIdx);
+    const trampType = ctx.mod.types[tramp.typeIdx];
+    const calleeType = callee ? ctx.mod.types[callee.typeIdx] : undefined;
+    if (trampType?.kind !== "func" || calleeType?.kind !== "func") continue;
+    const a = trampType.results;
     const b = calleeType.results;
     if (a.length === b.length && a.every((t, i) => valTypesMatch(t, b[i]!))) {
-      return { op: "return_call", funcIdx };
+      tramp.body[tramp.body.length - 1] = { op: "return_call", funcIdx: last.funcIdx };
     }
   }
-  return { op: "call", funcIdx };
 }
 
 /**
@@ -549,9 +575,10 @@ export function emitFuncRefAsClosure(
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
-    trampolineBody.push(trampolineForwardCall(ctx, liftedFuncTypeIdx, funcIdx));
+    trampolineBody.push(trampolineForwardCall(funcIdx));
 
     const trampolineFuncIdx = mintDefinedFunc(ctx);
+    ctx.trampolineForwarders.add(trampolineFuncIdx);
     pushDefinedFunc(ctx, trampolineFuncIdx, {
       name: trampolineName,
       typeIdx: liftedFuncTypeIdx,
@@ -631,9 +658,10 @@ export function emitFuncRefAsClosure(
   for (let i = 0; i < userParams.length; i++) {
     trampolineBody.push({ op: "local.get", index: i + 1 });
   }
-  trampolineBody.push(trampolineForwardCall(ctx, liftedFuncTypeIdx, funcIdx));
+  trampolineBody.push(trampolineForwardCall(funcIdx));
 
   const trampolineFuncIdx = mintDefinedFunc(ctx);
+  ctx.trampolineForwarders.add(trampolineFuncIdx);
   pushDefinedFunc(ctx, trampolineFuncIdx, {
     name: trampolineName,
     typeIdx: liftedFuncTypeIdx,
