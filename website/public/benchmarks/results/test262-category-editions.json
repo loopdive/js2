@@ -1085,20 +1085,6 @@
       "skip": 0
     }
   },
-  "built-ins/SharedArrayBuffer": {
-    "ES2017": {
-      "pass": 51,
-      "fail": 9,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2022": {
-      "pass": 28,
-      "fail": 16,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/decodeURI": {
     "ES2015": {
       "pass": 0,
@@ -1117,6 +1103,20 @@
     "ES2016": {
       "pass": 1,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/SharedArrayBuffer": {
+    "ES2017": {
+      "pass": 51,
+      "fail": 9,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2022": {
+      "pass": 28,
+      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1233,6 +1233,14 @@
       "skip": 0
     }
   },
+  "built-ins/DisposableStack": {
+    "ES2027": {
+      "pass": 77,
+      "fail": 16,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/reserved-words": {
     "ES5": {
       "pass": 13,
@@ -1257,14 +1265,6 @@
     "ES2017": {
       "pass": 0,
       "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/DisposableStack": {
-    "ES2027": {
-      "pass": 77,
-      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1301,6 +1301,14 @@
     "ES2023": {
       "pass": 0,
       "fail": 64,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/computed-property-names": {
+    "ES2015": {
+      "pass": 28,
+      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1348,14 +1356,6 @@
       "pass": 1,
       "fail": 0,
       "ce": 12,
-      "skip": 0
-    }
-  },
-  "language/computed-property-names": {
-    "ES2015": {
-      "pass": 28,
-      "fail": 16,
-      "ce": 0,
       "skip": 0
     }
   },
