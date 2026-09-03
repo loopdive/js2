@@ -1531,3 +1531,53 @@ Two facts the plan did not state, both confirmed against node as the oracle:
   negative control so this change cannot quietly "fix" it into Resolve.
 - Pre-existing, unrelated, NOT touched here: `Promise.resolve(w).then(cb)` where
   `w.then = 5` runs neither callback in standalone; node throws a TypeError.
+
+### r3 pass summary (2026-09-03, Opus implementer)
+
+Base `91d4999050de75d8e71e7ec6bc18f49952c9d3bf`. Five of the ten r3 steps
+landed, each committed separately after its own before/after measurement.
+
+| step | plan claim | verified | not claimed |
+| --- | ---: | ---: | --- |
+| R3-1 capability executor `undefined` slot | 4 | **4** | — |
+| R3-8 boolean `.then` result box | 2 | **2** | — |
+| R3-10 evolving `var` is not a nullish proof | 2 | **2** | `executor-function-not-a-constructor.js` (#3371, as the plan predicted) |
+| R3-9 GetCapabilitiesExecutor metadata carrier | 3 | **2** | `executor-function-prototype.js` — blocked on `Function.prototype.call` in standalone, a gap the plan did not know about |
+| R3-5 own `then` on a native promise | 7 | **6** | `race/resolve-prms-cstm-then.js` — needs the R3-2/R3-3 combinator pipeline |
+| **total** | 18 | **16** | 2 |
+
+NOT STARTED: R3-2 (23), R3-3 (27), R3-4 (7+6), R3-6 (5), R3-7 (2). R3-3 and
+R3-4 depend on R3-2's element pipeline, which is the large one; R3-6 and R3-7
+are independent and still open.
+
+**Ship gate — never worse than base.** Final probe of all 25 rows this pass
+touched: 23 pass / 2 fail, and both failures are the two rows named "not
+claimed" above.
+
+Regression sweep, `--standalone`, 153 rows sampled 1-in-4 from the 611
+`built-ins/Promise/**` rows OUTSIDE the 118-row census (11 batches of ≤15):
+90 pass / 63 non-pass. Every non-pass was A/B'd against the base tree:
+
+- 6 rows outside the `allKeyed`/`allSettled`/`any` families
+  (`prototype/finally/{is-a-method,subclass-reject-count,this-value-then-throws}.js`,
+  `try/{args,promise}.js`, `withResolvers/promise.js`) fail with the IDENTICAL
+  error on base — `__get_builtin` unsupported in standalone, and the
+  `finally`-glue gap. Pre-existing.
+- a 15-row suspect subset of the `allKeyed`/`allSettled` non-passes (every row
+  whose name mentions resolve/then/thenable — the ones R3-5 could plausibly
+  touch) produces the IDENTICAL non-pass set on base.
+
+The sample was drawn as "all Promise rows minus the ES2015 census", so it
+includes post-ES2015 families (`allKeyed` is a proposal) that were never
+passing; that is why the raw pass rate looks low and why every non-pass needed
+the base run. No pass -> non-pass transition was found.
+
+Unit controls, both lanes: 27 (R3-9 batch) + 60 (R3-5 batch) + 26 (R3-8 batch)
++ 15 (R3-1 batch) tests green, plus the two new control files. One
+pre-existing failure appears in `issue-2623-p7b-observable-resolve.test.ts`
+(`Promise.try is not a function`, a host node-version gap) and reproduces on
+base.
+
+Every gate run bare before every commit: LOC, function, coercion-sites,
+oracle-ratchet, dead-exports — plus `LOC_GATE_BASE=origin/main` simulations of
+CI's base for the LOC and function budgets. TS7 typecheck clean.
