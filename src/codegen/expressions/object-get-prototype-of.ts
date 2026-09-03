@@ -363,6 +363,12 @@ export function tryCompileEs5GetPrototypeOfValue(
   if (staticType === "boolean") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Boolean");
   if (staticType === "string") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "String");
   if (staticType === "number") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Number");
+  // (#5269 B-a) §7.1.18 ToObject(symbol) is a Symbol wrapper, whose
+  // [[Prototype]] is `%Symbol.prototype%`. Without this arm the symbol fell to
+  // the declared-name / signature probes below, answered `null`, and every
+  // reflective read off the result (`Symbol.prototype[Symbol.toStringTag]`,
+  // `Object.prototype.toString.call(…)`) then dereferenced a null.
+  if (staticType === "symbol") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Symbol");
 
   const knownPrototypeName = ES5_OBJECT_PROTOTYPES.get(ctx.oracle.declaredNameOf(arg0) ?? "");
   if (knownPrototypeName) {
