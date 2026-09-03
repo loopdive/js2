@@ -1,12 +1,11 @@
 {
   "id": "4390",
   "assignee": "ttraenkler/codex-es5-global-function-descriptors",
-  "requested_by": "ttraenkler/codex-es5-global-function-descriptors",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "",
-  "reserved_at": "2026-08-12T21:35:06Z",
   "claimed_at": "2026-08-12T21:35:06Z",
-  "updated_at": "2026-08-12T21:35:06Z",
-  "write_id": "71329-hdbhwvhn",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:47:31Z",
+  "write_id": "13985-qja6nd23",
+  "released_at": "2026-09-03T09:47:31Z"
 }
