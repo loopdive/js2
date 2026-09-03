@@ -1,10 +1,11 @@
 {
   "id": "4385",
   "assignee": "ttraenkler/codex-es5-function-prototype",
-  "requested_by": "ttraenkler/codex-es5-function-prototype",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4385-function-prototype-callable",
   "claimed_at": "2026-08-12T20:57:39Z",
-  "updated_at": "2026-08-12T20:57:39Z",
-  "write_id": "30615-wkk67f1j"
+  "updated_at": "2026-09-03T09:47:16Z",
+  "write_id": "10072-4k009uvs",
+  "released_at": "2026-09-03T09:47:16Z"
 }
