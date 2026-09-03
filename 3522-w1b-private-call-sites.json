@@ -2,10 +2,11 @@
   "id": "3522",
   "slice": "w1b-private-call-sites",
   "assignee": "ttraenkler/opus-3522-w1b",
-  "requested_by": "ttraenkler/opus-3522-w1b",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3522-w1b-private-call-sites",
   "claimed_at": "2026-09-03T20:19:03Z",
-  "updated_at": "2026-09-03T20:19:03Z",
-  "write_id": "15741-snbr6p7c"
+  "updated_at": "2026-09-03T22:55:54Z",
+  "write_id": "25274-fy7qbo54",
+  "released_at": "2026-09-03T22:55:54Z"
 }
