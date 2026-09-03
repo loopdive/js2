@@ -2367,3 +2367,63 @@ R9 denominator:
 target population, and #4522's `retire-at-R9` table has still not been
 cross-checked against either. Until that is done, every weight in this section
 is a floor on one sample, not an apportionment.
+
+### R9-D1 — implementation plan: put the dogfood corpus under CI as a `baseline` lane
+
+Everything measured above is invisible to CI. `check:ir-only` reports READY on
+five files and nothing watches the rest, so the gap this session found can widen
+again with no signal. The gate already has the mechanism to fix that without
+turning anything red — `IrOnlyLaneReadiness` (`scripts/check-ir-only.ts:48-58`):
+
+> `"baseline"`: the lane is measured and ratcheted against its committed
+> floors/ceilings, but is not asserted to be IR-only. Every anti-vacuity,
+> telemetry-consistency, invariant, and baseline check still applies; only the
+> compile-once assertions are withheld.
+
+That is exactly the shape needed: measure the honest gap, ratchet it so it
+cannot regress, and defer the compile-once assertion until R4 and R6 close it.
+`STANDALONE_ENTRIES` was itself in this mode until #4577 (the comment at `:22-27`
+records the promotion), so there is precedent in this file for both directions.
+
+**Contract.**
+
+1. Add `DOGFOOD_ENTRIES` — the 20 `.js` files under `tests/dogfood/corpus`.
+   Enumerate them explicitly rather than reading the directory: a glob makes the
+   lane's denominator move when someone adds a corpus file, which is the
+   silent-baseline-drift failure this gate exists to prevent.
+2. Add two lanes via the existing `observeLane` — `dogfood-single-host` and
+   `dogfood-standalone` — both `readiness: "baseline"`.
+3. Seed their floors/ceilings with `--policy=hybrid --update`. Today's measured
+   values, which the seed must reproduce or the lane is mis-wired:
+
+   | lane | terminal units | emitted | unsupported | legacy bodies | IR bodies |
+   | --- | --: | --: | --: | --: | --: |
+   | `dogfood-single-host` | 35 | 16 | 8 | 10 | 1 |
+   | `dogfood-standalone` | 35 | 10 | 14 | 14 | 0 |
+
+**The one real obstacle, stated up front.** Seeding writes
+`scripts/ir-only-baseline.json`, and CLAUDE.md says never to edit
+`scripts/*-baseline.json` because main is its sole writer. That rule exists to
+stop a PR banking a regression into a ratchet. Adding a *new lane* is not that —
+no existing floor moves — but it is close enough that the implementer must not
+decide alone. Either get the project lead's explicit sign-off for the one seeding
+commit, or add the lanes with `--policy=hybrid` reporting only and land the
+floors in a follow-up that main's post-merge job writes. **Do not hand-edit the
+JSON to make a gate pass.**
+
+**Acceptance.** `pnpm run check:ir-only` still reports READY (the two new lanes
+are `baseline`, so they cannot fail the verdict); the two lanes appear in the
+human output with the numbers above; and a deliberate regression in either lane
+— e.g. reverting #5498 — makes the gate fail. That last one is the anti-vacuity
+check: a baseline lane that cannot go red is decoration.
+
+**Why it is worth doing before R4 lands.** When R4-M1's string slice lands it
+should unlock exactly two dogfood files (`escapes-unicode.js`, `templates.js` —
+measured on `#3523`). With these lanes in place that shows up as a ratchet
+movement CI records automatically. Without them it is another number somebody
+has to re-measure by hand, which is how the 59,676 figure became unverifiable.
+
+**Not claimed:** that dogfood is the right R9 denominator. It is a better
+standalone population than the playground (see the corpus-mismatch correction
+above), and it is *a* measured population under CI, which is strictly better
+than none. Choosing the representative corpus remains open.
