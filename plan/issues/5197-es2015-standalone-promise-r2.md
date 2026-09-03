@@ -1,7 +1,8 @@
 ---
 id: 5197
 title: "ES2015 standalone promise — r2 residual pass"
-status: in-progress
+status: done
+completed: 2026-09-03
 sprint: current
 created: 2026-08-29
 updated: 2026-09-03
