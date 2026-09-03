@@ -1397,7 +1397,7 @@ function jsArrayParamNeedsOpenObjectCarrier(
  * sentinel path evaluates the initializer in the callee, so widening those
  * parameters would change a proven numeric default ABI for no semantic gain.
  */
-function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+export function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
   const jsdocType = ts.getJSDocType(param);
   const jsdocTags = ts.getJSDocParameterTags(param);
   return (
