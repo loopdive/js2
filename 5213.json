@@ -1,12 +1,11 @@
 {
   "id": "5213",
   "assignee": "ttraenkler/codex-luna-class-prototype-accessor",
-  "requested_by": "ttraenkler/codex-luna-class-prototype-accessor",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "",
-  "reserved_at": "2026-08-30T03:46:33Z",
   "claimed_at": "2026-08-30T03:46:33Z",
-  "updated_at": "2026-08-30T03:46:33Z",
-  "write_id": "37514-vyv5w9n5",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:53:03Z",
+  "write_id": "25215-5t9rsiwy",
+  "released_at": "2026-09-03T09:53:03Z"
 }
