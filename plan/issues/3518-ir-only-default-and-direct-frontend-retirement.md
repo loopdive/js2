@@ -2597,3 +2597,82 @@ would have settled it at any point, and the cost of not running it was an
 unattributed number sitting in a PR body as a permanent open question. Same
 family as this session's other corrections: an assumption about an instrument's
 reach, stated as a fact about the world.
+
+### R10 cost estimate, re-derived from the 2026-09-03 audit
+
+The re-measurement above says any estimate sized against 59,676 understates by
+~26,000 lines. Rather than restate the bigger total, here is the **shape** of
+the work, from `.tmp/legacy-reachability.json` (792 files; cut set
+`statements.ts#compileStatement` + `expressions.ts#compileExpression`).
+
+**The headline 85,823 is not one job. It is two, and they are very unequal.**
+
+| | files | legacy-only lines | shared lines that must survive |
+| --- | --: | --: | --: |
+| **A — whole-file deletion** (`sharedLoc == 0`) | **78** | **65,318** | 0 |
+| **B — split required** (`sharedLoc > 0`) | 29 | 20,505 | 15,956 |
+| total (frontend bucket) | 107 | 85,823 | 15,956 |
+
+**76% of the deletion by line count needs no surgery at all** — 78 files contain
+nothing but legacy-only functions, so R10 removes the file. The ten largest are
+each a single-purpose direct-path emitter:
+
+| file | legacy-only |
+| --- | --: |
+| `expressions/calls.ts` | 8,756 |
+| `expressions/new-super.ts` | 6,299 |
+| `expressions/assignment.ts` | 5,799 |
+| `expressions/call-receiver-method.ts` | 4,346 |
+| `expressions/call-builtin-static.ts` | 4,099 |
+| `statements/loops.ts` | 4,049 |
+| `expressions/call-identifier.ts` | 3,751 |
+| `expressions/operator-assignment.ts` | 3,435 |
+| `binary-ops.ts` | 3,391 |
+| `expressions/call-namespace-static.ts` | 3,162 |
+
+**The real work is the 29 mixed files, and it is smaller than it looks but more
+delicate.** They hold 266 shared functions that survive R10 and must be lifted
+out before the surrounding 20,505 legacy-only lines can go. The distribution is
+sharply bimodal — some are almost entirely shared, others almost entirely
+legacy:
+
+| file | shared (fns) | legacy-only | character |
+| --- | --- | --: | --- |
+| `closures.ts` | 3,872 (48) | 125 | nearly all survives — likely re-bucket, not split |
+| `statements/nested-declarations.ts` | 3,157 (47) | 285 | same |
+| `expressions/identifiers.ts` | 1,980 (28) | 873 | genuine split |
+| `expressions/builtins.ts` | 1,488 (10) | 2,197 | genuine split |
+| `literals.ts` | 766 (20) | 4,879 | mostly deletion, 20 fns to lift |
+| `statements/for-of-destructuring.ts` | 660 (**1**) | 2,041 | one function to lift, then delete |
+| *19 more* | 1,963 | 6,891 | |
+
+`closures.ts` and `nested-declarations.ts` together are 7,029 shared lines
+against 410 legacy-only — those two are probably **mis-bucketed rather than
+mixed**, and confirming that is the cheapest single thing that could shrink
+R10's scope. `for-of-destructuring.ts` is the opposite and the ideal early
+slice: lift **one** function, delete 2,041 lines.
+
+**The export surface is the risk, and it is mostly benign.** 929 legacy-only
+functions — 605 module-private, **324 exported**. Of those 324, **232 sit in
+whole-file-deletable files**, so they vanish with their file and only their
+importers matter; 92 are in mixed files and need individual care.
+`check:dead-exports` is a required part of `quality`, so an export left behind
+after its consumers go fails the gate — which makes the ordering explicit:
+**delete callers before definitions, and run `check:dead-exports` between
+slices, not at the end.**
+
+**Sequencing that falls out of the data**
+
+1. Confirm or re-bucket `closures.ts` / `nested-declarations.ts` (7,029 shared
+   lines hinge on it).
+2. Whole-file deletions, largest first — 78 files, 65,318 lines, no splitting,
+   each independently revertable.
+3. Lift-then-delete the low-shared-count mixed files (`for-of-destructuring.ts`
+   at 1 function, `late-imports.ts` at 9, `builtins.ts` at 10).
+4. The genuine splits last: `identifiers.ts`, `literals.ts`, `destructuring.ts`.
+
+**Caveat, stated because the last estimate lacked one.** These are *reachability*
+buckets under one cut set, not a compile-tested deletion plan — the audit proves
+what is reachable only from `compileStatement`/`compileExpression`, not that
+removing it leaves a building compiler. Every count above is a floor on the work
+and an upper bound on the deletion.
