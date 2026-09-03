@@ -1,10 +1,11 @@
 {
   "id": "4302",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4302-async-package-cfg",
   "claimed_at": "2026-08-13T04:57:55Z",
-  "updated_at": "2026-08-13T04:57:55Z",
-  "write_id": "32898-7okhyku7"
+  "updated_at": "2026-09-03T09:45:52Z",
+  "write_id": "9065-80i4f6sk",
+  "released_at": "2026-09-03T09:45:52Z"
 }
