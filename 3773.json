@@ -1,10 +1,11 @@
 {
   "id": "3773",
   "assignee": "ttraenkler/codex-es5-string-final-sigma",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es5-string-final-sigma",
-  "reserved_at": "2026-07-28T18:55:49Z",
   "claimed_at": "2026-07-28T18:55:49Z",
-  "updated_at": "2026-07-28T18:55:49Z",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:42:58Z",
+  "write_id": "23499-5fztst57",
+  "released_at": "2026-09-03T09:42:58Z"
 }
