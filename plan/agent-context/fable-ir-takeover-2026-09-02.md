@@ -24,6 +24,31 @@ It does not implement. It also owns the merge-queue shepherding for its own PRs.
 
 ## Open PRs and exactly what unblocks each
 
+**#5511 arrived after suspend and is REVIEWED — verdict release, no blocker.**
+`feat(ir)`: string module bindings on both string backends (#3523 R4-M1), the
+largest R9 blocker. Reviewed at
+<https://github.com/loopdive/js2/pull/5511#issuecomment-5519202513>. One `{ kind:
+"string" }` deferring the carrier to the backend, byte-neutral on 66/66, storage
+blocker 20 → 17 rows. Its `scripts/ir-kind-neutrality-baseline.json` edit is
+**sanctioned** — that gate documents author-committed refreshes, unlike the
+loc/func ratchets. CI was still running at suspend (only `cla-check` reported).
+**#5511 and #5509 both append to the end of
+`plan/issues/3523-ir-r4-module-init-compile-once.md` and will conflict: union in
+document order, the #5509 retraction first.**
+
+**It also refuted a finding of mine that was live in #5509.** I had recorded
+that each of the 13 blocked dogfood files has exactly ONE storage-blocking
+category, and concluded payoffs were "independent and additive." That is an
+artifact: `buildModuleBindingGlobals` (`src/ir/integration.ts:5839-5846`) throws
+on the FIRST unrepresentable declaration and the shape-diag recorder sits on that
+throw, so it can only ever report one category per file. `escapes-unicode.js`
+(string line 1, object literal line 5) was recorded string-only and did not move
+under R4-M1, while `templates.js` and `regex.js` did. Retracted in `05f1b64992`
+with the mechanism; **the all-or-nothing rule stands and the category counts are
+lower bounds.** Do not rank storage extensions by them until the diagnostic pass
+is made non-short-circuiting.
+
+
 **Late arrivals — two lane PRs landed after this handoff was first written, both
 `hold`-labelled and both needing a reviewer. A held PR is skipped by
 `auto-enqueue` and strands until someone resolves it, so these are the two most
