@@ -2523,3 +2523,77 @@ above with that correction.
 The playground's "all 8 module-init units are non-executable" is confirmed
 exactly (`non-exec` 8 of 8 module-init, 0 emitted), as is the gate corpus's
 "2 emitted, 3 non-executable" — which is why it is green.
+
+## 2026-09-03 — R10's audit discrepancy is ATTRIBUTED (the July tree was reachable after all)
+
+Earlier tonight this file recorded that the 2026-07-16 audit's headline numbers
+do not reproduce, that three explanations fit equally, and that separating them
+needs the Phase-2f JSON (gone) or the July tree — **"this clone is too shallow"**.
+That second claim was wrong, and it was wrong in the cheapest possible way: a
+shallow clone is not a truncated history, it is a *fetch boundary*.
+
+```bash
+git fetch --shallow-since=2026-07-10 origin main     # exit 0, ~seconds
+git worktree add --detach …/r10-july-audit <2026-07-17 sha>
+node scripts/audit-legacy-reachability.mjs
+```
+
+**The script is byte-identical between the two trees** (`git diff` of
+`scripts/audit-legacy-reachability.mjs` July↔today is empty), so the instrument
+is not a variable and the comparison is clean.
+
+### The measurement
+
+| bucket | files (Jul 17 → Sep 3) | legacy-only fn-lines (Jul 17 → Sep 3) |
+| --- | --- | --- |
+| **frontend** | 47 → 107 | **60,126 → 85,823** |
+| deferred | 3 → 3 | 1,731 → 2,543 |
+| runtime | 58 → 61 | 43,403 → 39,791 |
+| stays | 111 → 621 | 18,751 → 37,270 |
+| *`src/codegen` files scanned* | *219 → 792* | |
+
+### Which of the three explanations was right: two of them, on different columns
+
+- **`legacy-only fn-lines` — the recorded figure is SOUND and the growth is
+  REAL.** The July-era tree measures **60,126** against a recorded **59,676**, a
+  0.75% gap across one day of commits. So the metric reproduces, and
+  60,126 → 85,823 is **+42.7% of genuine growth** in seven weeks. The "front end
+  grew 43%" reading I declined to claim is now supported — by a measurement, not
+  by the coincidence that two numbers differ.
+- **`files` — the recorded 35 is an ARTIFACT.** The same-era tree measures
+  **47**, so the old table's `files` column was undercounting (consistent with
+  it having counted only the rows it printed). The eye-catching 35 → 107 is
+  really 47 → 107, and it sits inside a `src/codegen` population that itself
+  went 219 → 792 files.
+
+### What this means for R10, which is the point of measuring it
+
+**The deletion target is growing, and slightly faster than the surface around
+it.** As a share of all legacy-only fn-lines the front end went **48.5% → 51.9%**
+— so R10 is not being eroded by ordinary IR progress; it is being outpaced.
+The one genuinely reassuring cut is share of *total* fn-lines (legacy-only plus
+shared), **31.4% → 25.2%**, but that falls mostly out of the `stays` bucket
+tripling its shared lines, which is growth R10 never had to delete anyway.
+
+Two consequences worth acting on:
+
+1. **R10's cost estimate must be re-derived, not inherited.** Any plan sized
+   against 59,676 is understating by ~26,000 lines.
+2. **This should be a periodic measurement, not a one-off.** The whole reason
+   tonight's re-run was ambiguous is that July left no committed artifact.
+   `plan/log/3090-legacy-reachability-2026-09-03.json` fixes that going forward
+   for one date; a cheap recurring capture would let the *rate* be read directly
+   instead of reconstructed under a fetch boundary.
+
+**Correction to a figure recorded earlier tonight:** the frontend legacy-only
+count appears as 85,609 in the #5509 body and 85,823 here. Both are real —
+`main` advanced between the two runs and this branch merged it. The later number
+is the one measured against the July tree in the same session, so it is the one
+the comparison above uses.
+
+**Method note.** The claim "the July tree is unreachable" was never tested; it
+was inferred from `is-shallow-repository = true`. One `git fetch --shallow-since`
+would have settled it at any point, and the cost of not running it was an
+unattributed number sitting in a PR body as a permanent open question. Same
+family as this session's other corrections: an assumption about an instrument's
+reach, stated as a fact about the world.
