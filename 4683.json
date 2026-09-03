@@ -1,12 +1,11 @@
 {
   "id": "4683",
   "assignee": "codex/es6-language-tail-wave4b",
-  "requested_by": "codex/es6-language-tail-wave4b",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "",
-  "reserved_at": "2026-08-25T05:17:44Z",
   "claimed_at": "2026-08-25T05:17:44Z",
-  "updated_at": "2026-08-25T05:17:44Z",
-  "write_id": "24508-wa740d3r",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:50:30Z",
+  "write_id": "21559-rldil9uc",
+  "released_at": "2026-09-03T09:50:30Z"
 }
