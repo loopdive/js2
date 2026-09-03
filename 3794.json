@@ -1,8 +1,11 @@
 {
   "id": "3794",
   "assignee": "ttraenkler/codex-ir-dynamic-replace",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3794-ir-dynamic-replace",
   "claimed_at": "2026-07-30T07:18:54Z",
-  "updated_at": "2026-07-30T07:18:54Z"
+  "updated_at": "2026-09-03T09:43:42Z",
+  "write_id": "646-7w4hpusg",
+  "released_at": "2026-09-03T09:43:42Z"
 }
