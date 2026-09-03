@@ -295,6 +295,21 @@ function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   if (ctx.standalone) refreshRuntimeEvalCallableTrampolines(ctx);
 }
 
+/**
+ * §19.1 value properties of the global object. These are non-writable AND
+ * non-configurable, so a define that specifies any attribute throws — which
+ * the module mirror's `configurable: true` does.
+ *
+ * `var undefined;` at module scope is a common idiom in published packages
+ * (axios pulls in several through `get-intrinsic`/`function-bind`). These
+ * names therefore keep the pre-existing `configurable: false` spelling, which
+ * matches the descriptor already there and so defines without throwing. They
+ * are dropped from the MODULE carve-out only, never from the mirror itself —
+ * the push and pull helpers must publish the same set of names or the pull's
+ * lexical-cell invariant traps.
+ */
+const IMMUTABLE_GLOBAL_PROPERTY_NAMES: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+
 function emitRuntimeEvalGlobalBindingPushBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -481,7 +496,16 @@ function emitRuntimeEvalGlobalBindingPushBody(
       // synthetic configurable property to the descriptor ScriptDeclaration-
       // Instantiation created conceptually. Writable/enumerable stay
       // unspecified on updates so user changes to those attributes survive.
-      const attributes = isScriptBinding ? 0x23 : 0x05;
+      // §9.1.1.4.16 is a SCRIPT rule. A MODULE's top-level function/var
+      // bindings are not global-object properties at all, so stamping
+      // `configurable: false` onto the eval mirror is not the spec attribute —
+      // it is a fabricated one, and it takes the name away from the program.
+      // Its own `Object.defineProperty(globalThis, name, {configurable: true})`
+      // then throws `Cannot redefine property`, inside `__module_init`, so
+      // nothing in the module runs. The upstream-suite shim installs
+      // `beforeEach`/`beforeAll`/`afterEach`/`afterAll` in exactly that shape.
+      const moduleOwnsTheName = ctx.sourceIsModule && !IMMUTABLE_GLOBAL_PROPERTY_NAMES.has(name);
+      const attributes = isScriptBinding ? (moduleOwnsTheName ? 0x2d : 0x23) : 0x05;
       fctx.body.push(
         { op: "f64.const", value: 0x80 | attributes },
         { op: "call", funcIdx: liveDefineIdx },
