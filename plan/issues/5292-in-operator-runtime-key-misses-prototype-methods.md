@@ -114,6 +114,30 @@ plain object where the vec belongs and the first thing that stringifies it
 throws.
 
 marked's `use(...e)` is that method, and its tests hold the instance in a
-`beforeEach` closure, so every one of the 30 hits it. Teaching the host bridge
-the rest ABI (or giving the closed dispatcher a rest arm) is the fix; it is
-squarely runtime-bridge work, not a narrowing of this issue.
+`beforeEach` closure, so every one of the 30 hits it.
+
+The host bridge is NOT missing the rest ABI — `class-method-host-bridge.ts`
+already reads `__member_arity_<key>` (which returns `-1` for a rest method),
+selects `__class_call_<key>_vararg`, and calls it as
+`callFn(receiver, argsArray)`. The vararg export is emitted, too. What does not
+line up is its **arity**:
+
+```js
+const va = instance.exports.__class_call_use_vararg;
+va.length;                 // → 1     (one declared parameter)
+va(recv, [{}]);            // → throws "Cannot convert object to primitive value"
+va(recv);                  // → throws, same
+```
+
+An exported Wasm function's `length` is its declared parameter count, so the
+module says this bridge takes ONE parameter while the host calls it with two —
+and the throw happens at the JS→Wasm boundary itself (the innermost stack frame
+is `class-method-host-bridge.ts:261`, with no Wasm frame below it), which is
+what coercing a JS object into a non-`externref` slot does.
+
+`emitMethodDispatch` *reads* as though it declares two: for `classArity === -1`
+it builds `addFuncType(ctx, [externref, externref], [externref],
+"$class_call_<m>_vararg_type")` and pushes the function with that `typeIdx`.
+Reconciling that with the observed `length: 1` is the next step — either the
+type is being deduped/overwritten, or the export resolves to a different
+function than the one emitted there.
