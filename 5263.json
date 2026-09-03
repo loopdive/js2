@@ -1,10 +1,11 @@
 {
   "id": "5263",
   "assignee": "ttraenkler/opus-5263",
-  "requested_by": "ttraenkler/opus-5263",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5263-5262-reconciler",
   "claimed_at": "2026-09-03T08:45:36Z",
-  "updated_at": "2026-09-03T08:45:36Z",
-  "write_id": "11009-jhtyco53"
+  "updated_at": "2026-09-03T11:41:21Z",
+  "write_id": "8388-yqbdir25",
+  "released_at": "2026-09-03T11:41:21Z"
 }
