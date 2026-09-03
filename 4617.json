@@ -1,10 +1,11 @@
 {
   "id": "4617",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4617-frontend-neutral-semantic-ir",
   "claimed_at": "2026-08-22T03:05:57Z",
-  "updated_at": "2026-08-22T03:05:57Z",
-  "write_id": "96192-6hk617il"
+  "updated_at": "2026-09-03T09:49:46Z",
+  "write_id": "16478-vj3mxdw5",
+  "released_at": "2026-09-03T09:49:46Z"
 }
