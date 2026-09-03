@@ -1,8 +1,11 @@
 {
   "id": "3766",
   "assignee": "ttraenkler/codex-es5-string-indexof-receiver",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "",
   "claimed_at": "2026-07-28T17:17:59Z",
-  "updated_at": "2026-07-28T17:17:59Z"
+  "updated_at": "2026-09-03T09:42:28Z",
+  "write_id": "16597-h4y3su63",
+  "released_at": "2026-09-03T09:42:28Z"
 }
