@@ -343,14 +343,31 @@ was **not** confirmed and is corrected below.
 The plan expected that reverting change (1) alone would return the four tests to
 red. **It does not — they stay green.** The converse also holds: reverting
 change (2) alone leaves them green too. The two changes are *independently
-sufficient* for this population, because once precedence is asymmetric the arm's
-return value is only ever attached as a note, and once the arm is gone there is
-nothing to attach. Non-vacuity is therefore a property of the pair: reverting
-**both** restores the base red (measured — 5 failed on pristine `origin/main`).
+sufficient* **for that population**, because once precedence is asymmetric the
+arm's return value is only ever attached as a note, and once the arm is gone
+there is nothing to attach. For the four `issue-3519` tests, non-vacuity is a
+property of the pair: reverting **both** restores the base red (measured — 5
+failed on pristine `origin/main`).
 
-That makes change (1) look optional, so it was justified separately rather than
-assumed. **Measured**: with the arm restored and change (2) in place, every
-normal fall-back-then-invariant row gains an extra, *false* diagnostic —
+Each change does have its own witness elsewhere, both measured:
+
+| revert | goes red |
+| --- | --- |
+| change (1), the arm deletion | `tests/issue-3520-…` — the `patchedFallback` row |
+| change (2), the asymmetric write | `tests/issue-5262-accounting-precedence.test.ts` pin 3 |
+| either one alone | the four `issue-3519` tests stay GREEN |
+| both | the base red (11 tests across `issue-3519` + `issue-3525`) |
+
+The `patchedFallback` row is the sharpest single piece of evidence in this
+issue: its root cause is `selection-preparation-mismatch`, its accounting note
+is **`undefined`** — `(1 direct, 1 IR)` trips no surviving arm at all — so the
+deleted arm was the *only* thing that ever turned it into
+`body-emission-evidence`. It fired on a legal shape and cost the ledger a
+precise diagnosis.
+
+Change (1) was justified further rather than assumed. **Measured**: with the arm
+restored and change (2) in place, every normal fall-back-then-invariant row
+gains an extra, *false* diagnostic —
 
 ```
 IR body-emission accounting note for delay: … reached an R2 invariant after 1
