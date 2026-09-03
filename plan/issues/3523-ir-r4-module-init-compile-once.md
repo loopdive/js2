@@ -4599,3 +4599,58 @@ would have been taken immediately — and the way to know that *before* dispatch
 is to check whether the target kind already exists and what its admission arm's
 comment says. Two greps, and they are the difference between a slice and a
 stalled lane.
+
+### Carrier check on the two next candidates — and a second trap the check exposed
+
+Applying the rule from the section above (*before briefing a slice, check
+whether the target carrier splits per lane*) to `object` and `function`.
+Method is R4-M1's: compile a module global, read the `(global $__mod_… )` line
+out of the emitted WAT on both lanes. Probe: `.tmp/object-carrier-probe.mts`.
+
+| declaration | host (`target: "gc"`) | standalone | split? |
+| --- | --- | --- | --- |
+| `const obj = { b: 2 }` | `(mut (ref null 2))` | `(mut (ref null 42))` | **no** — a typed struct ref on both; only the type index differs |
+| `const fn = (x: number) => x + 1` | `(mut externref)` | `(mut externref)` | **no** — byte-identical carrier |
+
+**Neither carries the `$AnyValue`-vs-`externref` split that blocks `any`.**
+`object`'s differing type index is the ordinary per-lane resolution that
+`resolveModuleBindingGlobal` already performs for `native-map` and (under
+#5511) `string`; `function` does not differ at all. Both are viable as storage
+slices on this evidence.
+
+**The trap the probe exposed, which matters more than the green light.** On
+both shapes the module-init unit reports:
+
+```
+module-init: unsupported / body-shape-rejected
+```
+
+— **not** the storage code (`vardecl-module-storage-unrepresentable`) the
+census attributes these files to. So on *these* shapes storage is not the
+binding constraint: a storage slice would land correctly and the unit would
+still be refused, for a different reason, one arm earlier.
+
+That is the same failure mode as the retracted census, arriving from the other
+direction: the census records the **first** rejection, so a category can be
+listed as a file's storage blocker while a *shape* rejection is what actually
+fires. **Before briefing either slice, confirm against the real corpus files
+that the storage arm is what refuses them** — not against a synthetic
+declaration, and not against the census alone.
+
+Concretely, for a lane brief:
+
+| candidate | carrier | still to confirm |
+| --- | --- | --- |
+| `object` (3 files) | clean, typed struct ref both lanes | that `objects.js` / `escapes-unicode.js` / `spread-rest.js` refuse at the STORAGE arm, not a shape arm |
+| `function` (2 files) | clean, externref both lanes | same for `arrow-params.js` / `generators-async.js` |
+| `any` (4 files) | **split — blocked** | ABI unification first; not a slice |
+
+`#5285`'s non-short-circuiting survey answers the "still to confirm" column
+directly, which is a second reason it should land before either slice is
+dispatched — not merely to re-rank, but to establish that the ranked arm is the
+one that fires.
+
+**Incidental, not this issue's to fix:** the arrow-function binding resolves to
+`externref` on the **standalone** lane too. A host-free lane carrying an
+externref module global is at least surprising given the dual-mode principle,
+and is worth a look by whoever owns the standalone ABI.
