@@ -22,7 +22,7 @@ automation cannot fix by itself**:
 | state | who notices | who fixes it |
 | --- | --- | --- |
 | `merge_group` failure | `auto-park` (#2547) — adds `hold` + a comment naming the run | a human, with a signal to act on |
-| `BEHIND` | `auto-refresh-prs` | itself, by rebasing |
+| `BEHIND` | `auto-refresh-prs` | itself, by rebasing — **but only on a 2-3 h schedule**, see below |
 | `UNSTABLE` | nothing, but the red check is visible on the PR | a human |
 | **`DIRTY`** | **nothing at all** | **only a human or an agent — a rebase would conflict** |
 
@@ -37,6 +37,25 @@ reads as "one check, success".
 `auto-refresh-prs` can rebase a `BEHIND` PR; it cannot resolve a conflict. So
 `DIRTY` is terminal for the machinery: once a PR rots there it stays rotted
 until a person touches it, with nothing anywhere saying so.
+
+### Correction to the table above: `BEHIND` is also slow, just not silent
+
+`auto-refresh-prs.yml` is **schedule-only** — its recent runs are 02:31, 23:45,
+21:51, 19:08, 15:47, 11:40, i.e. every two to three hours and irregular. All
+succeed. So a `BEHIND` PR is not refreshed promptly; it waits for the next
+sweep, which is why #5393 and #5503 sat `behind` for hours and #5509 was still
+`behind` an hour after going so.
+
+**That latency is deliberate and the workflow says why**: refreshing a `BEHIND`
+PR restarts its ~10-minute CI from zero, and an eager version previously
+livelocked (the header cites the same failure mode in `auto-enqueue.yml`'s
+opt-in BEHIND-update path). So this is a considered trade-off, not a defect,
+and this issue does **not** propose changing it.
+
+It does mean the contrast this issue draws is sharper than the evidence
+supports. Both states are slow to clear. **What is unique to `DIRTY` is that it
+is slow *and* silent *and* unrecoverable by automation** — the third property is
+the one that makes it worth a gate.
 
 ## Evidence — measured 2026-09-03 03:35, one sweep of every open PR
 
