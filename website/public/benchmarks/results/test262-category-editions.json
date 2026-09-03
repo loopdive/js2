@@ -481,8 +481,8 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 2607,
-      "fail": 410,
+      "pass": 2608,
+      "fail": 409,
       "ce": 20,
       "skip": 0
     },
@@ -1085,14 +1085,6 @@
       "skip": 0
     }
   },
-  "built-ins/decodeURI": {
-    "ES2015": {
-      "pass": 0,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/SharedArrayBuffer": {
     "ES2017": {
       "pass": 51,
@@ -1103,6 +1095,14 @@
     "ES2022": {
       "pass": 28,
       "fail": 16,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/decodeURI": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -1247,6 +1247,14 @@
       "skip": 0
     }
   },
+  "built-ins/DisposableStack": {
+    "ES2027": {
+      "pass": 77,
+      "fail": 16,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/AsyncFunction": {
     "ES2015": {
       "pass": 0,
@@ -1257,14 +1265,6 @@
     "ES2017": {
       "pass": 0,
       "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/DisposableStack": {
-    "ES2027": {
-      "pass": 77,
-      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1359,6 +1359,14 @@
       "skip": 0
     }
   },
+  "built-ins/ArrayIteratorPrototype": {
+    "ES2015": {
+      "pass": 8,
+      "fail": 19,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/isNaN": {
     "ES2015": {
       "pass": 5,
@@ -1371,14 +1379,6 @@
     "ES2015": {
       "pass": 0,
       "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/ArrayIteratorPrototype": {
-    "ES2015": {
-      "pass": 8,
-      "fail": 19,
       "ce": 0,
       "skip": 0
     }
