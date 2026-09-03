@@ -1,8 +1,11 @@
 {
   "id": "3633",
   "assignee": "ttraenkler/codex-es5-eval-bindings",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3633-es5-eval-bindings",
   "claimed_at": "2026-07-28T19:29:25Z",
-  "updated_at": "2026-07-28T19:29:25Z"
+  "updated_at": "2026-09-03T09:41:13Z",
+  "write_id": "2578-f6xgg1y6",
+  "released_at": "2026-09-03T09:41:13Z"
 }
