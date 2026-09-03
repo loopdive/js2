@@ -1,10 +1,11 @@
 {
   "id": "4113",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4113-ir-final-alloc-provenance",
   "claimed_at": "2026-08-02T21:10:58Z",
-  "updated_at": "2026-08-02T21:10:58Z",
-  "write_id": "91573-ddb7ju0t"
+  "updated_at": "2026-09-03T09:44:39Z",
+  "write_id": "7486-laezcsf7",
+  "released_at": "2026-09-03T09:44:39Z"
 }
