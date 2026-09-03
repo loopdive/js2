@@ -2129,3 +2129,15 @@ Probes, all standalone with ZERO `env::` imports, base / lane / node:
   their call-site two-arm and are deliberately not routed through it.
 - A method name built at runtime (a rope) misses the `ref.eq` ladder in
   `ta-dyn-method-call.ts` and keeps today's behaviour — documented residual.
+- **An own dyn-view member reached WITH an argument still loses to the builtin
+  lowering** (`view.includes = f; view.includes(1)`). Measured identical on
+  base and lane (`.tmp/probes/p-shadow.mjs`, both trees answer the builtin), so
+  this wave neither caused nor fixed it. The zero-argument form DOES honour the
+  shadow, and the dispatcher arm declines correctly — the loss happens earlier,
+  in the string-flavoured lowering that claims the call. Pinned as a comment in
+  `tests/issue-5194-es2015-typedarray-r3.test.ts`.
+- The final two safety edits (the widen-only-if-box-helper-exists guard and the
+  `arity >= 1` guard on the helper's first argument slot) landed AFTER the
+  22/22 + 84/84 sweep. Both are decline/degenerate-case guards; all six probes
+  were re-run after them with identical results, but the corpus sweep itself
+  measures the tree one commit-worth of guards earlier.
