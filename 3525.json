@@ -1,10 +1,11 @@
 {
   "id": "3525",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3525-m1a3-same-spelling-callables",
   "claimed_at": "2026-08-29T23:12:17Z",
-  "updated_at": "2026-08-29T23:12:17Z",
-  "write_id": "73562-g1uy4m87"
+  "updated_at": "2026-09-03T09:40:40Z",
+  "write_id": "31852-cjrr47n9",
+  "released_at": "2026-09-03T09:40:40Z"
 }
