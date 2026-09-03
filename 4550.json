@@ -1,10 +1,11 @@
 {
   "id": "4550",
   "assignee": "ttraenkler/codex-4550-linear-ir",
-  "requested_by": "ttraenkler/codex-4550-linear-ir",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4550-linear-ir-census",
   "claimed_at": "2026-08-25T21:37:12Z",
-  "updated_at": "2026-08-25T21:37:12Z",
-  "write_id": "27395-fhvhjvvn"
+  "updated_at": "2026-09-03T09:48:17Z",
+  "write_id": "15097-5lrqt8af",
+  "released_at": "2026-09-03T09:48:17Z"
 }
