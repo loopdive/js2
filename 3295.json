@@ -1,8 +1,11 @@
 {
   "id": "3295",
   "assignee": "ttraenkler/codex-senior-3295",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3288-porffor-p0-compat",
   "claimed_at": "2026-07-16T04:29:43Z",
-  "updated_at": "2026-07-16T04:29:43Z"
+  "updated_at": "2026-09-03T09:38:19Z",
+  "write_id": "10560-ibf3crb5",
+  "released_at": "2026-09-03T09:38:19Z"
 }
