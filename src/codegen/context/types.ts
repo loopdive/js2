@@ -4419,6 +4419,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   modulePatternTdzBindings: Map<ts.SourceFile, Map<string, ts.BindingElement | null>>;
   /** Set of let/const module global variable names */
   tdzLetConstNames: Set<string>;
+  /**
+   * (#5271 step 8) The first SCRIPT-goal top-level lexical name that collides
+   * with a RESTRICTED GLOBAL (`undefined` / `NaN` / `Infinity`). §16.1.7
+   * GlobalDeclarationInstantiation step 5.d makes that a SyntaxError thrown
+   * before any statement runs, so `__module_init` opens with the throw.
+   */
+  restrictedGlobalLexicalName?: string;
   /** Compile-time property descriptor flags */
   definedPropertyFlags: Map<string, number>;
   /**
