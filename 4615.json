@@ -1,10 +1,11 @@
 {
   "id": "4615",
   "assignee": "ttraenkler/codex-ir-lead",
-  "requested_by": "ttraenkler/codex-ir-lead",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4615-fast-any-array-abi",
   "claimed_at": "2026-08-22T02:34:12Z",
-  "updated_at": "2026-08-22T02:34:12Z",
-  "write_id": "56628-8payakls"
+  "updated_at": "2026-09-03T09:49:40Z",
+  "write_id": "16408-zutk3ule",
+  "released_at": "2026-09-03T09:49:40Z"
 }
