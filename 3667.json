@@ -1,10 +1,11 @@
 {
   "id": "3667",
   "assignee": "ttraenkler/codex-acorn",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/1712-acorn-acceptance",
-  "reserved_at": "2026-07-26T09:38:14Z",
   "claimed_at": "2026-07-26T09:38:14Z",
-  "updated_at": "2026-07-26T09:38:14Z",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:41:44Z",
+  "write_id": "5210-1pshmjmt",
+  "released_at": "2026-09-03T09:41:44Z"
 }
