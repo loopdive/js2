@@ -52,6 +52,7 @@ import {
   getOrRegisterTaViewType,
   getTaViewName,
   isTaViewTypeIdx,
+  TA_CTOR_BRAND,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
   taCtorKindOf,
@@ -4488,6 +4489,7 @@ export function getOrRegisterTaCtorSingleton(ctx: CodegenContext, kind: number):
     mutable: false,
     init: [
       { op: "i32.const", value: kind },
+      { op: "i32.const", value: TA_CTOR_BRAND }, // (#5194 r3 F1) shape brand, see getOrRegisterTaCtorType
       { op: "struct.new", typeIdx: taCtorTypeIdx },
     ],
   });

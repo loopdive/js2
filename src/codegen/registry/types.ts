@@ -531,20 +531,32 @@ export function taCtorKindOf(name: string): number {
  * (index into `TA_CTOR_KINDS`) drives the runtime-switch dynamic construct and
  * `ctor.BYTES_PER_ELEMENT`. A plain struct (NOT a vec subtype) so it never collides
  * with buffer/view `ref.test`s. Registered late+once, memoized on `ctx.taCtorTypeIdx`.
+ *
+ * (#5194 r3 review F1) The struct carries a SECOND immutable `brand` field
+ * (constant `TA_CTOR_BRAND`, never read) purely so its shape is not
+ * `(struct (field i32))`. WasmGC canonicalizes structurally-identical types,
+ * and that one-field shape is ALSO `__box_boolean_struct` (`registry/imports.ts`),
+ * so `__typeof_function`'s `ref.test $__ta_ctor` arm
+ * (`builtin-callable-brand.ts`) matched every boxed boolean in a module that
+ * held a TypedArray constructor value: `id(true) instanceof Function` → true,
+ * `(true + "")` → `"function () { [native code] }"`, and a `typeof x ===
+ * "function"` guard CALLED the boolean. Two fields keep the two singletons
+ * distinct types; `struct.get` of field 0 is unchanged everywhere.
  */
+export const TA_CTOR_BRAND = 0x5441; // "TA"
 export function getOrRegisterTaCtorType(ctx: CodegenContext): number {
   if (ctx.taCtorTypeIdx >= 0) return ctx.taCtorTypeIdx;
   const idx = ctx.mod.types.length;
   const name = "__ta_ctor";
-  ctx.mod.types.push({
-    kind: "struct",
-    name,
-    fields: [{ name: "kind", type: { kind: "i32" }, mutable: false }],
-  });
+  const fields = [
+    { name: "kind", type: { kind: "i32" as const }, mutable: false },
+    { name: "brand", type: { kind: "i32" as const }, mutable: false },
+  ];
+  ctx.mod.types.push({ kind: "struct", name, fields: fields.map((f) => ({ ...f })) });
   ctx.taCtorTypeIdx = idx;
   ctx.structMap.set(name, idx);
   ctx.typeIdxToStructName.set(idx, name);
-  ctx.structFields.set(name, [{ name: "kind", type: { kind: "i32" as const }, mutable: false }]);
+  ctx.structFields.set(name, fields);
   return idx;
 }
 

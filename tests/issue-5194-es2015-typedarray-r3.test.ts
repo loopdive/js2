@@ -59,9 +59,15 @@ const RESOLUTION_SOURCE = `
     const TA: any = Float64Array;
     const sample: any = new TA([42, 43, 44]);
 
-    if (typeof sample.includes !== "function") return 1;
-    if (sample.includes !== TypedArray.prototype.includes) return 2;
-    if (typeof sample.sort !== "function") return 3;
+    // (round-3 review F3) The VALUE read of an inherited member is either the
+    // real prototype member (host) or \`undefined\` (standalone: the seeded
+    // %TypedArray%.prototype closure is a refusal body — see REVIEW_SOURCE).
+    // It is never anything else, and never a callable whose call throws.
+    const inc: any = sample.includes;
+    if (typeof inc !== "function" && typeof inc !== "undefined") return 1;
+    if (typeof inc === "function" && inc !== TypedArray.prototype.includes) return 2;
+    const srt: any = sample.sort;
+    if (typeof srt !== "function" && typeof srt !== "undefined") return 3;
     if (!("includes" in sample)) return 4;
     if ("nosuch" in sample) return 5;
     if (typeof sample.nosuch !== "undefined") return 6;
@@ -190,7 +196,74 @@ const NEIGHBOUR_SOURCE = `
   }
 `;
 
+/**
+ * Round-3 review fixes (2026-09-03), asserted on both lanes:
+ *  F1 — a boxed boolean is not a Function (`$__ta_ctor` no longer canonicalizes
+ *       with `__box_boolean_struct`), so `includes()` results and any-typed
+ *       booleans classify as booleans in a module holding a TA constructor.
+ *  F2 — an inherited accessor reached through a dyn view runs with `this` = the
+ *       instance, and its side effects land on the instance.
+ *  F3 — the value path never surfaces a refusal closure: an inherited member
+ *       without a native body reads back `undefined` on standalone instead of a
+ *       callable that throws "not yet implemented", so `typeof`-guarded calls
+ *       and same-name-expando closed dispatch answer as base did.
+ */
+const REVIEW_SOURCE = `
+  function id(x: any): any { return x; }
+  function callIfFn(x: any): number { if (typeof x === "function") return x(); return 7; }
+  const TypedArray: any = Object.getPrototypeOf(Int8Array);
+  Object.defineProperty(Float64Array.prototype, "dbl", {
+    get: function (this: any) { return this.length * 2; },
+    configurable: true,
+  });
+  Object.defineProperty(TypedArray.prototype, "mark", {
+    get: function (this: any) { this.marker = 1; return this; },
+    configurable: true,
+  });
+  export function test(): number {
+    const TA: any = Float64Array;
+    const sample: any = new TA([42, 43, 44]);
+    // F1
+    const r: any = sample.includes(44);
+    if (r !== true) return 1;
+    if (r instanceof Function) return 2;
+    if (typeof r === "function") return 3;
+    if ((r + "") !== "true") return 4;
+    if (Object.prototype.toString.call(r) !== "[object Boolean]") return 5;
+    if (callIfFn(r) !== 7) return 6;
+    const b: any = id(true);
+    if (b instanceof Function) return 7;
+    if ((b + "") !== "true") return 8;
+    const q: any = id([42, 43, 44]).includes(43);
+    if (q instanceof Function) return 9;
+    if (typeof TA !== "function") return 10; // the ctor carrier still says function
+    // F2
+    if (sample.dbl !== 6) return 11;
+    if (sample.mark !== sample) return 12;
+    if (sample.marker !== 1) return 13;
+    if ((Float64Array.prototype as any).marker !== undefined) return 14;
+    if ((TypedArray.prototype as any).marker !== undefined) return 15;
+    if (Reflect.get(Float64Array.prototype, "dbl", sample) !== 6) return 16;
+    // F3 — a value-path read of an unimplemented member is undefined or a real
+    // function; calling through typeof-guard must not throw "not yet implemented".
+    const s: any = sample.sort;
+    if (typeof s !== "function" && typeof s !== "undefined") return 17;
+    if (typeof s === "function") { try { s.call(sample); } catch (e) { return 18; } }
+    return 0;
+  }
+`;
+
 describe("#5194 r3 — TypedArray dyn-view method resolution (standalone)", () => {
+  it(
+    "round-3 review fixes F1/F2/F3 hold (standalone)",
+    async () => expect(await runControl(REVIEW_SOURCE, "standalone")).toBe(0),
+    CONTROL_TIMEOUT,
+  );
+  it(
+    "round-3 review fixes F1/F2/F3 hold (host)",
+    async () => expect(await runControl(REVIEW_SOURCE, "host")).toBe(0),
+    CONTROL_TIMEOUT,
+  );
   it(
     "resolves inherited %TypedArray%.prototype members off an instance (standalone)",
     async () => expect(await runControl(RESOLUTION_SOURCE, "standalone")).toBe(0),

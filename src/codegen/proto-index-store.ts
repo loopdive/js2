@@ -325,9 +325,33 @@ export function protoIndexRecvGetMissInstrs(
   ctx: CodegenContext,
   recvLocal: number,
   keyLocal: number,
+  accessorRecvLocal?: number,
 ): Instr[] | undefined {
   const getRIdx = ctx.funcMap.get(PROTOIDX_GET_R);
   if (getRIdx === undefined) return undefined;
+  // (#5194 r3 review F2) §7.3.2 OrdinaryGet step 3 / §6.2.5.5 — the brand
+  // (which companion to consult) comes from the object the walk is ON
+  // (`recvLocal`), but an accessor found there runs with `this` = the
+  // ORIGINAL receiver the [[Get]] started on. `__extern_get` hands its
+  // `explicitReceiverLocal` here (param 0, or the one-shot Reflect.get /
+  // dyn-view-walk receiver); the two coincide for every ordinary read, so
+  // this is `__protoidx_get_r`'s body inlined with the receiver split.
+  const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  if (
+    accessorRecvLocal !== undefined &&
+    accessorRecvLocal !== recvLocal &&
+    getKIdx !== undefined &&
+    brandOffIdx !== undefined
+  ) {
+    return [
+      { op: "local.get", index: accessorRecvLocal },
+      { op: "local.get", index: keyLocal },
+      { op: "local.get", index: recvLocal },
+      { op: "call", funcIdx: brandOffIdx },
+      { op: "call", funcIdx: getKIdx },
+    ];
+  }
   return [
     { op: "local.get", index: recvLocal },
     { op: "local.get", index: keyLocal },

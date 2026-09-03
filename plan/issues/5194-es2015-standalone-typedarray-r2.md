@@ -5,7 +5,7 @@ status: in-progress
 pr: 5300
 sprint: current
 created: 2026-08-29
-updated: 2026-09-01
+updated: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
@@ -59,6 +59,10 @@ loc-budget-allow:
   # reaches — the string-flavoured lowering, which claims the call before
   # `compileReceiverMethodCall` sees it.
   - src/codegen/string-ops.ts
+  # 2026-09-03 round-3 review fixes. F3 needs one ctx field (the set of
+  # refusal-minted native-proto meta types) and its 11-line docstring in the
+  # context type; the field is read at finalize by the dyn-view walk.
+  - src/codegen/context/types.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -96,6 +100,10 @@ func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/ta-dyn-method-call.ts::unshiftExternMethodCallTaDynViewArm
   - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynSearchHelper
+  # 2026-09-03 round-3 review F2: `__extern_get`'s chain-exhausted companion
+  # consult now hands the accessor the explicit receiver (4 lines: the call
+  # moved below `explicitReceiverLocal` and gained that argument).
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
 # #5194 — typedarray r2: cluster and fix the 461 residual failures
@@ -2141,3 +2149,102 @@ Probes, all standalone with ZERO `env::` imports, base / lane / node:
   22/22 + 84/84 sweep. Both are decline/degenerate-case guards; all six probes
   were re-run after them with identical results, but the corpus sweep itself
   measures the tree one commit-worth of guards earlier.
+
+### Round-3 review fixes (2026-09-03)
+
+Three findings from the adversarial review of r3-1/r3-2 (one reviewer, three
+independent skeptics, each with a `git archive` base at `4a0ed71a39` and node
+as oracle). All three reproduced; all three are fixed on this branch. Every
+number below is node / base / lane-after, standalone (`nativeStrings`),
+re-run on the skeptics' own probes (`/home/user/js2/.tmp/skeptic-5194-f1/`,
+`/home/user/js2/.tmp/skeptic-f2/`, `/home/user/js2/.tmp/f3-probe/`).
+
+**F1 (high) — the boolean box classified as a Function.** The r3-2 widening
+hands consumers the `__box_boolean_struct` singleton, a `(struct (field i32))`.
+WasmGC canonicalizes that with `$__ta_ctor {kind: i32}`, and
+`__typeof_function` ref.tests the ctor carrier first, so every boxed boolean in
+a module holding a TA constructor value was a "function".
+*Skeptic corrections that decided the fix:* (1) the type collision PRE-EXISTS
+on base — `id(true) instanceof Function` was 1 on BOTH trees in a dyn-TA
+module; the lane's contribution was routing every `includes` result into it,
+gated on the module-level `moduleUsesDynTaView` flag; (2) the widening is
+correct in intent (`=== true`, `typeof`, `String()`, JSON, wasi `r+""`), so
+reverting it re-breaks those. *Fix:* `getOrRegisterTaCtorType` gives
+`$__ta_ctor` a second immutable `brand` field (`TA_CTOR_BRAND`, never read);
+the one `struct.new` site (`getOrRegisterTaCtorSingleton`) pushes it. wasm-dis
+of the lane binary: `$19 (struct (field i32) (field i32))` is the only type of
+that shape and `__typeof_function` tests `$19`, not the `$18 (struct (field
+i32))` boolean box. Rows: probe1 20/20 node-equal (was 9 wrong); `r instanceof
+Function` 0/0/0; `typeof r === "function"` 0/0/0; `toString.call(r)`
+"[object Boolean]" (base "[object Number]"); CASCADE `callIfFn(r)` 7/7/7 (was
+a thrown WebAssembly.Exception); probe3 `id(true) instanceof Function` 0/**1**/0
+and `(id(true)+"").length` 4/**29**/4 — the base defect is fixed too. wasi:
+all 7 rows node-equal. Host: byte-identical. Modules with no dyn-TA construct
+(probe2/probe4 × standalone/host/wasi): 6/6 byte-identical base vs lane.
+Unchanged on both trees: `[r].map(String)` traps `dereferencing a null
+pointer` (probe5 row 7) — not this finding.
+
+**F2 (medium) — inherited accessors ran with `this` = the prototype.** The
+walk recursed as `__extern_get(proto, key)`. Two fixes were needed, because
+arming the one-shot receiver globals alone did NOT reach the getter: a
+`$NativeProto` receiver's non-seeded key falls to `__extern_get`'s non-object
+arm, `__closure_prop_get(obj, key)` → `__protoidx_get_r(obj, key)`, which runs
+the companion accessor with `obj`. (a) `buildStringKeyArm` recurses through
+`__reflect_get_receiver(proto, key, param0)` — the save/restore wrapper — unless
+an outer `Reflect.get(view, k, recv)` already has a receiver pending (this arm
+sits before the prelude that consumes it), and the pre-existing
+`constructorLookup` proto path uses the same call. (b) `protoIndexRecvGetMissInstrs`
+takes an optional accessor-receiver local: the brand still comes from the
+object the walk stands on, the getter's `this` from `explicitReceiverLocal`;
+`__extern_get` passes it at the chain-exhausted tail and (via
+`buildClosurePropGetMissArm`) on the non-closure-carrier route. Ordinary reads
+are unchanged (both locals are param 0). This also fixes base's
+`Reflect.get(Float64Array.prototype, "dbl", view)` (was `this` = prototype).
+Rows: `dbl` (`this.length*2`) 6/NaN/6; `tri` 9/NaN/9; `me === v` 1/0/1;
+Object.prototype getter 103/NaN/103; `this[0]+10` 13/NaN/13; `byteLength` 24/NaN/24;
+`instanceof`, `getPrototypeOf(this)`, sum 1/1/6; `this.subarray(0).length`
+3/NaN/**0** (no longer a TypeError — `subarray` on a dyn view is the r3-3+
+gap, wrong value not exception); marker lands on the instance 1/1/1, and
+`v.marker === 1` 1/0/1; memoising getter 31/NaN/31; inherited `constructor`
+getter observing `this` 1/0/1. Host: unchanged, node-equal. Wrong the same
+way as base, kept: `this instanceof Float64Array` 1/NaN/0, `v.__proto__ ===
+TA.prototype` 1/0/0, static-typed `(s as any).dbl` NaN/NaN.
+
+**F3 (medium) — the walk surfaced the refusal closure on the value path.** A
+string-key miss now walks [[Prototype]], so an inherited member with no native
+body resolved to the r2-seeded refusal closure (`native-proto.ts`
+`refusalBodyFallback`), and the closed dispatch a same-name `.m = function`
+assignment forces module-wide — or `__extern_method_call`'s proto arm for a
+helper-less method like `sort` — CALLED it: "%TypedArray%.prototype.<m> is not
+yet implemented in --target standalone" where base answered `null` / a silent
+no-op. *Fix (no per-method list):* `ensureStandaloneNativeMethodClosure`
+records each refusal-minted meta type in `ctx.nativeProtoRefusalMetaTypeIdxs`;
+the dyn-view `get` walk tests its result against those types (family
+`ref.test` + `bfnid` identity, the `fillBuiltinFnMeta` discipline, grouped per
+wrapper family) and answers `undefined` for a match. The loud refusal stays
+where it is intended: a read off the prototype object itself
+(`TypedArray.prototype.sort`) and the direct call. Rows: probe1 `s.join("-")`
+with a same-name expando elsewhere: 8/null/null (was TypeError); sortB
+`s.sort(); s[0]` 42/44/44 (was TypeError); seedT/probe6/probe3/probe2/blast2:
+base == lane on every row except `"sort" in s` 1/0/1 (kept). wasi probe1: base
+== lane except the indexOf fix. Host: node-equal.
+
+**Given up (deliberately, to satisfy never-worse-than-base):** the r3-1 value
+facts `typeof sample.includes === "function"`, `sample.includes ===
+TypedArray.prototype.includes`, `typeof sample.sort === "function"` on
+standalone read `undefined` again, as on base; `"includes" in sample` stays
+true. The r3 test now pins the F3 contract (value is a real function or
+`undefined`, never a callable that throws) and adds a REVIEW_SOURCE control for
+F1/F2/F3 on both lanes. A method-value closure that dispatches to the dyn-view
+helper (so `sample.includes` is a callable that works) is r3-3+ work.
+
+**Controls re-run after all three fixes (standalone, this tree):** the 84 r2
+flips (pa1/pa2/pa3) 84/84; `ta-controls.txt` 21/21; `arrobj-controls.txt`
+20/20; `ta-cl-C3-search.txt` 22/22; the two HasProperty rows 2/2 — 149/149
+kept, 0 given up. `tests/issue-5194-es2015-typedarray-r3.test.ts` 10/10,
+`…-r2.test.ts` 11/11.
+
+**Gates:** typecheck clean; loc/func/coercion/oracle/dead-exports green bare
+and with `LOC_GATE_BASE=origin/main`; two new grants above
+(`context/types.ts`, `ensureObjectRuntime`).
+

@@ -2293,13 +2293,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // shared Instr objects get double-remapped by finalize walks (see
     // `reference_shared_instr_object_dce_double_remap`).
     const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
-    const objectProtoIndexGetMiss = protoIndexRecvGetMissInstrs(ctx, 0, 1);
     const HSTR = ctx.hashedStrTypeIdx;
     // (#4194) Scratch externref for the instance-bag consult, appended LAST in
     // the locals list below so no already-baked index moves. Locals 8/9 are the
     // conditional proto-cache pair.
     const ispScratchLocal = protoCacheEnabled ? 10 : 8;
     const explicitReceiverLocal = ispScratchLocal + 1;
+    // (#5194 r3 review F2) The companion consult runs an accessor with the
+    // explicit receiver (param 0 for ordinary reads; the Reflect.get / dyn-view
+    // prototype-walk receiver otherwise), while the brand still comes from
+    // param 0 — the object the chain-exhausted walk is standing on.
+    const objectProtoIndexGetMiss = protoIndexRecvGetMissInstrs(ctx, 0, 1, explicitReceiverLocal);
     const nullProtoRootLocal = objectProtoIndexGetMiss === undefined ? undefined : explicitReceiverLocal + 1;
     const body: Instr[] = [
       // Consume a one-shot explicit receiver. Ordinary [[Get]] calls select
@@ -2411,7 +2415,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // the fnctor walk and the #4176 companion consult are unchanged.
           ...buildInstancePropGetArm(ctx, ispScratchLocal),
           ...(fnctorProtoStartIdx === undefined
-            ? buildVecOrClosurePropGetMissArm(ctx, getMiss)
+            ? buildVecOrClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal)
             : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
@@ -2420,7 +2424,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
+                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal),
                 },
                 // (#4639/#4637 cross-lane trap, 2026-08-23) TEST before the
                 // cast: `__fnctor_proto_start` answers whatever the S2 store
