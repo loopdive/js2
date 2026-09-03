@@ -124,3 +124,49 @@ export function isDirectProxyBinding(ctx: CodegenContext, expr: ts.Expression): 
   }
   return false;
 }
+
+/**
+ * (#5196 R3-0) True when `expr` evaluates to the `Proxy` CONSTRUCTOR itself —
+ * the bare `Proxy` binding, a realm-global read of it
+ * (`$262.createRealm().global.Proxy`, the shape every
+ * `built-ins/Proxy/**\/*-realm*` row uses), or a single-initializer alias of
+ * either.
+ *
+ * Distinct from {@link tracesToProxyValue}, which asks whether a value IS a
+ * proxy. This asks whether `new <expr>(t, h)` MAKES one — so a binding
+ * initialized from such a `new` is a proxy carrier and must keep the open
+ * externref representation, exactly as a syntactic `new Proxy(t, h)` does.
+ */
+export function tracesToProxyConstructorValue(ctx: CodegenContext, expr: ts.Expression, depth = 0): boolean {
+  if (depth > TRACE_DEPTH_LIMIT) return false;
+  const e = unwrap(expr);
+  if (ts.isIdentifier(e)) {
+    const init = ctx.oracle.variableInitializerOf(e);
+    if (init && init !== e) return tracesToProxyConstructorValue(ctx, init, depth + 1);
+    return e.text === "Proxy";
+  }
+  // A `.Proxy` read is claimed ONLY off a realm global; a `.Proxy` property of
+  // an arbitrary object keeps its existing lowering.
+  if (ts.isPropertyAccessExpression(e) && e.name.text === "Proxy") {
+    return isRealmGlobalExpression(ctx, e.expression, depth + 1);
+  }
+  return false;
+}
+
+/** `globalThis`, `$262.createRealm().global`, or a single-initializer alias. */
+function isRealmGlobalExpression(ctx: CodegenContext, expr: ts.Expression, depth: number): boolean {
+  if (depth > TRACE_DEPTH_LIMIT) return false;
+  const e = unwrap(expr);
+  if (ts.isIdentifier(e)) {
+    const init = ctx.oracle.variableInitializerOf(e);
+    if (init && init !== e) return isRealmGlobalExpression(ctx, init, depth + 1);
+    return e.text === "globalThis";
+  }
+  if (!ts.isPropertyAccessExpression(e) || e.name.text !== "global") return false;
+  const call = unwrap(e.expression);
+  return (
+    ts.isCallExpression(call) &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    call.expression.name.text === "createRealm"
+  );
+}

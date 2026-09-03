@@ -81,7 +81,7 @@ import {
 } from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
-import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
@@ -1068,6 +1068,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // (see the issue's remaining scope). `Reflect.get`/`set` fix the arity at 2/3
     // (no explicit-receiver slot), matching the call path which refuses the
     // receiver form under standalone (#2046).
+    // (#5196 R3-0) `Proxy.revocable` as a VALUE — `$262.createRealm()
+    // .global.Proxy.revocable(t, h)`, the shape the `*-realm*` rows use. The
+    // namespace carrier previously seeded the `genericThrowBody` refusal
+    // closure here ("Proxy.revocable is not yet implemented"), so every such
+    // row threw at the revocable call itself.
+    case "Proxy.revocable":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Reflect.get":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = { kind: "externref" };
@@ -1391,6 +1400,18 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       const integrityIdx = ctx.funcMap.get(helperName);
       if (integrityIdx === undefined) return null;
       closureFctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: integrityIdx });
+    } else if (key === "Proxy.revocable") {
+      // The SAME native the direct `Proxy.revocable(t, h)` call path uses
+      // (`call-builtin-static.ts`). `ensureNativeProxyRuntime` mints it (and
+      // the trap dispatchers) BEFORE any body instruction is pushed, so the
+      // funcIdx this closure bakes is already post-registration; the
+      // `flushLateImportShifts` at the end of this function repairs the rest.
+      ensureNativeProxyRuntime(ctx);
+      const revocableIdx = ctx.funcMap.get("__proxy_revocable");
+      if (revocableIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: revocableIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional

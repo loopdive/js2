@@ -53,6 +53,19 @@ loc-budget-allow:
   # refactor — every step adds an arm gated on the proxy runtime being present.
   - src/codegen/statements.ts
   - src/codegen/object-ops.ts
+  # 2026-09-03 R3-0 implementation (measured, not predicted): the `Proxy`-as-a-
+  # VALUE construct path needs (a) `new-super.ts` +21 for the
+  # `tracesToProxyConstructorValue` gate, the open-`$Object` lowering of an
+  # object-literal target/handler at a `new <Proxy ctor value>(…)` site, and the
+  # module flag that arms the driver; (b) `builtin-value-read.ts` +21 for the
+  # `Proxy.revocable` value-closure arm that replaces the "not yet implemented"
+  # thrower; (c) `context/types.ts` +10 for the `proxyConstructorValueNewSite`
+  # flag — the gate the plan proposed (proxy runtime / carrier global present)
+  # was measured to be true in EVERY standalone module, so a module-scoped flag
+  # is the only byte-inert gate available.
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/context/types.ts
 func-budget-allow:
   # 2026-09-01 r2 plan: arm-ladder / dispatch-builder functions that gain one
   # more arm in the shape their existing arms already have (the step naming
@@ -1437,3 +1450,68 @@ externref accessor path (`ctx.externrefAccessorVars`).
   `p11`) asserting `WebAssembly.Module.imports(module).length === 0`, plus the
   exact test262 rows via `runTest262File`; `node scripts/update-issues.mjs --check`,
   `check-issue-ids.mjs`, `check-issue-spec-coverage.mjs` green.
+
+## Results — R3-0 (2026-09-03, Opus implementer)
+
+Base for every number below: `4fa179f8` (this worktree's HEAD before the first
+edit), standalone lane, quickjs eval tier, run by the implementer.
+
+**Claimed: +11 of `r3-R.txt` (27 rows) — base 0/27 pass, lane 11/27.**
+
+| row | base | lane |
+|---|---|---|
+| `Proxy/{get,set,has,apply,getPrototypeOf,isExtensible,preventExtensions,ownKeys}/trap-is-not-callable-realm.js` | fail | **pass** |
+| `Proxy/{apply,construct,defineProperty}/null-handler-realm.js` | fail | **pass** |
+| the other 16 `*-realm*` rows | fail | fail (unchanged signature) |
+
+What landed:
+
+1. `native-construct.ts` `fillNativeConstructDrivers` — a front arm that
+   `ref.eq`-compares the callee against the `__builtin_Proxy` carrier global and
+   tail-calls `__proxy_create`. The decision is made on the VALUE at runtime, so
+   an alias, a parameter or a property read of the carrier all construct a proxy.
+2. `proxy-value-provenance.ts` `tracesToProxyConstructorValue` — one shared
+   predicate for "this expression IS the `Proxy` constructor" (bare binding,
+   realm-global `.Proxy`, single-initializer alias), oracle-only.
+3. `new-super.ts` — that predicate arms the driver (`ctx.proxyConstructorValueNewSite`),
+   forces `ensureNativeProxyRuntime`, and lowers an object-literal target/handler
+   at such a site to the OPEN `$Object` the syntactic `new Proxy` arm uses.
+4. `analysis/proxy-binding-escape.ts` `isDirectProxyConstruction(expr, ctx?)` —
+   with a ctx, `new <Proxy ctor value>(…)` gets the same externref binding
+   storage as `new Proxy(…)`; the three call sites that have a ctx pass it.
+5. `builtin-value-read.ts` — `Proxy.revocable` as a VALUE now calls
+   `__proxy_revocable` instead of the "not yet implemented" thrower.
+
+**Plan corrections (measured):**
+
+- The plan's expected "+21 immediately" is wrong. The 16 rows still failing are
+  NOT gated on the construct path: with the fix, `new OProxy(t, h)` demonstrably
+  builds a working proxy (a `get` trap fires, a non-callable `get` trap throws),
+  but the `getOwnPropertyDescriptor` / `defineProperty` / `ownKeys` / `construct`
+  operations do not dispatch through the proxy in these shapes. Those are the
+  A (§10.5 invariants) and E (define/gOPD routing) groups, i.e. R3-1/R3-3 work.
+- The plan's byte-inertness gate (`ctx.funcMap.has("__proxy_get_dispatch")`, or
+  the carrier global existing) does NOT work: measured on `4fa179f8`, a program
+  that never mentions `Proxy` already has `__proxy_create`, `__proxy_get_dispatch`
+  and the `__builtin_Proxy` global, and gating on them changed that program's
+  bytes. Hence the module-scoped flag.
+- `proxy-value-provenance.ts` exists but does NOT hold `isNewProxy` for the
+  define path; `object-ops.ts:1006` still has its own syntactic gate (R3-3).
+
+**Never-worse-than-base evidence (all re-run by the implementer on the lane):**
+
+- `built-ins/Proxy/` — all 311 rows, 8 batches: base 184 pass → lane 195 pass,
+  **zero pass→non-pass**.
+- `language/expressions/new/` + `built-ins/Reflect/` — all 212 rows: base 178
+  pass → lane 178 pass, **zero pass→non-pass**, zero new passes.
+- `r3-controls.txt` 70/70 on the lane (two runs: before and after the gate was
+  narrowed).
+- `imports-of` on `Proxy/get/trap-is-not-callable-realm.js` → `[]`.
+
+**Byte-identity caveat (honest):** a standalone program that never mentions
+`Proxy` is NOT byte-identical to base. The construct-driver arm is inert (flag
+gated, verified), but the `Proxy.revocable` value-closure arm changes the
+namespace carrier's `revocable` member in every module where that carrier is
+materialised — which measurement shows is every standalone module. The change
+replaces a thrower with a working native call; the 593 rows re-run above show no
+behavioural regression, but the bytes do move.
