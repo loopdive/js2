@@ -1,8 +1,11 @@
 {
   "id": "3666",
   "assignee": "ttraenkler/codex-regexp-completion",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3666-standalone-regexp-match-indices",
   "claimed_at": "2026-07-26T05:25:50Z",
-  "updated_at": "2026-07-26T05:25:50Z"
+  "updated_at": "2026-09-03T09:41:39Z",
+  "write_id": "5049-x6e0djrp",
+  "released_at": "2026-09-03T09:41:39Z"
 }
