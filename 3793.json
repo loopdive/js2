@@ -1,8 +1,11 @@
 {
   "id": "3793",
   "assignee": "ttraenkler/codex-ir-parser-wrappers",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3793-ir-acorn-retained-parser-wrappers",
   "claimed_at": "2026-07-30T05:51:17Z",
-  "updated_at": "2026-07-30T05:51:17Z"
+  "updated_at": "2026-09-03T09:43:37Z",
+  "write_id": "475-8ngx78n6",
+  "released_at": "2026-09-03T09:43:37Z"
 }
