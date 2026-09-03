@@ -1,9 +1,11 @@
 {
   "id": "3373",
   "assignee": "codex/root",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/test262-original-harness-parity",
-  "reserved_at": "2026-07-17T17:39:12Z",
   "claimed_at": "2026-07-17T17:39:12Z",
-  "updated_at": "2026-07-17T17:39:12Z"
+  "updated_at": "2026-09-03T09:38:39Z",
+  "write_id": "13752-kpxulsgd",
+  "released_at": "2026-09-03T09:38:39Z"
 }
