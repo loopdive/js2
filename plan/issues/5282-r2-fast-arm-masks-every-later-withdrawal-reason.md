@@ -1,9 +1,10 @@
 ---
 id: 5282
 title: "R2 fast-mode admission masks every later withdrawal reason — the 20-reason vocabulary collapses to one, and R2-E1 is blocked on it"
-status: ready
+status: done
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
 sprint: current
 priority: high
 horizon: s
@@ -13,6 +14,14 @@ area: ir
 goal: backend-agnostic-ir
 requested_by: ttraenkler/fable-ir-takeover
 related: [3521, 3518, 2856]
+# (#5282, 2026-09-03) The fix separates the DECIDING predicate from the NAMING
+# predicate inside `selectR2PreparedOwnerComponents`. The deciding `find` line is
+# byte-identical, which is the acceptance criterion — so the change cannot be
+# made smaller by deleting the second scan, and the comment that states WHY
+# re-ordering was rejected is the load-bearing part a future reader needs
+# (R2-T1's own comment forbids re-ordering). +16 lines, ~8 of them that comment.
+loc-budget-allow:
+  - src/codegen/ir-prepared-free-functions.ts
 ---
 
 ## Problem
@@ -299,3 +308,162 @@ a PR two other lanes need to review for a different reason.
 6. Report the fast-lane reason histogram before and after. Before (per the
    issue): 32/32 rows `fast-signature-unproven`. After: a distribution. If it is
    still one reason, the fix did not work.
+
+---
+
+## Resolution
+
+Landed 2026-09-03. Every figure below is labelled **measured** (a run executed
+in this worktree, base copy captured at first edit) or **reasoned** (an argument,
+not a run). Base is `origin/main` `4a0ed71a39`.
+
+### What changed
+
+`selectR2PreparedOwnerComponents` (`src/codegen/ir-prepared-free-functions.ts`)
+now separates the **deciding predicate** — the entry `admissionPredicates.find`
+returns, which alone determines admission — from the **naming predicate**, the
+entry whose literal is recorded as the withdrawal reason. The deciding `find`
+line is unchanged, byte for byte; on the already-refused path only, when the
+named reason is `fast-signature-unproven`, entries 1..N are re-scanned for a
+predicate that actually describes the refusal.
+
+Rejected alternatives are unchanged from the plan: re-ordering the table
+(forbidden by R2-T1's own comment, and it changes which predicates run on the
+*admitted* path), per-family reason splitting (grows the closed vocabulary and
+still leaves the later reasons unreachable), and a secondary-reason field
+(widens `IrR2Withdrawal`, which is R2-T1's contract).
+
+### Admission is unchanged — the load-bearing measurement
+
+**Measured.** File-copy A/B over a 21-entry corpus (13 `website/playground/examples`
+`.ts` files, 7 `tests/fixtures` top-level sources, one fast-lane shape battery)
+× 4 lanes (`fast`, `plain`, `standalone`, `fast` + `nativeStrings`) = 84
+compiles per arm:
+
+| check | result |
+| --- | --- |
+| prepared free-function name sets (84 lane×entry sets, 151 prepared units) | **identical**, `JSON.stringify` equality |
+| per-row `(prepareAttempts, directBodyEmissions, irBodyEmissions)` + prepared flag, 292 rows | **identical** |
+| compiled wasm binary sha256, 84 artifacts | **0 mismatches** |
+| compile throws / failures, either arm | **0** — no predicate in the second scan threw |
+| attached-reason diffs | **6**, all reason-only, all in the fast lanes |
+
+The six attached-reason moves (fast and fast+nativeStrings, same three units):
+`objParam` and `retObj` and `asyncInner` from `admission:fast-signature-unproven`
+to `admission:param-signature-unstable` / `return-signature-unstable` /
+`async-declaration`.
+
+The plan's edge case about throwing predicates is therefore **measured clean on
+this corpus**, not swallowed: no `try` was added, and nothing threw.
+
+### Fast-lane withdrawal-reason histogram
+
+**Measured**, recorded withdrawals (`ctx.irR2WithdrawalsByUnitId`, deduped per
+unit) over the same corpus, `fast` lane. Read through a temporary dump hook that
+was applied identically to both arms and is **not** part of the diff.
+
+| reason | base | after |
+| --- | ---: | ---: |
+| `admission:fast-signature-unproven` | 11 | **6** |
+| `admission:param-signature-unstable` | 0 | **3** |
+| `admission:return-signature-unstable` | 0 | **1** |
+| `admission:async-declaration` | 0 | **1** |
+| `deferred:unsealed-component` | 5 | 5 |
+| `not-attempted:late-feature-preparation` | 3 | 3 |
+| `fixed-point:callee-outside-component` | 2 | 2 |
+| `fixed-point:storage-terminal-unprepared` | 1 | 1 |
+
+One reason became four. The 6 residual `fast-signature-unproven` rows are units
+whose fast signature proof is the *sole* objection — that is now what the reason
+means, and it is the reason's correct population, not masking.
+
+**Correction to the issue's framing.** The issue's "32/32 fast-lane rows read
+`fast-signature-unproven`" came from #5507's own corpus, which is not
+reproducible here. On the corpus above the *attached* fast-lane reason count is
+**0 in both arms**: playground fast-lane refusals are `(1, 1, 0)` rows, and
+`r2WithdrawalDefect` only admits a reason on a compile-twice `(1, 1, 1)` row.
+The histogram above is therefore of **recorded** withdrawals, which is the
+population the fix acts on; the attached-row view is the 6-row diff in the table
+before it. Both are stated because they answer different questions.
+
+### Trap (a) — the `fast-signature-unproven` pin: option **(a)**, re-pointed
+
+`fast-signature-unproven` **stays in `IR_R2_WITHDRAWAL_REASONS`.** It is
+reachable, and the search that establishes it was run rather than reasoned.
+
+**Measured.** The old pin no longer qualifies, exactly as the plan predicted:
+under the fix, `op(o: { a: number }): number` records
+`admission:param-signature-unstable` in the fast lane, so the base pin fails
+(observed as a real red run: base test file + fixed compiler → 1 failed).
+
+**Measured.** A 14-shape battery compiled fast and plain. Two shapes keep
+`fast-signature-unproven` post-fix, and both are proven sole-fast-proof
+objections by the non-fast lane *preparing* them:
+
+| shape | fast lane | plain lane |
+| --- | --- | --- |
+| `extRef(e: HTMLElement): number` | `(1,1,1)`, `admission:fast-signature-unproven` | `(1,0,1)` **prepared**, no withdrawal |
+| `callable(f: (v: number) => number, v: number): number` | `(1,1,1)`, `admission:fast-signature-unproven` | `(1,0,1)` **prepared**, no withdrawal |
+
+The pin is re-pointed to `extRef` — the opaque-host reference carrier the plan
+predicted. `callable` was rejected as the pin because it is R2-E1's population
+and is already pinned in this suite's `fixed-point:outside-caller-uncertified`
+case; using it twice would couple two independent pins.
+
+Shapes measured *admitted in both lanes* (so unusable as a pin): `scalar`,
+`strFn`, `len`, `arrParam`, `boolFn`. Measured refused in both lanes at
+`(1, 1, 0)` — no reason to assert on: `mixed(a: number, s: string): string`,
+`gen`, `objAndFnRef`. This reproduces the plan's four-shape search and extends
+it.
+
+### Non-vacuity — delivered by a positive pin, not a reason pin
+
+The plan is right that a reason pin cannot catch an admission regression, and
+this PR does not pretend otherwise. Two separate demonstrations, both **measured**:
+
+1. **The reason-flip pins are red on base.** The new test
+   `(#5282) a fast-lane refusal names its own predicate, not the fast arm`
+   fails against the base compiler (`1 failed | 8 passed`) and passes after
+   (`9 passed`).
+2. **The #5507 revert now fails.** Replacing the R2-F1
+   `r2FastMixedFixedCarrierSignature` disjunct with `false`:
+   - base compiler + base suite → **8 passed (8)** — #5507's recorded vacuity,
+     reproduced exactly;
+   - this PR's compiler + this PR's suite → **1 failed | 8 passed**, failing on
+     the new positive pin with `expected [ 1, 1 ] to deeply equal [ 0, 1 ]`.
+
+   The positive pin is `arrParam(v: number[]): number`, asserted to emit
+   `(0, 1)` with a `preparedComponentId` and **no** withdrawal. **Measured:**
+   dropping the F1 disjunct flips exactly three battery shapes — `arrParam`,
+   `strFn(x: string): string`, `len(s: string): number` — from prepared to
+   `(1, 1, 1)` withdrawn; every other shape is unchanged.
+
+### Acceptance measurements, against the plan's list
+
+| # | criterion | result |
+| --- | --- | --- |
+| 1 | admission unchanged | **measured** — 84/84 prepared sets and wasm sha256 identical; `check:ir-only` READY with `scripts/ir-only-baseline.json` unmodified |
+| 2 | `objParam` fast records `param-signature-unstable` | **measured** — was `fast-signature-unproven` |
+| 3 | fast-lane async records `async-declaration` | **measured** — `asyncInner` |
+| 4 | shapes suite green, pin decision stated | **measured** — 9/9; option (a), search recorded above |
+| 5 | positive F1 pin exists and the revert turns it red | **measured** — revert run recorded above |
+| 6 | histogram before/after | **measured** — one reason → four |
+
+### Footprint
+
+`src/codegen/ir-prepared-free-functions.ts` (+16 LOC, allowance granted in this
+file's frontmatter) and `tests/issue-3521-r2-withdrawal-shapes.test.ts`.
+`src/codegen/ir-overlay-outcomes.ts` is **not** touched, so #5262 / #5263 /
+#5283 stay conflict-free. The fixed-point table and the R3 functions are
+untouched.
+
+### Left open, deliberately
+
+- A fast-lane refusal that lands at `(1, 1, 0)` still carries **no** attached
+  reason — `r2WithdrawalDefect` only admits one on `(1, 1, 1)`. That is the
+  larger share of the playground fast lane and is the plan's out-of-scope note,
+  restated here because it bounds what this telemetry can answer today.
+- Whether R2-E1 needs a *reference-carrier-specific* reason (splitting
+  `fast-signature-unproven` per family) is still open. It is now answerable:
+  reference carriers are the reason's remaining population, so the split is a
+  refinement rather than a way out of the masking.
