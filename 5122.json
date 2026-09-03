@@ -1,10 +1,11 @@
 {
   "id": "5122",
   "assignee": "ttraenkler/codex/5122-es2015-proxy-symbol-targets",
-  "requested_by": "ttraenkler/codex/5122-es2015-proxy-symbol-targets",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/5122-es2015-proxy-symbol-targets",
   "claimed_at": "2026-08-28T04:54:05Z",
-  "updated_at": "2026-08-28T04:54:05Z",
-  "write_id": "75699-fk0943ou"
+  "updated_at": "2026-09-03T09:52:23Z",
+  "write_id": "22658-k7mp6gf6",
+  "released_at": "2026-09-03T09:52:23Z"
 }
