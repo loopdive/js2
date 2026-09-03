@@ -1,8 +1,11 @@
 {
   "id": "3426",
   "assignee": "ttraenkler/codex-sendev-test262-quarantine",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3426-test262-host-flake-quarantine",
   "claimed_at": "2026-07-18T11:32:36Z",
-  "updated_at": "2026-07-18T11:32:36Z"
+  "updated_at": "2026-09-03T09:39:24Z",
+  "write_id": "20341-csmym3xt",
+  "released_at": "2026-09-03T09:39:24Z"
 }
