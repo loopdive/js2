@@ -91,6 +91,49 @@ therefore every helper it minted) is complete.
   but the package is no longer blocked at the door.
 - Sixteen upstream npm suites re-run: no package number changed.
 
+## What still keeps marked at 0/30 (bisected)
+
+The hook is registered but **never called** — an identity hook is
+indistinguishable from no hook, which is why case 3 below passes and only the
+observing case exposes it:
+
+```js
+let seen = "NONE";
+m.use({ hooks: { preprocess(md) { seen = md; return md; } } });
+m.parse("*text*");
+seen;               // → "NONE"    expected "*text*"
+```
+
+marked's `use()` installs each hook as an OWN property over the `_Hooks`
+prototype method (`r[o] = c => u.call(r, c)`), and the compiled `parse()` calls
+the prototype method instead. Three lines, no marked:
+
+```js
+class H { pre(x) { return x; } }
+const h = new H();
+h.pre = (x) => "W" + x;
+h.pre("a");               // → "a"    the prototype method wins
+const f = h.pre; f("a");  // → "Wa"   the own property IS there
+```
+
+So the assignment stores correctly; only **method-call dispatch** ignores it and
+binds statically to the class method. A literal assignment reproduces it — the
+computed key is not the trigger — and reading the member into a local first
+works, which is the tell.
+
+`call-receiver-method.ts` already knows this shape ("A callable class field
+shadows a prototype method of the same name. A closed method dispatcher cannot
+represent that per-instance choice"), but its `hasUserClassField` gate only
+looks for a **declared** field of externref type. marked's shadow is added
+dynamically, so nothing declares it. `sourceAssignsAliasedFunctionMember` is
+the nearest existing scanner and does not cover it either: it records only
+property-access writes whose RHS is an identifier or property access, while
+marked writes an element access with a function-expression RHS.
+
+The fix is an own-property-first dispatch for a class-instance receiver whose
+member name is assigned anywhere in the graph. That is a hot-path change and
+wants its own validation pass; it is not a narrowing of this issue.
+
 **On the test fixtures:** the call site must be untyped (`(g as any).use(…)`).
 A typed member access resolves to a direct call and never reaches the host
 bridge, so it cannot exercise this at all — an earlier draft did that and
