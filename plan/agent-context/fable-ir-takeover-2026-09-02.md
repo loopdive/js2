@@ -24,6 +24,19 @@ It does not implement. It also owns the merge-queue shepherding for its own PRs.
 
 ## Open PRs and exactly what unblocks each
 
+**Late arrivals — two lane PRs landed after this handoff was first written, both
+`hold`-labelled and both needing a reviewer. A held PR is skipped by
+`auto-enqueue` and strands until someone resolves it, so these are the two most
+time-sensitive items here:**
+
+- **#5506** — `fix(#5280)`: stop the null-proto-super flake from parking
+  unrelated PRs. Directly relieves the flake that parked three PRs on
+  2026-09-02; worth reviewing first for that reason.
+- **#5507** — `refactor(#3521)`: R2-F1 fast-lane mixed string/scalar signature
+  admission. Stacked on R2-T1 (#5486, merged), so the stack is resolvable.
+
+**#5508** carries this handoff and the R9/R4 census; **#5502 has merged.**
+
 - **#5502** (docs, this branch `claude/docs-f3s2-gap6b`) — carries the F3-S2
   plan, the #3523 gap-6b design record, the #5276 reachability correction, #5280
   and #5281 filings, this handoff, and the **conflict-marker resolution**
