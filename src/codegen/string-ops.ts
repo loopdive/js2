@@ -1257,7 +1257,26 @@ export function compileTaggedTemplateExpression(
     const closureInfo = ctx.closureMap.get(tagName);
     if (closureInfo) {
       const localIdx = fctx.localMap.get(tagName);
-      if (localIdx === undefined) {
+      // The closure can live in a MODULE GLOBAL rather than a local of this
+      // frame — `const tag = (s) => …` at top level, used as `` tag`…` ``
+      // inside a function. Consulting only `fctx.localMap` reported an error
+      // and returned null here, and a null-valued expression makes the
+      // enclosing `return` answer `undefined`: the tag was never invoked and
+      // `` tag`abc` `` evaluated to `undefined` with the module compiling
+      // clean. That is lit's shape — every generated lit test opens with
+      // `const branding_tag = (s) => s; … branding_tag\`\`` — and it is why
+      // 106 of lit's 151 scored upstream tests trapped.
+      //
+      // A `...rest` tag is deliberately NOT claimed here: this arm marshals one
+      // positional slot per substitution, which is not the rest ABI, and the
+      // mismatch traps. Leaving it to the generic arms below keeps the
+      // pre-existing behaviour for that shape rather than trading a silent
+      // `undefined` for a null-pointer trap.
+      const globalIdx =
+        localIdx === undefined && closureInfo.hasRestParam !== true
+          ? (ctx.moduleGlobals.get(tagName) ?? ctx.capturedGlobals.get(tagName))
+          : undefined;
+      if (localIdx === undefined && globalIdx === undefined) {
         reportError(ctx, expr, `Tagged template: closure variable '${tagName}' not found`);
         return null;
       }
@@ -1268,13 +1287,18 @@ export function compileTaggedTemplateExpression(
       // failed module validation with `call_ref[0] expected (ref null N), found
       // externref`. Normalize once into a correctly-typed local.
       const selfTypeIdx1 = getClosureFuncSelfTypeIdx(ctx, closureInfo.funcTypeIdx) ?? closureInfo.structTypeIdx;
-      const localType1 = getLocalType(fctx, localIdx);
-      let selfLocal = localIdx;
+      // A module global is always the widened `externref` carrier, so it takes
+      // the same normalization the externref-local case already needed.
+      const localType1: ValType | undefined =
+        localIdx === undefined ? { kind: "externref" } : getLocalType(fctx, localIdx);
+      let selfLocal = localIdx ?? -1;
       let selfStructTypeIdx = closureInfo.structTypeIdx;
       if (localType1?.kind === "externref") {
         selfStructTypeIdx = selfTypeIdx1;
         selfLocal = allocLocal(fctx, `__tt_self_${fctx.locals.length}`, { kind: "ref_null", typeIdx: selfTypeIdx1 });
-        fctx.body.push({ op: "local.get", index: localIdx });
+        fctx.body.push(
+          globalIdx === undefined ? { op: "local.get", index: localIdx! } : { op: "global.get", index: globalIdx },
+        );
         fctx.body.push({ op: "any.convert_extern" });
         emitGuardedRefCast(fctx, selfTypeIdx1);
         fctx.body.push({ op: "local.set", index: selfLocal });
