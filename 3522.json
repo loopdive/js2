@@ -1,10 +1,11 @@
 {
   "id": "3522",
   "assignee": "ttraenkler/opus-3522-f4",
-  "requested_by": "ttraenkler/opus-3522-f4",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "claude/issue-3522-f4-field-call-admission",
   "claimed_at": "2026-08-28T22:01:28Z",
-  "updated_at": "2026-08-28T22:01:28Z",
-  "write_id": "19748-qfwwjmam"
+  "updated_at": "2026-09-03T10:49:47Z",
+  "write_id": "27622-2lt7rcqe",
+  "released_at": "2026-09-03T10:49:47Z"
 }
