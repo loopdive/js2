@@ -1,10 +1,11 @@
 {
   "id": "4676",
   "assignee": "codex/es6-functionproto-wave3",
-  "requested_by": "codex/es6-functionproto-wave3",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es6-functionproto-wave3",
   "claimed_at": "2026-08-25T03:25:53Z",
-  "updated_at": "2026-08-25T03:25:53Z",
-  "write_id": "99674-j2u6q7nd"
+  "updated_at": "2026-09-03T09:50:16Z",
+  "write_id": "21332-x477iw9c",
+  "released_at": "2026-09-03T09:50:16Z"
 }
