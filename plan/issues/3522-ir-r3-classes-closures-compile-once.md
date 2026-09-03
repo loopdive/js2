@@ -122,6 +122,16 @@ loc-budget-allow:
   # other three sites are one-predicate widenings inside functions that already
   # own the decision. All four paths are already granted above; this entry
   # restates the grant so the allowance is not stranded (CLAUDE.md).
+  # 2026-09-03 (W1-B, PrivateIdentifier method CALL SITES). Measured against
+  # origin/main 744203f3c7: select.ts 11128 -> 11186 (+58), from-ast.ts
+  # 15252 -> 15258 (+6). 33 of select.ts's 58 are the dedicated private-call
+  # arm inside `isPhase1Expr` — it has to sit BEFORE the identifier-name gate
+  # that refused it (a bare `return false`), and it re-uses the two existing
+  # projections rather than threading a private name through the six ambient
+  # method-call arms in between, which is the widening the plan explicitly
+  # rules out. The rest is the shadow-guard name helper plus the rationale
+  # comments the reverts below are quoted in. Both paths are already granted
+  # above; this entry restates the grant so it is not stranded (CLAUDE.md).
   - src/ir/identity.ts
   - src/ir/select-identity.ts
 func-budget-allow:
@@ -4556,3 +4566,123 @@ WAT (no `call_ref`, `call_indirect`, `ref.test`, `__box_number`, `__call_m_*`).
 
 The next cluster is unchanged: private-method **call sites** (`r02`/`r03`), in
 `src/ir/from-ast.ts`.
+
+### W1-B private-method call sites — landed (2026-09-03)
+
+Branch `claude/issue-3522-w1b-private-call-sites`, base `origin/main`
+**744203f3c7** (which carries W1-A / PR #5545). The plan for this slice named
+five sites; **three shipped and two were dropped after measurement** — the two
+dropped ones are provably unreachable from a private call site, and each
+revert-alone run below is the evidence.
+
+| # | site | shipped | change |
+| --- | --- | --- | --- |
+| S1 | `src/ir/select.ts::isPhase1Expr`, generic method-call block | yes | a dedicated `ts.isPrivateIdentifier` arm placed BEFORE the identifier-name gate. Resolves the receiver's local class (`this` → `currentClaimClassName`; a bare unshadowed class identifier → the STATIC route), then runs the existing projection with `privateMemberMangledName`. No private name is threaded through the ambient arms in between. |
+| S2 | `classMethodProjection`'s declaration walk (the `exactShapes`-less branch) | **no — dropped** | unreachable in production: the ONE caller (`codegen/index.ts:3137`) always supplies `projectedClassShapes`, and the syntax mirror is documented as deliberately conservative. Reverting it alone moved zero rows on every fixture and zero census rows. Shipping it would widen a fallback path no test can exercise. |
+| S3 | `src/ir/select.ts::classElementMayName` (new `classElementProjectionName`) | yes | an own private member now names its own mangled name, so it SHADOWS an inherited descriptor of the same projected name. |
+| S4 | the free-function call-graph walker (`buildLocalCallGraph`) | **no — dropped** | unreachable: the walker returns at every function-like node, so a class METHOD body is never visited, and the one non-function-like carrier (a field initializer `x = this.#m()`) is claimed through the class path. Measured on three targeted fixtures (top-level class, class inside a function, class + module-init seed) plus the four-fixture matrix: reverting it alone moves nothing. |
+| S5 | `src/ir/from-ast.ts::lowerMethodCall` entry | yes | accept the private spelling and mint `__priv_<x>` via the existing `irPrivateFieldName`. `PropertyAccessExpression.name` is exactly `Identifier \| PrivateIdentifier`, so the old name-shape refusal only ever rejected private calls — as a POST-CLAIM demote once S1 admits them. |
+
+#### Acceptance, measured through the production `compile` seam (both lanes identical)
+
+| probe | base `744203f3c7` | branch |
+| --- | --- | --- |
+| `r02` callee `Animal___priv_doubled` | emitted | emitted |
+| `r02` caller `Animal_reveal` | `body-shape-rejected` @select | **emitted** |
+| `r02` ctor `Animal_new` | `late-preparation-unsupported` @resolve | **emitted** |
+| `r02` post-claim entries | 1 (ctor sealing) | **0** |
+| `r02` `run()`, direct emitters POISONED | — (poison fails: rows are direct) | **84** |
+| `s01`+calls (2 private methods, 1 caller) | caller + ctor lost | **all five units emitted**, poisoned `run()` = 3 |
+| inheritance shadow `B.#m` vs `A.m` | `B___priv_m` late-prep, `B_f` `body-shape-rejected` | **both emitted**, poisoned `run()` = 2 |
+| `r03` ctor `Animal_new` | `body-shape-rejected` | `body-shape-rejected` (unchanged — see below) |
+| static `Animal.#make()` declaration | `class-member-unsupported` | unchanged |
+| static `Animal.build()` caller | `body-shape-rejected` | `class-member-unsupported` (arm move; still refused, still legacy-owned) |
+| arity `this.#m(1)` | `body-shape-rejected` | `call-arity-unsupported` (the guard) |
+
+#### Measured plan correction — `r03`'s constructor is NOT this slice's
+
+The plan's acceptance asked for `r03`'s `Animal_new` to reach `emitted`. It does
+not, and no W1-B site could move it: an EXPLICIT constructor that calls **any**
+instance method is refused by `constructorHasIrSafeReceiverSemantics`
+(`select.ts`, the `hasReceiverDerivedCall` branch), which never looks at the
+name. Measured on this branch, the public twin
+(`constructor() { this.seen = this.publicMethod(); }`) is `body-shape-rejected`
+identically; a constructor with a plain field write is `emitted`. `r02`'s
+constructor DOES flip, because it is IMPLICIT — it was blocked only by the
+sibling's non-candidate status, exactly the sealing consequence W1-A predicted.
+The W1-B test file pins the public twin beside the private one so the boundary
+cannot be re-read as a private-name defect.
+
+#### Non-vacuity by revert (file-copy A/B, one site at a time)
+
+| reverted | `r02` caller | `r02` ctor | shadow `B_f` | generator-shadow `B_f` | static caller |
+| --- | --- | --- | --- | --- | --- |
+| nothing (shipped) | emitted | emitted | emitted | `class-member-unsupported` @select | `class-member-unsupported` |
+| S1 | `body-shape-rejected` | `late-preparation-unsupported` | `body-shape-rejected` | `body-shape-rejected` | `body-shape-rejected` |
+| S3 | emitted | emitted | emitted | **`method-call-unsupported` POST-CLAIM** | `class-member-unsupported` |
+| S5 | **`method-call-unsupported` POST-CLAIM** | `late-preparation-unsupported` | **post-claim** | `class-member-unsupported` | `class-member-unsupported` |
+| S2 / S4 | no change on any row | | | | |
+
+S3's row is the reason it ships: `class B extends A` whose own `#m` has no
+method descriptor (here a generator) resolved to `A`'s `__priv_m` — a
+**different** private name, since private names are per-class — and the selector
+CLAIMED the caller on that wrong slot, leaving from-ast to demote it after the
+claim. S5 alone is the post-claim class in the other direction, which is why S1
+and S5 ship together.
+
+#### Census — 33 files × 2 lanes = 66 compiles, 216 terminal units
+
+Per-code counts base vs branch: **identical in every one of the 18 buckets**
+(`emitted` 103, `class-member-unsupported` 10 → 10, `body-shape-rejected` 40,
+…). **0 of 216 unit rows moved. 66 / 66 sha256-identical binaries.** As the plan
+predicted, `classes.js`'s private method is A1-blocked (its class takes an
+`any`-typed constructor parameter, so no member has a descriptor), and no other
+corpus file calls a private method — so a moved census row would have been a
+defect, not a win.
+
+#### Two findings recorded, not fixed
+
+1. **A pre-existing legacy miscompile, unrelated to this slice.**
+   `class A { #m() { return 1 } } class B extends A { #m = () => 2; f() { return this.#m() } }`
+   returns **1**; node returns **2**. `B_f` is `class-member-unsupported` and
+   legacy-owned on base and on this branch, and reverting each site leaves the
+   answer at 1 — so the wrong resolution is on the direct route
+   (`class-bodies.ts`'s member-name resolution), not in selection. Files under
+   the private-field/method collision family rather than here.
+2. **`emitted` does not imply the legacy body was skipped when a DIRECT
+   constructor calls the method.** On `r03` the private method's row is
+   `emitted` with `irBodyEmitted: true` AND `legacyBodyEmitted: true` — the
+   legacy constructor needs that slot, so poisoning it fails the compile. The
+   compile-twice residue belongs to the constructor and leaves with it.
+
+#### Gates
+
+Bare and with `LOC_GATE_BASE=origin/main`: `check-loc-budget` (+58 select.ts,
++6 from-ast.ts, both granted above), `check-func-budget`
+(`isPhase1Expr` 1078 → 1119, `lowerMethodCall` 926 → 932, both already granted),
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`. Whole
+`quality` list: `check:ir-dialect`, `check:ir-kind-neutrality`,
+`check:jstag-seam`, `check:ir-layering` (**86 / 86, unchanged** — no new
+`src/ir` → `src/codegen` edge and no new import at all), `check:ir-fallbacks`
+(no unintended, post-claim or module-level increase; output byte-identical),
+`check:host-import-policy`, `check:ir-only --policy=hybrid` (**READY**, identical
+ledger), `check:standalone-ir-cutover-corpus`, `check:pushraw`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`,
+`check:speculative-rollback`, `check:harness-compile-budget` (measured 150774,
+ceiling 150803 — **29 under, unchanged**), `check:ir-adoption`,
+`check:linear-ir`; TS7 no-emit, Biome, Prettier. Equivalence: all **8 shards
+exit 0**, 24 failing = exactly the 24 committed known failures, zero
+regressions and zero newly-fixed. `tests/issue-3522-*`, `issue-3519-*`,
+`issue-3144-*`, `issue-3000-*`: failing-name-set diff vs base is **empty**
+(24 pre-existing failures on both sides).
+
+#### One W1-A test updated, deliberately
+
+`tests/issue-3522-private-method-admission.test.ts` pinned the sibling call site
+as deferred ("the NEXT slice's boundary") and asserted the constructor's sealing
+note. Both are this slice's subject, so the sibling test moves to the W1-B file
+and the sealing-note assertion becomes "no post-claim entries", with the reason
+in place. The constructor test, the negatives and the census test are untouched.
+
+The next boundary in this family: private ACCESSORS (`get #x`), static private
+methods, and the explicit-constructor receiver-call refusal above.
