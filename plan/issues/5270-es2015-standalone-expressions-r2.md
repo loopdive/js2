@@ -1241,3 +1241,83 @@ host `a44` bit for `Object.assign(arrow, {prototype: 4})` still answers `3`
 rather than `7` on `origin/main` too — re-confirmed AFTER the Array/Object wave
 landed, so it is pre-existing and outside this issue. That is why its pin is
 standalone-only.
+
+### 2026-09-02 round-2 review — R2-F1b fixed, R2-N2 refuted, R2-N3 documented
+
+Round 2 cleared the R1 fix everywhere else: the alias, object-literal,
+array-element and `Object.defineProperty`-via-alias spellings all come back
+clean (the un-suppressed `__extern_has` rescues them), the #1972 try/catch
+tail-call guard holds, mutual recursion to 400,000 is byte-identical on both
+lanes with no stack growth, and the five playground examples are host-byte-
+identical with only +136–142 B on standalone. One finding blocked.
+
+**R2-F1b (HIGH, fixed) — a REBOUND binding whose initializer was an arrow.**
+`arrowBindingNeverGainsProperties` leaned on `identifierIsWrittenTo`
+(`native-ordinary-instanceof.ts`) for its rebinding guard, and that matcher
+requires a BARE-IDENTIFIER assignment LHS. Three spellings walk past it:
+
+| probe | spelling | node | base | lane (R1) | lane (now) |
+|---|---|---:|---:|---:|---:|
+| `x20` | `[a] = src` (array-pattern LHS) | 1 | 1 | **0** | 1 |
+| `x21` | `for (a of src) {}` (not a BinaryExpression) | 1 | 1 | **0** | 1 |
+| `x22` | `({ a } = src)` (object-pattern LHS) | 1 | 1 | **0** | 1 |
+| `x24` | `const a = () => 1` (fold must SURVIVE) | 0 | — | 0 | 0 |
+
+Identical on BOTH lanes. After any of those rebinds the binding holds a function
+EXPRESSION, which HAS a `prototype`, and the fold still answered `false`. It
+bites hardest exactly there: the receiver stays a typed closure ref rather than
+externref, so the `__extern_has` fallback that R1 correctly un-suppressed never
+fires and the folded `false` is final.
+
+Route taken: **`ctx.oracle.constInitializerOf`** (`oracle.ts` — requires
+`NodeFlags.Const` and a plain identifier name), not an extended spelling list.
+The fold is justified ENTIRELY by the initializer, so it is sound only where the
+binding cannot be rebound, and `const` gives that structurally.
+`variableInitializerOf` deliberately accepts `let`/`var`, which is what let a
+MUTABLE binding qualify for an initializer-justified fold — the root of the
+finding. The incomplete `identifierIsWrittenTo` call is REMOVED, with a comment
+saying why: a guard that enumerates spellings reads as protection it does not
+give. The property-gaining scan stays, because `const` still permits
+`const a = () => 1; a.prototype = 5` — a different question.
+
+**Cost, stated plainly:** a `let`/`var`-bound FRESH arrow now answers `true` for
+`"prototype" in a`. That is what the BASE compiler answers as well (node says
+`false`), so it is a known remaining gap rather than a regression, and it is the
+price of closing the whole rebinding class instead of three of its spellings.
+The cluster-N test262 row `arrow-function/prototype-rules` uses an arrow
+LITERAL, which still folds unconditionally, so the row is unaffected.
+
+Four pins added under `review R2-F1b`, all four spellings on both lanes; three
+verified to FAIL on the pre-fix tree by file-copy A/B. The fourth (the
+bare-identifier rebind) passes there too — it is the one spelling
+`identifierIsWrittenTo` did catch — and is labelled a control rather than
+presented as a regression pin. The R1 write-form pins and the cluster-N binding
+pin were converted from `var` to `const` so they exercise the property-gaining
+scan instead of passing for the wrong reason (declining at the binding kind).
+
+**R2-N2 (refuted — no action beyond this record).** The claim was that removing
+the `!arrowPrototypeRoute` suppression pulls the object-MOP runtime into modules
+that previously folded statically (+96 KB, +287 % on a one-line standalone
+module). It does not stand, for two reasons and one of them is decisive:
+
+- "Previously" is the INTERMEDIATE lane state — step 10-N, which never existed
+  on `main`. The base tree has no `arrowPrototypeRoute` symbol at all, so there
+  is no baseline in which those modules folded statically. The comparison is
+  against a state no released compiler ever had.
+- The byte counts measure **base being wrong**. On the reviewer's `x9`, base
+  answers `1` where node answers `0`; this tree answers `0`. The extra size is
+  the cost of computing a correct answer at runtime instead of folding an
+  incorrect one at compile time.
+
+Recorded here so the next reader does not re-derive it as a regression.
+
+**R2-N3 (documented).** The N1 tightening — `valTypesMatch` (which compares
+`typeIdx`) plus the single sound widening direction `ref $T` → `ref null $T` —
+also refuses a class of promotion that IS sound: a callee returning a SUBTYPE
+`ref $B` into a caller returning `ref $A`. Latent only: the reviewer could not
+make the compiler lose a promotion to it (`t05` is byte-identical on both trees,
+because an intervening `ref.cast` makes `peelToTailCallIdx` decline the shape
+before the result check is ever consulted). The unsound direction
+(`ref null $T` → `ref $T`) is correctly closed, which was the point of N1; the
+subtype direction is a deliberate narrowing, not an oversight, and would need a
+real subtype relation on the module's type graph to widen safely.
