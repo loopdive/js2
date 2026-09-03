@@ -1,12 +1,11 @@
 {
   "id": "4274",
   "assignee": "ttraenkler/codex-es6-realms",
-  "requested_by": "ttraenkler/codex-es6-realms",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es6-next-lever-20260809",
-  "reserved_at": "2026-08-09T07:25:13Z",
   "claimed_at": "2026-08-09T07:25:13Z",
-  "updated_at": "2026-08-09T07:25:13Z",
-  "write_id": "60978-25iv1sih",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:45:34Z",
+  "write_id": "8637-8jmuleyq",
+  "released_at": "2026-09-03T09:45:34Z"
 }
