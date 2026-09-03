@@ -4500,3 +4500,336 @@ storage decisions and were not touched: `any` (4 declarations on the dogfood
 census), arrow functions (2), a class instance (1), `any[]` (1), bigint (1).
 Reaching an `emitted` module-init on a dogfood file needs whichever of those a
 given file also carries, plus the shape gaps now surfaced above.
+
+### Which type extensions actually unlock files — and a correction to the R4-M1 brief
+
+The section above establishes that rejection is all-or-nothing per file, and
+warns that partial coverage of a file's declarations yields zero. That makes one
+question decisive for scoping, and it had not been answered: **which set of type
+extensions unlocks how many files?**
+
+Measured by instrumenting the `no-value-kind` arm to log the declaration's file,
+declared type and initializer kind, then restoring from a copy taken before the
+edit. 13 dogfood files hold at least one declaration that reaches that arm (the
+11 counted earlier is the narrower figure — module-init units recorded as
+`body-shape-rejected`; these two counts measure slightly different things and
+neither is wrong).
+
+**Every one of the 13 files has exactly ONE category.** No file mixes them:
+
+> ⚠ **RETRACTED 2026-09-03 — this is an instrumentation artifact.** The
+> recorder can only ever see one category per file. Read the retraction at the
+> end of this file before using anything in this subsection, including the
+> best-set table and the reviewer instruction below.
+
+| file | blocking category |
+| --- | --- |
+| `escapes-unicode.js`, `templates.js` | **string** |
+| `arrow-params.js`, `generators-async.js` | function |
+| `members-calls.js`, `optional-nullish.js` | PropertyAccessExpression (`any`) |
+| `spread-rest.js` | array |
+| `literals.js` | bigint |
+| `new-target.js` | class instance |
+| `objects.js` | object |
+| `operators.js` | BinaryExpression (`any`) |
+| `regex.js` | RegExp literal |
+| `sequence-misc.js` | ParenthesizedExpression (`any`) |
+
+That is much better news than the all-or-nothing rule suggested: because no file
+mixes categories, **each extension's payoff is independent and additive**, and
+partial coverage is not wasted after all. Best-set-of-size-N over the 13:
+
+| categories supported | files unlocked |
+| --- | --- |
+| 1 (`string`) | 2 |
+| 2 (+ PropertyAccess/`any`) | 4 |
+| 3 (+ function) | 6 |
+| 4 (+ RegExp literal) | 7 |
+| … | … |
+| 10 (all) | 13 |
+
+**Correction, and it matters because a lane is running against the wrong
+statement.** The R4-M1 dispatch brief (`session_01SK6yHmgvNg8bRBasbfQC2p`) told
+that lane *"no dogfood file's rejections are string-only — expect the corpus
+counts not to move, and do not treat that as failure."* **The first half is
+false.** `escapes-unicode.js` and `templates.js` are string-only, so a correct
+string slice should unlock **2 of the 13 files** and the corpus counts **should**
+move. ~~Whoever reviews that PR: a result of "counts did not move" is now evidence
+of an incomplete slice, not the expected outcome the brief predicted. ~~ **← also retracted; see the end of this file.** The
+`any`-typed rows are the next-largest single win (2 more files) and are a
+different question entirely — a dynamic carrier, not a string carrier.
+
+**Reproduce:** instrument the `return { kind: "unsupported", declaration }` at
+`module-bindings.ts:2029` to log `getSourceFile().fileName`,
+`checker.typeToString(declaredType)` and `SyntaxKind[initializer.kind]`, gate on
+an env var, run the dogfood corpus through `observeSingleHostLane`, restore from
+the pre-edit copy.
+
+---
+
+## 2026-09-03 RETRACTION — "each file has exactly ONE blocking category" is an instrumentation artifact
+
+The per-file category table above, the "independent and additive" conclusion
+drawn from it, the best-set-of-size-N table, and the reviewer instruction it
+produced are all **withdrawn**. They rest on a measurement that could not have
+produced any other answer.
+
+### The mechanism
+
+`buildModuleBindingGlobals` (`src/ir/integration.ts:5839-5846`) walks the
+top-level declarations in source order and **throws on the first one that has
+no supported storage**:
+
+```ts
+const inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+if (inspected.kind === "unsupported") {
+  throw new IrUnsupportedError(/* … */);
+}
+```
+
+The `JS2WASM_IR_SHAPE_DIAG` recorder is on the `unsupported` return inside
+`inspectDirectBinding`, so it fires **at most once per file**. "Every file has
+exactly one category" is therefore not a finding about the corpus — it is a
+restatement of the control flow. A file with five distinct blockers and a file
+with one are indistinguishable to that instrument, and both report one.
+
+### The file that proves it
+
+`tests/dogfood/corpus/escapes-unicode.js`:
+
+```js
+const a = "\u{1F600}é\n\t\\";   // line 1 — string      ← the only one recorded
+…
+const obj = { "b": 2 };          // line 5 — object literal, also unrepresentable
+```
+
+It was recorded as **string-only** and listed as one of the two files a string
+slice would unlock. It has an object-literal binding four lines later.
+
+### The independent confirmation, which arrived before this was noticed
+
+R4-M1 (PR #5511) implemented exactly the predicted string slice and measured the
+corpus itself. Its result: `vardecl-module-storage-unrepresentable` **20 → 17
+rows** — `templates.js` on both lanes and `regex.js` on standalone.
+**`escapes-unicode.js` is not among them.** The prediction "a correct string
+slice should unlock 2 of the 13 files" failed, and it failed on precisely the
+file the artifact mis-described. That lane also reported no file crossing to
+`emitted`, which the retracted text would have had a reviewer read as an
+incomplete slice.
+
+### What is actually true
+
+- The category counts are a **first-blocker histogram**, not a per-file
+  inventory. Each is a **lower bound** on how many files carry that category.
+- **The all-or-nothing rule stands.** A file is unlocked only when *every*
+  blocking category it carries is covered, and how many that is per file was
+  never measured. "Partial coverage is not wasted" is retracted; the
+  pessimistic reading it claimed to reverse is the correct one.
+- **A slice that moves rows off one blocker and onto another is working as
+  designed.** That is the real signal — R4-M1's `template-substitution-unsupported`
+  and `string-method-unsupported` rows are progress made visible, not a shortfall.
+
+### How to measure it properly, if the ranking is ever needed again
+
+Do not instrument the throw site. Collect **all** declarations per file first,
+call `inspectDirectBinding` on each, and record every `unsupported` — i.e. make
+the diagnostic pass non-short-circuiting rather than reading a fail-fast path as
+a survey. Until that is run, do not rank storage extensions by these counts.
+
+### The standing lesson, which the session had already written down and did not apply
+
+The rule recorded earlier the same night was: *name the corpus in the claim, and
+do not promote a per-corpus finding to a ladder dependency until a second corpus
+agrees.* The failure here is its sibling and is worth stating separately —
+**name the INSTRUMENT, and ask what answer it is incapable of returning.** A
+fail-fast code path read as a survey will report "exactly one" every time, and
+that reads as a clean, surprising, actionable result rather than as a
+tautology. The tell was available for free: the claim "no file mixes
+categories" across 13 independent files is far too tidy to be a property of real
+source, and one `grep` of any file in the table would have shown it.
+
+### 2026-09-03 — the census, measured non-short-circuiting (replaces the retracted table)
+
+Done statically rather than waiting for #5285: parse every dogfood corpus file
+with `ts.createSourceFile` and enumerate **every** top-level variable
+declaration, classifying each by initializer shape. No compile, no source edit,
+no fail-fast path to read. Probe: `.tmp/census-all-decls.mjs`,
+`.tmp/census-collapse.mjs`.
+
+**Three findings the old instrument could not have produced.**
+
+**1. It is 14 files, not 13.** `destructuring.js` carries a blocker and was
+invisible: top-level destructuring throws at `integration.ts:5831-5836` —
+`"top-level destructuring has no one-to-one legacy global mapping"` — **before
+`inspectDirectBinding` is ever called**, so the recorder sits downstream of it.
+A whole file was missing from the denominator, not just miscategorised.
+
+**2. Files mix, and the pessimistic reading is confirmed.** 10 of 14 carry ≥2
+distinct blocker categories syntactically. Because a syntactic category can
+*collapse* under the checker's type view, the honest floor is the most
+aggressive plausible collapse (`PropertyAccess`/`call`/`BinaryExpression`/
+`conditional`/`Parenthesized` → one `any`; every `new(...)` → class-instance;
+template-substitution + tagged-template → string): **4 of 14 still mix**, and
+those four cannot collapse further —
+
+| file | irreducibly mixed categories |
+| --- | --- |
+| `escapes-unicode.js` | object · `identifier(café)` |
+| `literals.js` | bigint · null/undefined |
+| `regex.js` | regexp · `any` |
+| `spread-rest.js` | array · object · `any` |
+
+So "each extension's payoff is independent and additive" is false under *any*
+refinement of the categories, not merely under this one.
+
+**3. R4's slice order was pointing at the wrong extension.** The retracted table
+ranked `string` first (2 files). Measured, `string` unlocks **zero** files on its
+own — it does not enter the best set until position 9. The real ordering:
+
+| categories covered | files unlocked | the set |
+| --: | --: | --- |
+| 1 | **4** | `any` |
+| 2 | 6 | + function |
+| 3 | 7 | + destructuring |
+| 4 | 8 | + object |
+| 5 | 9 | + `identifier(café)` |
+| 6 | 10 | + class-instance |
+| 7 | 11 | + regexp |
+| 8 | 12 | + array |
+| 9 | 13 | + **string** |
+| 11 | 14 | + bigint, null-ish |
+
+`any` alone is worth twice what the whole retracted table credited to the
+extension that was actually dispatched. This is also the cleanest possible
+confirmation that R4-M1 was correct to move no file to `emitted` — string is
+ninth, so a string-only slice **could not** have unlocked a file, and the
+prediction it was briefed against was unreachable by construction.
+
+**Two limits, stated so this table is not over-read the way the last one was.**
+
+- **It is a syntactic survey; the resolver asks a type question.** `const x =
+  f()` is `call` here and whatever `f` returns to the checker. So the *ranking*
+  is indicative and #5285's checker-based survey is what makes it authoritative.
+  The two structural findings — 14 files, and irreducible mixing — do not depend
+  on that, since neither can be undone by refining categories.
+- **Storage is necessary, not sufficient.** "Unlocked" above means *no remaining
+  storage blocker*, not `emitted`. R4-M1 demonstrated the difference: it cleared
+  `templates.js`'s storage blocker and the file moved to a **shape** gap
+  (`template-substitution-unsupported`), not to `emitted`. Every row above is an
+  upper bound on files reaching compile-once.
+
+**What this changes for R4.** The next slice should be the `any`/dynamic carrier,
+not another concrete type — and it should be specified against the checker-based
+survey (#5285) rather than this one, because `any` is precisely the category
+whose membership a syntactic probe is least able to settle.
+
+### Correction to the slice recommendation: `any` is an ABI project, not a slice
+
+Two sections above this file recommends the `any`/dynamic carrier as R4's next
+slice, on the strength of it unlocking 4 files against `string`'s zero. The
+ranking stands. **The sizing does not**, and the resolver says so in a comment
+that predates all of this.
+
+`IrModuleBindingValueKind` **already has** `{ kind: "dynamic" }`
+(`src/ir/module-binding-value-kinds.ts:15`). So the gap is not a missing value
+kind — it is that nothing admits an `any`-typed declaration into it. The only
+arm that ever produces `dynamic` is at `module-bindings.ts:2011-2013`:
+
+```ts
+let valueKind =
+  options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration)
+    ? ({ kind: "dynamic" } as const)
+    : scalarKind(declaredType, options);
+```
+
+— a binding whose `++`/`--` retypes it, and nothing else. The comment directly
+above states the blocker:
+
+> Fast mode has a `$AnyValue` dynamic carrier while compatibility allocation
+> currently widens these globals to externref, so it stays on direct codegen
+> **until that ABI is unified**.
+
+**That is a different shape of problem from R4-M1's.** The string slice worked
+because a backend-agnostic marker already existed and the backends already
+disagreed *cleanly*: `IrType.string` defers to `IrLowerResolver.resolveString`,
+so one new kind could name the active carrier and let the existing
+storage-agreement check arbitrate. Dynamic has **no such deferral** — fast mode
+carries `(ref null $AnyValue)` with `__any_box_*` (`src/ir/builder.ts:458`),
+compatibility widens to `externref`, and the two are not two spellings of one
+source fact. Unifying them is the work, and it is not scoped by this issue.
+
+**Revised sequencing.** `any` remains the largest single prize (4 files) and
+should be planned as its own ABI-unification issue, not attempted as an R4
+storage slice. The cheapest *next* slice is whichever of the remaining
+categories has no carrier split — on the corrected census that is `object` (3
+files) and `function` (2), both of which need checking for the same trap
+before being briefed:
+
+| next candidate | files unlocked | first question to ask |
+| --- | --: | --- |
+| `object` | 3 | does the object carrier differ between fast and compatibility, as dynamic's does? |
+| `function` | 2 | is a module-level function binding a closure carrier or a funcref, and does it differ per lane? |
+| `any` / dynamic | 4 | **blocked** — `$AnyValue` vs `externref` ABI unification first |
+
+**The general lesson for R4 briefs.** R4-M1's brief was written expecting the
+ABI question to possibly exceed one slice, and gave the lane an explicit out to
+write a design record instead. For string that out went unused. For `any` it
+would have been taken immediately — and the way to know that *before* dispatch
+is to check whether the target kind already exists and what its admission arm's
+comment says. Two greps, and they are the difference between a slice and a
+stalled lane.
+
+### Carrier check on the two next candidates — and a second trap the check exposed
+
+Applying the rule from the section above (*before briefing a slice, check
+whether the target carrier splits per lane*) to `object` and `function`.
+Method is R4-M1's: compile a module global, read the `(global $__mod_… )` line
+out of the emitted WAT on both lanes. Probe: `.tmp/object-carrier-probe.mts`.
+
+| declaration | host (`target: "gc"`) | standalone | split? |
+| --- | --- | --- | --- |
+| `const obj = { b: 2 }` | `(mut (ref null 2))` | `(mut (ref null 42))` | **no** — a typed struct ref on both; only the type index differs |
+| `const fn = (x: number) => x + 1` | `(mut externref)` | `(mut externref)` | **no** — byte-identical carrier |
+
+**Neither carries the `$AnyValue`-vs-`externref` split that blocks `any`.**
+`object`'s differing type index is the ordinary per-lane resolution that
+`resolveModuleBindingGlobal` already performs for `native-map` and (under
+#5511) `string`; `function` does not differ at all. Both are viable as storage
+slices on this evidence.
+
+**The trap the probe exposed, which matters more than the green light.** On
+both shapes the module-init unit reports:
+
+```
+module-init: unsupported / body-shape-rejected
+```
+
+— **not** the storage code (`vardecl-module-storage-unrepresentable`) the
+census attributes these files to. So on *these* shapes storage is not the
+binding constraint: a storage slice would land correctly and the unit would
+still be refused, for a different reason, one arm earlier.
+
+That is the same failure mode as the retracted census, arriving from the other
+direction: the census records the **first** rejection, so a category can be
+listed as a file's storage blocker while a *shape* rejection is what actually
+fires. **Before briefing either slice, confirm against the real corpus files
+that the storage arm is what refuses them** — not against a synthetic
+declaration, and not against the census alone.
+
+Concretely, for a lane brief:
+
+| candidate | carrier | still to confirm |
+| --- | --- | --- |
+| `object` (3 files) | clean, typed struct ref both lanes | that `objects.js` / `escapes-unicode.js` / `spread-rest.js` refuse at the STORAGE arm, not a shape arm |
+| `function` (2 files) | clean, externref both lanes | same for `arrow-params.js` / `generators-async.js` |
+| `any` (4 files) | **split — blocked** | ABI unification first; not a slice |
+
+`#5285`'s non-short-circuiting survey answers the "still to confirm" column
+directly, which is a second reason it should land before either slice is
+dispatched — not merely to re-rank, but to establish that the ranked arm is the
+one that fires.
+
+**Incidental, not this issue's to fix:** the arrow-function binding resolves to
+`externref` on the **standalone** lane too. A host-free lane carrying an
+externref module global is at least surprising given the dual-mode principle,
+and is worth a look by whoever owns the standalone ABI.
