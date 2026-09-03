@@ -1,10 +1,11 @@
 {
   "id": "5252",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/5252-startup-boundaries-poc",
   "claimed_at": "2026-09-01T04:14:35Z",
-  "updated_at": "2026-09-01T04:14:35Z",
-  "write_id": "41278-aq3n00wy"
+  "updated_at": "2026-09-03T09:53:30Z",
+  "write_id": "25614-f6i0wlnb",
+  "released_at": "2026-09-03T09:53:30Z"
 }
