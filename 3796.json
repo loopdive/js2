@@ -1,8 +1,11 @@
 {
   "id": "3796",
   "assignee": "codex/finish-node-at-receiver-call",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3796-named-this-call",
   "claimed_at": "2026-07-30T12:38:12Z",
-  "updated_at": "2026-07-30T12:38:12Z"
+  "updated_at": "2026-09-03T09:43:52Z",
+  "write_id": "799-jrre5h1w",
+  "released_at": "2026-09-03T09:43:52Z"
 }
