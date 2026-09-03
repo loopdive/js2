@@ -2500,6 +2500,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**
+   * (#5270 step 1.3) Handles of every `__fn_tramp_*` pure forwarder. Read by
+   * `promoteTrampolineTailCalls` at finalize, which upgrades the trailing
+   * `call` to `return_call` only against the FINAL callee type.
+   */
+  trampolineForwarders: Set<number>;
+  /**
    * #2928 — true once the module has materialized the canonical eight-slot
    * callable carrier used by the separately linked interpreter runtime.
    */

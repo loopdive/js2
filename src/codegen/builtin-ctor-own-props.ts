@@ -73,6 +73,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import {
   BUILTIN_CTOR_ARITY,
+  getWellKnownSymbolId,
   NUMBER_CONSTANT_VALUES,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
@@ -84,6 +85,7 @@ import {
   pushBuiltinFnSingletonValueInstrs,
 } from "./builtin-fn-meta.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
+import { SPECIES_OWNER_CTORS } from "./builtin-static-gopd.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -136,6 +138,38 @@ const HOST_ACCESSOR_CONFIGURABLE = (1 << 4) | (1 << 5) | HOST_FLAG_CONFIGURABLE;
 const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
   Number: NUMBER_CONSTANT_VALUES,
 };
+
+/**
+ * (#5269 A-1) `Symbol`'s well-known-symbol own DATA properties — §20.4.2.
+ *
+ * Every one is `{ [[Writable]]: false, [[Enumerable]]: false,
+ * [[Configurable]]: false }` (flag word `0`, the same encoding `prototype`
+ * uses). The value is `__box_symbol(<id>)`, i.e. the INTERNED `$Symbol`
+ * carrier — the same object a syntactic `Symbol.iterator` read boxes to — so
+ * `gOPD(Symbol, "iterator").value === Symbol.iterator` holds and
+ * `verifyProperty`'s write / delete probes see one property model.
+ *
+ * Ids come from `getWellKnownSymbolId`, the table the value reads already use.
+ * Listing the names here rather than iterating that table keeps the seed to the
+ * spec's own-property set even if the id table gains a compiler-internal entry.
+ */
+const SYMBOL_WELL_KNOWN_OWN_PROPS: readonly string[] = [
+  "asyncIterator",
+  "hasInstance",
+  "isConcatSpreadable",
+  "iterator",
+  "match",
+  "matchAll",
+  "replace",
+  "search",
+  "species",
+  "split",
+  "toPrimitive",
+  "toStringTag",
+  "unscopables",
+  "dispose",
+  "asyncDispose",
+];
 
 /**
  * (#2875 wave-4 lane F) Per-ctor STATIC METHOD names to seed alongside
@@ -239,6 +273,28 @@ export function pushBuiltinCtorOwnPropSeed(
     fctx.body.push({ op: "drop" });
   }
 
+  // (#5269 A-1) `Symbol`'s well-known-symbol own data props — { w:false,
+  // e:false, c:false }. Seeded before `prototype` so
+  // `Object.getOwnPropertyNames(Symbol)` reports them in creation order.
+  if (builtinName === "Symbol") {
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    if (boxSymbolIdx !== undefined) {
+      for (const wellKnown of SYMBOL_WELL_KNOWN_OWN_PROPS) {
+        const id = getWellKnownSymbolId(wellKnown);
+        if (id === undefined) continue;
+        fctx.body.push({ op: "local.get", index: objLocal });
+        addStringConstantGlobal(ctx, wellKnown);
+        for (const instr of stringConstantExternrefInstrs(ctx, wellKnown)) fctx.body.push(instr);
+        fctx.body.push({ op: "i32.const", value: id });
+        fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+        fctx.body.push({ op: "f64.const", value: 0 });
+        fctx.body.push({ op: "call", funcIdx: defineIdx });
+        fctx.body.push({ op: "drop" });
+      }
+    }
+  }
+
   // `prototype` — { w:false, e:false, c:false }, value = the `$NativeProto`
   // singleton (identical to the syntactic `<Ctor>.prototype` read). Ctors with
   // no registered brand keep only `length`/`name`.
@@ -298,13 +354,23 @@ export function pushBuiltinCtorOwnPropSeed(
     });
   }
 
-  // Promise[@@species] is an own accessor whose getter returns the receiver
-  // (§27.2.4.4).  The static gOPD synthesis in builtin-static-gopd.ts already
-  // uses this canonical getter singleton, but a bare `Promise` value reaches
-  // this real `$Object` carrier at runtime.  Seed the same accessor there so
-  // direct computed reads and runtime descriptor/attribute queries observe one
+  // `<Ctor>[@@species]` is an own accessor whose getter returns the receiver
+  // (§27.2.4.4 for Promise, §23.1.2.5 / §24.1.2.2 / §22.2.6.2 / … for the rest).
+  // The static gOPD synthesis in builtin-static-gopd.ts already uses this
+  // canonical getter singleton, but a bare `Promise` value reaches this real
+  // `$Object` carrier at runtime.  Seed the same accessor there so direct
+  // computed reads and runtime descriptor/attribute queries observe one
   // property model instead of a synthetic descriptor-only answer.
-  if (builtinName === "Promise") {
+  //
+  // (#5269 A-5) Extended from Promise-only to the whole `SPECIES_OWNER_CTORS`
+  // set — the same set the static synthesis answers for. A DYNAMIC
+  // `getOwnPropertyDescriptor(Array, Symbol.species)` (the harness's
+  // `getGetterName` shape, where both receiver and key are untyped parameters)
+  // reaches the carrier, not the syntactic arm, so a Promise-only seed left
+  // every other owner answering `undefined` while its syntactic sibling
+  // answered a full accessor descriptor — the same descriptor-vs-presence
+  // disagreement this module exists to close.
+  if (SPECIES_OWNER_CTORS.has(builtinName)) {
     withSpeculativeCompile(ctx, fctx, () => {
       const closure = ensureStandaloneSpeciesGetterClosure(ctx, builtinName);
       if (!closure) return { commit: false, value: undefined };

@@ -39,6 +39,103 @@ function poisonMember(
   };
 }
 
+/**
+ * (#5270 step 10, cluster N) True when reading or writing `caller` /
+ * `arguments` on this function value must throw %ThrowTypeError%.
+ *
+ * §10.2.4 AddRestrictedFunctionProperties installs the poison accessors on
+ * every function EXCEPT the legacy sloppy-mode ordinary function, so an ARROW
+ * is restricted regardless of the surrounding strictness — arrows have no
+ * `arguments` binding and no `caller` at all. The base predicate only knew
+ * about strict SOURCE functions, so `(() => {}).caller` answered `undefined`
+ * where `ArrowFunction_restricted-properties` requires a TypeError.
+ *
+ * Methods, generators and class bodies are the same family; #5195 T owns those
+ * and should share this predicate rather than adding a second one.
+ *
+ * (#5270 review R3-F2) The arrow answer is NOT unconditional — those accessors
+ * are `configurable: true` and the binding can be rebound, so it is qualified by
+ * `arrowValueStillCarriesRestrictedAccessors` below.
+ */
+function hasRestrictedProperties(
+  ctx: CodegenContext,
+  sourceFunction: ts.FunctionLikeDeclaration,
+  receiver: ts.Expression,
+): boolean {
+  if (ts.isArrowFunction(sourceFunction)) return arrowValueStillCarriesRestrictedAccessors(receiver);
+  return isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments);
+}
+
+/**
+ * (#5270 review R3-F2) An arrow's restricted `caller`/`arguments` accessors are
+ * `configurable: true` (§10.2.4), so they are a fact about the value's CREATION,
+ * not about its lifetime — exactly the reasoning this wave already applied to the
+ * sibling `"prototype" in arrow` fold (`binary-ops-in.ts`,
+ * `arrowBindingNeverGainsProperties`). Anyone holding the arrow can replace them:
+ *
+ *   var b = () => 2;
+ *   Object.defineProperty(b, "arguments", { value: 7, configurable: true });
+ *   b.arguments;   // node 7 · base 7 · unguarded fold TypeError
+ *
+ * and a REBOUND binding is not the arrow at all (`var f = () => 1; f = function(){}`
+ * — node `null`, base `undefined`, unguarded fold TypeError). Turning a
+ * wrong-but-stable answer into a throw is strictly worse than base: the throw
+ * kills the rest of the enclosing evaluation.
+ *
+ * So the unconditional `true` is now earned only two ways:
+ *  - an arrow LITERAL receiver (`(() => {}).caller`) — no binding exists for
+ *    anyone to rebind or to hand to `Object.defineProperty`; or
+ *  - an identifier whose EVERY appearance in the file is a "custodial" use: the
+ *    receiver of a member access (`arrowFn.caller`, `arrowFn.caller = {}`,
+ *    `arrowFn.hasOwnProperty("caller")`) or a direct callee (`k()`).
+ *
+ * The custodial-use test is one scan and subsumes three separate guards. A call
+ * ARGUMENT (`Object.defineProperty(b, …)`, `Object.assign(b, …)`) is not
+ * custodial, so escapes are refused; neither is a bare identifier in any other
+ * position, which refuses BOTH rebinding in every spelling (`f = …`, `[f] = src`,
+ * `({f} = src)`, `for (f of src)`, `f++`) and aliasing (`var m = k`, `return k`)
+ * without enumerating any of them. A member WRITE through the binding needs no
+ * check at all: `k.caller = x` and `k["caller"] = x` both go through the
+ * inherited poison SETTER and throw, so they can never install an own
+ * `caller`/`arguments` — only `defineProperty`, which is a call argument, can.
+ *
+ * Conservative in the safe direction: a refusal costs only the fold, handing
+ * back base's answer, while a false `true` is a spurious throw.
+ */
+function arrowValueStillCarriesRestrictedAccessors(receiver: ts.Expression): boolean {
+  const expr = skipTransparentExpressions(receiver);
+  if (ts.isArrowFunction(expr)) return true;
+  if (!ts.isIdentifier(expr)) return false;
+  return identifierOnlyUsedCustodially(expr.getSourceFile(), expr.text);
+}
+
+/** Every `name` reference in `file` is a member-access receiver or a direct callee. */
+function identifierOnlyUsedCustodially(file: ts.SourceFile, name: string): boolean {
+  let escaped = false;
+  const visit = (node: ts.Node): void => {
+    if (escaped) return;
+    if (ts.isIdentifier(node) && node.text === name && !isCustodialIdentifierUse(node)) {
+      escaped = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return !escaped;
+}
+
+/** The binding's own declaration name, a member-access receiver, or a callee. */
+function isCustodialIdentifierUse(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (parent === undefined) return false;
+  if (ts.isVariableDeclaration(parent) && parent.name === node) return true;
+  if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === node) {
+    return true;
+  }
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) return true;
+  return false;
+}
+
 /** Compile a statically-proven poison get, or decline with `undefined`. */
 export function tryCompileFunctionPoisonRead(
   ctx: CodegenContext,
@@ -57,7 +154,7 @@ export function tryCompileFunctionPoisonRead(
   // (#4221) A bound function poisons `caller`/`arguments` unconditionally
   // (§15.3.4.5 steps 20-21) — the same terminal throw as the strict case.
   const strictFunction =
-    (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
+    (sourceFunction !== undefined && hasRestrictedProperties(ctx, sourceFunction, member.receiver)) ||
     isBoundFunctionValue(ctx, member.receiver) ||
     // (#4464) `var foo = Function("'use strict';")` — a strict function with no
     // source declaration for `sourceFunctionForValue` to find.
@@ -112,7 +209,7 @@ export function tryCompileStrictFunctionPoisonAssignment(
   if (!member || (member.name !== "caller" && member.name !== "arguments")) return undefined;
   const sourceFunction = sourceFunctionForValue(ctx, member.receiver);
   const poisoned =
-    (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
+    (sourceFunction !== undefined && hasRestrictedProperties(ctx, sourceFunction, member.receiver)) ||
     // (#4221) `boundFn.arguments = 12` hits the same [[ThrowTypeError]] setter.
     isBoundFunctionValue(ctx, member.receiver) ||
     // (#4464) …and so does the `Function("'use strict';")` product.

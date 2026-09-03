@@ -97,6 +97,16 @@ export interface IrDirectFunctionBodyReceiptAudit {
   readonly violations: readonly IrDirectFunctionBodyReceiptViolation[];
   /** Graph-global corruption that cannot be safely assigned to one source. */
   readonly unattributedViolation?: IrDirectFunctionBodyReceiptViolation;
+  /**
+   * (#5283) Units of THIS source that physically entered an audited direct-body
+   * root — the same superset `snapshot()`'s `legacyEntryIds` uses, so a row
+   * built from it agrees with `missing-legacy-entry-evidence` by construction.
+   * Wider than `countsByUnitId`, which is `compileFunctionBody` receipts for
+   * top-level free functions only: this also carries `compileClassBodies`,
+   * `compileModuleInitBody`, `compileStatement` and `compileExpression` roots,
+   * which is what "did a direct pass run for this unit" actually asks.
+   */
+  readonly physicalRootUnitIds: ReadonlySet<IrUnitId>;
 }
 
 /** Exhaustive source-inventory row, reconciled with physical legacy entries. */
@@ -267,10 +277,30 @@ export class IrBodyRouteAuditSession {
       sourceId,
       countsByUnitId,
       violations: Object.freeze(violations),
+      physicalRootUnitIds: this.#physicalRootUnitIds(sourceId),
       ...(this.#unattributedDirectFunctionBodyReceiptViolation
         ? { unattributedViolation: this.#unattributedDirectFunctionBodyReceiptViolation }
         : {}),
     });
+  }
+
+  /**
+   * (#5283) Physical direct-body roots of one source, attributed from EXACT
+   * inventory identity only. An entry's ambient `sourceId` is the source being
+   * compiled when the root was entered, not proof that source owns the body —
+   * the whole-program `__module_init` of a multi-source graph is exactly such
+   * an entry (already reported as `unresolved-legacy-entry`), so it resolves to
+   * no unit here and is attributed to nobody. Same shape as the
+   * `moduleInitRootSourceIds` guard in `snapshot()`.
+   */
+  #physicalRootUnitIds(sourceId: IrSourceId): ReadonlySet<IrUnitId> {
+    const rootUnitIds = new Set<IrUnitId>();
+    for (const entry of this.#entries.values()) {
+      if (entry.unitId === undefined) continue;
+      if (this.#identity.unitByUnitId.get(entry.unitId)?.sourceId !== sourceId) continue;
+      rootUnitIds.add(entry.unitId);
+    }
+    return rootUnitIds;
   }
 
   #directFunctionBodyReceiptIndex(sourceId: IrSourceId): MutableDirectFunctionBodyReceiptIndex {

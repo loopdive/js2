@@ -94,7 +94,16 @@ describe("tail call optimization", () => {
     // (We can't easily distinguish which function has return_call in WAT output)
   });
 
-  it("keeps only host-free externref boundaries as ordinary calls", async () => {
+  // (#5270 step 1) Was "keeps only host-free externref boundaries as ordinary
+  // calls" — a pin that restated an undocumented `canTailCall` refusal of any
+  // externref result under standalone/wasi. That refusal had no issue id, no
+  // comment and no rationale (#822 / #839 / #1972 are about argument types,
+  // stack setup and try/catch — never about an externref RESULT), and it made
+  // EVERY value-returning standalone tail call an ordinary call, since
+  // `return undefined` also lowers to an externref result. `return_call`
+  // type-checks exactly like `call` + `return`, so both lanes promote it now;
+  // the module stays valid and the value is unchanged.
+  it("promotes an externref-result tail call in both lanes", async () => {
     const src = `
       function makeObject(depth: number): any {
         if (depth <= 0) return { value: 42 };
@@ -107,20 +116,38 @@ describe("tail call optimization", () => {
         return objectTrampoline(1).value;
       }
     `;
-    const wat = await compileWat(src, { target: "standalone" });
-    const start = wat.indexOf("(func $objectTrampoline");
-    const end = wat.indexOf("\n(func $", start + 1);
-    const body = wat.slice(start, end < 0 ? undefined : end);
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(body).toMatch(/\bcall (?:\$makeObject|\d+)\b/);
-    expect(body).not.toContain("return_call");
+    const bodyOf = (wat: string): string => {
+      const start = wat.indexOf("(func $objectTrampoline");
+      expect(start).toBeGreaterThanOrEqual(0);
+      const end = wat.indexOf("\n(func $", start + 1);
+      return wat.slice(start, end < 0 ? undefined : end);
+    };
+    expect(bodyOf(await compileWat(src, { target: "standalone" }))).toContain("return_call");
+    expect(bodyOf(await compileWat(src))).toContain("return_call");
 
-    const hostWat = await compileWat(src);
-    const hostStart = hostWat.indexOf("(func $objectTrampoline");
-    const hostEnd = hostWat.indexOf("\n(func $", hostStart + 1);
-    const hostBody = hostWat.slice(hostStart, hostEnd < 0 ? undefined : hostEnd);
-    expect(hostStart).toBeGreaterThanOrEqual(0);
-    expect(hostBody).toContain("return_call");
+    // The standalone module must still validate and answer the same value.
+    const standalone = await compile(src, { target: "standalone" });
+    expect(standalone.success).toBe(true);
+    const { instance } = await WebAssembly.instantiate(standalone.binary, standalone.importObject ?? {});
+    expect((instance.exports as Record<string, () => number>).test!()).toBe(42);
+  });
+
+  // (#5270 step 1) The relaxation must not promote a NON-tail call: the
+  // addition after `boxed(n - 1)` still needs the caller's frame, so a deep
+  // non-tail recursion must still exhaust the stack. Behavioural rather than
+  // WAT-shaped because the object literal itself ends `boxed` with a genuine
+  // (correctly promoted) tail call to the allocator.
+  it("does not promote a non-tail externref call", async () => {
+    const src = `
+      function boxed(n: number): any {
+        if (n <= 0) return { value: 0 };
+        return { value: boxed(n - 1).value + n };
+      }
+      export function test(): number {
+        return boxed(200000).value;
+      }
+    `;
+    await expect(run(src, "test")).rejects.toThrow(/call stack|recursion|memory/i);
   });
 
   it("deep recursion does not overflow stack with tail calls", async () => {

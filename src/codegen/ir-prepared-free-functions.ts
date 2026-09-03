@@ -1472,6 +1472,9 @@ export function selectR2PreparedOwnerComponents(input: {
     // (#3521 R2-T1) The same ten predicates in the same order, read as a table
     // so the FIRST failing one can be named. `find` short-circuits exactly like
     // the `||` chain it replaces, so no predicate that used to be skipped runs.
+    // (#5282) Still true: the order and the short-circuit below are untouched.
+    // Only the recorded NAME may be re-scanned, and only after refusal — see
+    // the `firstFailing` block.
     const admissionPredicates: readonly (readonly [IrR2WithdrawalReason, () => boolean])[] = [
       [
         "fast-signature-unproven",
@@ -1514,7 +1517,20 @@ export function selectR2PreparedOwnerComponents(input: {
     ];
     const firstFailing = admissionPredicates.find(([, rejects]) => rejects());
     if (firstFailing) {
-      record(unitId, "admission", firstFailing[0]);
+      // (#5282) The DECISION above is untouched, so the prepared set is
+      // byte-identical; only the NAME moves. `fast-signature-unproven` is entry
+      // zero and its guard subsumes every later predicate, so in a fast lane it
+      // answered for refusals it does not describe — one object-parameter unit
+      // read `fast-signature-unproven` fast and `param-signature-unstable`
+      // plain. The unit is ALREADY refused here, so running the remaining
+      // predicates cannot admit it; it can only find the reason that fits. No
+      // later predicate firing means the fast proof was the sole objection.
+      let reason = firstFailing[0];
+      if (reason === "fast-signature-unproven") {
+        const specific = admissionPredicates.slice(1).find(([, rejects]) => rejects());
+        if (specific) reason = specific[0];
+      }
+      record(unitId, "admission", reason);
       continue;
     }
     freeFunctionCandidates.add(unitId);

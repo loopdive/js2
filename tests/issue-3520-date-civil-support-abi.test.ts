@@ -21,6 +21,7 @@ import { definedFuncAt } from "../src/codegen/func-space.js";
 import { generateModule } from "../src/codegen/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
+import { nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { compile } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
@@ -264,10 +265,14 @@ describe("#3520 C32 date civil support Program ABI ownership", () => {
     let dateHelperFunctions = 0;
     let dateRows = 0;
     let genericDateRows = 0;
-    let terminalUnits = 0;
+    // Counts OUTCOME ROWS, not terminal units: since #3523's `non-executable`
+    // arm a source can contribute an observational row that mints no terminal
+    // unit at all. `scripts/check-ir-only.ts:403-416` draws the same partition.
+    let outcomeRows = 0;
     let emitted = 0;
     let unsupported = 0;
     let invariants = 0;
+    let nonExecutable = 0;
 
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
@@ -288,10 +293,17 @@ describe("#3520 C32 date civil support Program ABI ownership", () => {
           candidate.id.includes(":retained-module-function:") && candidate.displayName === DATE_CIVIL_HELPER,
       ).length;
       for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
+        outcomeRows++;
         if (outcome.kind === "emitted") emitted++;
         if (outcome.kind === "unsupported") unsupported++;
         if (outcome.kind === "invariant") invariants++;
+        if (outcome.kind === "non-executable") {
+          nonExecutable++;
+          // The widened total below subtracts these rows, so they must be
+          // proven well-formed here: a malformed observational row would
+          // otherwise be excused rather than caught.
+          expect(nonExecutableOutcomeDefect(outcome), `${entry} ${outcome.key}`).toBeUndefined();
+        }
       }
     }
 
@@ -306,8 +318,8 @@ describe("#3520 C32 date civil support Program ABI ownership", () => {
     // Routing stays total and invariant-free. The emitted/unsupported SPLIT is a
     // corpus denominator and deliberately not pinned here; `check:ir-only` is the
     // gate that owns it.
-    expect(terminalUnits).toBeGreaterThan(0);
-    expect(emitted + unsupported + invariants).toBe(terminalUnits);
+    expect(outcomeRows).toBeGreaterThan(0);
+    expect(emitted + unsupported + invariants).toBe(outcomeRows - nonExecutable);
     expect(invariants).toBe(0);
   });
 });

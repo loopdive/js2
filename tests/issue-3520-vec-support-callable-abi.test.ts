@@ -24,6 +24,7 @@ import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { type CompileResult, compile } from "../src/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { type IrObservedOutcome, nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import type { WasmExport, WasmFunction } from "../src/ir/types.js";
 import { buildImports, instantiateWasm, wrapExports } from "../src/runtime.js";
 
@@ -48,6 +49,31 @@ function isVecHostBridgePhysicalExport(name: string): boolean {
     const base = vecHostBridgePhysicalExportBase(bridge.kind);
     return name.startsWith(base) && /^\$*$/.test(name.slice(base.length));
   });
+}
+
+/**
+ * (#3523 R4 gap 4) The ownership projection of an outcome ledger: every row
+ * that makes an ownership claim, in ledger order. `non-executable` rows are
+ * OBSERVATIONAL — they carry `sourceId` and deliberately no `unitId` — so they
+ * are not part of the kind sequence this file pins. Mirrors the partition in
+ * `scripts/check-ir-only.ts:403-416`.
+ */
+function ownershipKinds(outcomes: readonly IrObservedOutcome[] | undefined): string[] | undefined {
+  return outcomes?.filter((outcome) => outcome.kind !== "non-executable").map((outcome) => outcome.kind);
+}
+
+/**
+ * The positive half of that filter: an observational row excluded from the kind
+ * list must still be restricted by construction, or the exclusion would be a
+ * way to hide a lying row rather than to classify a truthful one.
+ */
+function expectWellFormedObservationalRows(outcomes: readonly IrObservedOutcome[] | undefined): void {
+  for (const outcome of outcomes ?? []) {
+    if (outcome.kind !== "non-executable") continue;
+    expect(outcome.unitId, `${outcome.key} observational unit id`).toBeUndefined();
+    expect(outcome.unitKind, `${outcome.key} observational unit kind`).toBe("module-init");
+    expect(nonExecutableOutcomeDefect(outcome), outcome.key).toBeUndefined();
+  }
 }
 
 const ARRAY_SOURCE = `
@@ -849,13 +875,20 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     });
     expect(tracked.success, tracked.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(tracked.binary).toEqual(untracked.binary);
-    expect(tracked.irOutcomes?.map((outcome) => outcome.kind)).toEqual(["emitted", "unsupported"]);
+    // The kind list is ORDER-SENSITIVE and pins the ownership rows only. A
+    // `non-executable` row (#3523 R4 gap 4) is observational, carries no
+    // terminal identity, and its ledger POSITION is not a property this test
+    // owns — so it is filtered out here rather than appended to the literal,
+    // and checked for well-formedness by `expectWellFormedObservationalRows`.
+    expect(ownershipKinds(tracked.irOutcomes)).toEqual(["emitted", "unsupported"]);
+    expectWellFormedObservationalRows(tracked.irOutcomes);
     expect(untracked.irOutcomes).toBeUndefined();
 
     const routed = generate(ARRAY_SOURCE, "vec-routing.ts", true).result;
     const unreported = generate(ARRAY_SOURCE, "vec-routing.ts", false).result;
     expect(unreported.irCompiledFuncs).toEqual(routed.irCompiledFuncs);
-    expect(routed.irOutcomes?.map((outcome) => outcome.kind)).toEqual(["emitted", "unsupported"]);
+    expect(ownershipKinds(routed.irOutcomes)).toEqual(["emitted", "unsupported"]);
+    expectWellFormedObservationalRows(routed.irOutcomes);
     expect(unreported.irOutcomes).toBeUndefined();
     expect(unreported.module.functions).toHaveLength(routed.module.functions.length);
 
@@ -899,15 +932,20 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
         checker: trackedAst.checker,
       });
       const outcomes = tracked.irOutcomes ?? [];
-      const outcomeIds = outcomes.map((outcome) => outcome.unitId);
+      // Same partition as `scripts/check-ir-only.ts:403-416`: observational
+      // `non-executable` rows own no terminal unit, so they belong to neither
+      // side of the ownership closure. Well-formedness is asserted right after.
+      const ownershipOutcomes = outcomes.filter((outcome) => outcome.kind !== "non-executable");
+      const ownershipIds = ownershipOutcomes.map((outcome) => outcome.unitId);
       expect(
-        outcomeIds.every((id) => id !== undefined),
+        ownershipIds.every((id) => id !== undefined),
         `${entry} structural outcome ids`,
       ).toBe(true);
-      expect(new Set(outcomeIds).size, `${entry} unique outcome ids`).toBe(outcomes.length);
-      expect([...outcomeIds].sort(), `${entry} terminal outcome closure`).toEqual(
+      expect(new Set(ownershipIds).size, `${entry} unique outcome ids`).toBe(ownershipOutcomes.length);
+      expect([...ownershipIds].sort(), `${entry} terminal outcome closure`).toEqual(
         inventory.terminalUnits.map((unit) => unit.id).sort(),
       );
+      expectWellFormedObservationalRows(outcomes);
       for (const outcome of outcomes) {
         expect(outcome.kind === "emitted" ? outcome.irBodyEmitted : !outcome.irBodyEmitted, outcome.key).toBe(true);
         if (outcome.kind === "unsupported") expect(outcome.legacyBodyEmitted, outcome.key).toBe(true);

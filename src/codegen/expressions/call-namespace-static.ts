@@ -61,11 +61,15 @@ import {
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
-import { compileObjectLiteralAsExternref } from "../literals.js";
+import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
-import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
+import {
+  emitArgAsNativeString,
+  emitHostExternrefToNativeString,
+  emitNativeStringToHostExternref,
+} from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import {
@@ -291,11 +295,88 @@ function isPlainJsonCodecObjectLiteral(literal: ts.ObjectLiteralExpression): boo
 }
 
 /**
+ * (#5269 F3) Is this closed-struct initializer FLAT — is every property's VALUE
+ * something the shallow materializer can copy across intact?
+ *
+ * `materializeStructAsDynamicObject` opens the outer struct into a `$Object`,
+ * but it copies each field ACROSS AS-IS (`extern.convert_any`). A nested
+ * literal is its own closed struct, so the copy hands the codec a value no arm
+ * recognises and `SerializeJSONObject` silently DROPS the key:
+ * `var o = {a:1, b:{c:2}}; JSON.stringify(o, {})` answered `{"a":1}` where node
+ * answers `{"a":1,"b":{"c":2}}` — and where the base compiler REFUSED the shape
+ * outright (#1599). A wrong answer is strictly worse than a refusal.
+ *
+ * (#5269 R2-1) The first cut asked only about the property initializer's
+ * SYNTACTIC KIND, so it saw through the BINDING (`variableInitializerOf` on the
+ * `var o = …`) but not through the property VALUE. Six spellings still dropped
+ * the key — a nested object reached through an identifier, a shorthand, a
+ * parenthesis, a `const`/`let`, a call result, a conditional. So the test now
+ * RESOLVES each value the same way the binding is resolved, and — this is the
+ * load-bearing half — treats anything it cannot resolve (call result,
+ * conditional, parameter, property access) as NOT flat.
+ *
+ * Refusing conservatively is right here: base refused ALL of these shapes, so a
+ * false "not flat" costs only a refusal that already existed, while a false
+ * "flat" silently loses data.
+ */
+function isFlatClosedCodecLiteral(ctx: CodegenContext, literal: ts.ObjectLiteralExpression): boolean {
+  const valueIsFlat = (expr: ts.Expression, depth: number): boolean => {
+    // Bounded: a resolution chain this long is pathological, and refusing is
+    // the safe answer anyway.
+    if (depth > 4) return false;
+    let value: ts.Expression = expr;
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isNonNullExpression(value) ||
+      ts.isSatisfiesExpression(value)
+    ) {
+      value = value.expression;
+    }
+    // A literal of either kind is the original defect.
+    if (ts.isObjectLiteralExpression(value) || ts.isArrayLiteralExpression(value)) return false;
+    // An identifier is flat only if what it is BOUND to is flat. An identifier
+    // with no resolvable initializer (a parameter, an import, a reassigned
+    // binding) is not something this can reason about — refuse.
+    if (ts.isIdentifier(value)) {
+      const init = ctx.oracle.variableInitializerOf(value);
+      return init === undefined ? false : valueIsFlat(init, depth + 1);
+    }
+    // Primitives are the only values the shallow copy is known to carry.
+    return (
+      ts.isStringLiteral(value) ||
+      ts.isNoSubstitutionTemplateLiteral(value) ||
+      ts.isNumericLiteral(value) ||
+      value.kind === ts.SyntaxKind.TrueKeyword ||
+      value.kind === ts.SyntaxKind.FalseKeyword ||
+      value.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isPrefixUnaryExpression(value) &&
+        value.operator === ts.SyntaxKind.MinusToken &&
+        ts.isNumericLiteral(value.operand))
+    );
+  };
+
+  return literal.properties.every((property) => {
+    // `{ a: 1, c }` — the shorthand's VALUE is the binding `c` names, which is
+    // exactly the spelling that slipped through before.
+    if (ts.isShorthandPropertyAssignment(property)) return valueIsFlat(property.name, 0);
+    if (!ts.isPropertyAssignment(property)) return false;
+    return valueIsFlat(property.initializer, 0);
+  });
+}
+
+/**
  * Normalize the bounded JSON.stringify value shapes into the existing codec's
  * `anyref` ABI. This keeps literal-carrier selection out of the namespace
  * dispatcher and gives compact/replacer routes one identical conversion path.
  */
-function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
+function emitJsonCodecValueAsAnyref(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  value: ts.Expression,
+  opts?: { materializeClosedStruct?: boolean },
+): boolean {
   const unwrapped = unwrapReflectConstructExpr(value);
   let valueType: ValType | null = { kind: "externref" };
   if (ts.isArrayLiteralExpression(unwrapped) && !unwrapped.elements.some(ts.isSpreadElement)) {
@@ -304,7 +385,34 @@ function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, 
     ensureObjectRuntime(ctx);
     valueType = compileObjectLiteralAsExternref(ctx, fctx, unwrapped);
   } else {
-    valueType = compileExpression(ctx, fctx, value, { kind: "anyref" });
+    // (#5269 G-3) A `var o = {…}` binding lowers to a CLOSED struct, which the
+    // codec's value ladder has no arm for — it serialises as the literal
+    // `null`. The replacer routes reach this with the binding's identifier
+    // (the static fold, which resolves the literal, is skipped whenever a
+    // replacer is observable), so open the struct into a `$Object` first.
+    // Narrow on purpose: only an identifier whose own initializer is a plain
+    // object literal, never a vec / class instance / dynamic value.
+    const closedLiteralInit =
+      (opts?.materializeClosedStruct ?? false) && ts.isIdentifier(unwrapped)
+        ? ctx.oracle.variableInitializerOf(unwrapped)
+        : undefined;
+    const closedLiteralStruct =
+      closedLiteralInit !== undefined &&
+      ts.isObjectLiteralExpression(closedLiteralInit) &&
+      isPlainJsonCodecObjectLiteral(closedLiteralInit);
+    if (closedLiteralStruct) {
+      const raw = compileExpression(ctx, fctx, value);
+      if (raw === null) return false;
+      const mat =
+        (raw.kind === "ref" || raw.kind === "ref_null") && materializeStructAsDynamicObject(ctx, fctx, raw.typeIdx);
+      if (mat) {
+        valueType = { kind: "externref" };
+      } else {
+        valueType = raw;
+      }
+    } else {
+      valueType = compileExpression(ctx, fctx, value, { kind: "anyref" });
+    }
   }
   if (valueType === null) return false;
   if (valueType.kind === "externref" || valueType.kind === "ref_extern") {
@@ -313,6 +421,50 @@ function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, 
     coerceType(ctx, fctx, valueType, { kind: "anyref" });
   }
   return true;
+}
+
+/**
+ * (#5269 G-2) Does this `JSON.stringify` value argument statically denote a
+ * `Proxy` carrier?
+ *
+ * `new Proxy([], handler)` has the TypeScript type `never[]`, and
+ * `Proxy.revocable([], {}).proxy` is typed the same way, so the array-typed
+ * refusal in the JSON arm — which exists because a CLOSED typed vec is not a
+ * `$ObjVec` — swallowed both. A Proxy is neither: it is the opaque `$Proxy`
+ * struct the native codec now walks through its traps.
+ *
+ * Deliberately expression-shaped and narrow (two spellings), not a type test:
+ * the point is to exempt exactly the values whose runtime carrier is a `$Proxy`,
+ * never to widen the array refusal itself.
+ */
+function jsonValueIsProxyShaped(ctx: CodegenContext, value: ts.Expression): boolean {
+  const seen = new Set<ts.Node>();
+  const walk = (node: ts.Expression | undefined, depth: number): boolean => {
+    if (node === undefined || depth > 4) return false;
+    const expr = unwrapReflectConstructExpr(node);
+    if (seen.has(expr)) return false;
+    seen.add(expr);
+    // `new Proxy(target, handler)`
+    if (ts.isNewExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy") return true;
+    // `<ident>.proxy` where `<ident>` came from `Proxy.revocable(...)`
+    if (ts.isPropertyAccessExpression(expr) && expr.name.text === "proxy") {
+      const holder = expr.expression;
+      if (!ts.isIdentifier(holder)) return false;
+      const init = ctx.oracle.variableInitializerOf(holder);
+      return (
+        init !== undefined &&
+        ts.isCallExpression(init) &&
+        ts.isPropertyAccessExpression(init.expression) &&
+        ts.isIdentifier(init.expression.expression) &&
+        init.expression.expression.text === "Proxy" &&
+        init.expression.name.text === "revocable"
+      );
+    }
+    // `const p = new Proxy(...)` / `const q = new Proxy(p, {})`
+    if (ts.isIdentifier(expr)) return walk(ctx.oracle.variableInitializerOf(expr), depth + 1);
+    return false;
+  };
+  return walk(value, 0);
 }
 
 function isOrdinaryFunctionLike(node: ts.Node | undefined): boolean {
@@ -525,9 +677,25 @@ export function compileNamespaceStaticCall(
       // returns its registration key (`ref_null $AnyString`, i.e. a native
       // string or undefined for an unregistered symbol). Zero host imports.
       if (usesNativeSymbolProvider(ctx)) {
+        // (#5269 A-6) §20.4.2.6 step 1: `If sym is not a Symbol, throw a
+        // TypeError`. Without it the argument was coerced to the i32 id lane —
+        // `Symbol.keyFor(null)` / `('')` / `({})` answered `undefined` instead
+        // of throwing. Only a STATICALLY-proven non-symbol throws; `"mixed"`
+        // (a union, a narrowed `any`) keeps the existing coercion, so nothing
+        // that works today changes.
+        const keyForArg = expr.arguments[0]!;
+        const argTag = ctx.oracle.staticJsTypeOf(keyForArg);
+        if (argTag !== "symbol" && argTag !== "mixed") {
+          // The argument still evaluates (its side effects are observable
+          // before the throw, §20.4.2.6 runs after ArgumentListEvaluation).
+          const evaluated = compileExpression(ctx, fctx, keyForArg);
+          if (evaluated) fctx.body.push({ op: "drop" });
+          emitThrowTypeError(ctx, fctx, "Symbol.keyFor requires that the argument be a symbol");
+          return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+        }
         ensureNativeSymbolBoundaryBridge(ctx);
         const { keyForIdx } = ensureSymbolRegistry(ctx);
-        const symType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "i32" });
+        const symType = compileExpression(ctx, fctx, keyForArg, { kind: "i32" });
         if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
         fctx.body.push({ op: "call", funcIdx: keyForIdx });
         return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
@@ -2588,7 +2756,14 @@ export function compileNamespaceStaticCall(
         return { kind: "i32" };
       }
     }
-    if ((method === "stringify" || method === "parse") && expr.arguments.length >= 1) {
+    // (#5269 G-1) `JSON.parse()` with NO argument is a legal call whose
+    // §25.5.1 step 1 `ToString(undefined)` produces "undefined" — a SyntaxError
+    // from the grammar, not a compile refusal. It used to miss this gate and
+    // fall through to the generic `__get_builtin` compile error.
+    if (
+      (method === "stringify" || method === "parse") &&
+      (expr.arguments.length >= 1 || (method === "parse" && useNativeJsonProvider))
+    ) {
       // (#1324 primitives slice) For JSON.stringify of statically-typed
       // primitive values (null / undefined / boolean, plus number when the
       // target has a number_toString helper), emit the result without the
@@ -2598,6 +2773,22 @@ export function compileNamespaceStaticCall(
       // JSON_stringify host import — full pure-Wasm shape walking is
       // tracked under #1353 (architect-spec follow-up).
       if (method === "stringify") {
+        // (#5269 G-3, REVERTED 2026-09-02) A `replacerObservable` gate used to
+        // divert EVERY non-nullish replacer off the primitive fold and onto the
+        // codec route, on the theory that §25.5.2 step 4 processes the replacer
+        // before the value is serialised. The codec root has no arm for a bare
+        // primitive, so it answered `null`: `JSON.stringify(1, fn)` became
+        // "null" where it had been "1", and the same for booleans, undefined,
+        // an object replacer, and a variable-bound number. Measured against the
+        // G cluster with the gate on and off, it bought EXACTLY ZERO rows
+        // (8 of 13 either way) — it was defensive reasoning with a real cost and
+        // no benefit, so the fold is unconditional again.
+        //
+        // Still pre-existing and NOT fixed here: for a primitive value the
+        // replacer's RETURN is ignored, so `JSON.stringify(1, (k,v) => "w:"+v)`
+        // answers `1` where node answers `"w:1"`. That is base behaviour on both
+        // lanes; the regression was answering `"w:null"`, i.e. handing the
+        // replacer a null value, and that is gone.
         const primitiveStringType = tryEmitJsonStringifyPrimitive(ctx, fctx, expr.arguments[0]!);
         if (primitiveStringType !== undefined) {
           // Compile remaining args (replacer, space) for their side
@@ -2659,6 +2850,14 @@ export function compileNamespaceStaticCall(
             ts.isArrayLiteralExpression(valueExpression) && !valueExpression.elements.some(ts.isSpreadElement)
               ? valueExpression
               : undefined;
+          // (#5269 G-2) `new Proxy([], h)` is typed `never[]`, so the array-typed
+          // refusal above claimed every proxy-of-an-array before the codec could
+          // see it. A Proxy carrier is NOT a closed typed vec — it is the opaque
+          // `$Proxy` struct the codec now walks through its traps — so the
+          // refusal's rationale does not apply to it. Narrow, deliberately
+          // expression-shaped: only the two spellings the Proxy front guards can
+          // actually produce statically.
+          const proxyShapedValue = jsonValueIsProxyShaped(ctx, expr.arguments[0]!);
           // (#2166 PR-B) Resolve a static `space` argument to the §25.5.2
           // indent unit ("gap"). `undefined` space → compact (gap ""). A
           // *dynamic* space arg stays unresolved → keep the refusal below
@@ -2669,7 +2868,11 @@ export function compileNamespaceStaticCall(
             const staticSpace = staticSpaceValue(ctx, spaceArg);
             gap = staticSpace === undefined ? undefined : jsonGapFromStaticSpace(staticSpace);
           }
-          if (replacerNullish && gap !== undefined && (!isArrayLike || arrayLiteralForCodec !== undefined)) {
+          if (
+            replacerNullish &&
+            gap !== undefined &&
+            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue)
+          ) {
             if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
             emitJsonStringifyValue(ctx);
             flushLateImportShifts(ctx, fctx);
@@ -2694,7 +2897,7 @@ export function compileNamespaceStaticCall(
           if (
             !replacerNullish &&
             gap !== undefined &&
-            (!isArrayLike || arrayLiteralForCodec !== undefined) &&
+            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue) &&
             replacerArg !== undefined
           ) {
             const replacerCallable =
@@ -2702,6 +2905,76 @@ export function compileNamespaceStaticCall(
               ts.isFunctionExpression(replacerArg) ||
               ctx.checker.getTypeAtLocation(replacerArg).getCallSignatures().length > 0;
             const isArrayLiteral = ts.isArrayLiteralExpression(replacerArg);
+            // (#5269 G-3) Anything else — `{}`, `new String('str')`, a symbol, a
+            // `new Proxy(['b'], {})`, a revoked proxy — is classified at RUNTIME
+            // by `__json_stringify_root_replacer_dyn`: IsArray decides between a
+            // PropertyList allowlist and ignoring the replacer, and a revoked
+            // proxy throws the §7.2.2 TypeError. Previously every one of these
+            // hit the #1599 refusal.
+            if (!replacerCallable && !isArrayLiteral) {
+              // Register the codec first (idempotent, no stack effect) so the
+              // "dyn root unavailable" decline happens BEFORE any operand is
+              // pushed — a `return null` with a half-built stack is the #3725
+              // hazard.
+              emitJsonStringifyValue(ctx);
+              if (ctx.funcMap.get("__json_stringify_root_replacer_dyn") === undefined) return undefined;
+              // (#5269 F3) …and refuse a NESTED closed struct, BEFORE any
+              // operand is pushed. `materializeStructAsDynamicObject` opens the
+              // outer struct but copies each field across as-is, so a nested
+              // literal arrives as a closed struct no codec arm recognises and
+              // `SerializeJSONObject` silently drops the key:
+              // `var o = {a:1,b:{c:2}}; JSON.stringify(o, {})` answered
+              // `{"a":1}`. The base compiler REFUSED this shape (#1599), and a
+              // wrong answer is strictly worse than a refusal — `return
+              // undefined` puts it back on the refusal path until the
+              // materializer can recurse.
+              {
+                const arg0 = unwrapReflectConstructExpr(expr.arguments[0]!);
+                const init = ts.isIdentifier(arg0) ? ctx.oracle.variableInitializerOf(arg0) : undefined;
+                if (
+                  init !== undefined &&
+                  ts.isObjectLiteralExpression(init) &&
+                  isPlainJsonCodecObjectLiteral(init) &&
+                  !isFlatClosedCodecLiteral(ctx, init)
+                ) {
+                  // (#5269 R2-6) Report the #1599 JSON-provider refusal HERE
+                  // rather than falling through. A bare `return undefined` left
+                  // the call to be re-classified downstream, and the user saw a
+                  // generic `__get_builtin` / #1472 "dynamic-shape object
+                  // operation" error plus a spurious "Host import leak" warning
+                  // about a binary that is never produced — three diagnostics,
+                  // none of them naming JSON. Same message, `sticky` flag and
+                  // `return null` shape as the Phase-1 refusal below, which is
+                  // what base emitted for these shapes.
+                  reportError(
+                    ctx,
+                    expr,
+                    `Codegen error: JSON.${method} of this value is not yet supported by the native JSON provider (#1599). ` +
+                      `The dynamic-replacer route opens only the OUTER struct of a variable-bound object literal, so it ` +
+                      `is taken only when every property value is provably a flat primitive; a value this pass cannot ` +
+                      `resolve to one — a nested object or array, a call result, a conditional — would be dropped from ` +
+                      `the output, so the shape is refused instead. Use a literal with flat primitive property values, ` +
+                      `or a callable/array-literal replacer, for now.`,
+                    "error",
+                    { sticky: true },
+                  );
+                  return null;
+                }
+              }
+              if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, { materializeClosedStruct: true }))
+                return null;
+              if (gap === "") {
+                fctx.body.push({ op: "ref.null", typeIdx: ctx.anyStrTypeIdx });
+              } else {
+                for (const instr of nativeStringLiteralInstrs(ctx, gap)) fctx.body.push(instr);
+              }
+              const r = compileExpression(ctx, fctx, replacerArg, { kind: "externref" });
+              if (r === null) return null;
+              if (r.kind !== "externref") coerceType(ctx, fctx, r, { kind: "externref" });
+              flushLateImportShifts(ctx, fctx);
+              fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_stringify_root_replacer_dyn")! });
+              return nativeStringType(ctx);
+            }
             if (replacerCallable || isArrayLiteral) {
               // value → anyref
               if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
@@ -2744,11 +3017,21 @@ export function compileNamespaceStaticCall(
         // (#2166 PR-D1) The static-literal fold ignores a reviver — skip it
         // when a 2nd arg is present so `JSON.parse('5', reviver)` runs the
         // reviver walk instead of folding to the bare parsed value.
-        if (expr.arguments.length < 2) {
+        if (expr.arguments.length === 1) {
           const parsedType = tryEmitJsonParseLiteral(ctx, fctx, expr);
           if (parsedType !== undefined) {
             return parsedType;
           }
+        }
+        // (#5269 G-1) `JSON.parse()` — ToString(undefined) is "undefined", which
+        // the ECMA-404 grammar rejects → a catchable SyntaxError from
+        // `__json_parse_text`, exactly as `JSON.parse(undefined)` already does.
+        if (expr.arguments.length === 0) {
+          for (const ins of stringConstantExternrefInstrs(ctx, "undefined")) fctx.body.push(ins);
+          emitJsonParseText(ctx);
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_text")! });
+          return { kind: "anyref" };
         }
         // (#2166 PR-C) Dynamic-graph JSON.parse: a runtime JSON *text* →
         // object / array / string / primitive value, parsed entirely in Wasm
@@ -2791,49 +3074,58 @@ export function compileNamespaceStaticCall(
               reviverCallable = false;
             }
           }
+          // (#5269 G-1) §25.5.1 step 1 is `ToString(text)` for EVERY text —
+          // `null`, `false`, `0`, `3.14` parse as their string forms and a
+          // Symbol throws a TypeError. Only the string/any route keeps the
+          // byte-identical `compileExpression(..., externref)` lowering; a
+          // statically non-string argument goes through the §7.1.17 ToString
+          // walker (`emitArgAsNativeString`) instead of the refusal below.
           if (isStringOrAny) {
             const argResult = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
             if (argResult === null) return null;
             if (argResult.kind !== "externref") {
               coerceType(ctx, fctx, argResult, { kind: "externref" });
             }
-            if (reviverCallable) {
-              // text already on the stack as externref; push the reviver as a
-              // GC closure widened to externref. CRITICAL: compile the closure
-              // via the GC-struct path (`compileArrowAsClosure`), NOT
-              // `compileExpression(..., externref)` — the latter routes an
-              // inline arrow at this non-user call site through the host
-              // `__make_callback` bridge (an `env::` import that breaks
-              // standalone and whose JS wrapper fails the `__call_fn_method_2`
-              // ref.cast). The driver consumes the GC closure as externref via
-              // extern.convert_any.
-              const revResult =
-                ts.isArrowFunction(reviverArg!) || ts.isFunctionExpression(reviverArg!)
-                  ? compileArrowAsClosure(ctx, fctx, reviverArg!)
-                  : compileExpression(ctx, fctx, reviverArg!, { kind: "anyref" });
-              if (revResult === null) return null;
-              if (revResult.kind === "ref" || revResult.kind === "ref_null" || revResult.kind === "anyref") {
-                fctx.body.push({ op: "extern.convert_any" });
-              } else if (revResult.kind !== "externref") {
-                coerceType(ctx, fctx, revResult, { kind: "externref" });
-              }
-              emitJsonParseTextReviver(ctx);
-              flushLateImportShifts(ctx, fctx);
-              fctx.body.push({
-                op: "call",
-                funcIdx: ctx.funcMap.get("__json_parse_text_reviver")!,
-              });
-              return { kind: "anyref" };
+          } else {
+            emitArgAsNativeString(ctx, fctx, expr.arguments[0]!);
+            fctx.body.push({ op: "extern.convert_any" });
+          }
+          if (reviverCallable) {
+            // text already on the stack as externref; push the reviver as a
+            // GC closure widened to externref. CRITICAL: compile the closure
+            // via the GC-struct path (`compileArrowAsClosure`), NOT
+            // `compileExpression(..., externref)` — the latter routes an
+            // inline arrow at this non-user call site through the host
+            // `__make_callback` bridge (an `env::` import that breaks
+            // standalone and whose JS wrapper fails the `__call_fn_method_2`
+            // ref.cast). The driver consumes the GC closure as externref via
+            // extern.convert_any.
+            const revResult =
+              ts.isArrowFunction(reviverArg!) || ts.isFunctionExpression(reviverArg!)
+                ? compileArrowAsClosure(ctx, fctx, reviverArg!)
+                : compileExpression(ctx, fctx, reviverArg!, { kind: "anyref" });
+            if (revResult === null) return null;
+            if (revResult.kind === "ref" || revResult.kind === "ref_null" || revResult.kind === "anyref") {
+              fctx.body.push({ op: "extern.convert_any" });
+            } else if (revResult.kind !== "externref") {
+              coerceType(ctx, fctx, revResult, { kind: "externref" });
             }
-            emitJsonParseText(ctx);
+            emitJsonParseTextReviver(ctx);
             flushLateImportShifts(ctx, fctx);
-            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_text")! });
-            // The codec returns the value graph as anyref ($Object/$ObjVec/
-            // $NativeString widened, or a ref $AnyValue for primitives). The
-            // downstream coercion paths (object property read, AnyValue→
-            // primitive) dispatch on the concrete ref via ref.test.
+            fctx.body.push({
+              op: "call",
+              funcIdx: ctx.funcMap.get("__json_parse_text_reviver")!,
+            });
             return { kind: "anyref" };
           }
+          emitJsonParseText(ctx);
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_text")! });
+          // The codec returns the value graph as anyref ($Object/$ObjVec/
+          // $NativeString widened, or a ref $AnyValue for primitives). The
+          // downstream coercion paths (object property read, AnyValue→
+          // primitive) dispatch on the concrete ref via ref.test.
+          return { kind: "anyref" };
         }
       }
       void tryEmitJsonParsePrimitive;

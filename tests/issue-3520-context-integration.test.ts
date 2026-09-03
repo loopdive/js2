@@ -38,6 +38,36 @@ vi.mock("../src/ir/planning-identity.js", async (importOriginal) => {
 
 import { compile, compileMulti } from "../src/index.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
+import { type IrObservedOutcome, nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
+
+/**
+ * (#3523 R4 gap 4) The ownership projection of an outcome ledger. A
+ * `non-executable` row is OBSERVATIONAL: it records that a source's module init
+ * has nothing to compile, carries `sourceId` and deliberately no `unitId`, and
+ * mints no terminal unit. `scripts/check-ir-only.ts:403-416` draws the same
+ * partition; these helpers let the ledger expectations below keep their
+ * original shape while stating the observational rows separately.
+ */
+function ownershipOutcomes(outcomes: readonly IrObservedOutcome[] | undefined): readonly IrObservedOutcome[] {
+  return (outcomes ?? []).filter((outcome) => outcome.kind !== "non-executable");
+}
+
+function observationalOutcomes(outcomes: readonly IrObservedOutcome[] | undefined): readonly IrObservedOutcome[] {
+  return (outcomes ?? []).filter((outcome) => outcome.kind === "non-executable");
+}
+
+/**
+ * The positive half of the filter: a row excluded from an ownership expectation
+ * must still be restricted by construction, so that the widening cannot be
+ * satisfied by a malformed observational row.
+ */
+function expectWellFormedObservationalRows(outcomes: readonly IrObservedOutcome[] | undefined): void {
+  for (const outcome of observationalOutcomes(outcomes)) {
+    expect(outcome.unitId, `${outcome.key} observational unit id`).toBeUndefined();
+    expect(outcome.unitKind, `${outcome.key} observational unit kind`).toBe("module-init");
+    expect(nonExecutableOutcomeDefect(outcome), outcome.key).toBeUndefined();
+  }
+}
 
 function expectOneInventory(...expectedFiles: readonly string[]): void {
   expect(inventoryBuilds).toHaveBeenCalledTimes(1);
@@ -87,9 +117,28 @@ describe("#3520 authoritative production planning context", () => {
     });
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irOutcomes).toEqual([
+    // (#3523 R4 gap 4) The ledger carries the ownership row for `add` AND an
+    // observational `<module-init>` row for the source's empty, non-executable
+    // module init. Assert the ownership projection unchanged, then the
+    // observational row explicitly — same partition as
+    // `scripts/check-ir-only.ts:403-416`.
+    expect(ownershipOutcomes(result.irOutcomes)).toEqual([
       expect.objectContaining({ displayName: "add", kind: "emitted", irBodyEmitted: true }),
     ]);
+    const observational = observationalOutcomes(result.irOutcomes);
+    expect(observational).toEqual([
+      expect.objectContaining({
+        displayName: "<module-init>",
+        kind: "non-executable",
+        unitKind: "module-init",
+        stage: "select",
+      }),
+    ]);
+    // Asserted with `toBeUndefined` rather than inside `objectContaining`: the
+    // row omits the key entirely, and `objectContaining` requires the property
+    // to be PRESENT even when the expected value is `undefined`.
+    expect(observational[0]?.unitId).toBeUndefined();
+    expectWellFormedObservationalRows(result.irOutcomes);
     expectOneInventory("issue-3520-single-context.ts");
   });
 
@@ -107,7 +156,19 @@ describe("#3520 authoritative production planning context", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irOutcomes?.map((outcome) => outcome.displayName).sort()).toEqual(["main", "twice"]);
+    // Same partition as above: each of the two sources contributes an
+    // observational `<module-init>` row that owns no terminal unit.
+    expect(
+      ownershipOutcomes(result.irOutcomes)
+        .map((outcome) => outcome.displayName)
+        .sort(),
+    ).toEqual(["main", "twice"]);
+    expect(
+      observationalOutcomes(result.irOutcomes)
+        .map((outcome) => outcome.file)
+        .sort(),
+    ).toEqual(["dependency.ts", "entry.ts"]);
+    expectWellFormedObservationalRows(result.irOutcomes);
     expectOneInventory("dependency.ts", "entry.ts");
   });
 
