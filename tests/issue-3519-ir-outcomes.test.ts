@@ -308,20 +308,37 @@ export function answer(): number { return 42; }
       { fileName: "anonymous-class.ts", trackIrOutcomes: true },
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    // (#5283) `legacyBodyEmitted` is now a receipt: it requires a physical
+    // direct-body root, and an anonymous default class records none — the only
+    // audited entry for this source is a `compileDeclarations` root with no
+    // unit identity at all. The direct route almost certainly DID emit these
+    // two bodies, so this is not a claim that it did not; it is the audit
+    // refusing to assert a body it cannot see. Measured before/after: the two
+    // rows read `true` with `missing-legacy-entry-evidence` x2 ("reports a
+    // legacy body without entering an audited direct-body root"), and now read
+    // `false` with `missing-terminal-evidence` x2 ("neither a resolved IR
+    // outcome nor a physical legacy entry"). Same violation count, and the
+    // second label is the honest one: attributing this class's roots is the
+    // #3523 gap-1 unattributed-entry debt, not something this row can fix.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "<anonymous-default-class:0>_new",
         kind: "unsupported",
         code: "anonymous-class",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
       }),
       expect.objectContaining({
         displayName: "<anonymous-default-class:0>_read",
         kind: "unsupported",
         code: "anonymous-class",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
       }),
     ]);
+    expect(
+      (result.irBodyRouteAudit?.violations ?? []).filter(
+        (violation) => violation.code === "missing-legacy-entry-evidence",
+      ),
+    ).toEqual([]);
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
