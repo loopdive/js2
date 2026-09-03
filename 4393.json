@@ -1,10 +1,11 @@
 {
   "id": "4393",
   "assignee": "ttraenkler/codex-es5-annexb-function",
-  "requested_by": "ttraenkler/codex-es5-annexb-function",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4393-annexb-if-switch-lifecycle",
   "claimed_at": "2026-08-12T21:53:57Z",
-  "updated_at": "2026-08-12T21:53:57Z",
-  "write_id": "90176-in7d0opm"
+  "updated_at": "2026-09-03T09:47:41Z",
+  "write_id": "14635-e1u2ehw0",
+  "released_at": "2026-09-03T09:47:41Z"
 }
