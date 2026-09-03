@@ -112,6 +112,16 @@ loc-budget-allow:
   # selector that consumes it. Splitting either into a new module would put the
   # marker type on the wrong side of the identity/selection seam and force a new
   # ir->ir import edge for every one of the seven consumers.
+  # 2026-09-03 (W1-A, PrivateIdentifier instance-method declarations). Measured
+  # against origin/main 2510fae02: identity.ts 1591 -> 1620 (+29, of which 23
+  # are the rationale comment on `privateMemberMangledName`), select-identity.ts
+  # 1621 -> 1630 (+9), select.ts 11122 -> 11128 (+6), codegen/index.ts
+  # 14773 -> 14778 (+5). The mangling helper has to live beside the identity
+  # records it names (`select.ts` already imports `identity.js`; the reverse
+  # edge would close an ir->ir cycle through dom-capability/propagate), and the
+  # other three sites are one-predicate widenings inside functions that already
+  # own the decision. All four paths are already granted above; this entry
+  # restates the grant so the allowance is not stranded (CLAUDE.md).
   - src/ir/identity.ts
   - src/ir/select-identity.ts
 func-budget-allow:
@@ -4399,3 +4409,150 @@ node scripts/claim-issue.mjs 3522:w1a-private-method ttraenkler/<agent> --branch
 
 Release it on merge. `#3522` itself is `horizon: xl` and remains open after this
 slice.
+
+### W1-A private-method — landed (2026-09-03)
+
+Branch `claude/issue-3522-w1a-private-method`, base `origin/main` **2510fae02**.
+All three sites moved together; `src/codegen/class-bodies.ts` was audit-only, as
+the plan predicted, and is not edited.
+
+| # | site | change |
+| --- | --- | --- |
+| 1 | `src/ir/identity.ts::memberBaseName` | returns `__priv_<x>` for a `PrivateIdentifier` via the new exported `privateMemberMangledName` |
+| 2 | `src/ir/select.ts::phase1MemberName` | returns the same mangled name; `ComputedPropertyName` still `null` |
+| 3 | `src/codegen/index.ts` method-descriptor loop (in `buildIrClassShapes`) | admits a `PrivateIdentifier` name; static / abstract / generator defers unchanged |
+| 4 | `src/ir/select-identity.ts` accessor arm | **behaviour-preserving**: an explicit `ts.isPrivateIdentifier` refusal so widening the shared predicate does not admit private ACCESSORS |
+
+The helper lives in `identity.ts`, not beside `phase1MemberName`: `select.ts`
+already imports `identity.js`, and the reverse value edge would close an
+`ir -> ir` cycle through `dom-capability` / `propagate` / `type-evidence`. One
+definition, both callers — the anti-drift property the plan asked for.
+
+#### Measured plan correction — on the census file, A2 sits on top of A1
+
+The arm map above lists `classes.js`'s `Animal_<computed>` under **A2** as if A2
+and A1 were disjoint for that member. Measured on this branch, they are
+**stacked**: `Animal` takes an `any`-typed constructor parameter, so the class
+never enters the class-shape sidecar at all — **no member of it has a
+descriptor**. A2 was merely the first stamp. With the name admitted, the row
+falls through to the same missing-descriptor arm its six siblings already sit
+on. This is a correction to the arm map, not a shortfall in the slice: all three
+sites moved, and reverting any one of them individually puts the row back on its
+own arm (table further down).
+
+| | base | branch |
+| --- | --- | --- |
+| display name | `Animal_<computed>` | `Animal___priv_privateMethod` |
+| code | `class-method` (A2) | `class-member-unsupported` (A1b) |
+| emitted | no | no |
+
+The remaining step for this one file is A1 — the `any`-carrier decision this
+plan disqualifies from R3 with three measured reasons and hands to the A1 /
+`any`-carrier lane (#5289 / #3523). So the arm table below moves exactly one row
+per lane, and no row reaches `emitted` on the census population; **acceptance
+criterion 1 is evidenced on the annotated fixtures**, which is where the plan's
+own cost table (`r01`…`s02`) measured this arm in the first place.
+
+Census (33 entries × 2 lanes = 66 compiles: dogfood 20 `.js` + playground 13
+`.ts`, gc + standalone, `trackIrOutcomes` + `JS2WASM_IR_SHAPE_DIAG=1`), base vs
+branch, code counts over all 216 terminal units:
+
+| code | base | branch |
+| --- | --: | --: |
+| `emitted` | 103 | 103 |
+| `class-method` | 2 | **0** |
+| `class-member-unsupported` | 8 | **10** |
+| `class-projection-unsupported` | 4 | 4 |
+| `static-class-initialization` | 2 | 2 |
+| every other code (15 of them) | — | unchanged |
+
+The only unit rows that move are `classes.js`'s `Animal_<computed>` on each
+lane. **Byte identity: 66 / 66 sha256-identical**, including `classes.js`
+itself — the refused row changes its label, not its bytes. (The plan budgeted
+65/66 with `classes.js` as the permitted mover; the actual result is stricter.)
+
+#### Acceptance criterion 1 — the arm claimed, annotated shapes, both lanes
+
+Measured through the production `compile` seam, gc and standalone identical,
+with the direct class-body emitter POISONED for the named slot:
+
+| probe | shape | base | branch |
+| --- | --- | --- | --- |
+| `r01` | private method declared, never called | `class-method` | **`emitted`**, in `irCompiledFuncs`, `legacyBodyEmitted: false` |
+| `r02` | called from a sibling method | 3 units lost | callee **`emitted`**; caller `body-shape-rejected` and ctor `late-preparation-unsupported` **unchanged** |
+| `r03` | called from the constructor | 2 units lost | callee **`emitted`**; ctor `body-shape-rejected` **unchanged** |
+| `s01` | TWO private methods | both `Animal_<computed>` / `class-method` | **`Animal___priv_first` + `Animal___priv_second`, both emitted, distinct unit ids** |
+| `s02` | private + computed-name method | both `Animal_<computed>` | private **`emitted`**; computed keeps `class-method` |
+| `r04` | private FIELD only | already claimed | unchanged |
+| `r05` | computed-name method | `class-method` | unchanged |
+| `r06` | generator method | `class-member-unsupported` | unchanged |
+
+`r02`/`r03` lose one unit FEWER than on base. The deferral boundary is
+unmoved — the caller and constructor keep their exact pre-slice codes; the
+extra claimed unit is the private method's own declaration, which is this
+slice.
+
+#### The collision was real, and the non-vacuity reverts prove each site
+
+Reverting each site alone (file-copy A/B, both lanes identical):
+
+| reverted | `r01` (one private method) | `s01` (two private methods) |
+| --- | --- | --- |
+| — (all three) | `emitted` | both `emitted`, distinct ids |
+| site 1 (`memberBaseName`) | `emitted`, but named `Animal_<computed>` | **both refused** `class-member-unsupported` — the collision materialises the moment admission is attempted |
+| site 2 (`phase1MemberName`) | `class-method` | `class-method` |
+| site 3 (descriptor loop) | `class-member-unsupported` | `class-member-unsupported` |
+
+Site 3's revert reproduces the exact trap the plan named: the row shifts A2 →
+A1b and claims nothing. Site 1's revert is the `s01` hazard measured live —
+without the distinct name, admitting two private methods drops both.
+
+#### The prescribed corpus fixture was measured and REJECTED
+
+The plan asked for `tests/dogfood/corpus/class-private-members.js` so the arm
+stops being invisible on the census. Built and measured: an unannotated `.js`
+class lands on **`return-type-not-resolvable`**, a different arm entirely — the
+method return type needs an explicit annotation (`ts-annotated` claims,
+`ts-inferred` and `js-inferred` both refuse with that code). A `.js` corpus
+entry therefore cannot exhibit this arm; it would have added four refused rows
+on an unrelated arm and moved the census denominators for nothing. The fixture
+is not added; the durable home for these shapes is
+`tests/issue-3522-private-method-admission.test.ts`, which pins all eight groups
+in CI on both lanes.
+
+#### Two honest deviations from the plan's expectations
+
+1. **A static private method's reason code moves**, `class-method` →
+   `class-member-unsupported`. The VERDICT is unchanged (refused, direct body,
+   still deferred by the static branch in `buildIrClassShapes`), and the new
+   code is the accurate one: the name is now representable, the missing static
+   descriptor is the real reason. No gate corpus contains the shape, so no
+   bucket moves. A private ACCESSOR likewise keeps `class-method` but is now
+   displayed as `Animal_get___priv_hidden` instead of `Animal_get_<computed>`.
+2. **`check:ir-kind-neutrality` did NOT move.** The plan expected an
+   evidence-location-only diff and a baseline re-lock; the gate's output is
+   byte-identical base vs branch, so nothing was re-locked.
+
+#### Gates
+
+`check-loc-budget` (bare and with `LOC_GATE_BASE=origin/main`),
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`, `check:ir-dialect`, `check:ir-kind-neutrality`,
+`check:ir-fallbacks`, `check:ir-only`, `check:ir-adoption`,
+`check:test-vacuity-shapes`, `update-issues --check`, TS7 no-emit, Biome,
+Prettier, `scripts/hooks/changed-root-tests.sh`, and equivalence across all 8
+shards (no new regressions, zero name-set diff vs the committed baseline): all
+pass. `check:ir-layering` is **86 import lines across 15 files, baseline 86,
+unchanged** — this slice adds no `src/ir/` -> `src/codegen/` edge; its two new
+imports are `codegen/index.ts` -> `ir/identity.js` (the permitted direction) and
+`ir/select.ts` -> `ir/identity.js` (intra-IR). `check:ir-fallbacks --verbose` output is
+byte-identical base vs branch — the playground gate corpus carries **zero**
+class-family rejections (every one of its class rows already emits), so
+`class-method` is 0 on both sides there and no bucket moved in either
+direction; nothing to `--update-on-decrease`. `check:ir-only` stays **READY**
+on both lanes with an identical ledger. No new import, ABI, runtime
+representation or lowering surface — asserted directly on the prepared owner's
+WAT (no `call_ref`, `call_indirect`, `ref.test`, `__box_number`, `__call_m_*`).
+
+The next cluster is unchanged: private-method **call sites** (`r02`/`r03`), in
+`src/ir/from-ast.ts`.

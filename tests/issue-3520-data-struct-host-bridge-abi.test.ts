@@ -21,6 +21,7 @@ import {
 } from "../src/codegen/program-abi-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
+import { nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import { createEmptyModule, type FuncTypeDef, type Import, type WasmFunction } from "../src/ir/types.js";
 import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm, wrapExports } from "../src/runtime.js";
@@ -353,10 +354,14 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     let dataBridgeFunctions = 0;
     let dataRows = 0;
     let genericDataRows = 0;
-    let terminalUnits = 0;
+    // Counts OUTCOME ROWS, not terminal units: since #3523's `non-executable`
+    // arm a source can contribute an observational row that mints no terminal
+    // unit at all. `scripts/check-ir-only.ts:403-416` draws the same partition.
+    let outcomeRows = 0;
     let emitted = 0;
     let unsupported = 0;
     let invariants = 0;
+    let nonExecutable = 0;
 
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
@@ -378,10 +383,17 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
           candidate.id.includes(":retained-module-function:") && DATA_BRIDGE_NAMES.has(candidate.displayName ?? ""),
       ).length;
       for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
+        outcomeRows++;
         if (outcome.kind === "emitted") emitted++;
         if (outcome.kind === "unsupported") unsupported++;
         if (outcome.kind === "invariant") invariants++;
+        if (outcome.kind === "non-executable") {
+          nonExecutable++;
+          // The widened total below subtracts these rows, so they must be
+          // proven well-formed here: a malformed observational row would
+          // otherwise be excused rather than caught.
+          expect(nonExecutableOutcomeDefect(outcome), `${entry} ${outcome.key}`).toBeUndefined();
+        }
       }
     }
 
@@ -393,8 +405,8 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     expect(genericDataRows).toBe(0);
     // Routing stays total and invariant-free; the emitted/unsupported SPLIT is a
     // corpus denominator owned by `check:ir-only`, not pinned here.
-    expect(terminalUnits).toBeGreaterThan(0);
-    expect(emitted + unsupported + invariants).toBe(terminalUnits);
+    expect(outcomeRows).toBeGreaterThan(0);
+    expect(emitted + unsupported + invariants).toBe(outcomeRows - nonExecutable);
     expect(invariants).toBe(0);
   });
 

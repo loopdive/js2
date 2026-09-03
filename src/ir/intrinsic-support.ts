@@ -14,7 +14,7 @@ import {
 } from "./runtime-host-capabilities.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import type { IrStringConcatMode } from "./string-runtime.js";
-import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
+import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS, type IntrinsicSignature } from "./intrinsics.js";
 import {
   forEachInstrDeep,
   irTypeEquals,
@@ -38,6 +38,7 @@ import {
   STRING_CONCAT_MANY_RUNTIME_FEATURES,
   STRING_CONST_RUNTIME_FEATURES,
   HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
+  FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -606,6 +607,9 @@ export function preparedStringConstProvider(
 /** The one host-callback-wrap feature row; named once so no caller spells it. */
 const HOST_CALLBACK_WRAP_RUNTIME_FEATURE = HOST_CALLBACK_WRAP_RUNTIME_FEATURES[0];
 
+/** The one `%Function.prototype%` call feature row; named once so no caller spells it. */
+const FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE = FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES[0];
+
 /**
  * (#3526 F3-S1) Which arm of the HOST CALLBACK MAKER seam the frozen manifest
  * selected, or `undefined` when no manifest carries the row.
@@ -648,6 +652,38 @@ export function preparedHostCallbackWrapProvider(prepared: PreparedIrRuntimeMani
     return { arm: "host", module: record.module, field: record.field, params: record.params, results: record.results };
   }
   throw new Error(`IR host-callback-wrap provider ${provider.id} is not a callback-boundary implementation`);
+}
+
+/**
+ * (#3526 F3-S3) The frozen `%Function.prototype%` call arm, or `undefined` when
+ * the manifest carries no row for the feature — which is every adapter whose
+ * policy resolved `unsupported`, and every program that calls no
+ * `Function.prototype(...)` at all.
+ *
+ * The seam has ONE admitting arm, so this returns the runtime symbol and the
+ * signature that names its ABI rather than a discriminated union: there is no
+ * host sibling a caller could have to distinguish. A row whose implementation
+ * is not `runtime-callable` is a manifest defect, not a lane this seam does not
+ * serve, so it throws rather than answering `undefined`.
+ *
+ * Read post-freeze only — `preregisterDynamicSupport`. from-ast runs in Phase 1,
+ * before `freeze()`, and projects the RESOLVED POLICY instead.
+ */
+export function preparedFunctionPrototypeCallProvider(prepared: PreparedIrRuntimeManifest | undefined):
+  | {
+      readonly arm: "native";
+      readonly symbol: string;
+      readonly signature: IntrinsicSignature | undefined;
+    }
+  | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", symbol: provider.implementation.symbol, signature: provider.signature };
+  }
+  throw new Error(`IR function-prototype-call provider ${provider.id} is not a runtime-callable implementation`);
 }
 
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
@@ -807,6 +843,13 @@ export function prepareIrRuntimeManifest(input: {
    * selected arm disagrees with the population it was frozen for.
    */
   readonly hostCallbackWrapDemand?: { readonly host: boolean; readonly nativeDispatch: boolean };
+  /**
+   * (#3526 F3-S3) Whether any built function calls the `%Function.prototype%`
+   * helper. Like `generatorNumberBoxDemand` the seam is a plain `call` and not
+   * an `IntrinsicUse`, so the demand cannot be recovered from `uses` and is
+   * scanned by the caller instead.
+   */
+  readonly functionPrototypeCallDemand?: boolean;
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -853,7 +896,8 @@ export function prepareIrRuntimeManifest(input: {
     !input.stringConstDemand?.literal &&
     !input.stringConstDemand?.utf16 &&
     !input.hostCallbackWrapDemand?.host &&
-    !input.hostCallbackWrapDemand?.nativeDispatch
+    !input.hostCallbackWrapDemand?.nativeDispatch &&
+    !input.functionPrototypeCallDemand
   ) {
     return undefined;
   }
@@ -877,6 +921,7 @@ export function prepareIrRuntimeManifest(input: {
   if (input.hostCallbackWrapDemand?.host || input.hostCallbackWrapDemand?.nativeDispatch) {
     builder.requestFeature(HOST_CALLBACK_WRAP_RUNTIME_FEATURE);
   }
+  if (input.functionPrototypeCallDemand) builder.requestFeature(FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {
