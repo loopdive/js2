@@ -1,10 +1,11 @@
 {
   "id": "4770",
   "assignee": "ttraenkler/codex-4770-function-name-length",
-  "requested_by": "ttraenkler/codex-4770-function-name-length",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4770-function-name-length",
   "claimed_at": "2026-08-27T11:49:37Z",
-  "updated_at": "2026-08-27T11:49:37Z",
-  "write_id": "77366-sqsab01p"
+  "updated_at": "2026-09-03T09:51:16Z",
+  "write_id": "22055-57cv51a6",
+  "released_at": "2026-09-03T09:51:16Z"
 }
