@@ -1,10 +1,11 @@
 {
   "id": "4260",
   "assignee": "ttraenkler/codex-4260-b",
-  "requested_by": "ttraenkler/codex-4260-b",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4260-b-atomic-publication",
   "claimed_at": "2026-08-26T04:48:19Z",
-  "updated_at": "2026-08-26T04:48:19Z",
-  "write_id": "48766-jg83yxvg"
+  "updated_at": "2026-09-03T09:45:18Z",
+  "write_id": "8485-qtbutib2",
+  "released_at": "2026-09-03T09:45:18Z"
 }
