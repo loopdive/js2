@@ -1,12 +1,11 @@
 {
   "id": "4785",
   "assignee": "ttraenkler/codex-es2015-next-bounded-fix-6",
-  "requested_by": "ttraenkler/codex-es2015-next-bounded-fix-6",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es2015-next-bounded-fix-6",
-  "reserved_at": "2026-08-27T18:15:45Z",
   "claimed_at": "2026-08-27T18:15:45Z",
-  "updated_at": "2026-08-27T18:15:45Z",
-  "write_id": "31082-yhej4suv",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:51:27Z",
+  "write_id": "22156-evhooqus",
+  "released_at": "2026-09-03T09:51:27Z"
 }
