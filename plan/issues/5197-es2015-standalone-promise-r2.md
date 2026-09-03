@@ -1421,3 +1421,35 @@ Controls green: `tests/promise-combinators.test.ts`,
 `issue-3125-widen.test.ts`, `issue-4746.test.ts` (26 tests), plus a 15-row
 currently-passing `Promise/{all,race,prototype/then}` standalone control
 sample, 15/15 pass.
+
+### R3-10 — an initializer-less `var` is not a proof of `undefined` (LANDED, +2)
+
+`provablyNullishReceiver` accepted `typeFactOf(e).kind === "undefined"` for an
+identifier whose declaration is an initializer-less, annotation-less
+`var`/`let`. That is an EVOLVING `any`: TypeScript's control-flow analysis
+narrows a use no assignment dominates to `undefined`, and a narrowing is not a
+proof. `var resolveFunction;` filled only inside the executor therefore compiled
+`hasOwnProperty.call(resolveFunction, "prototype")` to a static TypeError. The
+gate now declines for that declaration shape (variable declaration or parameter
+with neither type nor initializer) and keeps every genuine proof — the `null`
+keyword, an explicitly `undefined`-typed binding.
+
+Measured, same 3-row batch, `--standalone`:
+
+| tree | result |
+| --- | --- |
+| base | 3 fail, all `Object.prototype.hasOwnProperty called on null or undefined` |
+| branch | 2 pass; `executor-function-not-a-constructor.js` advances to the predicted #3371 text (`Expected a TypeError to be thrown` from the harness `isConstructor`), NOT claimed |
+
+Controls: a 15-row `Object/prototype/{hasOwnProperty,isPrototypeOf}` +
+`Function/prototype/{call,apply}` standalone batch, 14 pass / 1 fail —
+`isPrototypeOf/this-value-is-in-prototype-chain-of-arg.js` fails IDENTICALLY on
+the base tree (`called value is not a function`), so it is pre-existing, not a
+regression. New control `tests/issue-5197-nullish-receiver-proof.test.ts` pins
+both directions on both lanes.
+
+Note for the record: `Object.prototype.hasOwnProperty.call(x, k)` where `x` is
+declared `const x: undefined = undefined` does NOT throw in the HOST lane, on
+base and on this branch alike. That is a separate pre-existing gap in the
+borrowed-prototype nullish fold; the control uses the `undefined` keyword
+instead so it asserts something both lanes actually agree on.

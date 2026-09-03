@@ -582,6 +582,26 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
 function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
   const e = skipParens(expr);
   if (e.kind === ts.SyntaxKind.NullKeyword) return true;
+  // (#5197 R3-10) An initializer-less, annotation-less `var`/`let` is an
+  // EVOLVING `any`: TypeScript's control-flow analysis narrows a use that no
+  // assignment dominates to `undefined`, and `typeFactOf` faithfully reports
+  // that narrowing. A narrowing is not a proof — `var resolveFunction;`
+  // assigned only inside a nested executor holds a function by the time the
+  // top-level code runs — so declining here keeps the receiver dynamic instead
+  // of compiling `hasOwnProperty.call(resolveFunction, "prototype")` to a
+  // static TypeError. An explicit `undefined`/`null` type annotation, and the
+  // `null` keyword above, remain proofs.
+  if (ts.isIdentifier(e)) {
+    const decl = ctx.oracle.valueDeclarationOf(e);
+    if (
+      decl !== undefined &&
+      (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) &&
+      decl.type === undefined &&
+      decl.initializer === undefined
+    ) {
+      return false;
+    }
+  }
   const fact = ctx.oracle.typeFactOf(e);
   return fact.kind === "undefined" || fact.kind === "null";
 }
