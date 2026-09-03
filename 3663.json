@@ -1,8 +1,11 @@
 {
   "id": "3663",
   "assignee": "ttraenkler/codex-3663-descriptor-flags",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3663-descriptor-flags",
   "claimed_at": "2026-07-28T15:06:12Z",
-  "updated_at": "2026-07-28T15:06:12Z"
+  "updated_at": "2026-09-03T09:41:28Z",
+  "write_id": "4889-dlqgfdmt",
+  "released_at": "2026-09-03T09:41:28Z"
 }
