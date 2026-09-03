@@ -1,10 +1,11 @@
 {
   "id": "4242",
   "assignee": "ttraenkler/codex-quickjs-parity",
-  "requested_by": "ttraenkler/codex-quickjs-parity",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4242-quickjs-parity",
   "claimed_at": "2026-08-11T23:32:21Z",
-  "updated_at": "2026-08-11T23:32:21Z",
-  "write_id": "26221-h2xgg7c5"
+  "updated_at": "2026-09-03T09:45:07Z",
+  "write_id": "8381-bqk0bqer",
+  "released_at": "2026-09-03T09:45:07Z"
 }
