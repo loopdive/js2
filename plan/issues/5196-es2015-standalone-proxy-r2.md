@@ -1515,3 +1515,40 @@ namespace carrier's `revocable` member in every module where that carrier is
 materialised — which measurement shows is every standalone module. The change
 replaces a thrower with a working native call; the 593 rows re-run above show no
 behavioural regression, but the bytes do move.
+
+## Results — R3-2 C4 + C5 (2026-09-03, Opus implementer)
+
+**Claimed: +8 of `r3-C.txt`.** All eight re-run and seen passing on the lane;
+all eight `fail` on `4fa179f8`.
+
+- C4 (4): `Reflect/{get,has}/target-is-not-object-throws.js` — the shared
+  `guardNativeReflectTarget` (the §Type(V)-is-Object test the
+  `deleteProperty`/`ownKeys`/`isExtensible` arms already use) now runs on the
+  `get` and `has` arms too. `Reflect/apply/target-is-not-callable-throws.js` —
+  the callable ladder gains a POSITIVE `typeof t === "object" && typeof t !==
+  "function"` rejection, so `Reflect.apply({}, …)` throws while every callable
+  carrier (compiled closure, bound function, `$Proxy` over a callable) is
+  admitted exactly as before. `Reflect/apply/arguments-list-is-not-array-like.js`
+  — §7.3.19 step 2: a missing third argument throws at compile time, a
+  primitive/null one through the same Object guard.
+- C5 (4): the four `Reflect/*/return-abrupt-from-property-key.js`. §7.1.19
+  ToPropertyKey now runs at the CALL SITE (after the target guard, before the
+  native call) for `get`, `set`, `getOwnPropertyDescriptor`; the natives coerce
+  internally but swallow a throwing `toString`. `Reflect.defineProperty(t, k)`
+  with two arguments got a new arm — before it hit the "#1472 Phase C" hard
+  COMPILE refusal, so the row could not even run; it now does step 1, step 2
+  (where the throw escapes) and then the step-3 TypeError.
+- `Reflect.set`'s arguments now go through locals instead of straight onto the
+  stack (needed to coerce the key in place). Evaluation order is unchanged.
+
+**Never-worse-than-base (re-run by the implementer on the lane):**
+
+- `language/expressions/new/` + `built-ins/Reflect/` all 212 rows: base 178 pass
+  → lane 186 pass, **zero pass→non-pass**.
+- `built-ins/Proxy/` all 311 rows: base 184 → lane 195, **zero pass→non-pass**
+  (the `apply` guard sits on the path a proxy `apply` trap takes).
+- `r3-controls.txt` 70/70.
+
+**Not done in C:** C1 (Reflect.set proxy bypass), C2/C3 (setPrototypeOf /
+preventExtensions booleans), C6 (ownKeys symbols+order), C8a. Not started —
+budget, not a finding.

@@ -947,6 +947,24 @@ export function compileNamespaceStaticCall(
         boundaryAdmissionFuncIdx: boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined,
       });
     };
+    // (#5196 R3-2 C5) §7.1.19 ToPropertyKey on the Reflect key argument, in
+    // place, AFTER the target guard and BEFORE the native call. An object key
+    // with a throwing `toString`/`valueOf` must propagate that abrupt
+    // completion (`Reflect/*/return-abrupt-from-property-key.js`); the native
+    // helpers otherwise stringify it internally and swallow the throw. The
+    // coercion is the same central `__to_property_key` every dynamic property
+    // access uses, and it is identity for a string/symbol key.
+    const coerceReflectPropertyKey = (keyLocal: number | undefined): void => {
+      if (keyLocal === undefined) return;
+      ensureObjectRuntime(ctx);
+      const tpkIdx = ctx.funcMap.get("__to_property_key");
+      if (tpkIdx === undefined) return;
+      fctx.body.push(
+        { op: "local.get", index: keyLocal },
+        { op: "call", funcIdx: tpkIdx },
+        { op: "local.set", index: keyLocal },
+      );
+    };
     const emitNativeReflectSymbolTargetGuard = (targetLocal: number, message: string): void => {
       const symbolTypeIdx = ensureSymbolCarrier(ctx);
       const before = fctx.body.length;
@@ -995,6 +1013,10 @@ export function compileNamespaceStaticCall(
         if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
           emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.get called on non-object");
         }
+        // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
+        // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
+        guardNativeReflectTarget(targetLocal, "Reflect.get called on non-object");
+        coerceReflectPropertyKey(argLocals[1]);
 
         // (#2046/#4397) Preserve the optional receiver in Wasm. A native
         // target uses __reflect_get_receiver; an admitted caller-owned JS
@@ -1089,14 +1111,28 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
           return { kind: "i32" };
         }
-        emitReflectArgs(3);
+        // (#5196 R3-2 C5) Arguments go through locals rather than straight onto
+        // the stack so the key can take ToPropertyKey in place (an abrupt
+        // completion from a throwing `toString` must escape). Evaluation order
+        // is unchanged — `emitReflectArgumentLocals` compiles the same
+        // arguments in the same source order.
+        const setLocals = emitReflectArgumentLocals();
+        coerceReflectPropertyKey(setLocals[1]);
+        for (let i = 0; i < 3; i++) {
+          const local = setLocals[i];
+          if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
+          else fctx.body.push({ op: "local.get", index: local });
+        }
         const funcIdx = ensureLateImport(ctx, "__reflect_set", [externRef, externRef, externRef], [i32Ty]);
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx });
+          releaseReflectArgumentLocals(setLocals);
           return { kind: "i32" };
         }
-        return fallbackReturn(3, "i32-false");
+        releaseReflectArgumentLocals(setLocals);
+        fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
+        return { kind: "i32" };
       }
 
       if (reflectMethod === "has" && expr.arguments.length >= 2) {
@@ -1110,6 +1146,11 @@ export function compileNamespaceStaticCall(
         if (mayCarryNativeReflectSymbol(expr.arguments[0])) {
           emitNativeReflectSymbolTargetGuard(targetLocal, "Reflect.has called on non-object");
         }
+        // (#5196 R3-2 C4) §28.1.8 step 1 for EVERY non-Object target, not just
+        // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
+        // `isExtensible` already use (it admits closure and expando carriers
+        // positively, so an ordinary callable/instance target is unaffected).
+        guardNativeReflectTarget(targetLocal, "Reflect.has called on non-object");
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
@@ -1257,6 +1298,13 @@ export function compileNamespaceStaticCall(
             fctx.body.push({ op: "ref.null.extern" });
           }
         }
+        // (#5196 R3-2 C5) §7.1.19 ToPropertyKey at the CALL SITE, on the value
+        // just pushed: the native's internal coercion does not propagate an
+        // abrupt completion from a throwing `toString`/`valueOf`.
+        {
+          const tpkIdx = ctx.funcMap.get("__to_property_key");
+          if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
+        }
         const funcIdx = ensureLateImport(ctx, "__getOwnPropertyDescriptor", [externRef, externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
@@ -1264,6 +1312,35 @@ export function compileNamespaceStaticCall(
           return { kind: "externref" };
         }
         return fallbackReturn(0, "extern-null");
+      }
+
+      // (#5196 R3-2 C5) `Reflect.defineProperty(target, key)` — two arguments,
+      // no descriptor. §28.1.3 runs step 1 (Object target), step 2
+      // ToPropertyKey (which is where `return-abrupt-from-property-key.js`
+      // expects its throwing `toString` to escape) and only THEN step 3
+      // ToPropertyDescriptor(undefined), which is the required TypeError. The
+      // three-argument arm below cannot serve this: its applier needs a
+      // descriptor expression. Without this branch the call compiled to the
+      // "#1472 Phase C" hard refusal, which is a COMPILE error, not a
+      // catchable one.
+      if (reflectMethod === "defineProperty" && expr.arguments.length === 2) {
+        ensureObjectRuntime(ctx);
+        const targetLocal = allocTempLocal(fctx, externRef);
+        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: targetLocal });
+        guardNativeReflectTarget(targetLocal, "Reflect.defineProperty called on non-object");
+        releaseTempLocal(fctx, targetLocal);
+        const keyType = compileExpression(ctx, fctx, expr.arguments[1]!, externRef);
+        if (keyType && keyType.kind !== "externref") coerceType(ctx, fctx, keyType, externRef);
+        else if (!keyType) fctx.body.push({ op: "ref.null.extern" });
+        const tpkIdx = ctx.funcMap.get("__to_property_key");
+        if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
+        fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "Property description must be an object");
+        fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+        return { kind: "i32" };
       }
 
       if (reflectMethod === "defineProperty" && expr.arguments.length >= 3) {
@@ -1606,8 +1683,40 @@ export function compileNamespaceStaticCall(
           for (const funcIdx of brandIdxs) {
             fctx.body.push({ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, { op: "i32.or" });
           }
+          // (#5196 R3-2 C4) …plus the ORDINARY non-callable object:
+          // `Reflect.apply({}, 1, [])` must throw. Still a positive test —
+          // `typeof t === "object" && typeof t !== "function"` — so a callable
+          // carrier the classifier does recognise as a function (a compiled
+          // closure, a bound function, a `$Proxy` over a callable) is admitted
+          // exactly as before, and an unrecognised shape stays admitted too.
+          {
+            const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+            const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+            if (typeofObjectIdx !== undefined && typeofFunctionIdx !== undefined) {
+              fctx.body.push(
+                { op: "local.get", index: targetLocal },
+                { op: "call", funcIdx: typeofObjectIdx },
+                { op: "local.get", index: targetLocal },
+                { op: "call", funcIdx: typeofFunctionIdx },
+                { op: "i32.eqz" },
+                { op: "i32.and" },
+                { op: "i32.or" },
+              );
+            }
+          }
           fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
         }
+        // (#5196 R3-2 C4) §7.3.19 CreateListFromArrayLike step 2: the
+        // argumentsList must be an Object. A MISSING third argument is the
+        // static case; a primitive/null/undefined one is the runtime case, and
+        // the shared Reflect target guard is exactly the Type(V) is Object test
+        // (it admits arrays and every callable carrier positively).
+        if (argLocals[2] === undefined) {
+          emitThrowTypeError(ctx, fctx, "Reflect.apply argumentsList is not an object");
+          releaseReflectArgumentLocals(argLocals);
+          return { kind: "externref" };
+        }
+        guardNativeReflectTarget(argLocals[2], "Reflect.apply argumentsList is not an object");
         const applyIdx = reserveApplyClosure(ctx);
         fctx.body.push({ op: "local.get", index: targetLocal });
         if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });
