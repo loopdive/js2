@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-03T01:53:32.800Z",
-  "baseline_generated_at": "2026-09-03T01:53:32.800Z",
-  "baseline_sha": "9518b36706e84d521ca33059742af6b8f23559d7",
+  "timestamp": "2026-09-03T03:12:10.730Z",
+  "baseline_generated_at": "2026-09-03T03:12:10.730Z",
+  "baseline_sha": "777390e3e9a2887037cd9a4fcfd4d1f8709f09bb",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,22 +11,22 @@
   "summary": {
     "total": 48232,
     "pass": 34527,
-    "fail": 9895,
+    "fail": 9896,
     "compile_error": 3783,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 44422,
+    "compilable": 44423,
     "host_free_pass": 34527,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 33502,
-        "fail": 9854,
+        "fail": 9855,
         "compile_error": 3763,
-        "compile_timeout": 9,
+        "compile_timeout": 8,
         "skip": 18,
-        "compilable": 43356,
+        "compilable": 43357,
         "host_free_pass": 33502,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -58,11 +58,11 @@
       "official": {
         "total": 48232,
         "pass": 34527,
-        "fail": 9895,
+        "fail": 9896,
         "compile_error": 3783,
-        "compile_timeout": 9,
+        "compile_timeout": 8,
         "skip": 18,
-        "compilable": 44422,
+        "compilable": 44423,
         "host_free_pass": 34527,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -70,11 +70,11 @@
       "full": {
         "total": 48735,
         "pass": 34762,
-        "fail": 9911,
+        "fail": 9912,
         "compile_error": 3939,
-        "compile_timeout": 9,
+        "compile_timeout": 8,
         "skip": 114,
-        "compilable": 44673,
+        "compilable": 44674,
         "host_free_pass": 34762,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -84,22 +84,22 @@
   "official_summary": {
     "total": 48232,
     "pass": 34527,
-    "fail": 9895,
+    "fail": 9896,
     "compile_error": 3783,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 44422,
+    "compilable": 44423,
     "host_free_pass": 34527,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 34762,
-    "fail": 9911,
+    "fail": 9912,
     "compile_error": 3939,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 114,
-    "compilable": 44673,
+    "compilable": 44674,
     "host_free_pass": 34762,
     "stale": 0
   },
@@ -140,11 +140,11 @@
     "standard": {
       "total": 47146,
       "pass": 33502,
-      "fail": 9854,
+      "fail": 9855,
       "compile_error": 3763,
-      "compile_timeout": 9,
+      "compile_timeout": 8,
       "skip": 18,
-      "compilable": 43356,
+      "compilable": 43357,
       "host_free_pass": 33502,
       "stale": 0
     }
@@ -990,9 +990,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8884,
-      "fail": 1118,
+      "fail": 1119,
       "compile_error": 1081,
-      "compile_timeout": 1,
+      "compile_timeout": 0,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8884
@@ -1295,14 +1295,14 @@
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
-          "other:ReferenceError: Temporal is not defined"
+          "type_error:TypeError: called value is not a function"
         ]
       },
       {
@@ -1749,8 +1749,8 @@
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js",
           "test/built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js",
           "test/built-ins/AggregateError/newtarget-proto-fallback.js",
-          "test/built-ins/Reflect/set/symbol-property.js",
-          "test/built-ins/Reflect/set/return-false-if-target-is-not-writable.js"
+          "test/built-ins/Reflect/set/return-false-if-target-is-not-writable.js",
+          "test/built-ins/Reflect/set/different-property-descriptors.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (##); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.",
@@ -1906,17 +1906,17 @@
         },
         "sample_files": [
           "test/language/expressions/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
+          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/async-gen-method/yield-star-getiter-async-undefined-sync-get-abrupt.js",
-          "test/language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js"
+          "test/language/expressions/class/elements/async-gen-private-method/yield-star-next-then-non-callable-number-fulfillpromise.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'access')"
+          "other:Test262:AsyncTestFailure:Test262Error: Test262Error: completion closes iter"
         ]
       },
       {
@@ -2534,9 +2534,9 @@
         "count": 451,
         "statuses": {
           "pass": 0,
-          "fail": 442,
+          "fail": 443,
           "compile_error": 8,
-          "compile_timeout": 1,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 451,
           "host_free_pass": 0
@@ -2649,15 +2649,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js"
+          "test/built-ins/Atomics/or/bigint/bad-range.js",
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
         ]
       },
       {
