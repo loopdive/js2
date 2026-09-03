@@ -4321,3 +4321,62 @@ representable, and no dogfood file's rejections are string-only.
 sites in `inspectDirectBinding` with the declaration kind, declared type and
 `const`/`let`/`var`, gate on an env var, run the corpus through
 `observeSingleHostLane`, then restore from a copy taken before the first edit.
+
+### Which type extensions actually unlock files — and a correction to the R4-M1 brief
+
+The section above establishes that rejection is all-or-nothing per file, and
+warns that partial coverage of a file's declarations yields zero. That makes one
+question decisive for scoping, and it had not been answered: **which set of type
+extensions unlocks how many files?**
+
+Measured by instrumenting the `no-value-kind` arm to log the declaration's file,
+declared type and initializer kind, then restoring from a copy taken before the
+edit. 13 dogfood files hold at least one declaration that reaches that arm (the
+11 counted earlier is the narrower figure — module-init units recorded as
+`body-shape-rejected`; these two counts measure slightly different things and
+neither is wrong).
+
+**Every one of the 13 files has exactly ONE category.** No file mixes them:
+
+| file | blocking category |
+| --- | --- |
+| `escapes-unicode.js`, `templates.js` | **string** |
+| `arrow-params.js`, `generators-async.js` | function |
+| `members-calls.js`, `optional-nullish.js` | PropertyAccessExpression (`any`) |
+| `spread-rest.js` | array |
+| `literals.js` | bigint |
+| `new-target.js` | class instance |
+| `objects.js` | object |
+| `operators.js` | BinaryExpression (`any`) |
+| `regex.js` | RegExp literal |
+| `sequence-misc.js` | ParenthesizedExpression (`any`) |
+
+That is much better news than the all-or-nothing rule suggested: because no file
+mixes categories, **each extension's payoff is independent and additive**, and
+partial coverage is not wasted after all. Best-set-of-size-N over the 13:
+
+| categories supported | files unlocked |
+| --- | --- |
+| 1 (`string`) | 2 |
+| 2 (+ PropertyAccess/`any`) | 4 |
+| 3 (+ function) | 6 |
+| 4 (+ RegExp literal) | 7 |
+| … | … |
+| 10 (all) | 13 |
+
+**Correction, and it matters because a lane is running against the wrong
+statement.** The R4-M1 dispatch brief (`session_01SK6yHmgvNg8bRBasbfQC2p`) told
+that lane *"no dogfood file's rejections are string-only — expect the corpus
+counts not to move, and do not treat that as failure."* **The first half is
+false.** `escapes-unicode.js` and `templates.js` are string-only, so a correct
+string slice should unlock **2 of the 13 files** and the corpus counts **should**
+move. Whoever reviews that PR: a result of "counts did not move" is now evidence
+of an incomplete slice, not the expected outcome the brief predicted. The
+`any`-typed rows are the next-largest single win (2 more files) and are a
+different question entirely — a dynamic carrier, not a string carrier.
+
+**Reproduce:** instrument the `return { kind: "unsupported", declaration }` at
+`module-bindings.ts:2029` to log `getSourceFile().fileName`,
+`checker.typeToString(declaredType)` and `SyntaxKind[initializer.kind]`, gate on
+an env var, run the dogfood corpus through `observeSingleHostLane`, restore from
+the pre-edit copy.
