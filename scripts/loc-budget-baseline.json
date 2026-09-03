@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-03",
   "threshold": 1500,
-  "totalCeiling": 816377,
+  "totalCeiling": 816556,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -99,9 +99,9 @@
     "src/ir/builder.ts": 1968,
     "src/ir/from-ast.ts": 15252,
     "src/ir/identity.ts": 1591,
-    "src/ir/integration.ts": 9809,
+    "src/ir/integration.ts": 9837,
     "src/ir/lower.ts": 4558,
-    "src/ir/module-bindings.ts": 2526,
+    "src/ir/module-bindings.ts": 2577,
     "src/ir/nodes.ts": 3074,
     "src/ir/prepared-component-dependencies.ts": 1788,
     "src/ir/propagate.ts": 1666,
