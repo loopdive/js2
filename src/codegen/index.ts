@@ -122,6 +122,7 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  privateMemberMangledName,
   type IrNestedClassFieldCallAdmission,
   type IrSourceId,
   type IrUnitKind,
@@ -1759,9 +1760,13 @@ function buildIrClassShapes(
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
-      if (!ts.isIdentifier(member.name)) continue; // computed names → defer
+      // (#3522 W1-A) `#priv()` is admitted under the SAME mangling the legacy
+      // side already uses (`resolveClassMemberName`, and the field
+      // re-derivation above). Computed names still defer: their key is not a
+      // compile-time constant, so no stable descriptor name exists.
+      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) continue;
       if (member.asteriskToken) continue; // generators → defer
-      const methodName = member.name.text;
+      const methodName = ts.isPrivateIdentifier(member.name) ? privateMemberMangledName(member.name) : member.name.text;
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
