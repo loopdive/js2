@@ -147,4 +147,43 @@ describe("#5268 r3 — native Array.from / Array.of (standalone)", () => {
     `);
     expect(lines).toEqual(["h|é|l|l|o", "1|2|3", "1|2", "map=1", "1|2", "0|2|4"]);
   });
+
+  // Round-3 review fixes (2026-09-03). Each was RED on d18dd8673f (the r3
+  // step-1 tree): F1 `fin=0`, F2 `undefined,undefined`, F4 `gets=2`.
+  it("F1: IteratorClose on an abrupt mapper runs a native generator's finally, in order", async () => {
+    const lines = await runLines(`
+      var fin = 0, order = "";
+      function* wf() { try { order += "y1 "; yield 1; order += "y2 "; yield 2; yield 3; } finally { fin++; order += "FIN "; } }
+      try { Array.from(wf(), function (v) { order += "m" + v + " "; if (v === 2) throw new Error("x"); return v; }); }
+      catch (e) { order += "caught:" + e.message; }
+      LOG("fin=" + fin);
+      LOG(order);
+      var it = wf(); it.next();
+      try { Array.from(it, function () { throw new Error("q"); }); } catch (e) {}
+      LOG("done=" + it.next().done);
+    `);
+    expect(lines).toEqual(["fin=1", "y1 m1 y2 m2 FIN caught:x", "done=true"]);
+  });
+
+  it("F2: a closed-struct iterable that also carries length takes the iterator branch", async () => {
+    const lines = await runLines(`
+      class L2 { constructor() { this.length = 2; } [Symbol.iterator]() { return [6, 7][Symbol.iterator](); } }
+      LOG(Array.from(new L2()).join(","));
+      LOG(Array.from(new L2(), function (v) { return v + 1; }).join(","));
+      var lit = { length: 5, [Symbol.iterator]() { return [8, 9][Symbol.iterator](); } };
+      LOG(Array.from(lit).join(","));
+      LOG(Array.from("ab", function (v, i) { return v + i; }).join(","));
+    `);
+    expect(lines).toEqual(["6,7", "7,8", "8,9", "a0,b1"]);
+  });
+
+  it("F4: the @@iterator accessor fires exactly once per Array.from call", async () => {
+    const lines = await runLines(`
+      var c = { n: 0 }; var o = { length: 0 };
+      Object.defineProperty(o, Symbol.iterator, { get: function () { c.n++; return function () { return [7][Symbol.iterator](); }; } });
+      var r = Array.from(o);
+      LOG(r.join(",") + " gets=" + c.n);
+    `);
+    expect(lines).toEqual(["7 gets=1"]);
+  });
 });

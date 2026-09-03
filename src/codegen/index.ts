@@ -305,6 +305,7 @@ import {
   fillAnyIterNext,
   fillIterResultObject,
   fillNativeIteratorLateArms,
+  fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
@@ -6042,6 +6043,11 @@ export function generateModule(
     // No-op unless a lazy wrapper was constructed.
     fillLazyIterLadderArms(ctx);
 
+    // (#5268 r3) Prepend the static closed-struct / generator-frame arms to
+    // the `HasIteratorMethod` predicate `Array.from` branches on. After the
+    // ladder fills (its type set is the same one).
+    fillIteratorMethodPresent(ctx);
+
     // (#5147) Fill `__any_iter_next` — source-level `.next()` on a native
     // iterator carrier. MUST run after both fills above: it delegates to the
     // fully-armed `__iterator_next`.
@@ -11160,6 +11166,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));

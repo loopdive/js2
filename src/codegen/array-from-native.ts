@@ -33,11 +33,20 @@ import { buildStandardTryTable } from "../ir/try-table.js";
  * - {@link ensureNativeArrayOf} → `__array_of_native(C, argsVec)`.
  *
  * ## Two source branches, and how the branch is chosen
- * §23.1.2.1 branches on `GetMethod(items, @@iterator)`. The test here is the
- * `@@iterator` PROPERTY read (`__extern_get` + `__is_truthy`, plus
- * `__extern_has` so a present-but-nullish method still reaches the iterator
- * branch and raises its own TypeError) — the same test
- * `buildArrayFromIterNBody`'s (#3119) `objGuard` makes.
+ * §23.1.2.1 branches on `GetMethod(items, @@iterator)`. The test is the
+ * `__iterator_method_present` predicate (iterator-native.ts, #5268 r3 F2): a
+ * finalize-filled `ref.test` ladder over every shape whose `@@iterator` is a
+ * STATIC member — closed structs with a `<Struct>_@@iterator` method or an
+ * `@@iterator` closure field, driven generator frames, the lazy helper — and,
+ * for everything else, `HasProperty(items, @@iterator)` (`__extern_has`, own
+ * and prototype chain; a present-but-nullish method still reaches the
+ * iterator branch and raises its own TypeError). It is a HasProperty, not a
+ * `[[Get]]`, so an `@@iterator` accessor fires exactly once — inside
+ * `__iterator`'s GetMethod (round-3 review F4). The round-2 cut
+ * used the property read alone plus "no `length`" as a tell for closed
+ * structs; a closed-struct iterable that ALSO carried `length` then walked as
+ * an array-like and answered `undefined × length` where the previous lowering
+ * threw. The decision is now carried by what the value IS.
  *
  * A source that answers falsy takes the array-like branch, but is first passed
  * through `__array_from_iter_n(items, -1)`. That helper returns an indexable
@@ -70,13 +79,25 @@ import { buildStandardTryTable } from "../ir/try-table.js";
  * so a poisoned `length` setter on `C.prototype` propagates
  * (`iter-set-length-err`).
  *
+ * WASI declines the constructor lane with a catchable TypeError (#5268 r3 F5):
+ * `__extern_set` on WASI traps `illegal cast` inside `__obj_find` for any
+ * constructed instance (a plain `o.length = 2` on `{}` traps the same way on
+ * that target, before and after this change), so the CreateDataProperty step
+ * would turn the TypeError the previous lowering raised into an uncatchable
+ * trap. The default lane (`Array.from(…)` / `Array.from.call(undefined, …)`)
+ * is unaffected.
+ *
  * Standalone/WASI only: every dep is standalone-gated, and the JS-host lane
  * keeps its `env.__array_from` bridge byte-for-byte.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { ensureNativeArrayFromIterN, ensureNativeIteratorRuntime } from "./iterator-native.js";
+import {
+  ensureNativeArrayFromIterN,
+  ensureNativeIteratorMethodPresent,
+  ensureNativeIteratorRuntime,
+} from "./iterator-native.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { reserveNativeConstructDriver } from "./native-construct.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -90,9 +111,6 @@ const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 const F64: ValType = { kind: "f64" };
 
-/** `@@iterator` — well-known symbol id 1 in the native `$Symbol` carrier. */
-const SYMBOL_ITERATOR_ID = 1;
-
 /**
  * `__defineProperty_value` flag word for a full
  * `{value, writable: true, enumerable: true, configurable: true}` data
@@ -101,13 +119,10 @@ const SYMBOL_ITERATOR_ID = 1;
 const CREATE_DATA_PROPERTY_FLAGS = 0b1011_1111;
 
 interface FromDeps {
-  externGet: number;
   externSetStrict: number;
   externLength: number;
   externGetIdx: number;
-  externHas: number;
   externIsUndefined: number;
-  boxSymbol: number;
   boxNumber: number;
   defineValue: number;
   externSet: number;
@@ -124,6 +139,7 @@ interface FromDeps {
   iteratorNext: number;
   iteratorReturn: number;
   arrayFromIterN: number;
+  iteratorMethodPresent: number;
 }
 
 /**
@@ -137,7 +153,8 @@ function prepareFromDeps(ctx: CodegenContext): FromDeps | undefined {
   ensureNativeIteratorRuntime(ctx);
   const applyClosure = reserveApplyClosure(ctx);
   const arrayFromIterN = ensureNativeArrayFromIterN(ctx);
-  ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  // `__box_symbol` feeds the predicate's dynamic probe (`__extern_has` comes
+  // with the object runtime), so it is registered before the reserve.
   ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
   ensureLateImport(ctx, "__extern_length", [EXTERNREF], [F64]);
   ensureLateImport(ctx, "__extern_get_idx", [EXTERNREF, F64], [EXTERNREF]);
@@ -150,16 +167,14 @@ function prepareFromDeps(ctx: CodegenContext): FromDeps | undefined {
   ensureReflectIsConstructor(ctx);
   reserveNativeConstructDriver(ctx, 0, stringConstantExternrefInstrs(ctx, "prototype"));
   reserveNativeConstructDriver(ctx, 1, stringConstantExternrefInstrs(ctx, "prototype"));
+  const iteratorMethodPresent = ensureNativeIteratorMethodPresent(ctx);
 
   const get = (name: string): number | undefined => ctx.funcMap.get(name);
-  const externGet = get("__extern_get");
   const externSetStrict = get("__extern_set_strict");
   const externSet = get("__extern_set");
   const externLength = get("__extern_length");
   const externGetIdx = get("__extern_get_idx");
-  const externHas = get("__extern_has");
   const externIsUndefined = get("__extern_is_undefined");
-  const boxSymbol = get("__box_symbol");
   const boxNumber = get("__box_number");
   const defineValue = get("__defineProperty_value");
   const externToString = get("__extern_toString");
@@ -174,14 +189,12 @@ function prepareFromDeps(ctx: CodegenContext): FromDeps | undefined {
   const iteratorNext = get("__iterator_next");
   const iteratorReturn = get("__iterator_return");
   if (
-    externGet === undefined ||
+    iteratorMethodPresent === undefined ||
     externSetStrict === undefined ||
     externSet === undefined ||
     externLength === undefined ||
     externGetIdx === undefined ||
-    externHas === undefined ||
     externIsUndefined === undefined ||
-    boxSymbol === undefined ||
     boxNumber === undefined ||
     defineValue === undefined ||
     externToString === undefined ||
@@ -199,14 +212,11 @@ function prepareFromDeps(ctx: CodegenContext): FromDeps | undefined {
     return undefined;
   }
   return {
-    externGet,
     externSetStrict,
     externSet,
     externLength,
     externGetIdx,
-    externHas,
     externIsUndefined,
-    boxSymbol,
     boxNumber,
     defineValue,
     toString: externToString,
@@ -222,11 +232,36 @@ function prepareFromDeps(ctx: CodegenContext): FromDeps | undefined {
     iteratorNext,
     iteratorReturn,
     arrayFromIterN,
+    iteratorMethodPresent,
   };
 }
 
-/** `usingCtor = C is present ∧ IsConstructor(C)` → local `dst`. */
-function usingCtorInstrs(d: FromDeps, cLocal: number, dst: number): Instr[] {
+/**
+ * `usingCtor = C is present ∧ IsConstructor(C)` → local `dst`.
+ *
+ * (#5268 r3 F5) On WASI a constructor receiver is declined with a catchable
+ * TypeError instead: the constructor lane's CreateDataProperty `[[Set]]`
+ * (`__extern_set`) traps `illegal cast` in `__obj_find` on that target for
+ * every constructed instance — the round-2 lowering turned the TypeError the
+ * previous `.call` reification raised into an uncatchable trap. The default
+ * lane is untouched.
+ */
+function usingCtorInstrs(ctx: CodegenContext, d: FromDeps, cLocal: number, dst: number): Instr[] {
+  const wasiDecline: Instr[] = ctx.wasi
+    ? [
+        { op: "local.get", index: dst },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildThrowJsErrorInstrs(
+            ctx,
+            "TypeError",
+            "Array.from/Array.of: a constructor receiver is not supported in --target wasi",
+          ),
+          else: [],
+        },
+      ]
+    : [];
   return [
     { op: "local.get", index: cLocal },
     { op: "ref.is_null" },
@@ -255,6 +290,7 @@ function usingCtorInstrs(d: FromDeps, cLocal: number, dst: number): Instr[] {
         },
       ],
     },
+    ...wasiDecline,
   ];
 }
 
@@ -551,34 +587,15 @@ export function ensureNativeArrayFrom(ctx: CodegenContext): number | undefined {
     },
   ];
 
-  // usingIterator: the `@@iterator` property read, truthy OR merely present —
-  // a present-but-nullish method must reach `__iterator`'s own TypeError.
+  // usingIterator = GetMethod(items, @@iterator) is not undefined —
+  // `__iterator_method_present` (iterator-native.ts): static closed-struct /
+  // generator-frame arms filled at finalize, then HasProperty(items,
+  // @@iterator) (a present-but-nullish method reaches `__iterator`'s own
+  // TypeError; no probing [[Get]], so an accessor fires once). No `length`
+  // heuristics (#5268 r3 F2/F4).
   const hasIter: Instr[] = [
     { op: "local.get", index: ITEMS },
-    { op: "i32.const", value: SYMBOL_ITERATOR_ID },
-    { op: "call", funcIdx: d.boxSymbol },
-    { op: "call", funcIdx: d.externGet },
-    { op: "call", funcIdx: d.isTruthy },
-    { op: "local.get", index: ITEMS },
-    { op: "i32.const", value: SYMBOL_ITERATOR_ID },
-    { op: "call", funcIdx: d.boxSymbol },
-    { op: "call", funcIdx: d.externHas },
-    { op: "i32.or" },
-    // …OR the source has no `length` at all. A CLOSED-STRUCT literal with an
-    // inline `[Symbol.iterator]() {}` method answers the property probe above
-    // FALSE (its members are struct fields, not `$Object` entries), and the
-    // array-like walk would then read it as length 0 — silently empty where
-    // the pre-change drain-only lowering ran the iterator and propagated its
-    // abrupt (`source-object-iterator-1.js`). Absence of `length` is the tell:
-    // §23.1.2.1's array-like branch is only reachable for something whose
-    // `length` can be read, so anything else goes to `__iterator`, which knows
-    // those struct types and raises "value is not iterable" itself when it
-    // does not.
-    { op: "local.get", index: ITEMS },
-    ...stringConstantExternrefInstrs(ctx, "length"),
-    { op: "call", funcIdx: d.externHas },
-    { op: "i32.eqz" },
-    { op: "i32.or" },
+    { op: "call", funcIdx: d.iteratorMethodPresent },
   ];
 
   // Per-element work, shared by both branches: map then define. Wrapped by the
@@ -677,7 +694,7 @@ export function ensureNativeArrayFrom(ctx: CodegenContext): number | undefined {
   const body: Instr[] = [
     ...mapFnCheck,
     ...nullishGuard,
-    ...usingCtorInstrs(d, C, USING),
+    ...usingCtorInstrs(ctx, d, C, USING),
     ...hasIter,
     {
       op: "if",
@@ -735,7 +752,7 @@ export function ensureNativeArrayOf(ctx: CodegenContext): number | undefined {
   const VALUE = 6; // externref
 
   const body: Instr[] = [
-    ...usingCtorInstrs(d, C, USING),
+    ...usingCtorInstrs(ctx, d, C, USING),
     // `Array.of()` with no arguments hands the variadic closure a null vec.
     { op: "local.get", index: ARGV },
     { op: "ref.is_null" },
