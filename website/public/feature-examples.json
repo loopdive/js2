@@ -12952,7 +12952,7 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 557,
+      "passCount": 566,
       "totalCount": 604,
       "tests": [
         {
@@ -15965,7 +15965,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 387,
+          "pass": 396,
           "total": 430
         },
         {
@@ -16001,7 +16001,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> makeCounter</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#89DDFF\"> ()</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">  let</span><span style=\"color:#BABED8\"> n</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#89DDFF\"> ()</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#89DDFF\"> ++</span><span style=\"color:#BABED8\">n</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span>\n<span class=\"line\"></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> c </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#82AAFF\"> makeCounter</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#82AAFF\">c</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#82AAFF\"> c</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> value </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#82AAFF\"> c</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // 3</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $makeCounter</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> externref</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $n </span><span style=\"color:#FFCB6B\">f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__tdz_n </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__boxed_n (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">10</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    ref</span><span style=\"color:#89DDFF\">.func</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    ref</span><span style=\"color:#89DDFF\">.null</span><span style=\"color:#FFCB6B\"> extern</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    struct.new </span><span style=\"color:#F78C6C\">10</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.tee</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    struct.new </span><span style=\"color:#F78C6C\">11</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  ...</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">)</span></span></code></pre>",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1001,
+      "passCount": 1002,
       "totalCount": 1177,
       "tests": [
         {
@@ -19049,7 +19049,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 51,
+          "pass": 52,
           "total": 77
         }
       ]
@@ -19074,7 +19074,7 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 677,
+      "passCount": 683,
       "totalCount": 699,
       "tests": [
         {
@@ -22087,7 +22087,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 384,
+          "pass": 390,
           "total": 403
         },
         {
@@ -22123,7 +22123,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> safeDiv</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">a</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> b</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">):</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  try</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    if</span><span style=\"color:#F07178\"> (</span><span style=\"color:#BABED8\">b</span><span style=\"color:#89DDFF\"> ===</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#F07178\">) </span><span style=\"color:#89DDFF;font-style:italic\">throw</span><span style=\"color:#89DDFF\"> new</span><span style=\"color:#82AAFF\"> Error</span><span style=\"color:#F07178\">(</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#C3E88D\">div by zero</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#F07178\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span><span style=\"color:#BABED8\"> a</span><span style=\"color:#89DDFF\"> /</span><span style=\"color:#BABED8\"> b</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span><span style=\"color:#89DDFF;font-style:italic\"> catch</span><span style=\"color:#F07178\"> (</span><span style=\"color:#BABED8\">e</span><span style=\"color:#F07178\">) </span><span style=\"color:#89DDFF\">{</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span><span style=\"color:#89DDFF\"> -</span><span style=\"color:#F78C6C\">1</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $safeDiv</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">param</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">) (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $e </span><span style=\"color:#FFCB6B\">externref</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#89DDFF;font-style:italic\">try</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">      (do</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        f64</span><span style=\"color:#89DDFF\">.eq</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">        (</span><span style=\"color:#89DDFF;font-style:italic\">if</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">          (</span><span style=\"color:#89DDFF;font-style:italic\">then</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">          global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">          call</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">          throw</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">          )</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">        )</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">        local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  ...</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">)</span></span></code></pre>",
       "testCategories": ["language/statements/try"],
-      "passCount": 192,
+      "passCount": 194,
       "totalCount": 201,
       "tests": [
         {
@@ -23342,7 +23342,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 96,
+          "pass": 98,
           "total": 102
         },
         {
@@ -44284,7 +44284,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> firstTwo</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">arr</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#BABED8\">[]</span><span style=\"color:#89DDFF\">):</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">  const</span><span style=\"color:#89DDFF\"> [</span><span style=\"color:#BABED8\">a</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8\"> b</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#89DDFF\"> ...</span><span style=\"color:#BABED8\">rest</span><span style=\"color:#89DDFF\">]</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#BABED8\"> arr</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#BABED8\"> a</span><span style=\"color:#89DDFF\"> +</span><span style=\"color:#BABED8\"> b</span><span style=\"color:#89DDFF\"> +</span><span style=\"color:#BABED8\"> rest</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#BABED8\">length</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $firstTwo</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">param</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">)) (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $a </span><span style=\"color:#FFCB6B\">f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__tdz_a </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $b </span><span style=\"color:#FFCB6B\">f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__tdz_b </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $rest (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__tdz_rest </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__destruct_6 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__bounds_idx_7 </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__bounds_arr_8 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">3</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__bounds_idx_9 </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__bounds_arr_10 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">3</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__rest_len_11 </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__rest_arr_12 (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">3</span><span style=\"color:#BABED8\">))</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $__rest_src_off_13 </span><span style=\"color:#FFCB6B\">i32</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  ...</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">)</span></span></code></pre>",
       "testCategories": ["language/destructuring"],
-      "passCount": 3968,
+      "passCount": 3974,
       "totalCount": 4290,
       "tests": [
         {
@@ -47842,7 +47842,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2069,
+      "passCount": 2075,
       "totalCount": 2486,
       "tests": [
         {
@@ -85109,7 +85109,7 @@
       "compileSuccess": false,
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> all </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> Iterator</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">concat</span><span style=\"color:#BABED8\">(a</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">values</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8\"> b</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">values</span><span style=\"color:#BABED8\">())</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">toArray</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // not yet</span></span></code></pre>",
       "testCategories": [],
-      "passCount": 5,
+      "passCount": 6,
       "totalCount": 32,
       "tests": [],
       "testsTruncated": false
@@ -85161,7 +85161,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> hoisted</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  console</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">log</span><span style=\"color:#F07178\">(</span><span style=\"color:#BABED8\">x</span><span style=\"color:#F07178\">)</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // undefined (hoisted)</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">  var</span><span style=\"color:#BABED8\"> x</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#F78C6C\"> 5</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#BABED8\"> x</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $hoisted</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">    (</span><span style=\"color:#C792EA\">local</span><span style=\"color:#BABED8\"> $x </span><span style=\"color:#FFCB6B\">f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 5</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.tee</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 165,
+      "passCount": 166,
       "totalCount": 178,
       "tests": [],
       "testsTruncated": false,
@@ -85173,7 +85173,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 87,
+          "pass": 88,
           "total": 97
         },
         {
