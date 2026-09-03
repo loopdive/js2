@@ -1,12 +1,11 @@
 {
   "id": "4584",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4584-prepared-single-source-cutover",
-  "reserved_at": "2026-08-20T23:04:41Z",
   "claimed_at": "2026-08-20T23:04:41Z",
-  "updated_at": "2026-08-20T23:04:41Z",
-  "write_id": "98716-vhiv3gn2",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:48:56Z",
+  "write_id": "15685-5wyv4lhw",
+  "released_at": "2026-09-03T09:48:56Z"
 }
