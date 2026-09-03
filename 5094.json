@@ -1,10 +1,11 @@
 {
   "id": "5094",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5094-ir-host-free-boolean-console",
   "claimed_at": "2026-08-27T21:41:44Z",
-  "updated_at": "2026-08-27T21:41:44Z",
-  "write_id": "44067-96de26iz"
+  "updated_at": "2026-09-03T09:51:49Z",
+  "write_id": "22357-hi6uq2w3",
+  "released_at": "2026-09-03T09:51:49Z"
 }
