@@ -1,10 +1,11 @@
 {
   "id": "4304",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4304-test262-harness-ci",
   "claimed_at": "2026-08-09T12:35:08Z",
-  "updated_at": "2026-08-09T12:35:08Z",
-  "write_id": "31029-lsed02gl"
+  "updated_at": "2026-09-03T09:45:58Z",
+  "write_id": "9115-bp63ewhd",
+  "released_at": "2026-09-03T09:45:58Z"
 }
