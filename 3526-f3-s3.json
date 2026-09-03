@@ -2,10 +2,11 @@
   "id": "3526",
   "slice": "f3-s3",
   "assignee": "ttraenkler/opus-3526-f3s3",
-  "requested_by": "ttraenkler/opus-3526-f3s3",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3526-f3-s3-function-prototype-call",
   "claimed_at": "2026-09-03T18:37:07Z",
-  "updated_at": "2026-09-03T18:37:07Z",
-  "write_id": "434-sf1lf9us"
+  "updated_at": "2026-09-03T20:17:49Z",
+  "write_id": "6640-exo29i64",
+  "released_at": "2026-09-03T20:17:49Z"
 }
