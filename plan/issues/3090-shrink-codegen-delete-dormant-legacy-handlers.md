@@ -271,3 +271,57 @@ per-slice deletions gated by strong existing test coverage — parallelizable
 across several devs with low collision risk (distinct files per slice).
 Phase 0 (the audit) is a good first single-owner task; consider a fan-out
 over the 89 FRONTEND files to produce the delete-list quickly.
+
+## 2026-09-03 — the audit was re-run; its headline number does not reproduce
+
+R10's acceptance in #3518 is "re-run the #3090 audit; delete the ~59,676
+frontend-only fn-lines". That re-run has now been done on current `main`:
+
+```bash
+node scripts/audit-legacy-reachability.mjs --json .tmp/legacy-reachability.json
+```
+
+It **still runs clean (exit 0)** — worth knowing on its own, since R10's whole
+acceptance rests on this tool. Today's output:
+
+| Bucket | files | legacy-only fn-lines | shared | unreferenced |
+| --- | --: | --: | --: | --: |
+| frontend | 107 | **85,609** | 15,956 | 0 |
+| deferred | 3 | 2,534 | 2,951 | 0 |
+| runtime | 61 | 39,791 | 56,261 | 312 |
+| stays | 619 | 37,167 | 163,532 | 198 |
+
+Against the recorded baseline in `plan/log/3090-phase0-legacy-delete-list.md`
+(2026-07-10 table, adjusted to **59,676** at Phase 2f on 2026-07-16):
+
+| | recorded | today |
+| --- | --: | --: |
+| frontend files | 35 | 107 |
+| frontend legacy-only fn-lines | 59,676 | 85,609 |
+
+**The obvious reading — "the direct front end grew 43%" — is NOT established,
+and should not be repeated without evidence.** Three explanations fit the same
+numbers and this run does not separate them:
+
+1. the direct front end genuinely grew;
+2. bucket *membership* shifted, so files previously classified `stays`/`runtime`
+   are now `frontend` (the file count going 35 → 107 is the suspicious part);
+3. the recorded table's `files` column counted only files it listed, not every
+   file scanned — in which case the two rows were never comparable.
+
+Distinguishing them needs either the Phase-2f JSON (not in the repo — the audit
+writes to `.tmp/`, which is gitignored) or the 2026-07-16 tree. **Neither is
+reachable from this container**: the clone is shallow and does not go back that
+far. So this note records the discrepancy and stops, rather than picking the
+flattering explanation.
+
+**What R10 should take from this.** Its stated deletion opportunity is
+**unverified against current tooling** — the number in #3518's ladder row and
+in this issue's title is a July figure that today's audit does not reproduce.
+Before R10 is scoped, someone with full history should re-derive it and, this
+time, **commit the audit JSON** (or a small summary of it) so the next re-run
+has something to diff against. A headline number whose provenance is a
+gitignored file in a container that no longer exists is exactly the artifact-
+inherited-as-measurement pattern this project keeps getting bitten by.
+
+Cross-referenced from `#3518`'s R10 row.
