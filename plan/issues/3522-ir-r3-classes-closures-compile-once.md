@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-29
+updated: 2026-09-03
 assignee: ttraenkler/codex
 branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
@@ -4566,6 +4566,129 @@ WAT (no `call_ref`, `call_indirect`, `ref.test`, `__box_number`, `__call_m_*`).
 
 The next cluster is unchanged: private-method **call sites** (`r02`/`r03`), in
 `src/ir/from-ast.ts`.
+
+## Implementation Plan — W1-B private-method CALL SITES (2026-09-03, Fable lane)
+
+Written from a read of `src/ir/select.ts` (generic method-call arm
+`:9606-9612`, local-class instance arm `:9888-9905`, `classMethodProjection`
+`:7717-7785`, `classElementMayName` `:7709-7715`, call-graph walker
+`:10830-10886`), `src/ir/from-ast.ts` (`lowerMethodCall` entry `:7509-7513`,
+class arm `:8380-8432`, `irPrivateFieldName` `:5179`), `src/ir/builder.ts`
+(`emitClassCall` `:1033`) at the W1-A branch head `b57d721a98` (PR #5545), and
+from one probe on that head. Line numbers are from that revision; W1-A moved
+`identity.ts` / `select.ts` / `codegen/index.ts` — re-verify anchors after
+#5545 lands, and **branch from `origin/main` only after it has landed** (this
+slice depends on `privateMemberMangledName` and the admitted descriptor).
+
+### Measured starting point (W1-A head, both lanes identical)
+
+`CALLED_FROM_SIBLING` (`r02`, the test file's fixture), `trackIrOutcomes`,
+`JS2WASM_IR_SHAPE_DIAG=1`:
+
+| unit | kind | code | stage | detail |
+| --- | --- | --- | --- | --- |
+| `Animal___priv_doubled` (instance-method #0) | emitted | — | patch | W1-A's claim |
+| `Animal_reveal` (instance-method #1) | unsupported | `body-shape-rejected` | select | `unattributed-arm:helper-internal` |
+| `Animal_new` (implicit ctor) | unsupported | `late-preparation-unsupported` | resolve | "prepared component … has incomplete dependencies" |
+| `run` | emitted | — | patch | |
+| module-init | non-executable | | | |
+
+Two facts the table settles: (1) the caller is refused by the **selector**, not
+by from-ast — the shape diag names no arm because the refusing line is a bare
+`return false`; (2) the constructor's `late-preparation-unsupported` is not its
+own defect, it is the sealing consequence of the sibling's refusal (the
+component cannot complete while `reveal` is direct-owned), so it should flip to
+`emitted` with no ctor-specific change. That is the slice's built-in
+non-vacuity signal.
+
+### The refusing line, and its four siblings that must move with it
+
+| # | site | today | change |
+| --- | --- | --- | --- |
+| S1 | `select.ts:9611` generic method-call arm: `if (!ts.isIdentifier(expr.expression.name)) return false;` | a `PrivateIdentifier` callee name falls out as an unattributed shape refusal | add a **dedicated arm BEFORE this line**: if `ts.isPrivateIdentifier(expr.expression.name)`, the receiver must resolve to a local class (`localClassNameForExpression(expr.expression.expression, scope)`; `this` resolves to `currentClaimClassName` at `:8128`) — otherwise `shapeNo("expr-private-method-receiver", expr)`; then run exactly the existing instance projection check (`:9888-9905`) with `methodName = privateMemberMangledName(expr.expression.name)`. Do NOT thread a private name through the ambient arms (`Function.prototype`, regexp, `Math`, `String.fromCharCode`, `Object.defineProperty`, array methods) — none can carry one, and the early arm keeps them untouched. |
+| S2 | `select.ts:7756-7776` `classMethodProjection` declaration walk (the `exactShapes`-less branch) — matches only `ts.isIdentifier(member.name) && member.name.text === methodName` | a private method never matches its own mangled name → `missing` → `class-member-unsupported` | compare through one helper that maps a `PropertyName` to its projection name: `Identifier`/string/numeric → `.text`, `PrivateIdentifier` → `privateMemberMangledName`. The `exactShapes` branch (`:7719-7746`) already matches `shape.methods[].name`, which W1-A mints as `__priv_<x>` (`codegen/index.ts:1769`) — measure which branch the census takes and state it. |
+| S3 | `select.ts:7709` `classElementMayName` | private members can never "name" anything → an own private method never shadows an inherited public one | same helper. This is the shadowing guard for `class B extends A { #m() {} }` vs `A.m` — without it S2's parent walk resolves the wrong member. |
+| S4 | `select.ts:10830/10885` call-graph walker: `PropertyAccessExpression` callee with a non-`Identifier` name → `hasExternalCall.add(callerName)` | after S1 the selector admits the shape, then the closure pass drops the caller again as `external-call` (`:1121`) | in the `ts.isPropertyAccessExpression(node.expression)` branch, treat `ts.isPrivateIdentifier(node.expression.name)` like an identifier-named method call: visit receiver + args, no external mark. |
+| S5 | `from-ast.ts:7511` `lowerMethodCall` entry: `!ts.isIdentifier(expr.expression.name)` → `method-call-unsupported` "malformed method call" | post-claim demote if S1–S4 land alone | accept `PrivateIdentifier`; `methodName = irPrivateFieldName(expr.expression.name)` (`:5179`, already the field-read spelling). The class arm at `:8380` then finds the descriptor via `findClassMember(shape, "__priv_x", "method")` and emits `class.call` with `method.target` — the same `Animal___priv_doubled` slot W1-A minted. No builder change: `emitClassCall` takes a plain string. |
+
+Order matters for the non-vacuity table: S5 without S1 is unreachable; S1
+without S5 is a **post-claim** demote (the worst class — measure it once, then
+never ship it).
+
+### Explicitly out of scope, with the reason
+
+- **Private accessors / static private methods** (`this.#get`, `Animal.#s()`):
+  W1-A left both refused (`select-identity.ts` accessor arm; static branch in
+  `buildIrClassShapes`). The S1 arm must send a static-receiver private call
+  (`Animal.#s()`) down the existing static path (`:9866-9886`), where the
+  projection is `missing` → `class-member-unsupported`, unchanged. Pin it.
+- **`#m in obj`** (`ts.isPrivateIdentifier(expr.left)` at `select.ts:7312`):
+  a different production; untouched.
+- **Mangling collision** `#m` vs a public `__priv_m`: pre-existing in legacy's
+  `resolveClassMemberName` and in W1-A; not this slice. Note it in the PR body
+  as inherited.
+
+### Measurement order
+
+1. **Probe on base** (`.tmp/probe-3522-w1b.mts`, the table above): `r02`,
+   `r03` (`CALLED_FROM_CTOR`), `s01` + a call to each private method, and a
+   negative `Animal.#s()` fixture, both lanes, `JS2WASM_IR_SHAPE_DIAG=1`.
+   Record every row.
+2. Base copies at the first edit (`.tmp/base-select.ts`, `.tmp/base-from-ast.ts`).
+3. Implement S1–S5. Re-run the probe. Acceptance: `r02` → all three units
+   `emitted` (`Animal___priv_doubled`, `Animal_reveal`, `Animal_new`);
+   `r03` → `Animal___priv_privateMethod` + `Animal_new` emitted; `run` still
+   emitted; the static negative unchanged. Runtime with the direct emitters
+   POISONED (the test file's `compilePoisoned`): `r02` returns 84, `r03` 42,
+   both lanes.
+4. **Census** — the same 66 compiles W1-A used (dogfood 20 + playground 13 ×
+   gc/standalone): per-code counts and **66/66 sha256 byte identity**.
+   `classes.js`'s `Animal` is A1-blocked (`any` ctor param, no descriptors),
+   so no census row can move; if one does, it is a defect. State the
+   `class-member-unsupported` count before/after (expected 10 → 10).
+5. `check:ir-fallbacks --verbose`, `check:ir-only` (READY, identical ledger),
+   `check:ir-kind-neutrality`, `check:ir-dialect`, `check:ir-layering`
+   (86/86 — S1–S5 add no `src/ir` → `src/codegen` import; `select.ts` already
+   imports `identity.js`).
+6. Non-vacuity by revert, each site alone (file-copy A/B): S1 alone → `r02`
+   caller back to `body-shape-rejected`; S5 alone (S1–S4 kept) → post-claim
+   `method-call-unsupported` on `Animal_reveal` — record it, that row is the
+   argument for shipping the five together; S2/S3 alone → `class-member-unsupported`
+   on the caller; S4 alone → `external-call` under `check:ir-fallbacks --verbose`.
+7. Full ratchet chain + `LOC_GATE_BASE=$(git rev-parse origin/main)`;
+   equivalence 8 shards by name, zero name-set diff (24 known failures).
+
+### Tests
+
+`tests/issue-3522-private-method-call-sites.test.ts`, both lanes, direct
+emitters poisoned as in W1-A's file (reuse its helpers by import if they are
+exported, else copy the three small ones — do not widen W1-A's file):
+
+- (a) `r02`: caller + callee + ctor all `emitted`, `irCompiledFuncs` carries
+  all three, `run() === 84` — **red on base** (caller `body-shape-rejected`).
+- (b) `r03`: ctor + callee emitted, `run() === 42` — red on base.
+- (c) two private methods, each called from a public method: four emitted
+  units, distinct ids — red on base.
+- (d) inheritance shadow: `class A { m(): number { return 1 } } class B extends A { #m(): number { return 2 } f(): number { return this.#m() } }`
+  → `B_f` calls `B___priv_m` (WAT contains `call $B___priv_m`, not `$A_m`) and
+  `run() === 2` — red on base; this is S3's pin.
+- (e) arity mismatch `this.#m(1)` on a zero-param private method →
+  `call-arity-unsupported` at select (green on base by a different code;
+  label it as the guard).
+- (f) static private call `Animal.#s()` → still `class-member-unsupported`,
+  direct-owned — green on base, the out-of-scope pin.
+- (g) WAT proof on `r02`: no `call_ref` / `call_indirect` / `ref.test` /
+  `__box_number` in `Animal_reveal`.
+
+### Budget, sequencing, conflict surface
+
+`select.ts` (+~45 LOC: one early arm, one name helper, two comparisons, one
+walker branch), `from-ast.ts` (+~4), grant in this issue's frontmatter with a
+dated rationale. **Branch after PR #5545 lands** (needs W1-A's helper and
+descriptor). Disjoint from #5299 (`multi-prepared-callable-publication.ts`,
+`prepared-component-publication.ts`, `outcomes.ts`), F3-S3 (`runtime-manifest.ts`,
+`intrinsic-support.ts`, `integration.ts`), #3520 cluster D (`async.ts`
+positional fallback). Claim slug `3522:w1b-private-call-sites`.
 
 ### W1-B private-method call sites — landed (2026-09-03)
 
