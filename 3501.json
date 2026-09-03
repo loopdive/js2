@@ -1,8 +1,11 @@
 {
   "id": "3501",
   "assignee": "ttraenkler/codex-3501-empty-array-element-inference",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3501-empty-array-element-inference",
   "claimed_at": "2026-07-20T15:44:03Z",
-  "updated_at": "2026-07-20T15:44:03Z"
+  "updated_at": "2026-09-03T09:39:50Z",
+  "write_id": "22731-ununo79f",
+  "released_at": "2026-09-03T09:39:50Z"
 }
