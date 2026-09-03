@@ -4338,6 +4338,11 @@ neither is wrong).
 
 **Every one of the 13 files has exactly ONE category.** No file mixes them:
 
+> ⚠ **RETRACTED 2026-09-03 — this is an instrumentation artifact.** The
+> recorder can only ever see one category per file. Read the retraction at the
+> end of this file before using anything in this subsection, including the
+> best-set table and the reviewer instruction below.
+
 | file | blocking category |
 | --- | --- |
 | `escapes-unicode.js`, `templates.js` | **string** |
@@ -4370,8 +4375,8 @@ that lane *"no dogfood file's rejections are string-only — expect the corpus
 counts not to move, and do not treat that as failure."* **The first half is
 false.** `escapes-unicode.js` and `templates.js` are string-only, so a correct
 string slice should unlock **2 of the 13 files** and the corpus counts **should**
-move. Whoever reviews that PR: a result of "counts did not move" is now evidence
-of an incomplete slice, not the expected outcome the brief predicted. The
+move. ~~Whoever reviews that PR: a result of "counts did not move" is now evidence
+of an incomplete slice, not the expected outcome the brief predicted. ~~ **← also retracted; see the end of this file.** The
 `any`-typed rows are the next-largest single win (2 more files) and are a
 different question entirely — a dynamic carrier, not a string carrier.
 
@@ -4380,3 +4385,86 @@ different question entirely — a dynamic carrier, not a string carrier.
 `checker.typeToString(declaredType)` and `SyntaxKind[initializer.kind]`, gate on
 an env var, run the dogfood corpus through `observeSingleHostLane`, restore from
 the pre-edit copy.
+
+---
+
+## 2026-09-03 RETRACTION — "each file has exactly ONE blocking category" is an instrumentation artifact
+
+The per-file category table above, the "independent and additive" conclusion
+drawn from it, the best-set-of-size-N table, and the reviewer instruction it
+produced are all **withdrawn**. They rest on a measurement that could not have
+produced any other answer.
+
+### The mechanism
+
+`buildModuleBindingGlobals` (`src/ir/integration.ts:5839-5846`) walks the
+top-level declarations in source order and **throws on the first one that has
+no supported storage**:
+
+```ts
+const inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+if (inspected.kind === "unsupported") {
+  throw new IrUnsupportedError(/* … */);
+}
+```
+
+The `JS2WASM_IR_SHAPE_DIAG` recorder is on the `unsupported` return inside
+`inspectDirectBinding`, so it fires **at most once per file**. "Every file has
+exactly one category" is therefore not a finding about the corpus — it is a
+restatement of the control flow. A file with five distinct blockers and a file
+with one are indistinguishable to that instrument, and both report one.
+
+### The file that proves it
+
+`tests/dogfood/corpus/escapes-unicode.js`:
+
+```js
+const a = "\u{1F600}é\n\t\\";   // line 1 — string      ← the only one recorded
+…
+const obj = { "b": 2 };          // line 5 — object literal, also unrepresentable
+```
+
+It was recorded as **string-only** and listed as one of the two files a string
+slice would unlock. It has an object-literal binding four lines later.
+
+### The independent confirmation, which arrived before this was noticed
+
+R4-M1 (PR #5511) implemented exactly the predicted string slice and measured the
+corpus itself. Its result: `vardecl-module-storage-unrepresentable` **20 → 17
+rows** — `templates.js` on both lanes and `regex.js` on standalone.
+**`escapes-unicode.js` is not among them.** The prediction "a correct string
+slice should unlock 2 of the 13 files" failed, and it failed on precisely the
+file the artifact mis-described. That lane also reported no file crossing to
+`emitted`, which the retracted text would have had a reviewer read as an
+incomplete slice.
+
+### What is actually true
+
+- The category counts are a **first-blocker histogram**, not a per-file
+  inventory. Each is a **lower bound** on how many files carry that category.
+- **The all-or-nothing rule stands.** A file is unlocked only when *every*
+  blocking category it carries is covered, and how many that is per file was
+  never measured. "Partial coverage is not wasted" is retracted; the
+  pessimistic reading it claimed to reverse is the correct one.
+- **A slice that moves rows off one blocker and onto another is working as
+  designed.** That is the real signal — R4-M1's `template-substitution-unsupported`
+  and `string-method-unsupported` rows are progress made visible, not a shortfall.
+
+### How to measure it properly, if the ranking is ever needed again
+
+Do not instrument the throw site. Collect **all** declarations per file first,
+call `inspectDirectBinding` on each, and record every `unsupported` — i.e. make
+the diagnostic pass non-short-circuiting rather than reading a fail-fast path as
+a survey. Until that is run, do not rank storage extensions by these counts.
+
+### The standing lesson, which the session had already written down and did not apply
+
+The rule recorded earlier the same night was: *name the corpus in the claim, and
+do not promote a per-corpus finding to a ladder dependency until a second corpus
+agrees.* The failure here is its sibling and is worth stating separately —
+**name the INSTRUMENT, and ask what answer it is incapable of returning.** A
+fail-fast code path read as a survey will report "exactly one" every time, and
+that reads as a clean, surprising, actionable result rather than as a
+tautology. The tell was available for free: the claim "no file mixes
+categories" across 13 independent files is far too tidy to be a property of real
+source, and one `grep` of any file in the table would have shown it.
