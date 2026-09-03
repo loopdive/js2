@@ -1,12 +1,11 @@
 {
   "id": "5253",
   "assignee": "ttraenkler/codex-tdz-prior-stmt-terra-20260901",
-  "requested_by": "ttraenkler/codex-tdz-prior-stmt-terra-20260901",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es2015-tdz-prior-statement-terra-20260901",
-  "reserved_at": "2026-09-01T05:04:27Z",
   "claimed_at": "2026-09-01T05:04:27Z",
-  "updated_at": "2026-09-01T05:04:27Z",
-  "write_id": "85773-jq3jxbir",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:53:36Z",
+  "write_id": "25669-y6bsqoiv",
+  "released_at": "2026-09-03T09:53:36Z"
 }
