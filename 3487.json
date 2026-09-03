@@ -1,10 +1,11 @@
 {
   "id": "3487",
   "assignee": "ttraenkler/codex-es6-string-valueof",
-  "requested_by": "ttraenkler/codex-es6-string-valueof",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3487-string-valueof",
   "claimed_at": "2026-08-27T10:24:31Z",
-  "updated_at": "2026-08-27T10:24:31Z",
-  "write_id": "26375-9jv8ugy0"
+  "updated_at": "2026-09-03T09:39:29Z",
+  "write_id": "20391-traumbfn",
+  "released_at": "2026-09-03T09:39:29Z"
 }
