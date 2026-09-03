@@ -1,12 +1,11 @@
 {
   "id": "4259",
   "assignee": "ttraenkler/codex-es6-accessor-ir",
-  "requested_by": "ttraenkler/codex-es6-accessor-ir",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es6-class-accessor-ir",
-  "reserved_at": "2026-08-09T01:45:52Z",
   "claimed_at": "2026-08-09T01:45:52Z",
-  "updated_at": "2026-08-09T01:45:52Z",
-  "write_id": "22066-4lzi7eus",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:45:13Z",
+  "write_id": "8434-b0xc6aql",
+  "released_at": "2026-09-03T09:45:13Z"
 }
