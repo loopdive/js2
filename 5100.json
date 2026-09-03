@@ -1,10 +1,11 @@
 {
   "id": "5100",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5100-set-newtarget",
   "claimed_at": "2026-08-27T22:24:26Z",
-  "updated_at": "2026-08-27T22:24:26Z",
-  "write_id": "12920-kl160eru"
+  "updated_at": "2026-09-03T09:51:55Z",
+  "write_id": "22407-vffi44hj",
+  "released_at": "2026-09-03T09:51:55Z"
 }
