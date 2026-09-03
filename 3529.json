@@ -1,8 +1,11 @@
 {
   "id": "3529",
   "assignee": "ttraenkler/codex-3529-plan",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "symphony/3529-typed-producer-parity",
   "claimed_at": "2026-07-21T14:10:16Z",
-  "updated_at": "2026-07-21T14:10:16Z"
+  "updated_at": "2026-09-03T09:40:53Z",
+  "write_id": "2222-jd9m1d9k",
+  "released_at": "2026-09-03T09:40:53Z"
 }
