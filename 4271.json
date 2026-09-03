@@ -1,12 +1,11 @@
 {
   "id": "4271",
   "assignee": "ttraenkler/codex-typescript-upstream-source-build",
-  "requested_by": "ttraenkler/codex-typescript-upstream-source-build",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/issue-4268-generic",
-  "reserved_at": "2026-08-09T05:45:05Z",
   "claimed_at": "2026-08-09T05:45:05Z",
-  "updated_at": "2026-08-09T05:45:05Z",
-  "write_id": "77090-7bnuxxd3",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:45:23Z",
+  "write_id": "8535-hx2mq56x",
+  "released_at": "2026-09-03T09:45:23Z"
 }
