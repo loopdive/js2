@@ -1,8 +1,11 @@
 {
   "id": "3518",
   "assignee": "ttraenkler/codex-3518-plan",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "symphony/3518-ir-retirement-plan",
   "claimed_at": "2026-07-21T11:47:20Z",
-  "updated_at": "2026-07-21T11:47:20Z"
+  "updated_at": "2026-09-03T09:40:13Z",
+  "write_id": "26430-bjcwf4a3",
+  "released_at": "2026-09-03T09:40:13Z"
 }
