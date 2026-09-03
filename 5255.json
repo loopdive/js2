@@ -1,12 +1,11 @@
 {
   "id": "5255",
   "assignee": "ttraenkler/codex-gen-method-this-terra-20260901",
-  "requested_by": "ttraenkler/codex-gen-method-this-terra-20260901",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es2015-generator-method-this-terra-20260901",
-  "reserved_at": "2026-09-01T07:35:40Z",
   "claimed_at": "2026-09-01T07:35:40Z",
-  "updated_at": "2026-09-01T07:35:40Z",
-  "write_id": "86503-c0zkc0ph",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:53:48Z",
+  "write_id": "27925-m06wslpl",
+  "released_at": "2026-09-03T09:53:48Z"
 }
