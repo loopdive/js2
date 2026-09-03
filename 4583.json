@@ -1,12 +1,11 @@
 {
   "id": "4583",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4583-standalone-ir-cutover-corpus",
-  "reserved_at": "2026-08-20T22:11:35Z",
   "claimed_at": "2026-08-20T22:11:35Z",
-  "updated_at": "2026-08-20T22:11:35Z",
-  "write_id": "64360-gqewm04x",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:48:50Z",
+  "write_id": "15615-lnds730m",
+  "released_at": "2026-09-03T09:48:50Z"
 }
