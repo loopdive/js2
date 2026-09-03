@@ -2420,10 +2420,20 @@ records the promotion), so there is precedent in this file for both directions.
 `scripts/*-baseline.json` because main is its sole writer. That rule exists to
 stop a PR banking a regression into a ratchet. Adding a *new lane* is not that —
 no existing floor moves — but it is close enough that the implementer must not
-decide alone. Either get the project lead's explicit sign-off for the one seeding
-commit, or add the lanes with `--policy=hybrid` reporting only and land the
-floors in a follow-up that main's post-merge job writes. **Do not hand-edit the
-JSON to make a gate pass.**
+decide alone. **The "land report-only, seed later" alternative an earlier draft of this plan
+offered does NOT exist — verified in the gate's own code.**
+`evaluateIrOnlyReport` does `const expected = baseline.lanes[lane.name]; if
+(!expected) failures.push(\`${lane.name}: missing committed baseline lane\`)`.
+A lane present in the code and absent from the JSON **fails the gate
+immediately**, so the seed cannot be deferred to a follow-up. The only real
+options are:
+
+1. one seeding commit with the project lead's explicit sign-off, or
+2. don't add the lanes yet.
+
+**Do not hand-edit the JSON to make a gate pass**, and do not attempt the
+deferred-seed route — it was offered here in error and an implementer following
+it would land a red gate.
 
 **Acceptance.** `pnpm run check:ir-only` still reports READY (the two new lanes
 are `baseline`, so they cannot fail the verdict); the two lanes appear in the
