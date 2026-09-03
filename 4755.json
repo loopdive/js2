@@ -1,12 +1,11 @@
 {
   "id": "4755",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/legacy-assignment-tdz-guard-plan",
-  "reserved_at": "2026-08-26T07:00:03Z",
   "claimed_at": "2026-08-26T07:00:03Z",
-  "updated_at": "2026-08-26T07:00:03Z",
-  "write_id": "3285-nn8eq9sd",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:50:43Z",
+  "write_id": "21753-9f27h2s0",
+  "released_at": "2026-09-03T09:50:43Z"
 }
