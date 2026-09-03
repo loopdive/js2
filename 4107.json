@@ -1,10 +1,11 @@
 {
   "id": "4107",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4107-ir-async-compile-once",
   "claimed_at": "2026-08-02T19:58:14Z",
-  "updated_at": "2026-08-02T19:58:14Z",
-  "write_id": "47554-v0icbv4g"
+  "updated_at": "2026-09-03T09:44:24Z",
+  "write_id": "3939-dsjzmfr0",
+  "released_at": "2026-09-03T09:44:24Z"
 }
