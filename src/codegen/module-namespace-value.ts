@@ -1,24 +1,50 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Runtime values for same-compilation ESM namespace imports. */
 
-import { ts } from "../ts-api.js";
 import type { GlobalDef, ValType, WasmFunction } from "../ir/types.js";
+import { ts } from "../ts-api.js";
 import { emitCachedFuncClosureAccess, ensureFuncClosureSingleton } from "./closures.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { allocLocal } from "./context/locals.js";
 import { popBody, pushBody } from "./context/bodies.js";
+import { allocLocal } from "./context/locals.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { coerceType } from "./shared.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { coerceType } from "./shared.js";
 
 interface NamespaceFunctionExport {
+  readonly kind: "function";
   readonly key: string;
   readonly functionName: string;
   readonly funcIdx: number;
   readonly constructible: boolean;
+}
+
+/**
+ * A top-level `export const` of the imported module. `const` is the one binding
+ * form whose value is fixed once module initialization has run, so the snapshot
+ * this object publishes stays correct — which is exactly the carve-out the
+ * "mutable values require live-binding getters" rule below leaves open. `let`,
+ * `var` and reassigned function declarations still decline the whole object.
+ */
+interface NamespaceGlobalExport {
+  readonly kind: "global";
+  readonly key: string;
+  readonly globalName: string;
+}
+
+type NamespaceExport = NamespaceFunctionExport | NamespaceGlobalExport;
+
+/** `export const x = …` at the top level of the exporting module. */
+function immutableTopLevelConstName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
+  if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return undefined;
+  const list = node.parent;
+  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) === 0) return undefined;
+  const statement = list.parent;
+  if (!ts.isVariableStatement(statement) || statement.parent !== statement.getSourceFile()) return undefined;
+  return ctx.moduleGlobals.has(node.name.text) ? node.name.text : undefined;
 }
 
 interface NamespaceObjectCache {
@@ -40,7 +66,7 @@ function cacheMap(ctx: CodegenContext): WeakMap<ts.NamespaceImport, NamespaceObj
 function namespaceFunctionExports(
   ctx: CodegenContext,
   declaration: ts.NamespaceImport,
-): readonly NamespaceFunctionExport[] | undefined {
+): readonly NamespaceExport[] | undefined {
   let moduleSymbol = ctx.checker.getSymbolAtLocation(declaration.name);
   if (!moduleSymbol) return undefined;
   if ((moduleSymbol.flags & ts.SymbolFlags.Alias) !== 0) {
@@ -51,7 +77,7 @@ function namespaceFunctionExports(
     }
   }
 
-  const exports: NamespaceFunctionExport[] = [];
+  const exports: NamespaceExport[] = [];
   for (const exportedSymbol of ctx.checker.getExportsOfModule(moduleSymbol)) {
     let target = exportedSymbol;
     if ((target.flags & ts.SymbolFlags.Alias) !== 0) {
@@ -65,6 +91,21 @@ function namespaceFunctionExports(
       target.valueDeclaration ?? target.declarations?.find((node) => !node.getSourceFile().isDeclarationFile);
     // Type-only exports do not exist on the runtime namespace object.
     if (declarationNode === undefined && (target.flags & ts.SymbolFlags.Value) === 0) continue;
+    if (declarationNode !== undefined) {
+      // `export const` is immutable after module init, so a snapshot of the
+      // exporting module's global is a correct namespace property. Without this
+      // arm a single `export const` in the module declined the WHOLE namespace
+      // object, and `ns.CONSTANT` trapped even though `ns.fn()` worked.
+      const constName = immutableTopLevelConstName(ctx, declarationNode);
+      if (constName !== undefined) {
+        exports.push({
+          kind: "global",
+          key: exportedSymbol.getName(),
+          globalName: constName,
+        });
+        continue;
+      }
+    }
     if (
       declarationNode === undefined ||
       !ts.isFunctionDeclaration(declarationNode) ||
@@ -96,7 +137,13 @@ function namespaceFunctionExports(
       declarationNode.asteriskToken === undefined &&
       !(declarationNode.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
     if (ensureFuncClosureSingleton(ctx, functionName, funcIdx, constructible) === null) return undefined;
-    exports.push({ key: exportedSymbol.getName(), functionName, funcIdx, constructible });
+    exports.push({
+      kind: "function",
+      key: exportedSymbol.getName(),
+      functionName,
+      funcIdx,
+      constructible,
+    });
   }
 
   // An empty module still has a real namespace object. In particular, a
@@ -180,14 +227,31 @@ export function tryEmitCompiledModuleNamespaceObject(
     kind: "externref",
   });
   getterFctx.body.push({ op: "local.set", index: objectLocal });
+  // `global.get` indices baked here can still move: reserving a function-value
+  // cache or a string constant adds import globals and shifts the module-global
+  // range. `ctx.moduleGlobals` is shifted with them, so remember each emitted
+  // read and re-resolve its index once the loop is done — the same treatment
+  // the cache global gets below.
+  const globalReads: {
+    instr: { op: "global.get"; index: number };
+    name: string;
+  }[] = [];
   for (const entry of exports) {
-    const valueType = emitCachedFuncClosureAccess(
-      ctx,
-      getterFctx,
-      entry.functionName,
-      entry.funcIdx,
-      entry.constructible,
-    );
+    let valueType: ValType | null;
+    if (entry.kind === "global") {
+      const globalIdx = ctx.moduleGlobals.get(entry.globalName);
+      const global = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx - ctx.numImportGlobals];
+      if (global === undefined) {
+        popBody(getterFctx, savedBody);
+        return undefined;
+      }
+      const instr = { op: "global.get" as const, index: globalIdx! };
+      getterFctx.body.push(instr);
+      globalReads.push({ instr, name: entry.globalName });
+      valueType = global.type;
+    } else {
+      valueType = emitCachedFuncClosureAccess(ctx, getterFctx, entry.functionName, entry.funcIdx, entry.constructible);
+    }
     if (valueType === null) {
       getterFctx.body.push({ op: "ref.null.extern" });
     } else if (valueType.kind !== "externref") {
@@ -203,6 +267,14 @@ export function tryEmitCompiledModuleNamespaceObject(
     getterFctx.body.push({ op: "call", funcIdx: finalSetIdx });
   }
   // Global indices may have moved while function-value caches were reserved.
+  for (const read of globalReads) {
+    const current = ctx.moduleGlobals.get(read.name);
+    if (current === undefined) {
+      popBody(getterFctx, savedBody);
+      return undefined;
+    }
+    read.instr.index = current;
+  }
   const finalCacheGlobalIdx = absoluteGlobalIndex(ctx, cacheGlobal);
   if (finalCacheGlobalIdx === undefined) {
     popBody(getterFctx, savedBody);
@@ -215,7 +287,12 @@ export function tryEmitCompiledModuleNamespaceObject(
 
   getterFctx.body.push({ op: "global.get", index: finalCacheGlobalIdx });
   getterFctx.body.push({ op: "ref.is_null" });
-  getterFctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+  getterFctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: initBody,
+    else: [],
+  });
   getterFctx.body.push({ op: "global.get", index: finalCacheGlobalIdx });
   const getterTypeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
   const getterFuncIdx = mintDefinedFunc(ctx);

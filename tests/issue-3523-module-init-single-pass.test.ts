@@ -171,13 +171,20 @@ interface Shape {
   readonly read: number;
 }
 
+/** Pick one shape by name, so editing a list cannot silently retarget a test. */
+function shapeNamed(shapes: readonly Shape[], name: string): Shape {
+  const found = shapes.find((shape) => shape.name === name);
+  if (!found) throw new Error(`no shape named ${name} (have: ${shapes.map((shape) => shape.name).join(", ")})`);
+  return found;
+}
+
 /** gap-1a: call-free populations (some of them closure-BEARING). */
 const CALL_FREE_SHAPES: readonly Shape[] = [
-  {
-    name: "string-const",
-    source: `const greeting = "hi";\nexport function read(): number { return greeting.length; }\n`,
-    read: 2,
-  },
+  // `string-const` lived here until #3523 R4-M1. A string module binding is
+  // representable storage now, so that population is IR-owned and reads 0/0 —
+  // it moved to the "leaves IR-owned and function-only modules at 0/0" family
+  // below rather than being deleted, because the census still needs to state
+  // where it went.
   { name: "top-level-var", source: `var w = 5;\nexport function read(): number { return w; }\n`, read: 5 },
   {
     // Closure-bearing but call-free: pass 2 has nothing to inline, so this
@@ -232,11 +239,6 @@ const CALL_BEARING_SHAPES: readonly Shape[] = [
     name: "call-in-static-block",
     source: `function h(): number { return 4; }\nclass C { static n: number = 0; static { C.n = h(); } }\nexport function read(): number { return C.n; }\n`,
     read: 4,
-  },
-  {
-    name: "string-method-call",
-    source: `const s = "ab".toUpperCase();\nexport function read(): number { return s.length; }\n`,
-    read: 2,
   },
   {
     name: "array-push",
@@ -377,11 +379,16 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
     // dead copy of each. Acceptance here is validity + import surface + a
     // strictly smaller module, not byte identity.
     const wasi = { name: "wasi", target: "wasi" as const } as unknown as Lane;
-    const single = await compileLane(CALL_BEARING_SHAPES[10]!.source, wasi, "gap1b-wasi-console.ts", {
+    // Looked up BY NAME. This was a positional index until #3523 R4-M1 removed
+    // an earlier entry from the list and silently made it read `undefined` —
+    // the shape this test is about is `console-log`, not "whichever shape is
+    // tenth".
+    const consoleLog = shapeNamed(CALL_BEARING_SHAPES, "console-log");
+    const single = await compileLane(consoleLog.source, wasi, "gap1b-wasi-console.ts", {
       emitWat: true,
     });
     const forced = await withProfiler(true, () =>
-      compileLane(CALL_BEARING_SHAPES[10]!.source, wasi, "gap1b-wasi-console.ts", { emitWat: true }),
+      compileLane(consoleLog.source, wasi, "gap1b-wasi-console.ts", { emitWat: true }),
     );
     const segments = (wat: string | undefined) => (wat?.match(/\(data \(i32\.const \d+\)/g) ?? []).length;
     expect(segments(forced.wat) - segments(single.wat)).toBe(2);
@@ -452,25 +459,30 @@ describe("#3523 gap-1a/1b — a pass-2-stable module-init population compiles th
     // A call that lives only inside a top-level FUNCTION body is not an init
     // input, so it must not disqualify — even though the module is
     // typed-Unsupported and does compile a direct body.
-    const functionBodyOnly = `const greeting = "hi";
+    // The filler declaration must keep the population typed-Unsupported, or
+    // the census reads 0/0 for a reason that has nothing to do with calls.
+    // It was a string const until #3523 R4-M1 made string storage
+    // representable; an object literal is the call-free declaration that is
+    // still unrepresentable.
+    const functionBodyOnly = `const cfg = { k: 1 };
 function h(): number { return 4; }
 function g(): number { return h(); }
-export function read(): number { return greeting.length + g(); }
+export function read(): number { return cfg.k + g(); }
 `;
     // A call inside a STATIC BLOCK is an init input — but a call alone is now
     // admitted, so this population is single-pass.
-    const staticBlockCall = `const greeting = "hi";
+    const staticBlockCall = `const cfg = { k: 1 };
 function h(): number { return 4; }
 class C { static n: number = 0; static { C.n = h(); } }
-export function read(): number { return greeting.length + C.n; }
+export function read(): number { return cfg.k + C.n; }
 `;
     // A class-expression method whose owning statement reaches the population
     // (it carries statics) brings the CLOSURE ingredient with it, and the call
     // in its body brings the other — so this one keeps two passes.
-    const classExpressionMethodCall = `const greeting = "hi";
+    const classExpressionMethodCall = `const cfg = { k: 1 };
 function h(): number { return 4; }
 const K = class { static s: number = 1; m(): number { return h(); } };
-export function read(): number { return greeting.length + K.s; }
+export function read(): number { return cfg.k + K.s; }
 `;
     for (const lane of LANES) {
       expect(
@@ -605,7 +617,11 @@ export function read(): number { return p + q; }
   it("still compiles pass 1 for a stable shape (the skip must not skip BOTH passes)", async () => {
     process.env[POISON_ENV] = "1";
     try {
-      const poisoned = await compileLane(CALL_BEARING_SHAPES[0]!.source, LANES[0]!, "gap1b-poison-stable.ts");
+      const poisoned = await compileLane(
+        shapeNamed(CALL_BEARING_SHAPES, "call-in-initializer").source,
+        LANES[0]!,
+        "gap1b-poison-stable.ts",
+      );
       expect(poisoned.success).toBe(false);
       expect(poisoned.errors.map((error) => error.message).join("\n")).toContain(
         "injected direct module-init body poison",
@@ -645,6 +661,22 @@ export function read(): number { return p + q; }
         source: `const memo = new Map<string, number>();\nexport function read(): number { return memo.size; }\n`,
       },
       { name: "ir-owned-let", source: `let v = 7;\nexport function read(): number { return v; }\n` },
+      {
+        // (#3523 R4-M1) A string top-level binding. Both string backends have
+        // a module-global carrier for it — `externref` on the host lane,
+        // `(ref null $AnyString)` under `nativeStrings` — so the population is
+        // IR-owned on BOTH lanes this test runs.
+        name: "ir-owned-string-const",
+        source: `const greeting = "hi";\nexport function read(): number { return greeting.length; }\n`,
+      },
+      {
+        // (#3523 R4-M1) Same storage kind reached through a string-producing
+        // CALL. It sat in the call-bearing 1/0 family until the string slot
+        // existed; measured on both lanes, the IR-owned build reads the same
+        // `2` the direct build did.
+        name: "ir-owned-string-method-call",
+        source: `const s = "ab".toUpperCase();\nexport function read(): number { return s.length; }\n`,
+      },
       {
         name: "ir-owned-reassign",
         source: `let total = 0;\ntotal = total + 1;\nexport function read(): number { return total; }\n`,

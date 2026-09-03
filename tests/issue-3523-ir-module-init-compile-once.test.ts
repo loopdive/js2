@@ -316,8 +316,13 @@ export function late(): number { return v; }
 `;
   // Rejected by the exact-lexical selector (string binding), so it stays on the
   // typed Unsupported route in every mode — the control for each claim below.
-  const UNSUPPORTED = `const greeting = "hi";
-export function get(): string { return greeting + "!"; }
+  // A module-init population the IR still declines, so the direct emitter owns
+  // it. The declaration is an OBJECT LITERAL, not the string const this fixture
+  // used until #3523 R4-M1 — a string module binding is representable storage
+  // now, so a string const stopped being an "unsupported" fixture and this
+  // block silently started asserting the opposite of its own name.
+  const UNSUPPORTED = `const config = { n: 1 };
+export function get(): number { return config.n + 1; }
 `;
 
   function moduleInitOutcome(result: CompileResult): IrObservedOutcome {

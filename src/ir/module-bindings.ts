@@ -991,6 +991,31 @@ function isNativeMapStorageType(
 }
 
 /**
+ * (#3523 R4-M1) Prove a declared type is the plain JS `string`.
+ *
+ * Widening first is load-bearing, not a nicety: `const s = "plain"` has the
+ * LITERAL type `"plain"`, so a bare `StringLike` test on the declared type
+ * would accept it while a `string` annotation and a literal `const` took
+ * different paths. `getBaseTypeOfLiteralType` collapses both to `string`.
+ *
+ * Everything that is merely string-ADJACENT is refused. A union (including
+ * `string | undefined`) is refused because the legacy slot holds exactly one
+ * carrier and the IR has no null-carrying string value; a template-literal or
+ * string-mapping type (`` `a${string}` ``, `Uppercase<T>`) is refused because
+ * it survives widening with its own flag, and admitting it would claim a
+ * storage decision this slice never measured. The residual `String` WRAPPER
+ * object is not `StringLike` at all, so it never reaches here.
+ */
+function isModuleStringStorageType(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.isUnion()) return false;
+  try {
+    return (checker.getBaseTypeOfLiteralType(type).flags & ts.TypeFlags.String) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * (#4461) The one initializer shape a native-`$Map` module binding admits:
  * `new Map()` / `new Map<K, V>()` against the ambient constructor, zero
  * runtime arguments. `new Map(iterable)` needs the `__map_new_from_arr`
@@ -1351,6 +1376,16 @@ function writeValueMatches(
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
+  }
+  if (targetKind.kind === "string") {
+    // (#3523 R4-M1) REPRESENTATION agreement only, exactly like the `dynamic`
+    // arm above: this asks whether the written value inhabits the slot's
+    // carrier, not whether the write EXPRESSION has an IR lowering. The
+    // latter is the selector's separate `isPhase1Expr` question, and keeping
+    // the two apart is what stops a shape gap from being mis-reported as a
+    // storage gap. The provenance-following classifier is used (not the raw
+    // declared type) so `"x" as string` cannot assert its way into the slot.
+    return classifyPrimitiveExpression(valueExpr) === "string";
   }
   if (bindingValue.isCapabilityExternKind(targetKind))
     return bindingValue.capabilityExternWriteMatches(
@@ -2025,6 +2060,22 @@ export function makeIrLegacyModuleBindingResolver(
     // resulting storage is the native `$Map` struct rather than an externref.
     if (!valueKind && !isModuleVar && isNativeMapStorageType(declaredType, checker, options)) {
       valueKind = { kind: "native-map", className: "Map" } as const;
+    }
+    // (#3523 R4-M1) A `string` module binding. ONE kind for both string
+    // backends: the physical carrier is the backend's choice (`externref` vs
+    // `(ref null $AnyString)`), and `resolveModuleBindingGlobal` resolves the
+    // ACTIVE one against the slot legacy actually allocated.
+    //
+    // `let`/`const` only, deliberately excluding `var`. Every legacy arm that
+    // widens a module slot away from the checker-inferred type for a
+    // STRING-typed declaration is `var`-specific — a `with`-body hoisted
+    // binding that may never be written, and a `var` whose pre-initialization
+    // `undefined` is observed — and both widen to `externref`, which on the
+    // native lane is NOT the string carrier. That disagreement is only
+    // reportable as a hard Program ABI invariant, never as a demote, so the
+    // arm is excluded by construction rather than re-derived here.
+    if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
+      valueKind = { kind: "string" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration };
     if (

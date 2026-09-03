@@ -3,7 +3,7 @@ id: 5280
 title: "test262 flake: class-definition-null-proto-super.js overflows the stack under merge-group load and parks unrelated PRs"
 status: done
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-03
 completed: 2026-09-02
 sprint: current
 priority: high
@@ -22,7 +22,8 @@ related: [5275, 2547, 3426, 3457, 2562, 5479, 5480, 5486]
 flips `pass → fail` with `Maximum call stack size exceeded` (`range_error`,
 regression bucket signature **`96690aa5e0efb4ff`**, net −1) in the
 `merge_group` re-validation, non-deterministically. It has parked **three
-unrelated PRs in one day**:
+unrelated PRs in one day** (and a fourth, #5498, the next morning — see the
+implementation checkpoint):
 
 | PR | parked | run | what the PR changed |
 | --- | --- | --- | --- |
@@ -138,6 +139,35 @@ Not fixed here, and worth its own issue: the registry is still name-keyed and
 process-global, so two same-named classes with DIFFERENT non-null parents in one
 worker still collide. `extends null` was the case that could not self-correct;
 a non-null heritage at least overwrites.
+
+### 1b. A fourth park, and why the "wasm-hash change" counter-evidence is unsound here
+
+**#5498 (run 33701148752, 2026-09-03 01:12) is a FOURTH park on the same row and
+the same signature** — a fifth hand diagnosis and a fifth re-admission, after
+this issue was already filed. It is the direct cost of piece 2 not existing yet.
+
+That diagnosis, and the #5412 precedent it cites (2026-09-01, where this same
+row WAS a real PR-caused regression), both weighed this line:
+
+```
+=== Regressions with wasm-hash change: 1 ===
+=== Wasm-identical noise (pass → other, same wasm_sha): 0 ===
+```
+
+**For this row that line carries no information.** `diff-test262.ts` sets
+`wasmUnchanged` only when BOTH sides have a string `wasm_sha`
+(`typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha`),
+and the failing candidate row **has no `wasm_sha` field at all** — verified on
+the parked run 33683869984's own merged JSONL. So the row falls into
+"wasm-hash change" by default, without any hash ever being compared. The
+"binaries differ ⇒ PR-caused" inference therefore does not hold for a FAILING
+row of this shape, in either direction: it did not support #5498 being real, and
+it should not have been the ground on which #5412 was called real either. That
+one is worth re-reading against the code path, not against this line.
+
+This is also why #5480's "identical `wasm_sha aa0313d0d7f6` on both sides" was
+measuring something else entirely — that sha comes from `runTest262File`, which
+compiles the witness without the dynamic class-parent imports at all.
 
 ### 2. Cross-PR signature check — now load-bearing
 

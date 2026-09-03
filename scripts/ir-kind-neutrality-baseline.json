@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-02",
+  "generated": "2026-09-03",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
@@ -284,7 +284,7 @@
       "where": "dialect",
       "declaredAt": "src/ir/dialect/js.ts:713",
       "why": "This is `%String.prototype%[@@iterator]` inlined as a statement form. The per-iteration element is a CODE POINT rendered as a one-element string — the intent field resolves to `__str_charAt_cp`, deliberately not the code-unit `string.char_at` next door. Its general sibling `forof.iter` is already in the dialect, so keeping the string specialization in core splits one protocol across the boundary.",
-      "evidence": ["src/ir/dialect/js.ts:722", "src/ir/integration.ts:7213"]
+      "evidence": ["src/ir/dialect/js.ts:722", "src/ir/integration.ts:7241"]
     },
     "forof.vec": {
       "verdict": "neutral",
