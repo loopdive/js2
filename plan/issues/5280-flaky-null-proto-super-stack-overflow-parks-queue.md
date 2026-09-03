@@ -84,3 +84,95 @@ Two independent pieces; either alone is worth landing.
    such by the gate itself, without a human comparing two run logs.
 3. No PR is parked on this row again without the gate naming the prior
    occurrence.
+
+## Fourth instance, 2026-09-03 01:12 — and the strongest evidence yet
+
+PR #5498 parked on the same signature, 27 minutes after being released.
+
+| PR | what its diff changes | run |
+| --- | --- | --- |
+| #5479 | #3523 gap-6a | 33626922676 |
+| #5480 | #3523 gap-6a v2 | 33642323854 |
+| #5486 | #3521 R2 admission telemetry | 33683869984 |
+| **#5498** | **one expression in `loops.ts`** | **33701148752** |
+
+Verbatim from the fourth run:
+
+```
+⚠️  === Regressions (pass → other): 1 ===
+  test/language/statements/class/subclass/class-definition-null-proto-super.js:
+      pass → fail (Maximum call stack size exceeded)
+=== Regression bucket signature: 96690aa5e0efb4ff (1 non-CT files) ===
+=== GATE FAIL: net_per_test -1 < 0 (0 improvements − 1 regressions) ===
+```
+
+**Why this instance is the strongest argument for making the check
+load-bearing.** #5498's entire source change is
+`index: ctx.moduleGlobals.get(name) ?? moduleGlobalIdx` — a module-global index
+re-read inside a `for`-head `var` arm. There is no mechanism by which that
+produces unbounded recursion in `class C extends null`'s SuperCall, and by the
+time it parked, #5506 had already root-caused the overflow to a process-global
+class-parent registry leaking across files within a shard worker. So the fourth
+instance lands on a diff that is *provably* incapable of causing it, against a
+root cause that was *already known*.
+
+**And the gate argued the opposite, correctly-in-general.** Its footer read:
+
+> ❌ LIKELY-REAL REGRESSION (baseline content-current, #2562) … the baseline
+> reflects current src, so these regressions are far more likely PR-caused than
+> baseline drift. Do not dismiss them.
+
+That heuristic is sound — a content-current baseline genuinely cannot be the
+drift source — but it reasons from **one PR's data**. The discriminating
+evidence is **cross-PR**, and the gate cannot see the other three runs. It
+printed the signature and the hint ("Same signature on another PR ⇒ identical
+cluster") on all four, and on all four a human had to be the one to notice.
+Four parks, four manual diagnoses, four re-admissions: that is the cost of an
+advisory hint, and it is the whole argument for the second work item in this
+issue.
+
+Re-admitted once, per the auto-park rules, with a note that a second park on
+this signature escalates rather than repeating. #5506 is in the queue; once it
+lands, both halves of this issue close.
+
+## How to tell this flake from a REAL failure on the same test
+
+`class-definition-null-proto-super.js` is not exclusively a flake row. On
+2026-09-01 it parked PR #5412 and that **was** a genuine, PR-caused regression:
+the diff changed generator/IR lowering and the test's **wasm hash moved**, which
+is what identified it. Anyone hitting this test needs to separate the two cases,
+and neither signal alone is sufficient:
+
+| signal | flake (tonight ×4) | real (#5412) |
+| --- | --- | --- |
+| bucket signature `96690aa5e0efb4ff` | yes | yes |
+| same message, `range_error` | yes | yes |
+| wasm hash changed | **sometimes yes** (see below) | yes |
+| the PR's diff can reach the failing file | **no** | yes |
+
+**The bucket signature is necessary but not sufficient**, and — the trap —
+**`Regressions with wasm-hash change: 1` does not settle it either.** #5498's
+park printed exactly that line while being collateral, because the merge group
+tests the *merged* state and main's other landed changes move bytes too.
+
+**The decisive question is whether the PR's diff can execute while compiling the
+failing file.** For #5498 it provably cannot: the test contains no `for`
+statement at all (`grep -cE '^\s*for\s*\(\s*var '` → 0), and that PR's only
+source change lives inside `compileForStatement`'s module-global for-head `var`
+arm, behind `if (moduleGlobalIdx !== undefined)`. For #5412 the diff changed
+lowering reachable from any class body, so it could.
+
+**Recommended order when this parks your PR:**
+
+1. Check whether your diff's changed code paths can be reached while compiling
+   `class-definition-null-proto-super.js`. Read the test — it is 20 lines. If
+   the answer is no, it is collateral regardless of the wasm-hash line.
+2. Only if it *can* reach: reproduce locally on the merged state and byte-compare
+   against a clean `origin/main` build, per the #5412 procedure.
+3. Cross-check the signature against other open PRs' runs. Four disjoint diffs
+   with one signature is strong corroboration — but it is corroboration, not the
+   primary test.
+
+This ordering is the useful output of four manual diagnoses. Building it into
+the cross-PR signature check (this issue's second work item) is what stops the
+fifth person re-deriving it.
