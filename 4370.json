@@ -1,12 +1,11 @@
 {
   "id": "4370",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/hono-dynamic-index-cast",
-  "reserved_at": "2026-08-11T19:35:34Z",
   "claimed_at": "2026-08-11T19:35:34Z",
-  "updated_at": "2026-08-11T19:35:34Z",
-  "write_id": "50789-srjvc3t5",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:46:20Z",
+  "write_id": "9318-no24fxqf",
+  "released_at": "2026-09-03T09:46:20Z"
 }
