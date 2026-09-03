@@ -311,9 +311,23 @@ code rather than inferred from the name:
 | `JS2WASM_FIXED_ARITY_HOST_CALLS` | `=== "0"` selects **`legacyArrayAbi`**; also drives the fixed-arity host-call path | `closure-exports.ts:1280`, `expressions/host-call-fallback.ts:20` |
 | `JS2WASM_STRICT_FALLBACKS` | strictness of the fallback classifier | `fallback-telemetry.ts:87` |
 
-plus, unverified and needing the same read: `JS2WASM_DIRECT_CALLS`,
-`JS2WASM_PINNED_THIS_DIRECT_CALLS`, `JS2WASM_LINEAR_IR_COVERAGE`,
-`JS2WASM_NUMERIC_ADMISSION`, `JS2WASM_PROXY_MODULE_ESCAPE_GATE`.
+The remaining five have since been read too, and four of them are rollback
+hatches as well — **two of which the source itself calls a kill-switch**:
+
+| var | what it actually gates | site |
+| --- | --- | --- |
+| `JS2WASM_DIRECT_CALLS` | *"the `JS2WASM_DIRECT_CALLS=0` **kill-switch**, which keeps the S2 …"* — the comment's own words | `typed-this.ts:303,323` |
+| `JS2WASM_PINNED_THIS_DIRECT_CALLS` | `=== "0"` returns `undefined`, disabling the pinned-`this` direct-call path | `typed-this.ts:1730` |
+| `JS2WASM_NUMERIC_ADMISSION` | `=0` / `off` / empty *"restores the …"* prior behaviour — a rollback | `analysis/mixed-assignment-carrier.ts:301,308` |
+| `JS2WASM_PROXY_MODULE_ESCAPE_GATE` | `!== "0"` — an **escape gate**, disableable | `declarations.ts:2540` |
+
+The fifth, `JS2WASM_LINEAR_IR_COVERAGE`, is **not** a hatch: it is opt-in
+(`=== "1"`) coverage instrumentation in `ir/backend/linear-ir-coverage.ts:606`,
+so it belongs with the telemetry family and is correctly out of R9's scope.
+
+**Total: seven verified route/rollback hatches missing from this inventory**,
+and two of the seven are labelled "kill-switch" in the very source this table
+exists to inventory.
 
 **`JS2WASM_FIXED_ARITY_HOST_CALLS` is the one to look at first.** It selects a
 path the source itself calls *legacy*, it is absent from an inventory whose
@@ -322,14 +336,14 @@ flagged it as needing a decision ("freeze it as a record axis, or retire the
 knob first — a #3520/#4397 host-import-policy question"). Two separate lines of
 work reached it and neither found it here.
 
-**Consequence for R9.** Its scope is larger than this table, by at least three
-verified seams and up to five more unverified. Before the flip is planned,
+**Consequence for R9.** Its scope is larger than this table by **seven verified
+hatches** — not an estimate; each was read at the site cited above. Before the flip is planned,
 either extend the table to cover every `JS2WASM_*` that can route work away from
 the IR — with the `TEST_`/debug families explicitly excluded *in writing*, so the
 exclusion is a decision rather than an omission — or state that the table covers
 only a named subset and say which.
 
-Method note: the filter above is a name heuristic over 221 vars, so it can
-under-report. A var that gates a route without saying so in its name would not
-appear. The three verified rows are solid; the rest of the remainder has not
-been read.
+Method note: the filter is a name heuristic over 221 vars, so it can
+under-report — a var that gates a route without saying so in its name would not
+surface, and nothing here rules that out. All seven rows above were read at
+their sites; what is unbounded is what the heuristic never proposed.
