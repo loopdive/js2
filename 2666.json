@@ -1,8 +1,11 @@
 {
   "id": "2666",
   "assignee": "ttraenkler/codex-es5-2666",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/2666-member-reference-order",
   "claimed_at": "2026-07-28T15:18:52Z",
-  "updated_at": "2026-07-28T15:18:52Z"
+  "updated_at": "2026-09-03T09:37:59Z",
+  "write_id": "3516-xa00egbq",
+  "released_at": "2026-09-03T09:37:59Z"
 }
