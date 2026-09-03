@@ -1,8 +1,11 @@
 {
   "id": "3792",
   "assignee": "ttraenkler/codex-ir-optimization-ledger",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3792-ir-optimization-retirement-gate",
   "claimed_at": "2026-07-30T04:41:55Z",
-  "updated_at": "2026-07-30T04:41:55Z"
+  "updated_at": "2026-09-03T09:43:31Z",
+  "write_id": "31354-s81ckicm",
+  "released_at": "2026-09-03T09:43:31Z"
 }
