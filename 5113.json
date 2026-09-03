@@ -1,12 +1,11 @@
 {
   "id": "5113",
   "assignee": "ttraenkler/codex/es2015-next-lane-h",
-  "requested_by": "ttraenkler/codex/es2015-next-lane-h",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/5112-es2015-pad-symbol",
-  "reserved_at": "2026-08-28T02:07:32Z",
   "claimed_at": "2026-08-28T02:07:32Z",
-  "updated_at": "2026-08-28T02:07:32Z",
-  "write_id": "97877-8ih7nu34",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:52:17Z",
+  "write_id": "22608-isb71y5m",
+  "released_at": "2026-09-03T09:52:17Z"
 }
