@@ -67,7 +67,9 @@
   "codegen/native-proto-wrapper-primitive.ts": 1,
   "codegen/native-string-slot-bridge.ts": 1,
   "codegen/new-boolean-tobooleanarg.ts": 2,
-  "codegen/number-format-native.ts": 14,
+  "codegen/number-format-native.ts": 15,
+  "codegen/number-proto-format.ts": 3,
+  "codegen/object-integrity-proxy.ts": 1,
   "codegen/object-ops.ts": 4,
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 6,
@@ -112,6 +114,7 @@
   "codegen/vec-overlay.ts": 5,
   "codegen/vec-props.ts": 1,
   "codegen/wasi.ts": 1,
+  "codegen/with-has-binding-native.ts": 1,
   "codegen/with-rmw.ts": 1,
   "codegen/wrapper-proto-to-string.ts": 4
 }

@@ -36,7 +36,7 @@ import {
 } from "./statements/shared.js";
 import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
-import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
+import { expressionRunsUserCode, looseEqualityCoercesAnOperand } from "./module-init-collection.js"; // (#4433) bare `typeof f();` · (#5270 R3-F1) loose-eq guard
 import { noJsHost } from "./js-errors.js";
 
 // Sub-module imports — statement-family functions
@@ -62,6 +62,8 @@ import {
   compileNestedFunctionDeclaration,
 } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
+// (#5271 step 2.3) block-entry pre-allocation of the block's own lexical slots.
+import { preallocateBlockScopedSlots } from "./index.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
@@ -172,10 +174,66 @@ function bareTypeofStatementOperand(expr: ts.Expression): ts.Expression | undefi
  * on `expressionRunsUserCode`, so a statement with nothing to evaluate keeps its
  * previous lowering byte-for-byte.
  */
+/**
+ * (#5270 step 8) True for a bare `a <op> b;` statement whose operands can be
+ * OBJECTS, for an operator that reaches ToPrimitive (§7.1.1) — i.e. whose
+ * evaluation can run user code through `valueOf` / `toString` /
+ * `@@toPrimitive`.
+ *
+ * In statement position the value is dropped, so `compileExpression` is called
+ * with NO expected type and the binary lowering picks a scalar carrier that
+ * unboxes each operand directly, skipping ToPrimitive entirely: measured on
+ * HEAD, `left + right;` invoked the operands' `@@toPrimitive` ZERO times
+ * (probe p62 logged `""`) while `var r = left + right` — the same expression
+ * with an `externref` expectation — invoked both. Asking for `externref` here
+ * routes the statement through the same dynamic lowering the assignment gets.
+ *
+ * Deliberately narrow: an operand the oracle proves is a number / string /
+ * boolean / bigint cannot reach ToPrimitive, so those statements keep their
+ * previous lowering byte-for-byte.
+ */
+function bareBinaryStatementReachesToPrimitive(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isBinaryExpression(expr)) return false;
+  switch (expr.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      break;
+    default:
+      return false;
+  }
+  // (#5270 review R3-F1) §7.2.15 does NOT coerce Object-vs-Object (nor
+  // null/undefined), but this compiler's `==` lowering coerces both operands
+  // regardless. Asking for `externref` on `objA == objB;` therefore turns a
+  // statement the spec says is inert into one that runs `valueOf` — and a
+  // poisoned `valueOf` then kills the whole enclosing evaluation. Keep the
+  // dynamic lowering for the `0 == y;` shape only. MUST stay in step with
+  // `looseEqualityCoercesAnOperand` in module-init-collection.ts.
+  if (!looseEqualityCoercesAnOperand(expr)) return false;
+  const mayBeObject = (operand: ts.Expression): boolean => {
+    const tag = ctx.oracle.staticJsTypeOf(operand);
+    return tag === "object" || tag === "function" || tag === "mixed";
+  };
+  return mayBeObject(expr.left) || mayBeObject(expr.right);
+}
+
 function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
   const typeofOperand = bareTypeofStatementOperand(stmt.expression);
   const evaluated = typeofOperand ?? stmt.expression;
-  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated));
+  const expected =
+    typeofOperand === undefined && bareBinaryStatementReachesToPrimitive(ctx, evaluated)
+      ? ({ kind: "externref" } as const)
+      : undefined;
+  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated, expected));
 }
 
 function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {
@@ -504,6 +562,11 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // this for the same reason.
     const blockNames = collectBlockScopedNames(stmt);
     const savedLocals = saveBlockScopedShadowsForNames(fctx, blockNames);
+    // (#5271 step 2.3) The block's declarative environment exists before its
+    // first statement runs (§13.2.14), so its own `let`/`const` slots must too —
+    // otherwise a closure built earlier in the block captures the outer (or
+    // same-spelled module-global) binding instead of the block's.
+    preallocateBlockScopedSlots(ctx, fctx, stmt.statements);
     for (const s of stmt.statements) {
       compileStatement(ctx, fctx, s);
     }

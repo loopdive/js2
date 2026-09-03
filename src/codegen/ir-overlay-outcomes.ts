@@ -11,6 +11,8 @@ import type {
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
 import { nonExecutableOutcomeDefect } from "../ir/outcomes.js";
+import type { IrObservedOutcomeWithBodyAccountingNote } from "../ir/body-accounting-note.js";
+import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { IrDirectFunctionBodyReceiptAudit } from "./legacy-body-audit.js";
@@ -51,6 +53,24 @@ export interface ReconcileIrOverlayOutcomesInput {
    * only for internal callers that did not opt into the physical route audit.
    */
   readonly directFunctionBodyReceiptAudit?: IrDirectFunctionBodyReceiptAudit;
+  /**
+   * (#3521 R2-T1) Per-unit reason the R2 selector withdrew a terminal. Attached
+   * only to compile-twice function rows; absent on every lane that does not
+   * track outcomes.
+   */
+  readonly r2WithdrawalsByUnitId?: ReadonlyMap<IrUnitId, IrR2Withdrawal>;
+  /**
+   * (#3521 R2-T1) Source-level fallback for the routes the selector never ran
+   * on at all, used only where no per-unit record exists.
+   */
+  readonly r2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
+  /**
+   * (#5263) Terminals whose ledger row is minted by the prepared-callable
+   * publication path, not here. Reconcile must produce NEITHER a row nor a
+   * diagnostic for them: it cannot see the cross-source preparation, so every
+   * conclusion it reaches about them is stale by construction.
+   */
+  readonly ownedElsewhereUnitIds?: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
   readonly existingOutcomes: readonly IrObservedOutcome[];
   readonly target: IrObservedOutcome["target"];
@@ -336,12 +356,16 @@ function functionBodyAccountingFailure(input: {
       `${input.unit.unitId} fell back to direct emission with ${input.accounting.irBodyEmissions} terminal IR patch receipts`,
     );
   }
-  if (input.outcome.kind === "invariant" && input.accounting.directBodyEmissions !== 0) {
-    return bodyEmissionInvariant(
-      `${input.unit.unitId} reached an R2 invariant after ${input.accounting.directBodyEmissions} direct body receipts; ` +
-        "a fatal prepared owner may retain only zero or one exact IR patch receipt",
-    );
-  }
+  // (#5262) There is deliberately NO arm for `outcome.kind === "invariant"`.
+  // The one that used to live here fired on `directBodyEmissions !== 0`, but its
+  // own message described a bound on IR PATCH receipts ("may retain only zero or
+  // one exact IR patch receipt") — a different quantity, and one already
+  // enforced upstream in `reconcileR2FunctionBodyEmissionAccounting`, which
+  // turns `irBodyEmissions > 1` into a `receiptFailure`. Meanwhile any unit that
+  // reached an invariant after legitimately falling back to the direct route
+  // carries `directBodyEmissions === 1`, so the arm fired on the NORMAL shape
+  // and its only effect was to overwrite the root cause with
+  // `body-emission-evidence`. It added no coverage; deleting it loses no red.
   return undefined;
 }
 
@@ -852,6 +876,14 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
   const diagnostics: string[] = [];
 
   for (const unit of collectObservedIrUnits(input.sourceFile, input.identityPlan.identityContext)) {
+    // (#5263) A prepared-callable terminal is owned by the publication path.
+    // Skip the WHOLE unit, not just the diagnostic push: computing a row that
+    // the caller then discards is exactly the defect this fixes — the row was
+    // thrown away at `recordObservedIrOutcomes` while its diagnostic was
+    // reported anyway, failing every standalone multi-source compile with a
+    // `body-emission-evidence` invariant about receipts the unit correctly
+    // never took.
+    if (input.ownedElsewhereUnitIds?.has(unit.unitId)) continue;
     const bodyAccounting =
       directReceipts && irPatchReceipts && r2FreeFunctionPopulation?.unitIds.has(unit.unitId)
         ? reconcileR2FunctionBodyEmissionAccounting({
@@ -861,10 +893,29 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
           })
         : undefined;
     // R2 function rows derive compatibility booleans from exact production
-    // receipts. Class/member and module-init rows retain their established
-    // dispatcher-specific accounting until their own bounded migrations.
+    // receipts. Every other unit kind now REQUIRES a physical direct-body root
+    // as well (#5283): "a legacy body was available and we did not skip it" is
+    // a prediction about what the direct front end would do, and it read `true`
+    // on units where no direct pass ran at all — measured on
+    // `tests/fixtures/extern-demo.ts` and
+    // `tests/dogfood/corpus/import-attributes.module.js`, both of which the
+    // route audit already flagged with `missing-legacy-entry-evidence`.
+    //
+    // The root is a NECESSARY condition, not a sufficient one, so this can only
+    // ever turn a `true` into a `false`. A root attributed to a unit can be the
+    // dispatcher entering for a sibling obligation: measured on the implicit
+    // constructor of a class with a static block, `compileClassBodies` records
+    // a root against `Counter_new` while that constructor's own body is skipped
+    // and IR-patched. Reading the root alone would report compile-twice on a
+    // unit that compiled once — the exact inflation this issue is about, in the
+    // other direction. Callers that did not opt into the route audit have no
+    // receipts to read and keep the prediction unchanged.
+    const physicalRootUnitIds = input.directFunctionBodyReceiptAudit?.physicalRootUnitIds;
     const legacyBodyEmitted =
-      bodyAccounting?.legacyBodyEmitted ?? (unit.legacyBodyAvailable && !input.skippedBodyUnitIds.has(unit.unitId));
+      bodyAccounting?.legacyBodyEmitted ??
+      (unit.legacyBodyAvailable &&
+        !input.skippedBodyUnitIds.has(unit.unitId) &&
+        (physicalRootUnitIds?.has(unit.unitId) ?? true));
     const base = {
       key: unit.key,
       sourceId: unit.sourceId,
@@ -925,12 +976,25 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
               detail: `${unit.matchName} was unsupported after its legacy slot was skipped: ${evidence.error.message}`,
             });
     } else if (evidence?.kind === "patched") {
+      // (#3521 R2-T1) A row that emitted BOTH bodies is the compile-twice shape
+      // R2 exists to retire; it carries exactly one reason. The per-unit record
+      // wins over the source default, which only covers the routes where the
+      // selector never saw the unit. Attached by spread, so `IrObservedOutcome`
+      // itself is unchanged and no emitter reads the field.
+      const r2Withdrawal =
+        bodyAccounting?.directBodyEmissions === 1 && bodyAccounting.irBodyEmissions === 1
+          ? (input.r2WithdrawalsByUnitId?.get(unit.unitId) ??
+            (input.r2NotAttemptedReason
+              ? ({ stage: "not-attempted", reason: input.r2NotAttemptedReason } as const)
+              : undefined))
+          : undefined;
       outcome = {
         ...base,
         kind: "emitted",
         stage: "patch",
         irBodyEmitted: true,
         ...(evidence.preparedComponentId === undefined ? {} : { preparedComponentId: evidence.preparedComponentId }),
+        ...(r2Withdrawal ? { r2Withdrawal } : {}),
       };
     } else {
       outcome = observedFailure(base, {
@@ -942,6 +1006,7 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
     }
 
     let accountingFailure: IrPreparationFailure | undefined;
+    let accountingApplied = false;
     if (bodyAccounting) {
       accountingFailure = functionBodyAccountingFailure({
         unit,
@@ -949,17 +1014,42 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
         accounting: bodyAccounting,
         outcome,
       });
-      if (accountingFailure) outcome = observedFailure(base, accountingFailure);
+      if (accountingFailure && outcome.kind !== "invariant") {
+        // (#5262) An `emitted` or `unsupported` row that fails accounting took
+        // neither body route or both. These arms are the ONLY detector for that
+        // corruption, so they still REPLACE the outcome — demoting them to a
+        // note would leave the row `unsupported`, drop it out of the invariant
+        // diagnostic push below, and turn a real red into silence.
+        outcome = observedFailure(base, accountingFailure);
+        accountingApplied = true;
+      } else if (accountingFailure) {
+        // (#5262) Root cause wins the `code` slot. The accounting evidence rides
+        // alongside by spread, exactly like `r2Withdrawal` (#3521 R2-T1):
+        // `IrObservedOutcome` is unchanged and no emitter reads the field. The
+        // asymmetry with the branch above is load-bearing — do NOT simplify this
+        // to "attach, never replace".
+        const noted: IrObservedOutcomeWithBodyAccountingNote = {
+          ...outcome,
+          bodyAccountingFailure: accountingFailure,
+        };
+        outcome = noted;
+      }
     }
 
     outcomes.push(outcome);
     const unchangedReportVisibleInvariant =
-      accountingFailure === undefined &&
+      !accountingApplied &&
       evidence?.kind === "failed" &&
       evidence.diagnosticVisibility === "report" &&
       sameInvariantFailure(outcome, evidence.error.outcome);
     if (outcome.kind === "invariant" && !unchangedReportVisibleInvariant) {
       diagnostics.push(`IR outcome invariant [${outcome.code}] for ${unit.matchName}: ${outcome.detail}`);
+    }
+    // (#5262) An accounting failure that lost the `code` slot must not vanish
+    // from the diagnostic channel too — the evidence is still real, it is just
+    // no longer the headline.
+    if (accountingFailure && !accountingApplied) {
+      diagnostics.push(`IR body-emission accounting note for ${unit.matchName}: ${accountingFailure.detail}`);
     }
   }
   return { outcomes, diagnostics };

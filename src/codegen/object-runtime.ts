@@ -58,6 +58,7 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   buildArgumentsToPrimitiveArm,
   buildArgumentsLengthAbsentMiss,
@@ -182,6 +183,7 @@ import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { buildObjectEnumerationHelpers, fillObjectAssignProxySourceArm } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
+import { fillObjectIntegrityProxyArms } from "./object-integrity-proxy.js"; // (#5268 step 2)
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -363,7 +365,12 @@ function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[]
     }
     entries.push({
       className,
-      displayName: ctx.functionNameMap.get(className) ?? className,
+      // (#5271 step 7, G2) A class expression's registry key can be the
+      // synthetic `__anonClass_<n>` id; §10.2.9 says the observable name is the
+      // declared one or, for an anonymous class, the binding it is defined into.
+      displayName: className.startsWith("__anonClass_")
+        ? classObjectDisplayName(ctx, className)
+        : (ctx.functionNameMap.get(className) ?? className),
       structTypeIdx,
       classObjectGlobalIdx,
     });
@@ -5294,7 +5301,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "call", funcIdx: objVecNewIdx },
                 { op: "local.set", index: L_ARGS },
                 { op: "local.get", index: L_ARGS },
+                // (#5270 step 8) §7.1.1.1 step 2.b passes the HINT STRING, and
+                // an absent PreferredType is the string `"default"` (step 1),
+                // never the null the internal hint slot uses to encode it.
+                // Passing local 1 raw made a user `@@toPrimitive` method see
+                // `null` where the spec mandates `"default"` (probe p02 logged
+                // `LnullRnull`).
                 { op: "local.get", index: 1 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: stringExtern("default"),
+                  else: [{ op: "local.get", index: 1 }],
+                },
                 { op: "call", funcIdx: objVecPushIdx },
                 { op: "local.get", index: L_METHOD },
                 { op: "local.get", index: 0 },
@@ -6737,6 +6757,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
   // arm now that descriptor helpers and Proxy dispatch front-guards exist.
   fillObjectAssignProxySourceArm(ctx, types.proxyTypeIdx, types.objectTypeIdx);
+
+  // (#5268 step 2) …and the §7.3.16/§7.3.17 integrity algorithms over a
+  // `$Proxy`, for the same reason and in the same slot: both compose from the
+  // Proxy dispatch helpers registered just above.
+  fillObjectIntegrityProxyArms(ctx, types.proxyTypeIdx);
 
   // (#4223) Mint the primitive-wrapper `.constructor` carriers, when the module
   // was pre-scanned as reading a `constructor` property. Hung HERE — the tail of
@@ -8265,6 +8290,60 @@ export function fillExternIsArray(ctx: CodegenContext): void {
           ],
         },
       );
+    }
+  }
+
+  // (#5268 step 6) §7.2.2 step 3 — a Proxy exotic object. IsArray is defined
+  // ON the target: a revoked proxy throws a TypeError, and an unrevoked one
+  // recurses (a proxy-of-a-proxy is `toString/proxy-array.js`'s third
+  // assertion). Unwrapping BEFORE the carrier chain is what makes
+  // `Array.isArray(new Proxy([], {}))` true; without this arm a `$Proxy` — not
+  // a subtype of any vec carrier — silently answered `false`, and a REVOKED
+  // proxy answered `false` instead of throwing.
+  //
+  // Placed after the `$AnyValue` peel so a boxed proxy is unwrapped too, and
+  // bounded rather than looped for the same reason `PROTO_WALK_LIMIT` exists:
+  // a wrong answer is recoverable, a hung test262 shard is not.
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyTypeIdx !== undefined) {
+    const F_PTARGET = 1;
+    const F_REVOKED = 4;
+    const revokedMsg = "Cannot perform operation on a proxy that has been revoked";
+    addStringConstantGlobal(ctx, revokedMsg);
+    const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
+    if (typeErrorCtorIdx !== undefined) {
+      const exnTagIdx = ensureExnTag(ctx);
+      for (let depth = 0; depth < 4; depth += 1) {
+        body.push(
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx: proxyTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: proxyTypeIdx },
+              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // FRESH Instr array per use — a SHARED one is double-remapped
+                // by the finalize dead-code walk (object-runtime-proxy.ts says
+                // so at `throwRevoked`).
+                then: [
+                  ...stringConstantExternrefInstrs(ctx, revokedMsg),
+                  { op: "call", funcIdx: typeErrorCtorIdx },
+                  { op: "throw", tagIdx: exnTagIdx },
+                ],
+              },
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: proxyTypeIdx },
+              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+              { op: "local.set", index: anyLocal },
+            ],
+          },
+        );
+      }
     }
   }
 

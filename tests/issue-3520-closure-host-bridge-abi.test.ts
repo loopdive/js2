@@ -25,6 +25,7 @@ import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
+import { nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import {
   createEmptyModule,
   type FuncTypeDef,
@@ -631,15 +632,28 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
         checker: trackedAst.checker,
       });
       const outcomes = tracked.irOutcomes ?? [];
-      const outcomeIds = outcomes.map((outcome) => outcome.unitId);
+      // Partition the ledger the way `scripts/check-ir-only.ts:403-416` does.
+      // A `non-executable` row (#3523 R4 gap 4) is OBSERVATIONAL: the inventory
+      // mints no module-init unit for an empty population, so the row carries
+      // no `unitId` by design and belongs to neither side of the ownership
+      // closure below. Its well-formedness is asserted right after, so
+      // excluding it here cannot green-wash a row that lies.
+      const ownershipOutcomes = outcomes.filter((outcome) => outcome.kind !== "non-executable");
+      const observationalOutcomes = outcomes.filter((outcome) => outcome.kind === "non-executable");
+      const ownershipIds = ownershipOutcomes.map((outcome) => outcome.unitId);
       expect(
-        outcomeIds.every((id) => id !== undefined),
+        ownershipIds.every((id) => id !== undefined),
         `${entry} structural outcome ids`,
       ).toBe(true);
-      expect(new Set(outcomeIds).size, `${entry} unique outcome ids`).toBe(outcomes.length);
-      expect([...outcomeIds].sort(), `${entry} terminal outcome closure`).toEqual(
+      expect(new Set(ownershipIds).size, `${entry} unique outcome ids`).toBe(ownershipOutcomes.length);
+      expect([...ownershipIds].sort(), `${entry} terminal outcome closure`).toEqual(
         inventory.terminalUnits.map((unit) => unit.id).sort(),
       );
+      for (const outcome of observationalOutcomes) {
+        expect(outcome.unitId, `${entry} ${outcome.key} observational unit id`).toBeUndefined();
+        expect(outcome.unitKind, `${entry} ${outcome.key} observational unit kind`).toBe("module-init");
+        expect(nonExecutableOutcomeDefect(outcome), `${entry} ${outcome.key}`).toBeUndefined();
+      }
       for (const outcome of outcomes) {
         expect(outcome.kind === "emitted" ? outcome.irBodyEmitted : !outcome.irBodyEmitted, outcome.key).toBe(true);
         if (outcome.kind === "unsupported") expect(outcome.legacyBodyEmitted, outcome.key).toBe(true);

@@ -29,6 +29,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
@@ -1136,6 +1137,37 @@ function compileObjectLiteralWithAccessors(
           fctx.body.push({ op: "local.set", index: objLocal });
         }
       }
+    } else if (
+      // (#5270 step 2) §B.3.1 `__proto__` Property Names in Object
+      // Initializers: a NON-computed `__proto__:` key is NOT an own property —
+      // it runs `object.[[SetPrototypeOf]](value)` when Type(value) is Object
+      // or Null, and is otherwise silently ignored (no property, no error).
+      // `__extern_set(obj, "__proto__", v)` used to store it as an ordinary own
+      // data property in standalone, so `Object.getPrototypeOf` answered the
+      // literal's own prototype and `getOwnPropertyDescriptor` found a
+      // descriptor where the spec wants `undefined`.
+      //
+      // `__object_setPrototypeOf` already implements the whole rule: it
+      // canonicalizes a CALLABLE value to its `$Object` proto-view, coerces any
+      // other non-`$Object` value to a null field, and sets
+      // `OBJ_FLAG_NULL_PROTO` only for a raw JS `null` — so a number / string /
+      // boolean / symbol / undefined value leaves the fresh literal exactly as
+      // it was, with its implicit `%Object.prototype%` terminal. Gated on the
+      // native's presence, so the JS-host lane keeps its `__extern_set` route
+      // (where the host object's real `__proto__` setter does the same job).
+      ts.isPropertyAssignment(prop) &&
+      !ts.isComputedPropertyName(prop.name) &&
+      resolvePropertyNameText(ctx, prop) === "__proto__" &&
+      ctx.funcMap.get("__object_setPrototypeOf") !== undefined
+    ) {
+      fctx.body.push({ op: "local.get", index: objLocal });
+      const protoType = compileExpression(ctx, fctx, prop.initializer, { kind: "externref" });
+      if (!protoType) fctx.body.push({ op: "ref.null.extern" });
+      else if (protoType.kind !== "externref") coerceType(ctx, fctx, protoType, { kind: "externref" });
+      // Resolved AFTER the value compile: it may have pulled a late import,
+      // which shifts every function index captured before it.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_setPrototypeOf")! });
+      fctx.body.push({ op: "drop" }); // returns `obj`
     } else if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
       // __extern_set(obj, key, value)
       let propName: string | undefined;
@@ -1687,24 +1719,60 @@ function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr
   return true;
 }
 
+/**
+ * §B.3.1: a NON-computed `__proto__:` key in an object literal is not an own
+ * property at all — it runs `object.[[SetPrototypeOf]](value)` during literal
+ * evaluation. `['__proto__']: v` and `__proto__() {}` are ordinary own
+ * properties and are deliberately excluded.
+ *
+ * (#5270 step 2) Shared so the `Object.getPrototypeOf(<literal>)` static fold
+ * declines exactly the literals whose [[Prototype]] the colon form changes.
+ */
+export function objectLiteralHasColonProto(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  return expr.properties.some(
+    (p) =>
+      ts.isPropertyAssignment(p) &&
+      !ts.isComputedPropertyName(p.name) &&
+      resolvePropertyNameText(ctx, p) === "__proto__",
+  );
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
       _hasDisposalMethod(expr) ||
       _hasRuntimeComputedKey(ctx, expr) ||
+      // (#5269 H-1) STANDALONE ONLY. Both predicates exist for the #5102 probe:
+      // under the native provider a closed struct hides its `[Symbol.toPrimitive]`
+      // member from the runtime walker, so the literal has to become an open
+      // object. On the HOST lane it is not merely unnecessary, it is WRONG —
+      // forcing the host-object path routes the value through the host
+      // `__extern_toString`, which calls `v.toString()` and never consults
+      // @@toPrimitive: `${o}` and `String(o)` answered "[object Object]" instead
+      // of the @@toPrimitive result, `"" + o` got hint "string" rather than
+      // "default", and every host compile of such a file gained env imports.
+      // Host mode's own `_toPrimitive` already handles the closed-struct case.
+      // (#5269 R3-1) REVERTED to `ctx.standalone`. R2-5 widened this to
+      // `standalone || wasi || semanticProviders === "native-first"` on the
+      // reasoning that the #5102 fix was "inert on exactly those targets".
+      // Measured against the merge-base d7f23a80bf, that is factually wrong
+      // for `--target wasi`: base wasi ALREADY answered `String(w)`,
+      // `var v = w; String(v)`, `String(hmod.w)` and `v.x` correctly by a
+      // different route. The widening bought 2 rows there and cost 12 —
+      // including `null` for a plain alias, a TypeError on `v.x`, and a
+      // `dereferencing a null pointer` trap at module init. Widen again only
+      // after the wasi lane is measured to need it and the open-object
+      // consumers on that target are shown to agree.
+      (ctx.standalone && objectLiteralTakesToPrimitiveOpenPath(expr)) ||
       // A colon-form `__proto__` property is not an own data property. It sets
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the
       // struct to a dynamic consumer makes its fields invisible as ordinary
-      // own properties. Build the open object instead; `__extern_set` performs
-      // the required prototype setter operation in both runtime profiles.
-      expr.properties.some(
-        (p) =>
-          ts.isPropertyAssignment(p) &&
-          !ts.isComputedPropertyName(p.name) &&
-          resolvePropertyNameText(ctx, p) === "__proto__",
-      ) ||
+      // own properties. Build the open object instead; the PropertyAssignment
+      // arm of `compileObjectLiteralWithAccessors` routes it to
+      // `__object_setPrototypeOf` rather than `__extern_set` (#5270 step 2).
+      objectLiteralHasColonProto(ctx, expr) ||
       // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
       // — a legal JS property) cannot be a struct field: the field-name
       // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)
@@ -4941,6 +5009,36 @@ export function compileArrayLiteral(
     const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
+  // (#5269 R2-4) An element that is an object literal on the HOST-OBJECT path is
+  // an open `$Object`, not a closed struct — but the first-element heuristic
+  // below still picks a closed `$__anon_N` carrier for it, and the open object
+  // does not fit that slot. The element is silently lost: measured on standalone,
+  // `var g = { get a() { return 1; } }; String([g][0])` answers `undefined` and
+  // `[g,g].join("-")` answers `"-"`, on BOTH this tree and base.
+  //
+  // That is a pre-existing hole — every literal already forced open (an accessor,
+  // a disposal method, a runtime computed key, a colon-form `__proto__`) hits it.
+  // #5269's H-1 predicates made `[Symbol.toPrimitive]` literals join that class,
+  // which is how `[w].join()` regressed from "[object Object]" to "". Widening the
+  // carrier to externref — exactly what `hasDynamicOrCallableElement` already does
+  // for `any`/callable elements — fixes the whole class, not just the new member.
+  //
+  // This is the array-element LOCKSTEP CALLER of `objectLiteralForcesHostPath`;
+  // `statements/variables.ts`, `declarations.ts` and
+  // `statements/nested-declarations.ts` are the same pattern for a binding.
+  const hasHostPathObjectLiteralElement = expr.elements.some((element) => {
+    if (ts.isOmittedExpression(element)) return false;
+    let value: ts.Expression = ts.isSpreadElement(element) ? element.expression : element;
+    // The element is usually the BINDING, not the literal (`var w = {…}; [w]`),
+    // so resolve an identifier to its initializer first — the same resolution
+    // R2-1 needed for the JSON flatness test.
+    if (ts.isIdentifier(value)) {
+      const init = ctx.oracle.variableInitializerOf(value);
+      if (init === undefined) return false;
+      value = init;
+    }
+    return ts.isObjectLiteralExpression(value) && objectLiteralForcesHostPath(ctx, value);
+  });
   let assignmentValue: ts.Expression = expr;
   while (
     ts.isParenthesizedExpression(assignmentValue.parent) ||
@@ -5436,7 +5534,7 @@ export function compileArrayLiteral(
   // coerce every spread value through that primitive representation and can
   // also violate the enclosing callback's `any[]` result ABI. Preserve the
   // source values in the universal carrier, including the spread-first shape.
-  if (hasDynamicOrCallableElement) {
+  if (hasDynamicOrCallableElement || hasHostPathObjectLiteralElement) {
     elemWasm = { kind: "externref" };
   }
   // (#2106 S0) `any[]` element tag-recovery. When the contextual element type is

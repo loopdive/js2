@@ -1,10 +1,11 @@
 ---
 id: 5269
 title: "ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins — r2 residual pass"
-status: ready
+status: done
 sprint: current
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-03
+completed: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
@@ -73,6 +74,33 @@ loc-budget-allow:
   - src/codegen/number-proto-format.ts
   - src/codegen/error-stack-accessor.ts
   - src/codegen/symbol-proto-tostring.ts
+  # 2026-09-02 (Opus impl, Step J-1 follow-up): +20 lines in the native number
+  # formatter, all of them the §21.1.3.5-step-2 no-arg branch and the two
+  # dependency-closure comments that explain why it is reachable at all. It
+  # REPLACES an admitted approximation ("close enough for no-arg output") with
+  # the operation the spec names; the file is a god-file only by length, and the
+  # alternative — a second toPrecision emitter elsewhere — is exactly the drift
+  # this change removes.
+  - src/codegen/number-format-native.ts
+coercion-sites-allow:
+  # 2026-09-02 (Opus impl, Step J-1): the reflective
+  # `Number.prototype.toPrecision` body is §21.1.3.5 verbatim, and its two
+  # coercions are the SAME helpers the already-native DIRECT arm
+  # (`call-receiver-method.ts`) calls — `__unbox_number` for
+  # ToNumber(precision) and `number_toString` for the non-finite
+  # Number::toString(x) tail. Reusing that substrate is what keeps the two
+  # spellings from drifting; routing this one through a different engine
+  # would create the second implementation the gate exists to prevent.
+  - src/codegen/number-proto-format.ts
+  # 2026-09-02 (Opus impl, Step J-1 follow-up): +1 `number_toString` reference,
+  # and it REMOVES a coercion rather than adding one. §21.1.3.5 step 2 defines an
+  # absent precision as `! ToString(x)`; the no-arg branch used to approximate it
+  # with `toExponential(value, NaN)`, which rendered `(123.456).toPrecision()` as
+  # "1.234560e+2". Calling `number_toString` IS routing through the single
+  # Number::toString this lane already owns — the same helper the reflective body
+  # above calls for the identical case — so the two spellings cannot drift. No
+  # new ToString/ToNumber matrix is hand-rolled here.
+  - src/codegen/number-format-native.ts
 func-budget-allow:
   # 2026-09-01: each is a kind-dispatch / arm-ladder function that gains one
   # more arm in the shape its existing arms already have (see the step that
@@ -95,6 +123,48 @@ func-budget-allow:
   - src/codegen/json-codec-native.ts::emitJsonStringifyValue
   - src/codegen/literals.ts::objectLiteralForcesHostPath
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  # 2026-09-02 (Opus, round-3 review fix R2-4): +30 lines for the array-element
+  # LOCKSTEP CALLER of `objectLiteralForcesHostPath`. An array literal whose
+  # element is an OPEN object picked a CLOSED `$__anon_N` vec carrier the object
+  # does not fit, and the element was silently LOST — `String([g][0])` answered
+  # "undefined" and `[g,g].join("-")` answered "-" on base as well as here. The
+  # widening lives in this function because that is where the element carrier is
+  # chosen; the three sibling lockstep callers (statements/variables.ts,
+  # declarations.ts, statements/nested-declarations.ts) are the same one-flag
+  # shape for a binding rather than an element.
+  - src/codegen/literals.ts::compileArrayLiteral
+  # 2026-09-02 (Opus impl, Step G-5): the InternalizeJSONProperty proxy arm
+  # gains the §7.2.2 IsArray step-3 recursion — a loop that unwraps a
+  # proxy-of-a-proxy to its first non-proxy [[ProxyTarget]] before the
+  # array-vs-object classification. Same arm shape, one more unwrap.
+  - src/codegen/json-codec-native.ts::emitJsonParseTextReviver
+  # 2026-09-02 (Opus impl, Step B-d): `compileAssignment` gains ONE guard
+  # line — the `tryEmitSymbolReceiverPropertyWrite` probe — in the same
+  # early-arm shape as the `maybeCaptureArrayProtoOverride` arm directly
+  # above it; the arm's body lives in its own function.
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  # 2026-09-02 (Opus impl, Step L): both finalize drivers gain ONE call —
+  # `fillErrorStructMessageOwnPropArms`, next to the existing
+  # `fillExternGetErrorProps` call they already make. The arm itself lives
+  # in registry/error-types.ts.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  # 2026-09-03 (Opus, round-3 review fix R3-2): +14 lines in `resolveWasmType`
+  # for the TYPE-LEVEL twin of the `[Symbol.toPrimitive]` open-object gate. The
+  # value-side H-1 arm makes such a literal an open `$Object`, so every CONSUMER
+  # of the value must carry it as externref; before this the only agreement was
+  # three syntactic lockstep callers keyed on the initializer BEING the literal,
+  # so an alias / property slot / array element / parameter kept the closed
+  # struct TypeScript infers and the open object null-cast into it (measured
+  # against merge-base d7f23a80bf: `var v = w; String(v)` answered "null" where
+  # base answered "P<string>", `v.x` answered NaN where base answered 41, and at
+  # module scope the store trapped "dereferencing a null pointer"). The arm is a
+  # one-predicate early return in exactly the shape of the pure-index-signature
+  # and foreign-return-fnctor arms immediately above it, and the predicate
+  # itself lives in its own file (`to-primitive-open-object.ts`). This is the
+  # fix that REPLACES per-spelling callers; adding a fourth one instead is what
+  # the review rejected.
+  - src/codegen/index.ts::resolveWasmType
 ---
 
 # #5269 — ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins (r2)
@@ -827,3 +897,686 @@ carrier) with an async body. Attempt only after A–L are green.
 - #3371, #5198, #4274 / #4634, #5139, #5140 — owners of the X rows.
 - Handover: `plan/agent-context/es2015-standalone-session-handover.md`
   (method notes).
+
+## 2026-09-02 implementation (Opus)
+
+Steps G, H, A, B, C, L and J-1 landed. Measured with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/builtins-head.txt --standalone`
+over the same 150-row list the plan uses.
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| before (this branch's fork point) | **0** | 132 | 18 |
+| after (post `git merge origin/main`) | **29** | 112 | 9 |
+
+The before run is this branch's own base, not the plan's `c68dea0d2` figure
+(0/128/22) — the Promise (#5454), for-of (#5458) and buffers (#5224) waves
+landed in between, which moved four rows from `compile_error` to `fail`.
+
+**The after run is the STRICTER of the two.** It was taken after merging
+`origin/main`, which carries #5272 — the runner now applies
+`standaloneHostImportError` on the original-harness path, so a row that only
+"passes" by satisfying an `env::` import from the host no longer counts. Every
+flip below survives that check.
+
+All 29 flips are in-scope rows; none of the 64 X rows moved.
+
+### Per step
+
+| step | list | before → after | flipped |
+|---|---|---|---|
+| G — JSON residue | `builtins-cl-G-json.txt` | 0 → 8 of 13 | `value-symbol`, `parse/revived-proxy`, `value-{object,array}-proxy`, `value-{object,array}-proxy-revoked`, `replacer-array-proxy-revoked`, `replacer-array-wrong-type` |
+| H — `[Symbol.toPrimitive]` literals | `builtins-cl-H-…txt` | 0 → 7 of 11 | the 4 annexB `escape`/`unescape` rows, `isNaN`/`isFinite/toprimitive-valid-result`, `indexOf/searchstring-tostring-wrapped-values` |
+| A — Symbol namespace | `builtins-cl-A1…`, `A2…` | 0 → 7 of 14 | the 6 `Symbol/*/prop-desc.js` rows, `species/basic` |
+| B — Symbol.prototype / wrapper | `builtins-cl-B1…`, `B2…` | 0 → 5 of 11 | `prototype/intrinsic`, `prototype/Symbol.toStringTag`, `toString-default-attributes-strict`, `auto-boxing-strict`, `auto-boxing-non-strict` |
+| C — Proxy in the ToString cascade | `builtins-cl-C-…txt` | 0 → 0 of 8 | — (see below) |
+| L — Error instance `message` | `builtins-cl-L-…txt` | 0 → 1 of 1 | `Error/message_property` |
+| J-1 — reflective `toPrecision` | `builtins-cl-J-…txt` | 0 → 1 of 3 | `toPrecision/precision-cannot-be-coerced-to-a-number-in-range` |
+
+Controls: **20/20 on the standalone lane** after every step. On the js-host lane
+4 of the 20 fail (`Error/prototype/toString/name`, `JSON/stringify/space-wrong-type`,
+`Date/prototype/toJSON/called-as-function`, `isNaN/toprimitive-get-abrupt`) —
+**identical on base**, established by a file-copy A/B of the three files the G
+step touches, not assumed.
+
+Focused suite `tests/issue-5269-es2015-builtins-r2.test.ts`: 31 cases, host and
+standalone, each standalone case asserting the module imports nothing from
+`env`. Five ratchet gates green (also with `LOC_GATE_BASE=origin/main`),
+typecheck green, `biome lint src tests scripts` green.
+
+### Findings that change what the remaining work costs
+
+1. **C is blocked behind cluster M, not behind ToString.** The ToString side is
+   fixed and measured: `"" + new Proxy(function(){}, {})` and `String(…)` both
+   answer `function () { [native code] }`, where both were the string
+   `"undefined"`. All six `proxy-*.js` rows nevertheless still fail on their
+   SECOND assertion, `assertNativeFunction(new Proxy(f, { apply() {} }).apply)`:
+   a dynamic `.apply` read on a proxy answers **NULL** (measured directly —
+   `fn.toString` on the result dereferences a null). That is a
+   `Function.prototype` member-read gap. `not-a-constructor.js` and
+   `proxy-non-callable-throws.js` need the `.call` transfer to reach
+   `emitFunctionProtoToStringBody`, which already has the correct
+   callable/non-callable split.
+
+2. **The `env::__new_SuppressedError` leak is now VISIBLE, and it is the whole
+   of cluster E.** In the after run the two E rows
+   (`NativeErrors/message_property_native_error`,
+   `Error/prototype/stack/getter-subclass`) are `compile_error` with
+   `standalone target emitted host imports: env::__new_SuppressedError (#2961)`,
+   where before they were runtime `fail`s with unrelated messages. That is
+   #5272's leak check landing on the original-harness path — the plan's finding 1
+   predicted exactly this re-classification — not a regression from this
+   change-set, which touches nothing in the SuppressedError construction path.
+   E-2 (a native `SuppressedError` under `noJsHost`) is now the first thing to
+   do for that cluster, and its result is directly readable from the runner.
+
+3. **E-1 as the plan specifies it is unreachable, and was reverted.** The arm
+   was written into `native-construct.ts::fillNativeConstructDrivers` and
+   instrumented: `fillNativeConstructDrivers` is **never called** for
+   `var C = TypeError; new C("m")` — no `__native_construct_N` driver is even
+   reserved, because `tryCompileNativeConstruct`'s gate
+   (`new-super.ts`, `resolvesToConstructableFunctionValue` &co.) declines for a
+   builtin-carrier callee. Whatever lowers that shape is the site to find first;
+   until then an arm in the driver is dead code, so none was shipped.
+
+4. **G's five stragglers share one cause outside this issue.** A trapless Proxy
+   over a CLOSED typed-vec target does not forward its reads: `p["length"]` and
+   `p["0"]` both answer `undefined` through `__extern_get` (measured). That is
+   what leaves `replacer-array-proxy` and `value-array-abrupt` failing.
+   Separately, `parse/text-non-string-primitive` still answers `0` for
+   `JSON.parse(false)`, and `replacer-wrong-type` keeps its value binding a
+   closed struct in that module's shape.
+
+5. **H's four stragglers are not the literal.** With the `@@toPrimitive`
+   assertion now passing, the `String.prototype.indexOf` rows fail on the NEXT
+   one: OrdinaryToPrimitive completeness for the `position`/`searchString`
+   arguments (valueOf-before-toString, and the TypeError when neither is
+   callable).
+
+6. **`Symbol/species/builtin-getter-name.js` is now one step away.** The A-5
+   seed means the accessor IS found; the row fails because the getter's RUNTIME
+   `.name` reads `"get"` rather than `"get [Symbol.species]"`, even though
+   `ensureStandaloneSpeciesGetterClosure` records the right
+   `nativeClosureMeta`. The runtime `.name` read is not consulting that map.
+
+7. **A PROPERTY-form `[Symbol.iterator]: function () {…}` literal is not
+   iterable on either lane** — on this change and on its base alike (file-copy
+   A/B on `literals.ts`). Only the METHOD form is. Unrelated to this issue, but
+   it is why the H precondition fixture asserts a member read.
+
+### Not attempted (as of the first pass)
+
+M+F (7), J-2 (`Date.prototype.toJSON`, 2 — its rows need `toJSON.call(10)` and
+`toJSON.call(Symbol())` to find a user-installed `toISOString` on the boxed
+primitive's native-proto companion, a different substrate question from the glue
+ladder), I (7, of which the 3 normalize rows are a table-generation job), K (2).
+
+## 2026-09-02 second pass (Opus) — J-1 follow-up, E-2, D
+
+Three more commits on the same branch. The pass opened by running the two checks
+the first pass still owed (the focused suite and the equivalence gate); the
+focused suite failed on its own new fixture, and chasing that produced the first
+of these commits.
+
+### J-1 follow-up — an absent precision is `ToString(x)`
+
+Two PRE-EXISTING defects in `src/codegen/number-format-native.ts`, found only
+because the reflective and direct spellings of `x.toPrecision()` now disagreed:
+
+1. `emitToPrecision`'s no-arg branch delegated to `toExponential(value, NaN)`,
+   an approximation its own comment acknowledged ("close enough for no-arg
+   output"). §21.1.3.5 step 2 says an absent precision is `! ToString(x)`, so
+   `(7).toPrecision(undefined)` rendered `"7.000000e+0"`.
+2. Fixing (1) by calling `number_toString` was silently a no-op: in a module
+   whose only number formatting is `toPrecision`, that helper DOES NOT EXIST.
+   `emitNativeNumberFormat` pulls `number_toString` in on `needFixed`, but
+   `emitToString` itself bails out when `number_toString_radix` is absent — and
+   `needRadix` did not ride on `needFixed`. The same broken link also silently
+   disarmed toFixed's own `>= 1e21` ToString fallback, whose comment asserts
+   "number_toString is guaranteed emitted alongside toFixed".
+
+Measured over the four Number formatting families (138 rows —
+toString/toFixed/toExponential/toPrecision), standalone, file-copy A/B:
+
+| | pass | fail |
+|---|---|---|
+| base | 129 | 9 |
+| after | **130** | 8 |
+
+One row flipped (`toPrecision/undefined-precision-arg.js`); nothing regressed.
+The host lane over the toPrecision family is byte-identical before and after
+(15/2, the same two rows) — it uses the host import.
+
+Also in that commit, both found while diagnosing it:
+
+- the focused suite's standalone lane now compiles with `hostBridge: "always"`,
+  exactly as `test262-runner.ts` does (#4035). Standalone defaults to
+  `hostBridge: "off"`, which drops the `__exn_render_*` exports (#2962) —
+  without them every standalone failure in this file reported the opaque
+  `"[object WebAssembly.Exception]"` instead of its assertion text. It adds
+  EXPORTS, not imports, so the zero-`env` assertion still means what it says.
+- `runLane` renders thrown values through `scripts/lib/wasm-exn-render.mjs`, the
+  one renderer the sharded and local runners already share (#3613).
+
+### E-2 — SuppressedError without a JS host
+
+`new SuppressedError(...)` and `SuppressedError(...)` both lowered
+unconditionally to `env::__new_SuppressedError`. Both sites now ask
+`ensureNativeSuppressedErrorCtor` first (the `$Error_struct` shape the dispose
+driver already builds for its LIFO nesting) and keep the import path when it
+declines.
+
+E cluster, standalone: **`compile_error` x2 → `fail` x2.** The leak is gone and
+both rows reach their assertions for the first time. They now fail for reasons
+outside E-2, both confirmed from the runner's own messages:
+
+- `message_property_native_error.js` — "Expected obj[message] to equal
+  my-message, actually undefined" — needs **E-1**, whose arm is unreachable as
+  the plan specifies it (finding 3 above still stands).
+- `getter-subclass.js` — "Function.prototype.call is not yet implemented in
+  --target standalone" — needs **M-1**.
+
+Direct probe of the constructor (standalone, zero `env` imports):
+`name=SuppressedError`, `message=both`, `error`/`suppressed` identity both hold,
+`options.cause` installs, and the call-without-`new` form constructs identically.
+
+### D — the own `Error.prototype.stack` accessor pair
+
+`stack` is the one Error.prototype property that is neither a method nor a data
+property, so neither `memberCsv` nor `dataProps` could express it. D-1 adds an
+`accessorProps` glue kind that seeds a real getter/setter PAIR; D-2 supplies the
+two bodies in a new `src/codegen/error-stack-accessor.ts`.
+
+D cluster, standalone: **0 → 1 pass** (`setter-proxy-trap-rejects.js`). The
+descriptor is fully spec-shaped, probed directly:
+
+| | value |
+|---|---|
+| `typeof d.get` / `typeof d.set` | `function` / `function` |
+| `d.configurable` / `d.enumerable` | `true` / `false` |
+| `d.get.name` / `d.set.name` | `get stack` / `set stack` |
+| `d.get.length` / `d.set.length` | `0` / `1` |
+| `hasOwnProperty(Error.prototype,"stack")` | `true` |
+
+**D-3 was not needed and was not written.** The plan called for a
+`(Error, "stack")` arm in `builtin-static-gopd.ts`. Measurement says the static
+arm already declines — it requires the member to be in `memberCsv`, and `stack`
+deliberately is not — so the query falls through to the dynamic path and reads
+the seeded companion entry correctly. Adding the arm would have created a second
+source of truth for a descriptor that already answers.
+
+The other five D rows fail on `Function.prototype.call` (M-1): every one of them
+reaches the accessor as `Object.getOwnPropertyDescriptor(...).get.call(x)`.
+
+### Findings from the second pass
+
+8. **A dependency closure, not a formatter bug, is why `toPrecision()` was
+   wrong.** Worth stating separately because the same shape can recur: helper A
+   is pulled in on demand X, helper A silently *bails out* when helper B is
+   absent, and B's demand condition does not include X. Nothing errors; the
+   caller just gets a fallback. Both the toPrecision no-arg branch and the
+   toFixed `>= 1e21` branch were disarmed this way, and a comment in the second
+   one asserted the invariant that was already false.
+
+9. **`Object.getOwnPropertyDescriptor` on a builtin prototype already reaches
+   the seeded companion.** The static gOPD arm's `memberCsv` membership test is
+   what routes a non-CSV member to the dynamic path, so a glue that seeds an own
+   property outside the CSV (`dataProps`, and now `accessorProps`) does not also
+   need a static descriptor arm.
+
+10. **Two pre-existing defects surfaced while validating D, both established by
+    file-copy A/B with the change disabled — neither is introduced by it:**
+    - `new Proxy(new Error("i"), {})` property access traps with "illegal cast";
+    - a statically-typed Error's `e.stack` reads the raw `$Error_struct` field
+      instead of invoking the prototype accessor — the static property-access
+      fast path shadows it. `typeof e.stack` is `"object"`, not `"string"`.
+
+11. **`$Error_struct` with a null `$message` and a NON-null `$props` reads its
+    `message` back as the STRING `"null"`.** `new Error()` (whose `$props` IS
+    null) correctly answers `undefined`, and an arbitrary absent key on the same
+    value also answers `undefined` correctly — so the defect is the `message`
+    arm in `fillExternGetErrorProps`, not the sidecar. E-2 makes this reachable
+    (a SuppressedError always has a `$props` sidecar) but does not cause it. The
+    focused fixture deliberately does not assert either answer: the spec one
+    fails, and pinning `"null"` would enshrine the bug.
+
+12. **`String(<boolean>) !== "true"` can be wrongly true in some standalone
+    module shapes.** Two E-2 fixtures failed reporting `got true` while
+    expecting `"true"` — i.e. the actual, stringified, WAS `"true"`. The same
+    construct passes in a neighbouring fixture in the same file, so it is
+    shape-dependent. Not chased; the fixtures now assert identity with a direct
+    `if (a !== b) throw` instead, which is what they were really testing.
+
+### Still not attempted
+
+M+F (7), J-2 (2), I (7), K (2), E-1 (needs the real dynamic-`new` dispatch site
+first), and the five D rows and eight C rows that are all waiting on the same
+thing: **M-1, `Function.prototype.call`/`apply`.** That is now the highest-value
+remaining item in this wave — thirteen in-scope rows across three clusters block
+on it.
+
+### Final state of the branch
+
+`git merge origin/main` (54 commits, one conflict — see the merge commit), then
+re-measured on the merged tree.
+
+`.tmp/es2015/builtins-head.txt`, 150 rows, `--standalone`:
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| fork point | **0** | 132 | 18 |
+| first pass | 29 | 112 | 9 |
+| **final (post-merge)** | **30** | 113 | **7** |
+
+The extra pass is `Error/prototype/stack/setter-proxy-trap-rejects.js` (D). The
+two remaining `compile_error`s that left are the E cluster's — the
+`env::__new_SuppressedError` leak, now closed, so both rows reach their
+assertions. **No row that was passing at the checkpoint regressed**, verified by
+diffing the two runs' pass sets rather than by comparing totals.
+
+One more flip lands OUTSIDE this list:
+`built-ins/Number/prototype/toPrecision/undefined-precision-arg.js` (the J-1
+follow-up), measured over the 138-row Number-formatting families instead.
+
+Required checks on the merged tree:
+
+- **`pnpm run test:equivalence:gate` — PASS.** 24 failing / 1718 passing, all 24
+  already in `scripts/equivalence-baseline.json`: "No new equivalence
+  regressions", exit 0.
+- five ratchet gates green, including with `LOC_GATE_BASE=origin/main` (CI's
+  merge-preview base);
+- typecheck, biome lint and prettier clean;
+- focused suite 38/38.
+
+A note for whoever runs the gate locally next: it is ~70 min unsharded on this
+4-core box (CI runs it as 8 shards), and it must be launched DETACHED —
+`setsid nohup` — not as a harness background task. Three attempts today were
+reaped mid-run by the task supervisor, and the reap writes a pnpm `ELIFECYCLE`
+line into the log. That line is the KILL, not a gate failure, and the third
+attempt ran to completion with its verdict lost because the reaped wrapper owned
+the redirect.
+
+## 2026-09-02 adversarial-review fixes (Opus)
+
+An adversarial review (~230 probe cases, both trees x both lanes, node as oracle)
+put the branch on HOLD with three confirmed blockers. All three are fixed, each
+with a regression pin that was A/B'd against the defect it guards — a pin that
+does not fail on the regression is not a pin.
+
+| # | severity | what | fixed in |
+|---|---|---|---|
+| F1 | HIGH, standalone regression | a replacer knocked a primitive off the JSON primitive fold; `JSON.stringify(1, fn)` answered `"null"` | `1b482da376` |
+| F2 | HIGH, **host**-lane regression | a `[Symbol.toPrimitive]` literal was forced onto the host-object path; `${o}` answered `"[object Object]"` | `a6d3d56e76` |
+| F3 | MEDIUM, silent wrong output | a nested var-bound object dropped a key instead of refusing; `{"a":1}` for `{a:1,b:{c:2}}` | `1b482da376` |
+
+### F1 — the `replacerObservable` gate bought nothing and cost six answers
+
+Measured with the gate ON and OFF against the G cluster: **8 of 13 either way.**
+It was defensive reasoning with a real cost and no benefit, so it is gone rather
+than narrowed. Every value below is back to base and node.
+
+Still pre-existing and NOT claimed as fixed: for a primitive the replacer's
+RETURN is ignored (`JSON.stringify(1, (k,v) => "w:"+v)` answers `1`, node
+answers `"w:1"`). The pin asserts the regression cannot return — the replacer
+never sees a nulled value — rather than pinning a wish.
+
+### F2 — the H-1 predicates were never meant to run on the host lane
+
+Both are `ctx.standalone`-gated now. The host-lane repro output is
+BYTE-IDENTICAL to the reviewer's base tree, including its trailing
+"Cannot convert object to primitive value" throw.
+
+**The H-2 fixture's host half only ever passed because of the bug.** With the
+predicates gated, the host lane answers `called=0` — exactly as base does; node
+answers 1. Buying that call count back is what cost `${o}` its @@toPrimitive
+result. H-2 is standalone-only now, with a host-lane pin for the half that does
+hold there (the coerced VALUE still agrees).
+
+### F3 — a refusal beats a wrong answer
+
+`materializeStructAsDynamicObject` is a SHALLOW open-up, so a nested literal was
+copied across as a closed struct no codec arm recognises and the key was
+silently dropped. A nested shape now returns `undefined` from the route, before
+any operand is pushed, restoring the #1599 refusal that base produced. A FLAT
+shape still materializes and still answers correctly, so G-3's real gain is kept.
+
+One row moved as a direct result:
+`built-ins/JSON/stringify/replacer-wrong-type.js` **fail -> compile_error**. That
+is the intended trade — non-pass either way, and a refusal is honest where the
+answer was wrong.
+
+### Re-validation (post-merge, on the fixed tree)
+
+| | pass | fail | compile_error |
+|---|---|---|---|
+| `builtins-head.txt` (150) | **30** | 112 | 8 |
+| `builtins-controls.txt` (20) | **20** | 0 | 0 |
+
+The head pass SET is byte-identical to the pre-review run — the three fixes cost
+zero rows and gained zero rows (diffed as sets, not totals). Zero host-import
+leak compile_errors. Equivalence gate PASS (24 failing / 1718 passing, all 24 in
+the baseline, exit 0). Focused suite 54/54. Typecheck, biome lint, prettier and
+all five ratchet gates green.
+
+### F4 — a user-shadowed `Symbol` — DOCUMENTED, not fixed
+
+The A-1 seed gives the `Symbol` carrier 15 well-known own data properties with
+no user-shadow check, widening a leak base already had (`for`/`keyFor`).
+
+**Not fixed because the fix is not contained where the review assumed.** The
+`sourceShadowsGlobalName` helper the TypedArray lane added takes a
+`ts.SourceFile`; `pushBuiltinCtorOwnPropSeed` has no AST node and no SourceFile
+parameter, its two callers in `builtin-static-globals.ts` have none in scope, and
+`CodegenContext` exposes no entry source file (`callableSourceFiles` is optional
+and scoped to cross-module wrapper pre-registration). Threading one through
+touches shared globals-seeding code for a LOW finding.
+
+**And I could not reproduce an end-to-end difference.** Two probes on a
+`function Symbol(x){…}` program, base vs branch, standalone:
+
+- `Object.getOwnPropertyNames(Symbol)` — **both trees throw** `illegal cast`;
+- `typeof Symbol.iterator` / `typeof Symbol.for` / `Symbol(7)` — **both trees
+  throw** an identical WebAssembly.Exception.
+
+So the finding stands as a code-level widening of a pre-existing leak, with no
+measured behavioural delta in the shapes reachable today. Whoever fixes it needs
+the SourceFile plumbing first.
+
+### F7 — native SuppressedError's object model — DOCUMENTED, not fixed
+
+Measured on the branch (standalone), against the spec answer (this host's node
+has no `SuppressedError`, so there is no runtime oracle):
+
+| query | branch | spec |
+|---|---|---|
+| `getPrototypeOf(e) === SuppressedError.prototype` | **false** | true |
+| `getPrototypeOf(SuppressedError.prototype) === Error.prototype` | **false** | true |
+| `e instanceof Error` | true | true |
+| `e instanceof SuppressedError` | true | true |
+| `e.constructor === SuppressedError` | true | true |
+| `String(e)` | `SuppressedError: m` | same |
+| `typeof SuppressedError` | `function` | same |
+
+Five of seven already hold. The two that do not are both prototype identity, and
+they are NOT one fix:
+
+- the `.prototype`-parent half *looks* like adding `"SuppressedError"` to
+  `ES5_NATIVE_ERROR_CTORS` (`object-get-prototype-of.ts:57`) — but that set feeds
+  a second arm (`getPrototypeOf(<Ctor>)`, line 220) whose behaviour for this name
+  I did not measure;
+- the INSTANCE half needs a real brand + native-proto glue registration for
+  SuppressedError, the same substrate D-1 added for the stack accessor.
+
+Shipping only the first would leave a chain that is half-right and harder to
+reason about than one that is wholly absent, so neither was made.
+
+### F5 — module-size cost — MEASURED HERE, and the reviewer's figures are stale
+
+The review's numbers were taken against the older merge-base; main has advanced
+since. Re-measured by file-copy A/B on THIS tree (revert my hunk, compile, restore):
+
+| program | my change | delta |
+|---|---|---|
+| `(1234.5678).toFixed(2)` only | `needRadix` riding on `needFixed` | **+41 B** (reviewer: +3,286 B) |
+| `[] instanceof Array` only | A-5 species seed widened past Promise | **+3,728 B** (reviewer: +3,498 B) |
+
+The toFixed cost is now noise — main's advance made `number_toString_radix`
+reachable by other means. **The species one is real and worth recovering**: a
+program that never mentions `Symbol.species` pays 3.7 KB because the `Array`
+carrier seeds a species accessor unconditionally. The recovery is a demand gate
+mirroring the one the proto seeder already has (`ctx.protoMemberDirty`): set a
+`speciesDirty` flag in the pre-scan when a module actually reads a species key,
+and skip the seed otherwise. Not attempted here (LOW, and it is a new feature,
+not a one-liner).
+
+### F6 — narrowing the J-1 / B claims to the spellings actually measured
+
+| spelling | branch | base |
+|---|---|---|
+| `var tp = Number.prototype.toPrecision; tp.call(123.456, 4)` | `"123.5"` | (J-1's target) |
+| `Number.prototype.toPrecision.call(123.456, 4)` | `undefined` | **`undefined`** |
+
+The one-expression `X.prototype.m.call(...)` spelling is broken **identically on
+both trees** — pre-existing, untouched by J-1. So the J-1 and B claims hold for
+the VARIABLE-BOUND reflective spelling, which is exactly what the focused
+fixtures pin; they were never evidence about the direct spelling.
+
+### Reported but NOT reproduced: host-lane invalid wasm
+
+The review reports that host-lane `JSON.stringify(true, fn, 2)` / `(2, null, 4)`
+/ `(false, undefined, 4)` / `(3, {})` emit INVALID wasm on base and branch alike,
+and suggests it deserves its own issue. **I could not reproduce it.** Five shapes
+tried, each on BOTH trees, all `WebAssembly.validate === true`:
+
+1. `var s = JSON.stringify(...)` with `deferTopLevelInit`;
+2. the same without `deferTopLevelInit` (the reviewer's own host options);
+3. `console.log('r=' + JSON.stringify(...))`;
+4. the same without `deferTopLevelInit`;
+5. the probe wrapped in a `P(name, function(){ return ... })` callback, matching
+   the `p-json-prim-repl.js` harness shape.
+
+Filing it as confirmed would be inventing evidence, and dismissing it would be
+ignoring a reviewer who measured something. It needs the review's exact probe +
+epilogue to pin down; the shapes above are ruled out.
+
+## 2026-09-02 round-2 review fixes (Opus)
+
+The round-2 review confirmed F1 and F2 as fully fixed (host rows byte/sha-identical
+to base; reintroducing the deleted F1 gate in a copy of the tree reproduces the
+exact regression, so those pins are genuinely red against their own defect), and
+raised two new blockers plus five smaller items.
+
+| # | severity | outcome |
+|---|---|---|
+| R2-1 | HIGH | **fixed** — the F3 flatness test resolves VALUES, not just kinds |
+| R2-4 | MEDIUM | **fixed** — and it fixes a PRE-EXISTING class, not just the regression |
+| R2-5 | medium | **fixed** — the F2 gate now matches its own justification |
+| R2-6 | low | **fixed** — the accurate #1599 diagnostic is back |
+| R2-7 | low | **fixed** — pin gaps closed; the F2 control's comment/code mismatch corrected |
+| R2-2 | — | **refuted by the skeptic**, no action; recorded below so it is not re-derived |
+| R2-3 | low | **documented** — pre-existing, deserves its own issue |
+
+### R2-1 — flatness must follow the VALUE
+
+The first F3 cut asked only about the property initializer's syntactic KIND, so it
+saw through the BINDING but not the property VALUE. Six spellings still dropped the
+nested key: via an identifier, a shorthand (which was not even reached — the old
+test returned `true` for every non-`PropertyAssignment`), parentheses, a `const`
+binding, a call result, a conditional. All answered `{"a":1}` where node answers
+`{"a":1,"b":{"c":2}}` and base COMPILE_ERRORed.
+
+The test now resolves each value the way the binding is resolved, and — the
+load-bearing half — treats anything it cannot resolve (call result, conditional,
+parameter, import) as NOT flat. Refusing conservatively is right because base
+refused all of these: a false "not flat" costs a refusal that already existed,
+while a false "flat" silently loses data. The FLAT path is untouched and still
+answers `{"a":1,"b":2}`.
+
+### R2-4 — the root cause was pre-existing, and the fix is wider than the report
+
+`[w].join()` returning the empty string was real, but it is NOT the H-1 predicates'
+doing. An array literal whose element is an OPEN object picks a CLOSED `$__anon_N`
+vec carrier the object does not fit, and the element is silently lost. Measured on
+standalone, IDENTICALLY on this branch and on base:
+
+| | before | node |
+|---|---|---|
+| `var g={get a(){return 1}}; String([g][0])` | `"undefined"` | `"[object Object]"` |
+| `[g,g].join("-")` | `"-"` | `"[object Object]-[object Object]"` |
+
+So every literal already forced open — an accessor, a disposal method, a runtime
+computed key, a colon-form `__proto__` — was losing its element before #5269
+existed. H-1 made `[Symbol.toPrimitive]` literals JOIN that class; that is the
+whole of the regression.
+
+The fix is the array-element **lockstep caller** of `objectLiteralForcesHostPath`,
+the sibling of the three that already exist for a binding. It resolves an
+identifier element through `variableInitializerOf` first, because the element is
+usually the BINDING (`var w = {…}; [w]`) — the first cut checked the element
+syntactically and changed nothing, the same trap R2-1 names. After it, all six
+spellings match node, including the two base got wrong.
+
+### R2-5 — the F2 gate now matches its justification
+
+The gate read `ctx.standalone`, but the reason it exists is "under the NATIVE
+PROVIDER a closed struct hides its @@toPrimitive member from the runtime walker".
+`--target wasi` and an explicit `semanticProviders: "native-first"` are native-first
+without being standalone, so the #5102 fix was inert on exactly those targets — an
+under-fix, not a regression. Now gated on
+`ctx.standalone || ctx.wasi || semanticProviders === "native-first"`, the same idiom
+already used at `literals.ts` L1384. The JS-host lane is none of the three, so F2
+stays fixed (63/63 focused, including all four F2 pins).
+
+### R2-6 — the refusal says JSON again
+
+The F3 refusal returned `undefined` and let the call be re-classified downstream, so
+the user saw a generic `__get_builtin` / #1472 "dynamic-shape object operation" error
+PLUS a spurious "Host import leak" warning about a binary that is never produced —
+three diagnostics, none naming JSON. It now reports the #1599 message at the refusal
+site with the same `sticky` flag and `return null` shape as the Phase-1 refusal.
+Measured after: one diagnostic per offending line, and **zero** "Host import leak"
+warnings (was one per file).
+
+### R2-2 — refuted, recorded so nobody re-derives it
+
+The review held that the F3 refusal is wider than the defect, rejecting nested array
+literals and nested empty objects that used to answer correctly. The skeptic showed
+that evidence was an A/B of the lane against ITSELF with the refusal disabled — a
+state that never existed on main. Base compile-errors those shapes too (#1599 rejects
+every non-callable, non-array-literal replacer). Nothing regressed.
+
+### R2-3 — documented, pre-existing, wants its own issue
+
+`"" + o` / `o + 1` on an object with a `[Symbol.toPrimitive]` method pass hint
+`null` (typeof "object") instead of `"default"`. The observation reproduces, but the
+attribution to the F2 gate was rejected by the skeptic: **the base tree exhibits it
+on its own**, so `literals.ts` L1803 did not introduce it. Probe: `f2s.js` n2/n3 and
+`f2q.js` m3 under `/home/user/js2/.tmp/rev5269r2/`. This is a standalone
+`@@toPrimitive` default-hint gap and deserves a separate issue; it is not fixed here.
+
+### Round-3 fixes (2026-09-03)
+
+The round-3 adversarial review put this lane on hold with three HIGH findings
+(R3-1/R3-2/R3-3) and one LOW (R3-4). All four are addressed. **Route taken:
+PROPAGATE (Route A) for the value defect, plus an outright revert of R2-5.**
+
+**The one defect behind all three HIGH findings.** Step H-1 makes a
+`[Symbol.toPrimitive]` object literal an OPEN `$Object` (externref) so the
+#5102 runtime probe can find the handler under `__box_symbol(3)`. That makes
+"open" a property of the **value**. The only agreement about it, though, lived
+in three syntactic lockstep callers, each guarded by
+`ts.isObjectLiteralExpression(initializer)` — so the moment the value reached
+anything through an indirection (an alias, a property slot, an array element
+spelled any other way, a parameter, a return) the consumer still believed it
+was a closed struct, the open object null-cast into it, and the value was
+destroyed. Two more per-spelling callers would not have closed it; that pattern
+had already failed three rounds running.
+
+**The fix answers at the TYPE.** `src/codegen/to-primitive-open-object.ts` is
+now the single owner of the question, in two directions:
+
+- producer — `objectLiteralTakesToPrimitiveOpenPath(expr)`, which
+  `objectLiteralForcesHostPath` calls (the H-1/H-2 predicates moved here
+  verbatim);
+- consumer — `typeTakesToPrimitiveOpenPath(tsType)`, a new arm in
+  `resolveWasmType` (standalone-gated, same shape as the pure-index-signature
+  and foreign-return-fnctor arms beside it).
+
+TypeScript already carries the fact for us. H-1's member symbol propagates into
+every derived type (the alias binding, the enclosing literal's field, the
+array's element type, an inferred parameter/return). H-2's mutation form
+(`o[Symbol.toPrimitive] = f`) leaves nothing on the type, so it is carried by
+the literal type's own **identity** instead: `var v = o` gets the very same
+`ts.Type` object, while a structurally identical `{ x: 1 }` elsewhere in the
+module gets a different one — so the widening reaches every alias and leaks to
+nothing else. There is no per-spelling caller anywhere in this fix.
+
+**R3-1 — R2-5 reverted outright.** The gate is `ctx.standalone` again. R2-5's
+justification ("the #5102 fix was inert on exactly those targets") is factually
+wrong for `--target wasi`: measured against the merge-base, base wasi already
+answered `String(w)`, `var v = w; String(v)`, `String(holder.w)` and `v.x`
+correctly by a different route. Widening bought 2 rows there and cost 12. Every
+wasi row is now byte-for-byte back to base behaviour.
+
+**R3-4 — refusal text corrected.** The message no longer claims a nested
+object/array; it says the route is taken only when every property value is
+provably a flat primitive, and names the call-result / conditional cases it
+also refuses.
+
+#### Measured, three targets, node as the oracle
+
+Base tree = `git archive d7f23a80bf` at `/home/user/js2/.tmp/base5269r3fix`
+(materialised for this round, not reused). Probes and the full 94-row table:
+`/home/user/js2/.tmp/r3fix/` (`a.js` alias/object family, `b.js` array
+elements, `c.js` module-scope, `d.js` the H-2 and accessor-control families,
+`e.js` the 20-row ordinary-shape blast-radius control, `j1.js` JSON refusal;
+`final-table.txt`). Every row was run on all three of node, base and the lane,
+on the host lane, `{target:"standalone", nativeStrings:true}` and
+`{target:"wasi", nativeStrings:true}`.
+
+| target | rows | vs base |
+| --- | --- | --- |
+| host | 46 (+20 control) | **byte-identical** binaries, base vs fixed lane, every row |
+| wasi | 46 | **identical values**, base vs fixed lane, every row (R2-5 revert) |
+| standalone | 46 | 22 better (all now match node), 23 identical, 1 differently-wrong (`n5`) |
+
+Representative rows (`var w = { [Symbol.toPrimitive](h) { return "P<"+h+">"; }, x: 41 }`), standalone:
+
+| row | node | BASE d7f23a80bf | LANE 4152ff5256 | FIXED |
+| --- | --- | --- | --- | --- |
+| `var v=w; String(v)` | `P<string>` | `P<string>` | `null` | `P<string>` |
+| `var v=w; v.x` | `41` | `41` | `NaN` | `41` |
+| `String(holder.w)` | `P<string>` | `P<string>` | `null` | `P<string>` |
+| `holder.w.x` | `41` | `41` | TypeError | `41` |
+| module-scope `var holder={w:w}` | runs | runs | TRAP null pointer (7/9 rows die) | runs |
+| `[(w)].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `[holder.w].join()` | `P<string>` | `[object Object]` | TRAP null pointer | `P<string>` |
+| `[mk()].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `[cond?w:w].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `[...arr0].join()` | `P<string>` | `[object Object]` | `""` | `P<string>` |
+| `var v=w; [v][0].x` | `41` | `41` | `NaN` | `41` |
+| `[w,holder.w].join("~")` | `P<..>~P<..>` | `[oO]~[oO]` | `P<string>~` | `P<..>~P<..>` |
+| H-2 `var v=o; String(v)` | `Q<string>` | `[object Object]` | `null` | `Q<string>` |
+| H-2 `var v=o; v.x` | `1` | `1` | `NaN` | `1` |
+
+No `env::` import appears in any of the 66 standalone probe modules (`envN=0`
+throughout), so nothing here trades value loss for an import leak.
+
+#### What was given up, plainly
+
+- **6 rows on `--target wasi`** — the only gains R2-5 bought there
+  (`String(idf(w))`, `var v; v=w; String(v)`, `[w].join()`, a parameter
+  element, and the two H-2 rows). They are back to base's `[object Object]`.
+  Reason: on that target base was already correct for the aliased and direct
+  spellings, and the open-object consumers there were never measured. Widening
+  the gate again is a separate, measured change — not a side effect of this one.
+- **Nothing on standalone.** All six of the lane's own standalone gains are
+  kept, and 16 more rows now match node that did not before.
+
+#### Known residual, stated rather than shaded
+
+- `var v = w; "" + v` on standalone answers `P<null>` where base answered
+  `[object Object]` and node answers `P<default>`. Both are wrong; the fixed
+  lane is the only one that actually invokes the user's handler, and the wrong
+  part is the **hint string**, not the value. This is R2-3 above — the runtime's
+  null-hint convention is overloaded (`__to_primitive`'s callers pass
+  `ref.null.extern` for BOTH "number" (ToLength) and "default" (concat)), so it
+  cannot be fixed at the `@@toPrimitive` call site without picking one of them
+  wrongly. Still wants its own issue; deliberately not fixed here.
+- R2-4's array-element caller keeps its one-hop, no-paren-unwrap shape. For the
+  `@@toPrimitive` family it is now redundant — the type carrier answers every
+  spelling — and for the pre-existing open families (accessors, `__proto__`,
+  empty-string keys) it fixes the direct spelling and leaves the others exactly
+  as base has them. The R3-3 asymmetry note (its sibling in
+  `call-namespace-static.ts` unwraps parens and treats unresolvable as *refuse*)
+  is therefore no longer load-bearing for this issue, but it is real and
+  unresolved.
+- 14 test failures across 7 `Symbol.toPrimitive`-adjacent test files reproduce
+  **identically on the merge-base** (`.tmp/r3fix/base-tp.log`), on the lane
+  before this fix, and after it — pre-existing, not this lane's and not this
+  fix's. The lane un-skips 8 of those files' tests and passes them (53 passing
+  vs base's 45 + 8 skipped).
+- Not run here: the full equivalence suite and test262. Scoped evidence only —
+  `tests/issue-5269-es2015-builtins-r2.test.ts` is 68/68 green (63 existing +
+  5 new R3-2/R3-1 pins), and the 20-row ordinary-shape control shows zero blast
+  radius on all three targets.

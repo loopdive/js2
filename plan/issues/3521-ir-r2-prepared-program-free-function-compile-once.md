@@ -40,6 +40,37 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/builder.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-09-02 R2-T1/G1: the admission chain and the ownership fixed point are
+  # rewritten from two `||` chains into two ordered predicate TABLES read by a
+  # `find`, so the first failing predicate / first crossing edge can be named
+  # (+88 in ir-prepared-free-functions.ts). The remaining growth is the sink and
+  # its plumbing: the ctx map plus the source-level not-attempted default
+  # (+16 in context/types.ts), the selector-withdrawal merge, the
+  # late-feature-preparation default, the ir-first-disabled default and the
+  # multi-source default (+30 in index.ts, of which +4 land in `generateModule`,
+  # already granted below), and the reason's attachment to the compile-twice row
+  # (+25 in ir-overlay-outcomes.ts, as the gate measures it). The vocabulary, validator and row
+  # projection are NOT added to any of these: they are a new R2-owned
+  # `src/ir/r2-withdrawal.ts` (135 lines, far under the 1,500 threshold), which
+  # is also why #3520's `src/ir/outcomes.ts` is +0. Zero conformance change by
+  # design — 302/302 byte-matrix cells identical.
+  # 2026-09-02 R2-F1: the fast-mode admission arm gains its third and last
+  # signature predicate, `r2FastMixedFixedCarrierSignature` (+119 in
+  # ir-prepared-free-functions.ts, of which ~30 are the doc comment). It admits
+  # a declaration whose every position is drawn from the #4514 carrier-fixed
+  # family — `number`/`boolean` scalars, `string`, `number[]`/`boolean[]` —
+  # MIXED, which is exactly the gap between the two landed predicates (one
+  # takes all-scalar, the other all-string in the JS-host lane). It is a
+  # deliberate duplicate of `r2StableValType`'s per-lane carrier facts rather
+  # than a widening of the general R2 vocabulary, per the `:730-741` rule, and
+  # it ends in the same `r2SignatureMatchesAllocatedSlot` safety gate as its two
+  # neighbours so a wrong admission fails closed to the direct route. The two
+  # disjointness refusals keep each neighbour's revert independently
+  # observable. Zero conformance change by design — 60 ledger rows move
+  # `(1,1,1) -> (1,0,1)`, 45 of them byte-identical; the other 15 are vector
+  # rows that shed the direct body's dead residue (an `$exn` tag, its export
+  # and a `string_constants` global). 201/261 probe cells fully identical, and
+  # no non-fast lane moved.
   - src/codegen/ir-prepared-free-functions.ts
 oracle-ratchet-allow:
   - src/codegen/ir-fnctor-admission.ts
@@ -1064,6 +1095,14 @@ pnpm run format:check
 node scripts/equivalence-gate.mjs
 pnpm exec vitest run tests/cross-backend-diff.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 ```
+
+**`tests/issue-3214-imported-hof.test.ts` is a known BLOCKER of this list, and
+it is not R2's** (2026-09-02, R2-T1/G1). Its `:44` case is a #5165 regression
+in the selector's pre-claim guard, bisected to `ff403c6b2c`; the diagnosis and
+the ready-to-file issue text are in the R2-T1/G1 checkpoint note at the end of
+this record, under deviation 5. The blocker's own issue id is still to be
+allocated — it needs a lead-assigned owner, because `src/ir/select.ts` is
+listed by both #3520 and #3522.
 
 The PR report must include inventory and outcome denominators, a per-unit
 direct/IR emission table, the old-allowlist vs Prepared delta, all post-Prepared
@@ -3835,3 +3874,497 @@ a failed direct body — its own R2 follow-up); the inherited boolean allowlist 
 | next | the direct body's dead residue on `(1,1,1)` rows generally | P0 showed a `(1,1,1)` vec row ships a dead `string_constants` global, an `__exn` tag and an `__exn_tag` export; every remaining overlay row likely does — a byte-size and import-surface question for the ledger, sized by R2-T1 |
 | later | fast-lane `string[]` (`vec-string-param`) | requires the non-fast lanes to agree first (host `(1,1,1)`, others `abi-signature-parity`) — a slot-shape question, not a fast-arm one |
 | later | retire the fast arm (`:1320-1324` → fall through to `r2StableSignatureType`) | only once fast mode's reference family (`index.ts:2920/:3049/:3116`) is buildable; the three fast predicates then collapse |
+
+### 2026-09-02 R2-T1/G1 checkpoint note — Opus lane
+
+Implemented from the `## 2026-09-02 R2-T1/G1 implementation plan` section
+above, on branch `claude/issue-3521-r2-t1g1-telemetry-ci` off `origin/main`
+`079332e3e7`, merged forward through `77ca8fba` (PR #5483, the plan itself).
+Claim `3521:r2-t1g1`, held by `ttraenkler/opus-3521-r2-t1g1` since
+2026-09-02T13:40:36Z (`node scripts/claim-issue.mjs --check 3521:r2-t1g1`,
+read `origin/issue-assignments`). Every number below names the artifact that
+produced it; all artifacts are under `.tmp/r2-t1g1/` in the lane's container.
+
+**Anchor drift: none found.** The plan cites 113 anchors; this lane re-checked
+by content the ~35 the Contract actually edits or reads, and every one still
+matches at its stated line (the remaining anchors are cited in the census
+narrative and were not re-verified here): `ir-prepared-free-functions.ts` (`:272`, `:364`, `:565`, `:583`,
+`:622`, `:695`, `:705`, `:742`, `:802`, `:856`, `:890`, `:1262`, `:1715`,
+`:1840`, 2,027 lines), `outcomes.ts` (`:250-279`, `:314`, `:345`, `:365`),
+`ir-overlay-outcomes.ts` (`:42-57`, `:280`, `:862-864`, `:927-934`),
+`index.ts` (`:2501`, `:2516`, `:4573`, `:4624`, `:4646`, `:5628-5629`,
+`:10156`, `:10165`, `:10698`), `context/types.ts` (`:1543`, `:4284`, `:4291`),
+`check-ir-only.ts` (`:258`, `:294-320`), `select-changed-issue-tests.mjs`
+(`:39-44`, `:46`), `ci.yml` (`:690-712`), `docs/ci-policy.md` (`:63`).
+
+#### Probe answers
+
+**P1 — byte/behaviour matrix, BEFORE and AFTER.** `.tmp/r2-t1g1/bytes-matrix.mts`
+over `.tmp/r2-t1g1/shapes.mts`: 46 shapes × 6 lanes (host, fast, fast-hostStr,
+native, standalone, wasi) + 13 corpus files × 2 `compileFiles` lanes =
+**302 cells**, each recording sha256 of the binary, `success`, sorted error
+text and every function row's triple. `bytes-matrix-before.json` (base
+`079332e3e7`): **302 cells, 300 `success`**. `bytes-matrix-after.json`
+(candidate): 302 cells, 300 `success`, and the two files compare
+**302/302 identical on every field** (sha AND triples AND error text). The two
+non-`success` cells are `shape/generator/{standalone,wasi}`, an internal error
+that predates this slice and whose message is byte-identical in both runs.
+
+**P2 — the real recorder equals the scratch instrumentation.**
+`.tmp/r2-t1g1/census.mts` → `census.json`, reading `why` from
+`r2WithdrawalOf(row)`: **484 function rows**, of which **98 are `(1,1,1)`;
+98/98 carry exactly one reason, 0 are unattributed, and 0 rows that are not
+`(1,1,1)` carry a reason.** Distribution: `not-attempted:multi-source-driver`
+55, `admission:fast-signature-unproven` 24, `admission:param-signature-unstable`
+9, `admission:return-signature-unstable` 4, `admission:async-declaration` 2,
+`fixed-point:storage-terminal-unprepared` 2,
+`not-attempted:late-feature-preparation` 2. The last two are
+`compile/website/playground/examples/benchmarks/helpers.ts` `el` and `bcrd` —
+the plan's site-5 measurement reproduced exactly, and with it the refutation of
+Report A's R2-E1 diagnosis of those two names.
+
+**Deviation from the plan's expected P2 numbers, and why.** The plan's 57-row
+attribution is against `.tmp/r2-census/shape-census.ts`, a planning-lane
+SCRATCH file; `.tmp/` is gitignored, so neither it, `bytes-matrix.mts`,
+`shape-census-instr.ts` nor `corpus-files-census-instr.mjs` exists in the
+repo or in this lane's container. Every probe harness was therefore rebuilt
+in-lane, with its own 46-shape corpus. The claim the plan's design rests on —
+*every `(1,1,1)` row has exactly one cause and the instrumentation is
+tally-neutral* — is reproduced (98/98, 0 stray, 302/302 byte-identical); the
+per-bucket counts are not comparable across two different corpora and are not
+claimed to be. `compileFiles` was run through a `createRequire` shim in the
+harness only: `analyzeFiles` (`src/checker/index.ts:1315`) uses a bare
+`require("node:path")` that is undefined under tsx's ESM loader. No src change.
+
+**P3 — a claimable shape per unmeasured reason** (`p3.mts`, `p3b.mts`,
+`p3c.mts`). **Eleven of the twenty reasons now have a (b) behaviour pin**:
+the seven P2 found, plus `fixed-point:callee-outside-component` (the
+implicit-any component of the routing suite's `:753` shape — which also
+answers the plan's open question: that shape's reason is
+`callee-outside-component`, **not** `allocated-slot-mismatch`),
+`fixed-point:construction-callee-outside`,
+`fixed-point:outside-caller-uncertified` (a `callable-param` owner with a
+module-init caller — R2-E1's whole population) and
+`not-attempted:ir-first-disabled`.
+
+**Nine reasons are "recorder present, unreached" and carry a (d) source pin
+only**, exactly as the plan directs — none was dropped to make a count fit:
+`generator-lane`, `nested-executable-syntax`, `poison-pill-read`,
+`direct-caller-activation-target`, `function-value-reference`,
+`allocated-slot-mismatch`, `callee-of-unowned-caller`, `class-atom`,
+`unsealed-component`. `generator-lane` is the plan's one expectation not met,
+and the measurement says why: in every lane where `generatorsPreparable` is
+false (standalone, wasi, `strictNoHostImports`) the generator's row is
+`(1,1,0)` — #2951's gate 2 excludes it BEFORE R2 admission runs, so no
+`(1,1,1)` generator row can exist today. `class-atom` is unreachable by
+construction until #3522 migrates class-member body accounting (only function
+rows carry the triple), which the plan already predicted.
+
+**P4 — gates see no `(1,1,1)` row.** `pnpm run check:ir-only` (hybrid) and
+`-- --policy=ir-only`: both **`41/38/0/0/0/38/3`, verdict READY**, matching
+the plan's expectation exactly. `check:ir-only --json` contains **zero**
+occurrences of `r2Withdrawal` — the field is absent in the gate corpus, so
+the new row rule is live but fires 0 times. Non-vacuity is carried by V-C(3)
+and V-C(6) below, not by this run.
+
+**P5 — cold-tail semantics: yes.** `ctx.fnctorColdTailStructName` is written
+only at `src/codegen/fnctor-cold-tail.ts:361`; `ctx.fnctorColdTailTypeIdx`
+only at `src/codegen/linear-type-reservations.ts:243` (`grep -rn` over `src/`;
+all other references are reads). So `program-abi-fnctor-producer.ts:225` is
+correct and item 11 — the one-line fixture change — is the whole fix. `:81`
+untouched.
+
+**P6 — `tests/ir/` baseline on the lane's base, one file per `vitest run`**
+(`.tmp/r2-t1g1/p6/run.sh`, `summary.txt`): **19 green,
+`fnctor-producer` 20/21, `counted-string-append-provenance` 13/29 (16
+failed)** — the plan's expectation reproduced exactly, and **no third red**.
+
+#### Verification matrix
+
+- **V-A (byte/behaviour neutrality) — PASS.** P1's 302/302. `check:ir-only
+  --json` and `check:ir-fallbacks` were run on the candidate and on a
+  file-copy revert to `origin/main`'s five sources (`.tmp/r2-t1g1/ab/`):
+  **`diff` is 0 lines for both**
+  (`ir-only-{base,after}.json`, `ir-fallbacks-{base,after}.out`).
+  Run once on the candidate (`.tmp/r2-t1g1/vb/summary2.txt`):
+  `tests/cross-backend-diff.test.ts` **29/29**, and
+  `node scripts/equivalence-gate.mjs` **exit 0 — 24 failing, 1,718 passing,
+  24 known-failures in baseline; no new equivalence regressions**.
+- **V-B (pins) — PASS.** New suites 23/23 under CI's exact flags (22 when this
+  line was first written; the (d) precedence pin was added afterwards, and the
+  byte-matrix `it` now carries an explicit 120 s timeout because the 35 s global
+  budget left it only ~1.6x margin and it timed out under machine contention)
+  (`--pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism`);
+  the six pinned files + `issue-3529-selector-preclaim` **199/199**;
+  `tests/ir/fnctor-producer` **21/21**; routing suite **46/46**;
+  `issue-3521-linked-string-parser-abi` **4/4**;
+  `issue-3520-outcome-correlation-identity` **13/13**;
+  `issue-3519-ir-only-gate` **14/14**; `issue-3519-ir-outcomes` **25/30**
+  (5 pre-existing skips); `check:test-vacuity-shapes` exit 0 on the new
+  suites. Full logs: `.tmp/r2-t1g1/vb/summary{,2}.txt`.
+- **V-C (non-vacuity) — PASS, six reverts, each alone, counts measured:**
+  1. B4's recorder made a no-op → **6 of 8** shape pins fail (the 2 survivors
+     are the `not-attempted` pins, which come from `index.ts`, not the
+     selector — correct).
+  2. C7 + C8 defaults removed → the `ir-first-disabled` pin and the whole
+     multi-source suite fail (**2 pins**). The linked-parser suite stays 4/4
+     under this revert: every `(1,1,1)` assertion under `tests/` is
+     `toMatchObject`, so it cannot see an added field either way — which is
+     also why no existing pin had to move.
+  3. A3's validator neutered → **3 of 11** (a) pins fail.
+  4. Item 11 reverted → `fnctor-producer` back to **20/21**.
+  5. Item 10 reverted → **2** (e) pins fail.
+  6. D's row rule removed → **2** (a) `evaluateIrOnlyReport` pins fail.
+  Deviation from the plan's V-C(1) expectation: it also expected the "(a)
+  `(1,1,1)`-without-reason blocker" to fail under revert 1. It does not, and
+  cannot — that pin is a hand-built ledger row, which is precisely what makes
+  the validator policy-independent and testable without a compile. Reverts 3
+  and 6 are what cover it.
+- **V-D (gates) — PASS.** The five ratchets bare and under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`: `check-loc-budget` (net
+  **+294** src LOC, all four grown files granted by this file's
+  `loc-budget-allow`), `check-func-budget` (`index.ts::generateModule`
+  1729 → 1733, already granted), `check-coercion-sites`,
+  `check:oracle-ratchet` (getTypeAtLocation +0, ctx.checker +0),
+  `check:dead-exports`. Also `typecheck`, `lint`, `format:check`,
+  `check:ir-dialect`, `check:ir-layering`, `check:ir-kind-neutrality`,
+  `check:ir-fallbacks`, `check:ir-only` both lanes,
+  `check:test-vacuity-shapes`.
+
+#### Deviations from the plan, and why
+
+1. **Probe harnesses rebuilt.** See P2 above. The plan's `.tmp/r2-plans/`
+   artifacts are scratch and were not in the repo or this container.
+2. **`src/ir/r2-withdrawal.ts` is 135 lines, not the estimated +45.** The
+   estimate did not carry the doc comments the file needs to be reviewable
+   (why it is not in `outcomes.ts`, why `detail` is admissible on exactly one
+   reason, what each stage means). Far under the 1,500 god-file threshold, so
+   no grant and no gate movement.
+3. **The (F) suite is four files, not one** —
+   `issue-3521-r2-withdrawal-{telemetry,shapes,neutrality,multi-source}.test.ts`
+   — purely for memory. A vitest fork gets 512 MB (`vitest.config.ts:5`); one
+   `compile` retains ~20 MB of `ts.Program` and `compileFiles` ~90 MB
+   (measured: 470 MB → 558 MB on that one case), so a single file carrying
+   every compile OOMs while each case passes alone. The four run together
+   green under CI's exact flags. Related pre-existing finding, measured by
+   file-copy A/B against `origin/main`'s sources:
+   `tests/issue-3521-prepared-free-function-routing.test.ts` **already** OOMs
+   at 512 MB in a 4-core/16 GB container, unmodified — it needs
+   `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048`, as do the 3520-correlation and
+   3519-outcomes suites. Not caused by this slice; recorded because the R2
+   record's own Required-completion command block runs those files.
+4. **`generator-lane` and `allocated-slot-mismatch` got no (b) pin.** P3
+   above; both keep their recorder and a (d) pin.
+5. **Item 12 — the #5165-regression selector issue is NOT filed.** Filing it
+   requires `node scripts/claim-issue.mjs --allocate`, which pushes a
+   reservation to the shared `origin/issue-assignments` ref; that write was
+   refused by this lane's sandbox policy, and `gh` is not installed in the
+   container. Hand-picking an id is forbidden (#2531), so the issue is left
+   unfiled rather than filed wrongly. Everything needed to file it in one
+   step is below; the open-PR half of the `--allocate` scan was done by hand
+   against the REST API on 2026-09-02 (all 8 open PRs — #5485, #5484, #5480,
+   #5400, #5397, #5393, #5390, #5063 — add **zero** `plan/issues/*.md`
+   files), and `--allocate --dry-run --no-pr-scan` previews **#5277**. The
+   plan already requires a lead-assigned owner for this issue, so it is
+   handed to the Fable lane with the PR.
+
+   > **title** `selector: reject callable-family equality operands pre-claim
+   > (#5165 regression; red issue-3214-imported-hof)` · `goal:
+   > ir-full-coverage` · `related: [3214, 3529, 5165, 3521]` ·
+   > **insertion point** `src/ir/select.ts:9377` · **expected shape**
+   > `capabilityNo("operand-coercion-unsupported", "expr-callable-equality",
+   > expr)` when either operand is callable-typed · **body** the plan's
+   > diagnosis: first-parent bisect over 1,437 commits `037ff37d9a` (GOOD) →
+   > `47e337f3b6` (BAD) makes `ff403c6b2c` (merge of PR #5219, #5165
+   > tail-position loops / finally-less `try`) the first bad commit, parent
+   > `82a09a9b33` GOOD; on main `identical` compiles once and correctly, and
+   > its row is `(1,1,0) unsupported/build/operand-coercion-unsupported` — a
+   > POST-claim typed demote from `from-ast.ts:13226-13242` where both
+   > operands are `callable`, which before #5165 was rejected PRE-claim. It
+   > is a selector pre-claim gap (`select.ts:9377-9381` guards only
+   > module-extern operands), not R2 and not #3522's `from-ast` typing. That
+   > lane measures its own `check:ir-fallbacks` bucket. Once filed, add the
+   > id to this record's `related:` and name it as the `issue-3214` blocker
+   > under `## Required completion evidence`.
+6. **A V-B expectation corrected by measurement: the linked-parser suite's
+   `(1,1,1)` rows carry `multi-source-driver`, not `ir-first-disabled`.** The
+   plan's V-B line expected `ir-first-disabled` there. The route is BOTH by
+   configuration — it is `compileMulti` AND it sets `JS2WASM_IR_FIRST=0` — but
+   only one default is ever WRITTEN on it, and the first draft of this note
+   explained that with the wrong mechanism ("the multi default is written
+   later, so it wins"). Corrected on review: `src/compiler.ts:1102-1103`
+   chooses `generateMultiModule` XOR `generateModule`, and nothing inside
+   `generateMultiModule` calls `generateModule`, so the `ir-first-disabled`
+   default at `index.ts:5652` — which lives inside `generateModule` — is never
+   reached on the multi route at all. `multi-source-driver` wins because it is
+   the only writer, not because it is the later one. The observable outcome is
+   unchanged. Measured by instrumenting the real suite
+   (`tests/probe-lp.test.ts`, gitignored, removed after the run): `readNumber`
+   and `stringToNumber` both read `not-attempted:multi-source-driver`; the
+   suite is 4/4 either way, since every `(1,1,1)` assertion under `tests/` is
+   `toMatchObject`. The precedence is the right one and is kept: the multi lane
+   never runs the R2 owner selector even with IR-first ON (41/41 corpus rows,
+   measured), so it is the proximate cause, while `ir-first-disabled` is the
+   sole cause only on the single-source route — which is where its own (b) pin
+   lives. Pinned by source position in the (d) block rather than by a second
+   `compileFiles` call, because a whole-program `ts.Program` is ~90 MB and two
+   do not fit in one 512 MB fork.
+7. **`func-budget-allow` needed no new entry** —
+   `src/codegen/index.ts::generateModule` was already listed. The plan did not
+   anticipate the +4 lines landing inside that function (C7 sits at
+   `index.ts:5629`, inside `generateModule`); the existing grant covers it and
+   the dated `loc-budget-allow` rationale records it.
+
+#### Reported to other owners, not fixed here
+
+`tests/ir/counted-string-append-provenance.test.ts` is **13/29** on this base
+and on main — 16 failures, all `mismatched counted trip-count proof`
+(`src/ir/counted-string-append-provenance.ts:365`), first red at `0f42c1fde4`
+(2026-08-27, Codex, #3518). Out of scope for R2-T1/G1, deliberately **not**
+pinned (a red pin makes the fatal CI step noise for every PR), and named in
+this slice's PR body so #3518's owner sees it.
+
+### 2026-09-02 R2-F1 checkpoint note — Opus lane
+
+Implemented from the `## 2026-09-02 R2-F1 implementation plan` section above,
+on branch `claude/issue-3521-r2f1-fast-mixed-signature`. Claim `3521:r2f1`,
+held by `ttraenkler/opus-3521-r2f1`. Every number below names the artifact
+that produced it; artifacts are under `.tmp/r2-f1/` in this lane's container.
+
+**Sequencing deviation, forced and strictly-better: R2-T1/G1 had already
+LANDED when this lane started.** The dispatch brief and the plan both describe
+PR #5486 as in the merge queue, to be stacked on via its own branch. It merged
+at 2026-09-02T21:35:16Z as `56388ad3d` (GitHub API: `merged: true`), ~20
+minutes before this lane opened. `git merge-base --is-ancestor 90f7e0ad5
+origin/main` confirms R2-T1's branch tip is fully contained in `origin/main`,
+so this branch is cut from `origin/main` `5e094d2e3` instead — which carries
+R2-T1 plus the four commits that landed after it. Nothing in the plan's
+stacking rationale is lost: the telemetry denominator is present and was used
+(P2 below), and the text overlap resolved as the plan's content anchor
+predicted, with no merge conflict.
+
+**Anchor drift: substantial, and re-anchored by content as the plan directs.**
+`src/codegen/ir-prepared-free-functions.ts` is **2,115 lines, not 2,027** —
+R2-T1 grew it by 88 — so every line number in the plan's Contract has moved.
+Both edit sites were located by content and each asserted to occur exactly once
+before patching:
+
+| plan anchor | content anchor used | line on this base |
+| --- | --- | --- |
+| `:845` insertion point | the `return r2SignatureMatchesAllocatedSlot(ctx, unitId, preparedOverride);\n}` that closes `r2FastJsHostPassThroughStringSignature` | `:862-863` |
+| `:1322-1323` fast-arm OR | the two-line `r2FastPreparedScalarFunctionSignature(...) \|\|\n r2FastJsHostPassThroughStringSignature(...)` disjunct | `:1363-1364` |
+
+R2-T1 split the chain exactly as the plan's Sequencing section anticipated: the
+bare `if (A || B || …) { continue; }` is now an ordered predicate TABLE read by
+`find`, and the fast arm is its **first** entry, named
+`admission:fast-signature-unproven`. The new disjunct joined that entry's OR;
+nothing else in the chain changed and the `continue` stays R2-T1's.
+
+The plan's `.tmp/r2-plans/r2-f1/` artifacts — `proto-patch.py` (`NEW_FN`),
+`shape-census-f1.ts`, `f1-mixed-probe.ts`, `run-before-after.sh` — are **not in
+the repo or this container** (`.tmp/` is gitignored; it holds only unrelated
+`linear-*.mjs`). Same finding the R2-T1 lane recorded. The predicate was
+therefore written from the Contract's prose rather than transcribed from
+`NEW_FN`, and the probe harness was rebuilt in-lane
+(`.tmp/r2-f1/{shapes.mts,probe.mts,analyze.mjs,residual.mjs,grid.mjs}`): 29
+shapes × 9 lanes = **261 cells**, each recording route triple, sha256, bytes,
+`success`, sorted error text, `irFirstSkipped` membership and R2-T1's
+`r2Withdrawal` reason. Per-bucket counts are therefore **not** comparable with
+the plan's 288/252-cell censuses and are not claimed to be; the structural
+claims are reproduced.
+
+#### Probe answers
+
+**P0 — not re-run; its artifacts do not exist in this container.** Superseded
+by P1, which the brief and the plan both make mandatory anyway.
+
+**P1 — BEFORE/AFTER on this lane's own tip. MEASURED, not inherited.** This is
+the load-bearing evidence, and it had to be re-run because #5473 changed string
+lowering after the plan's P0, making every sha and byte figure in the plan a
+`47e337f3b6` figure.
+
+`.tmp/r2-f1/{before,after}.json`, diffed by `analyze.mjs` into `analyze.out`:
+
+```
+cells=261 flips=60 shaOnly=0 identical=201 successOrErrorChanged=0 missing=0
+flips by lane: {"fast":15,"fast-hostStr":12,"fast-standalone":15,"fast-wasi":15,"fast-strict-hostStr":3}
+```
+
+- **60 route flips, every one `(1,1,1) → (1,0,1)`.** No cell became `(1,1,0)`
+  or `(1,0,0)`; no cell changed `success` or error text; **0 sha-only changes**;
+  **201 cells fully identical**. **No non-fast lane moved at all** (host,
+  native, standalone, wasi: 0 flips, 0 sha changes).
+- **45 of the 60 flips are byte-identical** (`sha-same`) — every string and
+  scalar shape: the prepared body equals the overlay body and the direct body
+  left no residue. The plan's P0 measured the same 45 out of its 75. The other
+  **15 are the three vector shapes × 5 fast lanes** (the plan's 30 was the same
+  three shapes × 2 functions × 5 lanes).
+- **Byte deltas on the 15 vector flips**, `sum`/`range`/`anyTrue`:
+  `fast` −194/−9/−192 · `fast-hostStr` −96/−9/−95 ·
+  `fast-standalone` −172/−9/−170 · `fast-wasi` −172/−9/−170 ·
+  `fast-strict-hostStr` 0/−9/0 (two cells change sha at equal length).
+  The plan's `47e337f3b6` figures were −191/−9/−191, −94/−9/−94,
+  −170/−9/−185, 0/−9/0 — within a few bytes, and the drift is exactly what
+  P1 existed to catch.
+- **BEFORE reproduces the plan's account of the base**: the target rows are
+  `(1,1,1)` in `fast`/`fast-standalone`/`fast-wasi`; in `fast-hostStr` the
+  non-all-string rows are `(1,1,1)` while `echo`/`greet`/`up` are already
+  `(1,0,1)` (#5379); all are `(1,0,1)` in the four non-fast lanes. Finding
+  (iii) reproduces too: in `fast-strict-hostStr` the pass-through shapes are
+  `(1,1,1)` `success:true` while the mixed string shapes are `success:false`
+  on the base, before and after this slice.
+
+**Vector-shape convergence (b), measured on this tip.** AFTER, `fast-hostStr`
+has the host lane's sha and `fast` the native lane's for all three vector
+shapes; pinned in the new suite. The **string** shapes converge BEFORE as well
+as AFTER — the fast arm was never their byte difference — so, as the plan
+requires, that fact is recorded here as unchanged-by-design and is **not**
+pinned, because a string pin could not detect a revert of the new disjunct.
+
+**V-A residue diff, attached.** `vec-num-sum` in `fast-hostStr`, base **1445**
+→ candidate **1349** bytes, base captured by file-copy A/B revert
+(`.tmp/r2-f1/{base,new}-ipff.ts`), disassembled with binaryen `wasm-dis`
+(wabt's `wasm2wat` cannot read WasmGC rec groups). `vecsum.diff` is **53 lines**
+and contains **only**: one removed func type (`(func (param externref))`, the
+tag's), the removed import global
+`string_constants."Cannot access property on null or undefined at 1:108"`, the
+removed `(tag $tag$0)`, the removed `(export "__exn_tag")`, and index
+renumbering of types and two `env` imports. **No function body differs.** That
+is precisely the plan's stop-criterion boundary, not exceeded.
+
+**P2 — what stays, attributed. THE PLAN'S EXPECTATION IS CONTRADICTED, and the
+telemetry is right.** `residual.mjs` over `after.json` lists every fast-lane
+`(1,1,1)` row left with its recorded R2-T1 reason. All 32 of them read
+**`admission:fast-signature-unproven`** — the fast arm itself.
+
+The plan's P2 expected `object-param`/`object-return`/`callable-param`/
+`vec-string-param` to be attributed "at the position kind",
+`destructured-param` at `ts.isIdentifier(parameter.name)` and `async` at
+`isAsync`. **None of those attributions is reachable in a fast lane**, and the
+reason is structural rather than a measurement artefact: R2-T1 placed the fast
+arm **first** in its predicate table and `find` short-circuits, so in fast mode
+`fast-signature-unproven` always fires before `async-declaration`,
+`param-signature-unstable` or `allocated-slot-mismatch` can run. The plan's
+account describes where these rows *would* be refused if the fast arm admitted
+them — true, but not what the ledger records. This was already visible BEFORE
+the slice (`residual.mjs` over `before.json`), so it is a property of R2-T1's
+ordering, not something F1 introduced.
+
+The plan's actual stop-criterion — "a row attributed to `:1339`/`:705` is a
+carrier mismatch the table did not predict" — is **not** triggered: no residual
+row reads `allocated-slot-mismatch`. The families that stay are the ones the
+plan named (reference carriers, async, `string[]`, and string positions in the
+carrier-less strict/standalone/wasi lanes); only the recorded *name* differs
+from the plan's prediction. Consequence for R2-E1: the fast lanes cannot
+distinguish reference-carrier residue from any other fast-arm refusal by reason
+alone, so R2-E1 will need either the non-fast lanes' reasons or a re-ordering
+of R2-T1's table. Recorded here rather than fixed — re-ordering the table is
+R2-T1's contract, not this slice's.
+
+**P3 — non-vacuity of the disjointness refusals: confirmed unobservable
+through the OR, as the plan predicted.** Dropping item 3 (both refusals) in a
+scratch copy changes **no kept pin** (V-C4: 38/38 and 46/46) — the two
+neighbouring predicates accept exactly the shapes the refusals reject, so the
+OR hides the overlap. Recorded as 0 observable changes; the refusals are kept
+for the V-C independence of `:742`/`:802`, not for a pin.
+
+**P4 — `boolean[]`: kept.** `anyTrue(xs: boolean[]): boolean` flips in all five
+fast lanes on this tip (`fast` −192, `fast-hostStr` −95, `fast-standalone` and
+`fast-wasi` −170, `fast-strict-hostStr` sha-change at equal length), its
+`main()` oracle returns the expected value, and it sheds the same residue as
+the `number[]` shapes. No reason to drop it.
+
+**Two corpus-choice differences from the plan's row list, stated so the counts
+are not read as base regressions.** In my corpus `ns(n: number): string`
+(written with `String(n)`) and `first(xs: string[]): string` are `(1,1,0)`
+select-stage rejections in **every** lane, so they never reach the fast arm and
+cannot flip; the plan listed `ns` among its ten target rows and `first` as a
+`(1,1,1)` residual row in host/`fast-hostStr`. These are different function
+bodies, not a different compiler: `String(n)` is the
+`primitive-method-unsupported` rejection the plan itself records for `ns` in
+the strict lane. My target-row population is therefore 15 shapes, not the
+plan's 10 + 4, and the flip counts follow from that.
+
+#### Verification matrix
+
+- **V-A (byte/behaviour neutrality) — PASS.** P1's 201/261 identical, 0
+  success/error changes, 0 non-fast-lane movement, the 45 byte-identical flips
+  and the 15 vector flips explained by the attached WAT residue diff.
+  `check:ir-fallbacks` OK (no unintended/post-claim/module-level increase);
+  `check:ir-only` **41/38/0/0/0/38/3 verdict READY on both lanes**
+  (`--policy=hybrid` and `--policy=ir-only`), unchanged, and
+  `scripts/ir-only-baseline.json` is untouched — `git status scripts/` is
+  empty, so the mechanism is the expected one (the gate's corpus is non-fast
+  and never runs the fast arm). Behaviour suites green:
+  `issue-3907-cross-lane-number-equality` 18/18,
+  `issue-3912-fast-number-stringify` 31/31, `issue-3912-native-string-lanes`
+  6/6, `i32-fast-mode` 14/14, `native-strings` 95/95,
+  `native-strings-roundtrip` 7/7, `native-strings-standalone` 10/10.
+  `node scripts/equivalence-gate.mjs` **exit 0 — 24 failing, 1,718 passing, 24
+  known-failures in baseline; no new equivalence regressions**.
+- **V-B (pins) — PASS.** New suite
+  `tests/issue-3521-fast-mixed-signature-admission.test.ts` **38/38** under
+  CI's flags; routing suite **46/46** with the two moved pins;
+  `issue-3521-r2-withdrawal-{telemetry,shapes,neutrality}` 12/12, 8/8, 2/2;
+  `issue-3520-outcome-correlation-identity` **13/13** unchanged;
+  `issue-3519-ir-only-gate` 14/14; `check:test-vacuity-shapes` exit 0.
+- **A THIRD pin had to move, which the plan could not have named.** R2-T1's own
+  (b) shape pin for `admission:fast-signature-unproven`
+  (`tests/issue-3521-r2-withdrawal-shapes.test.ts:89`) uses
+  `len(s: string): number` in fast mode — the exact shape this slice admits;
+  its comment already flagged it as R2-F1's. The **reason stays reachable** (32
+  rows carry it AFTER), so the pin keeps its reason and swaps its shape to
+  `op(o: { a: number }): number`, a reference-carrier row measured to carry
+  exactly that reason. The plan's (E) list names only the two routing pins
+  because it was written before R2-T1 landed.
+- **V-C (non-vacuity) — four reverts, each applied ALONE and restored from the
+  file-copy `.tmp/r2-f1/new-ipff.ts` between runs (`.tmp/r2-f1/vc.sh`,
+  `vc.out`). Counts measured, not estimated:**
+  1. **Remove the third disjunct** → new suite **32 of 38 fail**, routing suite
+     **45/46** (the moved `nativeStrings` pin fails alone). Strongly
+     non-vacuous. The T1 shapes suite stays **8/8** — correct, and worth
+     stating: that pin was re-pointed at a reference-carrier shape which is
+     refused with or without the disjunct, so it is evidence that the *reason*
+     survives, not evidence *for* the disjunct.
+  2. **Drop the lane rule (item 2)** → **no kept pin fails** (38/38, 46/46),
+     exactly as the plan predicted. The plan left "what those cells do without
+     it" unmeasured; the answer is that they stay refused, because the terminal
+     `r2SignatureMatchesAllocatedSlot` catches them — with no string carrier
+     `r2StableValType` returns `undefined` and the gate returns false. The lane
+     rule is therefore defence-in-depth and a statement of intent, not the
+     enforcing mechanism. Kept, and now documented as such.
+  3. **Drop the terminal `r2SignatureMatchesAllocatedSlot` call** → **no pin
+     fails** (38/38, 46/46), as the plan predicted (every slot matched in P1).
+     The gate's non-vacuity rests on #3907's history and the `implicit-any` pin
+     in the routing suite, not on this corpus. Recorded, not invented into a pin.
+  4. **Drop BOTH disjointness refusals (P3)** → **no pin fails** (38/38, 46/46),
+     confirming they are unobservable through the OR because the two
+     neighbouring predicates accept exactly the shapes they reject. Kept for
+     the V-C independence of `:742`/`:802`, as the plan directs.
+- **V-D (gates) — PASS.** The five ratchets chained, **bare AND under
+  `LOC_GATE_BASE=$(git rev-parse origin/main)` = `5e094d2e3`**, both chains exit
+  0: `check-loc-budget` (net **+119** src LOC in one file, granted by this
+  file's `loc-budget-allow` with a dated R2-F1 rationale), `check-func-budget`
+  (`selectR2PreparedOwnerComponents` +1 line, well under the 300-line
+  threshold), `check-coercion-sites` (no net vocabulary growth),
+  `check:oracle-ratchet` (`getTypeAtLocation` +0, `ctx.checker` +0 — the
+  predicate reads only `ts` syntax and `ctx` lane fields), `check:dead-exports`
+  (25 known, 0 new). Also `typecheck`, `lint`, `format:check`,
+  `check:ir-dialect`, `check:ir-layering`, `check:ir-kind-neutrality`,
+  `check:ir-fallbacks`, `check:host-import-policy` (no new import),
+  `check:test-vacuity-shapes`, `check:r2-v2-collector` — all exit 0.
+  **No `scripts/*-baseline.json` was edited.**
+
+#### Reported to other owners, not fixed here
+
+- `tests/ir/counted-string-append-provenance.test.ts` — **13/29**, pre-existing,
+  #3518's, unchanged by this slice.
+- `tests/fast-arrays.test.ts > array find` — **1 failed / 13 passed**, and it
+  fails **identically on the base**: measured by file-copy A/B revert of
+  `ir-prepared-free-functions.ts` to `origin/main`'s version, same single
+  failure (`Compile failed`). This is a **third** red suite beyond the two the
+  dispatch brief named, it is a `fast: true` array suite the plan listed under
+  V-A, and it is **not** caused by R2-F1. Not fixed, not pinned, not skipped —
+  flagged so it gets an owner.
+- `tests/issue-3214-imported-hof.test.ts` was repaired by R2-T1 and is no
+  longer red on this base.

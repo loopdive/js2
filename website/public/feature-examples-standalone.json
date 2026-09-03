@@ -93,7 +93,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 983,
+      "passCount": 982,
       "totalCount": 1083,
       "editionSpread": [
         {
@@ -103,7 +103,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 41,
+          "pass": 40,
           "total": 48
         },
         {
@@ -233,7 +233,7 @@
     {
       "name": "for-in",
       "testCategories": ["language/statements/for-in"],
-      "passCount": 105,
+      "passCount": 116,
       "totalCount": 119,
       "editionSpread": [
         {
@@ -243,7 +243,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 65,
+          "pass": 75,
           "total": 75
         },
         {
@@ -268,7 +268,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 14,
+          "pass": 15,
           "total": 16
         }
       ]
@@ -314,7 +314,7 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 349,
+      "passCount": 350,
       "totalCount": 357,
       "editionSpread": [
         {
@@ -324,7 +324,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 51,
+          "pass": 52,
           "total": 55
         },
         {
@@ -347,7 +347,7 @@
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 166,
+      "passCount": 169,
       "totalCount": 181,
       "editionSpread": [
         {
@@ -357,7 +357,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 14,
+          "pass": 17,
           "total": 29
         },
         {
@@ -385,7 +385,7 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 583,
+      "passCount": 595,
       "totalCount": 604,
       "editionSpread": [
         {
@@ -395,7 +395,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 410,
+          "pass": 422,
           "total": 430
         },
         {
@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1092,
+      "passCount": 1095,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -453,7 +453,7 @@
         },
         {
           "edition": "ES2020",
-          "pass": 0,
+          "pass": 2,
           "total": 2
         },
         {
@@ -468,7 +468,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 55,
+          "pass": 56,
           "total": 77
         }
       ]
@@ -485,7 +485,7 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 688,
+      "passCount": 694,
       "totalCount": 699,
       "editionSpread": [
         {
@@ -495,7 +495,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 393,
+          "pass": 399,
           "total": 403
         },
         {
@@ -523,7 +523,7 @@
     {
       "name": "try / catch / finally",
       "testCategories": ["language/statements/try"],
-      "passCount": 193,
+      "passCount": 195,
       "totalCount": 201,
       "editionSpread": [
         {
@@ -533,7 +533,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 99,
+          "pass": 101,
           "total": 102
         },
         {
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4285,
+      "passCount": 4308,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 610,
+          "pass": 630,
           "total": 752
         },
         {
@@ -604,7 +604,7 @@
         },
         {
           "edition": "ES2019",
-          "pass": 7,
+          "pass": 8,
           "total": 25
         },
         {
@@ -639,7 +639,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 352,
+          "pass": 354,
           "total": 397
         }
       ]
@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1117,
+      "passCount": 1125,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -657,7 +657,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 248,
+          "pass": 249,
           "total": 277
         },
         {
@@ -667,7 +667,7 @@
         },
         {
           "edition": "ES2019",
-          "pass": 32,
+          "pass": 38,
           "total": 46
         },
         {
@@ -677,7 +677,7 @@
         },
         {
           "edition": "ES2021",
-          "pass": 18,
+          "pass": 19,
           "total": 40
         },
         {
@@ -705,7 +705,7 @@
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 635,
+      "passCount": 637,
       "totalCount": 667,
       "editionSpread": [
         {
@@ -715,7 +715,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 202,
+          "pass": 203,
           "total": 204
         },
         {
@@ -745,7 +745,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 162,
+          "pass": 163,
           "total": 180
         }
       ]
@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 100,
+      "passCount": 112,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -763,7 +763,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 14,
+          "pass": 22,
           "total": 28
         },
         {
@@ -783,7 +783,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 22,
+          "pass": 26,
           "total": 60
         }
       ]
@@ -796,7 +796,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 133,
+      "passCount": 142,
       "totalCount": 234,
       "editionSpread": [
         {
@@ -806,12 +806,12 @@
         },
         {
           "edition": "ES2015",
-          "pass": 86,
+          "pass": 88,
           "total": 106
         },
         {
           "edition": "ES2021",
-          "pass": 7,
+          "pass": 6,
           "total": 24
         },
         {
@@ -826,7 +826,7 @@
         },
         {
           "edition": "ES2027",
-          "pass": 5,
+          "pass": 13,
           "total": 46
         },
         {
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2192,
+      "passCount": 2195,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -849,7 +849,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 164,
+          "pass": 166,
           "total": 263
         },
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1652,
+          "pass": 1653,
           "total": 2250
         }
       ]
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1676,
+      "passCount": 1677,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -907,7 +907,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 147,
+          "pass": 148,
           "total": 278
         },
         {
@@ -1013,7 +1013,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 4081,
+      "passCount": 4091,
       "totalCount": 4290
     },
     {
@@ -1031,7 +1031,7 @@
     {
       "name": "Computed property names",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 90,
+      "passCount": 91,
       "totalCount": 133
     },
     {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2115,
+      "passCount": 2121,
       "totalCount": 2486
     },
     {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 356,
+      "passCount": 364,
       "totalCount": 461
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1332,
+      "passCount": 1372,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 878,
+      "passCount": 879,
       "totalCount": 1106
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 723,
+      "passCount": 742,
       "totalCount": 1072
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2453,
+      "passCount": 2456,
       "totalCount": 3812
     },
     {
@@ -1234,7 +1234,7 @@
     {
       "name": "globalThis",
       "testCategories": ["built-ins/global", "built-ins/globalThis"],
-      "passCount": 96,
+      "passCount": 120,
       "totalCount": 122
     },
     {
@@ -1306,7 +1306,7 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 7,
+      "passCount": 8,
       "totalCount": 25
     },
     {
@@ -1322,7 +1322,7 @@
         "built-ins/Array/prototype/toReversed",
         "built-ins/Array/prototype/toSpliced"
       ],
-      "passCount": 56,
+      "passCount": 59,
       "totalCount": 132
     },
     {
@@ -1384,7 +1384,7 @@
     {
       "name": "Upsert (Map.getOrInsert)",
       "testCategories": [],
-      "passCount": 56,
+      "passCount": 58,
       "totalCount": 72
     },
     {
@@ -1420,7 +1420,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 174,
+      "passCount": 176,
       "totalCount": 178,
       "editionSpread": [
         {
@@ -1430,7 +1430,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 93,
+          "pass": 95,
           "total": 97
         },
         {
@@ -1489,7 +1489,7 @@
     {
       "name": "escape() / unescape()",
       "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
-      "passCount": 31,
+      "passCount": 35,
       "totalCount": 35,
       "editionSpread": [
         {
@@ -1499,7 +1499,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 25,
+          "pass": 29,
           "total": 29
         },
         {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 153,
+      "passCount": 162,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 153,
+          "pass": 162,
           "total": 4603
         }
       ]

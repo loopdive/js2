@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7946,
-    "fail": 1056,
+    "pass": 7947,
+    "fail": 1055,
     "ce": 27,
     "skip": 0,
     "total": 9029,
@@ -48,17 +48,17 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9886,
-    "fail": 1757,
+    "pass": 9910,
+    "fail": 1733,
     "ce": 61,
     "skip": 0,
     "total": 11704,
-    "pct": 84,
+    "pct": 85,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3831,
-        "fail": 288,
+        "pass": 3837,
+        "fail": 282,
         "ce": 34,
         "skip": 0,
         "total": 4153,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2069,
-        "fail": 405,
+        "pass": 2075,
+        "fail": 399,
         "ce": 12,
         "skip": 0,
         "total": 2486,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 501,
-        "fail": 107,
+        "pass": 505,
+        "fail": 103,
         "ce": 1,
         "skip": 0,
         "total": 609,
-        "pct": 82
+        "pct": 83
       },
       {
         "name": "arrow-function",
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 46,
-        "fail": 30,
+        "pass": 51,
+        "fail": 25,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 61
+        "pct": 67
       },
       {
         "name": "Symbol.match",
@@ -3571,8 +3571,8 @@
   },
   {
     "edition": "ES2026",
-    "pass": 754,
-    "fail": 4167,
+    "pass": 755,
+    "fail": 4166,
     "ce": 0,
     "skip": 0,
     "total": 4921,
@@ -3670,12 +3670,12 @@
       },
       {
         "name": "iterator-sequencing",
-        "pass": 5,
-        "fail": 27,
+        "pass": 6,
+        "fail": 26,
         "ce": 0,
         "skip": 0,
         "total": 32,
-        "pct": 16
+        "pct": 19
       },
       {
         "name": "json-parse-with-source",
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 379,
-    "fail": 506,
+    "pass": 381,
+    "fail": 504,
     "ce": 12,
     "skip": 0,
     "total": 897,
@@ -3798,8 +3798,8 @@
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 265,
-        "fail": 158,
+        "pass": 267,
+        "fail": 156,
         "ce": 7,
         "skip": 0,
         "total": 430,
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4398,
-    "fail": 901,
+    "pass": 4399,
+    "fail": 900,
     "ce": 146,
     "skip": 0,
     "total": 5445,

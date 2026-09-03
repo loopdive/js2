@@ -420,8 +420,15 @@ export function collectAnnexBCancelSites(sf: ts.SourceFile | undefined): AnnexBC
           // here.  Annex B's relaxed treatment is explicitly non-strict
           // (ECMA-262 B.3.2.5/B.3.2.6), so preserve the existing eligible path
           // for the sloppy primary variant.
+          // (#5271 step 8) The same rule for a strict BLOCK: B.3.3's relaxed
+          // treatment is explicitly non-strict, so a function declared in a
+          // strict block is a LEXICAL declaration of that block and its name is
+          // unbound outside it (`global-code/block-decl-strict`). Only the
+          // position-sensitive unbound-read rule is recorded; the hoist walk
+          // still compiles the declaration for in-block references.
           const strictSwitchFunction =
-            isStrictContext(node) && (ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent));
+            isStrictContext(node) &&
+            (ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent) || ts.isBlock(node.parent));
           if (strictSwitchFunction && !scopeBindsName(scope, name)) {
             sites.push({
               name,

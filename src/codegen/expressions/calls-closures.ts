@@ -2584,6 +2584,15 @@ export function tryExternClassMethodOnAny(
     if (nativeJoin !== null) return nativeJoin;
   }
 
+  // Host-free targets: every `${Extern}_${method}` binding below is an `env`
+  // import no standalone/WASI instance can satisfy, so a first-match hit
+  // only turns a working dynamic dispatch into a retained host import
+  // (redux's `store.getState()` on an `any` receiver bound lib.dom's
+  // `NavigationHistoryEntry_getState`; the npm-compat standalone lane then
+  // failed with "retained 2 host import(s)"). Fall through to the native
+  // `__extern_method_call` route instead. JS-host lanes are untouched.
+  if (noJsHost(ctx)) return null;
+
   for (const [key, info] of ctx.externClasses) {
     if (key !== info.className) continue;
     const sig = info.methods.get(methodName);

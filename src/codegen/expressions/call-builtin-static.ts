@@ -49,6 +49,12 @@ import {
   tryEmitStandaloneStructGopdKeyDispatch,
 } from "../builtin-static-gopd.js";
 import { tryEmitBuiltinProtoConstructorDescriptor } from "../builtin-proto-constructor.js";
+import { tracesToProxyValue } from "../proxy-value-provenance.js"; // (#5268 step 6)
+import { emitObjectCoercion } from "./calls-guards.js"; // (#5268 step 3)
+import {
+  emitImmutablePrototypeStatusCorrection,
+  tryEmitObjectProtoProtoAccessorGopd,
+} from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import { compileArrowAsClosure } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
@@ -121,6 +127,7 @@ import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
   classIdentityFromExpression,
+  classObjectDisplayName,
   classStaticOwnPropertyNames,
   hasClassStaticMethod,
 } from "../class-static-metadata.js";
@@ -712,7 +719,15 @@ export function compileBuiltinStaticCall(
     //     `__extern_is_array` when a JS host is present.
     // We OR the two checks so neither case regresses; in standalone mode the
     // host predicate is simply absent and only the `ref.test` path runs.
-    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier) {
+    // (#5268 step 6) …and a value whose PROVENANCE is a Proxy, whatever the
+    // checker says its type is. TypeScript types `new Proxy(t, h)` and
+    // `Proxy.revocable(t, h).proxy` as the TARGET's type, so an array target
+    // folded this call to the constant `true` — skipping §7.2.2 step 3, whose
+    // revoked-proxy TypeError is the whole point of `isArray/proxy-revoked.js`.
+    // The runtime predicate answers correctly for a live proxy too (it unwraps
+    // to the target), so routing here is strictly closer to the spec.
+    const mayBeProxy = ctx.standalone && tracesToProxyValue(ctx, expr.arguments[0]!);
+    if (argWasmType.kind === "externref" || isErasedTsType || isErasedCarrier || mayBeProxy) {
       const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!retainArrayIsArrayExternrefCandidate(fctx, argType)) return { kind: "i32" };
       emitArrayIsArrayExternrefPredicate(ctx, fctx);
@@ -2028,6 +2043,12 @@ export function compileBuiltinStaticCall(
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "local.get", index: protoLocal });
         fctx.body.push({ op: "call", funcIdx: statusIdx });
+        // (#5268 step 1, cluster B) …corrected for the §10.4.7 immutable-
+        // prototype exotic `%Object.prototype%`, which the ordinary predicate
+        // cannot see (it is a `$NativeProto`, not a `$Object`). Emitted here,
+        // after arg0 has compiled, so an `Object.prototype` receiver has
+        // already registered the type this test needs.
+        emitImmutablePrototypeStatusCorrection(ctx, fctx, objLocal, protoLocal);
         fctx.body.push({ op: "i32.eqz" });
         fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwRefused });
         fctx.body.push({ op: "local.get", index: protoLocal });
@@ -3040,8 +3061,11 @@ export function compileBuiltinStaticCall(
           }
 
           if (propLiteral === "name") {
-            addStringConstantGlobal(ctx, classIdentity);
-            fctx.body.push(...stringConstantExternrefInstrs(ctx, classIdentity));
+            // (#5271 step 7, G2) §10.2.9 SetFunctionName — the OBSERVABLE name,
+            // not the `__anonClass_<n>` registry key.
+            const classDisplay = classObjectDisplayName(ctx, classIdentity);
+            addStringConstantGlobal(ctx, classDisplay);
+            fctx.body.push(...stringConstantExternrefInstrs(ctx, classDisplay));
             fctx.body.push({ op: "i32.const", value: 0x04 });
           } else if (propLiteral === "length") {
             fctx.body.push({ op: "f64.const", value: classConstructorLength(ctx, classIdentity) });
@@ -3084,6 +3108,14 @@ export function compileBuiltinStaticCall(
       tracesToTypedArrayIntrinsicProto(ctx, e),
     );
     if (tryCompileOverriddenBuiltinProtoDescriptor(ctx, fctx, expr, gopdProtoBuiltin, propLiteral)) {
+      return { kind: "externref" };
+    }
+
+    // (#5268 step 1) `gOPD(Object.prototype, "__proto__")` — the Annex B
+    // §B.2.2.1 accessor PAIR. The `$NativeProto` glue below models getters and
+    // methods only (no set-half), so this member is synthesized from its own
+    // two closures; see object-proto-proto-accessor.ts.
+    if (tryEmitObjectProtoProtoAccessorGopd(ctx, fctx, gopdProtoBuiltin, propLiteral)) {
       return { kind: "externref" };
     }
 
@@ -3369,8 +3401,36 @@ export function compileBuiltinStaticCall(
       coerceType(ctx, fctx, argResult, { kind: "externref" });
     }
     const funcIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [{ kind: "externref" }], [{ kind: "externref" }]);
+    // (#5268 step 3) §20.1.2.11 step 1 is `ToObject(O)`, which THROWS for
+    // null/undefined — the native answers an empty list for every non-`$Object`
+    // receiver instead, so the nullish case was a silent `[]`
+    // (`non-object-argument-invalid.js`). Every other primitive legitimately
+    // has no own symbol keys, so only the nullish half needs a guard.
+    //
+    // (#5268 review R2-4) Standalone-gated. The JS-host lane already throws
+    // there (its `__getOwnPropertySymbols` import is the host builtin), so on
+    // that lane the guard only changed the emitted BYTES — and this
+    // change-set's contract, stated in the focused test's header, is that every
+    // arm it adds is standalone-only.
+    const isUndefIdx = ctx.standalone
+      ? ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }])
+      : undefined;
+    const throwNotCoercible = ctx.standalone
+      ? buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", { flush: fctx })
+      : [];
     flushLateImportShifts(ctx, fctx);
-    if (funcIdx !== undefined) {
+    if (funcIdx !== undefined && isUndefIdx !== undefined) {
+      const gopsLocal = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: gopsLocal });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({ op: "local.get", index: gopsLocal });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx });
+      fctx.body.push({ op: "i32.or" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwNotCoercible });
+      fctx.body.push({ op: "local.get", index: gopsLocal });
+      releaseTempLocal(fctx, gopsLocal);
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertySymbols") ?? funcIdx });
+    } else if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
     } else {
       fctx.body.push({ op: "drop" });
@@ -3557,9 +3617,25 @@ export function compileBuiltinStaticCall(
     expr.arguments.length >= 1
   ) {
     const targetArg = expr.arguments[0]!;
-    // (#2076) Object-literal operands must build as native $Objects in
-    // standalone so __object_assign's `ref.test $Object` recognises them.
-    compileObjectAssignArg(ctx, fctx, targetArg);
+    // (#5268 step 3) §20.1.2.1 step 1 is `to = ToObject(target)`, and the
+    // RESULT of the whole call is that wrapper — `Object.assign(1, {a:1})`
+    // must answer an object whose `valueOf()` is 1, not the number back.
+    // `__object_assign` only rejects a NULLISH target, so a primitive one flowed
+    // straight through. Route a statically-primitive target through the same
+    // §7.1.18 emission `Object(x)` uses (`emitObjectCoercion`), which already
+    // has the four wrapper arms. Nullish is deliberately NOT routed here:
+    // ToObject THROWS for it, while `Object()` answers a fresh plain object, so
+    // that case stays with the native's own guard.
+    const targetTag = ctx.standalone ? ctx.oracle.staticJsTypeOf(targetArg) : "mixed";
+    const targetIsPrimitive =
+      targetTag === "number" || targetTag === "string" || targetTag === "boolean" || targetTag === "bigint";
+    if (targetIsPrimitive) {
+      emitObjectCoercion(ctx, fctx, [targetArg]);
+    } else {
+      // (#2076) Object-literal operands must build as native $Objects in
+      // standalone so __object_assign's `ref.test $Object` recognises them.
+      compileObjectAssignArg(ctx, fctx, targetArg);
+    }
     // Build the variadic `...sources` list. Under the native semantic provider
     // the native __object_assign iterates a $ObjVec built by
     // the native $ObjVec builders (__objvec_new / __objvec_push) instead of the

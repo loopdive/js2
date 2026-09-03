@@ -62,6 +62,7 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
@@ -1821,6 +1822,17 @@ export function tryGlobalThisAndProcessRead(
       // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
       else if (procProp === "stdout") hostImport = "__get_process_stdout";
       else if (procProp === "stderr") hostImport = "__get_process_stderr";
+      // Standalone has no process to read: `process.env` is the host-free
+      // empty object the JS-host import also answers when no `process` exists
+      // (react's / redux's `process.env.NODE_ENV === "production"` gate kept a
+      // `__get_process_env` import and failed the standalone npm-compat lane).
+      if (ctx.standalone && procProp === "env") {
+        const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
+        else fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -3704,8 +3716,39 @@ export function tryNamespaceConstantAndSymbolReads(
       return { kind: "externref" };
     }
   }
+
+  // (#5269 B-d) Any OTHER property read on a symbol PRIMITIVE. §6.2.5.5
+  // GetValue on a primitive base resolves against a throwaway wrapper, so only
+  // what `Symbol.prototype` owns can answer; every other name — including one a
+  // sloppy `sym.a = 0` appeared to write — is `undefined`. Before this the read
+  // fell through to a generic member path that answered a NULL externref, which
+  // `assert.sameValue(sym.a, undefined)` reports as `null`, not `undefined`.
+  // The Symbol.prototype own members are excluded so a reflective
+  // `sym.toString` / `sym.valueOf` / `sym.constructor` read keeps its closure.
+  if (
+    ctx.standalone &&
+    (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0 &&
+    !SYMBOL_PROTOTYPE_OWN_MEMBERS.has(propName)
+  ) {
+    const recvType = compileExpression(ctx, fctx, expr.expression);
+    if (recvType) fctx.body.push({ op: "drop" });
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
   return PA_FALLTHROUGH;
 }
+
+/**
+ * (#5269 B-d) The names `%Symbol.prototype%` owns (§20.4.3). A read of any of
+ * these off a symbol receiver resolves to the prototype's own property and must
+ * keep its existing lowering; everything else is `undefined`.
+ */
+const SYMBOL_PROTOTYPE_OWN_MEMBERS: ReadonlySet<string> = new Set([
+  "constructor",
+  "description",
+  "toString",
+  "valueOf",
+]);
 
 export function tryStringLengthIteratorAndExternClassReads(
   ctx: CodegenContext,
