@@ -1,8 +1,11 @@
 {
   "id": "3665",
   "assignee": "ttraenkler/codex-regexp-completion",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3665-regexp-string-set-algebra",
   "claimed_at": "2026-07-26T04:53:11Z",
-  "updated_at": "2026-07-26T04:53:11Z"
+  "updated_at": "2026-09-03T09:41:33Z",
+  "write_id": "4999-dt4kjcrs",
+  "released_at": "2026-09-03T09:41:33Z"
 }
