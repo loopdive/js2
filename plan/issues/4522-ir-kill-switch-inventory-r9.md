@@ -279,3 +279,57 @@ tests, scripts, and plans have a zero census for the retired Math family.
 This checkpoint does not retire the mixed-primitive rollback or any global,
 string-builder, async, object-shape, or multi-prepared R9 switch. Those remain
 live inventory entries until their separately owned policy work lands.
+
+## 2026-09-03 — cross-checked against `src/` for the first time
+
+#3518's R9 row depends on this inventory being complete: R9 removes the escape
+hatches, and a hatch that is not listed is a hatch that survives the flip. That
+check had never been run. It has now been:
+
+```bash
+grep -rohE 'JS2WASM_[A-Z0-9_]+' src/ --include=*.ts | sort -u   # 245
+# vs the vars named in this file's table                        #  24
+```
+
+**No stale rows** — all 24 tabled vars still exist in `src/`. That half is
+clean.
+
+**221 are in `src/` and absent from the table.** Most are legitimately out of
+scope: 54 are `JS2WASM_TEST_*` injectors and 66 are debug/telemetry
+(`*_DEBUG`, `*_STATS`, `TRACE`, `CENSUS`, `DUMP`, `_LOG`, `POISON`, `_DIAG`).
+Those are not R9's business — though the `JS2WASM_TEST_POISON_DIRECT_*_BODY`
+family becomes meaningless once the direct front end is deleted, so they are
+**R10** cleanup and should be named as such somewhere.
+
+**What is left is the real gap.** Filtering the remainder to names suggesting a
+route/admission/ABI gate leaves seven, and three were verified by reading the
+code rather than inferred from the name:
+
+| var | what it actually gates | site |
+| --- | --- | --- |
+| `JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC` | the #5480 module-init pass-1 skip **seam** — a named `DISCOVERY_STATIC_ENABLE_SEAM` constant | `declarations/module-init-closure-prelift.ts:132` |
+| `JS2WASM_FIXED_ARITY_HOST_CALLS` | `=== "0"` selects **`legacyArrayAbi`**; also drives the fixed-arity host-call path | `closure-exports.ts:1280`, `expressions/host-call-fallback.ts:20` |
+| `JS2WASM_STRICT_FALLBACKS` | strictness of the fallback classifier | `fallback-telemetry.ts:87` |
+
+plus, unverified and needing the same read: `JS2WASM_DIRECT_CALLS`,
+`JS2WASM_PINNED_THIS_DIRECT_CALLS`, `JS2WASM_LINEAR_IR_COVERAGE`,
+`JS2WASM_NUMERIC_ADMISSION`, `JS2WASM_PROXY_MODULE_ESCAPE_GATE`.
+
+**`JS2WASM_FIXED_ARITY_HOST_CALLS` is the one to look at first.** It selects a
+path the source itself calls *legacy*, it is absent from an inventory whose
+purpose is enumerating what R9 retires, and #3526's F3-S2 plan independently
+flagged it as needing a decision ("freeze it as a record axis, or retire the
+knob first — a #3520/#4397 host-import-policy question"). Two separate lines of
+work reached it and neither found it here.
+
+**Consequence for R9.** Its scope is larger than this table, by at least three
+verified seams and up to five more unverified. Before the flip is planned,
+either extend the table to cover every `JS2WASM_*` that can route work away from
+the IR — with the `TEST_`/debug families explicitly excluded *in writing*, so the
+exclusion is a decision rather than an omission — or state that the table covers
+only a named subset and say which.
+
+Method note: the filter above is a name heuristic over 221 vars, so it can
+under-report. A var that gates a route without saying so in its name would not
+appear. The three verified rows are solid; the rest of the remainder has not
+been read.
