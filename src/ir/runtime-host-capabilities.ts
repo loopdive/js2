@@ -58,6 +58,9 @@ export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
   "async.promise.settle.reject",
   "async.value.undefined",
   "boolean.box",
+  "callable.host_call.array",
+  "callback.wrap.ctor",
+  "callback.wrap.getter",
   "extern.is_undefined",
   "number.box",
   "number.unbox",
@@ -87,17 +90,48 @@ export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
  * typed-half hole F2-S2 closed for globals. With the third list the family id
  * is spellable only where a family is expected.
  */
-export const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS = Object.freeze(["string.concat.many"] as const);
+export const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS = Object.freeze([
+  "callable.boundary_callback.call",
+  "callable.host_call.fixed",
+  "string.concat.many",
+] as const);
 
 export const RUNTIME_HOST_CAPABILITY_GLOBAL_IDS = Object.freeze(["string.const", "string.const.utf16"] as const);
+
+/**
+ * (#3526 F3-S2) The EXPORT half — the first ids whose direction is host→module.
+ *
+ * Every id above names something this module CALLS or READS. These name what
+ * the module PUBLISHES for the host to call: the direct closure dispatchers
+ * `__call_fn_0..4` and the arity probe `__closure_arity`. Direction is carried
+ * by the kind, which is why an export record has no `module` key at all — an
+ * export has no import namespace, and giving it one would invite a lane to
+ * resolve it as an import.
+ *
+ * ENUMERATED rather than schematised, unlike the family half. The F2-S2/F2-S6
+ * criterion is closedness: string-literal fields and `__concat_N` are unbounded
+ * so they got schemes, but the direct dispatchers are bounded at 0..4
+ * (`directClosureHostBridgeOrdinal`, `closure-exports.ts:352-353`, and the
+ * `/^__call_fn_([0-4])$/` alias regex at `:101`), so they can be spelled.
+ */
+export const RUNTIME_HOST_CAPABILITY_EXPORT_IDS = Object.freeze([
+  "callable.export.arity",
+  "callable.export.call_fn.0",
+  "callable.export.call_fn.1",
+  "callable.export.call_fn.2",
+  "callable.export.call_fn.3",
+  "callable.export.call_fn.4",
+] as const);
 
 export type RuntimeHostCapabilityFuncId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_IDS)[number];
 export type RuntimeHostCapabilityFuncFamilyId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS)[number];
 export type RuntimeHostCapabilityGlobalId = (typeof RUNTIME_HOST_CAPABILITY_GLOBAL_IDS)[number];
+export type RuntimeHostCapabilityExportId = (typeof RUNTIME_HOST_CAPABILITY_EXPORT_IDS)[number];
 export type RuntimeHostCapabilityId =
   | RuntimeHostCapabilityFuncId
   | RuntimeHostCapabilityFuncFamilyId
-  | RuntimeHostCapabilityGlobalId;
+  | RuntimeHostCapabilityGlobalId
+  | RuntimeHostCapabilityExportId;
 
 /** Every id, sorted — the completeness axis the catalogue is checked against. */
 export const RUNTIME_HOST_CAPABILITY_IDS: readonly RuntimeHostCapabilityId[] = Object.freeze(
@@ -105,6 +139,7 @@ export const RUNTIME_HOST_CAPABILITY_IDS: readonly RuntimeHostCapabilityId[] = O
     ...RUNTIME_HOST_CAPABILITY_FUNC_IDS,
     ...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
     ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS,
+    ...RUNTIME_HOST_CAPABILITY_EXPORT_IDS,
   ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
 );
 
@@ -114,6 +149,7 @@ const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_ID_SET: ReadonlySet<string> = new Set(
   RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
 );
 const RUNTIME_HOST_CAPABILITY_GLOBAL_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_IDS);
+const RUNTIME_HOST_CAPABILITY_EXPORT_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_EXPORT_IDS);
 
 export function isRuntimeHostCapabilityId(value: string): value is RuntimeHostCapabilityId {
   return RUNTIME_HOST_CAPABILITY_ID_SET.has(value);
@@ -132,6 +168,16 @@ export function isRuntimeHostCapabilityFuncFamilyId(value: string): value is Run
 /** Runtime twin of the global half of the id union. */
 export function isRuntimeHostCapabilityGlobalId(value: string): value is RuntimeHostCapabilityGlobalId {
   return RUNTIME_HOST_CAPABILITY_GLOBAL_ID_SET.has(value);
+}
+
+/**
+ * (#3526 F3-S2) Runtime twin of the EXPORT half. No provider domain answers to
+ * it: {@link RuntimeManifestBuilder} refuses an export id in any provider's
+ * `hostCapabilities`, so this predicate exists for catalogues arriving through
+ * an `unknown` boundary, not for a `host-export` provider row (F3-S5's).
+ */
+export function isRuntimeHostCapabilityExportId(value: string): value is RuntimeHostCapabilityExportId {
+  return RUNTIME_HOST_CAPABILITY_EXPORT_ID_SET.has(value);
 }
 
 /**
@@ -166,7 +212,7 @@ export type RuntimeHostCapabilityGlobalModule = (typeof RUNTIME_HOST_CAPABILITY_
 const RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_FUNC_MODULES);
 const RUNTIME_HOST_CAPABILITY_GLOBAL_MODULE_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES);
 
-export const RUNTIME_HOST_CAPABILITY_KINDS = Object.freeze(["func", "func-family", "global"] as const);
+export const RUNTIME_HOST_CAPABILITY_KINDS = Object.freeze(["export", "func", "func-family", "global"] as const);
 export type RuntimeHostCapabilityKind = (typeof RUNTIME_HOST_CAPABILITY_KINDS)[number];
 const RUNTIME_HOST_CAPABILITY_KIND_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_KINDS);
 
@@ -204,11 +250,89 @@ const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEME_SET: ReadonlySet<string> 
 );
 
 /**
- * The smallest arity any capability family may admit. The batched-concat
- * producer never fuses fewer than three leaves, so a row below this describes
- * an import no lane can request.
+ * (#3526 F3-S2) Why an export NAME may be absent from a module that otherwise
+ * contains the capability.
+ *
+ * `host-bridge-gated` — the whole closure host bridge is published only when
+ * `ctx.emitHostBridge` is true (`create-context.ts:189`,
+ * `emitHostBridge: targetProfile.hostValueInterop !== "off"`), and
+ * `stripHostBridgeExports` (`host-bridge-exports.ts:118`) removes the set
+ * otherwise. Measured (P2, `.tmp/f3s2-plan/p2-strip.md`): on `standalone` and
+ * `wasi` all six names and all six `$c*` aliases are absent, on gc-host and
+ * gc-strict-no-host they are present. ONE member because the measurement found
+ * exactly one gate; a second arm must be declared from a measurement, not
+ * anticipated.
  */
-const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY = 3;
+export const RUNTIME_HOST_CAPABILITY_EXPORT_PUBLICATIONS = Object.freeze(["host-bridge-gated"] as const);
+export type RuntimeHostCapabilityExportPublication = (typeof RUNTIME_HOST_CAPABILITY_EXPORT_PUBLICATIONS)[number];
+const RUNTIME_HOST_CAPABILITY_EXPORT_PUBLICATION_SET: ReadonlySet<string> = new Set(
+  RUNTIME_HOST_CAPABILITY_EXPORT_PUBLICATIONS,
+);
+
+/**
+ * (#3526 F3-S2) The one environment variable that picks between two sibling
+ * spellings of the same crossing, DECLARED rather than read.
+ *
+ * No record ever reads `process.env`. This axis only records WHICH condition
+ * selects a row, so the `__call_function_N` / `__call_function` pair is a
+ * declared sibling choice instead of a fact hidden inside `planHostCallFallback`.
+ */
+export const RUNTIME_HOST_CAPABILITY_HOST_SELECTION_ENV_VARS = Object.freeze([
+  "JS2WASM_FIXED_ARITY_HOST_CALLS",
+] as const);
+export type RuntimeHostCapabilityHostSelectionEnvVar = (typeof RUNTIME_HOST_CAPABILITY_HOST_SELECTION_ENV_VARS)[number];
+const RUNTIME_HOST_CAPABILITY_HOST_SELECTION_ENV_VAR_SET: ReadonlySet<string> = new Set(
+  RUNTIME_HOST_CAPABILITY_HOST_SELECTION_ENV_VARS,
+);
+
+/**
+ * The two conditions, mirroring `host-call-fallback.ts:20` EXACTLY:
+ *
+ * ```ts
+ * nativeBoundary || (process.env.JS2WASM_FIXED_ARITY_HOST_CALLS !== "0" && arity <= 4)
+ * ```
+ *
+ * so the array ABI is selected when the knob is `"0"` **OR** the arity exceeds
+ * the family's `max` — not on the knob alone. A two-member `"zero" | "not-zero"`
+ * axis would therefore be a FALSE contract: measured (P3,
+ * `.tmp/f3s2-plan/p3-family-abi.json`) the gc-host cell for CB7/12 imports
+ * `env.__call_function` ALONGSIDE `__call_function_0..4` with the knob unset.
+ */
+export const RUNTIME_HOST_CAPABILITY_HOST_SELECTIONS = Object.freeze([
+  "knob-not-zero-within-arity",
+  "knob-zero-or-arity-above-max",
+] as const);
+export type RuntimeHostCapabilityHostSelectionCondition = (typeof RUNTIME_HOST_CAPABILITY_HOST_SELECTIONS)[number];
+const RUNTIME_HOST_CAPABILITY_HOST_SELECTION_SET: ReadonlySet<string> = new Set(
+  RUNTIME_HOST_CAPABILITY_HOST_SELECTIONS,
+);
+
+/** A declared selection axis: which env var, and which of its conditions picks this spelling. */
+export interface RuntimeHostCapabilityHostSelection {
+  readonly envVar: RuntimeHostCapabilityHostSelectionEnvVar;
+  readonly selectsWhen: RuntimeHostCapabilityHostSelectionCondition;
+}
+
+/**
+ * The smallest arity ANY capability family may admit.
+ *
+ * (#3526 F3-S2) This was `3` until family 3 arrived — the batched-concat
+ * producer never fuses fewer than three leaves, so a row below three described
+ * an import no lane could request. That reasoning was always about ONE
+ * producer, and `__call_function_0` / `__boundary_callback_call_0` are real
+ * imports at arity zero (measured, `.tmp/f3s2-plan/p3-family-abi.json` and
+ * `p3d.json`), so a shared floor of three would make them unrepresentable.
+ *
+ * The guard did not disappear, it moved: each row DECLARES its own floor, and
+ * `assertFuncFamilyCapabilityRecord` still refuses any row whose `min` drifts
+ * from its canonical value (the `params range` compare below). So
+ * `string.concat.many` still refuses arity 2 — through its own `min: 3` and
+ * its row comment's rationale — and a hand-built family row that claims a
+ * range no lane can request is still rejected. What this constant keeps
+ * refusing on its own is the absolute nonsense: a negative or non-integer
+ * arity, which no derivation rule can ever mean.
+ */
+const RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY = 0;
 
 export interface RuntimeHostCapabilityFuncFamilyField {
   readonly scheme: RuntimeHostCapabilityFuncFamilyFieldScheme;
@@ -228,6 +352,16 @@ export interface RuntimeHostCapabilityFuncFamilyParams<
   readonly repeat: Value;
   readonly min: number;
   readonly max: number | null;
+  /**
+   * (#3526 F3-S2) The FIXED prefix ahead of the repeated tail, when the family
+   * has one. `env.__call_function_3` takes five params — callee, this, and
+   * three arguments — so `repeat × arity` alone cannot describe it.
+   *
+   * OPTIONAL, on the `exceptionPolicy?` precedent, so `string.concat.many`'s
+   * frozen shape and its whole-shape pins do not move: a row that declares no
+   * `leading` is byte-identical to a pre-F3-S2 one.
+   */
+  readonly leading?: readonly Value[];
 }
 
 /**
@@ -251,6 +385,7 @@ export interface RuntimeHostCapabilityFuncRecord<
   readonly params: readonly Value[];
   readonly results: readonly Value[];
   readonly exceptionPolicy?: HostCallbackExceptionPolicy;
+  readonly hostSelection?: RuntimeHostCapabilityHostSelection;
 }
 
 /** Exact concrete GLOBAL capability record selected by the frozen manifest. */
@@ -287,6 +422,38 @@ export interface RuntimeHostCapabilityFuncFamilyRecord<
   readonly kind: "func-family";
   readonly params: RuntimeHostCapabilityFuncFamilyParams<Value>;
   readonly results: readonly Value[];
+  readonly hostSelection?: RuntimeHostCapabilityHostSelection;
+}
+
+/**
+ * (#3526 F3-S2) Exact concrete EXPORT capability record — a name this module
+ * PUBLISHES for the host to call, not one it imports.
+ *
+ * Deliberately has **no `module` key**, and the exact-key check enforces its
+ * absence: an export has no import namespace, so a `module` slot would only
+ * invite a consumer to resolve the row as an import. Direction is carried by
+ * `kind` alone, which is why `asCallableRuntimeHostCapabilityRecord` refuses an
+ * export record exactly as it refuses a global one.
+ *
+ * An export publishes TWO names. `publishClosureHostBridge`
+ * (`closure-exports.ts:162-166`) emits the logical label AND the reserved
+ * compact base `$c<bit36>` (`:156-172`), so the row carries both. It does NOT
+ * carry the `$`-suffix collision walk, which depends on user exports observed
+ * at emit time and is F3-S5's.
+ */
+export interface RuntimeHostCapabilityExportRecord<
+  Id extends RuntimeHostCapabilityExportId = RuntimeHostCapabilityExportId,
+  Value extends RuntimeHostCapabilityValueType = RuntimeHostCapabilityValueType,
+> {
+  readonly capability: Id;
+  /** The logical export label, e.g. `__call_fn_2`. */
+  readonly name: string;
+  /** The reserved compact alias base, e.g. `$c2`. */
+  readonly alias: string;
+  readonly kind: "export";
+  readonly params: readonly Value[];
+  readonly results: readonly Value[];
+  readonly publication: RuntimeHostCapabilityExportPublication;
 }
 
 export type RuntimeHostCapabilityRecord<
@@ -295,7 +462,16 @@ export type RuntimeHostCapabilityRecord<
 > =
   | RuntimeHostCapabilityFuncRecord<Extract<Id, RuntimeHostCapabilityFuncId>, Value>
   | RuntimeHostCapabilityFuncFamilyRecord<Extract<Id, RuntimeHostCapabilityFuncFamilyId>, Value>
-  | RuntimeHostCapabilityGlobalRecord<Extract<Id, RuntimeHostCapabilityGlobalId>, Value>;
+  | RuntimeHostCapabilityGlobalRecord<Extract<Id, RuntimeHostCapabilityGlobalId>, Value>
+  | RuntimeHostCapabilityExportRecord<Extract<Id, RuntimeHostCapabilityExportId>, Value>;
+
+/**
+ * (#3526 F3-S2) Optional trailing options, deliberately an OBJECT rather than a
+ * fifth positional argument: that slot in {@link record} is `exceptionPolicy`.
+ */
+interface RuntimeHostCapabilityFuncOptions {
+  readonly hostSelection?: RuntimeHostCapabilityHostSelection;
+}
 
 function funcRecord(
   capability: RuntimeHostCapabilityFuncId,
@@ -304,6 +480,7 @@ function funcRecord(
   params: readonly RuntimeHostCapabilityValueType[],
   results: readonly RuntimeHostCapabilityValueType[],
   exceptionPolicy?: HostCallbackExceptionPolicy,
+  options?: RuntimeHostCapabilityFuncOptions,
 ): RuntimeHostCapabilityFuncRecord {
   return Object.freeze({
     capability,
@@ -313,7 +490,13 @@ function funcRecord(
     params: Object.freeze([...params]),
     results: Object.freeze([...results]),
     ...(exceptionPolicy === undefined ? {} : { exceptionPolicy }),
+    ...(options?.hostSelection === undefined ? {} : { hostSelection: freezeHostSelection(options.hostSelection) }),
   });
+}
+
+/** Retain the axis as a frozen plain object so the structural compare has a stable shape. */
+function freezeHostSelection(selection: RuntimeHostCapabilityHostSelection): RuntimeHostCapabilityHostSelection {
+  return Object.freeze({ envVar: selection.envVar, selectsWhen: selection.selectsWhen });
 }
 
 /**
@@ -327,8 +510,9 @@ function record(
   params: readonly RuntimeHostCapabilityValueType[],
   results: readonly RuntimeHostCapabilityValueType[],
   exceptionPolicy?: HostCallbackExceptionPolicy,
+  options?: RuntimeHostCapabilityFuncOptions,
 ): RuntimeHostCapabilityFuncRecord {
-  return funcRecord(capability, "env", field, params, results, exceptionPolicy);
+  return funcRecord(capability, "env", field, params, results, exceptionPolicy, options);
 }
 
 function funcFamilyRecord(
@@ -337,14 +521,41 @@ function funcFamilyRecord(
   field: RuntimeHostCapabilityFuncFamilyField,
   params: RuntimeHostCapabilityFuncFamilyParams,
   results: readonly RuntimeHostCapabilityValueType[],
+  options?: RuntimeHostCapabilityFuncOptions,
 ): RuntimeHostCapabilityFuncFamilyRecord {
   return Object.freeze({
     capability,
     module,
     field: Object.freeze({ scheme: field.scheme, prefix: field.prefix }),
     kind: "func-family" as const,
-    params: Object.freeze({ repeat: params.repeat, min: params.min, max: params.max }),
+    params: Object.freeze({
+      repeat: params.repeat,
+      min: params.min,
+      max: params.max,
+      ...(params.leading === undefined ? {} : { leading: Object.freeze([...params.leading]) }),
+    }),
     results: Object.freeze([...results]),
+    ...(options?.hostSelection === undefined ? {} : { hostSelection: freezeHostSelection(options.hostSelection) }),
+  });
+}
+
+/** (#3526 F3-S2) Build one EXPORT row — the twin of {@link globalRecord}. */
+function exportRecord(
+  capability: RuntimeHostCapabilityExportId,
+  name: string,
+  alias: string,
+  params: readonly RuntimeHostCapabilityValueType[],
+  results: readonly RuntimeHostCapabilityValueType[],
+  publication: RuntimeHostCapabilityExportPublication,
+): RuntimeHostCapabilityExportRecord {
+  return Object.freeze({
+    capability,
+    name,
+    alias,
+    kind: "export" as const,
+    params: Object.freeze([...params]),
+    results: Object.freeze([...results]),
+    publication,
   });
 }
 
@@ -384,6 +595,109 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   // over its ABI, not a second registration path. The one-armed family has no
   // unbox row: `__unbox_boolean` has no IR producer.
   record("boolean.box", "__box_boolean", ["i32"], ["externref"]),
+  // (#3526 F3-S2) ---- family 3: the callable boundary ----------------------
+  //
+  // NOTHING selects any of the rows below: no provider names them, so
+  // `freeze()` never publishes them and no import, export or emitted body
+  // moves. They make family 3's crossings EXPRESSIBLE; F3-S5/F3-S6 give them
+  // providers.
+  //
+  // The unmatched-callee host fallback, NATIVE-boundary spelling.
+  // `planHostCallFallback(arity, nativeBoundary=true)`
+  // (`host-call-fallback.ts:19-30`) names `__boundary_callback_call_<arity>`;
+  // `ensureHostCallFallbackImports` gives it `[callee, this, ...args]`, hence
+  // `leading`. `min: 0` and `max: null` are MEASURED, not assumed: on the
+  // gc + `semanticProviders: "native-first"` lane — the only lane that is
+  // simultaneously `native-first` and `!standalone && !wasi`, which
+  // `calls.ts:4650-4652` requires — a one-line `f(a0..aN)` fixture imports
+  // `env.__boundary_callback_call_N` at every arity 0 through 6
+  // (`.tmp/f3s2-plan/p3d.json`, `p3-import-abi.json`). The census observed
+  // this family in ZERO of its 14 shapes × 4 lanes because it measured no
+  // such lane.
+  funcFamilyRecord(
+    "callable.boundary_callback.call",
+    "env",
+    { scheme: "arity-suffix", prefix: "__boundary_callback_call_" },
+    { repeat: "externref", leading: ["externref", "externref"], min: 0, max: null },
+    ["externref"],
+  ),
+  // The two direct host→module dispatch exports. Both ABIs are the compiled
+  // ground truth of a real gc-host module, read from the BINARY's type section
+  // (P1, `.tmp/f3s2-plan/p1-export-abi.json`): `__closure_arity` is
+  // `(externref) -> (i32)` and `__call_fn_N` is `(externref x (N+1)) ->
+  // (externref)`, each published beside its compact alias. Producers:
+  // `closure-exports.ts:2194`/`:2251` and `:907-910`/`:774`, aliases `:111`
+  // and `:101-104`.
+  exportRecord("callable.export.arity", "__closure_arity", "$ce", ["externref"], ["i32"], "host-bridge-gated"),
+  exportRecord("callable.export.call_fn.0", "__call_fn_0", "$c0", ["externref"], ["externref"], "host-bridge-gated"),
+  exportRecord(
+    "callable.export.call_fn.1",
+    "__call_fn_1",
+    "$c1",
+    ["externref", "externref"],
+    ["externref"],
+    "host-bridge-gated",
+  ),
+  exportRecord(
+    "callable.export.call_fn.2",
+    "__call_fn_2",
+    "$c2",
+    ["externref", "externref", "externref"],
+    ["externref"],
+    "host-bridge-gated",
+  ),
+  exportRecord(
+    "callable.export.call_fn.3",
+    "__call_fn_3",
+    "$c3",
+    ["externref", "externref", "externref", "externref"],
+    ["externref"],
+    "host-bridge-gated",
+  ),
+  exportRecord(
+    "callable.export.call_fn.4",
+    "__call_fn_4",
+    "$c4",
+    ["externref", "externref", "externref", "externref", "externref"],
+    ["externref"],
+    "host-bridge-gated",
+  ),
+  // The unmatched-callee host fallback, HOST spellings — a declared sibling
+  // PAIR, not an either/or. `host-call-fallback.ts:20` selects the fixed-arity
+  // member when `knob !== "0" && arity <= 4`, and the array member otherwise,
+  // so a module can and does carry BOTH: CB7/12 on gc-host with the knob unset
+  // imports `env.__call_function` alongside `__call_function_0..4`
+  // (`.tmp/f3s2-plan/p3-family-abi.json`), and with the knob at `"0"` only the
+  // array member survives. That is why `hostSelection` names a CONDITION and
+  // not the knob's value.
+  record(
+    "callable.host_call.array",
+    "__call_function",
+    ["externref", "externref", "externref"],
+    ["externref"],
+    undefined,
+    { hostSelection: { envVar: "JS2WASM_FIXED_ARITY_HOST_CALLS", selectsWhen: "knob-zero-or-arity-above-max" } },
+  ),
+  funcFamilyRecord(
+    "callable.host_call.fixed",
+    "env",
+    { scheme: "arity-suffix", prefix: "__call_function_" },
+    { repeat: "externref", leading: ["externref", "externref"], min: 0, max: 4 },
+    ["externref"],
+    { hostSelection: { envVar: "JS2WASM_FIXED_ARITY_HOST_CALLS", selectsWhen: "knob-not-zero-within-arity" } },
+  ),
+  // The two callback-maker SIBLINGS of `async.callback.wrap`. Same
+  // `(i32, externref) -> externref` shape as the maker, selected by
+  // `resolveCallbackMakerName` (`callback-ctor-bridge.ts:46-64`): `needsThis`
+  // picks the getter bridge, a constructible function EXPRESSION picks the ctor
+  // bridge, everything else keeps `__make_callback`. Both ABIs measured from
+  // real gc-host modules (`.tmp/f3s2-plan/p3-import-abi.json`) —
+  // `Object.defineProperty(o, "v", { get() {...} })` for the getter,
+  // `addEventListener("tick", function () {...})` for the ctor. F3-S1's record
+  // comment names bringing these under a record as this slice's work.
+  record("callback.wrap.ctor", "__make_callback_ctor", ["i32", "externref"], ["externref"]),
+  record("callback.wrap.getter", "__make_getter_callback", ["i32", "externref"], ["externref"]),
+  // ---- end family 3 -------------------------------------------------------
   // (#3526 F1-S4) The externref undefined probe. NOT a member of the
   // `addUnionImports` family: on the host lane `__extern_is_undefined` is a
   // standalone `ensureLateImport` registration, which is why the preregistration
@@ -521,8 +835,13 @@ export function assertRuntimeHostCapabilityRecord(value: unknown): asserts value
     assertFuncFamilyCapabilityRecord(candidate, id, expected);
     return;
   }
+  if (expected.kind === "export") {
+    assertExportCapabilityRecord(candidate, id, expected);
+    return;
+  }
   const keys = ["capability", "field", "kind", "module", "params", "results"];
   if (expected.exceptionPolicy !== undefined) keys.push("exceptionPolicy");
+  if (expected.hostSelection !== undefined) keys.push("hostSelection");
   assertExactKeys(candidate, keys);
   if (typeof candidate.module !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET.has(candidate.module)) {
     throw new Error(`unknown host capability ${id} module ${String(candidate.module)}`);
@@ -540,6 +859,74 @@ export function assertRuntimeHostCapabilityRecord(value: unknown): asserts value
       `host capability ${id} exception policy ${String(candidate.exceptionPolicy)} does not match ${String(expected.exceptionPolicy)}`,
     );
   }
+  assertHostSelection(candidate.hostSelection, expected.hostSelection, id);
+}
+
+/**
+ * (#3526 F3-S2) Compare the declared selection axis STRUCTURALLY.
+ *
+ * `exceptionPolicy` can be compared with `!==` (`:538`) only because it is a
+ * string literal. `hostSelection` is an object, so identity comparison would
+ * accept every structurally-equal foreign object and reject every identical
+ * one — the exact inversion of what a closed schema needs. Presence must agree
+ * too: an absent axis on a row that declares one is not "no opinion", it is a
+ * row that lost its sibling contract.
+ */
+function assertHostSelection(
+  candidate: unknown,
+  expected: RuntimeHostCapabilityHostSelection | undefined,
+  id: RuntimeHostCapabilityId,
+): void {
+  if (expected === undefined) {
+    if (candidate !== undefined) {
+      throw new Error(`host capability ${id} host selection ${describeRecord(candidate)} does not match none`);
+    }
+    return;
+  }
+  if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new Error(`host capability ${id} host selection ${String(candidate)} does not match a selection axis`);
+  }
+  assertExactKeys(candidate as Record<string, unknown>, ["envVar", "selectsWhen"]);
+  const { envVar, selectsWhen } = candidate as { envVar?: unknown; selectsWhen?: unknown };
+  if (typeof envVar !== "string" || !RUNTIME_HOST_CAPABILITY_HOST_SELECTION_ENV_VAR_SET.has(envVar)) {
+    throw new Error(`unknown host capability ${id} host selection env var ${String(envVar)}`);
+  }
+  if (typeof selectsWhen !== "string" || !RUNTIME_HOST_CAPABILITY_HOST_SELECTION_SET.has(selectsWhen)) {
+    throw new Error(`unknown host capability ${id} host selection condition ${String(selectsWhen)}`);
+  }
+  if (envVar !== expected.envVar || selectsWhen !== expected.selectsWhen) {
+    throw new Error(
+      `host capability ${id} host selection ${envVar}/${selectsWhen} does not match ${expected.envVar}/${expected.selectsWhen}`,
+    );
+  }
+}
+
+/**
+ * (#3526 F3-S2) The EXPORT arm. The exact-key list is the enforcement that an
+ * export row carries NO `module`: a row that grew one would be refused here
+ * before any consumer could read it as an import namespace.
+ */
+function assertExportCapabilityRecord(
+  candidate: Record<string, unknown>,
+  id: RuntimeHostCapabilityId,
+  expected: RuntimeHostCapabilityExportRecord,
+): void {
+  assertExactKeys(candidate, ["alias", "capability", "kind", "name", "params", "publication", "results"]);
+  const { name, alias, publication } = candidate as { name?: unknown; alias?: unknown; publication?: unknown };
+  if (typeof name !== "string" || name.length === 0 || name !== expected.name) {
+    throw new Error(`host capability ${id} export name ${String(name)} does not match ${expected.name}`);
+  }
+  if (typeof alias !== "string" || alias.length === 0 || alias !== expected.alias) {
+    throw new Error(`host capability ${id} export alias ${String(alias)} does not match ${expected.alias}`);
+  }
+  if (typeof publication !== "string" || !RUNTIME_HOST_CAPABILITY_EXPORT_PUBLICATION_SET.has(publication)) {
+    throw new Error(`unknown host capability ${id} export publication ${String(publication)}`);
+  }
+  if (publication !== expected.publication) {
+    throw new Error(`host capability ${id} export publication ${publication} does not match ${expected.publication}`);
+  }
+  assertValueTypes(candidate.params, expected.params, "params", id);
+  assertValueTypes(candidate.results, expected.results, "results", id);
 }
 
 /**
@@ -557,7 +944,9 @@ function assertFuncFamilyCapabilityRecord(
   id: RuntimeHostCapabilityId,
   expected: RuntimeHostCapabilityFuncFamilyRecord,
 ): void {
-  assertExactKeys(candidate, ["capability", "field", "kind", "module", "params", "results"]);
+  const familyKeys = ["capability", "field", "kind", "module", "params", "results"];
+  if (expected.hostSelection !== undefined) familyKeys.push("hostSelection");
+  assertExactKeys(candidate, familyKeys);
   if (typeof candidate.module !== "string" || !RUNTIME_HOST_CAPABILITY_FUNC_MODULE_SET.has(candidate.module)) {
     throw new Error(`unknown host capability ${id} module ${String(candidate.module)}`);
   }
@@ -583,9 +972,23 @@ function assertFuncFamilyCapabilityRecord(
   if (params === null || typeof params !== "object" || Array.isArray(params)) {
     throw new Error(`host capability ${id} params ${String(params)} do not match a family params scheme`);
   }
-  assertExactKeys(params as Record<string, unknown>, ["max", "min", "repeat"]);
-  const { repeat, min, max } = params as { repeat?: unknown; min?: unknown; max?: unknown };
+  const paramKeys = ["max", "min", "repeat"];
+  if (expected.params.leading !== undefined) paramKeys.push("leading");
+  assertExactKeys(params as Record<string, unknown>, paramKeys);
+  const { repeat, min, max, leading } = params as {
+    repeat?: unknown;
+    min?: unknown;
+    max?: unknown;
+    leading?: unknown;
+  };
   assertValueTypes([repeat], [expected.params.repeat], "params", id);
+  if (expected.params.leading === undefined) {
+    if (leading !== undefined) {
+      throw new Error(`host capability ${id} params leading ${JSON.stringify(leading)} does not match none`);
+    }
+  } else {
+    assertValueTypes(leading, expected.params.leading, "params", id);
+  }
   if (!Number.isSafeInteger(min) || (min as number) < RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY) {
     throw new Error(
       `host capability ${id} params min ${String(min)} is below the ${RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_MIN_ARITY}-operand floor`,
@@ -600,6 +1003,7 @@ function assertFuncFamilyCapabilityRecord(
     );
   }
   assertValueTypes(candidate.results, expected.results, "results", id);
+  assertHostSelection(candidate.hostSelection, expected.hostSelection, id);
 }
 
 function assertGlobalCapabilityRecord(
@@ -649,6 +1053,13 @@ export function assertCanonicalRuntimeHostCapabilityRecord(
  * A global record has no `params`/`results` and no callable import spelling,
  * so a consumer that reached one would silently build a nonsense
  * `irImportFuncRef`. This throws instead, naming the capability.
+ *
+ * (#3526 F3-S2) Its CODE is unchanged and its refusal set has grown: an
+ * `export` record is refused for a different reason than a global one. An
+ * export DOES have `params`/`results`, so the shape alone would not stop a
+ * consumer — but it has no `module` and its direction is host→module, so
+ * building an import reference from it would name something the module never
+ * imports. The kind test catches both.
  */
 export function asCallableRuntimeHostCapabilityRecord(
   value: RuntimeHostCapabilityRecord,
@@ -732,7 +1143,10 @@ export function resolveRuntimeHostCapabilityFuncFamilyRecord(
   return Object.freeze({
     module: found.module,
     field: `${found.field.prefix}${arity}`,
-    params: Object.freeze(Array.from({ length: arity }, () => repeat)),
+    // (#3526 F3-S2) `leading ++ repeat x arity`. The fixed prefix comes first
+    // because that is the physical order `ensureHostCallFallbackImports`
+    // registers (`host-call-fallback.ts:34-38`: callee, this, then the args).
+    params: Object.freeze([...(found.params.leading ?? []), ...Array.from({ length: arity }, () => repeat)]),
     results: found.results,
   });
 }
@@ -755,6 +1169,26 @@ export function resolveRuntimeHostCapabilityGlobalRecord(
   const found = resolveRuntimeHostCapabilityRecord(records, capability);
   if (found.kind !== "global") {
     throw new Error(`host capability ${capability} is not a global host capability`);
+  }
+  return found;
+}
+
+/**
+ * (#3526 F3-S2) Resolve one selected EXPORT ID, fail-closed on both misses and
+ * kind — the twin of {@link resolveRuntimeHostCapabilityGlobalRecord}.
+ *
+ * An export row carries a `name`/`alias` pair and a publication gate where a
+ * func row carries a module and a field, so a consumer that wants an export
+ * needs its own guard rather than reusing the func one, whose whole job is to
+ * refuse exactly this kind.
+ */
+export function resolveRuntimeHostCapabilityExportRecord(
+  records: readonly RuntimeHostCapabilityRecord[],
+  capability: RuntimeHostCapabilityExportId,
+): RuntimeHostCapabilityExportRecord {
+  const found = resolveRuntimeHostCapabilityRecord(records, capability);
+  if (found.kind !== "export") {
+    throw new Error(`host capability ${capability} is not an export host capability`);
   }
   return found;
 }

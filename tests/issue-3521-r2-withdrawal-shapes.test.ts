@@ -87,13 +87,22 @@ describe("#3521 R2 withdrawal telemetry — (b) one shape per reachable reason",
   });
 
   it("admission:fast-signature-unproven", async () => {
-    // Fast mode proves only the scalar and the JS-host string pass-through
-    // signatures; `s.length` is neither, and the first predicate masks every
-    // later one — which is why this is the census's largest bucket (R2-F1).
-    const result = await tracked("export function len(s: string): number { return s.length; }", "r2-fast-string.ts", {
-      fast: true,
-    });
-    expectWithdrawn(result, "len", { stage: "admission", reason: "fast-signature-unproven" });
+    // Fast mode proves only the three admitted signature families — all-scalar,
+    // the JS-host string pass-through, and (R2-F1) the mixed declaration-fixed
+    // carrier family. An object position is in none of them. The first
+    // predicate still masks every later one, which is why a reference-carrier
+    // row reads this reason rather than `param-signature-unstable`.
+    //
+    // (#3521 R2-F1) This pin used to use `len(s: string): number`, which is now
+    // admitted by `r2FastMixedFixedCarrierSignature` and prepares. The reason
+    // itself stays reachable — the reference and async families are its whole
+    // remaining population in fast mode.
+    const result = await tracked(
+      "export function op(o: { a: number }): number { return o.a; }",
+      "r2-fast-reference.ts",
+      { fast: true },
+    );
+    expectWithdrawn(result, "op", { stage: "admission", reason: "fast-signature-unproven" });
   });
 
   it("fixed-point:storage-terminal-unprepared", async () => {

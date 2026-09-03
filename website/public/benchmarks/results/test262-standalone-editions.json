@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9905,
-    "fail": 1407,
+    "pass": 9948,
+    "fail": 1364,
     "ce": 392,
     "skip": 0,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3944,
-        "fail": 76,
+        "pass": 3954,
+        "fail": 66,
         "ce": 133,
         "skip": 0,
         "total": 4153,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2115,
-        "fail": 142,
+        "pass": 2121,
+        "fail": 136,
         "ce": 229,
         "skip": 0,
         "total": 2486,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 320,
-        "fail": 66,
+        "pass": 328,
+        "fail": 58,
         "ce": 24,
         "skip": 0,
         "total": 410,
-        "pct": 78
+        "pct": 80
       },
       {
         "name": "Reflect",
@@ -201,12 +201,12 @@
       },
       {
         "name": "let",
-        "pass": 54,
-        "fail": 22,
+        "pass": 65,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 71
+        "pct": 86
       },
       {
         "name": "Symbol.match",
@@ -435,12 +435,12 @@
       },
       {
         "name": "Symbol.unscopables",
-        "pass": 5,
-        "fail": 12,
+        "pass": 8,
+        "fail": 9,
         "ce": 1,
         "skip": 0,
         "total": 18,
-        "pct": 28
+        "pct": 44
       },
       {
         "name": "Symbol.hasInstance",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3349,
-    "fail": 496,
+    "pass": 3351,
+    "fail": 494,
     "ce": 978,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2453,
-        "fail": 386,
+        "pass": 2455,
+        "fail": 384,
         "ce": 971,
         "skip": 0,
         "total": 3810,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 842,
-        "fail": 85,
+        "pass": 844,
+        "fail": 83,
         "ce": 458,
         "skip": 0,
         "total": 1385,
@@ -1179,12 +1179,12 @@
       },
       {
         "name": "class",
-        "pass": 24,
-        "fail": 6,
+        "pass": 26,
+        "fail": 4,
         "ce": 14,
         "skip": 0,
         "total": 44,
-        "pct": 55
+        "pct": 59
       },
       {
         "name": "Symbol",
@@ -1507,12 +1507,12 @@
   },
   {
     "edition": "ES2020",
-    "pass": 882,
-    "fail": 625,
+    "pass": 906,
+    "fail": 601,
     "ce": 510,
     "skip": 18,
     "total": 2035,
-    "pct": 43,
+    "pct": 45,
     "features": [
       {
         "name": "BigInt",
@@ -1552,12 +1552,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 96,
-        "fail": 26,
+        "pass": 120,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 122,
-        "pct": 79
+        "pct": 98
       },
       {
         "name": "Promise.allSettled",
@@ -1669,12 +1669,12 @@
       },
       {
         "name": "async-iteration",
-        "pass": 7,
-        "fail": 7,
+        "pass": 13,
+        "fail": 1,
         "ce": 29,
         "skip": 2,
         "total": 45,
-        "pct": 16
+        "pct": 29
       },
       {
         "name": "arrow-function",
@@ -1705,12 +1705,12 @@
       },
       {
         "name": "Symbol.unscopables",
-        "pass": 0,
-        "fail": 24,
+        "pass": 24,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 24,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "import.meta",
@@ -1777,12 +1777,12 @@
       },
       {
         "name": "async-functions",
-        "pass": 0,
-        "fail": 9,
+        "pass": 8,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 9,
-        "pct": 0
+        "pct": 89
       },
       {
         "name": "cross-realm",
@@ -1813,12 +1813,12 @@
       },
       {
         "name": "generators",
-        "pass": 0,
-        "fail": 5,
+        "pass": 4,
+        "fail": 1,
         "ce": 2,
         "skip": 0,
         "total": 7,
-        "pct": 0
+        "pct": 57
       },
       {
         "name": "Reflect.set",
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4099,
-    "fail": 1189,
-    "ce": 504,
+    "fail": 1188,
+    "ce": 505,
     "skip": 0,
     "total": 5792,
     "pct": 71,
@@ -2196,8 +2196,8 @@
       {
         "name": "class",
         "pass": 3257,
-        "fail": 662,
-        "ce": 364,
+        "fail": 661,
+        "ce": 365,
         "skip": 0,
         "total": 4283,
         "pct": 76
@@ -2241,8 +2241,8 @@
       {
         "name": "class-fields-private",
         "pass": 918,
-        "fail": 147,
-        "ce": 68,
+        "fail": 146,
+        "ce": 69,
         "skip": 0,
         "total": 1133,
         "pct": 81
@@ -3571,8 +3571,8 @@
   },
   {
     "edition": "ES2026",
-    "pass": 265,
-    "fail": 4083,
+    "pass": 267,
+    "fail": 4081,
     "ce": 573,
     "skip": 0,
     "total": 4921,
@@ -3634,12 +3634,12 @@
       },
       {
         "name": "upsert",
-        "pass": 56,
-        "fail": 16,
+        "pass": 58,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 72,
-        "pct": 78
+        "pct": 81
       },
       {
         "name": "TypedArray",
@@ -3661,12 +3661,12 @@
       },
       {
         "name": "WeakMap",
-        "pass": 26,
-        "fail": 7,
+        "pass": 27,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 33,
-        "pct": 79
+        "pct": 82
       },
       {
         "name": "iterator-sequencing",
@@ -3789,21 +3789,21 @@
   },
   {
     "edition": "ES2027",
-    "pass": 345,
-    "fail": 357,
+    "pass": 347,
+    "fail": 355,
     "ce": 195,
     "skip": 0,
     "total": 897,
-    "pct": 38,
+    "pct": 39,
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 230,
-        "fail": 99,
+        "pass": 232,
+        "fail": 97,
         "ce": 101,
         "skip": 0,
         "total": 430,
-        "pct": 53
+        "pct": 54
       },
       {
         "name": "await-dictionary",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4384,
-    "fail": 974,
+    "pass": 4391,
+    "fail": 967,
     "ce": 87,
     "skip": 0,
     "total": 5445,

@@ -662,9 +662,20 @@ describe("#3526 F3-S1 deliberately out of scope", () => {
     expect(JSON.stringify(HOST_CALLBACK_WRAP_CAPABILITY_RECORD)).not.toContain("sentinel");
   });
 
-  it("leaves the legacy `_ctor` maker untouched — its record lands in F3-S2", () => {
-    expect(RUNTIME_HOST_CAPABILITY_RECORDS.map((record) => record.field)).not.toContain("__make_callback_ctor");
-    expect(RUNTIME_HOST_CAPABILITY_RECORDS.map((record) => record.field)).not.toContain("__make_getter_callback");
+  /**
+   * (#3526 F3-S2) INVERTED, as this pin's own name said it would be: the two
+   * maker siblings now have catalogue rows. F3-S1 left them out because its
+   * slice governed one crossing; F3-S2 widened the schema and added them with
+   * a compiled witness each. What stays out of scope HERE is unchanged —
+   * F3-S1's policy governs `async.callback.wrap` alone, and neither sibling
+   * gained a provider, a policy field or a demand scan.
+   */
+  it("hands the legacy `_ctor` and getter makers to F3-S2's sibling rows", () => {
+    const fields = RUNTIME_HOST_CAPABILITY_RECORDS.map((record) => record.field);
+    expect(fields).toContain("__make_callback_ctor");
+    expect(fields).toContain("__make_getter_callback");
+    // Still exactly one record governs the F3-S1 crossing.
+    expect(HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field).toBe("__make_callback");
   });
 });
 

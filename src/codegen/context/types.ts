@@ -21,6 +21,7 @@ import type {
   WasmFunction,
   WasmModule,
 } from "../../ir/types.js";
+import type { IrModuleBindingRefusal } from "../../ir/module-bindings.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
@@ -1573,6 +1574,15 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * absence of a reason — without it those rows would be un-attributed.
    */
   irR2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
+  /**
+   * (#5285) Every unrepresentable top-level declaration of a source's
+   * `<module-init>` population, in source order — not just the first, which is
+   * all a fail-fast path can report. Written by `ir/integration.ts` ONLY under
+   * `JS2WASM_IR_SHAPE_DIAG=1`, read once in `recordObservedIrOutcomes`, and
+   * absent on every production compile. Keyed by source file so one map spans a
+   * multi-source compile.
+   */
+  irModuleBindingRefusalsBySourceFile?: Map<ts.SourceFile, readonly IrModuleBindingRefusal[]>;
   /**
    * #3000 — names of functions/class-members whose slots were actually patched
    * with an IR-lowered body by `compileIrPathFunctions` (its `report.compiled`).
@@ -4419,6 +4429,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   modulePatternTdzBindings: Map<ts.SourceFile, Map<string, ts.BindingElement | null>>;
   /** Set of let/const module global variable names */
   tdzLetConstNames: Set<string>;
+  /**
+   * (#5271 step 8) The first SCRIPT-goal top-level lexical name that collides
+   * with a RESTRICTED GLOBAL (`undefined` / `NaN` / `Infinity`). §16.1.7
+   * GlobalDeclarationInstantiation step 5.d makes that a SyntaxError thrown
+   * before any statement runs, so `__module_init` opens with the throw.
+   */
+  restrictedGlobalLexicalName?: string;
   /** Compile-time property descriptor flags */
   definedPropertyFlags: Map<string, number>;
   /**

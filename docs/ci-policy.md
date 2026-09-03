@@ -186,13 +186,39 @@ Two test262 workflows currently run on PRs:
     own delta. Fallback order when a predecessor artifact is unavailable:
     #1081 runs/<merge-base> cache, then latest-main baseline — i.e. exactly
     the pre-#1956 behavior.
-  - **Canonical queue configuration: `max_entries_to_build: 1` (no
-    speculation), `max_entries_to_merge: 5`, `min_entries_to_merge: 1`
-    (#3914 Step 2 was tried at floor 2 on 2026-08-14 and measured a NO-OP on
-    2026-08-15 — reverted; see the floor note below).** These live in the repo
-    ruleset, not in any workflow file, so they are applied and read back with
-    **`scripts/set-merge-queue-config.sh`** (`--show` to read, `--check` to
-    diff, no flag to apply; needs repo-admin `gh`). Before that script existed
+  - **Queue configuration — MEASURED LIVE 2026-09-03, not restated from
+    intent.** Read straight off the ruleset REST endpoint (see below), the
+    effective values on `main` are:
+
+    ```json
+    { "merge_method": "MERGE",
+      "max_entries_to_build": 1,
+      "min_entries_to_merge": 2,
+      "max_entries_to_merge": 5,
+      "min_entries_to_merge_wait_minutes": 5,
+      "grouping_strategy": "HEADGREEN",
+      "check_response_timeout_minutes": 120 }
+    ```
+
+    **`min_entries_to_merge` is 2, not the 1 this paragraph and the floor note
+    below both claim.** #3914 Step 2 raised it to 2 on 2026-08-14 and the
+    revert recorded on 2026-08-15 **never reached the ruleset** — see the floor
+    note for why that is not free. `max_entries_to_build: 1` (no speculation)
+    and `max_entries_to_merge: 5` are confirmed correct. Intent for the floor
+    is unresolved: either revert it to 1 as #3914 concluded, or record 2 as
+    deliberate; it is currently neither.
+
+    These live in the repo ruleset, not in any workflow file. **Read them with
+    the REST endpoint, which needs no repo-admin `gh`:**
+
+    ```bash
+    curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+      https://api.github.com/repos/loopdive/js2/rules/branches/main \
+      | jq '.[] | select(.type=="merge_queue") | .parameters'
+    ```
+
+    `scripts/set-merge-queue-config.sh` (`--show` / `--check` / apply) is still
+    the way to *write* them and needs repo-admin `gh`. Before that script existed
     the values were invisible from the repo and this doc's record of them went
     six weeks stale — it still said `max_entries_to_build: 5` long after the
     2026-06-20 wedge reverted it. Treat the script's `--show` output as
@@ -239,8 +265,15 @@ Two test262 workflows currently run on PRs:
     optimistic-batch/split-on-failure: re-enqueue the members singly to
     attribute. Cost is one wasted run, which is the `e`-weighted term in
     #3914's sizing.
-  - **`min_entries_to_merge` is back to 1 — #3914 Step 2 was tried and
-    measured a NO-OP.** The floor was raised to 2 (5-min timer) on
+  - **`min_entries_to_merge` was measured a NO-OP by #3914 Step 2 — but the
+    revert never landed, and it is LIVE AT 2 as of 2026-09-03.** The analysis
+    below stands; only its status line was wrong. Read together with the
+    measured block above: because `max_entries_to_build: 1` guarantees a second
+    entry is never green simultaneously, the floor is satisfied only by the
+    5-minute timer expiring, so **every fast merge pays that timer** — which is
+    the "added latency on quiet-queue fast merges" this note predicts, now in
+    force rather than reverted. Docs-only PRs go green in ~2-3 min and this
+    repo merges many of them. The floor was raised to 2 (5-min timer) on
     2026-08-14T18:16Z on the "the floor is what forms groups" hypothesis.
     Measured across all of 2026-08-15 up to 13:34Z: **29/29 successful merge
     groups still carried exactly one PR**, one full run each, merging ~15 min

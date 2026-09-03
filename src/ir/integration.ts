@@ -258,6 +258,8 @@ import {
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
   type IrModuleBindingIdentity,
+  type IrModuleBindingInspection,
+  type IrModuleBindingRefusal,
   type IrModuleBindingResolver,
   type IrRetainedFunctionMethodPlan,
   type IrStaticNumericArrayPlan,
@@ -2524,6 +2526,30 @@ export function compileIrPathFunctions(
     selected.moduleInit && selected.moduleInit.reason === null && selected.moduleInit.stmtCount > 0
       ? selected.moduleInit
       : undefined;
+  // (#5285) Census hook, gated on the EXISTING `JS2WASM_IR_SHAPE_DIAG` opt-in
+  // (#2856 Step-1) — read here, at the call site, so a production run never
+  // enters the survey at all and nothing below this line changes with the flag
+  // off.
+  //
+  // Deliberately NOT at the `buildModuleBindingsMap` call site the plan named.
+  // That site sits inside `if (moduleInitClaim && …)`, and a file whose module
+  // init the SELECTOR already refused
+  // (`vardecl-module-storage-unrepresentable`) never reaches it — which is
+  // every file the census is about. Surveying there would report an empty
+  // multiset for exactly the population being measured. Here both the resolver
+  // and the population are in scope whether or not the unit was claimed.
+  if (ctx.irOutcomes !== undefined && process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+    const refusals = surveyModuleBindingRefusals(
+      integrationPopulation?.moduleInitPopulation ?? collectModuleInitPopulation(sourceFile),
+      moduleBindingResolver,
+      ctx.checker,
+    );
+    // Last write wins: integration can run more than once per source (prepared
+    // route, then the late overlay), and the final pass is the population the
+    // compiler actually concluded with. Measured on `tests/dogfood/corpus`
+    // (2026-09-03): every repeated pass agreed, so this picks no side.
+    (ctx.irModuleBindingRefusalsBySourceFile ??= new Map()).set(sourceFile, refusals);
+  }
   const requireTerminalOwner = (legacyName: string): IrLegacyUnitProjectionEntry => {
     const owner = activeOwnerProjection.getByLegacyName(legacyName);
     if (!owner) {
@@ -5742,6 +5768,34 @@ function resolveModuleBindingGlobal(
       type = { kind: "val", val: storageType };
       break;
     }
+    case "string": {
+      // (#3523 R4-M1 / #679) The dual-backend arm. The IR type stays the
+      // backend-AGNOSTIC `string` — the same marker `IrLowerResolver.
+      // resolveString` answers — so module-init value flow keeps real string
+      // semantics instead of an opaque carrier. What differs per backend is
+      // only the legacy GLOBAL's ValType:
+      //   host strings   → `(mut externref)`
+      //   nativeStrings  → `(mut (ref null $AnyString))`
+      // Both are what `resolveWasmType`'s string arm produced, run through
+      // `registerModuleGlobal`'s `ref` → `ref_null` global-slot relaxation.
+      // Naming the ACTIVE backend's carrier here makes the `storageMatches`
+      // check below a real agreement test: a lane whose slot was widened for
+      // some other reason disagrees loudly rather than being reinterpreted.
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0) {
+          throw new IrInvariantError(
+            "unknown-type-ref",
+            "build",
+            `module-init: native-string binding '${name}' has no registered $AnyString array`,
+          );
+        }
+        storageType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+      } else {
+        storageType = { kind: "externref" };
+      }
+      type = { kind: "string" };
+      break;
+    }
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
@@ -5856,6 +5910,86 @@ function buildModuleBindingsMap(
     }
   }
   return map;
+}
+
+/**
+ * (#5285) The non-short-circuiting twin of {@link buildModuleBindingsMap}, and
+ * the ONLY instrument that can answer "which categories does this file carry".
+ *
+ * `buildModuleBindingsMap` above is on the production path and correctly stops
+ * at the first refusal; the `JS2WASM_IR_SHAPE_DIAG` reject-arm recorder in
+ * `select.ts` is first-wins for the same reason. Read as a survey, either one
+ * reports "exactly one blocker" for every file regardless of the corpus — which
+ * is how a 13-file census concluded "no file mixes categories" and a slice
+ * ranking got built on it. This function asks `inspectDirectBinding` the same
+ * question and **records and continues**.
+ *
+ * It is INERT by construction: it never calls `resolveModuleBindingGlobal`, so
+ * it mutates no `ctx`, registers no global, and plans no Program ABI entry. Its
+ * only caller is gated on `JS2WASM_IR_SHAPE_DIAG=1`.
+ *
+ * Refusals come back in SOURCE ORDER. Every historical measurement recorded the
+ * FIRST blocker, so preserving the order is what lets those numbers be
+ * reconciled with these instead of discarded.
+ */
+function surveyModuleBindingRefusals(
+  population: readonly ts.Statement[],
+  resolveModuleBinding: IrModuleBindingResolver,
+  checker: ts.TypeChecker,
+): readonly IrModuleBindingRefusal[] {
+  const refusals: IrModuleBindingRefusal[] = [];
+  const record = (name: string, declaration: ts.VariableDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
+    let declaredType = "<unresolved>";
+    try {
+      declaredType = checker.typeToString(checker.getTypeAtLocation(declaration.name));
+    } catch {
+      // A census must survive a checker failure; the arm still names the refusal.
+    }
+    refusals.push({
+      name,
+      declaredType,
+      initializerKind: declaration.initializer ? ts.SyntaxKind[declaration.initializer.kind] : undefined,
+      arm,
+    });
+  };
+  for (const stmt of population) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const d of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(d.name)) {
+        // Same refusal `buildModuleBindingsMap` throws for, kept as a category
+        // rather than a stop: a destructured top-level binding has no
+        // one-to-one legacy global. Leaf `.text` names, never a source slice.
+        record(moduleBindingPatternLabel(d.name), d, "destructuring-pattern");
+        continue;
+      }
+      let inspected: IrModuleBindingInspection;
+      try {
+        inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+      } catch {
+        record(d.name.text, d, "inspection-threw");
+        continue;
+      }
+      if (inspected.kind !== "unsupported") continue;
+      record(d.name.text, d, inspected.arm);
+    }
+  }
+  return refusals;
+}
+
+/** Leaf binding names of a top-level destructuring pattern, in source order. */
+function moduleBindingPatternLabel(pattern: ts.BindingPattern): string {
+  const names: string[] = [];
+  const visit = (node: ts.BindingName): void => {
+    if (ts.isIdentifier(node)) {
+      names.push(node.text);
+      return;
+    }
+    for (const element of node.elements) {
+      if (ts.isBindingElement(element)) visit(element.name);
+    }
+  };
+  visit(pattern);
+  return names.join(",");
 }
 
 /**

@@ -62,6 +62,8 @@ import {
   compileNestedFunctionDeclaration,
 } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
+// (#5271 step 2.3) block-entry pre-allocation of the block's own lexical slots.
+import { preallocateBlockScopedSlots } from "./index.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
@@ -552,6 +554,11 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // this for the same reason.
     const blockNames = collectBlockScopedNames(stmt);
     const savedLocals = saveBlockScopedShadowsForNames(fctx, blockNames);
+    // (#5271 step 2.3) The block's declarative environment exists before its
+    // first statement runs (§13.2.14), so its own `let`/`const` slots must too —
+    // otherwise a closure built earlier in the block captures the outer (or
+    // same-spelled module-global) binding instead of the block's.
+    preallocateBlockScopedSlots(ctx, fctx, stmt.statements);
     for (const s of stmt.statements) {
       compileStatement(ctx, fctx, s);
     }

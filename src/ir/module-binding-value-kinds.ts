@@ -19,7 +19,16 @@ export type IrModuleBindingValueKind =
   // (#1103a), NOT to an externref host handle. That is a different physical
   // carrier — `(ref null $Map)` vs `externref` — so it remains distinct from
   // both ambient and capability-authenticated externref storage.
-  | { readonly kind: "native-map"; readonly className: "Map" };
+  | { readonly kind: "native-map"; readonly className: "Map" }
+  // (#3523 R4-M1) A `string` module binding. Deliberately ONE kind for both
+  // string backends (#679): the source-level fact is "this slot holds a JS
+  // string", and the physical carrier — `externref` under host strings,
+  // `(ref null $AnyString)` under `nativeStrings` — is the backend's to pick,
+  // exactly as `IrType.string` defers to `IrLowerResolver.resolveString`. The
+  // legacy slot is resolved against the ACTIVE backend's carrier in
+  // `resolveModuleBindingGlobal`, so a lane whose allocation disagrees fails
+  // the storage-agreement check there rather than silently reinterpreting it.
+  | { readonly kind: "string" };
 
 export interface IrModuleCapabilityExternCertification {
   readonly capability: "dom";
@@ -44,10 +53,24 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
 
 /**
  * True when a binding exposes a reference carrier whose consumers need the
- * conservative extern discipline: ambient/capability externref or native Map.
+ * conservative extern discipline: ambient/capability externref, native Map, or
+ * (#3523 R4-M1) a string.
+ *
+ * A string module binding joins this set because BOTH of its carriers are
+ * reference-shaped and opaque to a shape-only selector — `externref` on the
+ * host lane, `(ref null $AnyString)` on the native one. Admitting it as a
+ * "scalar" instead would let the f64/boolean expression arms claim shapes
+ * (unboxed `throw`, numeric method dispatch) whose string lowering was never
+ * proven. A site that later earns a proven string lowering should test
+ * `valueKind.kind === "string"` at that site rather than widen this predicate.
  */
 export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "extern" || valueKind.kind === "capability-extern" || valueKind.kind === "native-map";
+  return (
+    valueKind.kind === "extern" ||
+    valueKind.kind === "capability-extern" ||
+    valueKind.kind === "native-map" ||
+    valueKind.kind === "string"
+  );
 }
 
 export function isCapabilityExternKind(

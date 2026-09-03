@@ -3877,3 +3877,97 @@ wasm-opt aborts on the prepared accessor module, and `optimize` swallows the
 abort and returns the unoptimized binary rather than reporting it. The silent
 fallback is the more dangerous half — a crashing optimizer currently reads as a
 successful compile. Both belong to the accessor slice, not to F4.
+
+## 2026-09-03 — this issue's claim is a GHOST, and it has blocked R3 for five days
+
+`claim-issue.mjs --check 3522` reports:
+
+```
+#3522 is CLAIMED by ttraenkler/opus-3522-f4 (since 2026-08-28T22:01:28Z).
+claim-issue: REFUSED (exit 3)
+```
+
+**That lane finished on 2026-08-29 and never released.** Evidence, all checked:
+
+| fact | value |
+| --- | --- |
+| claim holder | `ttraenkler/opus-3522-f4` (slice-named, not epic-named) |
+| its branch | `claude/issue-3522-f4-field-call-admission` |
+| its PR | **#5199, MERGED 2026-08-29T04:27:46Z** by the merge-queue bot |
+| branch vs `main` | **0 ahead, 1299 behind** — nothing left on it |
+| any `*3522*` branch moved since | **no** — the other four last moved 2026-08-15/16 |
+
+So the claim on the **bare issue id** outlived the slice that took it by five days.
+Every other lane this week claimed a *slice* (`3526:f3s1`, `3521:r2f1`,
+`3523:r4m1`) and released on merge; this one claimed the whole issue and did not.
+
+**The cost is concrete.** `claim-issue.mjs` exit 3 is what a dispatcher checks
+before starting, and `budget-status --pick` excludes claimed issues from its
+recommendations. So R3 — `priority: critical`, `sprint: current`, and the
+**second-largest blocker** in the 2026-09-03 dogfood census (the class family is
+7 of 33 single-host rejections; see `#3518`) — has been invisible to dispatch
+since 2026-08-29 while reading as actively owned.
+
+**Fix, one line:**
+
+```bash
+node scripts/claim-issue.mjs --release 3522 ttraenkler/opus-3522-f4
+```
+
+**Deliberately not run here.** #3522 is `horizon: xl` and #5199's own body says
+"F4 is a checkpoint under #3522, not its completion" — so someone intended to
+continue. If that lane is somehow still live, releasing lets a second lane start
+the same XL work, which is the duplicate-work hazard CLAUDE.md documents at
+length. The evidence says it is not live, but the asymmetry (a five-day-old
+ghost costs a day; a duplicated XL slice costs a week) says a human or the next
+session should make that call with this evidence in hand rather than have it
+made at 02:00 by a session that is suspending.
+
+**If you release it**, the next slice is well-specified: the class family in the
+dogfood census is `class-member-unsupported` ×4, `class-projection-unsupported`
+×2, `class-method` ×1, plus `static-class-initialization` ×1 on the module-init
+side — 7–8 units, second only to R4's module-init blocker.
+
+### Addendum — the session evidence is weaker than it looks, and here is why
+
+Before suspending I went looking for the one fact that would settle it: does
+the F4 lane's session still exist? `list_sessions` (100 rows, back to
+2026-07-17, so the 2026-08-28 claim window is covered) has **no row for
+`opus-3522-f4`**. The 12 rows in the 08-27..08-29 window are:
+
+| created (UTC) | status | title |
+| --- | --- | --- |
+| 08-28 21:44 | **RUNNING** | IR migration |
+| 08-28 21:58 | archived | PR #23 repository migration |
+| 08-28 22:36 | idle | Deno integration |
+| 08-28 23:13 | idle | ES edition feature list currency |
+| 08-29 00:53 | idle | PR #5183 fix |
+| 08-29 02:44 | idle | 3520 R1-A review + R1-B repair |
+| 08-29 02:44 | idle | 5165 tail loops/try adoption |
+| 08-29 02:44 | idle | 5166 nested-vec carrier + 4470 lift |
+| 08-29 02:45 | idle | 5167 string-index loop proof |
+| 08-29 02:45 | idle | 3521 R2-v2 static collector repair |
+| 08-29 07:41 | idle | 3523 R4 gap-1a single-pass module init |
+| 08-29 16:29 | idle | Landing page passrate not updating |
+
+**I nearly read that as "no session ⇒ the lane is dead." It does not say
+that.** A lane dispatched as an in-process `Agent` subagent never gets a
+session row at all, so its absence is consistent with both "gone" and "never
+had one." And the timing points exactly there: the claim landed
+**2026-08-28T22:01:28Z, seventeen minutes after** the `IR migration` session
+opened at 21:44 — the shape of a plan-then-dispatch subagent, not of an
+independent lane. Note that session is the one row still marked **RUNNING**.
+
+What the table *does* establish is narrower and still useful:
+
+- **Every sibling R-slice from this same window has its own session row**
+  (R1 #3520, R2 #3521, R4 #3523) — and every one of those released its claim
+  on merge. #3522 is the only R-slice of that week with neither.
+- **There is no session anyone can reattach to** to ask the F4 lane whether it
+  intends to continue. Whatever it was, it is not reachable.
+
+So the release decision rests where it already did — on the merged PR, the
+0-ahead/1299-behind branch, and five days of no branch movement — and **not**
+on this listing, which cannot distinguish a dead lane from a subagent. The one
+thing worth checking before releasing that I could not: whether the
+still-RUNNING `IR migration` seat considers F4 unfinished work of its own.

@@ -634,10 +634,29 @@ function foldedEvalHasScopedDeclaration(sourceFile: ts.SourceFile): boolean {
  * current execution environment is already the realm global. Inside a
  * function, reject the splice when the foreign Script names a local/capture:
  * indirect eval must resolve that name globally, never from the caller frame. */
-function foldedIndirectEvalReadsCallerBinding(sourceFile: ts.SourceFile, fctx: FunctionContext): boolean {
-  if (fctx.name === "__module_init") return false;
+function foldedIndirectEvalReadsCallerBinding(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  fctx: FunctionContext,
+): boolean {
   const referencedNames = new Set<string>();
   for (const stmt of sourceFile.statements) collectReferencedIdentifiers(stmt, referencedNames);
+  if (fctx.name === "__module_init") {
+    // (#5271 step 2.5) Module init IS the global environment — except while a
+    // BLOCK's lexical binding shadows a same-spelled top-level one. Splicing
+    // `(0,eval)('x;')` there compiles `x` in the module-init frame and reads the
+    // block shadow (probe p18: `'inside'`); indirect eval must resolve `x` in
+    // the GLOBAL environment. Refuse the fold so the standalone indirect-eval
+    // runtime route resolves it. The #3546 shadow local is the module binding's
+    // OWN dual store, not a lexical shadow, so it does not refuse.
+    for (const name of referencedNames) {
+      const localIdx = fctx.localMap.get(name);
+      if (localIdx === undefined || !ctx.moduleGlobals.has(name)) continue;
+      if (fctx.moduleBindingShadowLocals?.get(name) === localIdx) continue;
+      return true;
+    }
+    return false;
+  }
   for (const name of referencedNames) {
     if (fctx.localMap.has(name) || fctx.boxedCaptures?.has(name)) return true;
   }
@@ -1210,7 +1229,7 @@ export function tryStaticEvalInline(
   if (!evalAnnexBDeclarationsInlineSupported(sf) || !allNodesInlineSupported(sf, bodyIsStrict)) {
     return undefined;
   }
-  if (!directEval && foldedIndirectEvalReadsCallerBinding(sf, fctx)) return undefined;
+  if (!directEval && foldedIndirectEvalReadsCallerBinding(ctx, sf, fctx)) return undefined;
 
   // (#3301) The foreign-node regex-literal arm defect (dynamic `.flags` read
   // returned undefined because `compileRegExpLiteral` registered `RegExp_new`

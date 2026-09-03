@@ -7,7 +7,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { addUnionImports } from "../index.js";
+import { addUnionImports, preallocateBlockScopedSlots } from "../index.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { walkChildren, walkInstructions } from "../walk-instructions.js";
@@ -384,6 +384,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     const completionSnapshot = beginFinallyCompletionSnapshot(fctx);
     // Save/restore block-scoped shadows for let/const in the finally block (#817).
     const savedFinallyScope = saveBlockScopedShadows(fctx, stmt.finallyBlock);
+    // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
+    preallocateBlockScopedSlots(ctx, fctx, stmt.finallyBlock.statements);
     for (const s of stmt.finallyBlock.statements) {
       compileStatement(ctx, fctx, s);
     }
@@ -453,6 +455,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   // Save/restore block-scoped shadows for let/const in the try block (#817).
   const savedTryScope = saveBlockScopedShadows(fctx, stmt.tryBlock);
+  // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
+  preallocateBlockScopedSlots(ctx, fctx, stmt.tryBlock.statements);
   // While compiling the try body, record that a catch handler encloses it so
   // `return f()` is NOT rewritten to `return_call` — return_call replaces the
   // caller frame and a throw from the callee would skip this catch (#1972).
@@ -606,6 +610,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
       // Save/restore block-scoped shadows for let/const in the catch block (#817).
       const savedCatchScope = saveBlockScopedShadows(fctx, stmt.catchClause.block);
+      // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
+      preallocateBlockScopedSlots(ctx, fctx, stmt.catchClause.block.statements);
       for (const s of stmt.catchClause.block.statements) {
         compileStatement(ctx, fctx, s);
       }
