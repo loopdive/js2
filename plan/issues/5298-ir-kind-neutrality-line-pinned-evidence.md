@@ -66,3 +66,84 @@ current line:
    `prettier --check` without a manual pass.
 4. No verdict, count, or ratchet value changes in the migrated baseline
    (field-by-field diff recorded in the PR body).
+
+## Implementation Plan
+
+Written 2026-09-03 by the Fable lane from a read of
+`scripts/check-ir-kind-neutrality.mjs` at `origin/main` `68246a740c`. Line
+numbers below are from that revision.
+
+### Where the line leaks in
+
+| site | what it does today | brittle part |
+| --- | --- | --- |
+| L1042-1060 (R2 loop) | finds each `cite.quote` in `cite.file`; on hit pushes `` `${cite.file}:${lineOf(text, at)}` `` | the pushed string carries the **derived** line |
+| L1076-1084 (`table[kind]`) | persists `declaredAt: `${info.file}:${info.line}`` and `evidence: cites` | both fields are line-bearing |
+| L1181-1183 (`sameTable`) | `JSON.stringify({ratchet, counts, kinds: table})` on both sides | any line drift ⇒ "verdict table no longer matches" ⇒ `quality` red |
+| L1131-1134 (`write`) | `JSON.stringify(computed, null, 2)` | expanded arrays; committed baseline is prettier-compact, so raw output fails `format:check` |
+
+`info.line` comes from the population scan of `src/ir/nodes.ts` /
+`src/ir/dialect/js.ts` (the `readonly kind` discriminant's line) and is
+just as brittle as the evidence cites: a comment added above any interface
+in `js.ts` moves every `declaredAt` below it.
+
+### Change (one file + one tool-written baseline migration)
+
+1. **Split "what we compare" from "what we print".** Keep a `report` view
+   with lines for the console output (L1198+), and build the persisted
+   `table[kind]` from **stable keys only**:
+   - `declaredAt: `${info.file}#${info.interface}`` — the interface name is
+     the stable identity of the declaration site (`info.interface` already
+     exists, see L1013).
+   - `evidence: [`${cite.file}#${shortHash(cite.quote)}`]` where
+     `shortHash` is the first 12 hex chars of `sha1(cite.quote)`; a quote
+     that survives verbatim hashes identically wherever it sits. Keep the
+     `(absent from …)` cite string as is — it has no line.
+2. **`sameTable` (L1181) compares the stable table.** Nothing else about R1–R4
+   changes: R2 still fails on a missing quote (L1051-1057) and still needs
+   ≥1 cite (L1061).
+3. **Writer emits prettier-compatible JSON.** Replace `JSON.stringify(computed,
+   null, 2)` with a pass through prettier's API (`prettier.format(json, {
+   parser: "json", ...resolvedConfig })` — prettier is already a dev
+   dependency) so `--update` / `--update-on-decrease` output commits as-is.
+   If importing prettier into the script is unwelcome, run
+   `pnpm exec prettier --write scripts/ir-kind-neutrality-baseline.json`
+   from the script via `child_process.execFileSync` — either way the gate
+   owns the format of the file it writes.
+4. **Migrate the committed baseline with the tool**, never by hand:
+   `pnpm run check:ir-kind-neutrality -- --update` on the fixed script, in
+   the same PR. The PR body records a field-by-field diff: only `declaredAt`
+   and `evidence` strings change shape; `verdict`, `where`, `why`, `counts`,
+   `ratchet` byte-identical.
+
+### Measurement order (each a separate command, exit code read bare)
+
+1. Base reproduction on a scratch branch: insert one blank comment line above
+   `resolveModuleBindingGlobal` in `src/ir/integration.ts` (any line < 7347
+   works), run the gate → must fail with "verdict table no longer matches".
+   Record the failing cite (`forof.string` evidence `:7347 → :7348`).
+2. Apply the script change, regenerate baseline, re-run with the same
+   inserted line → green, table byte-identical.
+3. Delete the `forof.string` quote text from `js.ts` on the scratch branch
+   → still fails with the R2 "cited evidence is gone" message (the check is
+   not weakened).
+4. `pnpm run check:ir-kind-neutrality -- --update-on-decrease` then
+   `pnpm exec prettier --check scripts/ir-kind-neutrality-baseline.json` →
+   clean without a manual pass.
+
+### Tests
+
+`tests/issue-5298-kind-neutrality-stable-evidence.test.ts`: run the script
+via `execFileSync` against a temp copy of the two evidence files with (a) a
+line inserted above a quote → exit 0, (b) a quote removed → exit non-zero
+and the R2 message. (b) is red on base only in the sense that (a) is red on
+base; assert both and record it.
+
+### Gates and budget
+
+Script-only change under `scripts/` — no `src/` LOC growth, no coercion or
+oracle sites. Run `check:ir-kind-neutrality` itself, `check:ir-dialect`,
+`check:ir-fallbacks`, `check:ir-only` (READY unchanged), `prettier --check`,
+and the biome lint. No baseline JSON other than
+`scripts/ir-kind-neutrality-baseline.json` is touched, and that one only
+through the tool.
