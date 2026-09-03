@@ -1,8 +1,11 @@
 {
   "id": "3797",
   "assignee": "ttraenkler/codex-finish-node-at-selector",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3797-finish-node-at-selector",
   "claimed_at": "2026-07-30T13:00:41Z",
-  "updated_at": "2026-07-30T13:00:41Z"
+  "updated_at": "2026-09-03T09:43:57Z",
+  "write_id": "924-7rs036th",
+  "released_at": "2026-09-03T09:43:57Z"
 }
