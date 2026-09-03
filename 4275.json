@@ -1,12 +1,11 @@
 {
   "id": "4275",
   "assignee": "ttraenkler/codex-es6-forof-dstr-ir",
-  "requested_by": "ttraenkler/codex-es6-forof-dstr-ir",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es6-forof-dstr-ir",
-  "reserved_at": "2026-08-09T08:11:11Z",
   "claimed_at": "2026-08-09T08:11:11Z",
-  "updated_at": "2026-08-09T08:11:11Z",
-  "write_id": "34364-s73uprcb",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:45:39Z",
+  "write_id": "8688-gk1ogp8j",
+  "released_at": "2026-09-03T09:45:39Z"
 }
