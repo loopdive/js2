@@ -1,10 +1,11 @@
 {
   "id": "5137",
   "assignee": "ttraenkler/codex-5137-es2015-dataview-setter-undefined",
-  "requested_by": "ttraenkler/codex-5137-es2015-dataview-setter-undefined",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5137-es2015-dataview-setter-undefined",
   "claimed_at": "2026-08-28T11:09:24Z",
-  "updated_at": "2026-08-28T11:09:24Z",
-  "write_id": "73314-swq1eyk1"
+  "updated_at": "2026-09-03T09:52:51Z",
+  "write_id": "25115-1xj1zmo9",
+  "released_at": "2026-09-03T09:52:51Z"
 }
