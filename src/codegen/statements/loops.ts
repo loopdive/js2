@@ -435,7 +435,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
             const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
             const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
             compileExpression(ctx, fctx, decl.initializer, wasmType);
-            fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+            // (#5276) Re-read the slot: the initializer can insert an import global (`a[0]` adds the bounds-check
+            // string constant → `fixupModuleGlobalIndices`), which shifts every emitted `global.get/set` and ~20
+            // caches but cannot reach an index in flight in this local — the head wrote `global.set N` while every
+            // other reference read `N+1`. The guard above stays the decision; only the index is refreshed.
+            fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? moduleGlobalIdx });
           }
           continue;
         }
