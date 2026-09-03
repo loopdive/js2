@@ -1,8 +1,11 @@
 {
   "id": "3761",
   "assignee": "ttraenkler/codex-es5-string-split",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3761-string-split-nan-limit",
   "claimed_at": "2026-07-28T16:11:46Z",
-  "updated_at": "2026-07-28T16:11:46Z"
+  "updated_at": "2026-09-03T09:42:00Z",
+  "write_id": "11625-6836048s",
+  "released_at": "2026-09-03T09:42:00Z"
 }
