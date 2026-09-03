@@ -1,10 +1,11 @@
 ---
 id: 5269
 title: "ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins — r2 residual pass"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-01
-updated: 2026-09-02
+updated: 2026-09-03
+completed: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
