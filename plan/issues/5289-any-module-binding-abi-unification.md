@@ -96,11 +96,9 @@ hard `IrInvariantError` rather than a demote.
 **Answer the ABI question before writing any resolver code.** The first
 deliverable is a measurement, not a patch:
 
-1. **Establish what each lane actually allocates today** for an `any` module
-   global that is read from a function — compile it and read the
-   `(global $__mod_… )` line out of the emitted WAT on both lanes, exactly as
-   R4-M1 did for strings. Do not infer this from `#4208`'s comment; that comment
-   is the hypothesis, not the measurement, and it predates R4-M1.
+1. ~~**Establish what each lane actually allocates today**~~ — **DONE, see the
+   measurement section below.** Read it before anything else; it changes what
+   step 2 is choosing between, and it contains a trap worth not repeating.
 2. **Decide which of three shapes applies**, and say which in the issue before
    implementing:
    - *deferrable* — the carriers differ only in spelling and an
@@ -135,3 +133,58 @@ Two things this issue exists to prevent, both nearly happened on 2026-09-03:
   distinguishes them, and `ambient/import` is the proof: it clears two files'
   storage and unlocks zero, because both also refuse on `vardecl-modifier`.
   Any future R4 ranking must carry that second column.
+
+
+## 2026-09-03 — step 1 measured, and the blocker is REAL
+
+Run before dispatch so the lane does not repeat it. `let g: any = 1` read from
+an exported function; the `(global $__mod_g …)` line out of the emitted WAT.
+Probe: `.tmp/any-fast-probe.mts`.
+
+| target | mode | carrier |
+| --- | --- | --- |
+| `gc` | compatibility | `(mut externref)` |
+| `gc` | **fast** | `(mut (ref null 34))` |
+| `standalone` | compatibility | `(mut externref)` |
+| `standalone` | **fast** | `(mut (ref null 45))` |
+
+**The split is on the fast/compatibility axis, exactly as `#4208`'s comment
+says — not on target.** Both targets agree with each other in each mode. So the
+comment is current, not stale, and the blocker this issue describes is real.
+
+### The trap, recorded because I walked into it
+
+My first probe compiled `target: "gc"` and `target: "standalone"` with default
+options, saw `(mut externref)` twice, and pointed at the conclusion *"the two
+lanes agree, the ABI blocker is stale"* — which would have unblocked R4's
+largest slice on a false premise. It was wrong because **`fast` is a separate
+flag from `target`**: `integration.ts:2301` sets
+`numberStorage: ctx.fast ? "i32" : "f64"`, and `#4208`'s "fast mode" means that
+flag, not a target. Default options are the *compatibility* side of both
+targets — two cells of the four, both from the same side of the split being
+measured.
+
+**So the step-1 instruction as originally written was itself the trap** ("read
+what each lane allocates … on both lanes"). It is four cells, not two:
+`{gc, standalone} × {compatibility, fast}`. Any future measurement of a carrier
+question in this area must name which axis it varied, because "both lanes" is
+ambiguous between the two and the ambiguity resolves toward the wrong answer.
+
+### What this settles for step 2
+
+**Not `deferrable`.** The R4-M1 shape needs two spellings of one fact that a
+resolver can choose between by naming the active one. These are not that:
+`externref` is opaque and host-shaped, the fast carrier is a typed struct ref,
+and a resolver serving both cannot name "the active carrier" without the
+storage-agreement check losing its meaning — which is criterion 3.
+
+The live question is therefore **`unifiable` vs `irreducible`**, and that is the
+issue's real work. Two sub-questions a lane should answer first, in this order:
+
+1. **What is the fast carrier?** The type indices differ per target (34 vs 45),
+   which is ordinary per-module numbering, but whether both resolve to the same
+   *named* type (`$AnyValue`) is unverified — read the type section, do not
+   assume from the index.
+2. **Can compatibility adopt it, or fast adopt `externref`?** Either direction
+   is a Program-ABI change needing its own byte-neutrality argument, and the
+   answer decides whether this is a slice or a design record.
