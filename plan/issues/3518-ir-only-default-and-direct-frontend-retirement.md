@@ -2839,3 +2839,60 @@ class family's true weight cannot be read off these corpora at all.
 comparison against the npm-compat package sources, which are the closest thing
 the repo has to real application code. If playground and dogfood are both far
 from *that* too, the R9 denominator needs to be built rather than chosen.
+
+### The npm-compat comparison (the step the section above called for)
+
+Real library sources from the npm-compat package set — lodash, acorn, axios,
+uuid, cookie, clsx, prettier, eslint — resolved through the pnpm store:
+**2,667 files, 1,078,947 nodes**. Same method, now a full matrix.
+Probe: `.tmp/corpus-vs-npm.mjs`.
+
+| L1 | playground | dogfood | test262 | npm libs |
+| --- | --: | --: | --: | --: |
+| **playground** | — | 0.631 | 0.576 | **0.448** |
+| **dogfood** | 0.631 | — | 0.705 | 0.681 |
+| **test262** | 0.576 | 0.705 | — | 0.575 |
+| **npm libs** | 0.448 | 0.681 | 0.575 | — |
+
+**Three conclusions, and the first two are decisions.**
+
+1. **Dogfood is the worst denominator available, against every reference.** It
+   is the furthest corpus from real libraries (0.681), the furthest from
+   test262 (0.705), and further from libraries than test262 itself is (0.681 vs
+   0.575). It is not a hard case; it is an *unlike* case. **R9-D1's proposal to
+   make the dogfood corpus the CI `baseline` lane should be dropped, not
+   merely re-argued.**
+2. **Playground is the best of what exists** — 0.448 to real libraries, the
+   smallest distance anywhere in the matrix. Still large, but it is the only
+   corpus that is closest-to-something rather than furthest-from-everything.
+3. **test262 and real libraries are themselves 0.575 apart**, so there is no
+   single "R9 target population" to pick. A conformance denominator and an
+   application denominator are different instruments answering different
+   questions, and R9 needs to say which one its fail-closed default is
+   protecting before either number means anything.
+
+**What real library code has that neither corpus does:**
+
+| kind | npm libs | playground | dogfood |
+| --- | --: | --: | --: |
+| `PropertyAssignment` | 2.92% | **0.00%** | 0.54% |
+| `PropertyAccessExpression` | 7.65% | 5.92% | 2.79% |
+| `ThisKeyword` | 1.70% | 0.15% | 0.62% |
+| `AmpersandAmpersandToken` | 1.15% | 0.17% | 0.08% |
+| `ObjectLiteralExpression` | 0.85% | **0.00%** | 0.39% |
+| `BarBarToken` | 0.60% | 0.06% | 0.08% |
+| `Parameter` | 2.01% | 0.95% | 1.55% |
+
+**Object literals and `this` are the shape of real JavaScript, and we barely
+measure them.** `PropertyAssignment` and `ObjectLiteralExpression` are both
+*exactly zero* in the playground corpus. That lands directly on R4: `object` is
+already a blocking storage category in the corrected census, and its weight
+there is measured on corpora that contain essentially no object literals — so,
+like R3/classes, **it is under-counted rather than small**.
+
+**Limits.** Library sources include a great deal of code js2wasm may never be
+asked to compile (eslint's rule definitions, prettier's printers), so this is
+"what real JS looks like", not "what R9 must handle". And node-kind frequency
+remains a proxy for shape coverage, not for IR representability — it can show a
+corpus is unlike the target, never that a like corpus would pass. Both
+measurements are re-runnable from `.tmp/`; neither is committed as a baseline.
