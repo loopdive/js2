@@ -58,11 +58,13 @@ import {
 import {
   asCallableRuntimeHostCapabilityRecord,
   canonicalizeRuntimeHostCapabilityCatalog,
+  isRuntimeHostCapabilityExportId,
   isRuntimeHostCapabilityFuncFamilyId,
   isRuntimeHostCapabilityFuncId,
   isRuntimeHostCapabilityGlobalId,
   resolveRuntimeHostCapabilityFuncRecord,
   resolveRuntimeHostCapabilityRecord,
+  RUNTIME_HOST_CAPABILITY_EXPORT_IDS,
   RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES,
   RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES,
   RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
@@ -98,7 +100,25 @@ const NEW_ID_SET: ReadonlySet<string> = new Set(NEW_IDS);
  * so the "twelve pre-existing rows" pin below keeps meaning *pre-F2-S2*
  * rather than drifting into "everything that is not new today".
  */
-const LATER_SLICE_IDS = ["string.concat.many"] as const;
+const LATER_SLICE_IDS = [
+  "string.concat.many",
+  // (#3526 F3-S2) Family 3's eleven callable rows. They join this list for the
+  // reason the list exists: without them the "twelve pre-existing rows" pin
+  // below would drift into "everything that is not new today", and its
+  // `kind === "func"` / `module === "env"` loop would have to admit the very
+  // kinds it exists to exclude — an export row has neither.
+  "callable.boundary_callback.call",
+  "callable.export.arity",
+  "callable.export.call_fn.0",
+  "callable.export.call_fn.1",
+  "callable.export.call_fn.2",
+  "callable.export.call_fn.3",
+  "callable.export.call_fn.4",
+  "callable.host_call.array",
+  "callable.host_call.fixed",
+  "callback.wrap.ctor",
+  "callback.wrap.getter",
+] as const;
 const LATER_SLICE_ID_SET: ReadonlySet<string> = new Set(LATER_SLICE_IDS);
 
 /**
@@ -162,12 +182,35 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
     }
     // (#3526 F2-S6) A THIRD half: the func FAMILY ids. Disjoint from both the
     // plain func half and the global half, so `host-callable` cannot name one.
-    expect([...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS]).toEqual(["string.concat.many"]);
+    expect([...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS]).toEqual([
+      "callable.boundary_callback.call",
+      "callable.host_call.fixed",
+      "string.concat.many",
+    ]);
     for (const id of RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS) {
       expect(RUNTIME_HOST_CAPABILITY_FUNC_IDS as readonly string[]).not.toContain(id);
       expect(RUNTIME_HOST_CAPABILITY_GLOBAL_IDS as readonly string[]).not.toContain(id);
       expect(isRuntimeHostCapabilityFuncFamilyId(id)).toBe(true);
       expect(isRuntimeHostCapabilityFuncId(id)).toBe(false);
+      expect(isRuntimeHostCapabilityGlobalId(id)).toBe(false);
+    }
+    // (#3526 F3-S2) A FOURTH half: the export ids. Disjoint from all three
+    // import-side halves, so no provider domain can name one.
+    expect([...RUNTIME_HOST_CAPABILITY_EXPORT_IDS]).toEqual([
+      "callable.export.arity",
+      "callable.export.call_fn.0",
+      "callable.export.call_fn.1",
+      "callable.export.call_fn.2",
+      "callable.export.call_fn.3",
+      "callable.export.call_fn.4",
+    ]);
+    for (const id of RUNTIME_HOST_CAPABILITY_EXPORT_IDS) {
+      expect(RUNTIME_HOST_CAPABILITY_FUNC_IDS as readonly string[]).not.toContain(id);
+      expect(RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS as readonly string[]).not.toContain(id);
+      expect(RUNTIME_HOST_CAPABILITY_GLOBAL_IDS as readonly string[]).not.toContain(id);
+      expect(isRuntimeHostCapabilityExportId(id)).toBe(true);
+      expect(isRuntimeHostCapabilityFuncId(id)).toBe(false);
+      expect(isRuntimeHostCapabilityFuncFamilyId(id)).toBe(false);
       expect(isRuntimeHostCapabilityGlobalId(id)).toBe(false);
     }
     // Total, and sorted — the completeness axis `canonicalize` checks against.
@@ -176,9 +219,10 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
         ...RUNTIME_HOST_CAPABILITY_FUNC_IDS,
         ...RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_IDS,
         ...RUNTIME_HOST_CAPABILITY_GLOBAL_IDS,
+        ...RUNTIME_HOST_CAPABILITY_EXPORT_IDS,
       ].sort(),
     );
-    expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(19);
+    expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(30);
     expect([...RUNTIME_HOST_CAPABILITY_IDS]).toEqual([
       "async.callback.wrap",
       "async.promise.capability.create",
@@ -188,6 +232,17 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
       "async.promise.settle.reject",
       "async.value.undefined",
       "boolean.box",
+      "callable.boundary_callback.call",
+      "callable.export.arity",
+      "callable.export.call_fn.0",
+      "callable.export.call_fn.1",
+      "callable.export.call_fn.2",
+      "callable.export.call_fn.3",
+      "callable.export.call_fn.4",
+      "callable.host_call.array",
+      "callable.host_call.fixed",
+      "callback.wrap.ctor",
+      "callback.wrap.getter",
       "extern.is_undefined",
       "number.box",
       "number.unbox",
@@ -205,7 +260,7 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
   it("closes the module namespaces PER KIND, so env.<global> is unrepresentable", () => {
     expect([...RUNTIME_HOST_CAPABILITY_FUNC_MODULES]).toEqual(["env", "wasm:js-string"]);
     expect([...RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES]).toEqual(["string_constants", "string_constants16"]);
-    expect([...RUNTIME_HOST_CAPABILITY_KINDS]).toEqual(["func", "func-family", "global"]);
+    expect([...RUNTIME_HOST_CAPABILITY_KINDS]).toEqual(["export", "func", "func-family", "global"]);
     expect([...RUNTIME_HOST_CAPABILITY_FIELD_SCHEMES]).toEqual(["literal", "literal-utf16-hex"]);
     // (#3526 F2-S6) The family field schemes are their OWN list: a global's
     // scheme derives a field from a string literal, a family's from a number,
@@ -235,7 +290,19 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
         expect(RUNTIME_HOST_CAPABILITY_FUNC_MODULES as readonly string[]).toContain(record.module);
         expect(RUNTIME_HOST_CAPABILITY_FUNC_FAMILY_FIELD_SCHEMES as readonly string[]).toContain(record.field.scheme);
         expect(record.field.prefix.length).toBeGreaterThan(0);
-        expect(record.params.min).toBeGreaterThanOrEqual(3);
+        // (#3526 F3-S2) The floor is now DECLARED PER ROW, not shared: family 3
+        // reaches arity 0, so the only universal bound is non-negativity. The
+        // per-row value is pinned against the canonical record by the validator.
+        expect(record.params.min).toBeGreaterThanOrEqual(0);
+        expect(Number.isSafeInteger(record.params.min)).toBe(true);
+      } else if (record.kind === "export") {
+        // (#3526 F3-S2) An export row sits on NO module axis — it has no import
+        // namespace at all, which is the property the exact-key check enforces.
+        expect(isRuntimeHostCapabilityExportId(record.capability)).toBe(true);
+        expect(record).not.toHaveProperty("module");
+        expect(record.name.length).toBeGreaterThan(0);
+        expect(record.alias.length).toBeGreaterThan(0);
+        expect(record.publication).toBe("host-bridge-gated");
       } else {
         expect(isRuntimeHostCapabilityGlobalId(record.capability)).toBe(true);
         expect(RUNTIME_HOST_CAPABILITY_GLOBAL_MODULES as readonly string[]).toContain(record.module);

@@ -25,6 +25,7 @@ import {
 } from "./async-runtime-providers.js";
 import {
   canonicalizeRuntimeHostCapabilityCatalog,
+  isRuntimeHostCapabilityExportId,
   isRuntimeHostCapabilityFuncFamilyId,
   isRuntimeHostCapabilityFuncId,
   isRuntimeHostCapabilityGlobalId,
@@ -2516,6 +2517,20 @@ export class RuntimeManifestBuilder {
           throw new RuntimeManifestInvariantError(
             "unknown-host-capability",
             `provider ${provider.id} requests unknown host capability ${String(capability)}`,
+          );
+        }
+        // (#3526 F3-S2) No provider may REQUEST an export capability. Every
+        // implementation kind names something the module calls or reads, and an
+        // export is the opposite direction — the module publishes it for the
+        // host. The refusal is load-bearing rather than defensive: `HostCapabilityId`
+        // is the WHOLE id union, so without it an export id would type-check in
+        // `hostCapabilities`, reach `freeze()`'s record map and be published as
+        // though it were an import the module makes. Lifting it for a
+        // `host-export` implementation kind is F3-S5's first step.
+        if (isRuntimeHostCapabilityExportId(capability)) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-host-capability",
+            `provider ${provider.id} cannot request export host capability ${capability}`,
           );
         }
       }
