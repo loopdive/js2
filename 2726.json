@@ -1,8 +1,11 @@
 {
   "id": "2726",
   "assignee": "ttraenkler/codex-2726",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/2726-global-delete-model",
   "claimed_at": "2026-07-25T22:42:57Z",
-  "updated_at": "2026-07-25T22:42:57Z"
+  "updated_at": "2026-09-03T09:38:04Z",
+  "write_id": "5843-474ydxlq",
+  "released_at": "2026-09-03T09:38:04Z"
 }
