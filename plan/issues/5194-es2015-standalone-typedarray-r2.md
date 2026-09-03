@@ -1,7 +1,8 @@
 ---
 id: 5194
 title: "ES2015 standalone typedarray — r2 residual pass (post-#5188 clustering)"
-status: in-progress
+status: done
+completed: 2026-09-03
 pr: 5300
 sprint: current
 created: 2026-08-29
