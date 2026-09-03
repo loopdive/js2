@@ -1,10 +1,11 @@
 {
   "id": "4167",
   "assignee": "ttraenkler/codex-es6-promise",
-  "requested_by": "ttraenkler/codex-es6-promise",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es6-promise-exception-ir",
   "claimed_at": "2026-08-09T07:14:59Z",
-  "updated_at": "2026-08-09T07:14:59Z",
-  "write_id": "43117-d3wpb64k"
+  "updated_at": "2026-09-03T09:44:56Z",
+  "write_id": "8280-75ezkt9b",
+  "released_at": "2026-09-03T09:44:56Z"
 }
