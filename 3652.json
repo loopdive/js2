@@ -1,8 +1,11 @@
 {
   "id": "3652",
   "assignee": "ttraenkler/codex-regexp-completion",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3652-regexp-property-ranges",
   "claimed_at": "2026-07-26T00:51:43Z",
-  "updated_at": "2026-07-26T00:51:43Z"
+  "updated_at": "2026-09-03T09:41:23Z",
+  "write_id": "4753-si9gt9cj",
+  "released_at": "2026-09-03T09:41:23Z"
 }
