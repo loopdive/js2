@@ -1,9 +1,10 @@
 ---
 id: 5286
 title: "R10's deletion scope is set by hardcoded file paths, not by the reachability analysis it reports alongside"
-status: ready
+status: done
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
 sprint: current
 priority: high
 horizon: s
@@ -132,3 +133,53 @@ minute each time.** What makes this one worth a gate rather than a note is that
 the misreading is *structural* — the report puts an asserted number and a
 measured number in adjacent columns of the same table, with nothing marking
 which is which.
+
+## Outcome — PR #5513, and the scope error is six times what this issue claimed
+
+Implemented by an Opus lane (`session_012HBuuLFZ92Ui2yaeyBJkWA`) as **PR #5513**,
+reviewed and released 2026-09-03 03:2x. All five acceptance criteria met; the
+regression proof is byte-identity of `.tmp/legacy-reachability.json` with the two
+new keys stripped — 1,078,137 bytes both sides, independently reproduced against
+a copy captured before that PR existed.
+
+**This issue named two conflicting files. There are twelve, holding 10,642
+shared lines** — not the 7,029 the problem statement estimated from hand
+inspection of `closures.ts` and `nested-declarations.ts`:
+
+| file | basis | legacy-only | shared |
+| --- | --- | --: | --: |
+| `closures.ts` | named | 125 | 3,872 |
+| `statements/nested-declarations.ts` | prefix | 285 | 3,157 |
+| `expressions/identifiers.ts` | prefix | 873 | 1,980 |
+| `expressions/late-imports.ts` | prefix | 125 | 590 |
+| `expressions/identifier-module-storage.ts` | prefix | **0** | 254 |
+| `expressions/proto-override.ts` | prefix | 64 | 218 |
+| `expressions/this-keyword.ts` | prefix | **0** | 178 |
+| `expressions/spread-arguments-call.ts` | prefix | 10 | 140 |
+| `expressions/promise-subclass.ts` | prefix | 40 | 125 |
+| `statements/tdz.ts` | prefix | **0** | 94 |
+| `expressions/typed-array-host-carrier.ts` | prefix | 28 | 31 |
+| `expressions/eval-source.ts` | prefix | **0** | 3 |
+
+**Four of them have zero legacy-only lines, which is a different claim from
+"mostly shared".** `identifier-module-storage.ts`, `this-keyword.ts`,
+`statements/tdz.ts` and `eval-source.ts` contain **no legacy-only function lines
+at all** — they cannot contribute one line to R10's deletion, and they are in its
+scope solely because they live under `expressions/` or `statements/`. For those
+four, membership is *provably* wrong rather than arguably wrong; they need no
+ratio judgement and no taxonomy debate. **The twelve therefore split into "R10's
+owner decides" (8) and "just wrong" (4, 529 shared lines).**
+
+**Incidental finding worth keeping:** the `stays` bucket is **19 prefix / 602
+default**. The largest bucket is overwhelmingly "no rule matched", which makes it
+the *least*-asserted and least-examined of the four — the opposite of what its
+name suggests to a casual reader, and a place a mis-bucketed file would be
+equally invisible.
+
+**Note on this file's own status.** #5513 deliberately did not carry this issue
+file, because it lives on `claude/docs-r9-standalone-corpus` and copying it would
+collide when both land. That was the right call by the lane. `status: done` is
+set here rather than `in-review` per the lifecycle rule — the implementing PR is
+released and green-path, and `in-review` is what orphans issues in this repo. If
+#5513 fails to land, this status is wrong and should be reverted rather than
+left.
