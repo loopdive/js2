@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrSourceId, IrTerminalUnitRecord, IrUnitId } from "../ir/identity.js";
-import type { IrObservedOutcome } from "../ir/outcomes.js";
+import { hasMalformedBodyEmissionAccounting, type IrObservedOutcome } from "../ir/outcomes.js";
 import {
   takePendingPreparedProgramComponentReceipt,
   type PendingPreparedProgramComponentReceipt,
@@ -9,6 +9,7 @@ import {
 } from "../ir/prepared-component-publication.js";
 import type { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import type { IrDirectFunctionBodyReceiptAudit } from "./legacy-body-audit.js";
 import type { PreparedComponentPendingScope } from "./multi-source-ir-integration.js";
 
 type SourceFile = ts.SourceFile;
@@ -105,6 +106,21 @@ function sameSet<T>(actual: ReadonlySet<T>, expected: ReadonlySet<T>): boolean {
 
 function publicationError(detail: string): Error {
   return new Error(`multi-prepared callable publication: ${detail}`);
+}
+
+/**
+ * (#5299) The body-emission evidence a published prepared row carries.
+ *
+ * The counters are optional in exactly one situation, spelled out on
+ * `#bodyEmissionAccounting`: the direct-body receipt ledger was never
+ * allocated, so there is nothing to reconcile the IR patch count against.
+ */
+interface PreparedRowBodyEmissionAccounting {
+  readonly legacyBodyEmitted: boolean;
+  readonly irBodyEmitted: boolean;
+  readonly prepareAttempts?: number;
+  readonly directBodyEmissions?: number;
+  readonly irBodyEmissions?: number;
 }
 
 function serializeOutcome(outcome: IrObservedOutcome): string {
@@ -306,49 +322,6 @@ export class MultiPreparedCallablePublication<BodyPlan extends object> {
     this.#assertPreflightCurrent();
     this.#assertContextPrefixes();
 
-    const existingUnitIds = new Set(
-      this.#outcomePrefix.flatMap((outcome) => (outcome.unitId === undefined ? [] : [outcome.unitId])),
-    );
-    const existingKeys = new Set(this.#outcomePrefix.map(({ key }) => key));
-    if (publicationMutation() === "existing-outcome") {
-      existingUnitIds.add(this.#components[0]!.units[0]!.unitId);
-    }
-    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
-    const finalOutcomes =
-      this.#outcomePrefixObject === undefined
-        ? undefined
-        : [
-            ...this.#outcomePrefix,
-            ...this.#components.flatMap((component) =>
-              component.units.map((unit): IrObservedOutcome => {
-                const terminal = this.#terminalByUnitId.get(unit.unitId)!;
-                if (existingUnitIds.has(unit.unitId) || existingKeys.has(terminal.legacyKey)) {
-                  throw publicationError(`terminal outcome prefix already owns ${unit.unitId}`);
-                }
-                existingUnitIds.add(unit.unitId);
-                existingKeys.add(terminal.legacyKey);
-                return Object.freeze({
-                  key: terminal.legacyKey,
-                  sourceId: terminal.sourceId,
-                  unitId: terminal.id,
-                  file: unit.sourceFile.fileName,
-                  unitKind: terminal.observedKind,
-                  displayName: terminal.displayName,
-                  ordinal: terminal.legacyOrdinal,
-                  line: terminal.line,
-                  column: terminal.column,
-                  backend: "wasmgc",
-                  target,
-                  legacyBodyEmitted: false,
-                  irBodyEmitted: true,
-                  preparedComponentId: component.preparedComponentId,
-                  kind: "emitted",
-                  stage: "patch",
-                });
-              }),
-            ),
-          ];
-
     const tokens: PreparedComponentPublicationToken[] = [];
     try {
       const staleScopeMutation = publicationMutation();
@@ -388,6 +361,15 @@ export class MultiPreparedCallablePublication<BodyPlan extends object> {
       }
       throw error;
     }
+
+    // (#5299) The rows are built only now, from the CLAIMED tokens. Before the
+    // claim this transaction holds no patch count to cite, which is exactly why
+    // the rows used to carry no
+    // `(prepareAttempts, directBodyEmissions, irBodyEmissions)` triple and
+    // dropped out of every R9 ratio. Nothing between here and the token loop
+    // writes, so a rejection still reaches the owner's `abort()` with every
+    // receipt claimed-but-unpublished, as a failing take already did.
+    const finalOutcomes = this.#buildFinalOutcomes(tokens);
 
     const skippedUnitIds = new Set<IrUnitId>();
     for (const unitIds of this.#skippedUnitIdsBySourceFile.values()) {
@@ -438,6 +420,123 @@ export class MultiPreparedCallablePublication<BodyPlan extends object> {
       }
     }
     this.#state = "aborted";
+  }
+
+  /** Build the terminal rows from the claimed tokens; no value here writes. */
+  #buildFinalOutcomes(tokens: readonly PreparedComponentPublicationToken[]): IrObservedOutcome[] | undefined {
+    if (this.#outcomePrefixObject === undefined) return undefined;
+    const existingUnitIds = new Set(
+      this.#outcomePrefix.flatMap((outcome) => (outcome.unitId === undefined ? [] : [outcome.unitId])),
+    );
+    const existingKeys = new Set(this.#outcomePrefix.map(({ key }) => key));
+    if (publicationMutation() === "existing-outcome") {
+      existingUnitIds.add(this.#components[0]!.units[0]!.unitId);
+    }
+    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+    // One claim per component, counted rather than assumed: the constructor
+    // already rejects a repeated component id, so anything but `1` here is a
+    // broken claim loop and `hasMalformedBodyEmissionAccounting` rejects it.
+    const claimsByComponentId = new Map<string, number>();
+    const patchCountsByComponentId = new Map<string, ReadonlyMap<IrUnitId, number>>();
+    for (const token of tokens) {
+      const claimed = claimsByComponentId.get(token.preparedComponentId) ?? 0;
+      claimsByComponentId.set(token.preparedComponentId, claimed + 1);
+      patchCountsByComponentId.set(token.preparedComponentId, token.irPatchCountByUnitId);
+    }
+    const directAudits = new Map<SourceFile, IrDirectFunctionBodyReceiptAudit>();
+    return [
+      ...this.#outcomePrefix,
+      ...this.#components.flatMap((component) =>
+        component.units.map((unit): IrObservedOutcome => {
+          const terminal = this.#terminalByUnitId.get(unit.unitId)!;
+          if (existingUnitIds.has(unit.unitId) || existingKeys.has(terminal.legacyKey)) {
+            throw publicationError(`terminal outcome prefix already owns ${unit.unitId}`);
+          }
+          existingUnitIds.add(unit.unitId);
+          existingKeys.add(terminal.legacyKey);
+          const outcome: IrObservedOutcome = Object.freeze({
+            key: terminal.legacyKey,
+            sourceId: terminal.sourceId,
+            unitId: terminal.id,
+            file: unit.sourceFile.fileName,
+            unitKind: terminal.observedKind,
+            displayName: terminal.displayName,
+            ordinal: terminal.legacyOrdinal,
+            line: terminal.line,
+            column: terminal.column,
+            backend: "wasmgc",
+            target,
+            ...this.#bodyEmissionAccounting(
+              unit,
+              claimsByComponentId.get(component.preparedComponentId) ?? 0,
+              patchCountsByComponentId.get(component.preparedComponentId)?.get(unit.unitId) ?? 0,
+              directAudits,
+            ),
+            preparedComponentId: component.preparedComponentId,
+            kind: "emitted",
+            stage: "patch",
+          });
+          if (hasMalformedBodyEmissionAccounting(outcome)) {
+            throw publicationError(`prepared terminal ${unit.unitId} has malformed body-emission accounting`);
+          }
+          return outcome;
+        }),
+      ),
+    ];
+  }
+
+  /**
+   * (#5299) Exact body evidence for one prepared terminal.
+   *
+   * `directBodyEmissions` comes from the physical direct-body receipt ledger —
+   * the same `countsByUnitId` index the R2 reconciler reads — and MUST be zero:
+   * this transaction publishes an IR body for a unit whose direct body it made
+   * every source skip, so a direct receipt means both emitters ran and the row
+   * would be claiming sole IR ownership of a body the direct compiler also
+   * wrote. That fails closed rather than publishing.
+   *
+   * When the ledger was never allocated (`trackIrOutcomes` without an
+   * `irCutoverRoute`, reachable only by calling `generateMultiModule`
+   * directly) the row keeps the pre-#5299 booleans and states no counters.
+   * `directBodyEmissions: 0` would be an unmeasured claim of exactly the kind
+   * this row set exists to stop making, and `hasMalformedBodyEmissionAccounting`
+   * deliberately treats a wholly absent triple as well-formed.
+   */
+  #bodyEmissionAccounting(
+    unit: MultiPreparedProgramCallableUnit,
+    prepareAttempts: number,
+    irBodyEmissions: number,
+    directAudits: Map<SourceFile, IrDirectFunctionBodyReceiptAudit>,
+  ): PreparedRowBodyEmissionAccounting {
+    const session = this.#ctx.irBodyRouteAuditSession;
+    if (!session) return { legacyBodyEmitted: false, irBodyEmitted: true };
+    let audit = directAudits.get(unit.sourceFile);
+    if (!audit) {
+      audit = session.directFunctionBodyReceiptAudit(unit.sourceFile);
+      directAudits.set(unit.sourceFile, audit);
+    }
+    const directBodyEmissions = audit.countsByUnitId.get(unit.unitId) ?? 0;
+    // Derive first, then reject: the booleans stay the counters' projection
+    // (as in `reconcileR2FunctionBodyEmissionAccounting`) instead of literals
+    // that a later guard happens to agree with.
+    const accounting: PreparedRowBodyEmissionAccounting = {
+      legacyBodyEmitted: directBodyEmissions === 1,
+      irBodyEmitted: irBodyEmissions === 1,
+      prepareAttempts,
+      directBodyEmissions,
+      irBodyEmissions,
+    };
+    if (accounting.legacyBodyEmitted || directBodyEmissions !== 0) {
+      throw publicationError(
+        `prepared terminal ${unit.unitId} recorded ${directBodyEmissions} direct body receipts after an exact skip`,
+      );
+    }
+    if (!accounting.irBodyEmitted) {
+      throw publicationError(
+        `prepared terminal ${unit.unitId} claims emission with ${irBodyEmissions} exact IR body patches`,
+      );
+    }
+    return accounting;
   }
 
   #assertContextPrefixes(): void {

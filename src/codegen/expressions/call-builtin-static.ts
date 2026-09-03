@@ -75,7 +75,8 @@ import {
   TYPED_ARRAY_NAMES,
   typedArrayVecStorage,
 } from "../index.js";
-import { ensureNativeArrayFromMapped, ensureNativeIteratorRuntime } from "../iterator-native.js";
+import { ensureNativeIteratorRuntime } from "../iterator-native.js";
+import { ensureNativeArrayFrom, ensureNativeArrayOf } from "../array-from-native.js";
 import { ensureUint8FromBase64, ensureUint8FromHex } from "../uint8-codec.js";
 import {
   compileArrayConstructorCall,
@@ -362,6 +363,71 @@ export function compileBuiltinStaticCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
+  // (#5268 r3 R3-1) `Array.from.call(C, items[, mapFn[, thisArg]])` and
+  // `Array.of.call(C, …items)` — the shape twelve of this cluster's seventeen
+  // rows use. §23.1.2.1 step 1 / §23.1.2.3 step 3 read the `this` value as the
+  // CONSTRUCTOR to build the result with, and it is only reachable
+  // syntactically: the reified `Array.from` VALUE closure is invoked through
+  // `__extern_method_call`, which leaves `__current_this` null (measured — a
+  // closure body that simply returns the global answers `undefined` for
+  // `Array.from.call(C, x)`), so a body-side read would silently ignore `C`
+  // and hand back an ordinary array. The value form therefore keeps its
+  // existing refusal and this arm handles the spelled-out `.call`.
+  if (
+    noJsHost(ctx) &&
+    propAccess.name.text === "call" &&
+    ts.isPropertyAccessExpression(propAccess.expression) &&
+    ts.isIdentifier(propAccess.expression.expression) &&
+    propAccess.expression.expression.text === "Array" &&
+    (propAccess.expression.name.text === "from" || propAccess.expression.name.text === "of") &&
+    isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression.expression) &&
+    !expr.arguments.some((a) => ts.isSpreadElement(a))
+  ) {
+    const which = propAccess.expression.name.text;
+    const nativeIdx = which === "from" ? ensureNativeArrayFrom(ctx) : ensureNativeArrayOf(ctx);
+    if (nativeIdx !== undefined) {
+      const pushArg = (index: number, asClosure = false): void => {
+        const argument = expr.arguments[index];
+        if (argument === undefined) {
+          fctx.body.push({ op: "ref.null.extern" });
+          return;
+        }
+        if (asClosure && (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))) {
+          const closureType = compileArrowAsClosure(ctx, fctx, argument);
+          if (closureType && closureType.kind !== "externref")
+            coerceType(ctx, fctx, closureType, { kind: "externref" });
+          else if (closureType === null) fctx.body.push({ op: "ref.null.extern" });
+          return;
+        }
+        const argType = compileExpression(ctx, fctx, argument, { kind: "externref" });
+        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+        else if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+      };
+      pushArg(0); // the `this` value — the constructor, or null/undefined
+      if (which === "from") {
+        pushArg(1);
+        pushArg(2, true);
+        pushArg(3);
+        fctx.body.push({ op: "i32.const", value: expr.arguments.length >= 3 ? 1 : 0 });
+      } else {
+        const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+        const ofArgs = allocLocal(fctx, `__arrof_call_args_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: ofArgs });
+        for (let i = 1; i < expr.arguments.length; i++) {
+          fctx.body.push({ op: "local.get", index: ofArgs });
+          pushArg(i);
+          fctx.body.push({ op: "call", funcIdx: pushIdx });
+        }
+        fctx.body.push({ op: "local.get", index: ofArgs });
+      }
+      flushLateImportShifts(ctx, fctx);
+      const resolved = ctx.funcMap.get(which === "from" ? "__array_from_native" : "__array_of_native");
+      if (resolved !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: resolved });
+        return { kind: "externref" };
+      }
+    }
+  }
   // #4385 — ES5 §15.3.4: `%Function.prototype%` is itself callable, ignores
   // its arguments, and returns undefined. The generic `Namespace.member()`
   // path otherwise asks `__get_builtin` for a dynamic property and hard-refuses
@@ -1407,88 +1473,43 @@ export function compileBuiltinStaticCall(
         return { kind: "ref", typeIdx: vecTypeIdx };
       }
     }
-    // (#2169c) Native standalone drain: `Array.from(iterable)` with no mapFn,
-    // host-free. The native `__iterator` runtime (registered here) wraps the
-    // arg into an `$IterRec`; `__iterator_rest` drains it into a canonical
-    // externref `$Vec` — exactly the value the host `__array_from` returns, but
-    // with zero host imports. mapFn is NOT handled natively yet (it needs
-    // closure dispatch) — those fall through to the host path below.
-    if (noJsHost(ctx) && expr.arguments.length < 2) {
-      ensureNativeIteratorRuntime(ctx);
-      const argType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-      flushLateImportShifts(ctx, fctx);
-      const iterIdx = ctx.funcMap.get("__iterator");
-      const restIdx = ctx.funcMap.get("__iterator_rest");
-      if (iterIdx !== undefined && restIdx !== undefined) {
-        // rec = __iterator(arg) ; return __iterator_rest(rec)
-        fctx.body.push({ op: "call", funcIdx: iterIdx });
-        fctx.body.push({ op: "call", funcIdx: restIdx });
-        return { kind: "externref" };
-      }
-      // Native runtime unavailable — fall through to the host path with the
-      // arg already on the stack (push the null mapFn it expects).
-      fctx.body.push({ op: "ref.null.extern" });
-      const fromNativeFallbackIdx = ensureLateImport(
-        ctx,
-        "__array_from",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (fromNativeFallbackIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromNativeFallbackIdx });
-        return { kind: "externref" };
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
-    }
-
-    // (#3206) Native standalone `Array.from(source, mapFn[, thisArg])` —
-    // host-free. The 2-arg (mapper) arm otherwise fell to the host fallback
-    // below, which compiles the mapFn to externref via the `__make_callback`
-    // host bridge AND calls the host `__array_from` import — both
-    // unsatisfiable standalone, so the module failed to instantiate. Compose
-    // the native drain + native map HOF: `__array_from_mapped(source, mapFn,
-    // thisArg)` = `__hof_map(__array_from_iter_n(source, -1), mapFn,
-    // thisArg)`. The mapFn crosses as a raw GC CLOSURE (compileArrowAsClosure
-    // for an inline arrow/function; an identifier-held closure already crosses
-    // as a plain closure externref) invoked via `__apply_closure` — the exact
-    // #3098 native-HOF gate rep, NOT the host callback bridge. Standalone-only
-    // (the deps are standalone-gated); gc/wasi keep the host routing.
+    // (#5268 r3 R3-1) Native standalone `Array.from(items[, mapFn[, thisArg]])`
+    // — the real §23.1.2.1 algorithm (`array-from-native.ts`). It REPLACES two
+    // partial lowerings that stood here: the (#2169c) 1-arg drain (iterables
+    // only — an array-LIKE source threw "value is not iterable") and the
+    // (#3206) `__array_from_mapped` composition (drain-then-map, so the mapper
+    // saw three args, no IteratorClose, and an iterator that only ends because
+    // the mapper throws exhausted memory first). Every typed fast path ABOVE
+    // this point (native string, native generator, Set, Map, typed-vec
+    // `array.copy`) returns before it and is untouched.
     //
-    // Excludes Set/Map/WeakSet/WeakMap sources (`isNonArrayBuiltinCollection`,
-    // computed above): those are native collection structs, NOT `$Vec` /
-    // `$ObjVec` / `$Object {length}` / user-iterable closed structs, so
-    // `__array_from_iter_n` passes them through unchanged and `__hof_map`
-    // would read a wrong `__extern_length` → silent-wrong. On main they hit
-    // the host fallback (leak → INST-FAIL under standalone), so keeping them
-    // there is no regression; the 1-arg Set/Map arms above are their native
-    // path and the mapFn variant is a follow-up.
-    if (
-      ctx.standalone &&
-      expr.arguments.length >= 2 &&
-      !isNonArrayBuiltinCollection &&
-      ensureNativeArrayFromMapped(ctx) !== undefined
-    ) {
-      // source → externref
+    // Set/Map/WeakSet/WeakMap sources with a mapFn keep the host routing
+    // (`isNonArrayBuiltinCollection`): they are native collection structs, not
+    // `$Vec`/`$ObjVec`/`$Object {length}` carriers, so neither the `@@iterator`
+    // property test nor the array-like walk reads them correctly, and the
+    // 1-arg forms of both have their own native arms above.
+    if (noJsHost(ctx) && !isNonArrayBuiltinCollection && ensureNativeArrayFrom(ctx) !== undefined) {
+      // `this` (§23.1.2.1 step 1) is `undefined` for a direct call — the
+      // default lane; the `.call`/value form supplies a real receiver.
+      fctx.body.push({ op: "ref.null.extern" });
       const srcType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (srcType && srcType.kind !== "externref") coerceType(ctx, fctx, srcType, { kind: "externref" });
       else if (srcType === null) fctx.body.push({ op: "ref.null.extern" });
-      // mapFn → raw GC closure externref (mirrors calls.ts:~13699, #3098)
-      const mapArg = expr.arguments[1]!;
-      if (ts.isArrowFunction(mapArg) || ts.isFunctionExpression(mapArg)) {
-        const mt = compileArrowAsClosure(ctx, fctx, mapArg);
-        if (mt && mt.kind !== "externref") coerceType(ctx, fctx, mt, { kind: "externref" });
-        else if (mt === null) fctx.body.push({ op: "ref.null.extern" });
+      if (expr.arguments.length >= 2) {
+        // mapFn → raw GC closure externref (the #3098 native-HOF gate rep).
+        const mapArg = expr.arguments[1]!;
+        if (ts.isArrowFunction(mapArg) || ts.isFunctionExpression(mapArg)) {
+          const mt = compileArrowAsClosure(ctx, fctx, mapArg);
+          if (mt && mt.kind !== "externref") coerceType(ctx, fctx, mt, { kind: "externref" });
+          else if (mt === null) fctx.body.push({ op: "ref.null.extern" });
+        } else {
+          const mt = compileExpression(ctx, fctx, mapArg, { kind: "externref" });
+          if (mt && mt.kind !== "externref") coerceType(ctx, fctx, mt, { kind: "externref" });
+          else if (mt === null) fctx.body.push({ op: "ref.null.extern" });
+        }
       } else {
-        const mt = compileExpression(ctx, fctx, mapArg, { kind: "externref" });
-        if (mt && mt.kind !== "externref") coerceType(ctx, fctx, mt, { kind: "externref" });
-        else if (mt === null) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "ref.null.extern" });
       }
-      // thisArg → externref | null (§23.1.2.1: optional 3rd arg is mapFn's this)
       if (expr.arguments.length >= 3) {
         const tt = compileExpression(ctx, fctx, expr.arguments[2]!, { kind: "externref" });
         if (tt && tt.kind !== "externref") coerceType(ctx, fctx, tt, { kind: "externref" });
@@ -1496,15 +1517,20 @@ export function compileBuiltinStaticCall(
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
+      // §23.1.2.1 step 2 keys on whether a mapfn ARGUMENT was supplied, which
+      // an externref null cannot say (`Array.from(x, null)` must TypeError).
+      fctx.body.push({ op: "i32.const", value: expr.arguments.length >= 2 ? 1 : 0 });
       flushLateImportShifts(ctx, fctx);
-      const mappedIdx = ctx.funcMap.get("__array_from_mapped");
-      if (mappedIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: mappedIdx });
+      const fromNativeIdx = ctx.funcMap.get("__array_from_native");
+      if (fromNativeIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: fromNativeIdx });
         return { kind: "externref" };
       }
-      // Helper vanished (should not happen) — the source + mapFn + thisArg are
-      // already on the stack; drop them and hand back an empty result so the
-      // module stays valid rather than falling through with a corrupt stack.
+      // Helper vanished (should not happen) — the four operands are on the
+      // stack; drop them and hand back an empty result rather than falling
+      // through with a corrupt stack.
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "drop" });

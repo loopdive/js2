@@ -308,6 +308,7 @@ import {
   fillAnyIterNext,
   fillIterResultObject,
   fillNativeIteratorLateArms,
+  fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
@@ -6063,6 +6064,11 @@ export function generateModule(
     // No-op unless a lazy wrapper was constructed.
     fillLazyIterLadderArms(ctx);
 
+    // (#5268 r3) Prepend the static closed-struct / generator-frame arms to
+    // the `HasIteratorMethod` predicate `Array.from` branches on. After the
+    // ladder fills (its type set is the same one).
+    fillIteratorMethodPresent(ctx);
+
     // (#5147) Fill `__any_iter_next` — source-level `.next()` on a native
     // iterator carrier. MUST run after both fills above: it delegates to the
     // fully-armed `__iterator_next`.
@@ -9411,13 +9417,52 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         }
       }
 
+      // (#5268 r3 R3-5c) OrdinaryToPrimitive step 5.b.i is `IsCallable(method)`:
+      // a `valueOf: null` / `toString: null` FIELD is not a method, it is an
+      // absent one. The two closure modes below read that field and
+      // `ref.cast` it to the closure struct type unguarded, so a non-closure
+      // slot TRAPPED ("illegal cast in __call_valueOf") instead of falling
+      // through to the next candidate. Re-read the field and `ref.test` it
+      // first; a miss takes the same `else` an absent entry takes. (The
+      // `closure-eqref-multi` mode already guards, and `standalone` /
+      // `callable-dynamic` cannot hold a non-callable in that slot.)
+      const callableFieldGuard: Instr[] | undefined =
+        entry.mode === "closure-extern"
+          ? [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: entry.closureTypeIdx },
+            ]
+          : entry.mode === "closure"
+            ? [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: entry.typeIdx },
+                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+                { op: "ref.test", typeIdx: entry.closureTypeIdx },
+              ]
+            : undefined;
+      const guardedThen: Instr[] =
+        callableFieldGuard === undefined
+          ? thenInstrs
+          : [
+              ...callableFieldGuard,
+              {
+                op: "if",
+                blockType: { kind: "val" as const, type: { kind: "externref" as const } },
+                then: thenInstrs,
+                else: buildDispatch(idx + 1),
+              },
+            ];
+
       return [
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
         {
           op: "if",
           blockType: { kind: "val" as const, type: { kind: "externref" as const } },
-          then: thenInstrs,
+          then: guardedThen,
           else: buildDispatch(idx + 1),
         },
       ];
@@ -11164,6 +11209,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));

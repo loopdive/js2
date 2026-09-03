@@ -78,6 +78,21 @@ export interface PreparedComponentPublicationToken<Entry = unknown> {
   readonly preparedComponentId: string;
   readonly terminalUnitIds: readonly IrUnitId[];
   readonly pendingScope: PreparedComponentPendingScope;
+  /**
+   * (#5299) Exact own-body patch count per terminal, snapshotted at claim time
+   * so an owner can state `irBodyEmissions` from the bodies this token is
+   * about to publish rather than from a name or selector projection.
+   *
+   * Only patches whose artifact IS the terminal (`artifactUnitId ===
+   * terminalOwnerUnitId`) count — the same restriction `buildIrIntegrationReport`
+   * uses to mint `kind: "patched"` terminal evidence, so a lifted helper
+   * artifact belonging to the terminal never inflates its body count past one.
+   *
+   * The snapshot is taken here, not exposed as a live view, because
+   * `publishBodies()` empties the queue: a count read afterwards would be zero
+   * for every unit whose body was in fact published.
+   */
+  readonly irPatchCountByUnitId: ReadonlyMap<IrUnitId, number>;
   readonly publishBodies: () => void;
 }
 
@@ -297,11 +312,18 @@ export function takePendingPreparedProgramComponentReceipt<Entry>(
       throw error;
     }
   }
+  const irPatchCountByUnitId = new Map<IrUnitId, number>();
+  for (const patch of state.publicationPatches) {
+    if (patch.artifactUnitId !== patch.terminalOwnerUnitId) continue;
+    const owner = patch.terminalOwnerUnitId;
+    irPatchCountByUnitId.set(owner, (irPatchCountByUnitId.get(owner) ?? 0) + 1);
+  }
   state.state = "claimed";
   return Object.freeze({
     preparedComponentId: state.draft.preparedComponentId,
     terminalUnitIds: state.draft.terminalUnitIds,
     pendingScope,
+    irPatchCountByUnitId,
     publishBodies: () => {
       // This function is intentionally only the detached body assignment
       // phase.  Every identity/type/currentness check belongs before the
