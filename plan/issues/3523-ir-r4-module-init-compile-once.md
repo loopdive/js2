@@ -4833,3 +4833,38 @@ one that fires.
 `externref` on the **standalone** lane too. A host-free lane carrying an
 externref module global is at least surprising given the dual-mode principle,
 and is worth a look by whoever owns the standalone ABI.
+
+### Verified on post-#5511 main: the storage ranking over-counts, confirmed on a real file
+
+R4-M1 has merged, so the claim this file's retraction rests on — that
+`escapes-unicode.js` did **not** move — is now checkable against the compiler
+rather than inferred from the lane's list of moved rows. Probe:
+`.tmp/verify-escapes.mts`, both lanes.
+
+| file | `<module-init>` outcome, main after #5511 |
+| --- | --- |
+| `escapes-unicode.js` | `unsupported` / **`body-shape-rejected`** |
+| `templates.js` | `unsupported` / `template-substitution-unsupported` |
+
+Neither reaches `emitted`, so the string slice unlocked zero files — as R4-M1
+measured, and opposite to what the dispatch brief predicted. That part is now
+confirmed twice, by two instruments.
+
+**The reason codes say something the earlier evidence did not.** Neither file
+reports a *storage* code any more. `templates.js` moving to a shape gap was
+expected. **`escapes-unicode.js` reports `body-shape-rejected`** — so it is not
+sitting on the `object` blocker the corrected census attributes to it. A shape
+rejection fires **before** the storage arm is consulted at all.
+
+This is the trap flagged in the carrier-check section above, now confirmed on a
+corpus file rather than a synthetic one, and it cuts the same way as the
+original retraction: **the census ranks files by a storage category that, for
+some of them, never gets a chance to fire.** "`object` unlocks 3 files" is an
+upper bound with at least one member already excluded.
+
+**It does not change the slice ordering** — `any` is still ABI-blocked,
+`object`/`function` still have clean carriers. It hardens the precondition on
+both: **#5285 must land before either is briefed, and its survey must report the
+arm that ACTUALLY fires**, not merely every storage refusal it can find. A lane
+briefed on today's numbers would ship a correct slice and move fewer files than
+promised — and would look like it had underperformed.

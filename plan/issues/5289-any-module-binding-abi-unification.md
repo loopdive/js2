@@ -96,11 +96,9 @@ hard `IrInvariantError` rather than a demote.
 **Answer the ABI question before writing any resolver code.** The first
 deliverable is a measurement, not a patch:
 
-1. **Establish what each lane actually allocates today** for an `any` module
-   global that is read from a function — compile it and read the
-   `(global $__mod_… )` line out of the emitted WAT on both lanes, exactly as
-   R4-M1 did for strings. Do not infer this from `#4208`'s comment; that comment
-   is the hypothesis, not the measurement, and it predates R4-M1.
+1. ~~**Establish what each lane actually allocates today**~~ — **DONE, see the
+   measurement section below.** Read it before anything else; it changes what
+   step 2 is choosing between, and it contains a trap worth not repeating.
 2. **Decide which of three shapes applies**, and say which in the issue before
    implementing:
    - *deferrable* — the carriers differ only in spelling and an
@@ -135,3 +133,143 @@ Two things this issue exists to prevent, both nearly happened on 2026-09-03:
   distinguishes them, and `ambient/import` is the proof: it clears two files'
   storage and unlocks zero, because both also refuse on `vardecl-modifier`.
   Any future R4 ranking must carry that second column.
+
+
+## 2026-09-03 — step 1 measured, and the blocker is REAL
+
+Run before dispatch so the lane does not repeat it. `let g: any = 1` read from
+an exported function; the `(global $__mod_g …)` line out of the emitted WAT.
+Probe: `.tmp/any-fast-probe.mts`.
+
+| target | mode | carrier |
+| --- | --- | --- |
+| `gc` | compatibility | `(mut externref)` |
+| `gc` | **fast** | `(mut (ref null 34))` |
+| `standalone` | compatibility | `(mut externref)` |
+| `standalone` | **fast** | `(mut (ref null 45))` |
+
+**The split is on the fast/compatibility axis, exactly as `#4208`'s comment
+says — not on target.** Both targets agree with each other in each mode. So the
+comment is current, not stale, and the blocker this issue describes is real.
+
+### The trap, recorded because I walked into it
+
+My first probe compiled `target: "gc"` and `target: "standalone"` with default
+options, saw `(mut externref)` twice, and pointed at the conclusion *"the two
+lanes agree, the ABI blocker is stale"* — which would have unblocked R4's
+largest slice on a false premise. It was wrong because **`fast` is a separate
+flag from `target`**: `integration.ts:2301` sets
+`numberStorage: ctx.fast ? "i32" : "f64"`, and `#4208`'s "fast mode" means that
+flag, not a target. Default options are the *compatibility* side of both
+targets — two cells of the four, both from the same side of the split being
+measured.
+
+**So the step-1 instruction as originally written was itself the trap** ("read
+what each lane allocates … on both lanes"). It is four cells, not two:
+`{gc, standalone} × {compatibility, fast}`. Any future measurement of a carrier
+question in this area must name which axis it varied, because "both lanes" is
+ambiguous between the two and the ambiguity resolves toward the wrong answer.
+
+### What this settles for step 2
+
+**Not `deferrable`.** The R4-M1 shape needs two spellings of one fact that a
+resolver can choose between by naming the active one. These are not that:
+`externref` is opaque and host-shaped, the fast carrier is a typed struct ref,
+and a resolver serving both cannot name "the active carrier" without the
+storage-agreement check losing its meaning — which is criterion 3.
+
+The live question is therefore **`unifiable` vs `irreducible`**, and that is the
+issue's real work. Two sub-questions a lane should answer first, in this order:
+
+1. **What is the fast carrier?** The type indices differ per target (34 vs 45),
+   which is ordinary per-module numbering, but whether both resolve to the same
+   *named* type (`$AnyValue`) is unverified — read the type section, do not
+   assume from the index.
+2. **Can compatibility adopt it, or fast adopt `externref`?** Either direction
+   is a Program-ABI change needing its own byte-neutrality argument, and the
+   answer decides whether this is a slice or a design record.
+
+
+## Sub-question 1 attempted and NOT answered — plus the instrument that lied twice
+
+I tried to settle "is the fast carrier `$AnyValue` on both targets" and **could
+not**. Recording the failure because the instrument's failure mode is the point.
+
+The probe walked `(type …)` forms in the emitted WAT with a regex and indexed
+them positionally. For `standalone` it reported the global's carrier as
+`(func (param externref) (result i64))` — **a function type, which cannot be a
+global's carrier.** Positional counting does not map to wasm type indices;
+`rec` groups shift the numbering. The result was not an error, it was a
+confident wrong type.
+
+What survives from that run, because it needs no indexing:
+
+- `$AnyValue` is **named somewhere** in both fast-mode modules.
+- That is NOT evidence the module global's carrier *is* `$AnyValue`.
+
+So sub-question 1 stands open, and this issue's own instruction — *"read the
+type section, do not assume from the index"* — is exactly what the probe
+violated. Answering it needs rec-group-aware parsing or a real wasm type-index
+read, not a regex.
+
+### The pattern, since it happened twice within the hour
+
+| # | instrument | plausible wrong answer it gave | what caught it |
+| --- | --- | --- | --- |
+| 1 | vary `target`, default options | "both lanes agree at `externref`, blocker is stale" | checking what `fast` actually means (`ctx.fast`, not target) |
+| 2 | positional `(type …)` walk | a `func` type as a global's carrier | a func type in a global slot is impossible on its face |
+
+Both returned **real values from the wrong space** rather than failing. Neither
+announced a problem. The first would have unblocked R4's largest slice on a
+false premise; the second would have put a fabricated type name into this
+issue's decisive question.
+
+**The rule this yields, for anyone measuring carriers here:** a measurement of
+this kind needs a *falsifiable sanity check built into the probe* — something
+the wrong answer cannot satisfy. "Is the result even the right KIND of thing"
+would have caught #2 automatically (a global's carrier is never a `func`), and
+"which axis did I vary, and is it the axis the claim is about" would have
+caught #1. Neither costs anything; both were skipped because the output looked
+like data.
+
+
+## Sub-question 1 ANSWERED — from the source, not a probe
+
+`src/codegen/index.ts`, inside `resolveWasmType`:
+
+```ts
+// any/unknown -> ref_null $AnyValue (boxed any) when available.
+if (ctx.fast && tsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
+  ensureAnyValueType(ctx);
+```
+
+- **The fast carrier for `any` IS `$AnyValue`, on both targets.**
+  `ensureAnyValueType(ctx)` is one per-module allocator, so the differing WAT
+  indices (34 gc / 45 standalone) are per-module numbering, nothing more.
+- **The branch is gated on `ctx.fast` alone — no target term.** That confirms
+  the four-cell measurement from an unrelated direction: same axis, same
+  conclusion, two methods that share no machinery.
+- Compatibility falls through to `externref`.
+
+**Why this reading is trustworthy where the probe was not**, which is the part
+worth carrying forward: it is a *single conditional naming both the flag and
+the type*, not a value recovered through an index space I had to reconstruct.
+The failure mode that produced two wrong answers earlier — a real value from
+the wrong space — has no room to occur in a direct read of the deciding
+branch. **Prefer the deciding line of source over an artifact of the output
+whenever the question is "what does the compiler decide".** The artifact is
+downstream of exactly the reconstruction that can go wrong.
+
+### What it narrows for step 2
+
+The two carriers are `(ref null $AnyValue)` versus `externref` — they differ by
+**the presence of a tagged box, not by spelling**. That is `unifiable`-shaped,
+not `irreducible`: compatibility adopting `$AnyValue` is a real option, since
+the type already exists and `src/codegen/any-helpers.ts` carries the full
+box/unbox surface (`ensureAnyValueType` has 6+ call sites there).
+
+**Still the lane's decision, and still not free.** Either direction is a
+Program-ABI change and owes its own byte-neutrality argument under criterion 2.
+But the space is now one plausible direction plus its cost, rather than three
+open options — and `irreducible` should not be adopted without arguing against
+this specific finding.
