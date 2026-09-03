@@ -1,12 +1,11 @@
 {
   "id": "4404",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/quickjs-bytecode-aot-tiering",
-  "reserved_at": "2026-08-13T23:15:36Z",
   "claimed_at": "2026-08-13T23:15:36Z",
-  "updated_at": "2026-08-13T23:15:36Z",
-  "write_id": "96559-v18fzpha",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:48:00Z",
+  "write_id": "14878-1nakvrcz",
+  "released_at": "2026-09-03T09:48:00Z"
 }
