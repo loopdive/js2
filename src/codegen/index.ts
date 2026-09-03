@@ -7603,7 +7603,16 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
 
     if (entries.length === 0) return;
 
-    const funcIdx = ctx.numImportFuncs + mod.functions.length;
+    // The index is taken AFTER the body is built, immediately before the push.
+    // The vararg arm's body construction calls `ensureVecNewSized` /
+    // `ensureVecElemSet`, and those MINT AND APPEND functions of their own — so
+    // an index computed up here is already stale by the time this bridge is
+    // pushed, and `mod.exports` then published the first helper minted instead
+    // of the bridge. The exported `__class_call_<m>_vararg` therefore had that
+    // helper's `(f64) -> …` signature: the host bridge's
+    // `callFn(receiver, argsArray)` coerced the receiver toward a number and
+    // threw `Cannot convert object to primitive value` at the JS→Wasm boundary,
+    // with no Wasm frame below it. That is marked's whole 0/30.
     const bridgeTypeIdx =
       classMember && classArity === -1
         ? addFuncType(
@@ -7906,6 +7915,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             { name: "__i", type: { kind: "i32" } as const },
           ]
         : [{ name: "__any", type: { kind: "anyref" } as const }];
+    const funcIdx = ctx.numImportFuncs + mod.functions.length;
     mod.functions.push({
       name: exportName,
       typeIdx: bridgeTypeIdx,
