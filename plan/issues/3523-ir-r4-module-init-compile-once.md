@@ -121,6 +121,31 @@ loc-budget-allow:
   # 3 dogfood rows moving off the storage blocker.
   - src/ir/module-bindings.ts
   - src/ir/integration.ts
+  # 2026-09-03 (#5285, module-init refusal SURVEY — the census instrument, not a
+  # storage widening): +106 in `src/ir/integration.ts`, +44 in
+  # `src/ir/module-bindings.ts`, +10 each in `src/codegen/context/types.ts` and
+  # `src/codegen/index.ts`, +3 in `src/index.ts`. Every line is additive and
+  # inert: the survey runs only under the existing `JS2WASM_IR_SHAPE_DIAG=1`
+  # gate, read at its call site, and 66/66 playground + dogfood compiles across
+  # both lanes are byte-identical to the base tree with the flag off.
+  # Why these files and not a subsystem module: `surveyModuleBindingRefusals`
+  # exists to be read SIDE BY SIDE with `buildModuleBindingsMap` — the reviewer's
+  # question is "do these two ask `inspectDirectBinding` the same question, and
+  # does only one of them stop?", which is unanswerable if they live in different
+  # files (#5285 Implementation Plan, step 1). Roughly half of the
+  # `integration.ts` diff is the comment recording WHY the production loop stays
+  # fail-fast and why the call site is not where the plan first put it. The
+  # `module-bindings.ts` half is the refusal-arm label on the five existing
+  # `unsupported` returns plus the record type, which must sit with the arms it
+  # names. `context/types.ts` + `codegen/index.ts` carry the diagnostic from
+  # integration to the `<module-init>` outcome row (the `irR2Withdrawals*`
+  # precedent), and `src/index.ts` re-exports the two public record types the
+  # census and a future `check:ir-only` assertion read.
+  - src/ir/integration.ts
+  - src/ir/module-bindings.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  - src/index.ts
 func-budget-allow:
   # 2026-09-01 (gap 1b): the same +11 comment lines land inside
   # `compileDeclarations`, which is where the pass-2 gate lives; the gate cannot
@@ -131,6 +156,11 @@ func-budget-allow:
   - src/codegen/declarations.ts::compileDeclarations
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerMethodCall
+  # 2026-09-03 (#5285): +24 lines in `compileIrPathFunctions` — the gated survey
+  # call plus the comment stating why it is NOT at the `buildModuleBindingsMap`
+  # call site (that site is inside `if (moduleInitClaim && …)`, which every file
+  # the census measures never reaches). The resolver and the module-init
+  # population are both in scope only inside this function.
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
   - src/ir/lower.ts::emitInstrTree
@@ -4500,3 +4530,149 @@ storage decisions and were not touched: `any` (4 declarations on the dogfood
 census), arrow functions (2), a class instance (1), `any[]` (1), bigint (1).
 Reaching an `emitted` module-init on a dogfood file needs whichever of those a
 given file also carries, plus the shape gaps now surfaced above.
+
+---
+
+## 2026-09-03 checkpoint — the TRUE module-init storage census (#5285 survey, Opus lane)
+
+**This supersedes every earlier per-file "category" table in this issue,
+including the R4-M1 landing record's "Still out of scope" list.** Those numbers
+were read off a fail-fast path. `buildModuleBindingsMap`
+(`src/ir/integration.ts`) throws on the FIRST top-level declaration with no
+supported storage, and the `JS2WASM_IR_SHAPE_DIAG` reject-arm recorder in
+`src/ir/select.ts` is first-wins by construction — so both report exactly one
+blocker per file whatever the file contains. #5285 adds
+`surveyModuleBindingRefusals`, an inert twin of that loop that records and
+continues; the tables below are its output.
+
+**Method.** `tests/dogfood/corpus/*.js` (20 files), `trackIrOutcomes: true`,
+`JS2WASM_IR_SHAPE_DIAG=1`, both lanes, on this branch's tree at
+`e567b755` + the survey. The refusal list rides on the `<module-init>`
+`IrObservedOutcome`, so this is one corpus run, not a log scrape. "Category" is
+derived from the refusal's `arm` + `declaredType`: `no-value-kind` splits by
+declared type (`any`, `function`, `array`, `object`, `bigint`, `null`,
+`undefined`, a named class), `ambient-declaration` and `destructuring-pattern`
+are their own categories.
+
+### Per-file multiset — single-host (`target: "gc"`)
+
+| file | module-init outcome | decls refused | distinct categories | multiset |
+| --- | --- | --- | --- | --- |
+| arrow-params.js | body-shape-rejected | 8 | 1 | function×8 |
+| classes.js | static-class-initialization | 0 | 0 | — |
+| control-flow.js | body-shape-rejected | 0 | 0 | — |
+| destructuring.js | body-shape-rejected | 3 | 1 | destructuring×3 |
+| escapes-unicode.js | body-shape-rejected | 2 | **2** | any×1, object×1 |
+| for-await.module.js | non-executable | 0 | 0 | — |
+| generators-async.js | body-shape-rejected | 1 | 1 | function×1 |
+| import-attributes.module.js | body-shape-rejected | 1 | 1 | ambient/import×1 |
+| imports-exports.module.js | body-shape-rejected | 5 | 1 | ambient/import×5 |
+| literals.js | body-shape-rejected | 4 | **3** | bigint×2, null×1, undefined×1 |
+| loops.js | body-shape-rejected | 0 | 0 | — |
+| members-calls.js | body-shape-rejected | 7 | 1 | any×7 |
+| new-target.js | body-shape-rejected | 4 | **2** | any×3, Ctor×1 |
+| objects.js | body-shape-rejected | 1 | 1 | any×1 |
+| operators.js | operand-coercion-unsupported | 3 | 1 | any×3 |
+| optional-nullish.js | body-shape-rejected | 7 | 1 | any×7 |
+| regex.js | body-shape-rejected | 0 | 0 | — |
+| sequence-misc.js | body-shape-rejected | 2 | 1 | any×2 |
+| spread-rest.js | body-shape-rejected | 4 | **2** | any×2, array×2 |
+| templates.js | template-substitution-unsupported | 1 | 1 | any×1 |
+
+15 of 20 files carry ≥1 storage refusal; **57 refused declarations in total**,
+against the 11–20 the first-blocker instrument could ever have reported.
+
+### Per-file multiset — standalone
+
+Identical to the table above except for five rows, and the difference is
+structural rather than a storage difference:
+
+| file | gc | standalone | why |
+| --- | --- | --- | --- |
+| arrow-params.js | 8 refusals | **non-executable** | legacy collects no init statements for a file that is only top-level `const` arrows |
+| generators-async.js | 1 | **non-executable** | same |
+| literals.js | 4 | **non-executable** | same |
+| regex.js | 0 (vardecl-module-value-flow) | 0 (string-method-unsupported) | different non-storage blocker |
+| — | — | — | every other row is byte-for-byte the same multiset |
+
+12 of 20 on standalone; 30 refused declarations.
+
+### The finding the retracted table got backwards
+
+| claim | retracted table | this census (gc) |
+| --- | --- | --- |
+| files where categories MIX | 0 ("no file mixes them") | **4** — escapes-unicode, literals, new-target, spread-rest |
+| refused declarations visible | 11 (one per file) | **57** |
+| largest single file | 1 | **8** (arrow-params.js) |
+| `escapes-unicode.js` | string-only | `any`×1 + `object`×1 — **no string at all** |
+
+`escapes-unicode.js` is the specific refutation: the artifact described it as a
+string blocker, R4-M1 shipped string storage, and the file did not move. The
+survey says why — its two refused declarations are an object literal and an
+`any`, and neither was ever a string.
+
+### Criterion 4 — "files unlocked by covering set S" is now computable
+
+Clearing a file's storage refusals is **necessary, not sufficient**: five gc
+files carry an independent, non-storage module-init blocker that no storage
+widening touches.
+
+| file | independent blocker |
+| --- | --- |
+| destructuring.js | `vardecl-module-destructuring` |
+| import-attributes.module.js, imports-exports.module.js | `vardecl-modifier` |
+| operators.js | `operand-coercion-unsupported` |
+| templates.js | `template-substitution-unsupported` |
+
+So the honest payoff table separates the two questions:
+
+| category | decls | files touched | files whose storage is FULLY cleared by it alone | files actually **unlocked** |
+| --- | --- | --- | --- | --- |
+| `any` | 27 | 9 | 6 | **4** (members-calls, objects, optional-nullish, sequence-misc) |
+| `function` | 9 | 2 | 2 | **2** (arrow-params, generators-async) |
+| `ambient/import` | 6 | 2 | 2 | 0 — both also refuse on `vardecl-modifier` |
+| `destructuring` | 3 | 1 | 1 | 0 — also refuses on `vardecl-module-destructuring` |
+| `bigint` | 2 | 1 | 0 | 0 |
+| `array` | 2 | 1 | 0 | 0 |
+| `object`, `null`, `undefined`, `Ctor` | 1 each | 1 each | 0 | 0 |
+| `string` | **0** | **0** | 0 | **0** — R4-M1 already landed it; there is no string left to unlock |
+
+Best unlocking sets (gc): `{any, function}` → **6 files**;
+`{any, array, function}` → 7. On standalone: `{any, array}` → 5;
+`{any, array, object}` → 6.
+
+### Where this differs from the syntactic pre-check, and why
+
+A syntactic approximation run before the survey reported **14 blocked files, 10
+of 14 mixing categories**, `any` unlocking 4 and `string` unlocking 0. The
+checker-based numbers agree on the two conclusions that matter and disagree on
+the shape of the middle:
+
+- **`any` unlocks 4, `string` unlocks 0 — confirmed exactly**, on both lanes.
+- **Blocked files: 15, not 14.** The pre-check treated `destructuring.js` as
+  throwing upstream of the recorder; it does not. It records
+  `vardecl-module-destructuring` at select time and the survey reports its 3
+  patterns, because the survey does not reuse the loop that throws on them.
+- **Mixing files: 4 of 15, not 10 of 14.** This is the real disagreement. A
+  syntactic pass splits by *initializer* syntax, so `optional-nullish.js`
+  (PropertyAccess + ElementAccess + Call + Binary) looks like four categories;
+  the checker says all seven of its declarations are the single declared type
+  `any`, hence ONE storage decision. Storage is a decision about the declared
+  type, not the initializer, so the checker's grouping is the one a widening
+  slice can act on. The pre-check's "10 of 14" overstates fragmentation and
+  would have under-sold the `any` slice.
+
+The pre-check's headline — "categories mix, per-category payoffs are not
+additive" — survives; its ranking arithmetic does not.
+
+### What this hands to R4 slice selection
+
+`any` is the slice. 27 of 57 refused declarations, 9 of 15 blocked files, and
+the only single category that unlocks a file at all besides `function`. It is
+also the one the earlier "widen the resolver" framings kept deferring as
+untypable. Second is `function` (module-level `const` arrows), which unlocks 2
+on gc and 0 on standalone — where those same files have no executable
+module-init to begin with, a lane asymmetry worth confirming before sizing it.
+
+Reproduce: `JS2WASM_IR_SHAPE_DIAG=1` + `trackIrOutcomes: true`, read
+`moduleBindingRefusals` off the `<module-init>` `IrObservedOutcome`.
