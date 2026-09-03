@@ -10349,3 +10349,133 @@ scope decision rather than an oversight.**
    is a boundary move and this slice moves none. The rows make the rewiring
    expressible; F3-S5/F3-S6 own it. F3-S1's doc comment is left exactly as the
    review scoped it.
+
+## Implementation Plan — F3-S3 `functionPrototypeCall` policy (2026-09-03, Fable lane)
+
+Written from a read of `src/ir/runtime-manifest.ts` (`HostCallbackWrapPolicy`
+`:405-433`, builder resolution `:2248-2288`, provider rows `:1205-1295`),
+`src/ir/intrinsic-support.ts` (`preparedHostCallbackWrapProvider` `:626-650`,
+`preparedGeneratorNumberBoxProvider` `:279-295`), `src/ir/integration.ts`
+(`integrationHostCallbackWrapPolicy` `:1111-1125`, policy assembly `:1376`,
+the `functionPrototypeCallTarget` resolver arm `:6598-6603`,
+`admitAttachedHostCallbackMaker` `:8667-8683`), `src/ir/from-ast.ts` (consumer
+`:7554-7566`) and `src/codegen/function-prototype-callable.ts` (`:17-36`) at
+`origin/main` after PR #5535. Line numbers are from that revision.
+
+### Open question 4 — settled: build-time projection, resolve-time backstop
+
+The consumer is **pre-claim**: `from-ast.ts:7554` runs during Phase-1 build,
+before the freeze at `:4384` and before any owner is claimed. Moving the
+refusal to resolve time (F3-S1's post-freeze admission) would turn a clean
+`method-call-unsupported`@build fallback on host lanes into a post-claim
+demote — the `unpatched-slot` compile-failure class PR #5535 (#5300) just
+measured. F3-S1 could take the post-freeze side only because its owner-local
+partition demotes the owner *before* the freeze; F3-S3 has no such partition.
+
+So F3-S3 follows the **F1-S1 model** instead: the truth table is resolved into
+a policy value BEFORE the freeze (`integrationXPolicy(ctx)` at `:1376`, no
+live mode read below it), the from-ast arm projects that value at build, the
+frozen manifest carries the provider row, and `preregisterDynamicSupport`
+admits the emitted call against the frozen arm as an **invariant backstop**
+(`selection-preparation-mismatch`@resolve — unreachable in-tree, exactly like
+`admitAttachedHostCallbackMaker`). Census output is byte-unchanged: same
+demote code, same stage, same lanes.
+
+### Change
+
+1. **`src/ir/runtime-manifest.ts`** — add, as siblings of the F1/F3-S1 items
+   (never a widening of them):
+   - `interface FunctionPrototypeCallPolicy { readonly call: "native" | "unsupported" }`
+     and `FUNCTION_PROTOTYPE_CALL_POLICY_DISABLED`.
+   - `RuntimeManifestPolicy.functionPrototypeCall?: FunctionPrototypeCallPolicy`
+     (omission → DISABLED, resolved and frozen in the builder next to
+     `hostCallbackWrap` at `:2259` / `:2288`).
+   - feature `js.function.prototype.call`, provider id
+     `native.js.function.prototype.call`, ONE provider row
+     `{ kind: "runtime-callable", symbol: "__function_prototype_call" }` with
+     signature `() -> externref` (the `FUNCTION_PROTOTYPE_CALL_HELPER` type).
+     No host arm exists — `%Function.prototype%.[[Call]]` on a JS-host lane is
+     not this seam's job (the host object is real there), so `call: "native"`
+     is the only admitting value. The row is selected when the policy is
+     `native`, mirroring `GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS`.
+2. **`src/ir/integration.ts`**:
+   - `integrationFunctionPrototypeCallPolicy(ctx)`: `native` iff
+     `ctx.standalone && !ctx.wasi`, else `unsupported` — the exact truth table
+     of the current arm at `:6599`, resolved once, added to the policy literal
+     at `:1376`.
+   - The resolver arm `:6598-6603` reads the resolved policy value (passed in
+     with the resolver's other pre-freeze inputs; do NOT read `ctx.standalone`
+     / `ctx.wasi` there any more), returns `null` on `unsupported`, otherwise
+     still mints the helper via `ensureFunctionPrototypeCallHelper` and returns
+     `irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER)`. This deletes two of
+     the 18 functional mode reads in `makeFromAstResolver`.
+   - `preregisterDynamicSupport`: read the frozen arm once
+     (`preparedFunctionPrototypeCallProvider(prepared)`, new in
+     `intrinsic-support.ts`, shaped like `preparedGeneratorNumberBoxProvider`)
+     and, in the same instruction scan that runs
+     `admitAttachedHostCallbackMaker`, refuse a `call` to
+     `__function_prototype_call` whose frozen arm is not `native` with
+     `IrInvariantError("selection-preparation-mismatch", "resolve", …)`.
+     Also `observeNativeRuntimeProvider(ctx, FUNCTION_PROTOTYPE_CALL_HELPER)`
+     when the arm is `native` and a use was scanned, so the symbol is bound
+     through the observation path (F1-S3's measured constraint: `runtime`
+     refs only).
+3. **`src/ir/from-ast.ts:7554-7566`** — unchanged. The `null` target still
+   demotes `method-call-unsupported`@build.
+4. **`src/codegen/function-prototype-callable.ts`** — unchanged.
+
+### Measurement order
+
+1. **Base census** (`.tmp/probe-f3s3.ts`): compile a fixture calling
+   `Function.prototype()` / `Function.prototype(1, 2)` in all four cells
+   `{gc, standalone} × {compat, fast}` plus `wasi`, `trackIrOutcomes`; record
+   per cell the outcome code, stage, and whether `__function_prototype_call`
+   is present in the emitted module. Expected on base: standalone (non-wasi)
+   → `emitted` with the helper present; gc and wasi →
+   `method-call-unsupported`@build.
+2. Capture base copies at first edit.
+3. Implement 1–2. Re-run the census: **identical table** (code, stage, helper
+   presence) in every cell — that is the acceptance bar; any cell that moves
+   is a defect, not a feature.
+4. Byte identity: per-row sha256 over the dogfood corpus and playground
+   examples, gc + standalone + wasi, all rows identical. The helper's
+   physical target is the same defined func; the manifest row moves no bytes.
+5. Mode-read count inside `makeFromAstResolver` (`ctx.standalone` /
+   `ctx.wasi` reads) drops by exactly 2; record before/after.
+6. Hand-built-policy backstop test (below) proves the invariant is live.
+7. Gates: full ratchet chain + `LOC_GATE_BASE`, `check:ir-dialect`,
+   `check:ir-kind-neutrality` (verdict table must not move — no instruction
+   kind changes), `check:ir-fallbacks` (no bucket moves), `check:ir-only`
+   READY, `check:linear-ir`; equivalence 8 shards by name, zero name-set diff.
+
+### Tests
+
+`tests/issue-3526-f3s3-function-prototype-call-policy.test.ts`:
+
+- (a) frozen manifest for a standalone non-wasi adapter carries the
+  `native.js.function.prototype.call` provider row; gc and wasi adapters
+  carry none and the policy resolves `unsupported` — red on base (no such
+  policy field).
+- (b) four-cell outcome table pinned exactly as measured in step 1 (green on
+  base by construction — this is the "census unchanged" guard, label it as
+  such).
+- (c) backstop: a hand-built `RuntimeManifestPolicy` with
+  `functionPrototypeCall: { call: "unsupported" }` on a standalone adapter,
+  fed a program whose from-ast output contains the helper call, fails at
+  preregister with `selection-preparation-mismatch`@resolve — red on base
+  (no admission exists). Non-vacuity: revert the preregister scan alone → (c)
+  red.
+- (d) `preparedFunctionPrototypeCallProvider` returns the `runtime-callable`
+  arm with the exact `() -> externref` signature — red on base.
+
+### Budget, sequencing, conflict surface
+
+`runtime-manifest.ts` (+~40 LOC), `intrinsic-support.ts` (+~20),
+`integration.ts` (~+15 net; grants in this issue's frontmatter with a dated
+rationale, `LOC_GATE_BASE` re-checked). **Sequence behind #5297** (W2-A holds
+`integration.ts` for its wave). Disjoint from #5283 (`ir-overlay-outcomes.ts`,
+`module-init.ts`, `legacy-body-audit.ts`), #5299 (publication), #3520 W1-D
+(`program-abi-*.ts`), #3522 W1-A (`select.ts`, `class-bodies.ts`). R2 lock
+(#3521 `:953-956`): line-scoped edit at `:6598-6603` only, the same shape
+F1/F2 took — record the R2 lane's acknowledgement in the PR body as F3-S1 did.
+Claim slug `3526:f3-s3`, never the bare id.
