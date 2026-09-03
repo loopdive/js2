@@ -1,10 +1,12 @@
 ---
 id: 5297
 title: "R4 compatibility lane: symbolize the externref dynamic support surface (`__box_number` / `__unbox_number` + the externref carrier) as Program-ABI refs — the real blocker behind `implicit-support-reference-unavailable`"
-status: ready
+status: done
+assignee: ttraenkler/opus-5297
 sprint: current
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
 priority: high
 horizon: m
 feasibility: medium
@@ -14,6 +16,15 @@ area: ir
 goal: backend-agnostic-ir
 related: [5289, 3523, 3518, 5285, 4208]
 requested_by: ttraenkler/orchestrator
+# 2026-09-03 — new file `src/ir/prepared-dynamic-support.ts`: the
+# generalized dynamic sidecar (187 lines). It is deliberately a NEW module
+# rather than growth inside `compiler-timer-shim-preparation.ts` (which stays at
+# imports-and-exports only) or `prepared-component-sealing.ts` (which takes a
+# 21-line merge). Splitting it out keeps the timer shim's one-shape proof
+# separable from the general arm and keeps both existing files under their
+# base sizes.
+loc-budget-allow:
+  - src/ir/prepared-dynamic-support.ts
 ---
 
 # The slice #5289 uncovered and deliberately did not do
@@ -231,3 +242,56 @@ issue's frontmatter with dated rationale) + small edits to
 say why in the PR body — that file is R6 F3-S3's surface. Disjoint from
 #5283 (`src/codegen/ir-overlay-outcomes.ts`), #5299 (publication), #5300
 (`imported-functions.ts`), #3520 W1-D (`program-abi-*.ts`).
+
+## Outcome — measured 2026-09-03 on `origin/main 42a0adf7d4`
+
+**Probe (step 1) confirmed the planned mechanism exactly.** For the
+`gc/compat` and `standalone/compat` `<module-init>` of `let a: any = 1`:
+`classAccessorWritebacks` is a map WITHOUT an entry for the unit,
+`dynamicInstructionSupport` is absent entirely, so
+`preparedDynamicCarrierRef` returns `undefined` and the `dynamic` arm blocks.
+Two failures are reported, not one — the carrier type ref AND the `box`
+instruction's callable ref. The fast lane never enters
+`prepareDependencyCompletePreparedComponents` for this program at all.
+
+**Change.** New `src/ir/prepared-dynamic-support.ts` mints the module's own
+carrier and binds `__box_number` through the timer shim's
+`exactPreparedDynamicHelperRef` (now exported, together with
+`isDynamicInstruction`); `prepared-component-sealing.ts` merges the two
+sidecar maps and fails closed on overlap. `src/ir/integration.ts` is NOT
+touched.
+
+**Scope, narrowed by measurement.** Only `box`-to-dynamic with an f64 operand
+is named. `emitBox`'s externref/ref arms call nothing at all, so no callable
+ref can honestly satisfy `implicitSupportRequirement`; the i32/Boolean arm
+(`__box_boolean`) and the whole `unbox`/`dyn.*` family have no reachable
+prepared unit in the measured cohort, so naming helpers for them would be
+unverifiable code. Units carrying any other dynamic instruction are left
+exactly as the base tree leaves them.
+
+**Cohort measurement** (dogfood 20 x 4 cells + playground 13 x 4 cells + 6
+controls x 4 cells = 156 rows, per-row sha256 of the production binary):
+
+| result | rows |
+| --- | --- |
+| byte-identical base vs after | 150 |
+| moved | 6 |
+| fast-lane rows moved | 0 |
+| dogfood / playground rows moved | 0 |
+
+The six that moved are exactly `{any-number, unknown-number, any-const}` x
+`{gc/compat, standalone/compat}`: `unsupported / late-preparation-unsupported`
+with 0 emitted units, to `emitted` with 1 emitted unit. Rows carrying an
+`implicit-support-reference-unavailable` "dynamic carrier" detail: **6 to 0**.
+The #5525 "bytes move without gaining an emitted unit" churn is gone on
+every affected row.
+
+`any-reassigned` does NOT move: it is blocked earlier, in all four cells
+including fast, on `property-write-unsupported`
+(`ir/from-ast: assignment to module binding "a" (dynamic) got f64`). That is a
+named non-support blocker outside this arm. `any-var` stays
+`body-shape-rejected` by design.
+
+`check:ir-fallbacks --verbose`, `check:ir-only` (READY, 38/41 emitted) and
+`check:ir-kind-neutrality` are byte-identical base vs after; no
+`scripts/*-baseline.json` was touched.
