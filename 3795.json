@@ -1,8 +1,11 @@
 {
   "id": "3795",
   "assignee": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3795-ir-dynamic-member-set",
   "claimed_at": "2026-07-30T09:14:05Z",
-  "updated_at": "2026-07-30T09:14:05Z"
+  "updated_at": "2026-09-03T09:43:47Z",
+  "write_id": "727-e9he7tpt",
+  "released_at": "2026-09-03T09:43:47Z"
 }
