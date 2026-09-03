@@ -57,7 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import type { IrClassId, IrUnitId } from "./identity.js";
+import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
   isUnpreparedAsyncCallee,
@@ -10489,14 +10489,20 @@ function phase1PropertyName(name: ts.PropertyName): string | null {
  * member naming surface, where collision with non-Phase-1 members would
  * cause Phase B to patch the wrong slot.
  *
- * Returns null for computed names (`[expr]() {}`) and private identifiers
- * (`#priv() {}`) — Phase A can't form a stable funcMap key for either.
+ * Returns null for computed names (`[expr]() {}`) — Phase A can't form a stable
+ * funcMap key for a key that is only known at run time.
+ *
+ * (#3522 W1-A) A `PrivateIdentifier` IS representable: it mangles to
+ * `__priv_<name>`, the spelling the legacy side already mints at
+ * `class-bodies.ts::resolveClassMemberName` and that the field path in
+ * `buildIrClassShapes` already uses. See {@link privateMemberMangledName}.
  */
 export function phase1MemberName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isStringLiteral(name)) return name.text;
   if (ts.isNumericLiteral(name)) return name.text;
-  // ComputedPropertyName, PrivateIdentifier — Phase A skips both.
+  if (ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
+  // ComputedPropertyName — Phase A still skips it.
   return null;
 }
 
