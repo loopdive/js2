@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-03",
   "threshold": 1500,
-  "totalCeiling": 816364,
+  "totalCeiling": 816377,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -71,12 +71,12 @@
     "src/codegen/property-access.ts": 6659,
     "src/codegen/proto-index-store.ts": 1818,
     "src/codegen/regexp-standalone.ts": 5938,
-    "src/codegen/registry/imports.ts": 2611,
+    "src/codegen/registry/imports.ts": 2620,
     "src/codegen/stack-balance.ts": 3159,
     "src/codegen/statements/control-flow.ts": 2031,
     "src/codegen/statements/destructuring.ts": 1505,
     "src/codegen/statements/for-of-destructuring.ts": 2954,
-    "src/codegen/statements/loops.ts": 4433,
+    "src/codegen/statements/loops.ts": 4437,
     "src/codegen/statements/nested-declarations.ts": 4056,
     "src/codegen/statements/variables.ts": 2629,
     "src/codegen/string-ops.ts": 4039,
