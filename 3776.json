@@ -1,8 +1,11 @@
 {
   "id": "3776",
   "assignee": "ttraenkler/codex-es5-isfrozen-residual",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3776-es5-isfrozen-residual",
   "claimed_at": "2026-07-28T20:46:25Z",
-  "updated_at": "2026-07-28T20:46:25Z"
+  "updated_at": "2026-09-03T09:43:08Z",
+  "write_id": "24690-0scnrfsa",
+  "released_at": "2026-09-03T09:43:08Z"
 }
