@@ -4,9 +4,9 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: in-progress
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-09-02
+updated: 2026-09-03
 assignee: ttraenkler/fable-ir-takeover
-branch: claude/issue-3526-f2s5-string-concat
+branch: claude/issue-3526-f3s3-function-prototype-call
 priority: critical
 horizon: xl
 complexity: XL
@@ -65,6 +65,7 @@ files:
   - tests/issue-3526-string-boundary-schema.test.ts
   - tests/issue-3526-string-boundary-eq.test.ts
   - tests/issue-3526-string-boundary-len.test.ts
+  - tests/issue-3526-f3s3-function-prototype-call-policy.test.ts
   - src/ir/string-support.ts
 loc-budget-allow:
   - src/ir/integration.ts
@@ -419,7 +420,44 @@ loc-budget-allow:
   - src/codegen/ir-overlay-finalize.ts
   - src/codegen/native-batched-concat.ts
   - src/ir/async-plan.ts
+  #
+  # 2026-09-03 F3-S3 (`%Function.prototype%` call under manifest policy, +285
+  # net LOC measured against origin/main 2510fae): the `functionPrototypeCall`
+  # policy, its ONE provider row and the policy-driven selection arm
+  # (runtime-manifest.ts, +139); the freeze-time demand hook and the
+  # manifest-to-arm reader `preparedFunctionPrototypeCallProvider`
+  # (intrinsic-support.ts, +45); the caller policy projection, the pre-freeze
+  # resolution read by the from-ast arm, the demand scan and the preregister
+  # invariant backstop (integration.ts, +101). No new path: all three already
+  # carry an F1-S1..F3-S1 grant.
+  #
+  # The measured growth is ~3.8x the plan's "+~40 / +~20 / ~+15 net" estimate,
+  # and the overrun is COMMENT, not code — roughly 140 of the 285 lines are the
+  # rationale blocks. They are load-bearing here because this seam has THREE
+  # near-identical truth tables that must not be folded together, and the two
+  # that are not the policy's are the exact traps: helper MINTING runs on the
+  # wider `standalone || wasi` (so WASI carries `__function_prototype_call`
+  # while its IR unit is refused — helper presence is not support), and the
+  # SELECTOR's `standalone-function-prototype-call` backend capability answers
+  # a different question one stage earlier. Byte-neutral: 60/60
+  # `prove-emit-identity` (file,target) rows identical across gc / standalone /
+  # wasi / linear, and the 5-cell seam census unmoved.
 func-budget-allow:
+  # 2026-09-03 F3-S3: two integration.ts functions, both measured against
+  # origin/main 2510fae.
+  #   * `preregisterDynamicSupport` 299 -> 308 (+9). It sat ONE line under the
+  #     300 threshold, so any addition crosses it; the slice's own footprint is
+  #     the 3-line runtime-call `case`, the scanned flag, the once-read frozen
+  #     arm and one call. The refusal body itself was extracted to the
+  #     module-level `admitFunctionPrototypeCall`, mirroring this file's own
+  #     `admitAttachedHostCallbackMaker`, rather than inlined. Splitting the
+  #     pass is #3399's work, not this slice's.
+  #   * `makeFromAstResolver` 511 -> 513 (+2): the pre-freeze policy resolution
+  #     the migrated arm reads. The arm itself got SHORTER in mode reads —
+  #     `ctx.standalone`/`ctx.wasi` drop from 14 to 12 across the resolver,
+  #     which is the pre-declared -2 this slice was measured on.
+  - src/ir/integration.ts::preregisterDynamicSupport
+  - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
   - src/ir/lower.ts::emitInstrTree
