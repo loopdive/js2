@@ -46,6 +46,14 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   - src/codegen/native-proto-value-read.ts
   - src/codegen/ta-ctor-meta.ts
+  # 2026-09-03 r3 implementation (Opus). r3-1 is ONE runtime mechanism, so the
+  # growth is two new files plus three splice points; r3-2 puts its helper
+  # bodies in the new `ta-dyn-proto-methods.ts` rather than in the 8.6k-line
+  # `dataview-native.ts`.
+  - src/codegen/ta-dyn-method-call.ts
+  - src/codegen/ta-dyn-proto-methods.ts
+  # one import + one finalize call + the profiled twin.
+  - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -73,6 +81,16 @@ func-budget-allow:
   # §23.2.6.2 `prototype` get_meta + gOPD arm pair (one splice ladder over one
   # native, so the arms belong in it rather than in a parallel filler).
   - src/codegen/ta-ctor-meta.ts::fillTaCtorGetMetaArm
+  # 2026-09-03 r3: the prototype walk in the dyn-view MOP string-key arm, the
+  # reserve-time mint hook, and the finalize call — each an arm spliced into an
+  # existing ladder.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/ta-dyn-method-call.ts::unshiftExternMethodCallTaDynViewArm
+  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynSearchHelper
 ---
 
 # #5194 — typedarray r2: cluster and fix the 461 residual failures
@@ -1416,3 +1434,596 @@ than walk.
 The same row on the STANDALONE lane fails identically on the pre-#5479 base
 (`Expected a TypeError to be thrown but no exception was thrown at all`), so
 that lane is a pre-existing gap and not part of this park.
+
+## Implementation Plan — r3 (2026-09-03)
+
+Planner pass on `main` `bee5ddd535` (branch `claude/es6-test262-standalone-g10c7u`,
+identical to `origin/main`). Input: the 2026-09-03 09:07 UTC standalone
+baseline crossed with the ES2015 edition list — **244 non-pass rows** in
+`.tmp/census0903/typedarray.tsv` (226 `fail`, 18 `compile_error`). Nothing
+below restates the r2 sections; it starts from the r2 "Leftovers" and the
+2026-09-02 review findings F3/F4.
+
+### Step 0 — what changed since r2, and the one finding that reorders everything
+
+The r2 leftover 1 said the `any`-receiver rows never reach the
+`array-methods.ts` two-arm and must be wired through the `taFillIdx` block in
+`call-receiver-method.ts`. That is true but incomplete. Measured on this tree
+with WAT call-graph probes (`.tmp/census0903/probes/wat-fn-index.mts`, which
+resolves every `call N` inside one function to its name):
+
+- A local `var sample = new TA([...])` receiver compiles `sample.includes(42)`
+  to `__call_m_includes_1`, `sample.sort(cmp)` to `__call_m_sort_1`,
+  `sample.keys()` to `__call_m_keys_0`, `sample.every()` to `__call_m_every_0`,
+  `sample.map(cb)` to `__call_m_map_1` (`fillClosedMethodDispatch`). A
+  **parameter** receiver (`function g(a) { a.includes(42) }`) skips the closed
+  dispatcher and calls **`__extern_method_call`** directly. Every `__call_m_*`
+  bottoms out in `__extern_method_call` too. So the single convergence point
+  for dyn-view method calls is `__extern_method_call` (object-runtime.ts
+  L6444), not the `taFillIdx` two-arm.
+- **`__extern_get(view, "<method>")` answers `undefined`** — probe
+  `.tmp/census0903/probes/p9-shapes.js`:
+  `typeof sample.includes === "undefined"`, `typeof sample.sort`,
+  `typeof sample.keys` likewise, while `Object.getPrototypeOf(sample) ===
+  TA.prototype` is true. Root cause: `ta-dyn-mop.ts:buildStringKeyArm` (L532)
+  walks the prototype ONLY inside `constructorLookup` (L690, key
+  `"constructor"`); every other non-index string key that misses the expando
+  returns `missInstrs()` (L640 `legacyMiss` — `undefined` for get, `0` for has)
+  without consulting `__getPrototypeOf(recv)`. That is why the seeded
+  `%TypedArray%.prototype.<m>` closure singletons (r2 step 1/2) are unreachable
+  from an instance, why `HasProperty/inherited-property.js` fails, and why
+  `unshiftExternMethodCallProtoArm`-style dispatch cannot work for views yet.
+- With no method resolution, `__extern_method_call` falls to its generic
+  `$__vec_base` arms (the dyn view subtypes `$__vec_base`,
+  `registry/types.ts` L582): `includes` → the NUMBER `1`/`0` (probe p1/p8:
+  `includes(42)=number:1`; the SAME defect hits a plain any-array — an
+  arrays-cluster note, not claimed here), `indexOf()` → `0`, `join` works,
+  `at(1)` → `undefined`, `sort`/`keys` → `null`, `every()` → no throw, and
+  `map`'s callback never sees the view (`third=undefined`).
+
+Consequence: the r2 plan's per-call-site wiring (steps 3.2–3.5) is replaced by
+ONE runtime mechanism (step r3-1) plus per-method native helpers behind it. The
+helpers are the same ones r2 asked for; only the dispatch changes.
+
+### Step 0b — re-verification (15 rows, current main, fixed runner)
+
+```
+npx tsx scripts/run-test262-paths.mts .tmp/census0903/ta-r3-probe1.txt --standalone
+=== counts ===
+{ fail: 15 }
+```
+
+All 15 sampled rows (one per group below, list in
+`.tmp/census0903/ta-r3-probe1.txt`) fail with the baseline's error text, e.g.
+`includes/search-found-returns-true.js` → `Expected SameValue(«1», «true»)`,
+`sort/comparefn-calls.js` → `calls comparefn`, `keys/return-itor.js` →
+`Cannot read properties of undefined (reading 'next')`,
+`every/callbackfn-not-callable-throws.js` → `no args Expected a TypeError`,
+`join/return-abrupt-from-separator.js` → `illegal cast`,
+`fill/coerced-indexes.js` → `` `null` end coerced to 0 ``,
+`from/mapfn-arguments.js` → `SameValue(«3», «2»)`,
+`OwnPropertyKeys/integer-indexes.js` → `result1`,
+`map/speciesctor-get-ctor-inherited.js` → `SameValue(«true», «undefined»)`.
+Full output: `.tmp/census0903/ta-r3-probe1.out`. No group turned out to pass;
+nothing is dropped for staleness. The leak check (#5461) is active in this lane
+(`tests/issue-5272-runner-standalone-leak.test.ts` was 7/7 on the r2 tree and
+the runner is unchanged since).
+
+### Cluster table (244 rows, by root cause)
+
+Per-row: `.tmp/census0903/ta-sorted.txt` (`path|status|error`, sorted by error).
+
+| # | root cause | rows | fix step |
+|---|---|---:|---|
+| K1 | `ArrayBuffer/*` + `DataView/*` rows the census filed under "typedarray" (slice species ×13, isView ×5, prop-desc, proto, NewTarget CEs ×4, …) | 36 | **out of scope — #5150** (buffers lane; `tests/issue-5150-es2015-buffers.test.ts`). Do not touch `ArrayBuffer.prototype.slice`/`isView` here. |
+| K2 | `Reflect.construct` distinct NewTarget CE (`ctors/*/custom-proto-access-throws.js` ×5, `typedarray-arg/throw-type-error-before-custom-proto-access.js`) | 6 | out — #3371 |
+| K3 | `Reflect.set` explicit receiver CE (`internals/Set/*reflect-set.js`, `*receiver-is-*`) | 6 | out — #2046 |
+| K4 | `Function.prototype.call is not yet implemented` (`Symbol.species/result.js`, `Symbol.toStringTag/this-*` ×2, `from|of/custom-ctor-returns-other-instance.js`) | 5 | out — builtins lane cluster M (`.tmp/es2015/builtins-cl-M-function-call-value.txt`) |
+| K5 | native generator as ctor argument (`object-arg/as-generator-iterable-returns.js`) | 1 | out — #680/#2864 |
+| C0 | **dyn-view method resolution**: `__extern_get`/`__extern_has` never walk the prototype for ordinary string keys; `__extern_method_call` has no `$__ta_dyn_view` arm | — | r3-1 (foundation; every C/D row depends on it) |
+| C3 | `includes`/`indexOf`/`lastIndexOf` on dyn views: boolean-as-number, 0-arg → 0, fromIndex ToInteger/Symbol/abrupt/−0 not observed, detached not validated (14+7+7 minus 3 `invoked-as-method`) | 25 | r3-2 |
+| D | callback HOFs: IsCallable not checked (`*-not-callable*` ×7), callback's 3rd arg / `this` reads not the view, writes during iteration invisible, detach-inside-callback (×5) and on entry (×5), `filter` empty-result null deref (`every`/`some`/`forEach` ×3 each, `find`/`findIndex` ×2 each, `reduce`/`reduceRight` ×2 each, `map` ×3, `filter` ×4) | 24 | r3-3 |
+| C1 | `sort`: never runs (comparefn not called, `null` returned) | 12 | r3-4 |
+| C2 | `keys`/`values`/`entries`: `null` (return-itor ×3, iter-prototype ×3, detached-buffer ×3) | 9 | r3-4 |
+| C4 | `join`/`toLocaleString`/`toString`: separator reaches `__str_flatten` uncast (illegal cast ×5), per-element `toLocaleString`/`toString`/`valueOf` not invoked (×9), detached (×3) — minus `join/invoked-as-method` | 16 | r3-5 |
+| F | species residual: `get-ctor-inherited` ×4, `get-{ctor,species}-returns-throws` ×8, `custom-ctor-invocation` ×4, `custom-ctor-returns-another-instance` ×2, `slice` same-buffer offset, `map` empty-length, `subarray` instanceof | 21 | r3-6 |
+| E | ValidateTypedArray after argument coercion: `fill/coerced-*-detach` ×3, `copyWithin/coerced-values-*-detached*` ×3, `fill|copyWithin|reverse/detached-buffer` ×3, `subarray/{detached-buffer,byteoffset-with-detached-buffer}` | 11 | r3-7 |
+| G | index coercion: `null` end → 0 (`fill/coerced-indexes`, `copyWithin/coerced-values-end`), Symbol begin/end → TypeError (`slice`/`subarray` ×4), `set` reads past `src.length` | 7 | r3-7 |
+| H | constructor argument protocols (`object-arg` ×12, `typedarray-arg` ×4, `buffer-arg/toindex-*` ×2, `length-arg/toindex-length`, `no-species`) | 20 | r3-8 |
+| I | `from`/`of`: mapfn arity, IsCallable order, abrupt propagation as the original error (×8 `Expected a Test262Error but got a TypeError`), `invoked-as-func`/`not-a-constructor` ×4, `.call(customCtor)` ×4 (`Cannot read properties of undefined (reading 'call')`), `inherited` ×2, `mapper-detaches-result` ×2, `into-itself` (leak `env::__unwrap_for_wasm`, #2961) | 23 | r3-9 |
+| J | integer-indexed MOP: `OwnPropertyKeys` ×4, `DefineOwnProperty` ×5, `HasProperty` ×2 (fixed by r3-1's `has` walk), `Set/*prototype-chain-set` ×2 | 13 | r3-10 (+r3-1) |
+| C5 | `TypedArrayPrototype.<m>()` on the prototype for `includes`/`indexOf`/`lastIndexOf`/`join`/`slice` — probe p10: `sort()` throws (the `$NativeProto` arm reaches the seeded refusal closure) but these five route through `__extern_toString`/`__get_member_name` (a string-flavoured any-receiver lowering that claims the call before the `$NativeProto` arm) | 5 | DEFERRED (see r3-11) |
+| B | `%TypedArray%()` must throw; `length`/`byteLength` getters invoked through a var-held prototype; `Symbol.toStringTag/invoked-as-func` | 4 | DEFERRED (r3-11) |
+
+Out of scope: **54**. In scope: **190** (C3 25 + D 24 + C1 12 + C2 9 + C4 16 +
+F 21 + E 11 + G 7 + H 20 + I 23 + J 13 + C5 5 + B 4).
+
+### Common rules for every step
+
+- Standalone lane only (`noJsHost(ctx)` / `ctx.standalone` gates); no new
+  `env::*` import anywhere — the runner fails the whole module on a leak. The
+  host (gc) lane must stay byte-identical: assert it on the controls below.
+- Type questions through `ctx.oracle` (`src/checker/oracle.ts`); never
+  `ctx.checker.getTypeAtLocation` (oracle-ratchet gate). None of the steps below
+  needs a new type query — they are runtime-shape arms — so a new `checker.*`
+  call is a review flag, not a need.
+- Reserve-time minting only: every `ensureTaDyn*Helper` is a defined function
+  appended while the call site compiles (the same discipline as
+  `ensureTaDynFillHelper`); finalize passes only READ `funcMap` (#1719). Never
+  rebuild a native body at finalize; every throw sequence is a fresh `Instr[]`
+  per arm (#1058, #5194 F5).
+- `FunctionContext` literals: use `makeTaDynHelperFctx` (dataview-native.ts
+  L7407 — export it) so `labelMap: new Map()` and `savedBodies: []` are always
+  present.
+- Measurement: `npx tsx scripts/run-test262-paths.mts <list> --standalone`, one
+  process at a time, batches ≤ 15 paths on this box; `--isolate` for any list
+  with `$DETACHBUFFER` rows. Sub-lists: `.tmp/es2015/ta-cl-<X>.txt` still match
+  these clusters (C3/D/C1/C2/C4/F/E/G/H/I/J); regenerate from
+  `.tmp/census0903/ta-sorted.txt` if a fresh clone lacks them.
+- Controls after EVERY step, both lanes where the file is lane-agnostic:
+  `.tmp/es2015/ta-controls.txt` (21 rows, 21/21 on r2), `.tmp/es2015/ta-passing-all.txt`
+  (84 r2 flips, 84/84), `.tmp/es2015/arrobj-controls.txt` (20 array/object rows —
+  the `$__vec_base` arms the new dyn-view arm sits in front of), the 25-row
+  `set` cohort in `tests/issue-5194-es2015-typedarray-set-r2.test.ts`, and
+  `tests/issue-5194-es2015-typedarray-r2.test.ts` (11/11 incl. the F3
+  characterization control and the host `class extends null` pin).
+
+#### Step r3-1 — dyn-view method resolution and the `__extern_method_call` arm (foundation, 0 rows alone; C0)
+
+Root cause: C0 above. Two edits, both runtime-shape, both gated on
+`ctx.moduleUsesDynTaView` (set by the pre-scan, `dataview-native.ts` L3121) so a
+module without a dynamic view is **byte-identical**.
+
+1. `src/codegen/ta-dyn-mop.ts:buildStringKeyArm` (L532): factor the
+   prototype section of `constructorLookup` (L690–L760: `__getPrototypeOf(recv)`
+   → null ⇒ fallback; else `selfIdx(proto, key)`; for `get`, an `undefined`
+   result falls back) into `inheritedLookup(fallback: Instr[])` and call it from
+   `missInstrs()` for `mode === "get"` and `mode === "has"` on the
+   ordinary-key path (the `// get / has / delete: no expando → legacy miss`
+   branch at L672 and the expando-miss delegate right after it): expando own hit
+   → unchanged; expando miss (or no expando) → `inheritedLookup(legacyMiss)`.
+   `set`/`reflect_set`/`delete` keep their exact bodies (r3-10 owns `[[Set]]`
+   with a prototype-chain receiver). The `"constructor"` arm keeps its own
+   `constructorLookup` (its `namedValue` fallback differs) — do not merge them.
+   ORDER: expando own → prototype → legacy miss; the `@@toStringTag` symbol arm
+   (L770) and the intrinsic named props (`length`/`buffer`/…) stay BEFORE this
+   path exactly as today.
+2. New file `src/codegen/ta-dyn-method-call.ts` exporting
+   `unshiftExternMethodCallTaDynViewArm(ctx)`, a twin of
+   `native-proto-method-call.ts:unshiftExternMethodCallProtoArm` (read its
+   header — the "why FINALIZE" and "absent-not-wrong" rules apply verbatim):
+   `block { recv any.convert_extern ref.test $__ta_dyn_view; i32.eqz; br_if 0;
+   … }` unshifted onto `__extern_method_call` at finalize, called from
+   `src/codegen/index.ts` immediately after `unshiftExternMethodCallProtoArm(ctx)`
+   (L6354, and the profiled twin at L10961) and BEFORE `fillTaDynViewMopArms`
+   (L6438). Body, in order: (a) if the view's expando (`struct.get` field 4) is
+   non-null and `__hasOwnProperty(expando, name)` → `br_if 0` (an own
+   `view.includes = fn` shadows, §7.3.2); (b) a `ref.eq` ladder against the
+   INTERNED name globals (the #3673 round-9 pattern already inside
+   `__extern_method_call`, L6480–L6520 — `addStringConstantGlobal` +
+   `stringConstantExternrefInstrs`) for every method name whose helper exists
+   in `funcMap` at finalize (`__ta_dyn_<m>`); on a hit: unpack `argc`/`a0..a2`
+   from the `$ObjVec` args (the `loadArgs` shape at L6490) and
+   `return call __ta_dyn_<m>(recv, a0|null, a1|null, a2|null, argc)`;
+   (c) no hit → fall through to the untouched body. A rope/runtime-built name
+   misses the `ref.eq` and keeps today's behaviour — documented residual, not a
+   regression. The four existing helpers (`set`/`fill`/`copyWithin`/`reverse`)
+   join the ladder for free; the `taFillIdx` two-arm at
+   `call-receiver-method.ts` L4051 stays (it is a faster exit for the same
+   helpers and its bytes must not change).
+3. Helper registry: new file `src/codegen/ta-dyn-proto-methods.ts` with
+   `TA_DYN_PROTO_METHOD_HELPERS: ReadonlyMap<string, (ctx) => number | undefined>`
+   (name → ensure function; r3-2…r3-5 fill it) and
+   `ensureTaDynProtoMethodHelper(ctx, name)`. Reserve-time hook: in
+   `compileReceiverMethodCall`, where `taFillIdx` is computed (L4051–L4058),
+   add `else if (TA_DYN_PROTO_METHOD_HELPERS.has(methodName))
+   ensureTaDynProtoMethodHelper(ctx, methodName)` (mint only — the existing
+   two-arm keeps its four names), and call the same ensure at the two direct
+   `__extern_method_call` emit sites (L4400 and L4517) when
+   `ctx.moduleUsesDynTaView`. Also mint on `.call`/`.apply`-shaped reads of
+   `TypedArray.prototype.<m>` (`builtin-value-read.ts` value read) so the
+   closure body of step r3-1.4 has its helper.
+4. Seeded closure bodies (so `TypedArray.prototype.includes.call(view, 42)`
+   and `inherited.js`-style value reads dispatch too): in
+   `array-object-proto.ts:emitTypedArrayProtoMemberBody` (L1813), before the
+   refusal at L1829, `if (TA_DYN_PROTO_METHOD_HELPERS.has(member) &&
+   ctx.funcMap.has("__ta_dyn_<member>"))` emit: `local.get 1` (`this`)
+   `ref.test $__ta_dyn_view` → `call __ta_dyn_<member>(this, p2..p4 or null,
+   argc = paramSlots)` else `emitBrandCheckTypeError` (the existing cascade —
+   this is what keeps every `invoked-as-method.js` row green). Closure param
+   layout per `ensureStandaloneNativeMethodClosure` (native-proto.ts L1000–
+   L1040): 0 = self, 1 = `this`, 2… = `paramSlots` externrefs; treat an
+   `undefined` slot as absent (every §23.2.3 method defaults `undefined` the
+   same way an absent argument does — verified for fill/copyWithin/set/includes/
+   indexOf/lastIndexOf/join/sort/slice/subarray).
+
+Growth grant: `ta-dyn-mop.ts` +60 (`buildStringKeyArm` +40),
+`ta-dyn-method-call.ts` new ≈ 180, `ta-dyn-proto-methods.ts` new (registry
+≈ 60 now, grows in r3-2…r3-5), `index.ts` +6, `call-receiver-method.ts` +12
+(`compileReceiverMethodCall` +10), `array-object-proto.ts` +40
+(`emitTypedArrayProtoMemberBody` +30).
+
+Acceptance (this step ships alone, before any helper):
+- Probe `.tmp/census0903/probes/p9-shapes.js` must read
+  `typeof sample.includes=function sameAsProtoMember=true`, and
+  `internals/HasProperty/inherited-property.js` +
+  `internals/HasProperty/key-is-not-canonical-index.js` flip (2 rows).
+- **Passing shapes at risk**: (i) species `constructor` lookup —
+  `tests/issue-4449-species-controls.test.ts` 5/5 and
+  `tests/issue-2872-ta-dynview-reduce-includes.test.ts` 9/9 unchanged;
+  (ii) expando reads/writes — a control program `view.foo = 1; view.foo;
+  "foo" in view; view.nosuch === undefined; "nosuch" in view === false` on BOTH
+  lanes; (iii) `set`/`fill`/`copyWithin`/`reverse` on dyn views — the 25-row
+  `set` cohort and `tests/issue-2872-copywithin-reverse.test.ts` green, and the
+  `wasm_sha` of `built-ins/TypedArray/prototype/set/array-arg-set-values.js`
+  identical before/after (the `taFillIdx` two-arm must not move);
+  (iv) modules without a dynamic view — `wasm_sha` identical before/after on
+  three non-TA rows (`language/statements/class/subclass/class-definition-null-proto-super.js`,
+  one `built-ins/Array/prototype/map/*` row and one `built-ins/Map/*` row from
+  `ta-controls.txt`/`arrobj-controls.txt`), because every edit is gated on
+  `moduleUsesDynTaView` or on a `$__ta_dyn_view` type that such modules never
+  register; (v) `arrobj-controls.txt` 20/20 both lanes.
+
+#### Step r3-2 — search helpers: `__ta_dyn_includes` / `__ta_dyn_indexOf` / `__ta_dyn_lastIndexOf` (C3, 25 rows, expect ≥ 22)
+
+Root cause: C3. One `ensureTaDynSearchHelper(ctx, name)` in
+`ta-dyn-proto-methods.ts`, 5-slot ABI, body: `pushTaDynMethodPreamble`
+(export it, L7324) → `emitTaDynViewValidate` (detached/OOB → TypeError; the
+three `detached-buffer.js` rows) → `len` = `pushTaDynViewInBoundsLen` (the
+INTERNAL length, never the expando — `get-length-uses-internal-arraylength`) →
+`len == 0` → return boxed `false`/`-1` BEFORE reading `fromIndex`
+(§23.2.3.16 step 4; `length-zero-returns-false`) → `fromIndex` = `argc >= 2`
+? ToIntegerOrInfinity(a1) : default: reuse the Symbol pre-test +
+`coerceType(externref→f64)` + NaN→0 + `f64.trunc` sequence of
+`emitToIntegerI32FromArgLocal` (L5298 — factor its first 30 lines into an
+exported `emitToIntegerF64FromArgLocal` with no RangeError) so a Symbol throws
+TypeError (`*-fromindex-symbol` ×3) and an abrupt `valueOf` propagates
+(`return-abrupt-tointeger-fromindex` ×3; `__unbox_number`'s `@@toPrimitive`
+path throws through, as the set helper already relies on); `-0` → `+0`
+(`fromIndex-minus-zero` ×3); `+∞` → miss, `-∞` → 0 for forward /
+miss for backward (`fromIndex-infinity`); `lastIndexOf` default `len-1` and
+`n ≥ 0 ? min(n, len-1) : len+n`. Elements: `emitTaDynViewToVec` into a
+`$__vec_f64` (one decode pass; `searchelement-not-integer` reads the f64
+value), search target `ToNumber`-free: `includes` compares with SameValueZero
+on f64 (`f64.eq` OR both-NaN — `samevaluezero`); `indexOf`/`lastIndexOf` with
+strict `f64.eq` (NaN never matches). A non-number search element (object,
+string, undefined) can never match a numeric element → return the miss result
+without coercing it (`__unbox_number` must NOT be called on it — it would
+invoke `valueOf`). Results: `includes` → `__box_boolean`
+(`search-found-returns-true` ×3), index → `__box_number`.
+
+Rows: `ta-cl-C3-search.txt` minus the three `invoked-as-method.js`.
+Growth: `ta-dyn-proto-methods.ts` +220 (`ensureTaDynSearchHelper` ≈ 200 —
+grant), `dataview-native.ts` +10 (export of the factored ToInteger).
+Acceptance: the 22 rows; **at risk**: `Array.prototype.includes/indexOf` on
+`any` arrays keep the closed dispatcher's `$__vec_base` arm (the new arm is
+`ref.test $__ta_dyn_view`-gated and sits in `__extern_method_call`, not in
+`__call_m_*`) — `arrobj-controls.txt` 20/20 and a control program
+`var a: any = [1, NaN]; a.includes(NaN) === true; a.indexOf(1) === 0` on both
+lanes; `String.prototype.includes` on an `any` string
+(`"abc".includes("b")` through a parameter) unchanged on both lanes.
+
+#### Step r3-3 — callback HOFs on dyn views (D, 24 rows, expect ≥ 18)
+
+Root cause: D. `ensureTaDynHofHelper(ctx, name)` for `every`/`some`/`forEach`/
+`find`/`findIndex`/`reduce`/`reduceRight`/`map`/`filter`, 5-slot ABI, body:
+preamble → `emitTaDynViewValidate` (`detached-buffer` ×5 on entry) →
+`__typeof_function(a0)` else TypeError (`*-not-callable*` ×7 — this fixes r2
+leftover 3 for real: the guard lives in OUR helper, minted at reserve time with
+`ensureLateImport(ctx, "__typeof_function", …)` resolved BEFORE the body, so it
+is never compiled out) → then:
+- scalar family: `call __hof_<name>(recv = THE VIEW, cb, thisArg|init,
+  [hasInit = argc >= 2])` (`ensureNativeArrayHof`, hof-native.ts L83). Passing
+  the view itself (not a materialized vec) makes `__extern_length`/
+  `__extern_get_idx` go through the dyn-view MOP arms: live reads
+  (`callbackfn-set-value-during-*`), `this`/3rd argument = the view
+  (`callbackfn-arguments-*`), and a detach inside the callback reads `undefined`
+  from IntegerIndexedElementGet without throwing (`callbackfn-detachbuffer` ×5,
+  §23.2.3: "Let kValue be ! Get(O, Pk)") — verify the `__extern_get_idx`
+  dyn-view arm answers `undefined` (not a trap) on a negative buffer length;
+  if it traps, add the `buf.length < 0 → undefined` test to that arm in
+  `fillTaDynViewMopArms` (L341 index-key arm). `reduce`/`reduceRight` on empty
+  with no init already throw (r2).
+- `map`/`filter`: run `__hof_map`/`__hof_filter` over the view (same live
+  semantics) → `$ObjVec` result → `emitTaDynSpeciesCreate` with
+  `argLocals = [boxed count]` (`filter`: count = result length; `map`: len) →
+  `emitTaDynViewWriteF64Vec` from the `$ObjVec` (add an `$ObjVec` source arm:
+  `__unbox_number` per element — `map/callbackfn-return-*` rows already pass, so
+  keep the width conversion identical to `ta-hof-map-filter.ts`' store) —
+  count 0 must skip the copy loop (`filter/result-empty-callbackfn-returns-false`
+  null deref in `__any_unbox_bool`).
+Rows: `ta-cl-D-callback-hof.txt` (16) + the 8 `detached-buffer`/`callbackfn-detachbuffer`
+rows of `every`/`some`/`forEach`/`find`/`findIndex`/`reduce`/`reduceRight` (in
+`ta-cl-E-detach-validate.txt`) — `--isolate`.
+Growth: `ta-dyn-proto-methods.ts` +260 (`ensureTaDynHofHelper` ≈ 240 — grant),
+`ta-dyn-mop.ts` +15 if the detached `undefined` read is missing.
+Acceptance: the rows; **at risk**: `__hof_*` bodies are NOT edited (byte-identity
+of `__hof_map` in a plain-array module — hash one `built-ins/Array/prototype/map`
+row); static-carrier `map`/`filter` (`tests/issue-4449-species-producers.test.ts`,
+`tests/issue-2872-findlast-dynview.test.ts`) unchanged; the F3 characterization
+control still RED-by-design (unchanged verdict).
+
+#### Step r3-4 — `sort` and the three iterator factories (C1 12 + C2 9 = 21 rows, expect ≥ 17)
+
+- `ensureTaDynSortHelper`: preamble → validate → `a0` neither `undefined` nor
+  callable → TypeError BEFORE any read (`comparefn-nonfunction-call-throws`;
+  `null` is NOT undefined → TypeError, `comparefn-is-undefined` passes
+  `undefined`) → `emitTaDynViewToVec` → stable merge sort over the f64 array
+  (`merge-sort.ts:emitStableMergeSort(fctx, opts)` — read its
+  `MergeSortEmitOptions`; the comparator hook is an `Instr[]` producing an i32)
+  with comparator: default = numeric (`x < y`, `-0` before `+0` via
+  `i64.reinterpret` sign, NaN last — `sorted-values-nan`, `sort-tonumber`,
+  `sortcompare-with-no-tostring`), user = `__apply_closure(cb, undefined,
+  [box(x), box(y)])` → `__unbox_number` → NaN→0 → sign (`comparefn-calls`,
+  `stability`; abrupt propagates: `comparefn-call-throws`) → write back with
+  `emitTaDynViewWriteF64Vec(resultDv = recv)` → return `recv`
+  (`return-same-instance`). Ignore the expando `length`
+  (`arraylength-internal`). Do not call `compileArraySort` (string sort).
+- `ensureTaDynIteratorHelper(ctx, "keys"|"values"|"entries")`: preamble →
+  validate (`detached-buffer` ×3) → `emitTaDynViewToVec` → build the canonical
+  externref `$Vec` exactly as `compileNativeArrayIterator` does
+  (`array-methods.ts` L3090+: values box each f64, keys box the index, entries
+  build a 2-slot `$ObjVec` pair) → `struct.new $IterRec{ITER_KIND_VEC, vec, 0,
+  null}` (`iterator-native.ts` L3446 `iterRecAdoptArm` shape;
+  `getOrRegisterIterRecType`, `ensureNativeIteratorRuntime`) → externref. The
+  record's `next` must resolve (`return-itor` ×3) and
+  `Object.getPrototypeOf(it) === Object.getPrototypeOf([][Symbol.iterator]())`
+  (`iter-prototype` ×3): reuse `emitArrayIteratorPrototypeSingleton`
+  (array-object-proto.ts L3882) — check how `__getPrototypeOf` answers for an
+  `$IterRec` today (the #3013 arm in `call-builtin-static.ts` L2240) and make
+  the dyn-view records take the same arm; if `$IterRec` has no
+  `__getPrototypeOf` arm at all, that is the row's real defect — add it in
+  `object-runtime.ts:prependBuiltinFnObjectSemantics` next to the
+  `$NativeProto → $parent` arm (r2 step 1.1).
+Rows: `ta-cl-C1-sort.txt`, `ta-cl-C2-iterators.txt`.
+Growth: `ta-dyn-proto-methods.ts` +330 (`ensureTaDynSortHelper` ≈ 220,
+`ensureTaDynIteratorHelper` ≈ 110 — grant both), `object-runtime.ts` +20.
+Acceptance: the rows; **at risk**: plain-array `sort`/`keys` on `any` receivers
+(`arrobj-controls.txt`), `for (x of view)` (a currently-passing shape that goes
+through `iterRecAdoptArm`, not through `.values()` — control program on both
+lanes: `for (const v of new TA([1,2])) s += v`), and `[...view]`.
+
+#### Step r3-5 — `join` / `toLocaleString` / `toString` (C4, 16 rows, expect ≥ 12)
+
+`ensureTaDynJoinHelper(ctx, "join"|"toLocaleString")`: preamble → validate
+(`detached-buffer` ×3; `toString` aliases `Array.prototype.toString` per r2 —
+its detached row passes once `join` validates, because that alias calls
+`join`) → separator: `argc >= 1 && a0 !== undefined` ? `ToString(a0)` via the
+native `__extern_toString` (object-runtime.ts, standalone-registered) —
+Symbol → TypeError, abrupt `toString` → propagate (`return-abrupt-from-separator*`
+×2, and the two `custom-separator-*` illegal casts) — BEFORE the element loop
+(§23.2.3.15 step 5) : `","` → elements via `emitTaDynViewToVec` + the
+number→string path `compileArrayJoinNative` uses (array-methods.ts L5583; reuse
+its per-element formatter, do not reimplement `Number::toString`). For
+`toLocaleString`: per element `__extern_method_call(box(elem), "toLocaleString",
+[])` so a `Number.prototype.toLocaleString` override installed by the test is
+observed and its abrupt completion propagates (`calls-*-from-each-value` ×3,
+`return-abrupt-from-*` ×6) — this depends on `__extern_method_call`'s boxed-
+number receiver resolving `Number.prototype` members through the #4248 arm;
+probe `(5).toLocaleString()` with an override FIRST; if it does not resolve,
+scope this half to the 6 abrupt rows via `__extern_get(Number.prototype,
+"toLocaleString")` and record the 3 remaining as residual.
+Rows: `ta-cl-C4-join-tolocale.txt` minus `join/invoked-as-method.js`.
+Growth: `ta-dyn-proto-methods.ts` +180 (`ensureTaDynJoinHelper` ≈ 160 — grant).
+Acceptance: rows; **at risk**: `view.join()` and `String(view)` /
+`"" + view` on dyn views currently pass through the `$__vec_base` arm —
+control: `new TA([1,2]).join("-") === "1-2"` and `String(new TA([1]))` on both
+lanes; the arrays `join` rows in `arrobj-controls.txt`.
+
+#### Step r3-6 — species residual (F, 21 rows, expect ≥ 14)
+
+`dataview-native.ts:emitTaDynSpeciesCreate` (L6000): (a) the `constructor`
+read (L6097–L6110) already uses `__extern_get`; after r3-1 the read reaches
+the per-kind prototype's inherited getter, so `get-ctor-inherited` ×4 needs
+only: do NOT read `constructor` a second time anywhere in the producer (grep
+the callers: `emitDynViewSpeciesMethodTwoArm` L1522 and the r3-3 map/filter
+path) — re-measure first; (b) `false`/`42`/`"str"` constructor or species →
+the `typeErrorArm("TypedArray constructor is not an object")` at L6121 is
+reached only for `ref.is_null`; add `__typeof_object(C) == 0 && !isUndefined`
+→ TypeError (`get-ctor-returns-throws` ×4) and, after the species read,
+`species` non-nullish and `__reflect_is_constructor == 0` → TypeError
+(`get-species-returns-throws` ×4 — the L6169 check exists; verify it fires
+for `false`, which is a boxed boolean, not null); (c) the `@@species` getter
+must be invoked with `this` = C (`custom-ctor-invocation` ×4 asserts
+`this instanceof C`): the read at L6136 goes through `__extern_get(C,
+@@species)`, which invokes the accessor with `this` = C already — the failing
+half is the ARGUMENT tuple: `map`/`filter` `[count]`, `slice` `[count]`,
+`subarray` `[buffer, byteOffset, count]` — check `options.argLocals` at each
+caller; (d) a custom ctor returning ANOTHER dyn view: the result is that view
+(`custom-ctor-returns-another-instance` ×2 fail with "returned a
+non-TypedArray" → the driver's return is not the returned object; read
+`native-construct.ts:reserveNativeConstructDriver` L143 for how a closure
+constructor's explicit object return is surfaced, and pass it through);
+(e) `slice` same-buffer species result → snapshot the source before writing
+(`return-same-buffer-with-offset`); (f) `map` over length 0 still goes through
+species (`return-new-typedarray-from-empty-length`); (g) `subarray`
+`instanceof` — re-measure after r3-1 (prototype identity from r2 step 1.4).
+Rows: `ta-cl-F-species.txt`. Growth: `dataview-native.ts` +60
+(`emitTaDynSpeciesCreate` +50 — grant), `array-methods.ts` +20
+(`emitDynViewSpeciesMethodTwoArm` +15).
+Acceptance: rows; **at risk**: every currently-passing `speciesctor-*` row
+(`ta-passing-all.txt` holds them), `tests/issue-4449-species-{controls,producers}.test.ts`,
+`tests/issue-5385*`-era species identity (`result.constructor === TA` — probe
+P4 in the r2 section).
+
+#### Step r3-7 — validate-after-coercion and index coercion (E 11 + G 7 = 18 rows, expect ≥ 12)
+
+- `ensureTaDynFillHelper` (L6543) / `ensureTaDynCopyWithinHelper` (L7434):
+  keep `emitTaDynViewValidate` at entry (the `detached-buffer` rows) and add
+  a second `emitTaDynViewValidate` AFTER the last argument coercion and
+  BEFORE the write loop (§23.2.3.8 step 3 then IsDetachedBuffer re-check —
+  `coerced-*-detach` ×3, `coerced-values-*-detached*` ×3). Note the test
+  detaches from inside `valueOf`: the coercion must run through
+  `coerceType(externref→f64)`'s `@@toPrimitive`/`valueOf` route (it does —
+  `emitRelativeIndex` L6620). `reverse` validates at entry already; re-measure.
+  `subarray` must NOT throw when detached (§23.2.3.27); `byteOffset` reads 0
+  (`byteoffset-with-detached-buffer`) — that row fails with
+  `Cannot perform operation on a detached ArrayBuffer`: find the throw in
+  `emitTaViewDynamicByteOffset` (L4725) and return 0 for a detached buffer.
+- G: in both helpers the `end` (and copyWithin `start`) test
+  `argc >= 3 && !nullish(end)` treats `null` as absent; spec: only
+  `undefined` is absent, `null` → ToInteger → 0. Replace the
+  `__nullish_to_null` + `ref.is_null` test with `__extern_is_undefined` (a null
+  externref is JS `null` under the #2106 regime, so test `undefined` only
+  and let `null` coerce). Rows `fill/coerced-indexes`,
+  `copyWithin/coerced-values-end`. `slice`/`subarray` begin/end in
+  `emitDynViewSpeciesMethodTwoArm` go through `__unbox_number` (L1580+): add the
+  Symbol pre-test (`ctx.symbolTypeIdx` `ref.test` → TypeError, the
+  `emitToIntegerI32FromArgLocal` L5305 shape) — `return-abrupt-from-*-symbol`
+  ×4. `set/array-arg-set-values-in-order`: `ensureTaDynSetHelper`'s array-like
+  loop must stop at `ToLength(src.length)` read ONCE (L6960+).
+Growth: `dataview-native.ts` +70 (`ensureTaDynFillHelper` +20,
+`ensureTaDynCopyWithinHelper` +20 — grant both), `array-methods.ts` +25.
+Acceptance: rows (`--isolate`); **at risk**: the 25-row `set` cohort,
+`tests/issue-2872-copywithin-reverse.test.ts`, `tests/issue-3054-c-resizable.test.ts`
+(resizable-buffer OOB rows use the same validate), and `fill(v, s, undefined)`
+still meaning "to the end" — control program on both lanes.
+
+#### Step r3-8 — constructor argument protocols (H, 20 rows, expect ≥ 12)
+
+`emitTaDynCtorConstructFromLocals` (L5393) as r2 step 6.1 specified, with
+these corrections from reading the current arms: the plain-vec filter is at
+**L5773** (`carrierKey !== "f64" && … "i32_elem" && … "externref"`) — admit
+`i8_byte`/`i16_byte` and read signedness/width from the SOURCE carrier's
+storage entry (`typedarray-arg/returns-new-instance`,
+`other-ctor-returns-new-typedarray`); the `$Object` arm (L5560–L5700) already
+does `GetMethod(@@iterator)` with the non-callable TypeError — the failing rows
+are (i) `iterator-is-null-as-array-like` (`@@iterator` = `null` takes
+`arrayLikeArm` — check that `instanceof` fails because the result is built by
+a different carrier; measure `Object.getPrototypeOf(result)`), (ii)
+`iterator-throws`/`iterating-throws` (the abrupt completion is rewrapped:
+`__array_from_iter_n` L1779 drains and throws TypeError — propagate the
+original), (iii) `iterated-array-with-modified-array-iterator` (the `$ObjVec`
+fast arm L5726 skips the iterator protocol for a plain array whose
+`Array.prototype[@@iterator]` the test replaced — gate the fast arm on
+`!sourceOverridesBuiltinPrototypeMember(anchor, "Array", "@@iterator")`
+(`builtin-proto-member-override.ts` L111, a source scan, no checker), (iv)
+`throws-setting-obj-*` ×5 — element conversion in `emitTaExternrefElementToF64`
+(L3923) must propagate `valueOf`/`toString`/`@@toPrimitive` throws (it calls
+`coerceType`; verify the abrupt path is not swallowed by a `try`-less
+`__unbox_number` NaN default), (v) `length-excessive-throws`/`toindex-length`:
+check `n * es` against the allocation limit BEFORE `array.new_default`
+(`emitAllocViewFromN`, L5455) → RangeError instead of the trap, (vi)
+`buffer-arg/toindex-*`: ToIndex of an object `byteOffset`/`length` null-derefs
+in `__module_init` — coerce via `coerceType(externref→f64)` before the
+ArrayBuffer arm; **coordinate with #5150 F (windowed view)** — read
+`git log origin/main -- src/codegen/expressions/new-builtin-globals.ts` first.
+`no-species`/`same-ctor-buffer-ctor-species-*` ×3 need `view.buffer.constructor
+=== ArrayBuffer` — measure after #5150 lands; expect them to stay red here.
+Growth: `dataview-native.ts` +80 (`emitTaDynCtorConstructFromLocals` +60 —
+grant), `new-builtin-globals.ts` +20 (`tryCompileBuiltinGlobalNew` +15).
+Acceptance: rows; **at risk**: EVERY `makeCtorArg` harness row (the whole
+`ta-passing-all.txt`, 84/84), `tests/issue-3054-de-dynctor.test.ts`,
+`tests/issue-5150-es2015-buffers.test.ts` (the ArrayBuffer arm is shared),
+`tests/issue-3177.test.ts` at its pre-existing 3 failures and no more.
+
+#### Step r3-9 — `%TypedArray%.from` / `.of` (I, 23 rows, expect ≥ 14)
+
+`call-receiver-method.ts:tryEmitTaStaticOfFrom` (L330) + `dataview-native.ts:
+ensureTaFromArrayLikeHelper` (L6354) + `iterator-native.ts:ensureNativeArrayFromMapped`
+(L1875): (a) `mapfn` called with exactly `(kValue, k)` — `__array_from_mapped`
+composes `__hof_map`, which pushes 3 args; add a `__ta_from_mapped` twin whose
+loop builds a 2-slot `$ObjVec` (`mapfn-arguments`); (b) `IsCallable(mapfn)`
+BEFORE `source[@@iterator]` is read (`mapfn-is-not-callable`) — in the THEN
+arm at L390 test `__typeof_function(a1)` first when `argc >= 2 &&
+a1 !== undefined`; (c) `set-value-abrupt-completion`, `iterated-array-changed-
+by-tonumber`: values come from the DRAINED list; element ToNumber abrupt →
+propagate and stop; (d) `iter-*-error` ×4, `arylk-*-error` ×2, `custom-ctor`
+×2: the original error object must surface — `__array_from_iter_n`'s drain
+rewraps into a TypeError; find the wrap (iterator-native.ts L1906+
+`buildArrayFromIterNBody`) and rethrow the caught exception as-is;
+(e) `invoked-as-func` ×2 / `not-a-constructor` ×2: `var from = TA.from;
+from([])` — the value read mints the `from`/`of` closures (r2 step 2.1); their
+bodies must throw TypeError when `this` is not a `$__ta_ctor` / constructor
+(`__reflect_is_constructor`); (f) `.call(customCtor, src)` ×4 and
+`inherited` ×2 are the K4 `Function.prototype.call` family in disguise only
+when the receiver is read through `.call`; `inherited.js` compares
+`Int8Array.from === TypedArray.from` — a value-identity read: route the
+per-kind `$__ta_ctor` `__extern_get` arm (`ta-dyn-mop.ts` L1157) to the SAME
+intrinsic closures. `from-*-mapper-detaches-result` ×2: after the mapper
+detaches the result, the write must throw TypeError (validate before each
+element write). `from-typedarray-into-itself-mapper-detaches-result` leaks
+`env::__unwrap_for_wasm` (#2961) — do not chase it here; record it.
+Growth: `call-receiver-method.ts` +40 (`tryEmitTaStaticOfFrom` +30 — grant),
+`dataview-native.ts` +40 (`ensureTaFromArrayLikeHelper` +30 — grant),
+`iterator-native.ts` +60 (`ensureNativeArrayFromMapped` +40 — grant).
+Acceptance: rows; **at risk**: `harness/testTypedArray.js`'s `makeArray`
+(`Array.from({length:n}, fn)` — `__array_from_mapped` is on EVERY
+`makeCtorArg` row's path): `ta-passing-all.txt` 84/84 is the gate, plus
+`tests/issue-3177-fromof.test.ts` at its pre-existing failure and no more, and
+`Array.from` rows in `arrobj-controls.txt` on both lanes.
+
+#### Step r3-10 — integer-indexed MOP residual (J, 13 rows, expect ≥ 9; 2 come from r3-1)
+
+As r2 step 7 (a), (c), (d) — unchanged in substance: (a) the
+`__getOwnPropertyNames` (Reflect.ownKeys) `$__ta_dyn_view` arm mirroring the
+`__object_keys` arm at `ta-dyn-mop.ts` L957 — indices, then expando string
+keys, then symbols (`OwnPropertyKeys` ×4; `not-enumerable-keys` needs the
+expando's non-enumerable keys included); (c) `__defineProperty_value`/
+`_accessor` dyn-view arms (L1406–L1520): pass the caller's flag word through
+for expando keys (absent fields default to `false`, §10.1.6.3 —
+`key-is-not-numeric-index`, `key-is-symbol`, `non-extensible-redefine-key`),
+`ToNumber(Desc.[[Value]])` for a canonical index BEFORE the write
+(`desc-value-throws`), and `key-is-not-canonical-index` (null deref at 877:10
+— a `"1.0"`-style key reaching the index arm; route non-canonical numeric
+strings to the expando); (d) `[[Set]]` with the view on the RECEIVER's
+prototype chain (`prototype-chain-set` ×2): in `buildStringKeyArm` `set` mode
+the arm runs with `recv === O`; the ordinary `__extern_set` prototype walk
+must, on reaching a dyn view with `receiver !== O`, write the element for a
+valid index and do nothing for an invalid one (§10.4.5.5 step 1.b). Keep
+#2046's `Reflect.set` rows out.
+Growth: `ta-dyn-mop.ts` +120 (`fillTaDynViewMopArms` +80 — grant).
+Acceptance: rows; **at risk**: `Object.keys(view)`, `JSON.stringify(view)`,
+`for (k in view)` and `Object.defineProperty(view, "0", …)` — a control
+program on both lanes, and `tests/issue-3177.test.ts` `[[Delete]]` MOP case
+at its current verdict.
+
+#### Step r3-11 — DEFERRED: C5 (5 rows) and B (4 rows)
+
+- C5: probe `.tmp/census0903/probes/p10-protorecv.js` shows
+  `TypedArrayPrototype.includes()`/`.join()` do not throw while `.sort()` does:
+  the five names that are ALSO `String.prototype` members take a
+  string-flavoured any-receiver lowering (`__get_member_name` +
+  `__extern_toString` calls in the WAT of the caller) ahead of the
+  `$NativeProto` arm. Deferred because the site was not located by name in
+  this pass; find it with `npx tsx .tmp/census0903/probes/wat-fn-index.mts
+  <probe> '$h'` → the emitting function, then decline it when
+  `tracesToTypedArrayIntrinsicProto` holds. 5 rows, low value per risk.
+- B: `%TypedArray%()` must throw (r2 step 2.2 left undone — the callable
+  carrier's call body); `length`/`byteLength` getters through a var-held
+  prototype (`invoked-as-accessor` ×2 — needs the dynamic `__extern_get`
+  `$NativeProto` getter INVOCATION, not the value); `Symbol.toStringTag/
+  invoked-as-func` (gOPD `.get` symbol-key synthesis). All three are
+  builtin-surface mechanisms shared with other clusters; not worth a
+  TypedArray-local hack.
+
+### Order and honest expectations
+
+r3-1 (foundation, 2 rows, must ship first) → r3-2 (25) → r3-3 (24) → r3-4 (21)
+→ r3-5 (16) → r3-6 (21) → r3-7 (18) → r3-8 (20) → r3-9 (23) → r3-10 (13) →
+r3-11 deferred (9). Steps r3-1…r3-5 share one mechanism and one new file; ship
+them as one PR if the box allows, r3-6…r3-10 as one each. Floor for this pass:
+**≥ +110 of the 190 in-scope rows** (r3-1…r3-5 ≥ 71, r3-6…r3-10 ≥ 40 more);
+anything short of that per step is a residual to record, not a reason to widen
+a step. Do NOT touch `ArrayBuffer`/`DataView` rows (K1) even where the same
+function is edited — leave a note for #5150 instead.
+
+### Budget rationale (2026-09-03)
+
+The r3 mechanism is two NEW files (`ta-dyn-method-call.ts` — the
+`__extern_method_call` arm; `ta-dyn-proto-methods.ts` — the per-method
+helpers and their registry) so that `dataview-native.ts` (8,672 lines) and
+`call-receiver-method.ts` do not absorb another ~1,000 lines; the helper
+functions there (`ensureTaDynSortHelper`, `ensureTaDynSearchHelper`,
+`ensureTaDynHofHelper`, `ensureTaDynIteratorHelper`, `ensureTaDynJoinHelper`,
+`unshiftExternMethodCallTaDynViewArm`) are wasm-body emitters and will exceed
+the 300-line function ceiling the way `ensureTaDynSetHelper` does. Existing
+files grow only where an arm is spliced into an existing ladder: `ta-dyn-mop.ts`
+(prototype walk, MOP residual), `array-object-proto.ts` (closure bodies),
+`index.ts` (one finalize call), `call-receiver-method.ts` (reserve hook,
+`from`/`of`), `dataview-native.ts` (species, fill/copyWithin re-validate,
+ctor arms, from-arraylike), `iterator-native.ts` (2-arg mapper),
+`array-methods.ts` (Symbol pre-test in the species two-arm),
+`object-runtime.ts` (`$IterRec` prototype arm if missing). The frontmatter
+lists exactly these; r2's entries that r3 no longer touches are left in place
+(the gate only reads presence).

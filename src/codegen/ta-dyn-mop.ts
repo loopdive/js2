@@ -625,7 +625,37 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       { op: "struct.get", typeIdx: dynIdx, fieldIdx: 4 },
       { op: "local.set", index: aExp },
     ];
-    const missInstrs = (): Instr[] => {
+    // (#5194 r3-1) §10.4.5.4 IntegerIndexedElementGet falls back to
+    // OrdinaryGet, whose step 3 walks the [[Prototype]] chain. Before this the
+    // dyn-view arm stopped at the expando side-table, so every inherited
+    // `%TypedArray%.prototype` member — `includes`, `sort`, `keys`, … — read
+    // back `undefined` on an instance even though the prototype graph (r2
+    // step 1) had already seeded them. That is why `typeof sample.includes`
+    // was `"undefined"` and `"includes" in sample` was `false` while
+    // `Object.getPrototypeOf(sample) === TA.prototype` was already `true`.
+    //
+    // Only `get` and `has` walk: `set`/`reflect_set` own the receiver-on-the-
+    // prototype-chain question (r3-10) and `delete` never consults a parent.
+    const inheritedLookup = (fallback: Instr[]): Instr[] => {
+      if (mode !== "get" && mode !== "has") return fallback;
+      if (getProtoIdx === undefined || selfIdx === undefined || aProto < 0) return fallback;
+      return [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: getProtoIdx },
+        { op: "local.set", index: aProto },
+        { op: "local.get", index: aProto },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: fallback },
+        // The prototype is a `$NativeProto` (or an ordinary object a test
+        // installed), never a `$__ta_dyn_view`, so this recursion terminates
+        // in the untouched ordinary body one level down.
+        { op: "local.get", index: aProto },
+        { op: "local.get", index: aKey },
+        { op: "call", funcIdx: selfIdx },
+        { op: "return" },
+      ];
+    };
+    const missInstrs = (inherit = false): Instr[] => {
       const legacyMiss: Instr[] = (() => {
         switch (mode) {
           case "get":
@@ -666,10 +696,24 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
         out.push({ op: "return" });
         return out;
       }
-      // get / has / delete: no expando → legacy miss; else delegate.
+      // get / has / delete: no expando → final miss; else delegate.
+      const finalMiss = inherit ? inheritedLookup(legacyMiss) : legacyMiss;
       out.push({ op: "local.get", index: aExp });
       out.push({ op: "ref.is_null" });
-      out.push({ op: "if", blockType: { kind: "empty" }, then: legacyMiss });
+      out.push({ op: "if", blockType: { kind: "empty" }, then: finalMiss });
+      if (inherit && hasOwnIdx !== undefined) {
+        // §7.3.2 OrdinaryGet step 2: an OWN expando property shadows the
+        // prototype. A miss there must NOT stop the walk — delegating the miss
+        // to `__extern_get(expando, key)` would answer from `Object.prototype`
+        // and hide `%TypedArray%.prototype` entirely.
+        out.push(
+          { op: "local.get", index: aExp },
+          { op: "local.get", index: aKey },
+          { op: "call", funcIdx: hasOwnIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: finalMiss },
+        );
+      }
       out.push({ op: "local.get", index: aExp });
       out.push({ op: "local.get", index: aKey });
       out.push({ op: "call", funcIdx: selfIdx });
@@ -878,7 +922,10 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       }
     })();
     inner.push({ op: "if", blockType: { kind: "empty" }, then: canonThen });
-    inner.push(...missInstrs());
+    // Ordinary (non-index, non-intrinsic) STRING keys are the only path that
+    // continues onto the prototype chain here; the Symbol/non-string miss above
+    // keeps its expando-only behaviour until a step owns those keys.
+    inner.push(...missInstrs(true));
 
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
