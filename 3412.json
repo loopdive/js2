@@ -1,8 +1,11 @@
 {
   "id": "3412",
   "assignee": "codex/root",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "",
   "claimed_at": "2026-07-18T06:46:44Z",
-  "updated_at": "2026-07-18T06:46:44Z"
+  "updated_at": "2026-09-03T09:38:49Z",
+  "write_id": "15227-p3t8ug5s",
+  "released_at": "2026-09-03T09:38:49Z"
 }
