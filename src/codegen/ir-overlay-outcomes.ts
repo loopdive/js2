@@ -63,6 +63,13 @@ export interface ReconcileIrOverlayOutcomesInput {
    * on at all, used only where no per-unit record exists.
    */
   readonly r2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
+  /**
+   * (#5263) Terminals whose ledger row is minted by the prepared-callable
+   * publication path, not here. Reconcile must produce NEITHER a row nor a
+   * diagnostic for them: it cannot see the cross-source preparation, so every
+   * conclusion it reaches about them is stale by construction.
+   */
+  readonly ownedElsewhereUnitIds?: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
   readonly existingOutcomes: readonly IrObservedOutcome[];
   readonly target: IrObservedOutcome["target"];
@@ -864,6 +871,14 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
   const diagnostics: string[] = [];
 
   for (const unit of collectObservedIrUnits(input.sourceFile, input.identityPlan.identityContext)) {
+    // (#5263) A prepared-callable terminal is owned by the publication path.
+    // Skip the WHOLE unit, not just the diagnostic push: computing a row that
+    // the caller then discards is exactly the defect this fixes — the row was
+    // thrown away at `recordObservedIrOutcomes` while its diagnostic was
+    // reported anyway, failing every standalone multi-source compile with a
+    // `body-emission-evidence` invariant about receipts the unit correctly
+    // never took.
+    if (input.ownedElsewhereUnitIds?.has(unit.unitId)) continue;
     const bodyAccounting =
       directReceipts && irPatchReceipts && r2FreeFunctionPopulation?.unitIds.has(unit.unitId)
         ? reconcileR2FunctionBodyEmissionAccounting({

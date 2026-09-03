@@ -2517,6 +2517,16 @@ function recordObservedIrOutcomes(
     ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
     : ctx.irOutcomes;
   const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
+  // (#5263) Units the prepared-callable publication path already owns. Reconcile
+  // cannot see that preparation, so it reached `late-preparation-unsupported`
+  // and then upgraded it to a `body-emission-evidence` invariant over zero
+  // direct receipts — a row the filters below already discarded, while its
+  // diagnostic was reported unconditionally. Excluding the unit up front is
+  // what stops the diagnostic; the filters stay as the row-level guard.
+  const ownedElsewhereUnitIds = new Set<IrUnitId>([
+    ...(ctx.irProgramCallablePreparedUnitIds ?? []),
+    ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+  ]);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2527,6 +2537,7 @@ function recordObservedIrOutcomes(
     ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
     ...(ctx.irR2WithdrawalsByUnitId ? { r2WithdrawalsByUnitId: ctx.irR2WithdrawalsByUnitId } : {}),
     ...(ctx.irR2NotAttemptedReason ? { r2NotAttemptedReason: ctx.irR2NotAttemptedReason } : {}),
+    ...(ownedElsewhereUnitIds.size ? { ownedElsewhereUnitIds } : {}),
     report,
     existingOutcomes,
     target,
