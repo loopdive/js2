@@ -1,10 +1,11 @@
 {
   "id": "4109",
   "assignee": "ttraenkler/codex-4109",
-  "requested_by": "ttraenkler/codex-4109",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4109-ir-legacy-ceiling",
   "claimed_at": "2026-08-02T19:44:52Z",
-  "updated_at": "2026-08-02T19:44:52Z",
-  "write_id": "35596-o6axakzf"
+  "updated_at": "2026-09-03T09:44:29Z",
+  "write_id": "5737-d9729ktt",
+  "released_at": "2026-09-03T09:44:29Z"
 }
