@@ -1,8 +1,11 @@
 {
   "id": "3519",
   "assignee": "ttraenkler/codex-3519-outcomes",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "symphony/3519-ir-outcomes",
   "claimed_at": "2026-07-21T12:23:41Z",
-  "updated_at": "2026-07-21T12:23:41Z"
+  "updated_at": "2026-09-03T09:40:18Z",
+  "write_id": "27582-722x0fxh",
+  "released_at": "2026-09-03T09:40:18Z"
 }
