@@ -79,6 +79,7 @@ import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
   foldGroundExportCallsForCompile as foldGroundCalls,
 } from "./compiler/ground-call-fold.js";
+import { rewriteMultiNamespaceImports } from "./multi-namespace-import.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
 
@@ -1661,8 +1662,15 @@ export async function compileMultiSource(
   const rewrittenFiles = profilePhase("cjs-rewrite", () =>
     Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)])),
   );
+  // Lower in-graph `import * as ns from "./mod.js"` to the named-import form
+  // the multi-file linker already resolves. Without this the namespace binding
+  // is unbound and every `ns.member(...)` becomes a dynamic extern call on a
+  // null receiver. Offset-preserving, so it needs no position-map segment.
+  const namespaceLoweredFiles = profilePhase("namespace-import-lowering", () =>
+    rewriteMultiNamespaceImports(rewrittenFiles, projectResolutions),
+  );
   const processedFiles = profilePhase("ground-call-fold", () =>
-    foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize),
+    foldGroundCallsInMulti(namespaceLoweredFiles, entryFile, options.optimize),
   );
   profileCount("input-files", Object.keys(processedFiles).length);
 

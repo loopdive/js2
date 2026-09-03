@@ -79,6 +79,7 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
+import { tryEmitInlineDynamicCall } from "./calls.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
@@ -89,6 +90,17 @@ import { flushLateImportShifts } from "./late-imports.js";
  * bridge that would only return the same `undefined` more expensively.
  */
 const APPLY_CLOSURE_MAX_ARITY = 8;
+
+/** Strip the wrappers that do not change what a callee expression evaluates to. */
+function skipCalleeWrappers(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(current)) current = current.expression;
+    else if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) current = current.expression;
+    else if (ts.isNonNullExpression(current)) current = current.expression;
+    else return current;
+  }
+}
 
 /**
  * The tail of `compileTailDispatch`: the stored-member-closure arm, then the
@@ -112,6 +124,30 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
   // restriction that gates the arm above does not apply here.
   const inherited = tryEmitProtoInheritedMethodCall(ctx, fctx, expr);
   if (inherited !== undefined) return inherited;
+
+  // Curried invocation — `f(a)(b)`, `o.each(rows)(name, body)`, `(g())()`.
+  //
+  // The signature-directed dispatcher upstream only engages when the callee's
+  // TS type carries a call signature. A callee that returns `any` (every
+  // untyped `.js` dependency, and anything reached through an `as any`) has
+  // none, so the whole shape fell to the fallback below: the inner call RAN,
+  // its closure was built, and then the closure and every outer argument were
+  // dropped and the call answered `undefined`.
+  //
+  // This is the single defect behind the cookie suite's `it.each(rows)(name,
+  // body)` registration — 63,491 of the corpus's upstream unit tests never
+  // registered a case, and the harness scored each of them as a silent
+  // failure with no error text.
+  //
+  // `tryEmitInlineDynamicCall` is the same runtime ladder the identifier and
+  // element-access callees already use (`ref.test` over the registered
+  // closure-wrapper types, host bridge otherwise), so no new dispatch
+  // vocabulary is introduced. Restricted to a CALL callee: that is the shape
+  // measured, and every other shape keeps its current bytes.
+  if (ts.isCallExpression(skipCalleeWrappers(expr.expression))) {
+    const curried = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+    if (curried !== null) return curried as ValType;
+  }
 
   // Graceful fallback: compile the callee expression and all arguments for side
   // effects, then push `ref.null.extern`. This avoids hard compile errors for
