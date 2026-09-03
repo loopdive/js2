@@ -2045,3 +2045,36 @@ byte-identical on BOTH the standalone and host lanes (6 modules, `diff -r`).
 
 Growth: `class-bodies.ts` +10, `nested-declarations.ts` +7 (both already in
 `loc-budget-allow`), `class-dynamic-keys.ts` +24, `ast-modifiers.ts` +17.
+
+### r3-4 — `static constructor(){}` is not the class's constructor (0 rows; 2 CEs → fails)
+
+Landed edits (1) and (2) of the step: `module-rules.ts::checkDuplicateConstructors`
+no longer counts a `static` ConstructorDeclaration, and
+`ast-modifiers.ts::findConstructorImplementation` no longer SELECTS one (it was
+picking `static constructor(){}` as the class's [[Construct]] body whenever it
+came first in source). New shared predicate `ast-modifiers.ts::isStaticCtorMethod`.
+Also registered the member's spec name into `ctx.classStaticMethodNames`, so
+`Object.getOwnPropertyNames(C)` lists `constructor`.
+
+**The plan's 2-row claim does not hold, and this is a plan error, not a
+shortfall in the edit.** `grammar-static-ctor-meth-valid.js` asserts
+`C.hasOwnProperty('constructor')` at L27. That call folds from the RECEIVER'S
+CHECKER TYPE in `object-ops.ts::compilePropertyIntrospection`, and TypeScript
+does not surface a `static constructor(){}` as a static property of `typeof C`
+at all — so no amount of registration in `ctx.*` moves the fold. The assert
+needs r3-1's sidecar plus the fold DECLINE that hands a class-object receiver
+to `__hasOwnProperty`. Both rows now reach that assert instead of failing to
+compile (`A class may only have one constructor`), which is strictly closer.
+
+Not landed from the step: edit (3), registering the member as a compiled static
+METHOD. The four `class-bodies.ts` loops are all guarded on
+`ts.isMethodDeclaration(member) && member.name` and consume `member` as a
+MethodDeclaration (`asteriskToken`, `name`, parameter ABI); generalising them is
+real surgery for rows that cannot pass without r3-1 anyway. Consequence, probed:
+`C.constructor` answers a function value but calling it returns `null` (base:
+the whole module was a compile error, so this is not a regression from base —
+but it IS a hole a follow-up must close together with r3-1).
+
+Verified: 22/22 controls; duplicate-constructor early error still fires
+(`class Z { constructor(){} constructor(){} }`); the three plan controls
+byte-identical to base on both lanes.

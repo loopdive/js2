@@ -36,12 +36,23 @@ export function isGeneratorFunction(node: ts.FunctionDeclaration): boolean {
   return node.asteriskToken !== undefined;
 }
 
+/**
+ * (#5195 r3-4) `static constructor(){}` — TS parses it as a
+ * ConstructorDeclaration carrying a `static` modifier, but per §15.7 it is an
+ * ordinary static METHOD whose PropName is "constructor", NOT the class's
+ * [[Construct]] body. A class may legally carry both it and a real constructor.
+ */
+export function isStaticCtorMethod(member: ts.ClassElement): boolean {
+  return ts.isConstructorDeclaration(member) && hasStaticModifier(member) && member.body !== undefined;
+}
+
 /** Return the one executable constructor, ignoring TypeScript overload signatures. */
 export function findConstructorImplementation(
   declaration: ts.ClassDeclaration | ts.ClassExpression,
 ): ts.ConstructorDeclaration | undefined {
   return declaration.members.find(
-    (member): member is ts.ConstructorDeclaration => ts.isConstructorDeclaration(member) && member.body !== undefined,
+    (member): member is ts.ConstructorDeclaration =>
+      ts.isConstructorDeclaration(member) && member.body !== undefined && !isStaticCtorMethod(member),
   );
 }
 
