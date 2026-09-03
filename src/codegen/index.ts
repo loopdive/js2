@@ -2532,12 +2532,22 @@ function recordObservedIrOutcomes(
     target,
   });
   const preparedModuleInitUnitId = ctx.irProgramPreparedModuleInitUnitId;
+  // (#5285) The census payload rides on the `<module-init>` row so one corpus
+  // run answers "which categories does this file carry", instead of a log
+  // scrape. The map is written only under `JS2WASM_IR_SHAPE_DIAG=1`, so with the
+  // flag off this is an `undefined` lookup and every row is pushed unchanged.
+  const surveyed = ctx.irModuleBindingRefusalsBySourceFile?.get(sourceFile);
+  const moduleBindingRefusals = surveyed?.length ? surveyed : undefined;
   ctx.irOutcomes.push(
-    ...reconciled.outcomes.filter(
-      (outcome) =>
-        (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
-        outcome.unitId !== preparedModuleInitUnitId,
-    ),
+    ...reconciled.outcomes
+      .filter(
+        (outcome) =>
+          (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
+          outcome.unitId !== preparedModuleInitUnitId,
+      )
+      .map((outcome) =>
+        moduleBindingRefusals && outcome.unitKind === "module-init" ? { ...outcome, moduleBindingRefusals } : outcome,
+      ),
   );
   // (#3523 R4 gap 4) A source whose module init has nothing to do records one
   // truthful "non-executable" row here instead of staying silent. It is pushed

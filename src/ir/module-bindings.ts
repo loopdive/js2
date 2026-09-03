@@ -613,14 +613,58 @@ export interface IrModuleBindingIdentity extends IrLegacyModuleBindingIdentity {
  * node that is no longer the direct declaration the selector assessed is an
  * invariant.
  */
+/**
+ * (#5285) WHICH refusal an `unsupported` inspection came from. Every arm below
+ * is one `return { kind: "unsupported" }` in `inspectDirectBinding`, plus two
+ * the survey itself owns because the resolver is never asked:
+ * `destructuring-pattern` (the name is not an identifier, so there is no
+ * one-to-one legacy slot) and `inspection-threw` (a checker failure, which the
+ * production path deliberately re-raises but a census must not lose).
+ *
+ * The field is recorded, never read by the production path — it exists so the
+ * census can report a per-file category multiset instead of a bare count.
+ */
+export type IrModuleBindingRefusalArm =
+  | "ambient-declaration"
+  | "write-to-immutable"
+  | "heterogeneous-assignment-retype"
+  | "no-value-kind"
+  | "write-value-mismatch"
+  | "destructuring-pattern"
+  | "inspection-threw";
+
+/**
+ * (#5285) One unrepresentable top-level declaration, as reported by
+ * `surveyModuleBindingRefusals` (`ir/integration.ts`). Declared here rather
+ * than beside the survey because `ir/outcomes.ts` carries the list on the
+ * `<module-init>` row and must not take an edge on `ir/integration.ts`.
+ *
+ * `name` is `d.name.text`, never a source slice: the corpus carries a
+ * non-ASCII binding (`const id = café`, `tests/dogfood/corpus/escapes-unicode.js`).
+ */
+export interface IrModuleBindingRefusal {
+  readonly name: string;
+  readonly declaredType: string;
+  readonly initializerKind: string | undefined;
+  readonly arm: IrModuleBindingRefusalArm;
+}
+
 export type IrLegacyModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrLegacyModuleBindingIdentity }
-  | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
+  | {
+      readonly kind: "unsupported";
+      readonly declaration: ts.VariableDeclaration;
+      readonly arm: IrModuleBindingRefusalArm;
+    }
   | { readonly kind: "not-direct" };
 
 export type IrModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrModuleBindingIdentity }
-  | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
+  | {
+      readonly kind: "unsupported";
+      readonly declaration: ts.VariableDeclaration;
+      readonly arm: IrModuleBindingRefusalArm;
+    }
   | { readonly kind: "not-direct" };
 
 /**
@@ -2023,18 +2067,18 @@ export function makeIrLegacyModuleBindingResolver(
       (ts.isVariableStatement(statement) &&
         statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword))
     ) {
-      return { kind: "unsupported", declaration };
+      return { kind: "unsupported", declaration, arm: "ambient-declaration" };
     }
     const isModuleVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
     const mutable = isModuleVar || (list.flags & ts.NodeFlags.Let) !== 0;
-    if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration };
+    if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration, arm: "write-to-immutable" };
 
     // #4204/#4206 — direct codegen widens this binding's compatibility slot
     // to externref. IR cannot yet own the corresponding general dynamic
     // assignment/read boundaries, so reject before claim instead of resolving
     // the same slot as f64/i32 and tripping the Program ABI invariant later.
     if (heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)) {
-      return { kind: "unsupported", declaration };
+      return { kind: "unsupported", declaration, arm: "heterogeneous-assignment-retype" };
     }
 
     const declaredType = checker.getTypeAtLocation(declaration.name);
@@ -2077,7 +2121,7 @@ export function makeIrLegacyModuleBindingResolver(
     if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
       valueKind = { kind: "string" } as const;
     }
-    if (!valueKind) return { kind: "unsupported", declaration };
+    if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(
@@ -2090,7 +2134,7 @@ export function makeIrLegacyModuleBindingResolver(
         classifyPrimitiveExpression,
       )
     ) {
-      return { kind: "unsupported", declaration };
+      return { kind: "unsupported", declaration, arm: "write-value-mismatch" };
     }
     return { kind: "supported", identity: { declaration, mutable, valueKind } };
   };

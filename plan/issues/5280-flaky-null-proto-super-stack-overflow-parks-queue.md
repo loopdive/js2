@@ -1,9 +1,10 @@
 ---
 id: 5280
 title: "test262 flake: class-definition-null-proto-super.js overflows the stack under merge-group load and parks unrelated PRs"
-status: ready
+status: done
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-03
+completed: 2026-09-02
 sprint: current
 priority: high
 horizon: m
@@ -21,7 +22,8 @@ related: [5275, 2547, 3426, 3457, 2562, 5479, 5480, 5486]
 flips `pass → fail` with `Maximum call stack size exceeded` (`range_error`,
 regression bucket signature **`96690aa5e0efb4ff`**, net −1) in the
 `merge_group` re-validation, non-deterministically. It has parked **three
-unrelated PRs in one day**:
+unrelated PRs in one day** (and a fourth, #5498, the next morning — see the
+implementation checkpoint):
 
 | PR | parked | run | what the PR changed |
 | --- | --- | --- | --- |
@@ -84,6 +86,129 @@ Two independent pieces; either alone is worth landing.
    such by the gate itself, without a human comparing two run logs.
 3. No PR is parked on this row again without the gate naming the prior
    occurrence.
+
+## 2026-09-02 implementation checkpoint
+
+Both pieces landed. Measured on a 4-core / 15 GB container — the same shape as
+`ubuntu-latest`, which is what makes the shard reproduction faithful.
+
+### 1. Root cause of the overflow — found, reproduced, fixed
+
+**It is our recursion, and it is order-dependent, not stack-budget-dependent.**
+
+The host-side class-parent registry (`src/runtime/class-static-parent.ts`) is
+**process-global and keyed by class NAME**. A shard worker compiles and runs
+hundreds of test262 files in one process, and `C` is among the corpus's most
+common class names. `registerClassParent` dropped a **null** value on the floor
+(`if (value != null) …`), so `class C extends null` could not overwrite a
+PREVIOUS file's `C` entry. The SuperCall then resolved the stale parent through
+`__call_dynamic_class_parent_0` and `Reflect.apply`'d it instead of throwing
+TypeError. When the stale parent resolved back into the current module's own
+`C`, the SuperCall re-entered itself without bound → `Maximum call stack size
+exceeded`.
+
+Evidence, in the order it was obtained:
+
+| # | Measurement | Result |
+| --- | --- | --- |
+| 1 | `runTest262File` on the witness, 3 runs (the path the earlier hand diagnoses used) | pass ×3, `wasm_sha aa0313d0d7f6` — **and zero `class_parent` imports** |
+| 2 | Host row from the parked run 33683869984 (artifact 9867999215) | `status: fail`, `error: "Maximum call stack size exceeded"`, `host_import_leak_class: dynamic_object_property`, **`imports` include `env::__call_dynamic_class_parent_0` and `env::__register_class_parent`**, no `wasm_sha` at all, `retried: true` |
+| 3 | Full merge-group shard replica — `tests/test262-chunk-dynamic.test.ts`, `TEST262_CHUNK_INDEX=7 TEST262_CHUNK_TOTAL=52`, `COMPILER_POOL_SIZE=4`, 936 rows, 586 s | witness **pass**, and it carries `host_import_leak_class: dynamic_object_property` — i.e. the shard path takes the DYNAMIC heritage route that the in-process runner never takes |
+| 4 | Pool-1 worker, predecessor `.../subclass/derived-class-return-override-catch-super.js`, then the witness | witness **fail: `Maximum call stack size exceeded`** — the literal CI failure and bucket `96690aa5e0efb4ff`, reproduced from process ORDER alone |
+| 5 | Same, predecessor `.../subclass/superclass-bound-function.js` (which itself passes) | witness fail: `Expected a TypeError to be thrown but no exception was thrown at all` — the standalone lane's row in the same parked run |
+| 6 | Steps 4 and 5 after the fix | witness **pass** in every case |
+
+Measurement 1 is why three hand diagnoses missed this: the runner-faithful
+`runTest262File` path compiles the witness **without** the dynamic class-parent
+imports, so it never exercises the registry at all. It cannot reproduce the
+failure at any stack size — sweeping V8 `--stack-size` from 984 KB down to
+120 KB keeps the row passing, and at 100 KB it is the COMPILER that overflows
+(`src/ir/fnctor-method-edges.ts:501`), not the executed module. The stack budget
+was never the variable; the worker's process history was.
+
+**Fix** (`src/runtime/class-static-parent.ts`, `src/runtime.ts`): an explicit
+`extends null` is now recorded under a `NULL_PARENT` sentinel, `getClassParent`
+answers `null` for it and stops (no fall-through to a stale lazy resolver), and
+`_registerClassParentHandler` no longer returns early on a null heritage.
+`class C extends null` therefore throws the spec's TypeError deterministically,
+whatever ran before it. Regression test:
+`tests/issue-5280-class-parent-null-heritage.test.ts`. The test file itself was
+NOT skipped, quarantined or deleted.
+
+Not fixed here, and worth its own issue: the registry is still name-keyed and
+process-global, so two same-named classes with DIFFERENT non-null parents in one
+worker still collide. `extends null` was the case that could not self-correct;
+a non-null heritage at least overwrites.
+
+### 1b. Why the "wasm-hash change" line cannot settle this row
+
+"Fourth instance" and "How to tell this flake from a REAL failure" below record
+the #5498 park and the triage order; this notes the mechanism behind the one
+signal both of them flag as unreliable.
+
+`Regressions with wasm-hash change: 1` is not a weakened hash comparison on this
+row — it is **no hash comparison at all**. `diff-test262.ts` sets `wasmUnchanged`
+only when BOTH sides carry a string `wasm_sha`:
+
+```ts
+const wasmUnchanged = typeof baseSha === "string" && typeof curSha === "string" && baseSha === curSha;
+```
+
+and the failing candidate row **has no `wasm_sha` field whatsoever** — verified
+directly on the parked run 33683869984's merged JSONL. The row therefore lands
+in "wasm-hash change" by default, whatever the bytes did. So the cause is not
+only "the merge group tests the merged state and main's other changes move
+bytes"; for a FAILING row of this shape the line is vacuous even when nothing
+moved.
+
+That cuts both ways, and it reaches the #5412 row of the table below: that call
+rested on "the test's wasm hash moved", which this line cannot establish for a
+failing row. #5412's diff-reachability argument stands on its own and is the
+sound half; the hash half should not be relied on. Worth a re-read by whoever
+owns that call — not reopened here.
+
+It is also why #5480's "identical `wasm_sha aa0313d0d7f6` on both sides" was
+measuring something else entirely: that sha comes from `runTest262File`, which
+compiles the witness without the dynamic class-parent imports at all.
+
+### 2. Cross-PR signature check — now load-bearing
+
+`diff-test262.ts` has printed the #2098 bucket signature and the hint "Same
+signature on another PR ⇒ identical cluster ⇒ likely baseline drift" since
+#2098, and nothing ever acted on it. Now:
+
+- the gate writes the signature as a machine-readable sidecar
+  (`TEST262_SIGNATURE_OUT`, env-gated so an unset variable changes nothing);
+- `Cross-PR bucket-signature ledger (#5280)` persists each merge_group's record
+  as a run artifact named `test262-bucket-sig-<signature>` and looks up prior
+  occurrences by exact artifact name — the same mechanism #1956 uses for
+  `test262-group-<sha>`. 1-day retention covers the observed window (the three
+  parks landed inside nine hours);
+- when the same signature already failed on a **different PR whose
+  test262-relevant diff is disjoint** from this group's, the failure banner
+  becomes `CROSS-PR FLAKE CANDIDATE`, naming the prior PR, run id and log URL,
+  and explicitly supersedes the #2562 `LIKELY-REAL` banner — which answers a
+  different question (is the baseline content-current?) and, on 2026-09-02, gave
+  the opposite of the correct answer.
+
+Deliberate limits, so the gate is not weakened:
+
+- **A signature seen once stays `first-occurrence`** and the #2562 banner and
+  the exit code are untouched. That is the case a genuine single-PR regression
+  falls into.
+- **A re-run of the same PR** is `repeat-same-pr` — named, never downgraded.
+- **Overlapping test262-relevant diffs** are `overlapping-diff` — a shared file
+  is a plausible shared cause, so it stays a real regression.
+- **An unresolvable diff never counts as disjoint.** `pathsDisjoint` refuses an
+  empty path set, so a failed `git diff` cannot manufacture a downgrade.
+- The ledger changes the VERDICT TEXT and the evidence, never the pass/fail
+  decision. Re-admission stays a human action.
+- Relevance is decided by `scripts/test262-paths-match.sh --list` — the same
+  classifier the `changes` job and the #2562 staleness step use, so the ledger's
+  notion of "relevant" cannot drift from the gate's.
+
+Unit tests: `tests/issue-5280-signature-ledger.test.ts` (7 cases, including the
+literal #5479/#5480/#5486 shapes).
 
 ## Fourth instance, 2026-09-03 01:12 — and the strongest evidence yet
 
