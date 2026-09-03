@@ -2484,3 +2484,32 @@ re-reading my own numbers. The telemetry I spent the session counting had a
 field whose name and meaning disagree, and nothing in re-checking my arithmetic
 would ever have surfaced it. **A measurement is only as good as the field it
 reads, and the field is worth one compile of scepticism.**
+
+### Verification pass over every table in this file (2026-09-03)
+
+After two figure errors in one session — the dogfood legacy-body counts
+(`#5283`) and the R9-D1 seed table carrying playground numbers under dogfood
+labels — every headline table here was re-measured against a single fresh run
+rather than re-read. Ground truth:
+
+| corpus / lane | units | emitted | unsupported | non-exec | IR bodies | module-init | of which emitted |
+| --- | --: | --: | --: | --: | --: | --: | --: |
+| gate 5, single-host | 41 | 38 | 0 | 3 | 38 | 5 | 2 |
+| gate 5, standalone | 41 | 38 | 0 | 3 | 38 | 5 | 2 |
+| playground 8, single-host | 32 | 16 | 8 | 8 | 16 | 8 | **0** |
+| playground 8, standalone | 32 | 10 | 14 | 8 | 10 | 8 | **0** |
+| dogfood 20, single-host | 35 | 1 | 33 | 1 | 1 | 20 | **0** |
+| dogfood 20, standalone | 35 | 0 | 31 | 4 | 0 | 20 | **0** |
+
+**Everything above verifies except one denominator**, and it is one this file
+made load-bearing. The phrase "module-init adoption is **0 of 20 executable**
+units" is imprecise: 20 is the module-init *population*, but one of them is
+`non-executable` on single-host and four are on standalone. The accurate
+statement is **0 of 19 executable single-host and 0 of 16 executable
+standalone** — still zero adoption, which is the finding, but the denominator
+was the population rather than the executable subset. Read every "0 of 20"
+above with that correction.
+
+The playground's "all 8 module-init units are non-executable" is confirmed
+exactly (`non-exec` 8 of 8 module-init, 0 emitted), as is the gate corpus's
+"2 emitted, 3 non-executable" — which is why it is green.
