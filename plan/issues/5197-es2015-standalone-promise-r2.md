@@ -1484,3 +1484,50 @@ Controls green: `tests/issue-4682.test.ts`, `issue-4727.test.ts`,
 `issue-5197-promise-generic-capability.test.ts`,
 `issue-5197-es2015-promise-r2.test.ts` — 27 tests. The R3-1 8-row batch was
 re-run after this change (the executor capture index moved) and is still 8/8.
+
+### R3-5 — own `then` on a native `$Promise`, captured at Resolve time (LANDED, +6 of 7)
+
+Two defects, one fix each:
+
+1. `buildPromiseResolveValueBody`'s `$Promise` arm adopted the native state
+   directly, so §27.2.1.3.2 steps 8-13 `Get(resolution, "then")` never ran for a
+   native promise carrying an own `then`. The arm now consults
+   `__carrier_bag_has(peeled, "then")` and, when present, reads the value with
+   `__extern_get`: callable -> enqueue `__promise_thenable_job` with the
+   function captured NOW; own-but-not-callable -> fulfil with the promise object
+   itself (step 11). Absent the carrier-bag natives the arm is not emitted at
+   all, so a module with no promise expandos is byte-identical.
+2. `__promise_thenable_job` re-dispatched `__call_m_then_vararg` at JOB time.
+   `$__then_caps.callback` (previously always null on this job) now carries the
+   Resolve-time function, and the job calls it through `__apply_closure` when
+   set. The old dispatch is unchanged when it is null.
+
+The decision is keyed on the peeled VALUE's own carrier bag, so it is taken
+identically however the promise reaches Resolve.
+
+Measured, same 7-row batch, `--standalone`: base 7 fail -> branch 6 pass / 1
+fail. `race/resolve-prms-cstm-then.js` is NOT claimed — it needs the observable
+combinator element pipeline (R3-2/R3-3), which this pass did not reach.
+
+Controls: `tests/promise-expando-standalone.test.ts`, `issue-3125.test.ts`,
+`issue-3125-widen.test.ts`, `issue-4167-test262.test.ts`,
+`issue-2623-promise-subclass-identity.test.ts`, `issue-2867-gap4.test.ts` — 60
+tests green. `issue-2623-p7b-observable-resolve.test.ts` has ONE failure
+(`Promise.try is not a function` in the host lane) that reproduces IDENTICALLY
+on the base tree — a node-version gap, not a regression.
+
+New control `tests/issue-5197-own-then-indirection.test.ts` (13 rows, standalone,
+`imports=[]` asserted) walks the value through nine indirections — variable, two
+hops, object property, array element, call return, conditional, closure capture,
+function parameter — plus three negative controls. base 11 fail / 2 pass ->
+branch 13/13.
+
+Two facts the plan did not state, both confirmed against node as the oracle:
+
+- `Promise.resolve(p)` for a native `p` is §27.2.4.7.1 step 2 (return `p`
+  itself), NOT Resolve. Routing an own-`then` probe through it passes on the
+  base tree and proves nothing; the control therefore enters through
+  `new Promise(res => res(x))`. The identity short-circuit is pinned as its own
+  negative control so this change cannot quietly "fix" it into Resolve.
+- Pre-existing, unrelated, NOT touched here: `Promise.resolve(w).then(cb)` where
+  `w.then = 5` runs neither callback in standalone; node throws a TypeError.

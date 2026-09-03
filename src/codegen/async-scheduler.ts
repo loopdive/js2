@@ -45,6 +45,7 @@ import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
 // $ObjVec. Cycle-safe: object-runtime.ts does not import this module.
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
+import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 // (#2958, extracted for #3102) The unhandled-rejection substrate lives in its own
 // module; the inline hooks in this file (settle-body note, Promise.reject mint)
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
@@ -1253,10 +1254,15 @@ function ensurePromiseThenableSubstrate(
   const promiseLocal = 2;
   const reasonLocal = 3;
   const vecLocal = 4;
+  const capturedThenLocal = 5;
+  // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call
+  // bridge. Reserved here so the funcIdx is stable before this body bakes it.
+  const applyClosureIdx = reserveApplyClosure(ctx);
   const jobLocals: LocalDef[] = [
     { name: "$promise", type: { kind: "ref_null", typeIdx: state.promiseTypeIdx } },
     { name: "$reason", type: { kind: "externref" } },
     { name: "$argvec", type: { kind: "externref" } },
+    { name: "$capturedThen", type: { kind: "externref" } },
   ];
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
     ...buildPromiseSettleClosureInstrs(execClosures, clFuncIdx, [
@@ -1279,10 +1285,43 @@ function ensurePromiseThenableSubstrate(
     // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
     // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW
     // object as the receiver.
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: peelValueFuncIdx },
-    { op: "local.get", index: vecLocal },
-    { op: "call", funcIdx: varargThenFuncIdx },
+    // (#5197 R3-5) When Resolve captured the `then` FUNCTION (an own `then` on
+    // a native promise), call THAT value — the spec captures `then` at Resolve
+    // time (step 9) and calls it as a job (step 14), so a reassignment between
+    // the two must not change which function runs. Otherwise re-dispatch
+    // through the vararg `then` method dispatcher exactly as before.
+    ...(applyClosureIdx === undefined
+      ? [
+          { op: "local.get", index: 1 } as Instr,
+          { op: "call", funcIdx: peelValueFuncIdx } as Instr,
+          { op: "local.get", index: vecLocal } as Instr,
+          { op: "call", funcIdx: varargThenFuncIdx } as Instr,
+        ]
+      : ([
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: capsTypeIdx },
+          { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
+          { op: "local.tee", index: capturedThenLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: peelValueFuncIdx },
+              { op: "local.get", index: vecLocal },
+              { op: "call", funcIdx: varargThenFuncIdx },
+            ],
+            else: [
+              { op: "local.get", index: capturedThenLocal },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: peelValueFuncIdx },
+              { op: "local.get", index: vecLocal },
+              { op: "call", funcIdx: applyClosureIdx },
+            ],
+          },
+        ] satisfies Instr[])),
     { op: "drop" },
   ];
   const thenableJobFuncIdx = mintDefinedFunc(ctx);
@@ -1484,6 +1523,8 @@ function buildPromiseResolveValueLocals(promiseTypeIdx: number): LocalDef[] {
     { name: "$reason", type: { kind: "externref" } },
     { name: "$poisoned", type: { kind: "i32" } },
     { name: "$peeled", type: { kind: "externref" } },
+    // (#5197 R3-5) The own `then` read off a native `$Promise` resolution.
+    { name: "$bagThen", type: { kind: "externref" } },
   ];
 }
 
@@ -1645,6 +1686,68 @@ function buildPromiseResolveValueBody(
           { op: "local.set", index: peeledLocal },
         ];
 
+  // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, "then")` for EVERY
+  // object, including a native promise. The `$Promise` arm below adopts the
+  // native state directly, so `nativePromise.then = f` was never observed. The
+  // decision rides on the VALUE (does this exact object carry an own `then` in
+  // its carrier bag?), not on the syntax that produced it, so it is taken
+  // identically however the promise reaches Resolve — a variable, a property,
+  // an array element, a call result.
+  //
+  // Absent the carrier-bag natives (a module with no promise expandos at all)
+  // this arm is not emitted and the body is byte-identical to before.
+  const bagThenLocal = 8;
+  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const ownThenArm: Instr[] =
+    thenable === null || bagHasIdx === undefined || externGetIdx === undefined || callableRootTypeIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: peeledLocal },
+          ...stringConstantExternrefInstrs(ctx, "then"),
+          { op: "call", funcIdx: bagHasIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: peeledLocal },
+              ...stringConstantExternrefInstrs(ctx, "then"),
+              { op: "call", funcIdx: externGetIdx },
+              { op: "local.set", index: bagThenLocal },
+              { op: "local.get", index: bagThenLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: callableRootTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  // Callable own `then`: enqueue PromiseResolveThenableJob with
+                  // the function CAPTURED NOW (step 9), so a later reassignment
+                  // of `then` cannot change which function the job calls.
+                  { op: "ref.func", funcIdx: thenable.thenableJobFuncIdx },
+                  { op: "local.get", index: bagThenLocal },
+                  { op: "local.get", index: promiseLocal },
+                  { op: "struct.new", typeIdx: capsTypeIdx },
+                  { op: "extern.convert_any" },
+                  { op: "local.get", index: valueLocal },
+                  { op: "call", funcIdx: state.enqueueFuncIdx },
+                  { op: "local.get", index: valueLocal },
+                  { op: "return" },
+                ],
+                else: [
+                  // Own but NOT callable (step 11): fulfil with the promise
+                  // object itself, do not adopt its state.
+                  { op: "local.get", index: promiseLocal },
+                  { op: "local.get", index: valueLocal },
+                  { op: "call", funcIdx: state.promiseFulfillFuncIdx },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+        ];
+
   return [
     ...peelPrelude,
     { op: "local.get", index: peeledLocal },
@@ -1660,6 +1763,7 @@ function buildPromiseResolveValueBody(
         { op: "ref.cast", typeIdx: promiseTypeIdx },
         { op: "local.set", index: innerLocal },
         ...selfCheck,
+        ...ownThenArm,
         // caps = $__then_caps{ callback: null, chained: promise }
         { op: "ref.null.extern" },
         { op: "local.get", index: promiseLocal },
