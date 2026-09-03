@@ -1060,6 +1060,26 @@ function isModuleStringStorageType(type: ts.Type, checker: ts.TypeChecker): bool
 }
 
 /**
+ * (#5289) Prove a declared type is the DYNAMIC one — `any` or `unknown`.
+ *
+ * The predicate deliberately mirrors `resolveWasmType`'s own deciding branch
+ * in `src/codegen/index.ts` (`ctx.fast && tsType.flags & (Any | Unknown)`)
+ * rather than re-deriving a narrower notion of "dynamic". That branch is the
+ * function that ALLOCATES the legacy `__mod_*` slot, so matching it exactly is
+ * what makes `resolveModuleBindingGlobal`'s storage-agreement check a real
+ * agreement test: both sides are answering from the same source fact.
+ *
+ * A union is refused for the same reason the `string` arm refuses one — the
+ * checker's `any` is not a union, so a union reaching here is some other type
+ * that merely contains a dynamic member, and admitting it would claim a
+ * storage decision this issue never measured.
+ */
+function isModuleDynamicStorageType(type: ts.Type): boolean {
+  if (type.isUnion()) return false;
+  return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+}
+
+/**
  * (#4461) The one initializer shape a native-`$Map` module binding admits:
  * `new Map()` / `new Map<K, V>()` against the ambient constructor, zero
  * runtime arguments. `new Map(iterable)` needs the `__map_new_from_arr`
@@ -2120,6 +2140,31 @@ export function makeIrLegacyModuleBindingResolver(
     // arm is excluded by construction rather than re-derived here.
     if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
       valueKind = { kind: "string" } as const;
+    }
+    // (#5289) An `any`/`unknown` module binding. ONE kind for both lanes,
+    // exactly like the `string` arm above — and for a stronger reason than
+    // "the backend picks the spelling": the two carriers here are chosen by
+    // ONE function of ONE flag on BOTH sides of the boundary.
+    //
+    //   legacy allocation  `resolveWasmType`            (src/codegen/index.ts)
+    //     ctx.fast → `(ref null $AnyValue)` · else → externref
+    //   IR resolution      `resolveIrDynamicCarrierType` (src/codegen/any-helpers.ts)
+    //     ctx.fast → `(ref null $AnyValue)` · else → externref
+    //
+    // `resolveModuleBindingGlobal`'s `dynamic` arm already calls the second,
+    // so admitting the binding here does not WIDEN the storage-agreement check
+    // — it makes the check load-bearing for a population it never saw. A lane
+    // whose slot was widened for some other reason (see the `var` exclusion
+    // below) disagrees loudly as an `abi-type-index-mismatch`, never silently.
+    //
+    // `let`/`const` only, deliberately excluding `var`, on the same measured
+    // grounds as R4-M1's string arm: every legacy arm that widens a module
+    // slot away from the checker-inferred type is `var`-specific, and the
+    // widened carrier is `externref`, which in FAST mode is not the dynamic
+    // carrier. That disagreement is only reportable as a hard Program-ABI
+    // invariant, never as a demote, so the arm excludes it by construction.
+    if (!valueKind && !isModuleVar && isModuleDynamicStorageType(declaredType)) {
+      valueKind = { kind: "dynamic" } as const;
     }
     if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
     if (
