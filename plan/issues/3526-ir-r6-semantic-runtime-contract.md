@@ -96,6 +96,8 @@ loc-budget-allow:
   # self-hosted-stdlib adapters. All four cited files already carry an
   # F1-S1 grant; this line records the F1-S2 rationale against it.
   - src/ir/runtime-host-capabilities.ts
+  # 2026-09-02 F3-S2: the callable capability-record schema suite.
+  - tests/issue-3526-callable-boundary-schema.test.ts
   # 2026-09-01 F1-S3 (generator setReturn boxing, +294 net LOC measured against
   # origin/main 009b8127): the `generatorNumberBox` policy, its two provider
   # rows and their policy-driven selection (runtime-manifest.ts); the
@@ -437,6 +439,57 @@ func-budget-allow:
   # callable symbols whose arms are individually small, and every family-2 slice
   # so far has added to it under the same discipline (#3399 tracks the split).
   #
+  #
+  # 2026-09-02 F3-S2 (capability-record schema widening for callables — family
+  # 3's second slice; +474 net src LOC measured against this branch's own base,
+  # the F3-S1 branch head b16a68d06, with `origin/main` da00bd956 as the CI
+  # merge-preview base; both gate runs green).
+  #
+  # NO NEW PATH. Both files written already carry grants. Breakdown:
+  #
+  # * `runtime-host-capabilities.ts` (+459, 772 -> 1231, still under the 1500
+  #   god-file threshold): a FOURTH record kind, `export`, and the first ids
+  #   whose direction is host->module. An export record deliberately has NO
+  #   `module` key — an export has no import namespace, and the exact-key check
+  #   enforces its absence so no consumer can resolve one as an import;
+  #   direction is carried by the kind alone. Two `func-family` widenings: an
+  #   optional `leading` prefix (the fixed `[callee, this]` ahead of the
+  #   repeated tail, which `repeat x arity` alone cannot describe), COMPARED by
+  #   value and not merely admitted; and the 3-operand floor becoming a PER-ROW
+  #   declaration, because `__call_function_0` and `__boundary_callback_call_0`
+  #   are real imports at arity zero. The shared floor did not vanish, it
+  #   split: each row declares its own `min`, the validator still refuses any
+  #   row whose `min` drifts from its canonical value, and the surviving
+  #   constant refuses only a negative or non-integer arity. A declared knob
+  #   axis, `hostSelection`, records WHICH condition selects a spelling; it
+  #   mirrors `host-call-fallback.ts:20` exactly — the array ABI is selected
+  #   when the knob is "0" OR the arity exceeds `max`, not on the knob alone —
+  #   and no record ever reads `process.env`. It is compared STRUCTURALLY, since
+  #   `exceptionPolicy`'s `!==` identity compare works only for a string
+  #   literal. Eleven rows with pinning comments.
+  # * `runtime-manifest.ts` (+15, 2962 -> 2977; already over the god-file
+  #   threshold and already granted, as in F2-S3..F3-S1): the `#indexProviders`
+  #   blanket refusal of an export capability in any provider's
+  #   `hostCapabilities`, typed `unknown-host-capability`. Load-bearing rather
+  #   than defensive — `HostCapabilityId` is the WHOLE id union, so without it
+  #   an export id would type-check there and reach `freeze()`'s record map.
+  #
+  # ELEVEN rows, not the planned twelve. `closure.apply` is DEFERRED to F3-S6
+  # for want of a compiled witness: `__apply_closure` has two producers — an
+  # `env` import (`array-tolocalestring.ts:153`) and a module-DEFINED function
+  # (`object-runtime.ts:7316`) — and no fixture across eight candidate paths
+  # produced a module that IMPORTS it, so which spelling is the crossing is
+  # unmeasured. Declaring it anyway would invert measure-then-declare.
+  # `callable.boundary_callback.call`, which the plan gated hardest, DOES ship:
+  # it is witnessed at every arity 0..6 on the gc + `semanticProviders:
+  # "native-first"` lane, the one lane that is simultaneously native-first and
+  # `!standalone && !wasi`, which `calls.ts:4650-4652` requires. Cardinality
+  # 19 -> 30.
+  #
+  # NO PROVIDER references any new row, so `freeze()` publishes none of them
+  # and every frozen manifest, import, export and emitted body is byte-
+  # identical: 28 of 28 corpus cells and 27 of 27 WAT texts identical, measured
+  # file-copy A/B on one tree.
   # 2026-09-02 F2-S8: no NEW path crosses a threshold. The one function this
   # slice grows past the gate's notice is
   # `integration.ts::compileIrPathFunctions` (3178 -> 3242), which already
@@ -457,6 +510,14 @@ func-budget-allow:
   # extracted into `admitAttachedHostCallbackMaker` instead — the same shape
   # F1-S4 gave `attachedExternIsUndefinedArm` — which leaves the function under
   # the threshold with no grant needed.
+  #
+  # 2026-09-02 F3-S2: no function crosses the threshold, and none is granted.
+  # The export validator arm (`assertExportCapabilityRecord`), the structural
+  # `assertHostSelection` compare and `resolveRuntimeHostCapabilityExportRecord`
+  # are each a NEW sibling function in the shape of
+  # `assertGlobalCapabilityRecord`, so the widening adds functions rather than
+  # growing one. `assertFuncFamilyCapabilityRecord` grows by the `leading`
+  # admit-and-compare and stays well under 300.
   - src/ir/integration.ts::resolveAndObserveCallableProvider
 ---
 
@@ -10022,3 +10083,269 @@ axis, open question 6 answered in the cheapest-to-reverse direction).
 | F3-S4 (closure-environment policy) | needs a type/role record kind this slice does **not** add — deferred (b) is still open, so F3-S4 must either add it or stay symbolic like `carrier-field` |
 | F3-S6 (unmatched-callee host fallback) | needs the two family rows this slice adds, and inherits `callable.boundary_callback.call` if P3 finds no witness; the only family-3 slice that is **not** byte-neutral, and it owns the gc-host import-set change on shape 04 |
 | F3-S3 (`functionPrototypeCall`) | independent of the schema; blocked only on census open question 4 (build-time vs resolve-time demote) |
+
+### 2026-09-02 F3-S2 checkpoint note — Opus lane
+
+Implemented from `## 2026-09-02 F3-S2 implementation plan — capability-record
+schema widening for callables (family 3, slice 2)` on the docs branch
+`claude/docs-f3s2-gap6b`, on `claude/issue-3526-f3s2-callable-schema`, branched
+from **F3-S1's branch** `claude/issue-3526-f3s1-host-callback-maker`
+`b16a68d06` (the plan cites `29bfb8be7e`; the head had moved by two commits —
+the review's doc-comment scoping and the merge that carried it). Base for every
+measurement below: `b16a68d06`. CI merge-preview base: `origin/main`
+`da00bd956`. Slice claim `3526:f3s2`. Every probe was measured on this branch's
+own tree BEFORE the first source edit; the revert copies were captured at that
+first edit.
+
+**This slice moves no boundary, and that is measured, not asserted**: 28 of 28
+corpus cells and 27 of 27 WAT texts byte-identical.
+
+#### Probe answers
+
+- **P1 — export ABI ground truth: the planned rows were right, unchanged.**
+  `wabt` 1.0.39 refuses these modules (`readWasm failed: unexpected type form
+  (got -0x30)` — the WasmGC `sub` form `0x50`) and our own WAT printer drops
+  type indices, so the signatures were read from the compiled BINARY's type
+  section (`.tmp/f3s2-plan/p1-export-abi.mts`, artifact `p1-export-abi.json`).
+  On CB7/12 gc-host (11354 bytes, sha `95f65d95053d`): `__call_fn_N` is
+  `(externref × (N+1)) -> (externref)` for every N in 0..4 and `__closure_arity`
+  is `(externref) -> (i32)`, each published beside `$cN` / `$ce` with an
+  identical signature. **No mismatch, so no row was rewritten.** CB7/09b
+  publishes only `__call_fn_0`/`$c0` — the bridge emits the arities it observes
+  — which is why shape 12 and not 09b is the cross-check fixture in the suite.
+- **P2 — export stripping: one publication member is correct.** Artifact
+  `.tmp/f3s2-plan/p2-strip.md`. All six names and all six `$c*` aliases are
+  **absent** on `standalone` and `wasi` for both fixtures that compile there
+  (04 and 12), and present on gc-host. **One finding the plan did not
+  anticipate**: they are also present on **gc-strict-no-host**, because the gate
+  is `emitHostBridge: targetProfile.hostValueInterop !== "off"`
+  (`create-context.ts:189`) and not `strictNoHostImports`. That does not add a
+  publication member — the single gate is still a single gate — but it is
+  recorded so F3-S5 does not read `host-bridge-gated` as "JS-host only".
+- **P3 — the gate flipped two rows the plan expected to go the other way.**
+  Artifacts `p3-family-abi.json`, `p3b.json`, `p3c.json`, `p3d.json`,
+  `p3-import-abi.json`.
+  - Both knob values, on CB7/12 gc-host: knob **unset** imports
+    `env.__call_function` **and** `__call_function_0..4` in one module; knob
+    `="0"` imports `__call_function` alone. That is `host-call-fallback.ts:20`
+    exactly, and it is why `hostSelection` names a condition rather than the
+    knob's value.
+  - `leading`, `min: 0`, `max: 4` confirmed from real import signatures:
+    `__call_function_N` is `(externref, externref, externref × N) -> externref`.
+  - **`callable.boundary_callback.call` SHIPS.** The plan gated it hardest —
+    zero census cells — but the census simply had no lane for it. `nativeBoundary`
+    is `semanticProviders === "native-first"`, while `calls.ts:4650-4652` requires
+    `!ctx.standalone && !ctx.wasi`; the standalone profile derives `native-first`,
+    so on standalone the arm is unreachable. The lane that satisfies both is
+    **gc with an explicit `{ semanticProviders: "native-first" }`**, and there
+    `export function call(f: any, ...): any { return f(...); }` imports
+    `env.__boundary_callback_call_N` at **every arity 0 through 6** — direct
+    evidence for `min: 0` and `max: null`.
+  - **`closure.apply` is DEFERRED, and ships with no row.** `__apply_closure`
+    has TWO producers — an `env` import (`array-tolocalestring.ts:153`) and a
+    module-DEFINED function (`object-runtime.ts:7316` `reserveApplyClosure`,
+    same signature) — and **no** fixture across eight candidate paths (three
+    `toLocaleString` receivers ×3 lanes, the Promise executor ×2, the TypedArray
+    HOF, `charAt`, all under `nativeStrings` where relevant) produced a module
+    that IMPORTS it. Which spelling is the crossing is therefore unmeasured, and
+    declaring `module: "env"` on a guess would invert measure-then-declare. It
+    goes to F3-S6 with this note. Pinned as an explicit absence in the new
+    suite's section (g).
+  - The other two maker rows DO have witnesses: `__make_getter_callback` from
+    `Object.defineProperty(o, "v", { get() {...} })`, and
+    `__make_callback_ctor` from `addEventListener("tick", function () {...})` —
+    a constructible function EXPRESSION, per `callableHasConstructBehavior`.
+    Both `(i32, externref) -> externref`.
+- **P4 — canonicalization and `semanticView` are stable.**
+  `tests/issue-3526-ir-runtime-manifest.test.ts` passes **unedited**: `freeze()`
+  publishes `hostCapabilityRecords` only for requested ids, and no provider
+  names a new one. The reversed-catalogue canonicalization pin
+  (`issue-3526-string-boundary-schema.test.ts:489-494`) also passes unedited —
+  it compares against `RUNTIME_HOST_CAPABILITY_IDS` itself, so it holds over a
+  larger domain by construction.
+- **P5 — no other un-requested-id gate exists.** Artifact
+  `.tmp/f3s2-plan/p5-gates.txt`. `scripts/` does not reference
+  `runtime-host-capabilities` at all. The one fence of that shape is
+  `issue-3526-string-boundary-schema.test.ts:124`/`:440`, which derives from the
+  hardcoded `NEW_IDS` list, so eleven new unprovided ids do not touch it — M8
+  confirmed. Nothing needed exempting and no gate was weakened.
+- **P6 — the pin census was right about the seven, and missed an eighth.**
+  Artifact `.tmp/f3s2-plan/p6-pins.md`. The seven forecast pins in
+  `issue-3526-string-boundary-schema.test.ts` moved. Two files the plan listed
+  as CONTROLS also moved, both for reasons the plan's own text implies:
+  `issue-3526-string-boundary-concat-many.test.ts` (see divergence 2) and
+  `issue-3526-callable-boundary-callback.test.ts` (divergence 3).
+
+#### Verification matrix
+
+- **V-A — 28/28 byte cells identical, 27/27 WAT texts identical, 0 differing
+  fields.** CB7 (01 direct call, 04 closure capturing param, 06 `.bind`, 07
+  `.call`/`.apply`, 08 `array.map(arrow)`, 09b the pinned B2 source, 12
+  higher-order compose) × four lanes, compiled before and after on one tree by
+  file-copy A/B (`.tmp/f3s2-plan/matrix.mts`, `base-matrix.json` vs
+  `after-matrix.json`). Every cell matches on success, byte length, binary
+  sha256, the ordered import list, the export list, the error list,
+  `irCompiledFuncs`, `irOutcomes` and WAT sha; `cmp` over all 27 emitted WAT
+  texts is clean (27, not 28 — 09b/wasi produces no module).
+
+  The corpus was **reconstructed**, since `.tmp/r6-f3-census/` does not exist in
+  this container, and it reproduces the census: 04 imports `__call_function_1..4`,
+  12 imports `__call_function` + `_0..4`. Two cross-checks show the
+  reconstruction is faithful rather than merely plausible — 09b/gc-host is
+  **908 bytes / sha `2b0fa77dc7d5`** and 09b/standalone **50422 /
+  `7f9a1ee3f80e`**, byte-for-byte F3-S1's own V-A figures, and
+  09b/gc-strict-no-host is **93770**, matching F3-S1's post-merge re-measurement
+  rather than its pre-merge number. Two fixtures differ from the census: 06
+  imports `_2..4` where the census recorded `_1..4`, and 07 reaches no host-call
+  fallback at all (229 bytes vs the census's 812) — different sources for the
+  same shape, recorded rather than tuned, and immaterial to an A/B where both
+  sides compile the identical text.
+
+  | shape | gc-host | gc-strict-no-host | standalone | wasi |
+  | --- | --- | --- | --- | --- |
+  | 01 | 169 ✓ | 22004 ✓ | 22619 ✓ | 22646 ✓ |
+  | 04 | 2976 ✓ | 32993 ✓ | 33016 ✓ | 33043 ✓ |
+  | 06 | 2817 ✓ | 98992 ✓ | 132443 ✓ | 105647 ✓ |
+  | 07 | 229 ✓ | 22064 ✓ | 22679 ✓ | 22706 ✓ |
+  | 08 | 4138 ✓ | 35431 ✓ | 53224 ✓ | 53180 ✓ |
+  | 09b | 908 ✓ | 93770 ✓ | 50422 ✓ | fail ✓ |
+  | 12 | 11354 ✓ | 43546 ✓ | 61102 ✓ | 60929 ✓ |
+
+  (✓ = bytes, sha256, imports, exports, errors, outcomes and WAT all identical
+  before/after. The wasi 09b cell stays the census's same hard failure, M7.)
+- **V-B — new suite `tests/issue-3526-callable-boundary-schema.test.ts`, 24
+  tests, all green**, in sections (a) exact + canonical rows · (b) each ABI
+  against compiled ground truth · (c) validator refusals · (d) the kind guards ·
+  (e) the provider refusal and a Math-only manifest · (f) the measured
+  publication gate · (g) what is deliberately absent.
+- **V-C — anti-vacuity.** A provider requesting any of the six export ids fails
+  freeze with `unknown-host-capability` naming the id; a gc-host module exports
+  every name AND alias the six export rows declare, and a standalone one none of
+  them — the same measurement P2 made, re-asserted as a live pin.
+- **V-D — revert non-vacuity: 24 tests fail, in exactly 3 files, nothing outside
+  them.** Reverting only the two src files (file-copy, no `git stash`) fails 21
+  of the new suite's 24, 2 in `issue-3526-string-boundary-schema` and 1 in
+  `-concat-many`; 65 pass. The honest bound is "nothing outside those three
+  files", not "0 elsewhere" — this slice moves committed pins, and the third
+  file is one P6 did not forecast.
+
+  Three of the new suite's tests SURVIVE the revert, which is correct and worth
+  naming: the `string.concat.many` optionality pin and the two section-(g)
+  absence pins assert what must be true both before and after.
+- **V-E — closedness lives in `src/`.** `tsconfig.json` excludes `tests/`, so
+  `@ts-expect-error` there is unenforced; the enforcement is the `as const`
+  tuples plus the factory parameter types under `pnpm run typecheck` (clean),
+  with the runtime membership checks as their pinnable twins. The new suite
+  reaches the negative cases through `assertRuntimeHostCapabilityRecord` and
+  through freeze, not through type errors.
+- **V-F — gates and controls.**
+  - Five ratchet gates, chained and bare, **and again under
+    `LOC_GATE_BASE=$(git rev-parse origin/main)`** (`da00bd956`): all green both
+    ways. `runtime-host-capabilities.ts` 772 → **1231** (+459, inside the plan's
+    +410..+490 estimate, under the 1500 threshold); `runtime-manifest.ts`
+    2792 → 2977 (+185, of which +15 is this slice).
+  - **`check:dead-exports` was run at the FIRST commit-ready point, as the plan
+    required, and is GREEN: `25 known entries, 0 new`.** The residual risk did
+    not materialise — no new symbol had to be made module-private, and
+    `scripts/dead-export-baseline.json` is untouched.
+  - `check:ir-fallbacks`: OK, no unintended/post-claim/module-level increases.
+    `check:ir-layering`: 86 import lines across 15 files (baseline 86) — the new
+    `runtime-manifest.ts` → `runtime-host-capabilities.ts` specifier is ir→ir and
+    not counted. `check:ir-kind-neutrality`: OK with **no evidence-line shift at
+    all**, so the surgical baseline refresh F2-S7/F3-S1 needed was NOT required
+    here; `git status --short scripts/` is empty — no `scripts/*-baseline.json`
+    was edited.
+  - `pnpm run typecheck` and `pnpm run format:check`: clean.
+  - **Controls, 26 files / 549 tests: 3 failed | 546 passed, and the red set is
+    identical to the base tree's, name for name.** Measured by file-copy A/B on
+    this branch's own tree, not assumed: `issue-3214-callable-abi` (1, "runs a
+    legacy captured closure through a genuine-IR callee in both wrapper
+    orders"), `issue-3214-void-host-callback` (1, "rejects non-void before the
+    IR claim") and `issue-3520-closure-host-bridge-abi` (1, "derives the exact
+    five-entry census…") — the same three F3-S1 recorded, none of them this
+    slice's.
+  - `tests/issue-3518-multi-prepared-string-leaf-planner.test.ts` was **not
+    run**: it OOMs the vitest worker on this container, as F2-S4…F3-S1 all
+    recorded. CI runs it with a larger heap.
+
+#### Deviations from the plan
+
+1. **Eleven rows, not twelve — `closure.apply` deferred, and the deferral is
+   the opposite one the plan expected.** The plan gated
+   `callable.boundary_callback.call` on P3 and expected the three maker/apply
+   rows to be the likelier survivors. Measured, `boundary_callback` has a witness
+   at seven arities and `closure.apply` has none. Cardinality is **19 → 30**, and
+   that number is used consistently in the frontmatter, the suite and this note.
+2. **`issue-3526-string-boundary-concat-many.test.ts` moved, where the plan
+   predicted an empty edit.** The plan's prediction was specifically about the
+   **whole-shape** pin, and that one did NOT move — `leading` stayed optional, so
+   the concat row's frozen shape is untouched. What moved is a *different* pin:
+   a refusal case asserting the message `params min 2 is below the 3-operand
+   floor`. Per-row `min` necessarily changes which check refuses `min: 2` — it is
+   now the range compare against the canonical row. **The guard is not weaker,
+   and the pin now proves that**: the case still refuses `min: 2`, and two cases
+   were added — `min: -1` still hits the surviving absolute floor, and a
+   `leading` smuggled onto a row that does not declare it is refused outright by
+   the exact-key check.
+3. **`issue-3526-callable-boundary-callback.test.ts` moved — F3-S1's own suite,
+   listed as a control.** Its pin "leaves the legacy `_ctor` maker untouched —
+   **its record lands in F3-S2**" is a pin written to be inverted by this slice,
+   and it was: it now asserts both maker fields ARE in the catalogue, plus that
+   `HOST_CALLBACK_WRAP_CAPABILITY_RECORD` still names `__make_callback` alone. No
+   other line of that file changed, and F3-S1's 16-line record append and its
+   review-scoped doc comment were not re-touched.
+4. **The seventh moving pin was handled through the suite's own
+   `LATER_SLICE_IDS` convention, not by the plan's "→ 24".** That list exists
+   (`:101`) precisely to keep the "twelve pre-existing rows" pin meaning
+   *pre-F2-S2*. Raising the count to 24 would have forced its `kind === "func"` /
+   `module === "env"` loop to admit an export row, which has neither — i.e. to
+   weaken the pin. Adding the eleven ids to `LATER_SLICE_IDS` keeps `old` at 12
+   and the loop intact.
+5. **`RUNTIME_HOST_CAPABILITY_KINDS` is `["export", "func", "func-family",
+   "global"]`** — sorted, matching every other tuple in the file, rather than
+   appended.
+6. **An inherited unresolved merge conflict was resolved in this branch.** F3-S1's
+   head `b16a68d06` has literal `<<<<<<< HEAD` / `=======` / `>>>>>>>` markers
+   committed into this issue file at lines 9551/9583/9608 — its merge message
+   says "Both kept: the lane's re-measurement first, then the review findings"
+   but the resolution was never written. Since this slice appends to that exact
+   file tail, the markers are removed here and both blocks kept **in the order
+   that message states**. No prose was changed. Flagged to the F3-S1 lane; if
+   F3-S1 fixes it upstream the re-merge conflict is trivial.
+
+#### Not touched
+
+`src/ir/integration.ts` and `src/codegen/index.ts` (R2 lock — this slice needed
+no line-scoped exception, unlike F3-S1);
+`src/codegen/multi-prepared-callable-orchestration.ts`; `src/ir/outcomes.ts`;
+`src/codegen/declarations/import-collector.ts`, `src/codegen/closure-exports.ts`,
+`src/codegen/expressions/host-call-fallback.ts`,
+`src/codegen/callback-ctor-bridge.ts` (read-only sources of ABI truth);
+`src/ir/intrinsic-support.ts` and `src/ir/async-runtime-providers.ts` — the plan
+allowed comment-only edits there and none was needed, since both already fail
+closed on the wrong kind and `export` joins the set they refuse without a code
+change. No provider row, no policy field, no resolve/attach/from-ast edit.
+
+#### The three F3-S1 review findings, and what this slice did with them
+
+Handed over explicitly at dispatch; **none is addressed here, and that is a
+scope decision rather than an oversight.**
+
+1. **The async-plan-state admission gap** (`preregisterDynamicSupport` walks
+   `fn.blocks` but not `fn.asyncPlan?.states`, so an admission can be missed —
+   a missing refusal, not a mislowering). **Not closed.** It lives in
+   `src/ir/integration.ts`, which this slice does not write at all and which is
+   R2-locked; closing it "for all three arms at once", as the finding suggests,
+   is a change to an admission walk, not to a record schema. It needs its own
+   slice and an R2 coordination, exactly as F3-S1's own integration edits did.
+2. **The admission's refusal is not owner-local** (the `IrInvariantError`
+   escapes into `runGlobalPreparation`'s `failEveryOwner`). **Not closed**, same
+   file and same reason. Still unreachable in-tree.
+3. **The record comment's scope** — "bringing `import-collector.ts:2010`/`:2053`
+   and `async-frame.ts:165` under the record is F3-S2's `callback.wrap.*` sibling
+   row". **This slice adds the sibling ROWS** (`callback.wrap.ctor`,
+   `callback.wrap.getter`) and F3-S1's own inverted pin now asserts they exist —
+   but it does **not** rewire those three legacy sites to read them, because that
+   is a boundary move and this slice moves none. The rows make the rewiring
+   expressible; F3-S5/F3-S6 own it. F3-S1's doc comment is left exactly as the
+   review scoped it.

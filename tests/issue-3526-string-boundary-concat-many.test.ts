@@ -712,12 +712,29 @@ describe("#3526 F2-S6 family rows are validated", () => {
     }
   });
 
-  it("refuses a family record with an unknown scheme, an empty prefix, or a floor below three", () => {
+  /**
+   * (#3526 F3-S2) The three-operand floor is no longer a shared constant — it
+   * is `string.concat.many`'s OWN declared `min`, because family 3's
+   * `__call_function_0` and `__boundary_callback_call_0` are real imports at
+   * arity zero. The guard did not weaken: a row claiming `min: 2` is still
+   * refused, now by the per-row range compare against the canonical value
+   * rather than by a global floor message. The absolute floor that survives as
+   * a constant refuses only what no derivation rule can ever mean — a negative
+   * or non-integer arity — and the last case pins that too.
+   */
+  it("refuses a family record with an unknown scheme, an empty prefix, or a drifted arity range", () => {
     const record = familyRecord();
     for (const [update, pattern] of [
       [{ field: { scheme: "literal", prefix: "__concat_" } }, /unknown host capability .* field scheme literal/],
       [{ field: { scheme: "arity-suffix", prefix: "" } }, /field prefix .* does not match/],
-      [{ params: { repeat: "externref", min: 2, max: null } }, /params min 2 is below the 3-operand floor/],
+      [{ params: { repeat: "externref", min: 2, max: null } }, /params range 2\.\.null does not match 3\.\.null/],
+      [{ params: { repeat: "externref", min: -1, max: null } }, /params min -1 is below the 0-operand floor/],
+      // An OPTIONAL key cannot be smuggled onto a row that does not declare it:
+      // the exact-key check refuses `leading` on the concat row outright.
+      [
+        { params: { repeat: "externref", min: 3, max: null, leading: ["externref"] } },
+        /keys leading,max,min,repeat do not match max,min,repeat/,
+      ],
     ] as const) {
       const catalogue = RUNTIME_HOST_CAPABILITY_RECORDS.map((entry) =>
         entry.capability === "string.concat.many" ? { ...record, ...update } : entry,
