@@ -1,12 +1,11 @@
 {
   "id": "4772",
   "assignee": "ttraenkler/codex-es6-switch",
-  "requested_by": "ttraenkler/codex-es6-switch",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es6-switch-residual",
-  "reserved_at": "2026-08-27T08:55:33Z",
   "claimed_at": "2026-08-27T08:55:33Z",
-  "updated_at": "2026-08-27T08:55:33Z",
-  "write_id": "60840-n934g38m",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:51:21Z",
+  "write_id": "22105-o2jwgvzl",
+  "released_at": "2026-09-03T09:51:21Z"
 }
