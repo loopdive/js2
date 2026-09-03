@@ -285,6 +285,24 @@ Both budget gates pass **without a grant**: `check-loc-budget` reports net
 `check-func-budget` reports no unallowed growth on either base. No
 `loc-budget-allow:` entry is therefore needed or added.
 
+### Validation, re-run after merging `origin/main` at `744203f3c7`
+
+Every number above was re-measured on the merged tree; none moved. In addition:
+
+- **Equivalence**, 8 shards, `EQUIVALENCE_FORK_HEAP_MB=4096`: 24 failing /
+  1,718 passing, all 24 in `scripts/equivalence-baseline.json` — zero new
+  regressions on every shard.
+- **62 `issue-3520-*` suites**, base vs branch, run in three chunks: failing-name
+  sets **identical** (11 failures, all pre-existing on merged main).
+- `issue-3525-*` (4 files), `issue-3519-*` (2), `issue-5262`, `issue-5283`,
+  `issue-5300`, `issue-5297`: failing-name sets identical — the two known
+  `#3525 M2 prepared multi-source module-init` reds are unchanged, everything
+  else green.
+- Ratchet chain green on both bases (`merge-base(origin)` and
+  `LOC_GATE_BASE=origin/main`); every `quality` gate green, including
+  `check:harness-compile-budget` at measured 150,774 / ceiling 150,803 — **29
+  units of margin**, unchanged by this PR.
+
 ### Open, deliberately not done
 
 `PreparedIrEmissionLedgerEntry` (`src/ir/program.ts:167`) carries the same
