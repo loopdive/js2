@@ -1,12 +1,11 @@
 {
   "id": "4575",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "",
-  "reserved_at": "2026-08-20T08:52:19Z",
   "claimed_at": "2026-08-20T08:52:19Z",
-  "updated_at": "2026-08-20T08:52:19Z",
-  "write_id": "41174-eai0aeqv",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:48:34Z",
+  "write_id": "15313-5yrc9jhw",
+  "released_at": "2026-09-03T09:48:34Z"
 }
