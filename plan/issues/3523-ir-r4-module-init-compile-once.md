@@ -5082,3 +5082,301 @@ mixing reason this issue was opened about, not because the arm was pre-empted.
 
 Reproduce: read `code` **and** `detail` off the `<module-init>`
 `IrObservedOutcome` under `JS2WASM_IR_SHAPE_DIAG=1`; `detail` is the arm.
+
+## Implementation Plan
+
+**Slice R4 W2-B — admit `function`-typed top-level `const` declarations into
+`IrModuleBindingValueKind`.** Written 2026-09-03 against `origin/main`
+`2510fae`. Every figure below was produced in this worktree by a probe run
+here, not carried over from the census or from an earlier checkpoint.
+
+### Verdict, up front
+
+**The slice is real as scoped, and its file yield is zero.** Those are two
+separate findings and both are load-bearing:
+
+1. **The storage arm is what refuses both files.** `arrow-params.js` and
+   `generators-async.js` refuse at `vardecl-module-storage-unrepresentable`
+   with 8 and 1 `no-value-kind` refusals respectively — the 9 the brief
+   predicted, confirmed one declaration at a time. The precondition passes.
+2. **Clearing it moves no file to `emitted`.** Measured with the arm actually
+   implemented (prototype, reverted): the 9 refusals go to 0, and both files
+   then refuse one arm later at `vardecl-module-value-flow`, and — with that
+   arm also opened — two arms later at the closure-literal shape gate. The
+   remaining distance is **shape** coverage, which is outside R4's storage
+   scope.
+
+So this slice should be accepted on "the 9 storage refusals are cleared and
+every already-admitted shape is byte-identical", exactly as R4-M1 was, and
+must **not** be briefed or reviewed as "unlocks 2 dogfood files". It does not.
+
+### Correction: `escapes-unicode.js` was read one level too coarse
+
+The 2026-09-03 checkpoint above retracts the `object` category on the grounds
+that `escapes-unicode.js` "actually fires `body-shape-rejected` — a shape arm
+that fires *before* the storage arm is ever consulted". **Re-measured on
+`2510fae`, that is not what the compiler reports:**
+
+```
+tests/dogfood/corpus/escapes-unicode.js | gc          code=body-shape-rejected
+  detail=vardecl-module-storage-unrepresentable:VariableDeclaration
+  moduleBindingRefusals = [ obj: no-value-kind ]
+tests/dogfood/corpus/escapes-unicode.js | standalone  (identical)
+```
+
+`body-shape-rejected` is the **bucket**, not an arm. The storage refusal is
+raised *by* `shapeNo("vardecl-module-storage-unrepresentable", d)` at
+`src/ir/select.ts:5664`, which sits **inside** the Phase-1 shape gate and
+therefore returns that same uniform bucket reason — `select.ts:1363` assigns
+`body-shape-rejected` to every un-typed shape rejection, and the arm survives
+only in `detail`. Reading `code` cannot distinguish a storage refusal from a
+shape refusal, because a storage refusal *is* reported in the shape bucket.
+
+The checkpoint's own rule was right and was applied one notch too shallow:
+read the **arm**, and for this bucket the arm lives in `detail`, never in
+`code`. `escapes-unicode.js` is still on the `object` storage blocker.
+
+### Measurement 1 — the refusal arm, per file, per target
+
+Command (run from the repo root; `tsx` on the source tree, no build step):
+
+```bash
+JS2WASM_IR_SHAPE_DIAG=1 npx tsx .tmp/w2b-arm-probe.mts
+# compile(src, { target, trackIrOutcomes: true, experimentalIR: true })
+# → rows filtered to unitKind === "module-init"; prints kind/code/detail and
+#   the #5285 moduleBindingRefusals multiset.
+```
+
+| file | target | `kind` | `code` (bucket) | `detail` (**arm**) | storage refusals |
+| --- | --- | --- | --- | --- | --: |
+| `arrow-params.js` | `gc` | `unsupported` | `body-shape-rejected` | **`vardecl-module-storage-unrepresentable:VariableDeclaration`** | **8** |
+| `arrow-params.js` | `standalone` | `non-executable` | — | — | 0 |
+| `generators-async.js` | `gc` | `unsupported` | `body-shape-rejected` | **`vardecl-module-storage-unrepresentable:VariableDeclaration`** | **1** |
+| `generators-async.js` | `standalone` | `non-executable` | — | — | 0 |
+
+All 9 refusals are `arm=no-value-kind` on an `ArrowFunction` initializer —
+`a,b,c,d,e,f,g,h` in `arrow-params.js`, `arrow` in `generators-async.js`. The
+"9 refusals / 2 files" figure from the **dogfood** census is confirmed exactly.
+
+**The `standalone` cells are not a refusal at all, and this was not predicted.**
+On host-free targets `src/compiler.ts:1585` gates
+`elideDeadTopLevelBindings` (`src/deadcode-elide.ts`, #3418) on
+`targetProfile.environment === "none" || "wasi"`. Both corpus files export
+nothing, so every top-level `const` is a provably-dead pure binding and is
+blanked to a length-preserving `;` **before** IR planning. Instrumented at
+`buildNonExecutableModuleInitOutcome`
+(`src/codegen/ir-overlay-outcomes.ts:715`):
+
+```
+[w2b] file=input.ts target=gc         stmts=8 hasUnit=true  pop=8
+[w2b] file=input.ts target=standalone stmts=8 hasUnit=false pop=0
+      kinds=EmptyStatement×8  text=";                      \n;   …"
+```
+
+Consequence for the acceptance criteria: **the 9 refusals are a `gc`-lane
+population.** The `standalone` lane has nothing for this arm to admit on these
+two files, and must be asserted byte-identical rather than improved. A plan
+that promised "clears 9 refusals on both lanes" would be unfalsifiable on one
+of them.
+
+### Measurement 2 — the carrier, four cells
+
+`fast` is `ctx.fast` (`src/codegen/context/create-context.ts:266`,
+`fast: options?.fast ?? false`) and is orthogonal to `target`; it is the flag
+`src/ir/integration.ts:2303` reads for `numberStorage: ctx.fast ? "i32" : "f64"`.
+Both are varied independently below.
+
+```bash
+npx tsx .tmp/w2b-carrier.mts
+# const f = (x) => x;  export function use(v) { return f(v); }
+# compile(SRC, { target, fast, wat: true }) → the (global $__mod_f …) line
+```
+
+| | `target: "gc"` | `target: "standalone"` |
+| --- | --- | --- |
+| **compat** (`fast: false`) | `(global $__mod_f (mut externref) (ref.null extern))` | `(global $__mod_f (mut externref) (ref.null extern))` |
+| **fast** (`fast: true`) | `(global $__mod_f (mut externref) (ref.null extern))` | `(global $__mod_f (mut externref) (ref.null extern))` |
+
+**Byte-identical in all four cells.** The census's claim holds, and now on the
+four-cell grid rather than two cells from the same side of the split.
+
+**Falsifiability, built in.** Two independent checks, because a probe that
+cannot vary is worthless:
+
+- *Right kind of thing.* The matched line is a `(global …)` form carrying its
+  ValType **inline** — `(mut externref)` with an agreeing `(ref.null extern)`
+  initializer. No type index is dereferenced, so the rec-group misnumbering
+  that produced a confidently wrong `func`-type answer here previously cannot
+  arise; there is nothing positional to miscount.
+- *The probe responds to its inputs.* `fast` demonstrably reaches codegen —
+  emitted WAT length on `gc` is 21,469 (compat) vs 200,072 (fast) for the same
+  source. A control run on `const n = 1` returns `(mut f64)` in all four
+  cells, i.e. the *numeric* carrier does not split at the module-global level
+  either; `numberStorage` constrains what the resolver may claim, not what the
+  global is allocated as. Recorded because it bounds what this probe proves:
+  it proves the `function` carrier is uniform, **not** that no module-binding
+  carrier anywhere splits on `fast`.
+
+**Sibling comparison — refuted, and in the slice's favour.** The brief carries
+`#5289` (`any`) as "blocked on an ABI question". It is not: `#5289` is
+`status: done`, its `dynamic` arm is live at `src/ir/module-bindings.ts:2167`
+and its `resolveModuleBindingGlobal` arm at `src/ir/integration.ts:5738`. The
+comparison that remains true is the mechanical one: `dynamic` needed a
+lane-resolved carrier (`resolveIrDynamicCarrierType`), `string` a
+backend-resolved one (`ctx.nativeStrings ? $AnyString : externref`), and
+`function` needs **neither** — one constant `externref` on all four cells.
+It is the simplest of the three at the storage boundary.
+
+### Measurement 3 — what admitting the kind actually achieves
+
+Prototype applied in this worktree (3 edits, `npm run typecheck` exit 0), then
+reverted via the file-copy A/B pattern; `git diff` clean before this plan was
+committed. Arms re-read after each step:
+
+| step | `arrow-params.js` (gc) | `generators-async.js` (gc) |
+| --- | --- | --- |
+| base `2510fae` | `vardecl-module-storage-unrepresentable` (8 refusals) | `vardecl-module-storage-unrepresentable` (1 refusal) |
+| + storage arm (**this slice**) | `vardecl-module-value-flow:ArrowFunction` (**0 refusals**) | `vardecl-module-value-flow:ArrowFunction` (**0 refusals**) |
+| + value-flow arm (*not this slice*) | `closure-return-type:ArrowFunction` | `closure-async:ArrowFunction` |
+
+The third row is the reason the yield is zero and stays zero for at least two
+more slices: after storage and value flow, both files hit the Phase-1
+**closure-literal** shape gate, which is IR shape coverage (`#1370`/`#1373`
+territory), not module-binding storage. Do not scope those into W2-B.
+
+### Order of edits
+
+Three files, in this order. Each step compiles on its own.
+
+1. **`src/ir/module-binding-value-kinds.ts:40`** — add
+   `| { readonly kind: "function" }` after the `string` member, with the
+   R4-M1-style comment stating the measured fact: *one* carrier, `externref`,
+   on all four `{gc, standalone} × {compat, fast}` cells, so unlike `string`
+   and `dynamic` this kind defers to nothing.
+   **Do not add it to `isIrModuleReferenceValueKind` (`:86`).** That predicate
+   governs consumer discipline for kinds whose *reads* are already claimed by
+   extern arms; a function binding has no proven IR read lowering, and #5289
+   set the precedent of refusing at the site that matters instead
+   (`obviousModuleValueFamily`, step 3).
+2. **`src/ir/module-bindings.ts`** —
+   a. new predicate `isModuleFunctionStorageType(type, checker)` beside
+      `isModuleStringStorageType` (`:1053`): reject unions, reject nullable
+      (`getNonNullableType(type) !== type`), reject construct signatures, then
+      require `getCallSignatures().length > 0` **and**
+      `getProperties().length === 0` — the last clause keeps callable *objects*
+      and class statics out of a storage decision this slice did not measure.
+   b. admission arm immediately before the `no-value-kind` return at `:2169`,
+      guarded `!valueKind && !isModuleVar` — `let`/`const` only, excluding
+      `var` on exactly R4-M1's measured grounds (`:2132-2140`): every legacy
+      arm that widens a module slot away from the checker-inferred type is
+      `var`-specific.
+3. **`src/ir/integration.ts`** — `case "function":` in the
+   `resolveModuleBindingGlobal` switch (`:5729`, after the `string` case ends
+   at `:5812`): `storageType = { kind: "externref" }`,
+   `type = { kind: "val", val: storageType }`. The opaque-val shape (not
+   `extern`, which would demand a registered `ctx.externClasses` entry, and not
+   `dynamic`, which would assert boxing semantics the slice has not proven).
+   `storageMatches` at `:5814` then becomes a real agreement test for this
+   population.
+
+**Deliberately NOT in this slice**, each because it is a separate measured
+decision: the `writeValueMatches` arm (`module-bindings.ts:1423`) — without it
+a `let` function binding's *write* refuses at `write-value-mismatch`, which is
+correct and is what keeps the blast radius at declaration storage; and
+`obviousModuleValueFamily` (`select.ts:6591`) — a `function` binding falls
+through to the literal/alias arms and yields `undefined`, the same
+conservative answer `dynamic` gets at `:6601`. Confirm that fall-through is
+`undefined` rather than a wrong family before landing.
+
+### Acceptance criteria
+
+1. **Byte neutrality, R4-M1's shape.** Every `website/playground/examples/**.ts`
+   (13) and `tests/dogfood/corpus/**.js` (20) compiled on both lanes = **66
+   compiles**; sha256 of the emitted binary identical to a base run executed
+   *in the same worktree on `2510fae` before the first edit* (capture the
+   revert copies first — the base run must be yours, not quoted). Successes
+   compare by binary sha256, failures by sorted diagnostic set. Target: 66/66.
+   Zero `irOutcomes` rows may change except the two in AC 2.
+2. **The arm is load-bearing.** With `JS2WASM_IR_SHAPE_DIAG=1`, on `gc`:
+   `arrow-params.js` 8 → **0** and `generators-async.js` 1 → **0**
+   `moduleBindingRefusals`, both files' `detail` moving from
+   `vardecl-module-storage-unrepresentable` to `vardecl-module-value-flow`.
+   On `standalone`: both rows stay `non-executable`, unchanged.
+3. **No file crosses to `emitted`, and that is the expected result** — assert
+   it, so a reviewer cannot read the zero as underperformance.
+4. Gates green: `check:loc-budget`, `check:func-budget`,
+   `check:coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`, plus
+   `check:ir-fallbacks`, `check:ir-dialect`, `check:ir-layering`, `typecheck`,
+   `lint`. Run the five ratchet gates chained, and again under
+   `LOC_GATE_BASE=$(git rev-parse origin/main)`.
+
+### The non-vacuous test
+
+New `tests/issue-3523-r4w2b-function-module-storage.test.ts`, modelled on
+`tests/issue-3523-r4m1-string-module-storage.test.ts` (which already provides
+`compileAndRun`, `outcomeFor` and `moduleGlobalLine` — reuse that shape).
+
+**The case that fails if the arm is removed** — this is the point of the file,
+so it must assert the arm, not the bucket:
+
+```ts
+const outcome = outcomeFor(run.outcomes, "<module-init>");
+expect(outcome.kind).toBe("unsupported");
+// The BUCKET is body-shape-rejected either way — asserting it proves nothing.
+expect((outcome as { detail?: string }).detail).toBe("vardecl-module-value-flow:ArrowFunction");
+```
+
+With the arm present the detail is `vardecl-module-value-flow`; with it
+removed it reverts to `vardecl-module-storage-unrepresentable`, and the test
+fails. An assertion on `code` alone would pass in **both** states — that is
+precisely the failure this issue has now made twice, and the test must not
+reproduce it. Add alongside:
+
+- **Carrier assertion.** `moduleGlobalLine(wat, "f")` is
+  `(global $__mod_f (mut externref) (ref.null extern))` on `gc` *and*
+  `standalone`. A future change that splits the carrier per lane fails here
+  rather than as a Program-ABI invariant deep in a later build.
+- **The refusals are gone, counted.** Under `JS2WASM_IR_SHAPE_DIAG=1`, the
+  `moduleBindingRefusals` array on the `<module-init>` row of a
+  function-binding source is empty.
+- **The boundary is deliberate**, each asserted still refused: a nullable
+  `const f: ((x: number) => number) | null = null`, a union, a callable object
+  (`getProperties().length > 0`), a `var` function binding, and a *write* to a
+  `let` function binding (`write-value-mismatch`).
+- **No new emission.** Assert `irBodyEmitted === false` for the `<module-init>`
+  row, so the test cannot silently start passing for the wrong reason if a
+  later slice opens the shape gate.
+
+### Conflict surface
+
+- **Low, and measured.** The prototype touched exactly 3 files and
+  `npm run typecheck` passed with **no** exhaustiveness break anywhere else —
+  no other `switch` over `IrModuleBindingValueKind` is exhaustive, so the union
+  member can be added without a cascade. The flip side: nothing will *force*
+  the implementer to visit the consumer sites, so visit them deliberately —
+  `module-bindings.ts:1530`, `select.ts:2958, 6360, 6594-6601, 6829, 9320,
+  10628`, and `module-binding-value-kinds.ts:60, 86, 130`.
+- **`check:ir-kind-neutrality` will likely need a one-line baseline refresh.**
+  R4-M1 hit this: the baseline cites `src/ir/integration.ts:7213` by line, and
+  inserting a `case` in `resolveModuleBindingGlobal` shifts every later anchor
+  in that file. Nothing grows; the counts are unchanged. Budget one line.
+- **Anchors in this issue file drift and some are already stale.** Verified on
+  `2510fae`: `scalarKind` is `:967` (brief said ~:923);
+  `makeIrLegacyModuleBindingResolver` `:2068` (~:2067 ✓); R4-M1's string arm
+  `:2142` (~:2121); `numberStorage: ctx.fast` is `integration.ts:2303` (brief
+  said `:2301`); `resolveWasmType`'s `any` conditional is
+  `src/codegen/index.ts:12636`. The audit's `integration.ts:6332-6337`
+  citation is stale as the brief warned. Re-verify before editing.
+- **`plan/issues/` only in this PR.** No `src/` or `tests/` changes ship here;
+  the prototype above was reverted and is not part of the diff.
+
+### Scope caveat — name the corpus in every figure
+
+The "9 refusals / 2 files" figure is a **dogfood-corpus** figure and nothing
+more. Per the 2026-09-03 measurement on `#3518`
+(`plan/issues/3518-…md:2800`), `FunctionExpression` is **0.87% of test262
+nodes and exactly 0.00% in both the playground and dogfood denominators** —
+an entire syntactic form with no coverage in either corpus this slice is
+measured against. So the dogfood count neither establishes nor bounds the real
+weight of the `function` category; it establishes only that this slice's arm
+is exercised at all. Any figure quoted downstream must name its corpus.
