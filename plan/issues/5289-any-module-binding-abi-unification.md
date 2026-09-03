@@ -414,10 +414,22 @@ initialized and reassigned): `irBodyEmitted false → true` in `gc/fast` and
 
 ### Criterion 2 — byte neutrality with the arm inactive
 
-Dogfood corpus, per-row sha256, 20 files x 4 cells: **80/80 byte-identical**,
-zero rows moved. Focused controls (`no_any`, `var_any`): **8/8 byte-identical**
-across the same four cells. Every `any` fixture moves, which is the intended
-flip; values re-checked and unchanged where runnable (`1`, `2`, `42`, `2`).
+Per-row sha256, every cohort compiled in all four cells on this branch and on
+its merge base, compared row by row:
+
+| cohort | rows | identical | moved |
+| --- | --: | --: | --: |
+| dogfood corpus (20 files x 4 cells) | 80 | **80** | 0 |
+| playground examples (13 files x 4 cells) | 52 | **52** | 0 |
+| focused controls `no_any` / `var_any` | 8 | **8** | 0 |
+
+**132/132 reachable rows plus 8/8 controls, zero movement.** The one playground
+row that fails to compile (`dom/calendar.ts` in `standalone/fast`: "standalone
+DOM callback dispatcher was not reserved before component sealing") fails
+IDENTICALLY on the merge base — pre-existing, not touched here.
+
+Every `any` fixture moves, which is the intended flip; values re-checked and
+unchanged where runnable (`1`, `2`, `42`, `2`).
 
 One honest cost, measured: in the COMPATIBILITY lane a module that admits an
 `any` binding now moves bytes without gaining an emitted unit — preparation
@@ -444,6 +456,23 @@ future two-cell measurement cannot re-walk the `target`-vs-`fast` trap.
 **Non-vacuity (demonstrated):** the file is 27/27 green on this branch and
 **6 failing on the base tree** (`AssertionError: expected [ 'a' ] to not include
 'a'` — the storage refusal this slice removes).
+
+### Suite results
+
+- **Equivalence, 8 shards by name** (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`): all
+  eight exit 0, "No new equivalence regressions". 1,718 passing; 24 failing,
+  which is exactly the 24 known-failure entries in
+  `scripts/equivalence-baseline.json` — **zero name-set diff**.
+- **`tests/issue-4520-abi-carrier-differential.test.ts`: 9 of 44 fail, and they
+  fail IDENTICALLY on the merge base** — same nine test names, same 9-failed /
+  35-passed split (`destructured-param`, `nested-array-param`,
+  `unannotated-return`, `object-literal-type-param` in both `standalone` and
+  `wasi`, plus the `IrType`-family row-table check). Pre-existing, proven by
+  running the gate on both trees; none concerns module bindings. Not introduced
+  here and not fixed here.
+- `check:ir-dialect`, `check:ir-fallbacks`, `check:linear-ir`: OK.
+- LOC / func / coercion / oracle-ratchet / dead-exports: OK, including the CI
+  base simulation (`LOC_GATE_BASE=origin/main`).
 
 ## Follow-up this issue names but does not do
 
