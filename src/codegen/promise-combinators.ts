@@ -186,6 +186,13 @@ function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRun
   const exnTag = ensureExnTag(ctx);
   const executorFuncIdx = mintDefinedFunc(ctx);
   const stateLocal = 3;
+  // "this slot already holds a stored value" — i.e. it is neither null nor
+  // undefined. Leaves the incoming externref consumed and an i32 on the stack.
+  const nullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  const slotIsStoredTail: Instr[] =
+    nullishIdx === undefined
+      ? [{ op: "ref.is_null" }, { op: "i32.eqz" }]
+      : [{ op: "call", funcIdx: nullishIdx }, { op: "i32.eqz" }];
   const body: Instr[] = [
     // state = self.$capability
     { op: "local.get", index: 0 },
@@ -193,14 +200,21 @@ function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRun
     { op: "struct.get", typeIdx: executorTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE },
     { op: "local.set", index: stateLocal },
     // A second call is only an error once a non-undefined slot was stored.
+    // (#5197 R3-1) `undefined` is NOT `ref.null.extern` under the #2864
+    // singleton regime: `executor(undefined, undefined)` and the zero-argument
+    // `executor()` (padded by `__apply_closure`) store the canonical
+    // `$AnyValue` undefined singleton, a NON-null externref. Guarding with a
+    // bare `ref.is_null` therefore treated that spec-legal state as "already
+    // stored" and made the following `executor(f, g)` throw. Consult the
+    // object runtime's own nullish predicate when it is registered; when it is
+    // not (legacy regime, where undefined IS the null bit pattern) keep the
+    // original `ref.is_null` body byte-for-byte.
     { op: "local.get", index: stateLocal },
     { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 0 },
-    { op: "ref.is_null" },
-    { op: "i32.eqz" },
+    ...slotIsStoredTail,
     { op: "local.get", index: stateLocal },
     { op: "struct.get", typeIdx: stateTypeIdx, fieldIdx: 1 },
-    { op: "ref.is_null" },
-    { op: "i32.eqz" },
+    ...slotIsStoredTail,
     { op: "i32.or" },
     {
       op: "if",

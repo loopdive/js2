@@ -1374,3 +1374,30 @@ pitfall above), and re-probe the currently-passing `built-ins/Promise/**`
 ES2015 rows (the set `ls test262/test/built-ins/Promise -R` minus the census
 list, ~110 rows, ≤15 per batch) once after R3-4 and once at the end — that
 sweep, not the row list, is what catches a broken passing shape.
+
+## 2026-09-03 r3 implementation (Opus)
+
+Base: `91d4999050de75d8e71e7ec6bc18f49952c9d3bf`. Base tree materialised to
+`.tmp/basetree` for file-copy A/B; every delta below is a measured before/after
+pair run by this lane, not an inherited figure.
+
+### R3-1 — capability executor: `undefined` is "not yet stored" (LANDED, +4)
+
+`ensureCustomCapabilityRuntime` decided "a slot was already stored" with
+`ref.is_null`. Under the #2864 singleton regime the canonical `undefined` is a
+NON-null externref, so `executor()` / `executor(undefined, undefined)` looked
+"stored" and the spec-legal follow-up `executor(f, g)` threw. The guard now
+routes through the object runtime's own `__extern_is_nullish` predicate when it
+is registered, and keeps the original `ref.is_null` body byte-for-byte when it
+is not (legacy regime, where undefined IS the null bit pattern).
+
+Measured, same 8-row batch, `--standalone`:
+
+| tree | result |
+| --- | --- |
+| base `.tmp/basetree` | 4 pass / 4 fail (all four `capability-executor-called-twice.js`) |
+| branch | 8 pass / 0 fail |
+
+Controls green on both lanes: `tests/issue-4682.test.ts` (3/3, including the
+gc/host path), `tests/issue-5197-promise-generic-capability.test.ts` (10/10),
+`tests/issue-4727.test.ts`.
