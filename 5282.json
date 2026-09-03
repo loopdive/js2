@@ -1,10 +1,11 @@
 {
   "id": "5282",
   "assignee": "ttraenkler/opus-5282",
-  "requested_by": "ttraenkler/opus-5282",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5282-fast-admission-mask",
   "claimed_at": "2026-09-03T08:45:31Z",
-  "updated_at": "2026-09-03T08:45:31Z",
-  "write_id": "10950-m4fp3t7d"
+  "updated_at": "2026-09-03T10:54:30Z",
+  "write_id": "24906-uhk5o2ll",
+  "released_at": "2026-09-03T10:54:30Z"
 }
