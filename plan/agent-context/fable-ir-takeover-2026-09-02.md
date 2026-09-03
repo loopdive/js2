@@ -90,7 +90,35 @@ done and only needs harvesting into issue files.
 
 ## Open threads, ranked
 
-1. **The merge-queue configuration contradiction — unresolved, and it decides
+1. **#3522's claim is a GHOST — one command unblocks a `priority: critical`
+   issue that has been undispatchable for five days.** `claim-issue.mjs --check
+   3522` refuses (exit 3) for `ttraenkler/opus-3522-f4`, claimed
+   2026-08-28T22:01:28Z. That lane's PR **#5199 merged 2026-08-29T04:27:46Z**
+   and never released; its branch is 0 ahead / 1299 behind and no `*3522*`
+   branch has moved since 2026-08-16. Meanwhile R3 is the **second-largest
+   blocker** in tonight's dogfood census (7 of 33 single-host rejections are
+   the class family) and is invisible to both `claim-issue` and
+   `budget-status --pick`.
+
+   ```bash
+   node scripts/claim-issue.mjs --release 3522 ttraenkler/opus-3522-f4
+   ```
+
+   **Deliberately not run by this seat**, and the reason is an asymmetry worth
+   preserving: #3522 is `horizon: xl` and #5199's body says "F4 is a checkpoint
+   under #3522, not its completion," so a release that is wrong lets a second
+   lane redo XL work (a week) while a release that is late costs a day. I also
+   checked whether the F4 session still exists — it does not appear in a
+   100-row `list_sessions` covering the window — but **that proves less than it
+   looks**: an in-process subagent never gets a session row, and the claim
+   landed 17 minutes after the still-RUNNING `IR migration` session opened,
+   which is exactly that shape. Full evidence, including what the listing does
+   and does not establish, is on
+   `plan/issues/3522-ir-r3-classes-closures-compile-once.md` (two dated
+   sections at the end). The one check I could not make: whether that RUNNING
+   seat considers F4 unfinished work of its own.
+
+2. **The merge-queue configuration contradiction — unresolved, and it decides
    whether an escalation already made to the project lead was a no-op.**
    `plan/issues/5275-merge-queue-lands-failed-predecessor-via-skipped-shard-group.md` attributes four same-day landings of a failed
    predecessor to speculative group building (`max_entries_to_build > 1`), and
@@ -106,12 +134,12 @@ done and only needs harvesting into issue files.
    thing. If the live value is already 1, #5275's mechanism section and
    acceptance criteria are wrong and must be rewritten, and the lead should be
    told the admin change is unnecessary.
-2. **#5280 null-proto-super flake** — `class-definition-null-proto-super.js`
+3. **#5280 null-proto-super flake** — `class-definition-null-proto-super.js`
    flipping pass→fail with "Maximum call stack size exceeded", bucket signature
    `96690aa5e0efb4ff`, parked three unrelated PRs today (#5479, #5480, #5486).
    Lane dispatched. Until it lands, expect roughly one park per few merges, and
    the sanctioned response is exactly one diagnosed re-admission.
-3. **R9's denominator — measured on two corpora, and root-caused.**
+4. **R9's denominator — measured on two corpora, and root-caused.**
    `check:ir-only` is READY only against 5 hardcoded entry files. Widening it
    flips the verdict, so R9's flip cannot be scheduled off the current green.
    The blocker is **corpus-dependent**: on `tests/dogfood/corpus` (20 module-
@@ -138,7 +166,7 @@ done and only needs harvesting into issue files.
    it: **name the corpus in the claim, and do not promote a per-corpus finding
    to a ladder dependency until a second corpus agrees.**
 
-4. **Superseded, kept only so the trail is legible.** Two earlier framings of
+5. **Superseded, kept only so the trail is legible.** Two earlier framings of
    item 3 stood before it was root-caused: "READY is genuine but narrow" (true,
    but it stopped at the gate's five files), and a first widening that reported
    the playground's uncovered eight as 8 unsupported / 10 legacy bodies
@@ -146,7 +174,7 @@ done and only needs harvesting into issue files.
    question they left — the denominator past `website/playground/examples/` —
    is the one item 3 answers.
 
-5. **#3523 gap-6b** — record verified and shipped. Verdict: the recommendation
+6. **#3523 gap-6b** — record verified and shipped. Verdict: the recommendation
    ("retire pass 2, not pass 1") **holds only as a gated slice choice**. The
    direction is measured; acceptance is not, because every corpus row was
    measured under the route being rejected. P1, P4 and #5276 are hard
