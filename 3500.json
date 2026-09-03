@@ -1,8 +1,11 @@
 {
   "id": "3500",
   "assignee": "ttraenkler/codex-senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3500-recursive-call-graph-type-evidence",
   "claimed_at": "2026-07-20T15:25:11Z",
-  "updated_at": "2026-07-20T15:25:11Z"
+  "updated_at": "2026-09-03T09:39:45Z",
+  "write_id": "20987-fe98lm9c",
+  "released_at": "2026-09-03T09:39:45Z"
 }
