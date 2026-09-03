@@ -132,6 +132,63 @@ Read the session, harvest the work, then archive it.
 The four review-ready ones are the cheapest resumption points: their work is
 done and only needs harvesting into issue files.
 
+## Post-suspend work, 2026-09-03 02:00–03:00 (read this before the threads below)
+
+Six increments after the handoff was written. Four findings change what the
+next session should do; two issues were filed with plans.
+
+**R4 — the slice order was wrong, and is now measured.** The retracted per-file
+census ranked `string` first. Re-measured non-short-circuiting (parse every
+top-level declaration statically; `.tmp/census-all-decls.mjs`): it is **14 files
+not 13** (`destructuring.js` throws upstream of the recorder entirely), 10 of 14
+mix categories, and **`any` unlocks 4 files alone while `string` unlocks zero
+and does not enter the best set until position 9.** So R4-M1 (#5511, string) was
+correct to move no file to `emitted` — its target was unreachable by
+construction. **The next R4 slice is the `any`/dynamic carrier**, specified
+against #5285 rather than this syntactic probe.
+
+**R9 — #4522's inventory was missing seven hatches**, each verified at its site.
+Two classified (`JS2WASM_STRICT_FALLBACKS` is subsumed by R9's definition; the
+module-init discovery seam matches an existing row). **Five left open on
+purpose**: `DIRECT_CALLS` and its pinned-`this` sibling gate devirtualization
+inside `src/codegen/` — backend lowering, the axis that *stays* — so on one
+reading they are not R9's at all. The answer decides whether R9's retire-at-R9
+population is **14 or 16**. Needs the table owner.
+
+**R10 — the discrepancy is attributed, and the sizing is real.** The July tree
+was reachable all along (`git fetch --shallow-since=2026-07-10`); the audit
+script is byte-identical across the two dates. Legacy-only fn-lines reproduce
+(60,126 measured vs 59,676 recorded a day earlier) so **+42.7% growth is real**
+and any R10 estimate built on 59,676 understates by ~26,000 lines. The `files`
+column does *not* reproduce (47, not 35) — it was undercounting.
+
+**R10's shape matters more than its total: 78 of 107 frontend files are 100%
+legacy-only (65,318 lines, 76%) and delete whole.** The work is 29 mixed files
+holding 266 shared functions. `for-of-destructuring.ts` is the ideal first
+slice — lift **one** function, delete 2,041 lines. Ordering is forced by
+`check:dead-exports` gating `quality`: delete callers before definitions, run
+the gate *between* slices.
+
+**One figure I published tonight and withdrew.** "Frontend share of legacy-only
+rose 48.5% → 51.9%, the deletion target is being outpaced" — invalid.
+`bucketOf` is a hardcoded path lookup and two of its prefixes are directories,
+so the frontend *set* grew as `expressions/` and `statements/` grew. The +42.7%
+survives (per-function class); the share and the 47 → 107 file rise do not.
+
+**Filed with implementation plans:** **#5285** (the module-init refusal survey —
+until it lands, do not rank storage extensions by category counts) and **#5286**
+(make the audit report asserted-vs-measured; deliberately does *not* re-bucket,
+because the buckets encode intent a ratio cannot express).
+
+**#5511 reviewed → release; its `hold` removed 02:14.** It was the lane's own
+do-not-enqueue label awaiting a reviewer.
+
+**Method, three times in one night, one root.** A fail-fast path read as a
+survey; a fetch boundary read as absent history; a hardcoded label read as an
+analysis result. Each time the instrument was assumed to answer the question
+asked of it, and each time one look at the source settled it in under a minute.
+**Name the instrument and ask what answer it cannot return.**
+
 ## Open threads, ranked
 
 1. **#3522's claim is a GHOST — one command unblocks a `priority: critical`
