@@ -1,10 +1,11 @@
 {
   "id": "4368",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4368-marked-self-capture-init",
   "claimed_at": "2026-08-11T19:40:42Z",
-  "updated_at": "2026-08-11T19:40:42Z",
-  "write_id": "57828-bq69i754"
+  "updated_at": "2026-09-03T09:46:09Z",
+  "write_id": "9216-ce7qztnq",
+  "released_at": "2026-09-03T09:46:09Z"
 }
