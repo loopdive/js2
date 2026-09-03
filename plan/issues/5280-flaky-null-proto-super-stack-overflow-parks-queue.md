@@ -1,0 +1,86 @@
+---
+id: 5280
+title: "test262 flake: class-definition-null-proto-super.js overflows the stack under merge-group load and parks unrelated PRs"
+status: ready
+created: 2026-09-02
+updated: 2026-09-02
+sprint: current
+priority: high
+horizon: m
+feasibility: medium
+task_type: infrastructure
+area: tooling
+goal: ci-infrastructure
+requested_by: claude/fable-ir-takeover
+related: [5275, 2547, 3426, 3457, 2562, 5479, 5480, 5486]
+---
+
+## Problem
+
+`test/language/statements/class/subclass/class-definition-null-proto-super.js`
+flips `pass → fail` with `Maximum call stack size exceeded` (`range_error`,
+regression bucket signature **`96690aa5e0efb4ff`**, net −1) in the
+`merge_group` re-validation, non-deterministically. It has parked **three
+unrelated PRs in one day**:
+
+| PR | parked | run | what the PR changed |
+| --- | --- | --- | --- |
+| #5479 | 2026-09-02 12:15 | 33626922676 | ES2015 standalone TypedArray r2 — builtins/prototype graph |
+| #5480 | 2026-09-02 14:51 | 33642323854 | #3523 gap-6a v2 — module-init prelift, default-OFF (byte-neutral) |
+| #5486 | 2026-09-02 21:33 | 33683869984 | #3521 R2-T1/G1 — telemetry + CI selection (302/302 byte-identical) |
+
+Three disjoint diffs, one row, one signature. Two of the three PRs carry their
+own byte-identity evidence, and #5480's diagnosis measured the row directly:
+runner-faithful `runTest262File`, 3 runs each, `origin/main` **pass ×3** and
+the PR tree **pass ×3**, identical `wasm_sha` `aa0313d0d7f6`. The compiled
+artifact is the same on both sides — nothing in a PR diff selects the outcome.
+Each park costs a full ~20-minute matrix cycle plus the re-admission cycle, and
+stalls whatever is queued behind it.
+
+Each park was diagnosed by hand and re-admitted once; every re-admission then
+passed. That is three hand-diagnoses of the same row.
+
+## Why the existing machinery does not catch it
+
+- The **canary quarantine** (#3426) reports `0 observed transitions excluded`
+  for this row: its manifest was built from two same-SHA canary runs
+  (29632875780, 29643714720) whose 932 union-eligible paths do not include
+  this file. The row is flaky but was not flaky *in those two runs*.
+- The **`LIKELY-REAL` banner** (#2562) fires because the baseline is
+  content-current (0 test262-relevant commits behind main HEAD). Content
+  currency says nothing about whether a row is deterministic, so the banner
+  actively argues against the correct call here.
+- The **cross-PR signature hint** in the gate's own footer ("Same signature on
+  another PR ⇒ identical cluster ⇒ likely baseline drift") is printed but not
+  acted on: nothing compares this run's signature against other recent runs'.
+
+## Implementation Plan
+
+Two independent pieces; either alone is worth landing.
+
+1. **Root-cause the overflow.** The failure is a real stack overflow in the
+   compiled module (or in the harness driving it), not a compile error — the
+   test builds a `class extends` chain whose prototype is `null`. Find whether
+   the recursion is in the emitted `[[Construct]]` path, in the runner's
+   harness assembly, or in the interpreter's own stack budget under a loaded
+   runner (the shards run at pool ≥ 3). If it is our recursion, bound it; if
+   it is a stack-budget interaction, raise or pin the budget for that shard.
+   The reduced witness is the test file itself — it passes standalone and
+   fails only under merge-group load, so reproduce with the shard's real
+   concurrency, not a single-file run.
+2. **Make the cross-PR signature check load-bearing.** The gate already
+   computes the bucket signature and already prints the hint. Persist recent
+   `merge_group` signatures (the run artifacts are retained ~1 day, which is
+   enough) and, when the same signature appears on a PR whose diff is disjoint
+   from the previous one's, downgrade the verdict from `LIKELY-REAL` to a
+   flake candidate — or route it into the #3426 canary manifest automatically.
+   This is the piece that stops the next three hand-diagnoses.
+
+## Acceptance criteria
+
+1. The row either passes deterministically under shard-level concurrency, or
+   is in the canary manifest with the evidence that put it there.
+2. A second unrelated PR hitting an identical bucket signature is reported as
+   such by the gate itself, without a human comparing two run logs.
+3. No PR is parked on this row again without the gate naming the prior
+   occurrence.

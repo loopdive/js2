@@ -5742,6 +5742,34 @@ function resolveModuleBindingGlobal(
       type = { kind: "val", val: storageType };
       break;
     }
+    case "string": {
+      // (#3523 R4-M1 / #679) The dual-backend arm. The IR type stays the
+      // backend-AGNOSTIC `string` — the same marker `IrLowerResolver.
+      // resolveString` answers — so module-init value flow keeps real string
+      // semantics instead of an opaque carrier. What differs per backend is
+      // only the legacy GLOBAL's ValType:
+      //   host strings   → `(mut externref)`
+      //   nativeStrings  → `(mut (ref null $AnyString))`
+      // Both are what `resolveWasmType`'s string arm produced, run through
+      // `registerModuleGlobal`'s `ref` → `ref_null` global-slot relaxation.
+      // Naming the ACTIVE backend's carrier here makes the `storageMatches`
+      // check below a real agreement test: a lane whose slot was widened for
+      // some other reason disagrees loudly rather than being reinterpreted.
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0) {
+          throw new IrInvariantError(
+            "unknown-type-ref",
+            "build",
+            `module-init: native-string binding '${name}' has no registered $AnyString array`,
+          );
+        }
+        storageType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+      } else {
+        storageType = { kind: "externref" };
+      }
+      type = { kind: "string" };
+      break;
+    }
   }
   const storageMatches =
     global.type.kind === storageType.kind &&

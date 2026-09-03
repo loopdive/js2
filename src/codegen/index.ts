@@ -13731,6 +13731,103 @@ export function hoistLetConstWithTdz(
 }
 
 /**
+ * (#5271 step 2.3) Pre-allocate the value slot (and TDZ flag) of a BLOCK's own
+ * direct `let`/`const`/`using` declarations at block ENTRY.
+ *
+ * `hoistLetConstWithTdz` only ever ran for a whole function body, so a block's
+ * lexical binding got its local at the DECLARATION, not at block entry. A
+ * closure built earlier in the same block — `{ p = function(){ return x; };
+ * let x = 'inside'; }` — therefore found no slot named `x` and fell through to
+ * whatever the spelling resolved to outside the block: the enclosing local, or
+ * a same-spelled module global (`__mod_x`). Both are the wrong binding
+ * (§13.2.14: the block's declarative environment is created before ANY of its
+ * statements run), and the module-global case is cluster A of #5271.
+ *
+ * Pass the block's DIRECT statements only. `walkStmtForLetConst` claims a slot
+ * per name and skips names already in `localMap`, so this must run AFTER
+ * `saveBlockScopedShadowsForNames` has hidden the outer entries; it then also
+ * records `preHoistedLetConstSlots`, which is what makes the later
+ * `compileVariableStatement` reuse this slot instead of allocating a second one.
+ */
+export function preallocateBlockScopedSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmts: readonly ts.Statement[],
+): void {
+  // (#5271 step 5) A block that also hoists a FUNCTION DECLARATION as a DIRECT
+  // child is left alone. The hoisted function is materialized before the
+  // block's statements run, so giving it a block-scoped binding to capture
+  // makes it capture a ref cell that is only minted at the DECLARATION — a call
+  // before that point then dereferences null instead of throwing the §13.3.1
+  // ReferenceError. Boxing the value + flag at block entry is the real fix
+  // (#5271 cluster B2, not done); until then this keeps the pre-#5271 lowering
+  // for that shape rather than turning a wrong answer into a trap.
+  for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt)) return;
+  }
+  for (const stmt of stmts) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    reinstallPreHoistedCapturedSlots(ctx, fctx, stmt);
+    walkStmtForLetConst(ctx, fctx, stmt);
+  }
+}
+
+/**
+ * (#5271 F1) Put back the slot the FUNCTION-ENTRY pre-hoist already claimed for
+ * a block's own `let`/`const`, when a plain nested `function` captures it.
+ *
+ * `hoistFunctionDeclarations` runs at function entry and recurses into nested
+ * `if`/`try`/block statements, PINNING each capture to `fctx.localMap.get(name)`
+ * as it stands then — the slot `hoistLetConstWithTdz` claimed. Block entry then
+ * hides that entry (`saveBlockScopedShadowsForNames`), and without this the
+ * block-entry pre-allocation minted a SECOND slot and overwrote the
+ * `preHoistedLetConstSlots` record, so the declaration wrote slot B while the
+ * hoisted function kept reading slot A (null / 0 / a trap). On the base tree
+ * `compileVariableStatement`'s #2814 Bug-C path realigned the declaration to A;
+ * it is guarded by `!fctx.localMap.has(name)`, so the extra slot silenced it.
+ *
+ * The admission test is deliberately the SAME one that Bug-C path uses — a
+ * capture by a plain (non-async, non-generator) nested function, and a
+ * pre-hoist record for THIS declaration. A declaration the function-entry hoist
+ * skipped (because an outer same-named binding had already claimed the name)
+ * has no record and still gets its own block-fresh slot, which is what makes
+ * `{ p = function(){ return x; }; let x; }` capture the block binding.
+ */
+function reinstallPreHoistedCapturedSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+): void {
+  const records = fctx.preHoistedLetConstSlots;
+  if (records === undefined || records.size === 0) return;
+  const TDZ_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  if (!(stmt.declarationList.flags & TDZ_FLAGS)) return;
+  for (const decl of stmt.declarationList.declarations) {
+    if (!ts.isIdentifier(decl.name)) continue;
+    const record = records.get(decl);
+    if (record === undefined || record.valueSlot < fctx.params.length) continue;
+    const name = decl.name.text;
+    if (fctx.localMap.has(name)) continue;
+    let capturedByPlainFn = false;
+    let cpsCaptured = false;
+    for (const [capturerName, caps] of ctx.nestedFuncCaptures) {
+      if (!caps.some((c) => c.name === name)) continue;
+      if ((ctx.asyncFunctions?.has(capturerName) ?? false) || (ctx.generatorFunctions?.has(capturerName) ?? false)) {
+        cpsCaptured = true;
+        break;
+      }
+      capturedByPlainFn = true;
+    }
+    if (!capturedByPlainFn || cpsCaptured) continue;
+    fctx.localMap.set(name, record.valueSlot);
+    if (record.flagSlot !== undefined) {
+      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+      fctx.tdzFlagLocals.set(name, record.flagSlot);
+    }
+  }
+}
+
+/**
  * Check if a let/const variable needs a TDZ flag by analyzing all references.
  * Returns false if every access to the symbol is provably after the declaration
  * in straight-line code (same function, no closures, loop-local safe).
