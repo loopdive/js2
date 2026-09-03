@@ -1,12 +1,11 @@
 {
   "id": "4277",
   "assignee": "ttraenkler/codex-es6-default-param-ir",
-  "requested_by": "ttraenkler/codex-es6-default-param-ir",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es6-default-param-ir",
-  "reserved_at": "2026-08-09T08:51:40Z",
   "claimed_at": "2026-08-09T08:51:40Z",
-  "updated_at": "2026-08-09T08:51:40Z",
-  "write_id": "2763-2huv1379",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:45:47Z",
+  "write_id": "9013-7p11bzzu",
+  "released_at": "2026-09-03T09:45:47Z"
 }
