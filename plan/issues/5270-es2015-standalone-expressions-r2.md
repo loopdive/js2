@@ -1,10 +1,11 @@
 ---
 id: 5270
 title: "ES2015 standalone: expressions — r2 residual pass (89 rows)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-03
+completed: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
