@@ -3877,3 +3877,53 @@ wasm-opt aborts on the prepared accessor module, and `optimize` swallows the
 abort and returns the unoptimized binary rather than reporting it. The silent
 fallback is the more dangerous half — a crashing optimizer currently reads as a
 successful compile. Both belong to the accessor slice, not to F4.
+
+## 2026-09-03 — this issue's claim is a GHOST, and it has blocked R3 for five days
+
+`claim-issue.mjs --check 3522` reports:
+
+```
+#3522 is CLAIMED by ttraenkler/opus-3522-f4 (since 2026-08-28T22:01:28Z).
+claim-issue: REFUSED (exit 3)
+```
+
+**That lane finished on 2026-08-29 and never released.** Evidence, all checked:
+
+| fact | value |
+| --- | --- |
+| claim holder | `ttraenkler/opus-3522-f4` (slice-named, not epic-named) |
+| its branch | `claude/issue-3522-f4-field-call-admission` |
+| its PR | **#5199, MERGED 2026-08-29T04:27:46Z** by the merge-queue bot |
+| branch vs `main` | **0 ahead, 1299 behind** — nothing left on it |
+| any `*3522*` branch moved since | **no** — the other four last moved 2026-08-15/16 |
+
+So the claim on the **bare issue id** outlived the slice that took it by five days.
+Every other lane this week claimed a *slice* (`3526:f3s1`, `3521:r2f1`,
+`3523:r4m1`) and released on merge; this one claimed the whole issue and did not.
+
+**The cost is concrete.** `claim-issue.mjs` exit 3 is what a dispatcher checks
+before starting, and `budget-status --pick` excludes claimed issues from its
+recommendations. So R3 — `priority: critical`, `sprint: current`, and the
+**second-largest blocker** in the 2026-09-03 dogfood census (the class family is
+7 of 33 single-host rejections; see `#3518`) — has been invisible to dispatch
+since 2026-08-29 while reading as actively owned.
+
+**Fix, one line:**
+
+```bash
+node scripts/claim-issue.mjs --release 3522 ttraenkler/opus-3522-f4
+```
+
+**Deliberately not run here.** #3522 is `horizon: xl` and #5199's own body says
+"F4 is a checkpoint under #3522, not its completion" — so someone intended to
+continue. If that lane is somehow still live, releasing lets a second lane start
+the same XL work, which is the duplicate-work hazard CLAUDE.md documents at
+length. The evidence says it is not live, but the asymmetry (a five-day-old
+ghost costs a day; a duplicated XL slice costs a week) says a human or the next
+session should make that call with this evidence in hand rather than have it
+made at 02:00 by a session that is suspending.
+
+**If you release it**, the next slice is well-specified: the class family in the
+dogfood census is `class-member-unsupported` ×4, `class-projection-unsupported`
+×2, `class-method` ×1, plus `static-class-initialization` ×1 on the module-init
+side — 7–8 units, second only to R4's module-init blocker.
