@@ -9,6 +9,16 @@
 #   test262-paths-match.sh                       # any lane (default, unchanged)
 #   test262-paths-match.sh --target host         # the JS-host (gc) lane only
 #   test262-paths-match.sh --target standalone   # the standalone lane only
+#   test262-paths-match.sh --list                # print the MATCHING paths
+#
+# `--list` prints every input path that is test262-relevant (one per line,
+# input order preserved) instead of the true/false verdict, and prints nothing
+# when none match. Added for #5280's cross-PR bucket-signature ledger, which
+# needs the relevant SUBSET of a merge_group's diff — the set two runs are
+# compared for disjointness — not just whether one exists. It reuses this
+# classifier deliberately: if the ledger had its own idea of "relevant" the two
+# would drift, and a drifted disjointness test is exactly how a real regression
+# would get mislabelled as a flake.
 #
 # This is the single source of truth for "does this change affect test262
 # conformance?". It MUST stay in sync with the `&test262-paths` allowlist in
@@ -46,8 +56,13 @@
 set -euo pipefail
 
 target="any"
+list_mode="false"
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --list)
+      list_mode="true"
+      shift
+      ;;
     --target)
       target="${2:-}"
       shift 2
@@ -57,7 +72,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     *)
-      echo "usage: $0 [--target host|standalone|any]" >&2
+      echo "usage: $0 [--target host|standalone|any] [--list]" >&2
       exit 2
       ;;
   esac
@@ -159,8 +174,15 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$line" ] && continue
   if scope_matches_target "$(classify_test262_path "$line")"; then
     result="true"
+    # `--list` must see EVERY match, so only the verdict mode short-circuits.
+    if [ "$list_mode" = "true" ]; then
+      printf '%s\n' "$line"
+      continue
+    fi
     break
   fi
 done
+
+[ "$list_mode" = "true" ] && exit 0
 
 printf '%s\n' "$result"

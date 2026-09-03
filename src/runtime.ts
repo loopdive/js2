@@ -6386,7 +6386,7 @@ function _classObjectPrototypeStruct(obj: any): any {
  * emitRegisterDynamicClassParent). */
 function _registerClassParentHandler(className: any, parentValue: any): void {
   if (typeof className !== "string" || className.length === 0) return;
-  if (parentValue == null) return;
+  // (#5280) A null `parentValue` is `class C extends null` — a real heritage, not a missing one; see registerClassParent.
   classStaticParent.registerClassParent(className, parentValue);
 }
 
