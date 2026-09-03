@@ -188,3 +188,46 @@ issue's real work. Two sub-questions a lane should answer first, in this order:
 2. **Can compatibility adopt it, or fast adopt `externref`?** Either direction
    is a Program-ABI change needing its own byte-neutrality argument, and the
    answer decides whether this is a slice or a design record.
+
+
+## Sub-question 1 attempted and NOT answered — plus the instrument that lied twice
+
+I tried to settle "is the fast carrier `$AnyValue` on both targets" and **could
+not**. Recording the failure because the instrument's failure mode is the point.
+
+The probe walked `(type …)` forms in the emitted WAT with a regex and indexed
+them positionally. For `standalone` it reported the global's carrier as
+`(func (param externref) (result i64))` — **a function type, which cannot be a
+global's carrier.** Positional counting does not map to wasm type indices;
+`rec` groups shift the numbering. The result was not an error, it was a
+confident wrong type.
+
+What survives from that run, because it needs no indexing:
+
+- `$AnyValue` is **named somewhere** in both fast-mode modules.
+- That is NOT evidence the module global's carrier *is* `$AnyValue`.
+
+So sub-question 1 stands open, and this issue's own instruction — *"read the
+type section, do not assume from the index"* — is exactly what the probe
+violated. Answering it needs rec-group-aware parsing or a real wasm type-index
+read, not a regex.
+
+### The pattern, since it happened twice within the hour
+
+| # | instrument | plausible wrong answer it gave | what caught it |
+| --- | --- | --- | --- |
+| 1 | vary `target`, default options | "both lanes agree at `externref`, blocker is stale" | checking what `fast` actually means (`ctx.fast`, not target) |
+| 2 | positional `(type …)` walk | a `func` type as a global's carrier | a func type in a global slot is impossible on its face |
+
+Both returned **real values from the wrong space** rather than failing. Neither
+announced a problem. The first would have unblocked R4's largest slice on a
+false premise; the second would have put a fabricated type name into this
+issue's decisive question.
+
+**The rule this yields, for anyone measuring carriers here:** a measurement of
+this kind needs a *falsifiable sanity check built into the probe* — something
+the wrong answer cannot satisfy. "Is the result even the right KIND of thing"
+would have caught #2 automatically (a global's carrier is never a `func`), and
+"which axis did I vary, and is it the axis the claim is about" would have
+caught #1. Neither costs anything; both were skipped because the output looked
+like data.
