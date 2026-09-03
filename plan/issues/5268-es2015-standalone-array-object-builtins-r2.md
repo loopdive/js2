@@ -4,7 +4,7 @@ title: "ES2015 standalone: Array + Object built-ins — r2 residual pass (136 ro
 status: in-progress
 sprint: current
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
@@ -30,6 +30,23 @@ related: [5145, 5148, 4491, 4492, 4444]
 # provenance is a Proxy, which routes it to the native enumerator instead of the
 # closed-struct expansion. The predicate itself lives in the new
 # `proxy-value-provenance.ts`.
+# 2026-09-03 (fable-es6 r3 planning pass, "## Implementation Plan — r3"): the
+# r3 steps put every new algorithm in a NEW module — `array-from-native.ts`
+# (§23.1.2.1/§23.1.2.3), `object-assign-integrity.ts` (the fold-driven
+# integrity precheck), `array-unscopables-native.ts` (the @@unscopables
+# singleton) — and grow the files below by WIRING only: one call per arm
+# (`call-builtin-static.ts` Array.from/Object.assign arms, `builtin-value-read.ts`
+# two switch cases), one factory per trap-read site (`object-runtime-proxy.ts`
+# lazy trap fetch for a Proxy-typed handler), one carrier arm per native
+# (`object-runtime-descriptors.ts` gOPS `$Vec`/closure/Proxy arms,
+# `object-runtime.ts` index reads on closure/wrapper carriers,
+# `object-runtime-enumeration.ts` `$AnyStr` assign source), one guarded cast
+# (`index.ts` `__call_valueOf` closure-extern arm), one Get before the
+# classifier (`object-proto-tostring.ts`). `extern-declarations.ts` /
+# `global-environment.ts` are listed because ONE of them is the producer of the
+# `env::toString` getter import the r3 step R3-2.1 locates by stack trace; the
+# fix there is a single `sourceShadowsGlobalName` guard. Per-step budgets are in
+# the r3 section; `total` is deliberately not granted.
 loc-budget-allow:
   - src/codegen/object-ops.ts
   - src/codegen/expressions/call-namespace-static.ts
@@ -59,6 +76,19 @@ loc-budget-allow:
   - src/codegen/expressions/calls-guards.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/declarations/import-collector.ts
+  # r3 (2026-09-03) — wiring-only growth, see the r3 section per step
+  - src/codegen/native-proto-instance-method-read.ts
+  - src/codegen/expressions/call-object-builtins.ts
+  - src/stdlib/object-runtime.ts
+  - src/codegen/index.ts
+  - src/codegen/carrier-bag-visibility.ts
+  - src/codegen/builtin-prototype-brand.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/vec-length-set.ts
+  - src/codegen/vec-constructor-carrier.ts
+  - src/codegen/extern-declarations.ts
+  - src/codegen/global-environment.ts
+  - src/codegen/registry/imports.ts
 # 2026-09-02 (Opus implementation pass): the two step-1 wiring sites above are
 # each one arm inside an already-oversized dispatcher; splitting either is a
 # separate refactor with its own blast radius.
@@ -75,6 +105,12 @@ loc-budget-allow:
 # nothing here hand-rolls a ToString/ToNumber/equality matrix.
 coercion-sites-allow:
   - src/codegen/object-integrity-proxy.ts
+  # r3 (2026-09-03): `__array_from`'s GetMethod truthiness (`__is_truthy` on
+  # the `@@iterator` read, the same call `buildArrayFromIterNBody` makes) and
+  # the ToBoolean of a trap result in the lazy handler-proxy fetch; both are
+  # the coercion engine's own entry, never a hand-rolled matrix.
+  - src/codegen/array-from-native.ts
+  - src/codegen/object-runtime-proxy.ts
 func-budget-allow:
   - src/codegen/object-ops.ts::compileObjectKeysOrValues
   - src/codegen/object-runtime.ts::ensureObjectRuntime
@@ -91,6 +127,23 @@ func-budget-allow:
   - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
   - src/codegen/expressions/calls-guards.ts::emitObjectCoercion
+  # r3 (2026-09-03) — per-function growth named in the r3 section; if the
+  # gate reports a different qualified name for a nested builder (e.g. the
+  # `emitDispatchForMethod` arrow inside index.ts), replace the key with the
+  # gate's own spelling rather than widening the list.
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoOrRefusal
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
+  - src/codegen/array-concat-spec.ts::compileArrayConcatNativeSpecFromExprs
+  - src/codegen/array-concat-spec.ts::emitConcatSource
+  - src/codegen/carrier-bag-visibility.ts::fillCarrierBagVisibility
+  - src/codegen/carrier-bag-visibility.ts::buildBuiltinFnSetRefusalArm
+  - src/codegen/array-like-native.ts::emitArrayLikeNativeMemberBody
+  - src/codegen/array-length-define.ts::maybeEmitVecLengthDefine
+  - src/codegen/vec-length-set.ts::fillVecLengthDynamicArms
+  - src/codegen/array-methods.ts::tryCompileArrayFlatNativeDepth1
+  - src/codegen/index.ts::emitDispatchForMethod
+  - src/codegen/object-runtime-proxy.ts::buildProxyRuntime
 ---
 
 # #5268 — ES2015 standalone: Array + Object built-ins, r2 residual pass
@@ -930,3 +983,899 @@ findings from reconnaissance that a follow-up should not re-derive:
 - **The four `Object.assign/Target-*` rows are one shared blocker**, described
   in the step-3 section above: a DYNAMIC `.valueOf()` on a wrapper `$Object`.
   Fixing that one seam flips all four at once.
+
+## Implementation Plan — r3 (2026-09-03)
+
+Written by the planning lane against `origin/main` `bee5ddd535` (the checkout
+branch `claude/es6-test262-standalone-g10c7u` is exactly that commit). The
+implementer works in its own worktree from this text; nothing below has been
+implemented.
+
+### Census and root-cause groups (137 rows, `.tmp/census0903/array+object.tsv`)
+
+Baseline: `.test262-cache/test262-standalone-current.jsonl` rows stamped
+2026-09-03 09:07 UTC (`oracle_lane: honest`), ES2015 bucket per
+`website/public/benchmarks/results/test262-file-editions.json`. 127 `fail` + 10
+`compile_error`. **23 rows are the r2 "Out of scope" set and stay out**: X0 11
+realm rows (`*proto-from-ctor-realm*` — note CI reaches the realm assertion,
+`Expected SameValue(«[object Array]», «[object Object]»)`, so `$262.createRealm`
+works in CI; the failure is the realm lane's `other.Array.prototype` identity,
+not ours), X1 `subclass-object-arg` (CE, #3371), X2 8 §10.5.11 invariant rows,
+X3 3 `revoke()`-inside-closure `illegal cast … __call_fn_method_3` rows. **114
+rows are in scope**, grouped by the error column (one defect per group, not per
+path prefix):
+
+| Group | Rows | Shared error signature | Root cause (one line) |
+|---|---:|---|---|
+| L `Array.from`/`Array.of` | 17 | `Array.from is not yet implemented` ×7, `Array.of …` ×2, `value is not iterable` ×2, `Expected a Test262Error but got a TypeError` ×3, `args[0].length … 3 vs 2`, `closeCount 0 vs 1`, `requested new array is too large`, `arr[0] undefined vs true`, `source-array-boundary` | No §23.1.2.1 native: the value/`.call` form hits the generic throw body (`builtin-value-read.ts:1717`), the 1-arg direct call drains through `__iterator` only (`call-builtin-static.ts:1416`, no array-like arm), the 2-arg call composes drain-THEN-map (`iterator-native.ts:1883`) so the mapper gets 3 args, never IteratorCloses, and drains an infinite iterator before mapping. |
+| C `Object.assign` + ToObject residual | 12 | `Return value should be …` ×4, `Expected a TypeError … no exception` ×3 (frozen/sealed/non-ext targets), `Cannot assign to read only property`, `Cannot convert undefined or null to object`, `length should be 4 … 0`, `NaN vs "c"`, `Object(symA)` identity | (a) wrapper `$Object`'s dynamic `.valueOf()` reaches `Object.prototype.valueOf` (r2 note); (b) compile-time integrity fold (`ctx.frozenVars`, `call-builtin-static.ts:1737`) is invisible to `__object_assign`; (c) no `$AnyStr` source arm, typed-field store on override, no standalone `Object(sym)` wrapper (`calls-guards.ts:773` is host-gated). |
+| J `concat` protocol | 12 | `[1,2,3,null,null,null] vs …undefined` ×3, `is-concat-spreadable-val-falsey`, `get-order`, `illegal cast in __call_valueOf`, `array-like-to-length-throws`, `arg-length-exceeding-integer-limit`, `uncaught Wasm-GC exception`, TA ×2, `is-concat-spreadable-proxy` illegal cast | `array-concat-spec.ts:204-228` treats `null` as absent; species prologue runs after the receiver's `@@isConcatSpreadable` Get; `__extern_has_idx` on an `arguments` carrier answers the length OVERRIDE; `index.ts:9194-9225` `closure-extern` arm `ref.cast`s a non-closure `valueOf`. |
+| E Proxy MOP in Object statics (r2 step 2 residual) | 11 | `Expected SameValue(«""», «"\|ownKeys\|…"»)` ×2, `Expected SameValue(«1», «0»)`, `Actual [ownKeys, getOwnPropertyDescriptor] and expected [get, set, has, …]`, `Cannot access property on null … 3xx:18` ×2, `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`, `illegal cast … __module_init_chunk_1`, `key is not present`, `Actual [0, foo] and expected [0, foo, Symbol()]`, `isPrototypeOf … false vs true` | Traps are read off the handler ONCE at `new Proxy` (`object-runtime-proxy.ts:1511-1537` `readTrap`), so a handler that is itself a Proxy (`new Proxy(handler, check)`) contributes NO traps — that is the "wrapTest mystery" of the r2 note (the hand probe used a plain handler); plus r2 steps 2.4-2.7 never started. |
+| D+D2 symbol keys on `$Vec`/closure carriers + intrinsic symbol props | 10 | `Actual [] and expected [Symbol(a), Symbol(b)]` ×2, `obj has 2 symbol-keyed descriptors … 0`, `first entry has value symValue`, `[a, length] vs [length, a]`, `[] vs [name, a]`, `[0, 1, length, a] vs [length, a]`, `Symbol() should be an own property`, `Cannot access property … 858:18`, `Expected obj[5] NOT to be writable` | `__getOwnPropertySymbols` has one `$Object` arm (`object-runtime-descriptors.ts:3323-3333`); the self-hosted gOPDs walks names only (`src/stdlib/object-runtime.ts:59-72`); `Array.prototype[@@unscopables]` never materialised; `Array[@@species]` write not refused. |
+| G reflective `Object.prototype.toString` + `env::toString` leak | 9 | `standalone target emitted host imports: env::toString` ×5 (CE), `Object.prototype.toString is not yet implemented` ×2, `get-symbol-tag-err`, `[object Boolean] vs [object test262]` | Leak: a script-level `var toString` registers a `(func (result externref))` import named `toString` (reproduced below); classifier (`object-proto-tostring.ts:236`) has no WeakSet/WeakMap/Promise/generator/Symbol/Math/JSON arms and the reflective body (`emitObjectProtoOrRefusal` L661) never does the `@@toStringTag` Get. |
+| F symbol/index expandos on function/wrapper/RegExp carriers + species via Proxy | 9 | `Actual [1,2,3] and expected []` (function), `[true] vs []`, `[y,u,c,k,…] vs []`, `[] vs []` (reg-exp), `[object Array] vs [object Object]` ×4 (`create-proxy`), `concat/create-proxy` | index reads (`__extern_has_idx`/`__extern_get_idx`/`__extern_length`) have no closure/wrapper/RegExp carrier arm; the 5 `create-proxy` rows need a repro (see F step). |
+| A/B `__proto__` residual | 6 | see r2 step-1 "NOT done" list | closed-struct literal has no runtime `%Object.prototype%` terminal; `Object.create(proxy)` canonicalises the link; `prop-desc` needs `__proto__` in `OBJECT_PROTOTYPE_OWN_NAMES`. |
+| H `toLocaleString` | 4 | `"true" vs "boolean"` ×2, `"true,false" vs "boolean,boolean"` ×2 | `x.toLocaleString()` folded statically; element Invoke must observe a patched `Boolean.prototype.toString` through the seeded companion (`__protoidx_get_r`). |
+| I/P reflective HOF on a Proxy receiver | 6 | `Expected a TypeError … no exception` ×3 (`create-revoked-proxy`), `Expected a RangeError` ×3 | `Array.prototype.{map,filter,splice}.call(proxy, cb)` goes `emitArrayProtoMemberBody` L896 → `__hof_<m>` with NO species prologue and no `ArrayCreate` RangeError (r2 step-6 "NOT done" finding). |
+| M/N/O/Q/R/S | 18 | as r2 table | unchanged from r2 step 10; O and M re-diagnosed below. |
+
+Sum: 17+12+12+11+10+9+9+6+4+6+18 = 114. ✓
+
+### Verification on current main (2026-09-03, load 0.4-2)
+
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/r3/sample.txt --standalone`
+(14 rows, one per big group; output `.tmp/es2015/r3/sample-run1.txt`):
+
+```
+=== counts ===
+{ fail: 13, compile_error: 1 }
+fail  Array/from/source-object-length.js            TypeError: value is not iterable
+fail  Array/of/construct-this-with-the-number-of-arguments.js  Array.of is not yet implemented in --target standalone
+compile_error  Object/prototype/toString/symbol-tag-weakset-builtin.js  standalone target emitted host imports: env::toString (#2961)
+fail  Object/prototype/toString/get-symbol-tag-err.js   Expected a Test262Error to be thrown but no exception was thrown at all
+fail  Object/entries/observable-operations.js       Expected SameValue(«""», «"|ownKeys|getOwnPropertyDescriptor:a|get:a|…"»)
+fail  Object/assign/Target-Boolean.js               Return value should be true … at L15: result.valueOf()
+fail  Object/assign/target-is-frozen-data-property-set-throws.js  Expected a TypeError … no exception
+fail  Array/prototype/concat/Array.prototype.concat_spreadable-function.js  Actual [1, 2, 3] and expected []
+fail  Array/prototype/concat/Array.prototype.concat_sloppy-arguments.js  Actual [1, 2, 3, null, null, null]
+fail  Array/prototype/concat/is-concat-spreadable-val-falsey.js  result.length … 2 vs 1
+fail  Object/getOwnPropertySymbols/order-after-define-property.js  Actual [] and expected [Symbol(a), Symbol(b)]
+fail  Object/prototype/toLocaleString/primitive_this_value.js  «"true"» vs «"boolean"»
+fail  Array/prototype/keys/returns-iterator-from-object.js  Array.prototype.keys is not yet callable as a value
+fail  Array/prototype/map/target-array-with-non-writable-property.js  0 value should be 2
+```
+
+Every sampled row fails exactly as the baseline records — nothing to drop.
+Controls: `.tmp/es2015/arrobj-controls.txt` re-run in two 10-row batches
+(`.tmp/es2015/r3/controls-run1.txt`): **20 / 20 pass** on `bee5ddd535`.
+
+Leak repro (CLI, one compile): `npx tsx src/cli.ts .tmp/es2015/probes/ts2.js
+--standalone -o .tmp/es2015/r3/out2` → `WebAssembly.Module.imports` =
+`[{"module":"env","name":"toString","kind":"function"}]`; the WAT carries
+`(import "env" "toString" (func $toString_import (type 17)))` with
+`(type $type17 (func (result externref)))` and a `$__mod_toString` module
+global — i.e. a ZERO-ARG externref GETTER import named after the identifier
+(not `global_toString`), never called from any body. The `global_<name>`
+family in `extern-declarations.ts:1459-1530,1594-1626` is already
+standalone-gated, so this comes from a different producer.
+
+### Ground rules for every step
+
+- Probe: `npx tsx scripts/run-test262-paths.mts <list> --standalone`, lists
+  ≤ 15 rows, one compile process at a time; `--isolate` only when a row hangs.
+  Compile timeouts under load are artifacts — re-run alone before believing one.
+- Type facts through `ctx.oracle` (`src/checker/oracle.ts`) only; a raw
+  `ctx.checker.getTypeAtLocation` trips `check:oracle-ratchet`. The steps below
+  name the oracle entry where a type question arises.
+- New mechanisms go in NEW modules (named per step); the god-files listed in
+  the frontmatter grow by WIRING only. Every `Instr[]` handed to two bodies is
+  a factory (#5188 followUp 4). `FunctionContext` literals carry
+  `labelMap: new Map()` (+ `isGenerator?`).
+- No new `env::*` import, no allowlist edit, no runner/skip-list/baseline edit.
+- **Every step's acceptance names PASSING shapes at risk and how they are
+  checked** — this is the r2 lesson (5 of 6 waves shipped regressions the row
+  list could not see). Two checks are used throughout: **byte-identity** (the
+  JS-host lane module for a named control program is sha-identical to base —
+  compile with `{ target: "gc" }` on both trees, compare `sha1(wasm)`) and
+  **control programs run on BOTH lanes** (standalone + host) and diffed
+  against base output. Capture `.tmp/base-<file>.ts` copies at the FIRST edit
+  (CLAUDE.md file-copy A/B) so every base run is one `cp` away.
+- Gates before every commit, bare and chained:
+  `node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet && npm run -s check:dead-exports`,
+  plus once with `LOC_GATE_BASE=$(git rev-parse upstream/main)`.
+
+### Step R3-1 — native `Array.from` / `Array.of` (group L; 17 rows; risk: medium)
+
+**Root cause.** There is no §23.1.2.1/§23.1.2.3 algorithm in the module: the
+direct 1-arg call drains only iterables (`call-builtin-static.ts:1416-1447`
+calls `__iterator` → `value is not iterable` on `{length:4,…}`), the 2-arg
+call composes `__array_from_iter_n` THEN `__hof_map` (`iterator-native.ts:1873-1903`),
+which drains before mapping (infinite `{done:false}` → "requested new array is
+too large"), calls the mapper with `(v, i, recv)` (3 args), and never closes
+the iterator; the value/`.call` form takes the `default:` branch of
+`ensureStandaloneBuiltinStaticMethodClosure` (`builtin-value-read.ts:1280-1299`,
+throw body at L1717). `Array.of.call(T, …)` likewise.
+
+**Files / functions.**
+
+1. NEW `src/codegen/array-from-native.ts` (≈ 420 LOC): `ensureNativeArrayFrom(ctx)`
+   registers `__array_from(C, items, mapFn, thisArg) -> externref` and
+   `ensureNativeArrayOf(ctx)` registers `__array_of(C, argsVec) -> externref`
+   (both standalone-only, append-only defined funcs via `mintDefinedFunc` /
+   `pushDefinedFunc`, deps resolved BY NAME after `ensureObjectRuntime`,
+   `ensureNativeIteratorRuntime`, `addUnionImportsViaRegistry`,
+   `reserveApplyClosure`, and `reserveNativeConstructDriver(ctx, 0, …)` +
+   `(ctx, 1, …)` — `native-construct.ts:143`, driver name `__native_construct_<arity>`,
+   params `(C, newTarget, …args)`). Body of `__array_from`, in spec order:
+   - `C` null/undefined ⇒ the default lane (a fresh `$ObjVec` via `__objvec_new`);
+     else `usingCtor = __is_constructor(C)` (the predicate `array-species.ts`
+     already resolves as `deps.isConstructor`).
+   - `mapFn` undefined ⇒ `mapping = false`; else `__typeof_function(mapFn)`
+     false ⇒ `buildThrowJsErrorInstrs(ctx, "TypeError", "Array.from: mapFn is not callable")`.
+   - `usingIterator = GetMethod(items, @@iterator)`: `ref.test $Vec` OR
+     `__is_truthy(__extern_get(items, __box_symbol(1)))` (id 1 = `@@iterator`,
+     the same test `buildArrayFromIterNBody` makes at `iterator-native.ts:2033-2058`,
+     including the present-but-nullish arm that must reach `__iterator`'s
+     TypeError). Nullish `items` ⇒ TypeError "Cannot convert undefined or null
+     to object" (ToObject, step 7 of the array-like branch — but GetMethod on
+     nullish throws first, so ONE nullish guard at the top is spec-equivalent).
+   - Iterator branch: `A = usingCtor ? __native_construct_0(C, null) : $ObjVec`;
+     `iter = __iterator(items)`; loop `k`: `(done, v) = __iterator_next(iter)`;
+     done ⇒ `Set(A,"length",k)` (custom-C lane: `__extern_set_strict(A,"length",box(k))`;
+     `$ObjVec`: nothing) and return; `mapped = mapping ? __apply_closure(mapFn, thisArg, [v, box(k)]) : v`
+     — build the 2-slot `$ObjVec` with `__objvec_new`/`__objvec_push` so the
+     mapper observes `arguments.length === 2` (`iter-map-fn-args`);
+     `CreateDataPropertyOrThrow(A, k, mapped)`: `$ObjVec` lane ⇒ `__objvec_push`
+     (no prototype consult — `of/does-not-use-prototype-properties`); custom-C
+     lane ⇒ `__defineProperty_value(A, ToString(k), mapped, CREATE_DATA_PROPERTY_FLAGS)`
+     + the following plain `__extern_set` exactly as `emitArraySpeciesResultSwap`
+     does at `array-species.ts:423-451` (copy that comment's reason).
+     **IteratorClose on abrupt** (`iter-map-fn-err`, `iter-set-elem-prop-err`,
+     `iter-set-elem-prop-non-writable`): wrap the mapper call + define in a
+     `try_table` with a `catch_all_ref` clause (`src/ir/types.ts:592`; shape
+     precedent `named-this-call.ts:306-325` — EMPTY block type, result parked
+     in a local), handler = `__iterator_return(iter)` then `throw_ref`.
+   - Array-like branch: `len = __extern_length(items)` (ToLength incl. the
+     observable valueOf/toString walk); `A = usingCtor ? __native_construct_1(C, null, box(len)) : $ObjVec`;
+     loop `k < len`: `v = __extern_get_idx(items, k)` (an absent index reads
+     `undefined` — `source-object-length` expects an OWN `undefined`, not a
+     hole, so push the undefined singleton, never `$Hole`); same map/define as
+     above (no IteratorClose here); then `Set(A,"length",len)`.
+   - `__array_of(C, argsVec)`: `len = argsVec.len`; `A = usingCtor ? construct_1(C, box(len)) : $ObjVec`;
+     per k `CreateDataPropertyOrThrow` as above (custom-C lane must THROW when
+     the define is refused — `of/return-abrupt-from-data-property-using-proxy`
+     expects the Proxy `defineProperty` trap's Test262Error to escape, which
+     `__defineProperty_value` on a `$Proxy` already forwards); `Set(A,"length",len)`.
+2. `src/codegen/expressions/call-builtin-static.ts` — the `Array.from` arm
+   (L1188-1541): under `ctx.standalone`, REPLACE the #2169c drain block
+   (L1416-1447) and the #3206 mapped block (L1470-1513) with one emission:
+   `items` → externref, `mapFn` → externref (inline arrow/function via
+   `compileArrowAsClosure` exactly as L1482-1490, else `compileExpression`),
+   `thisArg` → externref or `ref.null.extern`, `ref.null.extern` for `C`, then
+   `call __array_from`. **Keep every arm above L1416 byte-for-byte**: the
+   native-string (#1470, L1225), native-generator (#2169, L1254), Set (L1288),
+   Map (L1322) and typed-vec `array.copy` (L1346-1409) fast paths return
+   before the new call, so `Array.from(typedVec)`, `Array.from("str")`,
+   `Array.from(set)` keep their carriers. The `Array.of` arm (L1543+): keep
+   the native `Array.of(a,b,c)` vec build; nothing changes for direct calls.
+   Type question here — none new (`argTsType` at L1195 is pre-existing;
+   do not add `ctx.checker` calls; `ctx.oracle.staticJsTypeOf` is the entry
+   if the implementer needs a primitive-vs-object fact).
+3. `src/codegen/builtin-value-read.ts` `ensureStandaloneBuiltinStaticMethodClosure`
+   (L996): add `case "Array.from"` (paramTypes = 3 × externref, returnType
+   externref, body = `call __array_from(<receiver>, arg1, arg2, arg3)`) and
+   `case "Array.of"` (variadic: mirror `String.fromCharCode` at L1183-1207 —
+   paramTypes = `[ref_null $argvVec]` from `ensureExtrasArgvGlobal`, body =
+   `call __array_of(<receiver>, vec)`; add `"Array.of"` to the variadic
+   publication test at L1742 so any-callee call sites emit the variadic arm).
+   **The receiver slot is the open question the implementer must settle with
+   a 5-line probe FIRST**: static value closures are minted with params
+   `[__self, arg0…]` (`makeBuiltinClosureFctx`, L524) — no `this` param — while
+   `__call_fn_method_N` installs the caller's `this` in the `__current_this`
+   module global before the `call_ref` (`closure-exports.ts:1338-1345`,
+   `context/types.ts:986`). Probe `var f = Array.from; f.call(C, [])` with a
+   body that returns `__current_this`; if the global carries `C`, read it
+   there; if not, mint these two closures with a leading receiver slot the
+   way proto-member closures do (`this` = param 1, `array-object-proto.ts:865`)
+   and route `.call` through the same wrapper type. `iter-cstm-ctor.js`
+   asserts `thisVal === result` and `args.length === 0`, which pins the answer.
+4. `iterator-native.ts`: leave `ensureNativeArrayFromMapped` in place for one
+   PR (it is still referenced from `call-builtin-static.ts` until step 2 lands);
+   after step 2 it is dead → `check:dead-exports` will flag it; delete it in
+   the same PR (−64 LOC) rather than leaving an unreferenced export.
+
+**Rows claimed (17):** all `built-ins/Array/from/*` and `built-ins/Array/of/*`
+rows in the TSV except the two X0 `proto-from-ctor-realm.js`.
+`source-array-boundary.js` (mapper receives `1.7976931348623157e+308`,
+expected `undefined` for `array[this.arrayIndex]`) is the mapper's `this`
+(`thisArg`) — verify after the 2-arg mapper exists; if it is a boxed-f64
+crossing defect, name it and defer.
+
+**Growth grant:** `src/codegen/array-from-native.ts` (new, no grant needed),
+`src/codegen/expressions/call-builtin-static.ts` +40 (wiring, net negative
+after the two removed arms), `src/codegen/builtin-value-read.ts` +45,
+`builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure` +30 lines.
+
+**Order-preservation constraints.** §23.1.2.1 order: mapFn callability check
+BEFORE `GetMethod(items,@@iterator)`; `Construct(C)` (iterator lane, zero
+args) BEFORE the first `next`; `Construct(C,«len»)` (array-like lane) AFTER
+`Get(items,"length")`; per element `Get`/`next` → map → define; `length`
+set LAST and through `[[Set]]`, not define (`iter-set-length-err`). The
+mapper receives exactly `(value, k)`.
+
+**Acceptance.**
+- The 17 rows above flip; `.tmp/es2015/r3/from-of.txt` (implementer writes
+  it from the TSV) 0 pass → ≥ 15 pass, every not-flipped row named with the
+  measured reason.
+- **Passing shapes at risk, checked on BOTH trees:** (i) the `#3206`
+  consumer — `Array.from({length: 3}, (_, i) => i * 2)` and
+  `Array.from(new Set([1,2]), x => x + 1)` print identically; run
+  `built-ins/TypedArray/prototype/map/` (any 10 rows — they go through
+  `harness/testTypedArray.js` `makeArray = Array.from({length:n}, fn)`) and
+  require an identical pass set; (ii) `Array.from("héllo")`,
+  `Array.from(gen())`, `Array.from(new Map([[1,2]]))`, `Array.from([1,2,3])`
+  (typed vec copy) — byte-identical standalone modules (the arms above the
+  new call must not move); (iii) host lane: `tests/issue-4492-builtin-as-value.test.ts`
+  style compile of `var f = Array.from; f([1])` with `{target:"gc"}` is
+  sha-identical to base (the new cases are inside `ctx.standalone`);
+  (iv) `built-ins/Array/from/iter-map-fn-this-arg.js`,
+  `get-iter-method-err.js`, `of/creates-a-new-array-from-arguments.js`
+  (controls) stay green.
+- Pin: `tests/issue-5268-r3-array-from.test.ts` — standalone compile of the
+  four shapes (array-like, iterable+mapFn+throw with `closeCount`,
+  `Array.from.call(C, iterable)`, `Array.of.call(C, 1, 2)`), `result.imports`
+  empty, verified to FAIL on the pre-change tree by file-copy A/B.
+
+### Step R3-2 — `env::toString` leak + reflective `Object.prototype.toString` (group G; 9 rows; risk: medium)
+
+**Root cause.** (a) A script-level `var toString = …` makes a
+`(func (result externref))` getter import named `toString` appear in the
+module (repro above) — the r2 note's diagnosis ("the collector registers the
+ambient function") is confirmed in effect but the producer is NOT any of the
+`global_<name>` loops (all standalone-gated). (b) The reflective body never
+performs the §20.1.3.6 step-14 `Get(O, @@toStringTag)`; steps 14/15 exist only
+in the compile-time `.call` fold (`object-proto-symbol-tag.ts:155
+emitObjectProtoToStringWithSymbolTag`).
+
+**Files / functions.**
+
+1. Locate the producer: add a TEMPORARY `if (name === "toString") throw new
+   Error(new Error().stack)` at the top of `addImport`
+   (`src/codegen/registry/imports.ts:51`) and compile
+   `.tmp/es2015/probes/ts2.js --standalone`; the stack names the site. Two
+   candidates by signature (zero params, externref result, bare name): a
+   declared-global getter thunk keyed by identifier text, or the
+   `emitRealmGlobalPrimitiveMethodWriteback` neighbourhood
+   (`global-environment.ts:61-95`, the ONLY code that special-cases a script
+   `toString`/`valueOf` binding). Fix at the producer: a name that
+   `sourceShadowsGlobalName(sourceFile, name)` (`source-function-members.ts:135`)
+   reports as rebound by THIS program must not register an ambient import
+   under `ctx.standalone`/`ctx.wasi`. Re-verify: 0 imports for `ts2.js`, AND
+   the module still prints `[object …]` (the `$__mod_toString` global path is
+   what the body actually uses). Remove the throw.
+2. `object-proto-tostring.ts:661 emitObjectProtoOrRefusal`: before the
+   classifier, emit `tag = __extern_get(recv, __box_symbol(4))` (id 4 =
+   `Symbol.toStringTag`, `array-object-proto.ts:3840`) — a real `[[Get]]`, so
+   a throwing getter propagates (`get-symbol-tag-err.js`) and a Proxy `get`
+   trap fires; if `tag` is a native string (`ref.test $AnyString`) → return
+   `"[object " + tag + "]"` (`__str_concat`), else fall into the classifier.
+   For a PRIMITIVE receiver (`symbol-tag-override-primitives.js`,
+   `toString.call(true)`), the Get must see the wrapper prototype: box first
+   through `__new_Boolean`/`__new_Number`/`__new_String`
+   (`object-runtime.ts:2952-2996`, the same natives `emitObjectCoercion` calls)
+   — only when `__typeof_boolean/number/string` says so; `null`/`undefined`
+   keep steps 1-2.
+3. Classifier arms (`emitObjectProtoToStringClassifier`, L236): add
+   brand-tested arms for WeakSet, WeakMap, Promise (`ref.test` on the
+   registered `$__WeakSet`/`$__WeakMap`/`$Promise` types), `$Symbol`
+   carrier/wrapper, and the `Math`/`JSON` namespace carriers → all answer
+   `[object Object]` ONLY as the step-13 default AFTER the @@toStringTag Get
+   above declined (their own tag was deleted/replaced, which is exactly why
+   the rows expect the default). Keep the loud refusal as the tail — the
+   module header forbids a blanket default.
+4. Proxy arm (`proxy-array.js`, `proxy-revoked-during-get-call.js`): replace
+   the explicit refusal at L493-502 with §20.1.3.6 step 4 `IsArray(O)` through
+   `__extern_is_array` (its `$Proxy` arm landed in r2 step 6: unwrap to target,
+   TypeError on revoked), then the step-14 Get through the proxy (the `get`
+   trap in `proxy-revoked-during-get-call` revokes the proxy DURING the Get —
+   the spec answer is still `[object Array]` because `builtinTag` was fixed in
+   step 4; do not re-run IsArray after the Get).
+
+**Rows claimed (8 of 9):** the 5 `symbol-tag-*-builtin.js` (must go CE → pass;
+`symbol-tag-generators-builtin.js` additionally wants `[object GeneratorFunction]`
+/ `[object Generator]` + a deletable generator-prototype tag — if that needs
+the generator carrier's own `@@toStringTag`, name it and DEFER that one row),
+`get-symbol-tag-err.js`, `symbol-tag-override-primitives.js`,
+`proxy-array.js`, `proxy-revoked-during-get-call.js`.
+
+**Growth grant:** `object-proto-tostring.ts` +90,
+`object-proto-tostring.ts::emitObjectProtoOrRefusal` +25,
+`object-proto-tostring.ts::emitObjectProtoToStringClassifier` +40; the
+producer file of the leak +10 (name it in the PR; if it is
+`extern-declarations.ts` or `global-environment.ts` the grant below covers
+it).
+
+**Order constraints.** Steps 1-2 (null/undefined) → 3 ToObject → 4 IsArray →
+5-13 builtinTag → 14 Get(@@toStringTag) → 15 string test. Do NOT move the
+Get before IsArray (revoked-proxy rows).
+
+**Acceptance.**
+- The 8 rows flip; the 5 CE rows are checked for `imports.length === 0` from
+  the CLI, not only for the runner verdict.
+- **Passing shapes at risk:** the compile-time `.call` fold is untouched —
+  `Object.prototype.toString.call([])`, `.call(null)`, `.call(new Date())`,
+  `.call(function(){})`, `.call(Object.prototype)`, `.call(Error.prototype)`
+  (the `NATIVE_PROTO_ORDINARY_BRANDS` rows) printed on both trees, standalone;
+  the stored-method idiom `arr.getClass = Object.prototype.toString; arr.getClass()`
+  for Array/Number/String/Boolean/Date/RegExp/Error/Map/Set receivers printed
+  on both trees; `built-ins/Object/prototype/toString/symbol-tag-non-str-proxy-function.js`
+  and `proxy-revoked.js` (controls) stay green; `built-ins/Object/prototype/toString/`
+  (≤ 15 rows sampled, including the 5 `S15.2.4.2_*`) identical pass set;
+  host lane sha-identical for a `toString.call(x)` program.
+- Pin: `tests/issue-5268-r3-proto-tostring.test.ts` asserts the import list
+  is EMPTY for the `var toString = Object.prototype.toString` shape and the
+  `@@toStringTag` getter throw propagates.
+
+### Step R3-3 — `Object.assign` integrity + wrapper `valueOf` + `Object(sym)` (group C; 12 rows; risk: medium)
+
+**Root cause.** Three seams: (a) a wrapper `$Object` created by
+`emitObjectCoercion` has no `$NativeProto` link, so the DYNAMIC
+`result.valueOf()` resolves to `Object.prototype.valueOf` (r2 step-3 note);
+`native-proto-instance-method-read.ts` answers the wrapper case on
+`__extern_get` only, and only for closures ALREADY minted (its demand gate,
+L27-40). (b) `Object.freeze/seal/preventExtensions(<literal>)` is a
+compile-time fold (`ctx.frozenVars`/`sealedVars`/`nonExtensibleVars`,
+`call-builtin-static.ts:1726-1737`; R2-5 in this file) invisible to
+`__object_assign`. (c) no `$AnyStr` source arm; a same-key override writes
+through a typed field (`ObjectOverride-sameproperty` → `NaN`); `Object(sym)`
+standalone is identity (`calls-guards.ts:773` arm is `!noJsHost`-gated).
+
+**Files / functions.**
+
+1. Wrapper method identity (4 rows `Target-{Boolean,Number,String,Symbol}`):
+   in `emitObjectCoercion` (`calls-guards.ts`, the four wrapper arms) and the
+   `Object.assign` primitive-target route (`call-builtin-static.ts:3629-3633`),
+   after emitting the wrapper, SEED the `valueOf` and `toString` closures for
+   that brand — `ensureStandaloneNativeMethodClosure(ctx, brand, "valueOf", "method", { refusalBodyFallback: true })`
+   (`native-proto.ts`; brand via `BUILTIN_BRAND_TABLE`), so
+   `unshiftExternGetProtoMethodArm` finds them; then give the METHOD-CALL
+   path the same answer: the `__extern_method_call` `$Object` arm's
+   proto-miss terminal (in `object-runtime.ts` — search the `registerNative("__extern_method_call"`
+   site) must consult a new `native-proto-instance-method-read.ts` export
+   `wrapperBrandMethodLookupInstrs(ctx, …)` (factor the `wrapperClassify`
+   ladder at L193-225 so both arms share ONE ladder) before answering
+   `Object.prototype.valueOf`. `Target-Symbol` needs 4 below.
+2. Integrity fold → runtime precheck (3 + 2 rows): NEW
+   `src/codegen/object-assign-integrity.ts` (≈ 140 LOC) exporting
+   `emitObjectAssignIntegrityPrecheck(ctx, fctx, targetLocal, sourcesLocal, level)`
+   where `level ∈ {frozen, sealed, nonExtensible}` comes from the call-site
+   fold (`integrityVarKey(ctx, targetIdentifier)` ∈ `ctx.frozenVars`/…, the
+   same test `assignment.ts:2898,4489` makes). Emitted at
+   `call-builtin-static.ts:3674` just before `call __object_assign`: for each
+   source (the `$ObjVec` built at L3666-3673) and each of
+   `__object_keys(src)` ++ `__getOwnPropertySymbols(src)`:
+   `d = __getOwnPropertyDescriptor(target, key)`; accessor `d` (has `set`) →
+   allowed (§10.1.5.3 calls the setter: `target-is-frozen-accessor-property-set-succeeds`,
+   `target-is-non-extensible-existing-accessor-property`); `frozen` and data
+   `d` → TypeError "Cannot assign to read only property"; `sealed`/`nonExtensible`
+   and `d` undefined → TypeError "Cannot add property, object is not extensible".
+   Only emitted when the fold KNOWS the level (a plain target keeps today's
+   bytes). `target-is-non-extensible-existing-accessor-property` currently
+   dies earlier with "Cannot convert undefined or null to object": probe
+   `var t = Object.preventExtensions({ set foo(v){} }); print(t == null)` —
+   `emitStoredObjectIntegrityCall` (`call-object-builtins.ts:80`) is returning
+   a null externref for an accessor-carrying literal; fix it to return its
+   argument (§20.1.2.17 step 3) before the precheck can help.
+3. `__object_assign` sources (`object-runtime-enumeration.ts:1107-1330`):
+   (a) `$AnyStr` source arm — copy index keys `"0"…"len-1"` via
+   `__extern_set_strict` (`Override-notstringtarget`: three string sources
+   onto a Number wrapper, later sources override); (b) `ObjectOverride-sameproperty`:
+   the `$Object` arm already writes through `__extern_set_strict` (L1318-1326),
+   so the `NaN` comes from the TARGET being a closed struct with a typed `a`
+   field — route a target whose `ctx.oracle` literal-shape fact has only
+   primitive-typed fields the way `compileObjectAssignArg` (`calls.ts:687`)
+   routes a literal (build as `$Object`); confirm with a 4-line probe before
+   editing (the fix may be in `compileObjectAssignArg`, not the native).
+4. `Object(sym)` standalone wrapper (`symbol_object-returns-fresh-symbol`,
+   half of `Target-Symbol`): in `calls-guards.ts:773` add the `noJsHost` arm —
+   `__new_plain_object()` + `__defineProperty_value(obj, WRAPPER_PRIMITIVE_KEY, extern(symbolCarrier), 0)`
+   (the `[[PrimitiveValue]]` slot convention `native-proto-instance-method-read.ts:70`
+   documents; the carrier from `ensureSymbolCarrier`/`__box_symbol`), typeof
+   answers `"object"` because it is a `$Object`.
+
+**Rows claimed (12):** all `built-ins/Object/assign/*` rows in the TSV +
+`built-ins/Object/symbol_object-returns-fresh-symbol.js`.
+
+**Growth grant:** `object-assign-integrity.ts` new; `call-builtin-static.ts`
++25 (wiring, shared with R3-1's grant); `calls-guards.ts` +35,
+`calls-guards.ts::emitObjectCoercion` +30; `native-proto-instance-method-read.ts`
++40; `object-runtime.ts` +25 (the one method-call consult);
+`object-runtime-enumeration.ts` +60 (string-source arm),
+`object-runtime-enumeration.ts::buildObjectEnumerationHelpers` +60;
+`call-object-builtins.ts` +8.
+
+**Order constraints.** §20.1.2.1: ToObject(target) first (already), then per
+source in order, per key in `[[OwnPropertyKeys]]` order (strings, then
+symbols), `Get` then `Set(…, true)`. The precheck of step 2 must observe the
+SAME key order and must run the source `Get` only once (do not read the
+value in the precheck — descriptors of the TARGET only).
+
+**Acceptance.**
+- The 12 rows flip.
+- **Passing shapes at risk, both trees:** `Object.assign({}, {a:1}, {b:2})`,
+  `Object.assign(target, null, undefined, {c:3})`, `Object.assign([], [1,2])`,
+  `Object.assign({}, "ab")` (host lane prints `{0:"a",1:"b"}` — after 3(a)
+  standalone must match), a frozen literal WITHOUT assign (`Object.freeze(o); o.x = 1`
+  strict throw, sloppy no-op) — byte-identical standalone modules (the
+  precheck is gated on `assign` + a fold hit); the wrapper seeding must not
+  change `(new Number(1)).toString()`/`Number.prototype.toString === (new Number()).toString`
+  (`tests/issue-4248*` suite green, A/B'd); `built-ins/Object/assign/Target-Undefined.js`
+  (control) stays green; host lane sha-identical for an `Object.assign(a, b)`
+  program (`{target:"gc"}`).
+- Pin `tests/issue-5268-r3-object-assign.test.ts`: frozen-data throw,
+  frozen-accessor setter called, `Object.assign(true, {}).valueOf() === true`,
+  `Object(sym) !== sym && typeof Object(sym) === "object"`.
+
+### Step R3-4 — Proxy MOP residual in the Object statics (group E; 9 of 11 rows; risk: high)
+
+**Root cause.** Traps are read off the handler ONCE, at `new Proxy` time
+(`object-runtime-proxy.ts:1511-1537`, the `readTrap("get")…readTrap("construct")`
+sequence into `$ProxyTraps`). §10.5.* does `GetMethod(handler, "<trap>")` at
+EVERY operation, so a handler that is itself a Proxy (`new Proxy(handler,
+check)` — `{values,entries}/observable-operations.js`,
+`keys/property-traps-order-with-proxied-array.js`, and R's
+`splice/property-traps-order-with-species.js`) contributes no traps today (the
+`$Proxy` handler fails `readTrap`'s `$Object` read → empty log). This is the
+r2 "wrapTest mystery": the hand probe used a plain handler. Plus r2 steps
+2.4-2.7 (never started).
+
+**Files / functions.**
+
+1. Lazy trap lookup for a Proxy-typed handler: in `object-runtime-proxy.ts`,
+   at `new Proxy` (L1511) record a `handlerIsProxy` i32 (append a field to
+   `$Proxy` or reuse a spare flag bit — the struct layout is minted in the
+   same file; pick the option that keeps `F_PTARGET`/`F_PHANDLER`/`F_REVOKED`
+   indices stable) and at every `trap = p.ptraps.<field>` read site
+   (L316, L565, L883, L966, L1194, L1315 and the ownKeys/gopd/gpo/spo/isext/
+   prevext/define sites that share the pattern) route through ONE new factory
+   `trapFetchInstrs(field, name)`: `handlerIsProxy ? GetMethod via __extern_get(handler, "<name>")` (which
+   dispatches the handler-proxy's own `get` trap) `: p.ptraps.<field>`. The
+   ordinary-handler path is byte-identical (the flag is 0). GetMethod: a
+   present non-callable trap is a TypeError, `undefined`/`null` is absent
+   (§7.3.9, the rule L129/L377 already document).
+2. r2 step 2.4 — `Object.keys(proxy)` post-trap enumerability
+   (`proxy-non-enumerable-prop-invariant-3`): in `buildOwnKeysDispatch`'s
+   `Object.keys` forward (L732; `forwardName === "__object_keys"`), after the
+   trap list is materialised, filter each STRING key through
+   `__proxy_gopd_dispatch(p, k)`, keeping only `enumerable === true`
+   (§7.3.25 step 4.a). `proxy-keys.js` (`illegal cast … __module_init_chunk_1`):
+   the ownKeys trap returns an array-LIKE `$Object` with numeric GETTERS; the
+   CreateListFromArrayLike loop at L768+ reads entries with `__extern_get_idx`
+   — confirm with a 6-line repro whether it is that read or the later
+   `__objvec` cast that traps, then read `length`/indices through
+   `__extern_get` with a string key (getter-aware) when the result is not a
+   `$ObjVec`.
+3. r2 step 2.5 — `__getOwnPropertySymbols` Proxy arm: ownKeys result filtered
+   to `$Symbol` carriers (`object-runtime-descriptors.ts:3305`, prepend the
+   arm with the `fillObjectIntegrityProxyArms` `install()` idempotence shape,
+   `object-integrity-proxy.ts:949-970`); and `__object_getOwnPropertyDescriptors`
+   (`src/stdlib/object-runtime.ts:59-72`, self-hosted TS): switch the key
+   source to names ++ `__getOwnPropertySymbols(obj)` and SKIP a key whose
+   `__getOwnPropertyDescriptor` answers `undefined` (`proxy-undefined-descriptor`);
+   this also serves D's `symbols-included` and
+   `getOwnPropertyDescriptors/order-after-define-property` once R3-6 gives
+   gOPS its `$Vec` arm. (`__getOwnPropertySymbols` must be added to the
+   `calleeTypes` map at L110-114.)
+4. r2 step 2.6 — `Object.defineProperties(o, proxy)`: at the
+   `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]` refusal (`object-runtime-descriptors.ts:1326`)
+   add a `$Proxy` PROPS arm: keys = `__proxy_own_keys_all(props)`
+   (`object-integrity-proxy.ts:174`), per key `d = __proxy_gopd_dispatch`,
+   skip undefined, collect, then define in order. The row only asserts the
+   gopd trap ORDER `["0","foo",sym]`.
+5. r2 step 2.7 — `__isPrototypeOf` (`object-runtime-prototype.ts:777-781`):
+   replace the raw `struct.get $proto` hop with `__getPrototypeOf(cur)`
+   (Proxy `gpo` guard) — one call per hop, `ref.eq` unchanged.
+
+**Rows claimed (9):** `{values,entries}/observable-operations.js`,
+`keys/proxy-non-enumerable-prop-invariant-3.js`, `keys/proxy-keys.js`,
+`keys/property-traps-order-with-proxied-array.js`,
+`getOwnPropertyDescriptors/proxy-{no-ownkeys-returned-keys-order,undefined-descriptor}.js`,
+`defineProperties/proxy-no-ownkeys-returned-keys-order.js`,
+`isPrototypeOf/arg-is-proxy.js`. **DEFERRED (2):**
+`{freeze,seal}/proxy-with-defineProperty-handler.js` — r2 measured the trap
+sequence correct and the failure in a closed-struct capture
+(`seenDescriptors[key] = descriptor` not persisting into a captured empty
+literal); that is a value-representation defect outside this issue.
+
+**Growth grant:** `object-runtime-proxy.ts` +120,
+`object-runtime-proxy.ts::fillProxyDispatch` +60,
+`object-runtime-proxy.ts::buildProxyRuntime` (or whichever function owns
+L1500-1570 — name it in the PR) +20; `object-runtime-descriptors.ts` +70,
+`object-runtime-descriptors.ts::buildObjectDescriptorHelpers` +50;
+`src/stdlib/object-runtime.ts` +15; `object-runtime-prototype.ts` +10,
+`object-runtime-prototype.ts::buildObjectPrototypeHelpers` +10.
+
+**Order constraints.** Trap lookup order per operation is observable
+(`property-traps-order-with-proxied-array` expects exactly
+`["ownKeys","getOwnPropertyDescriptor"]` from the HANDLER proxy's `get`
+trap, in that order, and nothing else — so the lazy fetch must read only the
+trap the operation needs, never pre-fetch). EnumerableOwnProperties:
+`ownKeys`, then per key `gopd` → `get`.
+
+**Acceptance.**
+- The 9 rows flip.
+- **Passing shapes at risk, both trees:** `built-ins/Proxy/` — the largest
+  blast radius in this plan: run the 60-row sample
+  `built-ins/Proxy/{get,set,has,ownKeys,getOwnPropertyDescriptor,defineProperty}/`
+  (first 10 of each, in 15-row batches) and require an IDENTICAL pass set;
+  `built-ins/Object/seal/seal-proxy.js` (control) green; the 280-row
+  `Object/{freeze,seal,isFrozen,isSealed,values,entries}` set r2 measured
+  (253/26) must not lose a row (run in 15-row batches or the subset touched);
+  `tests/issue-5268*.test.ts` (r2's 23 pins) green; an ordinary-handler
+  program (`new Proxy({a:1}, { get(t,k){ return 42 } })`) compiles to a
+  byte-identical standalone module (the lazy path is flag-gated); host lane
+  sha-identical.
+- Pin `tests/issue-5268-r3-proxy-handler-proxy.test.ts`: the nested-handler
+  log for `Object.entries`, and `Object.keys` post-trap filtering.
+
+### Step R3-5 — concat residuals (group J; 10 of 12 rows; risk: low-medium)
+
+r2 step 8 is still exact; the sub-items below are re-anchored to today's code.
+
+1. (d) `is-concat-spreadable-val-falsey` (1 row, one line): `array-concat-spec.ts:212-216`
+   tests `ref.is_null ∨ __extern_is_undefined`; §23.1.3.1.1 step 3 is "if
+   `spreadable` is not undefined, return ToBoolean" — drop the `ref.is_null`
+   term (a present `null` is falsy, not absent). Risk: a receiver whose
+   reflective read returns `ref.null` for ABSENT — verify `__extern_get` on a
+   `$Vec`/closure/`$Object` miss returns the undefined singleton, not
+   `ref.null`, with a 3-line probe; if any carrier answers `ref.null` for a
+   miss, keep the null term for that carrier only.
+2. (e) `is-concat-spreadable-get-order` (1 row): in
+   `compileArrayConcatNativeSpecFromExprs` (L348-380) emit the species
+   prologue (`emitArraySpeciesCreate`, L375) BEFORE `emitConcatSource` runs
+   the receiver's `@@isConcatSpreadable` Get; the receiver is already stashed
+   in a local, so only the call order moves.
+3. (c) `concat_array-like-length-to-string-throws` / `-to-length-throws` /
+   `arg-length-exceeding-integer-limit` (3 rows): `index.ts:9194-9225`
+   (`closure-extern` arm of `emitDispatchForMethod`) `ref.cast`s the field to
+   `entry.closureTypeIdx` unguarded — a `valueOf: null` field traps. Add
+   `ref.test` and treat a non-closure slot as ABSENT (fall to the next
+   candidate / `toString`); when neither is callable `__to_primitive` must
+   throw TypeError (§7.1.1.1 step 6) — check `__class_to_primitive`'s tail
+   does, else add it. For the Proxy-backed `length` (`arg-length-exceeding…`)
+   the read at L232 is `__extern_length(src)` — confirm its `$Proxy` arm
+   reaches the `get` trap (it should via `__extern_get`); the L235-244
+   overflow check then fires.
+4. (a) `concat_{strict,sloppy,sloppy-with-dupes}-arguments` (3 rows):
+   `__extern_has_idx` on a `__arguments_vec` whose `length` was overridden to
+   6 answers true for 3..5 — in the `__extern_has_idx` arguments arm
+   (`object-runtime.ts`, the consumer of `ARGUMENTS_LENGTH_OVERRIDE_FIELD`
+   next to L11158-11190) compare the index against the PHYSICAL vec length
+   (field 0), not the override; the concat loop then pushes `$Hole` and the
+   patched output readers map it to `undefined` (`compareArray` reads through
+   `__extern_get_idx`).
+5. (b) `concat_spreadable-sparse-object` (1 row, "uncaught Wasm-GC exception"):
+   `[].concat({length: 5, [@@isConcatSpreadable]: true})` then
+   `compareArray(new Array(4000), [].concat(obj))` — repro the 5-element case
+   alone first; the exception is thrown, not a marker escape — suspect
+   `holeSentinelInstrs` (L285) reaching a reader that `throw`s on `$Hole`.
+   Name the reader in the PR.
+6. (g) `is-concat-spreadable-proxy` (1 row): the argument is a Proxy with a
+   `get` trap; the spreadable read at L208-211 already goes through
+   `__extern_get`; the `illegal cast in __module_init_chunk_0` is therefore
+   downstream — `__extern_length`/`__extern_get_idx` on the `$Proxy` — 6-line
+   repro, then add the `$Proxy` forward to whichever helper casts.
+7. (f) `concat_{large,small}-typed-array` (2 rows) — **DEFERRED** unless
+   `__extern_is_array` answering `false` for `$__ta_view` plus the TA expando
+   read needs no #4449-owned internals; check `collectStandaloneArrayCarrierTypeIdxs`
+   (`object-runtime.ts` ~L8162) first and say which in the PR.
+
+**Rows claimed (10)**, 2 deferred. **Growth grant:** `array-concat-spec.ts` +30,
+`array-concat-spec.ts::compileArrayConcatNativeSpecFromExprs` +15,
+`array-concat-spec.ts::emitConcatSource` +10; `index.ts` +25 (the guarded
+cast); `object-runtime.ts` +20 (shared with R3-3).
+
+**Order constraints.** §23.1.3.1: `ArraySpeciesCreate(O, 0)` (its
+`constructor` Get) FIRST, then per E: `Get(E,@@isConcatSpreadable)` →
+`IsArray(E)` only if undefined → `Get(E,"length")` → per index `HasProperty`
+then `Get`.
+
+**Acceptance.** The 10 rows flip; **passing shapes at risk:**
+`built-ins/Array/prototype/concat/` (≤ 45 rows, in 15-row batches) identical
+pass set on both trees — this file was the r2 control
+`concat_spreadable-number-wrapper.js`/`create-species-non-extensible-spreadable.js`/`concat_array-like.js`
+home; `[].concat([1,[2]], 3)`, `arr.concat()` on a typed vec, `Array.prototype.concat.call(obj, …)`
+printed on both trees; `"" + {valueOf(){return 1}}` / `+{toString(){return "2"}}` / `String({})`
+(the `__call_valueOf` dispatcher consumers) printed on both trees in BOTH
+lanes — the `index.ts` arm is not standalone-gated, so the host lane needs a
+sha or output diff too.
+
+### Step R3-6 — symbol keys on `$Vec`/closure carriers + intrinsic symbol props (groups D + D2; 9 of 10 rows; risk: medium)
+
+1. `__getOwnPropertySymbols` (`object-runtime-descriptors.ts:3305-3383`): add
+   BEFORE the `$Object` test a `$__vec_base` arm — `bag = __vec_bag_lookup(obj)`
+   (`vec-props.ts:64`, `VEC_BAG_LOOKUP`); non-null → run the SAME
+   `__obj_ordered_symbols` loop on the bag — and a closure arm via
+   `__closure_bag_lookup` (`closure-props.ts:85`, compose through
+   `ctx.funcMap.get`, do not edit that file). Rows:
+   `getOwnPropertySymbols/order-after-define-property.js` (array half),
+   with R3-4.3 also `getOwnPropertyDescriptors/{symbols-included,order-after-define-property}.js`.
+2. `Object.entries` omits symbol keys (`entries/symbols-omitted.js`): the
+   static-struct arm at `object-ops.ts:4360` enumerates literal fields
+   including a computed-symbol one; filter by the `ctx.oracle` literal-shape
+   fact's key kind (never `ctx.checker`). Also the `Object.defineProperty(obj, nonEnumSym, …)`
+   in that test forces the runtime path — check which path the row takes
+   before editing.
+3. Function receivers (`keys/entries/order-after-define-property-with-function.js`,
+   2 rows): `Object.defineProperty(fn, "length", {enumerable: true})` lands
+   `length` in the closure bag AFTER `a`; §10.1.11.1 order is creation order,
+   and `length`/`name` were created at function creation. In
+   `__carrier_bag_push_keys` (`carrier-bag-visibility.ts:250 buildBagPushKeys`
+   → the `CARRIER_BAG_PUSH_KEYS` native filled at L442
+   `fillCarrierBagVisibility`) for CLOSURE carriers emit the builtin own names
+   the bag marks enumerable (`length`, then `name`) FIRST, then the remaining
+   bag keys in insertion order.
+4. `getOwnPropertyNames(arr)` after `defineProperty(arr,"length",{value:2})`
+   fabricates `0,1` (`getOwnPropertyNames/order-after-define-property.js`):
+   `vec-overlay-keys.ts` (RC2 in its header) enumerates `0..length-1`; use
+   the hole-aware presence helper (`vec-overlay-presence.ts`) so an index
+   with no slot and no overlay entry is not listed.
+5. D2 `Array.prototype[@@unscopables]` (`Symbol.unscopables/{value,prop-desc}.js`):
+   NEW `src/codegen/array-unscopables-native.ts` (≈ 90 LOC) with
+   `emitArrayUnscopablesSingleton(ctx, fctx)` copying the lazy-global pattern
+   of `emitIteratorPrototypeSingleton` (`array-object-proto.ts:3799-3880`):
+   a null-prototype `$Object` (`__object_create(null)` or `__new_plain_object`
+   + `OBJ_FLAG_NULL_PROTO`) with the full modern name list the `value.js`
+   row asserts (read the file: `at, copyWithin, entries, fill, find, findIndex,
+   findLast, findLastIndex, flat, flatMap, includes, keys, toReversed, toSorted,
+   toSpliced, values`), each `{writable:true, enumerable:true, configurable:true}`
+   via `__defineProperty_value` flags `0b111`; wire the element-access read
+   `Array.prototype[Symbol.unscopables]` (the builtin-proto symbol-member read
+   in `builtin-value-read.ts` — `getWellKnownSymbolId("unscopables")` = 11 at
+   L182 already interns the id) and the gOPD arm in `builtin-static-gopd.ts`
+   beside `tryEmitStandaloneBuiltinSpeciesGopd` (L444) with
+   `{writable:false, enumerable:false, configurable:true}`.
+6. `Array[Symbol.species] = v` refusal (`Symbol.species/symbol-species.js`):
+   `verifyNotWritable` writes through `__extern_set` onto the ctor carrier;
+   extend `buildBuiltinFnSetRefusalArm` (`carrier-bag-visibility.ts:328`) to
+   refuse a `@@species` key (symbol id from `getWellKnownSymbolId("species")`)
+   on `SPECIES_OWNER_CTORS` carriers (`builtin-static-gopd.ts:384`) — sloppy
+   no-op, strict TypeError through the shared result channel
+   (`SET_RESULT_REFUSED`).
+
+**Rows claimed (9):** all group D/D2 rows except
+`getOwnPropertyDescriptors/order-after-define-property.js` IF R3-4.3's
+symbol source does not flip it — say so.
+
+**Growth grant:** `array-unscopables-native.ts` new;
+`object-runtime-descriptors.ts` (shared with R3-4) ;
+`carrier-bag-visibility.ts` +50, `carrier-bag-visibility.ts::fillCarrierBagVisibility` +30,
+`carrier-bag-visibility.ts::buildBuiltinFnSetRefusalArm` +15;
+`vec-overlay-keys.ts` +20; `object-ops.ts` +15,
+`object-ops.ts::compileObjectKeysOrValues` +15; `builtin-value-read.ts` +25
+(shared with R3-1); `builtin-static-gopd.ts` +30.
+
+**Acceptance.** The rows flip. **Passing shapes at risk, both trees:**
+`Object.getOwnPropertySymbols({[s]:1})`, `Object.keys(fn)` after `fn.a=1`
+(no `length` redefine → `["a"]` unchanged), `Object.getOwnPropertyNames([1,2])`
+→ `["0","1","length"]`, `Object.keys(arr)` on a sparse `[1,,3]`, `for-in`
+over an array with expandos — printed on both trees; the r2 pins
+`tests/issue-5268*.test.ts` and `built-ins/Object/getOwnPropertySymbols/object-contains-symbol-property-with-description.js`
++ `Object/entries/return-order.js` (controls) green; `with (arr) { … }` —
+`with-has-binding-native.ts` reads `@@unscopables` at runtime, so
+`language/statements/with/unscopables-*.js` (≤ 10 rows) must keep an
+identical pass set once the object is real (today they see `undefined`).
+
+### Step R3-7 — reflective HOF on a Proxy receiver: species prologue + `ArrayCreate` RangeError (groups I + P; 6 rows; risk: medium)
+
+**Root cause** (r2 step-6 "NOT done", confirmed by reading):
+`Array.prototype.{map,filter,splice,slice}.call(proxy, …)` is served by
+`emitArrayProtoMemberBody` (`array-object-proto.ts:871`) → the `__hof_<m>`
+route at L896-925 (map/filter) or the refusal (splice), which never runs
+`ArraySpeciesCreate`, so neither the revoked-proxy TypeError from `IsArray`
+(`create-revoked-proxy` ×3, `ctorCount === 0` asserted) nor the `len ≥ 2^32`
+RangeError (`create-species-undef-invalid-len` ×2, `create-proxied-array-invalid-len`)
+can fire.
+
+**Edits.** In `emitArrayProtoMemberBody` (map/filter branch, before the
+`call hofIdx` at L923): after the ToObject guard, `len = __extern_length(this)`
+(f64), then `emitArraySpeciesCreate(ctx, fctx, deps, [local.get 1], [local.get len])`
+(`array-species.ts:264`; `deps` via the same `prepareArraySpeciesDeps` the
+direct `map` lowering uses at `array-methods.ts:4999`) — a null result means
+the default lane: emit the §10.4.2.2 `ArrayCreate` check `len > 2^32-1 ⇒
+RangeError "Invalid array length"` (`buildThrowJsErrorInstrs(ctx, "RangeError", …)`)
+BEFORE the loop; a non-null species object → run the HOF into a `$ObjVec`
+then `emitArraySpeciesResultSwap` (L380). Give `splice` and `slice` the
+same prologue via a new arm in `array-like-native.ts emitArrayLikeNativeMemberBody`
+(L546; `splice` needs the §23.1.3.31 loop — if that is more than ~120 LOC,
+claim only the `slice` row and defer `splice/create-{revoked-proxy,species-undef-invalid-len}`
+with that reason).
+
+**Rows claimed (up to 6):** `{filter,map,splice}/create-revoked-proxy.js`,
+`{map,splice}/create-species-undef-invalid-len.js`,
+`slice/create-proxied-array-invalid-len.js`.
+
+**Growth grant:** `array-object-proto.ts` +60,
+`array-object-proto.ts::emitArrayProtoMemberBody` +45; `array-like-native.ts`
++80 (slice arm), `array-like-native.ts::emitArrayLikeNativeMemberBody` +10.
+
+**Order constraints.** §23.1.3.18 map: ToObject → `Get(O,"length")` →
+IsCallable(cb) → ArraySpeciesCreate → loop. IsArray(O) inside
+ArraySpeciesCreate must throw for a revoked proxy BEFORE `Get(O,"constructor")`
+(already the r2 step-6 shape) and BEFORE the first callback.
+
+**Acceptance.** The rows flip; **passing shapes at risk, both trees:**
+`Array.prototype.map.call(arguments, String)` (the #4394 harness idiom —
+`compareArray.format`), `Array.prototype.map.call({length:2,0:1,1:2}, x=>x*2)`,
+`Array.prototype.filter.call("abc", c => c > "a")`, `[1,2].map(x=>x)` (direct,
+must be byte-identical — the direct lowering is untouched); the 41-row
+`create-species*.js` + `Symbol.species*.js` set r2 measured at 38/3 must stay
+38/3 or better with the same 3 non-pass; controls `filter/create-non-array.js`,
+`slice/create-species-poisoned.js` green.
+
+### Step R3-8 — `toLocaleString` must `Invoke` (group H; 4 rows; risk: low)
+
+`Object.prototype.toLocaleString` (§20.1.3.5) is `Invoke(this,"toString")`;
+`Array.prototype.toLocaleString` (§23.1.3.32) per element
+`Invoke(elem,"toLocaleString")`. The Array side already has the `localized`
+arm (`array-methods.ts:5425 ensureElementToLocaleStringInvoke`, used at
+L5485/L5737); the failing rows patch `Boolean.prototype.toString` (or a
+GETTER for it) and expect the element's `toLocaleString` → `toString` chain to
+see the patch. Edits: (1) `builtin-prototype-brand.ts:536` — for
+`<primitive>.toLocaleString()` on a boolean/number/string receiver (static
+fold today), when the module has a dirty `Boolean/Number/String.prototype`
+companion (`seededNativeProtoOwnMembersByBrand(ctx)` non-empty for that brand,
+`native-proto.ts`), emit `__extern_method_call(box(x), "toString")` instead of
+the fold; (2) `ensureElementToLocaleStringInvoke` — confirm it dispatches
+`toLocaleString` through `__extern_method_call` (which reaches the seeded
+companion via `__protoidx_get_r`) and that the inherited
+`Object.prototype.toLocaleString` fallback in that native calls
+`Invoke(elem,"toString")` rather than `__extern_toString` — the GETTER row
+(`primitive_this_value_getter`) additionally needs the accessor to run with
+`this` = the boxed primitive (the `__reflect_get_receiver` route
+`closure-props.ts:850-857` describes).
+
+**Rows:** the 4 `toLocaleString/primitive_this_value*.js`. **Grant:**
+`builtin-prototype-brand.ts` +25, `builtin-prototype-brand.ts::tryBorrowedPrototypeNullishThisThrow` +0
+(new helper beside it), `array-methods.ts` +30. **At risk:** `[1,2].toLocaleString()`,
+`(1234.5).toLocaleString()`, `true.toLocaleString()` with NO patched proto —
+byte-identical (gated on a dirty companion); `built-ins/Array/prototype/toLocaleString/`
+(≤ 15 rows) identical pass set; host lane untouched (`!ctx.standalone && !ctx.wasi` return at L1989 stays).
+
+### Step R3-9 — small clusters, ordered (groups N, S, Q, R, M, A/B, F, O)
+
+- **S (1 row, low)** `hasOwnProperty/topropertykey_before_toobject.js`:
+  `tryBorrowedPrototypeNullishThisThrow` (`builtin-prototype-brand.ts:681`)
+  compiles+drops the args (L719-722) BEFORE throwing, but the key's
+  `ToPrimitive` (`hint === "string"` observed) never runs because the drop
+  is of the raw value: for `hasOwnProperty`/`propertyIsEnumerable` call
+  `__to_property_key` on argument 1 (dropping its result) before the throw;
+  `compilePropertyIntrospection` (`object-ops.ts:4644-4676`) already routes the
+  dynamic receiver to `__hasOwnProperty`, which must ToPropertyKey before its
+  own nullish throw — check that native's order too. At risk:
+  `hasOwnProperty.call("ab", "0") === true`, `({}).hasOwnProperty(sym)` — both trees.
+- **N (3 rows, medium)** ArraySetLength: `maybeEmitVecLengthDefine`
+  (`array-length-define.ts:111`) returns `false` for an object-valued `value`
+  (L199) and the dynamic `fillVecLengthDynamicArms` (`vec-length-set.ts:87`)
+  applies ONE `__to_primitive` (L118-125); §10.4.2.4 steps 3-4 call
+  `ToUint32(Desc.[[Value]])` AND `ToNumber(Desc.[[Value]])` — two ToPrimitive
+  hints `number` (`coercion-order-set` expects `["number","number"]`), then
+  RangeError on mismatch, then (step 12-13) if `length` is non-writable NOW
+  (it became so inside `valueOf`) → return false / strict TypeError. Add the
+  second coercion + the post-coercion writability re-check in both the
+  static arm (route object values to the dynamic native instead of `false`)
+  and the dynamic arm; `no-value-order`: a descriptor with no `value` must
+  not touch `enumerable` — `Object.defineProperty([], "length", {configurable:true})`
+  is a TypeError ("Cannot redefine") and `{enumerable:true}` via
+  `Reflect.defineProperty` is `false`, `{get(){}}` TypeError, `{writable:true}`
+  on a non-writable length TypeError — today the enumerable path throws the
+  wrong message. Grant: `array-length-define.ts` +40,
+  `array-length-define.ts::maybeEmitVecLengthDefine` +25; `vec-length-set.ts`
+  +40, `vec-length-set.ts::fillVecLengthDynamicArms` +40. At risk:
+  `arr.length = 0`, `arr.length = 2**32-1`, `Object.defineProperty(arr,"length",{value:2})`,
+  `arr.length = "3"`, `arr.length = new Number(1)` (S15.4.5.1_A1.3_T1/T2),
+  propertyHelper `verifyWritable(array,"length")` — printed on both trees;
+  `built-ins/Array/length/` (≤ 15 rows) identical pass set.
+- **Q (4 CE, medium)** `flat`/`flatMap` species targets: extend
+  `tryCompileArrayFlatNativeDepth1` (`array-methods.ts:10278`) to run
+  `emitArraySpeciesCreate` first and write through `emitArraySpeciesResultSwap`
+  when `ctx.arraySpeciesDirty` (the same gate the direct `map` lowering uses at
+  L4999), so the CE (the `#2717` refusal at L10404's fallthrough) becomes a
+  runtime path; never leave a CE that could become a wrong answer — if the
+  heterogeneous target cannot be handled, keep the refusal for THAT shape.
+  Grant: `array-methods.ts` +60 (shared with R3-8),
+  `array-methods.ts::tryCompileArrayFlatNativeDepth1` +30. At risk:
+  `[[1],[2]].flat()`, `[1,2].flatMap(x=>[x,x])`, `[[1,[2]]].flat(2)` (must
+  still refuse or answer identically) — both trees.
+- **R (2 of 3 rows, medium)** `copyWithin` reflective: `compileArrayCopyWithin`
+  (`array-methods.ts:9711`) is vec-only; the rows use
+  `Array.prototype.copyWithin.call(proxy, 0, 0)` and today hit the
+  "not yet callable as a value" refusal (that is the TypeError the rows
+  report). Add `copyWithin` to `emitArrayLikeNativeMemberBody`
+  (`array-like-native.ts:551`) with §23.1.3.4 steps 3-18 over
+  `__extern_length` / `__extern_has` / `__extern_get` / `__extern_set_strict` /
+  `__delete_property` (all Proxy-guarded). `splice/property-traps-order-with-species.js`
+  — **DEFERRED**: needs R3-4.1 (nested handler proxy) AND a full splice
+  trap sequence. Grant: `array-like-native.ts` +110 (shared with R3-7). At
+  risk: `[1,2,3,4,5].copyWithin(0,3)` direct (byte-identical) and control
+  `copyWithin/return-abrupt-from-target-as-symbol.js`.
+- **M (3 rows, medium)** `Array.prototype.{keys,values,entries}.call(obj)`:
+  give the three a body in `emitArrayProtoMemberBody` (L927 refusal): mint a
+  native `$__IterRec` over the array-like exactly as the direct `[].values()`
+  lowering does (`array-methods.ts:1296` region / `iterator-native.ts`), and
+  make `Object.getPrototypeOf(<that record>)` answer
+  `emitArrayIteratorPrototypeSingleton` (`array-object-proto.ts:3882`): the
+  routing is keyed on the STATIC type `ArrayIterator<T>` (header L3782-3785)
+  — `Array.prototype.keys.call(obj)` is typed `IterableIterator<number>`, so
+  the runtime `__getPrototypeOf` needs a `$__IterRec` arm answering the
+  Array singleton global (`ctx.builtinObjectGlobals.get("__native_array_iterator_prototype")`).
+  Grant: `array-object-proto.ts` (shared with R3-7) +40;
+  `object-runtime-prototype.ts` +20 (shared with R3-4). At risk:
+  `[].values()`, `Object.getPrototypeOf([].values()) === Object.getPrototypeOf([][Symbol.iterator]())`,
+  `getPrototypeOf(new Map().entries())` distinct — control
+  `values/returns-iterator.js` + `tests/issue-3013*` green on both trees.
+- **A/B residual (6 rows) — DEFERRED** with the r2 measured reasons: the
+  closed-struct literal's runtime `%Object.prototype%` terminal (3 rows +
+  `set-abrupt`) is a carrier change; `set-cycle-shadowed` needs
+  `canonicalizeProtoArg` to stop unwrapping a Proxy link (a `__object_create`
+  model change with a Proxy-lane owner, #5196); `prop-desc` needs
+  `__proto__` in `OBJECT_PROTOTYPE_OWN_NAMES` (changes every `in` answer) plus
+  `delete` on `Object.prototype`. Re-evaluate after R3-4.
+- **F (9 rows) — 4 claimed, 5 need a repro first.** The four
+  `concat_spreadable-{function,reg-exp,boolean-wrapper,string-wrapper}.js`
+  rows: `[].concat(fn)` with `fn[@@isConcatSpreadable]=true; fn[0..2]=…`
+  spreads to `[]` — `__extern_length(fn)` answers the arity 3 (correct), then
+  `__extern_has_idx`/`__extern_get_idx` on a closure carrier have no bag
+  consult. Add the closure/wrapper/RegExp carrier arms to those two natives
+  (`object-runtime.ts`, the `objArrayLikeArms` region — compose through
+  `buildClosurePropGetMissArm` (`closure-props.ts:157`) and the wrapper
+  `[[PrimitiveValue]]` string-exotic reader `string-exotic-own-props.ts`);
+  `Function.prototype[0] = 1` (inherited index) then also needs the
+  `__protoidx_get_r` consult that `__closure_prop_get` already has. The five
+  `create-proxy.js` rows (`array.constructor = function(){}; array.constructor[@@species] = Ctor;
+  Array.prototype.map.call(new Proxy(new Proxy(array,{}),{}), …)`): after
+  R3-7 the species prologue runs; `vecConstructorArmInstrs`
+  (`vec-constructor-carrier.ts:131-153`) DOES consult the bag for an own
+  `constructor`, and `__closure_prop_get` DOES read symbol keys from the bag
+  (`$Object`), so the r2 diagnosis ("string-keyed bags only") is not
+  supported by the code — run the 8-line repro (proxy → `Get("constructor")`
+  → `Get(@@species)`) through the proxy-of-proxy `get` forward and name the
+  failing hop before editing. Grant: `object-runtime.ts` +60 (total with
+  R3-3/R3-5), `object-runtime.ts::ensureObjectRuntime` +20. At risk:
+  `fn.length`, `fn[0]` (undefined), `"abc"[1]`, `new String("ab")[0]`,
+  `/x/[0]` — both trees; `built-ins/Function/prototype/` (≤ 10 rows) identical.
+- **O (4 rows) — DEFERRED.** `emitArraySpeciesResultSwap` already does
+  define + plain `[[Set]]` (L423-451, with the comment naming this exact
+  test); the read `r[0]` still answers the stale dense slot because the
+  overlay entry from the species constructor's `defineProperty(q, 0, {writable:false})`
+  shadows it and the later `[[Set]]` is refused by the (now writable, but
+  overlay-resident) entry — a `vec-overlay.ts` define-vs-slot coherence
+  question (#3251/#4491 territory). Reduce with the species-free repro from
+  #5145 and route to the overlay owner.
+
+### Step order and honest yield
+
+| Order | Step | Rows | Risk | Why here |
+|---|---|---:|---|---|
+| 1 | R3-1 Array.from/of | 17 | medium | new module, biggest yield, typed fast paths untouched |
+| 2 | R3-5 concat (10) | 10 | low-med | mostly one-line fixes in one 523-LOC file |
+| 3 | R3-2 toString + leak | 8 | medium | closes 5 CEs; leak fix is a gate on every later CE claim |
+| 4 | R3-3 assign/wrapper | 12 | medium | one new module + seeding; precheck is fold-gated |
+| 5 | R3-6 symbols/D2 | 9 | medium | additive arms |
+| 6 | R3-7 reflective HOF species | 6 | medium | contained in two files |
+| 7 | R3-8 toLocaleString | 4 | low | gated on a dirty companion |
+| 8 | R3-9 S, N, Q, R, M, F(4) | 4+3+4+2+3+4 = 20 | low-med | independent small edits |
+| 9 | R3-4 Proxy handler-proxy + 2.4-2.7 | 9 | **high** | last: widest blast radius (`built-ins/Proxy`), needs its own PR |
+| — | DEFERRED: E ×2, J(f) ×2, R ×1, A/B ×6, F ×5 (until repro), O ×4, G ×1 | 21 | | reasons above |
+
+Planned: 17+10+8+12+9+6+4+20+9 = 95 of 114 in-scope rows (target ≥ 80 for
+the wave); 19 deferred with named reasons (21 listed above minus the two
+F/G rows that are "claim after repro"). One PR per step (R3-9 may batch by
+file); R3-4 alone in its PR.
+
+### Frontmatter grants (r3)
+
+Added to the YAML below with a dated rationale: new files need no grant;
+the listed god-files grow by wiring only. `total` is NOT granted — if the
+change-set's net LOC exceeds the headroom, split the PR, do not widen the
+grant.

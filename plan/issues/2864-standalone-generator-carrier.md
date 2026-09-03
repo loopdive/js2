@@ -1166,6 +1166,68 @@ Source artifacts:
    pass/fail/compile-error counts, and integrate the checkpoint into the sole
    upstream draft PR #5010.
 
+## 2026-09-03 re-measurement of the 297-row checkpoint — now 233 rows, and the cross-cluster leverage
+
+Filed by the #4444 ES2015 closeout lane, not by this issue's owner: this lane
+is CLAIMED by `claude/es6-team-generators` (claim ref, since 2026-08-15) and is
+demonstrably live (`src/codegen/generators-native.ts` last moved on `main` at
+085ad75506 and 5890005e85, 2026-09-01), so nothing here is an attempt to take
+it over. It is a measurement handed to the owner, plus the reason it matters
+more than its own cluster suggests.
+
+**The 2026-08-26 checkpoint's 297 is now 233.** Same exact-text predicate (the
+sequential-numeric refusal, or a `__create_generator` / `__gen_*` token),
+re-run against the standalone baseline fetched 2026-09-03 08:13 UTC (rows
+stamped 09:07 UTC, `oracle_lane: "honest"`, so post-#5461 leak-checked) crossed
+with the ES2015 edition map. **64 rows cleared** since the checkpoint. All 233
+are still `compile_error`.
+
+| kind | rows | 08-26 | Δ |
+| --- | ---: | ---: | ---: |
+| carrier / import leak | 137 | 193 | −56 |
+| native-plan refusal (sequential numeric yields) | 95 | 104 | −9 |
+| `wasm_compile` naming `__gen_resume_g` | 1 | 1 | 0 |
+| **total** | **233** | **297** | **−64** |
+
+**The part that is easy to miss from inside this issue: only 46 of the 233 are
+in the generators cluster.** The rest sit in other clusters' residual lists,
+where the lane that owns the cluster cannot fix them:
+
+| cluster | generator-blocked rows | that cluster's total non-pass |
+| --- | ---: | ---: |
+| expressions | 91 | 244 |
+| generators | 46 | 121 |
+| class | 45 | 191 |
+| for-of + collections | 35 | 101 |
+| statements + lang | 13 | 75 |
+| module-code | 2 | 25 |
+| proxy + reflect | 1 | 157 |
+
+So this one lane gates **233 of the 1,756 remaining ES2015 standalone rows
+(13.3%), and 59% of all 391 compile_errors** — by a wide margin the largest
+single lever left toward the 100% goal, and larger than any whole cluster.
+Concretely: `language/expressions` cannot get past ~63% until this lands, no
+matter what the expressions lane does, because 91 of its 244 residual rows are
+this refusal.
+
+Two consequences for whoever picks this up:
+
+- **The cluster r3 plans being written today (typedarray, class, proxy+reflect,
+  array+object, promise, for-of) must EXCLUDE these rows from what they claim**,
+  or six plans will each promise rows only this lane can deliver. The
+  per-cluster path lists are in `.tmp/census0903/`; the 233 are isolated in
+  `.tmp/census0903/_gen.tsv`.
+- **The two biggest signature groups are still the two the checkpoint named.**
+  94 rows carry the canonical sequential-numeric refusal (the C01 group, which
+  the checkpoint already warned is a signature and not a bucket), and 137 carry
+  a carrier/import leak whose largest variants differ only in which `__gen_*`
+  helpers the module reached for. The `## S3 design note — yield POSITION
+  admission (measured, not implemented)` in this file is the piece that the
+  94-row group is waiting on.
+
+Reproduce: `.tmp/census0903/census.mjs`, then
+`grep -aE '__create_generator|__gen_|native generator lowering' .tmp/census0903/*.tsv`.
+
 ## ES2015 exact 297-row classification checkpoint (2026-08-26)
 
 This is the first closeout checkpoint from the authoritative ES2015 run. It is classification-only: no candidate gate was widened and no standalone result was credited without a host control. The next implementation checkpoint must start from the reduced groups below.
