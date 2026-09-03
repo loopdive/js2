@@ -1,12 +1,11 @@
 {
   "id": "4103",
   "assignee": "ttraenkler/codex-runtime-provider-slice",
-  "requested_by": "ttraenkler/codex-runtime-provider-slice",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/runtime-provider-slice",
-  "reserved_at": "2026-08-02T16:28:57Z",
   "claimed_at": "2026-08-02T16:28:57Z",
-  "updated_at": "2026-08-02T16:28:57Z",
-  "write_id": "21339-szdu7ga4",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:44:19Z",
+  "write_id": "2889-hk2kxx6u",
+  "released_at": "2026-09-03T09:44:19Z"
 }
