@@ -1,12 +1,11 @@
 {
   "id": "4273",
   "assignee": "ttraenkler/codex-es6-census",
-  "requested_by": "ttraenkler/codex-es6-census",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es6-next-lever-20260809",
-  "reserved_at": "2026-08-09T07:24:19Z",
   "claimed_at": "2026-08-09T07:24:19Z",
-  "updated_at": "2026-08-09T07:24:19Z",
-  "write_id": "59314-s7r9t8oy",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:45:28Z",
+  "write_id": "8585-bxwq18wo",
+  "released_at": "2026-09-03T09:45:28Z"
 }
