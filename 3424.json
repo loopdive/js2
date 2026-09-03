@@ -1,8 +1,11 @@
 {
   "id": "3424",
   "assignee": "ttraenkler/codex-es5-regexp-meta-canonicalization",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3424-builtin-meta-canonicalization",
   "claimed_at": "2026-07-28T18:07:09Z",
-  "updated_at": "2026-07-28T18:07:09Z"
+  "updated_at": "2026-09-03T09:39:18Z",
+  "write_id": "20243-f1x5o0ab",
+  "released_at": "2026-09-03T09:39:18Z"
 }
