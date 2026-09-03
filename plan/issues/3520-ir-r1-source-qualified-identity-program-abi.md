@@ -4595,3 +4595,11 @@ and func budgets re-run with `LOC_GATE_BASE=$(git rev-parse origin/main)`;
 R1 acceptance claim, and item 4 of the `## Resume checkpoint` list is not
 discharged. Next up is cluster D (row 2, `compiler-support-abi`), which is not
 byte-neutral and needs its own cohort and PR.
+
+**Re-verified after merging `origin/main` at `986bbf7705`**, which brought in
+PR #5540 (#5283, `legacyBodyEmitted` requires a physical direct-body root) —
+the one in-flight change that touches module-init outcome rows. All five files
+still exit 0 (20/15/7/19/4 passed), `check:ir-only` still READY with the same
+five counters, and every ratchet gate re-run clean on the merged state. None of
+the five files asserts `legacyBodyEmitted` on `extern-demo.ts` or
+`import-attributes.module.js`, so no expectation had to move.
