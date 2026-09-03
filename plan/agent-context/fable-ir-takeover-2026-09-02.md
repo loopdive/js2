@@ -24,6 +24,19 @@ It does not implement. It also owns the merge-queue shepherding for its own PRs.
 
 ## Open PRs and exactly what unblocks each
 
+**Late arrivals — two lane PRs landed after this handoff was first written, both
+`hold`-labelled and both needing a reviewer. A held PR is skipped by
+`auto-enqueue` and strands until someone resolves it, so these are the two most
+time-sensitive items here:**
+
+- **#5506** — `fix(#5280)`: stop the null-proto-super flake from parking
+  unrelated PRs. Directly relieves the flake that parked three PRs on
+  2026-09-02; worth reviewing first for that reason.
+- **#5507** — `refactor(#3521)`: R2-F1 fast-lane mixed string/scalar signature
+  admission. Stacked on R2-T1 (#5486, merged), so the stack is resolvable.
+
+**#5508** carries this handoff and the R9/R4 census; **#5502 has merged.**
+
 - **#5502** (docs, this branch `claude/docs-f3s2-gap6b`) — carries the F3-S2
   plan, the #3523 gap-6b design record, the #5276 reachability correction, #5280
   and #5281 filings, this handoff, and the **conflict-marker resolution**
@@ -98,24 +111,41 @@ done and only needs harvesting into issue files.
    `96690aa5e0efb4ff`, parked three unrelated PRs today (#5479, #5480, #5486).
    Lane dispatched. Until it lands, expect roughly one park per few merges, and
    the sanctioned response is exactly one diagnosed re-admission.
-3. **R9's denominator is the real gate, and part of it is now measured.**
-   Before suspending I measured the eight playground entries the gate does not
-   run (the gate's own lane observers take an entries override). They carry
-   **8 unsupported / 10 legacy bodies on single-host and 14 / 14 on
-   standalone**, against 0 and 0 on the gate's five — so widening the corpus
-   flips READY to NOT READY. Full table, the two compile-once violations, and
-   a probe trap that produced a wrong reading are recorded in
-   `plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`. What
-   remains open is the denominator beyond `website/playground/examples/`.
+3. **R9's denominator — measured on two corpora, and root-caused.**
+   `check:ir-only` is READY only against 5 hardcoded entry files. Widening it
+   flips the verdict, so R9's flip cannot be scheduled off the current green.
+   The blocker is **corpus-dependent**: on `tests/dogfood/corpus` (20 module-
+   bearing programs) module-init adoption is 0 of 20 executable units on both
+   lanes; on the playground's uncovered eight all 8 module-inits are
+   non-executable and the standalone blocker is `host-surface-unavailable`
+   (12 of 14, R6). So R4 and the standalone host surface **both** gate R9.
+   Root cause of the R4 half, established by instrumenting the resolver: all 11
+   rejections come from one arm (`module-bindings.ts:2029`), because
+   `scalarKind` (`:923`) has **no `StringLike` branch** — module-binding storage
+   is scalars-only, so a module-level `const` of a string, object, array,
+   function, class instance or bigint is unrepresentable by construction.
+   Full record on `plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md`
+   and `plan/issues/3523-ir-r4-module-init-compile-once.md`; both on PR #5508.
+   **A lane is dispatched** for the string slice (R4-M1,
+   `session_01SK6yHmgvNg8bRBasbfQC2p`) with an explicit instruction to write a
+   design record instead of forcing an implementation if the dual-backend ABI
+   decision proves larger than one slice.
 
-4. **The original framing of that gate, for context.**
-   `pnpm run check:ir-only` reports **READY** on main — both lanes, 41 terminal
-   units, 38 emitted, 0 unsupported, 0 invariants, 0 legacy body emitted. That
-   is genuine but **narrow**: `scripts/check-ir-only.ts:14-20` runs a **five-file**
-   corpus. The script's own comment says wider compiler reachability is a
-   separate R9/R10 requirement. Do not read READY as "the migration is done";
-   the goal's completion criterion needs the denominator census
-   (`session_01VDoJL5WxevynhetPFVFWGE`) first.
+   Three of my own claims were retracted on the way to this, all kept visible on
+   #3518: attributing the gap to R3 (reason labels read without grouping by
+   `unitKind`), pointing at `from-ast.ts` for rejections raised in `select.ts`,
+   and promoting "R4 first" from a single corpus. Standing rule that came out of
+   it: **name the corpus in the claim, and do not promote a per-corpus finding
+   to a ladder dependency until a second corpus agrees.**
+
+4. **Superseded, kept only so the trail is legible.** Two earlier framings of
+   item 3 stood before it was root-caused: "READY is genuine but narrow" (true,
+   but it stopped at the gate's five files), and a first widening that reported
+   the playground's uncovered eight as 8 unsupported / 10 legacy bodies
+   single-host and 14 / 14 standalone. Both are subsumed above. The open
+   question they left — the denominator past `website/playground/examples/` —
+   is the one item 3 answers.
+
 5. **#3523 gap-6b** — record verified and shipped. Verdict: the recommendation
    ("retire pass 2, not pass 1") **holds only as a gated slice choice**. The
    direction is measured; acceptance is not, because every corpus row was
