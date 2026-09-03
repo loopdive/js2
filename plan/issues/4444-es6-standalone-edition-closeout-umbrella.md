@@ -64,6 +64,30 @@ for**: 948 in the six lanes planned on 09-03, 441 in the two waves in flight,
 to emit rather than a wrong answer, so it needs a feature, not a fix. Any plan
 that counts rows without splitting fail from CE is over-promising.
 
+### Cross-cutting blockers — 281 rows no cluster lane can fix
+
+Three defects are not clusters at all: they are single missing capabilities
+whose rows are scattered across other lanes' residual lists. A cluster plan
+that counts them is promising rows it cannot deliver.
+
+| blocker | issue | rows | where they sit |
+| --- | --- | ---: | --- |
+| standalone native generator lowering | #2864 (claimed, live) | 233 | expressions 91 · generators 46 · class 45 · for-of 35 · statements 13 · module-code 2 · proxy 1 |
+| `Reflect.construct` with a distinct NewTarget | #3371 (design checkpoint PR #5400) | 33 | proxy+reflect 11 · typedarray 11 · other built-ins 6 · expressions 2 · promise 2 · array+object 1 |
+| `Reflect.set` with an explicit receiver | #2046 (design checkpoint PR #5397) | 15 | proxy+reflect 7 · typedarray 6 · statements 2 |
+
+**281 rows, 16% of the residual.** Net of them, the six lanes planned today can
+claim at most: typedarray 227, class 146, proxy+reflect 138, array+object 136,
+promise 116, for-of+collections 66. Two caveats on that arithmetic — the 44
+`env::Promise_*` leaks inside the promise cluster and the 3 RegExp-engine
+refusals inside the regexp cluster are *those lanes' own scope*, so they are
+not subtracted; and #3371/#2046 are the proxy+reflect lane's own subject
+matter, held at design checkpoints rather than blocked elsewhere, so #5196's
+plan should treat its 18 as dependent-on-design rather than out of scope.
+
+Reproduce the split with the predicate in the commit that added this section;
+the generator rows are isolated in `.tmp/census0903/_gen.tsv`.
+
 ## 2026-09-02 post-wave census — 9,905 / 11,704 (84.6%), +232 rows in one day
 
 Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched
