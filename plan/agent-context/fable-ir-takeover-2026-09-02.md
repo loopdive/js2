@@ -190,3 +190,38 @@ Note for the next container: **`gh` was absent here.** GitHub work went through
 the `mcp__github__*` tools against `loopdive/js2` (this session's only permitted
 repo). Anything in the docs that shells out to `gh` — including
 `set-merge-queue-config.sh` — will fail until `gh` is installed.
+
+## Method note from this session — nine corrections, one root cause
+
+Nine claims in this session were wrong and corrected on the record. They look
+varied (R3 vs R4, `from-ast.ts` vs `select.ts`, a corpus generalisation, a seed
+table, a denominator, an impossible plan step) but they share one shape:
+
+**I reasoned about what a system probably does instead of reading what it
+does.** Every underlying *measurement* held up — each names the command that
+produced it. The errors lived in the inferences stacked on top.
+
+Four of them were caught by doing something that took under a minute:
+
+| what I assumed | what reading it took | what it overturned |
+| --- | --- | --- |
+| the `body-shape-rejected` label names a feature area | grouping by `unitKind` | wrong lane (R3 → R4) |
+| a baseline gate probably tolerates an unseeded lane | reading `evaluateIrOnlyReport` | a plan step that would have landed a red gate |
+| `legacyBodyEmitted` means a legacy body was emitted | one compile of `extern-demo.ts` | a 4× inflation of my own counts |
+| the corpus figures in my seed table were the ones I measured | re-running the measurement | playground numbers labelled as dogfood |
+
+Two things follow for whoever works here next:
+
+1. **Trust the measurements, re-check the inferences.** Every number in
+   `#3518`, `#3523`, `#3090` and `#4522` from this session names its command and
+   can be re-run. Every *conclusion* drawn from one deserves the thirty seconds
+   it takes to read the code it describes.
+2. **The fluency is the hazard.** The wrong tables were not sloppy — they were
+   plausible, well-formatted and internally consistent, which is exactly why
+   they survived re-reading and only died to re-measuring. When output is
+   coming easily, that is the moment to switch from generating to auditing. The
+   one time I did that deliberately, the audit found another error immediately.
+
+The standing rules that came out of it, both already applied above: **name the
+corpus in the claim**, and **do not promote a per-corpus finding to a ladder
+dependency until a second corpus agrees.**
