@@ -4603,3 +4603,137 @@ still exit 0 (20/15/7/19/4 passed), `check:ir-only` still READY with the same
 five counters, and every ratchet gate re-run clean on the merged state. None of
 the five files asserts `legacyBodyEmitted` on `extern-demo.ts` or
 `import-attributes.module.js`, so no expectation had to move.
+
+## Implementation Plan — W1-E cluster D: structural owner for the vec write-back helpers (2026-09-03, Fable lane)
+
+Written from a read of `src/codegen/vec-access-exports.ts` (`VEC_HOST_BRIDGE_ROLE`
+`:28`, `VEC_HOST_BRIDGE_DEFINITIONS` `:52-101`, materializer ordinal contract
+`:105-121`, allocation + `observeEntrySourceSupports` `:200-240`, the
+write-back emission gate `:1160-1200`), `src/codegen/vec-define-writeback.ts`
+(`__vec_set_elem` `:195-222`, `__vec_set_len` `:296-316`),
+`src/codegen/compiler-support-abi.ts` (C35 families, `:1-60`, `:280-330`),
+`src/codegen/program-abi-callable-planning.ts` (`observeEntrySourceSupports`
+`:81`, `handleForEntrySourceSupport` `:154`), `src/codegen/program-abi-finalization.ts`
+and `src/codegen/index.ts` (`emit-vec-access-exports` `:11111` runs before
+`eliminate-dead-layout` `:11397`; same order at `:5991` / `:6751`) at
+`origin/main 744203f3c7`. Re-verify anchors before editing.
+
+### Measured starting point (reproduced 2026-09-03 on `744203f3c7`)
+
+`tests/issue-3520-compiler-support-abi.test.ts` › *leaves no compiler-support
+callable on the positional fallback across the five host entries*:
+`expected 2 to be +0` (`:130`). The two generic rows are `__vec_set_elem` and
+`__vec_set_len` on `website/playground/examples/js/async.ts`, on
+`retained-module-function` ordinals `0x80`/`0x81` — final function indices, so
+a positional label that moves whenever an unrelated function is added.
+
+### Why these two fell through, and where they belong
+
+`emitVecDefineWritebackExports` (#3116) pushes both functions straight into
+`mod.functions` with a live numeric index and registers them in `ctx.funcMap`,
+but records nothing for the Program ABI. Every sibling vec helper is owned:
+the six core bridges (`__vec_len` … `__vec_pop`) are observed at allocation
+as `vec-host-bridge` ordinals 0–5, the three host-to-vec materializers take
+6–8 of the same role, and the per-shape `__vec_from_extern_<n>` family has its
+own C35 role. The write-back pair is the **third sub-family of the vec host
+bridge** — same anchor (entry source), same emission gate family, same
+`externref`-in / `i32`-out shape — so it takes the next two slots of that
+closed table rather than a new role ordinal. Nothing a program contains can
+move a closed-table ordinal (C35's stdlib-math argument), which is exactly the
+property the generic fallback lacks.
+
+### Change
+
+1. **`src/codegen/vec-access-exports.ts`** — extend the closed ordinal
+   contract: after `VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS` (6/7/8) add
+   `VEC_HOST_BRIDGE_WRITEBACK_ORDINALS = Object.freeze({ setElem: 9, setLen: 10 })`
+   with the same contiguity assertion (`firstWritebackOrdinal === 9`), and an
+   exported `vecHostBridgeWritebackOrdinal(kind)` reader mirroring
+   `vecHostBridgeMaterializerOrdinal`. Do NOT add rows to
+   `VEC_HOST_BRIDGE_DEFINITIONS` — that table also drives the reserved
+   physical `$v<ordinal>` export namespace (`:135-145`) and the six-bridge
+   placeholder allocation; the write-back pair keeps its logical exports.
+2. **`src/codegen/vec-define-writeback.ts`** — allocate both functions through
+   the handle-safe path the bridges use (`mintDefinedFunc` + `pushDefinedFunc`
+   from `./registry/func-space.js` or wherever `vec-access-exports.ts:208-218`
+   imports them), keep `ctx.funcMap.set` and the `mod.exports.push` descriptor
+   exactly as today, and after both are pushed call
+   `ctx.programAbiCallables?.observeEntrySourceSupports([...])` with
+   `{ role: VEC_HOST_BRIDGE_ROLE, roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.vecHostBridge, derivedOrdinal: 9|10, displayName, funcIdx }`.
+   Emission precedes `eliminateDeadLayoutAndPlanProgramAbi` in both flows, so
+   the `planning-sealed` invariant cannot fire; assert that in a comment with
+   the two `index.ts` anchors.
+   If `mintDefinedFunc` is not usable at this call site (measure, don't
+   assume — the writer runs after body compilation), the fallback is
+   `compiler-support-abi.ts`'s record path: a `recordVecWritebackHelper(ctx, kind, func)`
+   pushing an entry-source record with `role: VEC_HOST_BRIDGE_ROLE`,
+   `roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.vecHostBridge`,
+   `derivedOrdinal: 9|10`, planned by `planEntrySourceFamilies`. State which
+   path was taken and why.
+3. **`src/codegen/compiler-support-abi.ts`** header comment — add the
+   write-back pair to the family table (anchor: entry source; ordinal: closed
+   table 9/10) so the C35 inventory stays complete.
+
+No change to the emission gate (`wantsDefineWriteback` / `wantsDynamicWriteback`
+/ `wantsNativeBoundaryWriteback`) and none to the helper bodies.
+
+### Measurement order
+
+1. **Reproduce on base**: the failing test above (`-t "positional fallback"`),
+   and a probe (`.tmp/probe-3520-w1e.mts`) that compiles the five
+   `SINGLE_HOST_ENTRIES` and lists every `retained-module-function` row's
+   `displayName` + binding id. Expected: exactly the two rows on `async.ts`.
+2. Base copies at first edit.
+3. Implement 1–3. Probe again: 0 generic rows; `async.ts` publishes
+   `vec-host-bridge:9` (`__vec_set_elem`) and `vec-host-bridge:10`
+   (`__vec_set_len`); the other four entries publish neither (they do not
+   emit the pair) and no other row changes. Diff the full ABI entry list per
+   entry, base vs branch: the only delta is those two rows' role/ordinal.
+4. **Byte identity**: per-row sha256 over the 34-case corpus (20 dogfood + 12
+   playground + `extern-demo.ts` + `add.ts`), gc + standalone + wasi. The
+   issue file predicts "not byte-neutral"; measure it. Observation does not
+   reorder functions, so the expected result is **34/34 identical per lane**;
+   if any row moves, name it and explain from the diff (a moved row that is
+   not `async.ts` is a defect).
+5. Ordinal stability under unrelated growth: compile `async.ts` with one
+   extra exported function appended; the two binding ids are unchanged while
+   the old `0x80`/`0x81` positions would have shifted. Pin this.
+6. Gates: full ratchet chain + `LOC_GATE_BASE=$(git rev-parse origin/main)`,
+   `check:ir-only` READY, `check:ir-fallbacks`, `check:ir-dialect`,
+   `check:ir-kind-neutrality`, `check:ir-layering`, `check:linear-ir`, and the
+   rest of the `quality` list; equivalence 8 shards by name, zero name-set diff.
+7. Keep green: every `tests/issue-3520-*` file that is green on main (run the
+   62 one file per invocation; the failing-name-set diff base → branch must be
+   exactly `{row 2}` removed, nothing added), `tests/issue-3116-*`,
+   `tests/issue-1712-*`, `tests/issue-4733-*`.
+
+### Tests
+
+`tests/issue-3520-vec-writeback-abi.test.ts`:
+
+- (a) `async.ts` on the host lane publishes `vec-host-bridge` rows with
+  derived ordinals 9 and 10 whose display names are `__vec_set_elem` /
+  `__vec_set_len`, and no `retained-module-function` row — red on base.
+- (b) ordinal stability: the two binding ids are identical with and without an
+  appended unrelated function — red on base (positional ids move).
+- (c) a module that emits no write-back (no defineProperty / dynamic-set
+  import, e.g. `tests/fixtures/add.ts`) publishes no ordinal 9/10 row and is
+  byte-identical base vs branch — green on base, labelled as the
+  no-over-claim guard.
+- (d) `vecHostBridgeWritebackOrdinal("setElem") === 9`, `("setLen") === 10`,
+  and `PROGRAM_ABI_CALLABLE_ROLE` ordinals stay distinct — the closed-table
+  pin.
+- The existing C35 test (`compiler-support-abi.test.ts` › positional fallback)
+  flips red → green; do not edit it.
+
+Non-vacuity: revert the observation call alone → (a) and (b) red, C35 red.
+
+### Budget, sequencing, conflict surface
+
+`vec-access-exports.ts` (+~25 LOC), `vec-define-writeback.ts` (+~20),
+`compiler-support-abi.ts` (comment only), grant in this issue's frontmatter
+with a dated rationale. Disjoint from #3522 W1-B (`select.ts`, `from-ast.ts`),
+#5299 (`multi-prepared-callable-publication.ts`, `prepared-component-publication.ts`,
+`outcomes.ts`). Independent of W1-D; branch from `origin/main` now. Claim slug
+`3520:w1e-cluster-d`. After it lands, the `tests/issue-3520-*` red set is
+cluster B (4), C (3), E (1), F (1).

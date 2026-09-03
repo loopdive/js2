@@ -1,10 +1,12 @@
 ---
 id: 5299
 title: "Published prepared-callable outcome rows carry NO (prepareAttempts, directBodyEmissions, irBodyEmissions) triple — absent, not zero — so every R9 ratio over the R2 population silently omits them"
-status: ready
+status: done
 sprint: current
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
+assignee: ttraenkler/opus-5299
 priority: high
 horizon: s
 feasibility: medium
@@ -190,3 +192,119 @@ onto it), #5297 (`prepared-component-sealing.ts`, `prepared-dynamic-support.ts`,
 `compiler-timer-shim-preparation.ts`), #3520 W1-D (`program-abi-*.ts`),
 #3522 W1-A (`select.ts` class arms, `class-bodies.ts`). Branch after #5283
 lands if it touches `legacy-body-audit.ts`'s index shape; otherwise now.
+
+## Implementation notes (2026-09-03, ttraenkler/opus-5299)
+
+Implemented as planned. Three deviations, each forced by a measurement.
+
+### 1. The 34-case corpus contains ZERO rows from this publication path
+
+Acceptance criterion 1 assumed the dogfood/ratchet corpus would show a
+non-zero N for this row set. It does not, and the plan's own construction
+explains why: `MultiPreparedCallablePublication` only ever stages **cross-source
+`top-level-function` terminals**, and all 34 corpus cases are compiled
+single-source through `compile()`.
+
+Measured on `origin/main` (`986bbf7705`) with a probe over the exact 34 cases,
+both lanes:
+
+| | gc | standalone |
+| --- | --- | --- |
+| outcome rows | 105 | 105 |
+| rows with a `preparedComponentId` | 48 | 45 |
+| of those, **absent triple** | **13** | **13** |
+| of the 13, built by `multi-prepared-callable-publication.ts` | **0** | **0** |
+
+The 13 are 10 `class-member` rows (`classes.ts`), 2 `module-init` rows
+(`calendar.ts`, `algorithms.ts`) and 1 derived timer-shim `setTimeout` row
+(`async.ts`) — R3/R4 populations that the R2 reconciler does not cover and that
+this slice deliberately does not touch. **They are unchanged after the fix**
+(13 → 13, both lanes), which is the correct outcome, not a miss: fabricating a
+triple for a population whose counters nothing measures is the exact defect
+this issue exists to remove. They are the natural follow-up for the R9
+denominator work.
+
+So the affected population needed its own corpus (below), and the corpus sweep
+served only as the byte-identity and no-collateral check.
+
+### 2. The affected population is standalone-only
+
+Measured across seven `compileMulti` option lanes on the same cross-source
+program: `gc/default`, `gc/experimentalIR`, `gc/experimentalIR+nativeStrings`,
+`gc/nativeStrings` and `wasi/default` all produce **0** prepared-callable rows;
+only `standalone/default` and `standalone/experimentalIR+nativeStrings` reach
+the route (2 rows each). Every measurement of the fixed population is therefore
+standalone; the gc lane is reported as a byte-identity control.
+
+Eight-program prepared corpus (multi-source, both lanes, 16 compiles):
+
+| | base | branch |
+| --- | --- | --- |
+| prepared rows | 22 | 22 |
+| absent triple | **21** | **0** |
+| exact `(1, 0, 1)` | 1 | **22** |
+| sha256 of the binary, per case | — | **16/16 identical** |
+
+The one row already exact on base comes from the overlay reconciler
+(`ir-overlay-outcomes.ts`), not from this publication — it is the control that
+shows the two producers now agree.
+
+### 3. A row states no counters when the direct-body ledger does not exist
+
+`ctx.irBodyRouteAuditSession` requires `trackIrOutcomes` **and** an
+`irCutoverRoute` (`context/body-route-audit.ts:29`). Every production entry
+point supplies one (`compiler.ts:838` defaults it to `compileSourceSync`), but
+a direct `generateMultiModule(ast, { trackIrOutcomes: true })` call does not —
+and that spelling is used by existing `issue-3525` tests.
+
+Failing closed there would break a public entry point; writing
+`directBodyEmissions: 0` would be an unmeasured claim of exactly the kind this
+issue removes. So the row keeps its pre-#5299 booleans and states **no**
+counters, which `hasMalformedBodyEmissionAccounting` already treats as
+well-formed. A pinned test covers this boundary so a later change cannot
+quietly start guessing zeros.
+
+### Ordering, and why the reorder is load-bearing
+
+`prepareCommit` now claims the component tokens **before** building the rows.
+Reverting only that reorder (rows built first, `tokens` still empty) makes every
+prepared unit read 0 own-body patches, the fail-closed arm fires, and the whole
+compile errors — 3 of the 8 new tests go red, including the end-to-end one.
+The counts genuinely are unavailable at the old construction point.
+
+Abort semantics are unchanged: nothing between the token loop and the row build
+writes, so a rejected row still reaches the owner's `publication.abort()` with
+every receipt claimed-but-unpublished — the same state a failing `take` already
+produced. A pinned test asserts that abort still succeeds after a post-claim
+rejection.
+
+### Budgets
+
+Both budget gates pass **without a grant**: `check-loc-budget` reports net
++130 LOC against `merge-base(origin)` and net −86 against `origin/main`, and
+`check-func-budget` reports no unallowed growth on either base. No
+`loc-budget-allow:` entry is therefore needed or added.
+
+### Validation, re-run after merging `origin/main` at `744203f3c7`
+
+Every number above was re-measured on the merged tree; none moved. In addition:
+
+- **Equivalence**, 8 shards, `EQUIVALENCE_FORK_HEAP_MB=4096`: 24 failing /
+  1,718 passing, all 24 in `scripts/equivalence-baseline.json` — zero new
+  regressions on every shard.
+- **62 `issue-3520-*` suites**, base vs branch, run in three chunks: failing-name
+  sets **identical** (11 failures, all pre-existing on merged main).
+- `issue-3525-*` (4 files), `issue-3519-*` (2), `issue-5262`, `issue-5283`,
+  `issue-5300`, `issue-5297`: failing-name sets identical — the two known
+  `#3525 M2 prepared multi-source module-init` reds are unchanged, everything
+  else green.
+- Ratchet chain green on both bases (`merge-base(origin)` and
+  `LOC_GATE_BASE=origin/main`); every `quality` gate green, including
+  `check:harness-compile-budget` at measured 150,774 / ceiling 150,803 — **29
+  units of margin**, unchanged by this PR.
+
+### Open, deliberately not done
+
+`PreparedIrEmissionLedgerEntry` (`src/ir/program.ts:167`) carries the same
+triple for the #3525 owner lifecycle and is still not wired to this path.
+Unifying the two is R5 M1B, not this slice.

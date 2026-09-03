@@ -108,7 +108,8 @@ import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
-import { compileExpression } from "./shared.js"; // (#4556)
+import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js"; // (#4556)
+import { coerceType } from "./type-coercion.js";
 
 /** WasmGC `none` bottom heap type (signed LEB −18) — `ref.null none`, the
  *  canonical `anyref` null (mirrors receiver-brand.ts / map-runtime.ts). */
@@ -805,7 +806,30 @@ export function tryBorrowedPrototypeNullishThisThrow(
     return undefined;
   }
 
-  for (const arg of expr.arguments) {
+  // (#5268 r3 R3-9 S) §20.1.3.2 step 1 is `? ToPropertyKey(V)` — it runs
+  // BEFORE step 2's `ToObject(this)`, so a key whose `toString` getter throws
+  // beats the nullish-receiver TypeError, and the key is observably coerced
+  // with hint "string" (`topropertykey_before_toobject.js` asserts
+  // `coercibleKey.hint === "string"` after the throw). Compiling the argument
+  // and dropping it evaluates the EXPRESSION but performs no coercion, so the
+  // getter never ran. Route argument 1 of the two key-taking methods through
+  // `__to_property_key` and drop THAT instead.
+  const coercesKeyFirst = ctor === "Object" && (method === "hasOwnProperty" || method === "propertyIsEnumerable");
+  const toPropertyKeyIdx = coercesKeyFirst
+    ? ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }])
+    : undefined;
+  for (const [index, arg] of expr.arguments.entries()) {
+    if (coercesKeyFirst && index === 1 && toPropertyKeyIdx !== undefined) {
+      const t = compileArg(arg);
+      if (t === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (t.kind !== "externref") {
+        coerceType(ctx, fctx, t, { kind: "externref" });
+      }
+      flushLateImportShifts(ctx, fctx);
+      fctx.body.push({ op: "call", funcIdx: toPropertyKeyIdx }, { op: "drop" });
+      continue;
+    }
     const t = compileArg(arg);
     if (t !== null) fctx.body.push({ op: "drop" });
   }
