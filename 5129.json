@@ -1,10 +1,11 @@
 {
   "id": "5129",
   "assignee": "ttraenkler/codex-5129-es2015-buffer-prototype-tostringtag",
-  "requested_by": "ttraenkler/codex-5129-es2015-buffer-prototype-tostringtag",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5129-es2015-buffer-prototype-tostringtag",
   "claimed_at": "2026-08-28T07:39:48Z",
-  "updated_at": "2026-08-28T07:39:48Z",
-  "write_id": "51853-3653hk7f"
+  "updated_at": "2026-09-03T09:52:40Z",
+  "write_id": "22810-95lupz31",
+  "released_at": "2026-09-03T09:52:40Z"
 }
