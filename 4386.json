@@ -1,12 +1,11 @@
 {
   "id": "4386",
   "assignee": "ttraenkler/codex-es5-array-cluster",
-  "requested_by": "ttraenkler/codex-es5-array-cluster",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es5-array-cluster-20260812",
-  "reserved_at": "2026-08-12T21:01:49Z",
   "claimed_at": "2026-08-12T21:01:49Z",
-  "updated_at": "2026-08-12T21:01:49Z",
-  "write_id": "33581-ey4ymytm",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:47:21Z",
+  "write_id": "12260-5ixex8mq",
+  "released_at": "2026-09-03T09:47:21Z"
 }
