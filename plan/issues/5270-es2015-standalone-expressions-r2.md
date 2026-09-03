@@ -60,6 +60,11 @@ loc-budget-allow:
   - src/codegen/closure-props.ts
   - src/codegen/function-poison-pill-access.ts
   - src/codegen/statements.ts
+  # 2026-09-03 (round-3 fix, R3-F1): the loose-equality retention guard
+  # (`looseEqualityCoercesAnOperand` + `isNonNullishPrimitiveLiteral`) lives
+  # beside the operator table it qualifies; `statements.ts` imports it so both
+  # halves of the decision cannot drift apart.
+  - src/codegen/module-init-collection.ts
   - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/statements/control-flow.ts::canTailCall
@@ -1321,3 +1326,148 @@ before the result check is ever consulted). The unsound direction
 (`ref null $T` → `ref $T`) is correctly closed, which was the point of N1; the
 subtype direction is a deliberate narrowing, not an oversight, and would need a
 real subtype relation on the module's type graph to widen safely.
+
+### Round-3 fixes (2026-09-03)
+
+Two confirmed defects from the round-3 adversarial review, both fixed here. All
+rows below were re-measured in this pass against a merge-base tree materialised
+by hand (`git archive bee5ddd535`), with **node as the oracle**; the wave's own
+17 claimed rows and its 20-row control list were re-run afterwards.
+
+#### R3-F1 — a bare `objA == objB;` statement newly ran (and could die in) `valueOf`
+
+`binaryOperatorReachesToPrimitive` (`module-init-collection.ts`) and its lowering
+twin `bareBinaryStatementReachesToPrimitive` (`statements.ts`) both listed
+`==`/`!=`, so a bare module-scope `p == q;` was RETAINED and compiled through the
+dynamic carrier. §7.2.15 IsLooselyEqual performs **no** coercion when both
+operands are Objects — it compares references — but this compiler's `==` lowering
+calls ToPrimitive on both regardless. That lowering defect is **pre-existing**
+(base coerces too once the statement is wrapped in `if (true) { … }`); retention
+merely exposed it, and exposed it in the worst place: a poisoned `valueOf` threw
+out of `__module_init`, so every later top-level statement was skipped.
+
+| probe | node | base | lane before | lane now |
+|---|---|---|---|---|
+| `p == q;` with poisoned `valueOf`, then a later statement (`s14`) | reached | reached | **throws, init dies** | reached |
+| invocation log `a == b;` / `var r = (a == b)` / `a != b` / `a === b` (`s11`) | `\|\|false\|\|` | `\|vBvBvAvA\|false\|\|` | `vBvBvAvA\|vBvBvAvA\|false\|vBvBvAvA\|` | `\|vBvBvAvA\|false\|\|` |
+| `o == null` · `o == undefined` · `0 == o` · `o != "x"` · `p == q` (`s20`) | `\|\|vO\|vO\|` | `\|\|\|\|` | — | `\|\|vO\|vO\|` |
+
+**What was chosen, and why not the deeper fix.** The reviewer offered fixing the
+`==` LOWERING instead (skip ToPrimitive when both operands are statically
+Objects) so the retention could stay. Not taken: §7.2.15's Object-vs-Object early
+exit belongs in the loose-equality lowering itself, which every `==` in every
+compiled program goes through, and this wave is on hold for defects — not the
+place to change a hot path with no room to measure it. **Follow-up, unfixed:**
+`objA == objB` still runs ToPrimitive on both operands wherever the statement is
+reached by other means (an `if`/block wrapper, an assignment position). That is
+base behaviour, not a regression from this wave, and it wants its own issue
+against the loose-equality lowering.
+
+**But the plain token removal the reviewer proposed would have cost a row.** The
+review states the retention's corpus exposure is one file, `addition/…`, which
+uses `+`. It is two: `expressions/equals/coerce-symbol-to-prim-invocation.js` is
+literally a bare `0 == y;` statement at module scope, and dropping the tokens
+turned it back to `fail` (re-measured, not inferred). So the guard is narrower
+than a removal instead of wider than the defect:
+
+- `looseEqualityCoercesAnOperand` (new, exported from `module-init-collection.ts`,
+  imported by `statements.ts` so the retention and lowering halves cannot drift)
+  retains a bare `==`/`!=` statement **only when one operand is a literal
+  non-nullish primitive** — the `0 == y;` shape, where ToPrimitive on the object
+  operand is exactly what the spec asks for.
+- Object-vs-Object keeps base's drop. So do `o == null` and `o == undefined`,
+  which §7.2.15 also answers without coercing — a second instance of the same
+  defect the review did not name, and one the lane now gets *right* rather than
+  merely back to base (`s20` above: lane matches node, base does not).
+- The other nine operators are untouched.
+
+#### R3-F2 — the arrow arm of `hasRestrictedProperties` was unconditional
+
+`hasRestrictedProperties` (`function-poison-pill-access.ts`) answered "restricted"
+for EVERY arrow, on both the read path and the write path. §10.2.4's restricted
+accessors are `configurable: true`, so they can legally be replaced, and a
+rebound binding is not the arrow at all. The lane therefore turned two
+wrong-but-stable base answers into THROWS, which is strictly worse — the throw
+kills the rest of the enclosing evaluation.
+
+| probe | node | base | lane before | lane now |
+|---|---|---|---|---|
+| `Object.defineProperty(b,"arguments",{value:7,…}); b.arguments` (`n04`) | `7` | `7` | **TypeError** | `7` |
+| …same for `caller` (`n04`) | `8` | `8` | **TypeError** | `8` |
+| `var f = () => 1; f = function(){}; f.caller` (`n03` r1/r2) | `null` | `undefined` | **TypeError** | `undefined` |
+| `(() => {}).caller` / `.arguments` (`n20` r1/r2) | TypeError | undefined | TypeError | TypeError |
+| `var k = () => 1; k.caller` / `k.caller = {}` (`n20` r3/r4) | TypeError | undefined / set | TypeError | TypeError |
+| `arrow-function/ArrowFunction_restricted-properties.js` | — | fail | pass | **pass** (standalone AND host) |
+
+This is verbatim the reasoning the lane already wrote for the sibling
+`"prototype" in arrow` fold in its R2 review — *an arrow's missing `prototype` is
+a fact about its CREATION, not about its lifetime* — applied to the accessors.
+The unconditional `true` is now earned two ways: an arrow **literal** receiver
+(no binding exists for anyone to rebind or hand to `Object.defineProperty`), or
+an identifier whose **every** appearance in the file is custodial — the receiver
+of a member access, or a direct callee.
+
+That single custodial-use scan replaces three separate guards and is why the win
+row survives. `identifierEscapesToCall` alone would not have been enough and
+`arrowBindingNeverGainsProperties` would have been actively wrong here:
+`ArrowFunction_restricted-properties` writes `arrowFn.caller = {}`, which that
+predicate refuses as a property-gaining write. It is not one — `k.caller = x` and
+`k["caller"] = x` both go through the **inherited poison setter** and throw, so a
+member write can never install an own `caller`/`arguments`. Only
+`Object.defineProperty` can, and that is a call argument, i.e. not custodial. The
+same test also refuses rebinding in every spelling (`f = …`, `[f] = src`,
+`({f} = src)`, `for (f of src)`, `f++`) and aliasing (`var m = k`, `return k`)
+without enumerating any of them — the enumeration hole that bit the R2 cut.
+
+**Given up, deliberately:** the scan is name-based over the whole SourceFile, and
+under the test262 harness that file also contains the harness sources. A
+short-named arrow binding (`var a = () => 1`) therefore collides with harness
+identifiers and loses the fold, falling back to base's `undefined`. Conservative
+in the safe direction — a refusal costs only the fold; a false `true` is a
+spurious throw — and it is the same name-scan weakness the accepted `in` fold
+already carries.
+
+#### R3-F3 — the IIFE / `__module_init` termination sink (NOT fixed here, by design)
+
+In js-host mode a poison-pill TypeError raised inside a module-scope IIFE that
+catches it still terminates `__module_init`, so every later top-level statement
+is skipped and the file **vacuous-passes** — green for the wrong reason. The root
+cause pre-dates this wave: base does the same for a TypeError out of a
+`"use strict"` function. What this wave did was widen the trigger population from
+strict/bound functions to *every arrow in sloppy code*, which made the sink easy
+to hit. Fixing R3-F2 removes the arrow entry into it, and that is all this wave
+owes. The sink itself is a separate defect and deserves its own issue: a
+module-scope IIFE whose own `try`/`catch` handles a throw must not be able to end
+module initialisation, and any test that "passes" because its later assertions
+never ran is not evidence of anything. Worth pairing with a runner-side check
+that `__module_init` ran to completion.
+
+#### Rows kept, and the regression control
+
+All **17** claimed rows re-run on standalone with the CI-equivalent runner:
+17 pass, **0 given up** — including `equals/coerce-symbol-to-prim-invocation.js`,
+which the narrow guard exists to keep. The 20-row control list is 20/20. On the
+js-host lane the same 17 rows go base 9 pass → lane 14 pass, no row backwards.
+
+A 193-row regression control over the families the two fixes touch — the whole
+`equals` and `does-not-equals` families, all of `arrow-function`, all of
+`built-ins/Object/getPrototypeOf`, and every `language/expressions` file with a
+bare `x == …` / `x != …` statement — run base vs lane on BOTH lanes:
+
+| lane | base pass | lane pass | regressions |
+|---|---:|---:|---:|
+| standalone | 155 | **170** | 0 |
+| js-host | 167 | **169** | 0 |
+
+Every standalone transition is `fail → pass`: the ten `Object/getPrototypeOf`
+15.2.3.2-2-* rows, both arrow rows, `equals/coerce-symbol-to-prim-invocation`,
+and two equality rows this wave never claimed (`equals/S11.9.1_A6.1`,
+`does-not-equals/S11.9.2_A6.1`) that the narrowed retention picks up. On host
+the two arrow rows flip and nothing else moves.
+
+`tests/issue-3017-function-poison-pill.test.ts` is 12/16 — the same 4 failures
+this issue already records as pre-existing red on `origin/main`.
+
+Standalone and wasi compiles of the F1/F2 probe shapes carry **no `env::`
+imports**. All five source-ratchet gates pass, including with
+`LOC_GATE_BASE=origin/main`.

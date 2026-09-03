@@ -36,7 +36,7 @@ import {
 } from "./statements/shared.js";
 import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
-import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
+import { expressionRunsUserCode, looseEqualityCoercesAnOperand } from "./module-init-collection.js"; // (#4433) bare `typeof f();` · (#5270 R3-F1) loose-eq guard
 import { noJsHost } from "./js-errors.js";
 
 // Sub-module imports — statement-family functions
@@ -211,6 +211,14 @@ function bareBinaryStatementReachesToPrimitive(ctx: CodegenContext, expr: ts.Exp
     default:
       return false;
   }
+  // (#5270 review R3-F1) §7.2.15 does NOT coerce Object-vs-Object (nor
+  // null/undefined), but this compiler's `==` lowering coerces both operands
+  // regardless. Asking for `externref` on `objA == objB;` therefore turns a
+  // statement the spec says is inert into one that runs `valueOf` — and a
+  // poisoned `valueOf` then kills the whole enclosing evaluation. Keep the
+  // dynamic lowering for the `0 == y;` shape only. MUST stay in step with
+  // `looseEqualityCoercesAnOperand` in module-init-collection.ts.
+  if (!looseEqualityCoercesAnOperand(expr)) return false;
   const mayBeObject = (operand: ts.Expression): boolean => {
     const tag = ctx.oracle.staticJsTypeOf(operand);
     return tag === "object" || tag === "function" || tag === "mixed";
