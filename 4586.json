@@ -1,10 +1,11 @@
 {
   "id": "4586",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4586-o4-try-table-fallback",
   "claimed_at": "2026-08-21T00:56:25Z",
-  "updated_at": "2026-08-21T00:56:25Z",
-  "write_id": "98502-ulbbozqt"
+  "updated_at": "2026-09-03T09:49:03Z",
+  "write_id": "15855-qv4c54ff",
+  "released_at": "2026-09-03T09:49:03Z"
 }
