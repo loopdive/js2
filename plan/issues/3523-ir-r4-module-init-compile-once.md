@@ -4543,3 +4543,59 @@ prediction it was briefed against was unreachable by construction.
 not another concrete type — and it should be specified against the checker-based
 survey (#5285) rather than this one, because `any` is precisely the category
 whose membership a syntactic probe is least able to settle.
+
+### Correction to the slice recommendation: `any` is an ABI project, not a slice
+
+Two sections above this file recommends the `any`/dynamic carrier as R4's next
+slice, on the strength of it unlocking 4 files against `string`'s zero. The
+ranking stands. **The sizing does not**, and the resolver says so in a comment
+that predates all of this.
+
+`IrModuleBindingValueKind` **already has** `{ kind: "dynamic" }`
+(`src/ir/module-binding-value-kinds.ts:15`). So the gap is not a missing value
+kind — it is that nothing admits an `any`-typed declaration into it. The only
+arm that ever produces `dynamic` is at `module-bindings.ts:2011-2013`:
+
+```ts
+let valueKind =
+  options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration)
+    ? ({ kind: "dynamic" } as const)
+    : scalarKind(declaredType, options);
+```
+
+— a binding whose `++`/`--` retypes it, and nothing else. The comment directly
+above states the blocker:
+
+> Fast mode has a `$AnyValue` dynamic carrier while compatibility allocation
+> currently widens these globals to externref, so it stays on direct codegen
+> **until that ABI is unified**.
+
+**That is a different shape of problem from R4-M1's.** The string slice worked
+because a backend-agnostic marker already existed and the backends already
+disagreed *cleanly*: `IrType.string` defers to `IrLowerResolver.resolveString`,
+so one new kind could name the active carrier and let the existing
+storage-agreement check arbitrate. Dynamic has **no such deferral** — fast mode
+carries `(ref null $AnyValue)` with `__any_box_*` (`src/ir/builder.ts:458`),
+compatibility widens to `externref`, and the two are not two spellings of one
+source fact. Unifying them is the work, and it is not scoped by this issue.
+
+**Revised sequencing.** `any` remains the largest single prize (4 files) and
+should be planned as its own ABI-unification issue, not attempted as an R4
+storage slice. The cheapest *next* slice is whichever of the remaining
+categories has no carrier split — on the corrected census that is `object` (3
+files) and `function` (2), both of which need checking for the same trap
+before being briefed:
+
+| next candidate | files unlocked | first question to ask |
+| --- | --: | --- |
+| `object` | 3 | does the object carrier differ between fast and compatibility, as dynamic's does? |
+| `function` | 2 | is a module-level function binding a closure carrier or a funcref, and does it differ per lane? |
+| `any` / dynamic | 4 | **blocked** — `$AnyValue` vs `externref` ABI unification first |
+
+**The general lesson for R4 briefs.** R4-M1's brief was written expecting the
+ABI question to possibly exceed one slice, and gave the lane an explicit out to
+write a design record instead. For string that out went unused. For `any` it
+would have been taken immediately — and the way to know that *before* dispatch
+is to check whether the target kind already exists and what its admission arm's
+comment says. Two greps, and they are the difference between a slice and a
+stalled lane.
