@@ -1,8 +1,11 @@
 {
   "id": "3769",
   "assignee": "ttraenkler/codex-es5-json-space",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3769-json-static-space",
   "claimed_at": "2026-07-28T18:07:47Z",
-  "updated_at": "2026-07-28T18:07:47Z"
+  "updated_at": "2026-09-03T09:42:39Z",
+  "write_id": "16877-wnyc8yeo",
+  "released_at": "2026-09-03T09:42:39Z"
 }
