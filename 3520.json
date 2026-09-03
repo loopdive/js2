@@ -1,10 +1,11 @@
 {
   "id": "3520",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3520-c36-vec-export-provenance-fail-closed",
   "claimed_at": "2026-08-30T06:53:13Z",
-  "updated_at": "2026-08-30T06:53:13Z",
-  "write_id": "74605-8rwa59ud"
+  "updated_at": "2026-09-03T09:40:24Z",
+  "write_id": "27724-kssyg7r6",
+  "released_at": "2026-09-03T09:40:24Z"
 }
