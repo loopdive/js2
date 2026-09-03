@@ -1,8 +1,11 @@
 {
   "id": "3790",
   "assignee": "ttraenkler/codex-ir-dynamic-string-loop",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3790-ir-dynamic-string-loop",
   "claimed_at": "2026-07-30T02:55:54Z",
-  "updated_at": "2026-07-30T02:55:54Z"
+  "updated_at": "2026-09-03T09:43:20Z",
+  "write_id": "28414-rodll9nt",
+  "released_at": "2026-09-03T09:43:20Z"
 }
