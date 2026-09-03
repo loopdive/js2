@@ -1,12 +1,11 @@
 {
   "id": "4374",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/marked-compat-20260812",
-  "reserved_at": "2026-08-11T22:30:22Z",
   "claimed_at": "2026-08-11T22:30:22Z",
-  "updated_at": "2026-08-11T22:30:22Z",
-  "write_id": "55965-bleflm79",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:46:43Z",
+  "write_id": "9600-p7ywj1ps",
+  "released_at": "2026-09-03T09:46:43Z"
 }
