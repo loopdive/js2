@@ -101,3 +101,201 @@ so asserting the masked code would turn a red flag into a green lie.
 
 The M0-owner receipt defect behind the `issue-3525` skips (#5263) — same
 violation code, different trigger.
+
+---
+
+## Implementation Plan
+
+Written 2026-09-03 (architect lane). Every figure below labelled **measured**
+was produced in a worktree at `origin/main` `bee5ddd535`; anything labelled
+**reasoned** was derived by reading the source and is NOT a measurement.
+
+### Shared vocabulary — R2 accounting cluster (#5262 / #5263 / #5282 / #5283)
+
+Identical block in all four plans. Use these words; they are not synonyms.
+
+| term | meaning |
+| --- | --- |
+| **direct receipt** | one `compileFunctionBody` entry indexed by `IrBodyRouteAuditSession.#indexDirectFunctionBodyReceipt` (`src/codegen/legacy-body-audit.ts:303`). The ONLY source of `directBodyEmissions`. Recorded **only** for top-level free-function terminals; every other unit kind is dropped at `:312`. |
+| **physical root** | any `IrLegacyBodyEntry` carrying a `unitId` — a superset of direct receipts that also includes `compileClassBodies`, `compileModuleInitBody`, `compileStatement`, `compileExpression`. This is what `snapshot()`'s `legacyEntryIds` uses. |
+| **the triple** | `(prepareAttempts, directBodyEmissions, irBodyEmissions)`. Present **only** on rows in the R2 population; absent (not zero) everywhere else. |
+| **R2 population** | `indexR2FreeFunctionPopulations` (`ir-overlay-outcomes.ts:153`) — source-local, public, physical, last-named top-level function declarations with bodies. |
+| **accounting arm** | one `if` branch inside `functionBodyAccountingFailure` (`ir-overlay-outcomes.ts:315-358`). |
+| **root-cause outcome** | the outcome the precedence chain at `ir-overlay-outcomes.ts:905-967` computed, *before* the accounting block at `:969-978` runs. |
+| **owned-elsewhere unit** | a terminal whose ledger row is minted by the prepared-callable publication path, not by `reconcileIrOverlayOutcomes`. See #5263. |
+
+### Root cause
+
+`reconcileIrOverlayOutcomes` computes the root-cause outcome, then at
+`src/codegen/ir-overlay-outcomes.ts:969-978` calls `functionBodyAccountingFailure`
+and **unconditionally replaces** the outcome with whatever it returns. The
+accounting arm at `:351` fires on `outcome.kind === "invariant" &&
+directBodyEmissions !== 0` — but *any* unit that reached an invariant after
+legitimately falling back to the direct route has `directBodyEmissions === 1`,
+so that arm fires on the normal case and overwrites the diagnosis.
+
+The condition/message mismatch at `:351-355` resolves in one direction: the
+message ("a fatal prepared owner may retain only zero or one exact IR **patch**
+receipt") describes a bound on `irBodyEmissions`, and that bound is **already
+enforced upstream** at `:302-304`, where `reconcileR2FunctionBodyEmissionAccounting`
+turns `irBodyEmissions > 1` into a `receiptFailure`. The arm as written checks
+a different quantity, adds no coverage, and its only effect is the masking.
+**Reasoned, not measured** — the implementer should confirm by deleting the arm
+and checking that no suite loses a red.
+
+### Measured current behavior
+
+`tests/probe-5262-outcomes.test.ts` = `tests/issue-3519-ir-outcomes.test.ts`
+with `it.skip` → `it` (gitignored probe copy). **5 failed / 25 passed**, which
+matches the issue's count — but **not** its attribution:
+
+| test | expected `code` | actual | masked by the accounting arm? |
+| --- | --- | --- | --- |
+| `turns an actual missing integration terminal into a reconciliation invariant` | `missing-terminal-outcome` | `body-emission-evidence` | **yes** |
+| `routes iterator registration throws through the owning source outcome` | `unexpected-internal-throw` | `body-emission-evidence` | **yes** |
+| `does not demote an unexpected Promise final-registration throw` | `unexpected-internal-throw` | `body-emission-evidence` | **yes** |
+| `does not demote unexpected imported-call planning throws` | `unexpected-internal-throw` | `body-emission-evidence` | **yes** |
+| `counts only executable overload implementations and ignores ambient signatures` | (asserts `success === true`) | `success === false` | **NO — different bug** |
+
+**Premise correction (measured).** The fifth test is not an accounting-precedence
+failure. It fails with:
+
+```
+ir/from-ast: direct call to "overloaded" has no exact AST-site plan in run [IR-FALLBACK]
+IR-first (#2138): run failed after its legacy body was skipped … [unpatched-slot]
+IR outcome invariant [unpatched-slot] for run
+```
+
+`run` calls an **overloaded** function; the IR from-AST lowering cannot resolve
+the call site to the implementation signature, the legacy slot was already
+skipped, and the row fails closed as `unpatched-slot`. Nothing in
+`functionBodyAccountingFailure` is involved. **Do not expect this issue's fix to
+un-skip that test.** Either (a) file the overload call-site planning gap
+separately and leave that one `it.skip` with a pointer, or (b) fix it here as an
+explicitly-scoped second change. Recommendation: (a) — it is a `from-ast`
+lowering defect, a different owner and a different lane.
+
+So the honest acceptance is **4 of 5 un-skipped**, not 5.
+
+Also measured: the exact overwrite text for the `missing-terminal-outcome` case
+is
+`… reached an R2 invariant after 1 direct body receipts; a fatal prepared owner may retain only zero or one exact IR patch receipt`
+with `directBodyEmissions: 1, irBodyEmissions: 0, legacyBodyEmitted: true`. A
+row with `(1, 0)` and an invariant root cause is the **normal** fall-back shape,
+which is the clearest single proof that the arm's condition is wrong.
+
+### Changes
+
+**File: `src/codegen/ir-overlay-outcomes.ts`**
+
+1. `functionBodyAccountingFailure` (`:315-358`) — **delete the arm at `:351-356`**
+   (`outcome.kind === "invariant" && directBodyEmissions !== 0`). Replace it with
+   a comment naming #5262 and stating that the `irBodyEmissions` bound the old
+   message described is enforced at `:302-304`, and that a fall-back-then-invariant
+   row legitimately carries `directBodyEmissions === 1`.
+
+   If the implementer instead concludes the arm *should* survive in a corrected
+   form, the only defensible form is `irBodyEmissions > 1` — and then it must be
+   deleted from `reconcileR2FunctionBodyEmissionAccounting` so the check lives in
+   exactly one place.
+
+2. `reconcileIrOverlayOutcomes` (`:969-978`) — make the write **non-destructive
+   for outcomes that are already invariants, and only for those**:
+
+   ```ts
+   let accountingFailure: IrPreparationFailure | undefined;
+   let accountingApplied = false;
+   if (bodyAccounting) {
+     accountingFailure = functionBodyAccountingFailure({ … });
+     if (accountingFailure && outcome.kind !== "invariant") {
+       outcome = observedFailure(base, accountingFailure);
+       accountingApplied = true;
+     } else if (accountingFailure) {
+       // (#5262) Root cause wins. The accounting evidence rides alongside by
+       // spread, exactly like `r2Withdrawal` (#3521 R2-T1): `IrObservedOutcome`
+       // is unchanged and no emitter reads the field.
+       outcome = { ...outcome, bodyAccountingFailure: accountingFailure };
+     }
+   }
+   ```
+
+   **This asymmetry is load-bearing — do not simplify it to "never overwrite".**
+   The accounting arms that fire on `emitted` / `unsupported` rows are the ONLY
+   detector for a unit that took neither route or both; #5263's six red tests are
+   exactly that detector firing. A blanket "attach, never replace" would leave
+   those rows `unsupported`, drop them out of the `outcome.kind === "invariant"`
+   diagnostic push at `:986`, and turn a real red into silence. State this in the
+   code comment.
+
+3. `:981-988` — the `unchangedReportVisibleInvariant` guard currently keys on
+   `accountingFailure === undefined`. Change it to `!accountingApplied`, or a
+   report-visible invariant that now merely *carries* an accounting note stops
+   being recognised and starts double-reporting into `diagnostics`.
+
+4. When an accounting failure is attached but not applied, still push a
+   diagnostic naming it — the evidence must not vanish from the diagnostic
+   channel just because it lost the `code` slot. Suggested shape, appended after
+   the existing invariant push:
+   `IR body-emission accounting note for ${unit.matchName}: ${accountingFailure.detail}`.
+
+**File: `src/ir/r2-withdrawal.ts` (or a sibling)** — if the attached field is
+introduced, follow the `IrObservedOutcomeWithR2Withdrawal` precedent exactly:
+a widened type plus a single reader function, with `IrObservedOutcome` itself
+untouched. Do **not** add the field to `src/ir/outcomes.ts` (that file is
+#3520's and its row type is contractually byte-identical).
+
+**Do not touch** `src/codegen/ir-prepared-free-functions.ts` (that is #5282's
+file and R2-T1's contract) or `src/ir/module-init.ts` / the identity scanner
+(#5283's).
+
+**File: `tests/issue-3519-ir-outcomes.test.ts`** — un-skip the four
+accounting-masked tests with their assertions unchanged. Leave the overload test
+skipped, and **rewrite its skip comment** to name the real cause
+(`from-ast` overload call-site planning) and the new issue id, so the next reader
+is not sent here again.
+
+### Ordering constraints
+
+- **#5263 must land before or with this.** Both edit `reconcileIrOverlayOutcomes`
+  and `recordObservedIrOutcomes`; #5263 removes owned-elsewhere units from the
+  loop this change modifies. Landing #5262 first makes #5263 a textual conflict
+  in the same 20 lines.
+- **#5283 must land after this.** It edits `legacyBodyEmitted` at `:878-879` in
+  the same function.
+- **#5282 is independent** — different file entirely
+  (`ir-prepared-free-functions.ts`), no shared symbol.
+
+### PR grouping
+
+**Ship #5262 and #5263 as ONE PR, with #5263's change applied first** — they
+touch the same 20 lines of `reconcileIrOverlayOutcomes` and the same block of
+`recordObservedIrOutcomes`, and #5262's precedence change is only safe once
+#5263 has removed the rows reconcile does not own.
+
+### Edge cases
+
+- A row that is invariant **and** has a genuine `receiptFailure` (duplicate or
+  foreign direct receipt): the root cause still wins the `code` slot, but the
+  receipt corruption must remain visible in `diagnostics`. Verify with a
+  hand-built duplicate receipt.
+- `evidence.kind === "failed"` with `diagnosticVisibility === "report"`: the
+  dedup guard at `:981` must not regress. Add a targeted assertion.
+- Multi-source: the same reconcile runs per source; the attached field must
+  survive the `.map()` at `src/codegen/index.ts:2548` that rebuilds module-init
+  rows with `moduleBindingRefusals` (a spread, so it does — confirm).
+
+### Acceptance measurements
+
+1. `npm test -- tests/issue-3519-ir-outcomes.test.ts` — the four
+   previously-skipped tests un-skipped and green; the overload test still skipped
+   with a corrected comment naming its real cause.
+2. `npm test -- tests/issue-3523-*` green (no change).
+3. `pnpm run check:ir-only` still READY; `scripts/ir-only-baseline.json`
+   unchanged (this issue must not move a single count — it changes which `code`
+   a row carries, never `kind`).
+4. Non-vacuity: revert change (1) alone (restore the deleted arm) and confirm the
+   four un-skipped tests go red again. Record it in the PR.
+5. Anti-greenwash: with #5263's change in the same PR, confirm the six
+   `issue-3525` tests are green **because reconcile no longer owns those rows**,
+   not because the accounting arm stopped upgrading `unsupported` rows — prove it
+   by keeping one hand-built `unsupported`-with-zero-receipts fixture red.
