@@ -1,10 +1,11 @@
 {
   "id": "3768",
   "assignee": "ttraenkler/codex-es5-object-create-proto-validation",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "",
-  "reserved_at": "2026-07-28T17:35:10Z",
   "claimed_at": "2026-07-28T17:35:10Z",
-  "updated_at": "2026-07-28T17:35:10Z",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:42:33Z",
+  "write_id": "16649-5tddo9nq",
+  "released_at": "2026-09-03T09:42:33Z"
 }
