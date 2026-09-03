@@ -89,20 +89,66 @@ describe("#3521 R2 withdrawal telemetry — (b) one shape per reachable reason",
   it("admission:fast-signature-unproven", async () => {
     // Fast mode proves only the three admitted signature families — all-scalar,
     // the JS-host string pass-through, and (R2-F1) the mixed declaration-fixed
-    // carrier family. An object position is in none of them. The first
-    // predicate still masks every later one, which is why a reference-carrier
-    // row reads this reason rather than `param-signature-unstable`.
+    // carrier family. An opaque host reference is in none of them.
     //
-    // (#3521 R2-F1) This pin used to use `len(s: string): number`, which is now
-    // admitted by `r2FastMixedFixedCarrierSignature` and prepares. The reason
-    // itself stays reachable — the reference and async families are its whole
-    // remaining population in fast mode.
+    // (#5282) This pin used to use `op(o: { a: number }): number`, and before
+    // #5282 ANY fast-lane refusal satisfied it: the fast arm is entry zero of
+    // the admission table and masked every later predicate. Now the reason is
+    // recorded only when no later predicate fires, so the pin needs a shape
+    // whose SOLE objection is the fast signature proof. `HTMLElement` is that
+    // shape, and the non-fast lane proves it: measured 2026-09-03, `extRef`
+    // PREPARES with `(0, 1)` and no withdrawal when `fast` is off, so every
+    // predicate after entry zero accepts it and only the fast proof refuses.
+    //
+    // `op(o: { a: number })` no longer qualifies — it is refused by
+    // `param-signature-unstable` in both lanes, which is exactly the masking
+    // this pin used to hide. It is pinned as such in the fast-lane specificity
+    // test below.
     const result = await tracked(
-      "export function op(o: { a: number }): number { return o.a; }",
+      "export function extRef(e: HTMLElement): number { return e.childElementCount; }",
       "r2-fast-reference.ts",
       { fast: true },
     );
-    expectWithdrawn(result, "op", { stage: "admission", reason: "fast-signature-unproven" });
+    expectWithdrawn(result, "extRef", { stage: "admission", reason: "fast-signature-unproven" });
+  });
+
+  it("(#5282) a fast-lane refusal names its own predicate, not the fast arm", async () => {
+    // The masking this issue closes: before #5282 all three of these rows read
+    // `admission:fast-signature-unproven` in a fast lane while the SAME units
+    // read their specific reason with `fast` off — same unit, same cause, two
+    // reasons. Measured on this exact source, base vs fixed (2026-09-03).
+    //
+    // The deciding `find` is untouched: `arrParam` below is the control that
+    // proves the same compile still admits, and every prepared-set and
+    // compiled-artifact hash over the corpus is byte-identical across the fix.
+    const result = await tracked(
+      [
+        "export function objParam(o: { a: number }): number { return o.a; }",
+        "export function retObj(a: number): { a: number } { return { a }; }",
+        "async function asyncInner(): Promise<number> { return 1; }",
+        "export async function asyncOuter(): Promise<number> { return (await asyncInner()) + 1; }",
+        "export function arrParam(v: number[]): number { return v[0]; }",
+      ].join("\n"),
+      "r2-fast-specific-reasons.ts",
+      { fast: true },
+    );
+    expectWithdrawn(result, "objParam", { stage: "admission", reason: "param-signature-unstable" });
+    expectWithdrawn(result, "retObj", { stage: "admission", reason: "return-signature-unstable" });
+    expectWithdrawn(result, "asyncInner", { stage: "admission", reason: "async-declaration" });
+
+    // (#5282) The POSITIVE pin — this, not any reason pin, is what closes the
+    // vacuity #5507 recorded. A reason pin can never catch an admission
+    // regression, because a unit that stops being admitted moves INTO the
+    // refused set and no reason pin asserts over admitted units. Dropping the
+    // R2-F1 `r2FastMixedFixedCarrierSignature` disjunct moves `arrParam` from
+    // `(0, 1)` prepared to `(1, 1)` withdrawn, and this assertion goes red.
+    // Measured 2026-09-03: with that disjunct replaced by `false`, `arrParam`,
+    // `strFn(x: string): string` and `len(s: string): number` are the three
+    // shapes that flip; every other shape in the battery is unchanged.
+    const admitted = outcome(result, "arrParam");
+    expect([admitted.directBodyEmissions, admitted.irBodyEmissions]).toEqual([0, 1]);
+    expect(r2WithdrawalOf(admitted)).toBeUndefined();
+    expect(admitted.preparedComponentId).toMatch(/^prepared-component:/);
   });
 
   it("fixed-point:storage-terminal-unprepared", async () => {
