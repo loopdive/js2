@@ -1,10 +1,11 @@
 {
   "id": "5289",
   "assignee": "ttraenkler/opus-5289",
-  "requested_by": "ttraenkler/opus-5289",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5289-any-binding-abi",
   "claimed_at": "2026-09-03T08:09:49Z",
-  "updated_at": "2026-09-03T08:09:49Z",
-  "write_id": "20748-hlky3mei"
+  "updated_at": "2026-09-03T11:15:25Z",
+  "write_id": "13737-jmoas40a",
+  "released_at": "2026-09-03T11:15:25Z"
 }
