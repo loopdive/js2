@@ -1,10 +1,11 @@
 {
   "id": "5300",
   "assignee": "ttraenkler/opus-5300",
-  "requested_by": "ttraenkler/opus-5300",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5300-overload-call-site-plan",
   "claimed_at": "2026-09-03T10:43:27Z",
-  "updated_at": "2026-09-03T10:43:27Z",
-  "write_id": "4009-gpegmx3o"
+  "updated_at": "2026-09-03T15:49:50Z",
+  "write_id": "879-xoc8fq78",
+  "released_at": "2026-09-03T15:49:50Z"
 }
