@@ -1,10 +1,11 @@
 {
   "id": "3764",
   "assignee": "ttraenkler/codex-es5-array-oob",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es5-standalone-array-oob-undefined",
-  "reserved_at": "2026-07-28T16:51:42Z",
   "claimed_at": "2026-07-28T16:51:42Z",
-  "updated_at": "2026-07-28T16:51:42Z",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:42:17Z",
+  "write_id": "14422-36hceewa",
+  "released_at": "2026-09-03T09:42:17Z"
 }
