@@ -1,10 +1,11 @@
 {
   "id": "5297",
   "assignee": "ttraenkler/opus-5297",
-  "requested_by": "ttraenkler/opus-5297",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5297-compat-dynamic-support",
   "claimed_at": "2026-09-03T12:15:52Z",
-  "updated_at": "2026-09-03T12:15:52Z",
-  "write_id": "31019-h97t9o89"
+  "updated_at": "2026-09-03T18:37:01Z",
+  "write_id": "31815-9jsc2z98",
+  "released_at": "2026-09-03T18:37:01Z"
 }
