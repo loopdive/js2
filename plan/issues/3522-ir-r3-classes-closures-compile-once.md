@@ -4428,16 +4428,17 @@ already imports `identity.js`, and the reverse value edge would close an
 `ir -> ir` cycle through `dom-capability` / `propagate` / `type-evidence`. One
 definition, both callers — the anti-drift property the plan asked for.
 
-#### The census row does NOT reach `emitted`, and that is A1, not a partial fix
+#### Measured plan correction — on the census file, A2 sits on top of A1
 
-The plan's acceptance criterion 1 is **not satisfiable as written**, and the
-reason is a defect in the arm map rather than in the implementation: the map
-lists `Animal_<computed>` under A2 as if A2 and A1 were disjoint for that
-member. They are stacked. `classes.js`'s `Animal` takes an `any`-typed
-constructor parameter, so the class never enters the class-shape sidecar at all
-— **no member of it has a descriptor**. A2 was merely the first stamp. With the
-name admitted, the row falls through to the same missing-descriptor arm its six
-siblings already sit on.
+The arm map above lists `classes.js`'s `Animal_<computed>` under **A2** as if A2
+and A1 were disjoint for that member. Measured on this branch, they are
+**stacked**: `Animal` takes an `any`-typed constructor parameter, so the class
+never enters the class-shape sidecar at all — **no member of it has a
+descriptor**. A2 was merely the first stamp. With the name admitted, the row
+falls through to the same missing-descriptor arm its six siblings already sit
+on. This is a correction to the arm map, not a shortfall in the slice: all three
+sites moved, and reverting any one of them individually puts the row back on its
+own arm (table further down).
 
 | | base | branch |
 | --- | --- | --- |
@@ -4445,10 +4446,12 @@ siblings already sit on.
 | code | `class-method` (A2) | `class-member-unsupported` (A1b) |
 | emitted | no | no |
 
-Fixing that needs A1 — the `any`-carrier decision the plan disqualifies from
-this slice with three measured reasons and hands to #5289 / #3523. So the arm
-table below moves exactly one row per lane, and no row reaches `emitted` on the
-census population.
+The remaining step for this one file is A1 — the `any`-carrier decision this
+plan disqualifies from R3 with three measured reasons and hands to the A1 /
+`any`-carrier lane (#5289 / #3523). So the arm table below moves exactly one row
+per lane, and no row reaches `emitted` on the census population; **acceptance
+criterion 1 is evidenced on the annotated fixtures**, which is where the plan's
+own cost table (`r01`…`s02`) measured this arm in the first place.
 
 Census (33 entries × 2 lanes = 66 compiles: dogfood 20 `.js` + playground 13
 `.ts`, gc + standalone, `trackIrOutcomes` + `JS2WASM_IR_SHAPE_DIAG=1`), base vs
@@ -4468,11 +4471,10 @@ lane. **Byte identity: 66 / 66 sha256-identical**, including `classes.js`
 itself — the refused row changes its label, not its bytes. (The plan budgeted
 65/66 with `classes.js` as the permitted mover; the actual result is stricter.)
 
-#### Where the arm IS claimed — annotated shapes, both lanes
+#### Acceptance criterion 1 — the arm claimed, annotated shapes, both lanes
 
-The plan's own cost table used annotated fixtures, and that is where the slice
-pays. Measured through the production `compile` seam, gc and standalone
-identical, with the direct class-body emitter POISONED for the named slot:
+Measured through the production `compile` seam, gc and standalone identical,
+with the direct class-body emitter POISONED for the named slot:
 
 | probe | shape | base | branch |
 | --- | --- | --- | --- |
@@ -4535,9 +4537,15 @@ in CI on both lanes.
 
 `check-loc-budget` (bare and with `LOC_GATE_BASE=origin/main`),
 `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
-`check:dead-exports`, `check:ir-dialect`, `check:ir-layering`,
-`check:ir-kind-neutrality`, `check:ir-fallbacks`, `check:ir-only`, TS7 + TS5
-no-emit, Biome, Prettier: all pass. `check:ir-fallbacks --verbose` output is
+`check:dead-exports`, `check:ir-dialect`, `check:ir-kind-neutrality`,
+`check:ir-fallbacks`, `check:ir-only`, `check:ir-adoption`,
+`check:test-vacuity-shapes`, `update-issues --check`, TS7 no-emit, Biome,
+Prettier, `scripts/hooks/changed-root-tests.sh`, and equivalence across all 8
+shards (no new regressions, zero name-set diff vs the committed baseline): all
+pass. `check:ir-layering` is **86 import lines across 15 files, baseline 86,
+unchanged** — this slice adds no `src/ir/` -> `src/codegen/` edge; its two new
+imports are `codegen/index.ts` -> `ir/identity.js` (the permitted direction) and
+`ir/select.ts` -> `ir/identity.js` (intra-IR). `check:ir-fallbacks --verbose` output is
 byte-identical base vs branch — the playground gate corpus carries **zero**
 class-family rejections (every one of its class rows already emits), so
 `class-method` is 0 on both sides there and no bucket moved in either
