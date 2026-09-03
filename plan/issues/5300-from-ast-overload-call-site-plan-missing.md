@@ -236,11 +236,25 @@ not compile.
 
 ### Test Results
 
+Measured on the merged tree (this branch merged with `origin/main` `6c960971cb`,
+which is where #5262 had already un-skipped the other four tests in that file).
+
 | Check | Result |
 | --- | --- |
-| `tests/issue-3519-ir-outcomes.test.ts` | 26 passed / 4 skipped (was 25 / 5); the un-skipped overload test is red on base with `unpatched-slot` |
-| `tests/issue-5300-overload-call-site-plan.test.ts` | 6 passed; on base 3 fail (both compatible-set cases + the ambient-plus-overloads case), 3 pass by construction (the divergence/ambient guards) |
+| `tests/issue-3519-ir-outcomes.test.ts` | 30 passed, 0 skipped — the last `it.skip` in the file is gone; that test is red on base with `unpatched-slot` |
+| `tests/issue-5300-overload-call-site-plan.test.ts` | 8 passed; on base 5 fail (the ledger case, the resolver case, the ambient-plus-overloads case and both runtime lanes), 3 pass by construction (the divergence/ambient guards) |
+| runtime equivalence of the admitted path | `run(v) = overloaded(v) + overloaded(v+1)` over `{0, 1, 5, -3, 1e6}` matches the JS reference exactly in **gc** and **standalone** — compiling was never the contract; this is what proves the single emitted callable is the implementation and keeps its arguments |
 | byte identity | `prove-emit-identity` over 112 `(file, target)` rows — `website/playground/examples` + `scripts/emit-identity-corpus` + `examples/`, targets gc/standalone/wasi/linear — `IDENTICAL`, zero rows moved (no corpus file has an overloaded callee) |
-| `check:ir-fallbacks --verbose` | report identical before/after; `call-graph-closure` stays absent from the unintended table (0), no baseline update needed |
+| `check:ir-fallbacks --verbose` | report byte-identical base vs after; `call-graph-closure` stays absent from the unintended table (0), no baseline update needed |
 | `check:ir-only` | `READY`, 41 terminal units / 38 emitted / 0 invariants — unchanged |
-| equivalence, 8 shards | no regression against `scripts/equivalence-baseline.json` |
+| equivalence, 8 shards | 1718 passing / 24 failing, and the 24 are exactly the committed known-failures — every shard exits 0 |
+| ratchet chain | loc, func, coercion-sites, oracle-ratchet, dead-exports, ir-dialect, ir-kind-neutrality, ir-layering all green, incl. `LOC_GATE_BASE=origin/main` |
+
+Two existing tests recorded the OLD blanket refusal and now assert the new
+contract, because `targetForSymbol` is shared: `issue-3520-imported-target-identity`
+(an imported compatible overload set resolves to its implementation; a divergent
+one and a live reassignment are still refused) and
+`issue-3522-nested-class-field-call-planning` (a compatible set now proves, a
+divergent one does not). Three unrelated failures seen while sweeping every
+overload-mentioning test file (`issue-1058-node-array-factory`, two
+`issue-2785` canaries) reproduce identically on base.

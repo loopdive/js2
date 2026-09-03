@@ -86,6 +86,26 @@ export function run(value: number): number { return overloaded(value); }
     });
   });
 
+  // Compiling is not the contract — computing the right answer is. The IR emits
+  // ONE callable for the set, so this is where an admission that silently picked
+  // the wrong declaration, or lost an argument, would show up.
+  it.each(["gc", "standalone"] as const)("runs an admitted overload set correctly on %s", async (target) => {
+    const result = await compile(
+      `
+function overloaded(value: number): number;
+function overloaded(value: number): number { return value * 2 + 1; }
+export function run(value: number): number { return overloaded(value) + overloaded(value + 1); }
+`,
+      { fileName: "overloads-runtime.ts", target },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary!, result.importObject ?? {});
+    const run = (instance.exports as Record<string, (value: number) => number>).run!;
+    const reference = (value: number): number => value * 2 + 1 + ((value + 1) * 2 + 1);
+    for (const value of [0, 1, 5, -3, 1_000_000]) expect(run(value)).toBe(reference(value));
+  });
+
   it("admits the implementation of a compatible overload set as a direct-call target", () => {
     // RED ON BASE: `targetForSymbol` refused the set at `functions.length !== 1`.
     expect(
