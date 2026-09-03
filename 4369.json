@@ -1,10 +1,11 @@
 {
   "id": "4369",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4369-dynamic-in-stack-balance",
   "claimed_at": "2026-08-11T19:28:14Z",
-  "updated_at": "2026-08-11T19:28:14Z",
-  "write_id": "43995-t1kklxv8"
+  "updated_at": "2026-09-03T09:46:14Z",
+  "write_id": "9268-xn37o3yw",
+  "released_at": "2026-09-03T09:46:14Z"
 }
