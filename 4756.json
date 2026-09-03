@@ -1,10 +1,11 @@
 {
   "id": "4756",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4756-npm-remaining-tests-plan",
   "claimed_at": "2026-08-26T10:58:49Z",
-  "updated_at": "2026-08-26T10:58:49Z",
-  "write_id": "5759-w1u0yaxw"
+  "updated_at": "2026-09-03T09:50:48Z",
+  "write_id": "21803-kjh2iyh8",
+  "released_at": "2026-09-03T09:50:48Z"
 }
