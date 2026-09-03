@@ -8,6 +8,7 @@
  */
 import type { IrFallbackReason } from "./select.js";
 import type { IrSourceId, IrUnitId } from "./identity.js";
+import type { IrModuleBindingRefusal } from "./module-bindings.js";
 
 export type IrPreparationStage = "select" | "resolve" | "build" | "verify" | "lower" | "backend-legality" | "patch";
 
@@ -276,6 +277,14 @@ interface IrObservedOutcomeBase {
   readonly irBodyEmitted: boolean;
   /** R2 component whose ABI was dependency-derived and sealed before lowering. */
   readonly preparedComponentId?: string;
+  /**
+   * (#5285) On a `<module-init>` row: EVERY top-level declaration whose storage
+   * the module-binding resolver refuses, in source order — the per-file category
+   * multiset, which no fail-fast path can report. Populated only under
+   * `JS2WASM_IR_SHAPE_DIAG=1`; `undefined` on every production compile, so the
+   * ledger and the gates are byte-unchanged with the flag off.
+   */
+  readonly moduleBindingRefusals?: readonly IrModuleBindingRefusal[];
 }
 
 export type IrObservedOutcome =
