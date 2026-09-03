@@ -69,6 +69,23 @@ function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): strin
     .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
 }
 
+/**
+ * Instance method names the receiver's class (and its ancestors) put on the
+ * prototype. `in` finds them; the physical field list does not carry them.
+ */
+function dynamicKeyMethodNames(ctx: CodegenContext, receiver: ValType | null | undefined): string[] {
+  if (receiver == null || (receiver.kind !== "ref" && receiver.kind !== "ref_null")) return [];
+  let className = ctx.typeIdxToStructName.get(receiver.typeIdx);
+  const names: string[] = [];
+  const seen = new Set<string>();
+  while (className !== undefined && !seen.has(className)) {
+    seen.add(className);
+    for (const name of ctx.classMethodNames.get(className) ?? []) names.push(name);
+    className = ctx.classParentMap.get(className);
+  }
+  return names;
+}
+
 /** Return true for an approved standalone fnctor instance struct. */
 function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
   if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
@@ -581,7 +598,31 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     leftKeyWasm.kind === "anyref" ||
     leftKeyWasm.kind === "ref" ||
     leftKeyWasm.kind === "ref_null";
-  if (structFieldNames !== null && structFieldNames.length > 0 && keyIsRefLike) {
+  // §7.3.12 [[HasProperty]] is prototype-INCLUSIVE, but `structFieldNames`
+  // holds only the receiver's physical struct fields — a class's instance
+  // METHODS live on the prototype and have no field, so a dynamic key naming
+  // one compared against nothing and answered `false`. A literal key took the
+  // checker-backed static fold above and answered correctly, which is what hid
+  // it: `"pre" in new P()` was true while `for (const k in src) k in new P()`
+  // was false for the same name.
+  //
+  // marked's `use()` is exactly that loop —
+  //   `for (let i in n.hooks) { if (!(i in r)) throw new Error(...) }`
+  // with `r = new _Hooks()` — so every `marked.use({hooks})` threw
+  // "hook 'preprocess' does not exist" and all 30 of its upstream tests
+  // failed with `Cannot convert object to primitive value` downstream.
+  //
+  // Adding names can only turn a `false` into a `true`, and every name added
+  // is one the prototype genuinely carries, so no currently-correct answer
+  // moves.
+  const inheritedMethodNames = dynamicKeyMethodNames(ctx, structWasm);
+  const dynamicKeyNames =
+    structFieldNames === null
+      ? inheritedMethodNames.length > 0
+        ? inheritedMethodNames
+        : null
+      : [...new Set([...structFieldNames, ...inheritedMethodNames])];
+  if (dynamicKeyNames !== null && dynamicKeyNames.length > 0 && keyIsRefLike) {
     // Compile the key expression (should produce a string/externref)
     const keyType = compileExpression(ctx, fctx, expr.left);
     if (keyType) {
@@ -594,7 +635,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         fctx.body.push({ op: "local.set", index: keyLocal });
         // Start with false (0)
         fctx.body.push({ op: "i32.const", value: 0 });
-        for (const fieldName of structFieldNames) {
+        for (const fieldName of dynamicKeyNames) {
           const strGlobal = ctx.stringGlobalMap.get(fieldName);
           if (strGlobal !== undefined) {
             fctx.body.push({ op: "local.get", index: keyLocal });
