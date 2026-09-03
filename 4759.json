@@ -1,12 +1,11 @@
 {
   "id": "4759",
   "assignee": "ttraenkler/codex-es6-closeout",
-  "requested_by": "ttraenkler/codex-es6-closeout",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/es6-conformance-closeout",
-  "reserved_at": "2026-08-26T17:29:45Z",
   "claimed_at": "2026-08-26T17:29:45Z",
-  "updated_at": "2026-08-26T17:29:45Z",
-  "write_id": "59203-9mr97x9n",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:50:59Z",
+  "write_id": "21904-7cnx4xwi",
+  "released_at": "2026-09-03T09:50:59Z"
 }
