@@ -51,7 +51,8 @@
 // code-point string arm (see `buildToVecStringArm`).
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
-import type { Instr, LocalDef, ValType } from "../ir/types.js";
+import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
+import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -61,7 +62,6 @@ import {
 import { allocLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable mint/push
 import {
-  CLOSURE_CAPTURE_FIELD_BASE,
   closureArityField,
   closureBagField,
   closureBagInitInstr,
@@ -114,6 +114,29 @@ interface CustomCapabilityRuntime {
   stateTypeIdx: number;
   executorTypeIdx: number;
   executorFuncIdx: number;
+  /** (#5197 R3-9) The builtin-fn metadata supertype the executor subtypes. */
+  capMetaTypeIdx: number;
+  /** Index of the `$capability` capture, AFTER the metadata carrier's fields. */
+  capabilityFieldIdx: number;
+}
+
+/**
+ * (#5197 R3-9) The ONE place that knows the capability executor's operand
+ * order. §27.2.1.5.1 GetCapabilitiesExecutor Functions are anonymous built-in
+ * function objects with `length` 2, so the struct subtypes the repository's
+ * builtin-fn metadata carrier exactly as `$__promise_settle_cap` does, and the
+ * capture is appended AFTER the carrier's fields — never at a hard-coded index.
+ */
+function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {
+  return [
+    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
+    { op: "i32.const", value: 2 }, // (#3673) $arity — the executor takes (resolve, reject)
+    closureBagInitInstr(), // (#4241) $bag
+    { op: "i32.const", value: 0 }, // `bfnstate` delete-bits
+    { op: "i32.const", value: runtime.capMetaTypeIdx }, // `bfnid` metadata anchor
+    { op: "local.get", index: stateLocal },
+    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
+  ];
 }
 
 type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };
@@ -157,29 +180,44 @@ function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRun
     { name: "$reject", type: EXTERNREF, mutable: true },
   ]);
 
-  // This subtype is a normal `(externref, externref) -> void` closure with one
-  // capture: the mutable capability record. Its inherited header makes it
-  // callable by the ordinary `executor(...)` lowering in a compiled C body.
+  // (#5197 R3-9) §27.2.1.5.1 — a GetCapabilitiesExecutor function is an
+  // anonymous BUILT-IN function object (`name` "", `length` 2, own `length`
+  // before own `name`, `%Function.prototype%` as [[Prototype]], extensible, no
+  // own `prototype`). Slice B moved the settle closures onto the repository's
+  // builtin-fn metadata carrier for exactly that reason; this struct now
+  // subtypes the SAME carrier rather than the bare `(externref, externref)->()`
+  // wrapper, so there is one function-object representation, not two. The
+  // inherited closure header still makes it callable by the ordinary
+  // `executor(...)` lowering in a compiled C body.
+  const capMetaTypeIdx = ensureBuiltinFnMetaType(
+    ctx,
+    wrapper.structTypeIdx,
+    wrapper.closureInfo,
+    "promise:capexec",
+    "",
+    2,
+  );
+  const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
+  const capabilityFieldIdx = capMetaFields.length;
+  const executorFields = [
+    // The metadata supertype's fields MUST be redeclared verbatim (closure
+    // header + `bfnstate` + `bfnid`); the capture is appended after them.
+    ...capMetaFields.map((f) => ({ ...f })),
+    { name: "$capability", type: { kind: "ref" as const, typeIdx: stateTypeIdx }, mutable: false },
+  ];
   const executorTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
     name: "$__promise_custom_capability_executor",
-    fields: [
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(),
-      closureBagField(),
-      { name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
-    ],
-    superTypeIdx: wrapper.structTypeIdx,
+    fields: executorFields,
+    superTypeIdx: capMetaTypeIdx,
   });
   ctx.structMap.set("$__promise_custom_capability_executor", executorTypeIdx);
   ctx.typeIdxToStructName.set(executorTypeIdx, "$__promise_custom_capability_executor");
-  ctx.structFields.set("$__promise_custom_capability_executor", [
-    { name: "func", type: { kind: "funcref" }, mutable: false },
-    closureArityField(),
-    closureBagField(),
-    { name: "$capability", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
-  ]);
+  ctx.structFields.set(
+    "$__promise_custom_capability_executor",
+    executorFields.map((f) => ({ ...f })),
+  );
 
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   const typeErrorIdx = ctx.funcMap.get("__new_TypeError");
@@ -197,7 +235,7 @@ function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRun
     // state = self.$capability
     { op: "local.get", index: 0 },
     { op: "ref.cast", typeIdx: executorTypeIdx },
-    { op: "struct.get", typeIdx: executorTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE },
+    { op: "struct.get", typeIdx: executorTypeIdx, fieldIdx: capabilityFieldIdx },
     { op: "local.set", index: stateLocal },
     // A second call is only an error once a non-undefined slot was stored.
     // (#5197 R3-1) `undefined` is NOT `ref.null.extern` under the #2864
@@ -247,6 +285,8 @@ function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRun
     stateTypeIdx,
     executorTypeIdx,
     executorFuncIdx,
+    capMetaTypeIdx,
+    capabilityFieldIdx,
   };
   (ctx as CtxWithCustomCapability).__promiseCustomCapability = result;
   return result;
@@ -292,14 +332,10 @@ export function emitStandalonePromiseCustomCapabilityCheck(
     kind: "ref",
     typeIdx: runtime.executorTypeIdx,
   });
-  fctx.body.push(
-    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
-    { op: "i32.const", value: 2 },
-    closureBagInitInstr(),
-    { op: "local.get", index: stateLocal },
-    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
-    { op: "local.set", index: executorLocal },
-  );
+  fctx.body.push(...buildCustomCapabilityExecutorInstrs(runtime, stateLocal), {
+    op: "local.set",
+    index: executorLocal,
+  });
 
   // C's lifted closure ABI always carries its self struct first. The
   // capability executor itself is passed as the first user parameter; any
@@ -389,11 +425,7 @@ export function emitStandalonePromiseCustomSettle(
     { op: "ref.null.extern" },
     { op: "struct.new", typeIdx: runtime.stateTypeIdx },
     { op: "local.set", index: stateLocal },
-    { op: "ref.func", funcIdx: runtime.executorFuncIdx },
-    { op: "i32.const", value: 2 },
-    closureBagInitInstr(),
-    { op: "local.get", index: stateLocal },
-    { op: "struct.new", typeIdx: runtime.executorTypeIdx },
+    ...buildCustomCapabilityExecutorInstrs(runtime, stateLocal),
     { op: "local.set", index: executorLocal },
   );
   fctx.body.push({ op: "local.get", index: constructorLocal });

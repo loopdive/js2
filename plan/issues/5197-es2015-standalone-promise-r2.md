@@ -1453,3 +1453,34 @@ declared `const x: undefined = undefined` does NOT throw in the HOST lane, on
 base and on this branch alike. That is a separate pre-existing gap in the
 borrowed-prototype nullish fold; the control uses the `undefined` keyword
 instead so it asserts something both lanes actually agree on.
+
+### R3-9 — GetCapabilitiesExecutor on the builtin-fn metadata carrier (LANDED, +2 of 3)
+
+`$__promise_custom_capability_executor` subtyped the bare
+`(externref, externref) -> ()` func-ref wrapper, so it carried no `name`/`length`
+metadata. It now subtypes `ensureBuiltinFnMetaType(…, "promise:capexec", "", 2)`
+— the SAME carrier Slice B gave the settle closures — with the `$capability`
+capture appended AFTER the carrier's fields and read back through the recorded
+`capabilityFieldIdx`, never a hard-coded `CLOSURE_CAPTURE_FIELD_BASE`. The two
+`struct.new` mint sites are factored into one
+`buildCustomCapabilityExecutorInstrs`, so the operand order lives in exactly one
+place.
+
+Measured, same 5-row batch, `--standalone`:
+
+| tree | result |
+| --- | --- |
+| base | 2 pass / 3 fail (`executor-function-{name,property-order,prototype}.js`) |
+| branch | 4 pass / 1 fail |
+
+The plan claimed 3 rows; only **2** are claimable.
+`executor-function-prototype.js` is blocked behind a DIFFERENT gap —
+`Object.getPrototypeOf(executorFunction)` compared against
+`Function.prototype` reaches `Function.prototype.call is not yet implemented in
+--target standalone`, the same wall Slice B recorded for
+`{resolve,reject}-function-prototype.js`. Not claimed.
+
+Controls green: `tests/issue-4682.test.ts`, `issue-4727.test.ts`,
+`issue-5197-promise-generic-capability.test.ts`,
+`issue-5197-es2015-promise-r2.test.ts` — 27 tests. The R3-1 8-row batch was
+re-run after this change (the executor capture index moved) and is still 8/8.
