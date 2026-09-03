@@ -132,6 +132,44 @@ Read the session, harvest the work, then archive it.
 The four review-ready ones are the cheapest resumption points: their work is
 done and only needs harvesting into issue files.
 
+## IN FLIGHT at 03:10 — four things running that nobody else knows about
+
+If this session ends without another update, these are the loose ends.
+
+| what | session / id | state |
+| --- | --- | --- |
+| **#5285** module-init refusal survey (unblocks R4 ranking) | `session_016tGKtWvN8y7J5DrbrqVwAo` | RUNNING — "implementing: attrib + survey + gated call" |
+| **#5286** audit bucket provenance (makes R10 sizing auditable) | `session_012HBuuLFZ92Ui2yaeyBJkWA` | RUNNING — "conflicts basis threaded, ratchet gates passing" |
+| **#5504** F3-S2 conflict resolution (R6, senior-dev) | `session_01PJbUnJkT3F4d4Vdgir4MDV` | RUNNING — cloning |
+| **#5504 review corrections** retrieval | trigger `trig_0122Rgi3puuTGPTqeXsc8N8b` | fires 03:14 into `session_01KESR3Jb6NRvURvJiSnXKBw` |
+
+Claims taken: `ttraenkler/opus-5285-survey`, `ttraenkler/opus-5286-buckets`. All
+three lanes are briefed to open a PR labelled `hold` and stand down — **none of
+them enqueues**, and the release decision is this seat's (or yours).
+
+**Two hazards to know about these:**
+
+- **#5504's lane and the review-corrections trigger touch the same files.** The
+  senior-dev lane is resolving conflicts in `src/ir/runtime-host-capabilities.ts`,
+  `src/ir/runtime-manifest.ts` and `plan/issues/3526-…md`; the review lane's three
+  corrections may land on those same files. The trigger prompt tells it to say so
+  in its first line, but if both finish unsupervised, check that the resolution
+  did not drop a correction.
+- **The trigger stores no MCP connectors**, so the woken review session may have
+  no `mcp__github__*` tools and cannot post a PR comment. Its prompt carries
+  fallbacks (write into the issue file on a branch, or state them in its reply),
+  but if nothing appears on #5504 by ~03:20 that is the likely reason — the
+  corrections would then be in that session's own transcript only.
+
+**A retrieval note that cost two wrong calls tonight:** `SendMessage` reaches
+only same-machine peers, so remote lanes listed by `list_sessions` are NOT
+messageable — I recorded them "unreachable", then wrongly announced that call
+had been an error, then found the actual route. **The way to reach a remote
+session in this account is a `create_trigger` with `persistent_session_id`** —
+which is exactly what the older "Wake F1-S3 session" triggers in the routines
+list already were. Persistent, not fresh: a new session would not carry the
+transcript you are trying to retrieve.
+
 ## Post-suspend work, 2026-09-03 02:00–03:00 (read this before the threads below)
 
 Six increments after the handoff was written. Four findings change what the
