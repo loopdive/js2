@@ -4,7 +4,7 @@ title: "ES2015 standalone proxy — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-01
+updated: 2026-09-03
 priority: medium
 horizon: m
 feasibility: medium
@@ -44,6 +44,15 @@ loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/index.ts
+  # 2026-09-03 r3 plan (see "## Implementation Plan — r3 (2026-09-03)"):
+  # R3-5 opens the representation of a proxy-TARGET object literal at the
+  # variable-declaration compile sites (statements.ts / object-ops.ts, +~20
+  # each); R3-3's E-1 rebuilds a descriptor object inside the new
+  # `__defineProperty_value`/`_accessor` `$Proxy` front-guards; R3-2's C6 mints
+  # `__own_property_keys` beside `__getOwnPropertySymbols`. All growth, no
+  # refactor — every step adds an arm gated on the proxy runtime being present.
+  - src/codegen/statements.ts
+  - src/codegen/object-ops.ts
 func-budget-allow:
   # 2026-09-01 r2 plan: arm-ladder / dispatch-builder functions that gain one
   # more arm in the shape their existing arms already have (the step naming
@@ -61,6 +70,14 @@ func-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
   - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
   - src/codegen/index.ts::generateModule
+  # 2026-09-03 r3 plan: R3-4(c) adds a `ref.test __proxy_revoker` arm to
+  # `emitHasOwn` (a nested helper of ensureObjectRuntime, already >300 LOC);
+  # R3-5 may add an externref-slot decline to the `in` fold; R3-3 E-1 leaves
+  # the syntactic gate in compileObjectDefineProperty in place but the grant is
+  # here in case the implementer widens it via `tracesToProxyValue` (oracle).
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
 ---
 
 # #5196 — proxy r2: cluster and fix the residual proxy-bucket failures
@@ -893,3 +910,530 @@ Expected: +3 to +5.
   (already exists from #5389 — extend it) with one host+standalone control
   per step (p1, p4, p5, p6, p11, p12 shapes) and the exact test262 rows via
   `runTest262File`.
+
+## Implementation Plan — r3 (2026-09-03)
+
+Written by the Fable planning lane for an Opus implementer. The r2 residual
+plan above (2026-09-01) was **never dispatched**; this section re-verifies it
+against `origin/main` `bee5ddd535` (2026-09-03) and re-cuts it into steps that
+each carry a regression check on PASSING behaviour, per the six-wave lesson
+(five of six waves shipped regressions that a failing-row list cannot see).
+Where an r2 step is restated it is by reference — do not re-read r2 for the
+mechanics unless this section points there.
+
+### Census and re-verification (2026-09-03)
+
+- Input: `.tmp/census0903/proxy+reflect.tsv` — 157 non-pass rows
+  (`built-ins/Proxy/**` 125 + `built-ins/Reflect/**` 32; 141 `fail`, 16
+  `compile_error`), baseline stamped 2026-09-03 09:07 UTC, `oracle_lane:
+  honest`. The set is r2's 157 with one swap: `Reflect/apply/call-target.js`
+  now PASSES (dropped — the C4 `this`-threading question is closed) and
+  `Proxy/apply/trap-is-undefined-target-is-proxy.js` (generator host-import
+  compile error, #680/#2961) entered. Every other r2 cluster is unchanged.
+- Root-cause groups (from the error column crossed with the r2 probes; sizes
+  are exact, lists under `.tmp/census0903/probe5196/r3-*.txt`, partition
+  verified 157/157 against the TSV):
+
+  | group | rows | root cause (one line) |
+  |---|---:|---|
+  | R — `Proxy` read as a VALUE resolves to the namespace carrier, not a constructor | 27 | every `*-realm*` row does `new OProxy(t,h)` / `OProxy.revocable(t,h)` where `OProxy = $262.createRealm().global.Proxy` |
+  | A — §10.5 post-trap invariants not enforced (A1–A8) | 29 | dispatch builders return the trap result as-is ("Phase-F scope: NO result-invariants") |
+  | C — Reflect arm defects (C1–C6, C8a) | 22 | dropped booleans, missing non-object guards, string-only ownKeys, eager `#1472 Phase C` refusal |
+  | E — define/gOPD routing bypasses the proxy | 3 | syntactic `new Proxy` gate at `object-ops.ts:1000`; 1-arg gOPD compile error |
+  | D — revoker has no function metadata | 4 | `__proxy_revoker` is a 1-field struct known only to `fillApplyClosure` / `__typeof_function` |
+  | G — proxy TARGET literal keeps a closed representation | 5 | `delete p.attr` forwards onto a non-`$Object`, silently no-op |
+  | B — proxy as `[[Prototype]]` + receiver threading | 12 | DEFERRED (see below) |
+  | F — exotic targets under the trap-absent forward | 18 | DEFERRED — carrier-lane MOPs |
+  | C7 / C8b-d / E-3 | 5 | DEFERRED — wide blast radius for 1–2 rows each |
+  | X — owned elsewhere (#3371 14, #2046 7, realm harness 3, misc 7) | 31 | not this issue |
+
+- **Probe on `bee5ddd535`** (15 rows across R, A1, A2, A3, A7, B, C2, C4, C6,
+  D, E, G — `.tmp/census0903/probe5196/sample.txt`):
+
+  ```
+  npx tsx scripts/run-test262-paths.mts .tmp/census0903/probe5196/sample.txt --standalone
+  === counts ===
+  { fail: 15 }
+  ```
+
+  All 15 fail with the baseline's signature (`sample-run1.txt`), e.g.
+  `apply/null-handler-realm.js → TypeError: Proxy.revocable is not yet
+  implemented in --target standalone` (proves R's premise: the `OProxy` read is
+  the seeded namespace carrier whose `revocable` member is the
+  `builtin-value-read.ts:1717` refusal closure), `has/call-in-prototype.js →
+  handler is context Expected SameValue(«undefined», …)` (B: no trap fires
+  through `Object.create(proxy)`), `Reflect/ownKeys/return-on-corresponding-order.js
+  → Expected SameValue(«5», «7»)` (C6: symbols dropped). Nothing in the sample
+  has been fixed by the 09-01…09-03 merges (#5268 Steps 1/2-partial/3/6 landed
+  `object-integrity-proxy.ts`, `proxy-value-provenance.ts`,
+  `object-proto-proto-accessor.ts`; **#5268 Step 2.5 (gOPS proxy arm) and
+  2.7 (`__isPrototypeOf` hop) did NOT land** — `git show d21a768efa` touches
+  neither, and `object-runtime-prototype.ts:760-770` still seeds
+  `cur = candidate is $Object ? cast : null`).
+- Three micro-probes (`.tmp/census0903/probe5196/p{A,C,D}-*.js`, run one at a
+  time through `.tmp/probe-one.mts`, all `STATUS fail`):
+  - `pA` — `delete p.attr` on `new Proxy({attr:1}, {})` returns `true` but
+    `gOPD(target,"attr")` still answers the descriptor → G confirmed (forward
+    is a no-op on the target carrier).
+  - `pC` — `new OProxy({}, {get(){throw}})` throws `Cannot access property on
+    null or undefined at 321:11` from the `new` itself: the construct driver
+    takes the ordinary `callee.prototype` tail on the namespace carrier, never
+    `__proxy_create` → R confirmed.
+  - `pD` — `Object.defineProperty(r.proxy, "x", {value:1})` never fires the
+    `defineProperty` trap (`r = Proxy.revocable(…)`) → E confirmed; the
+    #5268 `tracesToProxyValue` predicate exists but `compileObjectDefineProperty`
+    does not use it.
+- Controls: `.tmp/census0903/probe5196/r3-controls.txt` — 70 rows, every one
+  `pass` in the 09-03 baseline (r2's 18 + 52 chosen from the directories each
+  step touches: Proxy/{construct,get,set,has,defineProperty,gOPD,ownKeys,
+  getPrototypeOf,setPrototypeOf,preventExtensions,apply,revocable},
+  Object/{setPrototypeOf,preventExtensions,freeze/proxy-*,getOwnPropertyNames,
+  prototype/__proto__,create}, Reflect/{set,setPrototypeOf,preventExtensions,
+  get,has,gOPD,defineProperty,ownKeys,apply}, language/expressions/{instanceof,
+  new,delete,in}, Function/prototype/bind). Baseline pass counts for the wider
+  directories, for the "N rows must stay green" checks below: Proxy 184/311,
+  Reflect/get 9/11, Reflect/has 9/10, Reflect/set 10/18, Reflect/setPrototypeOf
+  10/14, Reflect/preventExtensions 9/10, Reflect/ownKeys 10/13, Reflect/apply 7/9,
+  Reflect/defineProperty 10/12, Object/setPrototypeOf 11/12,
+  Object/preventExtensions 39/40, Object/freeze 51/53, Object/getOwnPropertyNames
+  42/45, Object/getOwnPropertyDescriptor 310/310, Object/defineProperty
+  1128/1131, Object/prototype/__proto__ 8/15, instanceof 37/43, new 56/59,
+  delete 62/69, in 28/36 (all editions; the standalone baseline).
+
+### Measurement protocol (every step)
+
+1. Before the first edit of a file: `git show HEAD:<path> > .tmp/base-<name>.ts`
+   (file-copy A/B; `git stash` is forbidden here — other agents share the
+   clone).
+2. After the step: `npx tsx scripts/run-test262-paths.mts .tmp/census0903/probe5196/r3-<X>.txt --standalone`
+   (claimed rows) AND `… r3-controls.txt --standalone` (must stay 70/70).
+   Batches ≤ 40 paths, one compile process at a time, `--isolate` only if a
+   row hangs; a compile timeout under load is an artifact — re-run alone.
+3. Byte-identity where a step promises it: compile the named control program
+   on base and branch with `compile(src, {target:"standalone"})` and compare
+   `sha256` of the bytes (`.tmp/es2015/probes5267/imports-of.mts` shows the
+   `compile` call; add a hash print). Where a step edits an emitted path for
+   ALL receivers (no byte-identity possible) it names the behavioural control
+   instead — run that control's rows on BOTH trees.
+4. Host-import check: `imports-of.mts` on one claimed row per step → `[]`.
+5. Gates, chained, before every commit (never piped):
+   `node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet && npm run -s check:dead-exports`,
+   then `LOC_GATE_BASE=$(git rev-parse origin/main) node scripts/check-loc-budget.mjs`.
+   New type queries go through `ctx.oracle` (`variableInitializerOf`, the way
+   `proxy-value-provenance.ts` does) — never `ctx.checker.*` (oracle-ratchet).
+6. Every `Instr[]` template inside the proxy runtime is a FACTORY (fresh array
+   per use — `object-runtime-proxy.ts:96-104`); anything filled at finalize is
+   reserve-then-fill (`fillProxyDispatch`, `:2323`). Gate every new arm on the
+   proxy runtime being present (`ctx.funcMap.has("__proxy_get_dispatch")`) so
+   gc/host lanes and proxy-free standalone modules stay byte-identical.
+
+### Step R3-0 — `Proxy` as a first-class constructor value (R, 27 rows) — `r3-R.txt`
+
+**Root cause.** A bare `Proxy` identifier read materialises the namespace
+carrier (`builtin-static-globals.ts:40 ["Proxy", []]` →
+`emitBuiltinNamespaceObject` `:469`, a plain `$Object` whose `revocable`
+member is the `genericThrowBody` closure minted at `builtin-value-read.ts:1717`).
+`new <carrier>(t, h)` enters `fillNativeConstructDrivers`
+(`native-construct.ts:248`) whose only special arm is `ref.test $Proxy` (`:299-307`);
+a plain `$Object` callee falls to the ordinary tail.
+
+**Edits (in order).**
+1. `native-construct.ts` `fillNativeConstructDrivers`, inside the per-arity
+   loop, BEFORE the `canProxyConstruct` arm (`:299`): when
+   `ctx.builtinObjectGlobals.get("Proxy") !== undefined` AND
+   `ctx.funcMap.has("__proxy_create")`, push an arm: `local.get 0` /
+   `any.convert_extern`, `global.get <ProxyGlobal>` / `any.convert_extern`,
+   `ref.eq` (the global may still be `ref.null.extern` if never read — `ref.eq`
+   on null vs a non-null callee is simply 0, no extra guard needed) → `if`:
+   push arg0 / arg1 (`local.get 2` / `local.get 3`; for `arity < 2` push
+   `ref.null.extern` for the missing one — `__proxy_create`'s `requireObject`
+   (`object-runtime-proxy.ts:1494-1495`) turns that into the §28.2.1.1
+   TypeError), `call __proxy_create`, `return`. Arity > 2: extra args ignored.
+2. `builtin-value-read.ts` `ensureStandaloneBuiltinStaticMethodClosure`
+   (`:996`): add `case "Proxy.revocable"` beside `case "Reflect.get"` (`:1071`):
+   `paramTypes = [externref, externref]`, `returnType = externref`; then find
+   the body-emission block for the `Reflect.*` cases further down the same
+   function and add the twin: `ensureNativeProxyRuntime(ctx)` FIRST (it
+   registers natives — must precede any `closureFctx.body` push; the trailing
+   `flushLateImportShifts(ctx, closureFctx)` at `:1725` repairs the rest),
+   then `local.get 0`, `local.get 1`, `call __proxy_revocable`
+   (`object-runtime-proxy.ts:1658`). The namespace seed then carries a working
+   `revocable`; `r.revoke()` already routes through `fillApplyClosure`'s
+   revoker arm (#5389).
+3. Nothing else: `Proxy.length` / `Proxy.name` are not asserted by any R row.
+
+**Growth grant.** `native-construct.ts` (+~40 LOC, `fillNativeConstructDrivers`
+already in `func-budget-allow`), `builtin-value-read.ts` (+~25 LOC,
+`ensureStandaloneBuiltinStaticMethodClosure` already granted).
+
+**Order-preservation.** The new arm must sit BEFORE the `ref.test $Proxy` arm
+and AFTER nothing (it is the first test); it must not reorder the existing
+arms. The `Proxy` global is read, never written, here.
+
+**Acceptance.**
+- Claimed: +21 of `r3-R.txt` immediately (the rows whose non-realm twin passes
+  today), the remaining 6 (`defineProperty/targetdesc-*-realm` ×5,
+  `gopd/result-type-is-not-object-nor-undefined-realm`) after R3-1. Re-run the
+  list after BOTH steps.
+- Passing shapes at risk: every dynamic `new <externref callee>(…)` (class
+  values in `any` slots, `new F()` with `F` a closure, `Reflect.construct`
+  fallbacks) — the arm is gated on the `Proxy` carrier global existing, so a
+  module that never reads `Proxy` as a value must compile **byte-identical**:
+  hash-compare on base vs branch for (a) a class-in-`any` `new` program and
+  (b) `new Proxy({}, {})` + `Proxy.revocable({}, {})` (direct forms, which do
+  not materialise the carrier). Behavioural controls: `language/expressions/new/`
+  (56 pass), `built-ins/Proxy/construct/` (11 pass), `revocable/` (13 pass) on
+  both trees; `r3-controls.txt` 70/70.
+- `imports-of.mts` on `get/trap-is-not-callable-realm.js` → `[]`.
+
+### Step R3-1 — §10.5 descriptor-model invariants (A1–A8, 29 rows + 6 R twins) — `r3-A.txt`
+
+**Root cause.** `buildDispatch` (`object-runtime-proxy.ts:264`) trap arm,
+`buildDefineDispatch` (`:928`), `buildOwnKeysDispatch` (`:732`) and
+`buildProtoDispatch` (`:444`) return the trap result unvalidated (only #5140's
+target-independent checks exist, `:405-443` and `:463-530`).
+
+**Edits.** Implement r2 **Step 1** verbatim (its 1-a primitive table and 1-b
+per-operation table are still exact — the descriptor model, `$PropEntry.flags`
+and `__getOwnPropertyDescriptor` (`object-runtime-descriptors.ts:2909`) are
+unchanged), in the NEW module `src/codegen/object-runtime-proxy-invariants.ts`
+(export `registerProxyInvariantHelpers(ctx, deps)` + one `Instr[]` factory per
+operation, called from `ensureProxyRuntime` after `:83`), with these r3 deltas:
+
+1. `dispatchLocals()` (`:1001`) already reserves `res` at index `2 + arity`;
+   add `tdesc` (externref) and `ext` (i32) after it — FRESH array per use.
+2. A7 (`buildOwnKeysDispatch`): compute the TARGET's key set with
+   `__getOwnPropertyNames(target)` ++ `__getOwnPropertySymbols(target)`
+   (`object-runtime-descriptors.ts:3262` / `:3385`) — NOT
+   `__proxy_own_keys_all` (`object-integrity-proxy.ts:175`, which takes the
+   PROXY and would re-run the trap). Copy its `appendAll` loop idiom.
+3. A8b (`instanceof`): #5268 2.7 did not land, so this step owns the
+   `__isPrototypeOf` seed (`object-runtime-prototype.ts:760-770`): a `$Proxy`
+   candidate → `cur = __getPrototypeOf(candidate)` (front-guarded → gpo
+   dispatch, throws the §10.5.1 TypeError for
+   `instanceof-target-not-extensible-not-same-proto-throws`), cast when
+   `$Object` else answer 0. Leave the per-hop `struct.get` loop untouched.
+4. A8a: replace the `invStrictEqIdx` compare in the `!isSet` block
+   (`:504-526`) by the canonical proto-view compare r2 describes
+   (`__proxy_get_target_if_absent` → `__proto_from_function` on the trap
+   result vs the target `$Object`'s raw field 0, `ref.eq`, null-safe; keep the
+   SameValue fallback for non-`$Object` targets). Verify the `p10` probe flips.
+5. **Regression guard that r2 lacked:** a trap result that is a non-null,
+   non-primitive value the readers cannot decompose (a CLOSED literal struct
+   returned from a trap closure, a closure carrier, a `$Vec`) must be treated
+   as "an Object with no readable fields" — CompletePropertyDescriptor defaults
+   — and NEVER throw from a validator. Only a positive primitive/undefined
+   (`__typeof_number/string/boolean/bigint`, `__extern_is_undefined`,
+   `ref.is_null`) triggers the "not an Object" TypeError in A2. Probe this with
+   a trap `getOwnPropertyDescriptor(){ return {value:1, configurable:true,
+   enumerable:true, writable:true} }` over a configurable target prop —
+   must NOT throw before and after.
+
+**Growth grant.** New file `object-runtime-proxy-invariants.ts` (~450 LOC,
+already in `loc-budget-allow`), `object-runtime-proxy.ts` (+~120 wiring,
+`ensureProxyRuntime` already granted), `object-runtime-prototype.ts` (+~30,
+`buildObjectPrototypeHelpers` granted).
+
+**Order-preservation.** Validators run AFTER the driver call and BEFORE the
+result is pushed; the trap-ABSENT forward arms are not touched; a throwing
+trap propagates before any validator; `ToBoolean` is `__is_truthy` never
+`ref.is_null`; a revoked proxy still throws first. `__proxy_target_desc` must
+call the front-guarded `__getOwnPropertyDescriptor` (a proxy-of-proxy target
+recurses) — never read `ptarget`'s struct directly.
+
+**Acceptance.**
+- Claimed: `r3-A.txt` 29/29 (A1 6, A2 7, A3 4, A4 2, A5 2, A6 2, A7 3, A8 3)
+  plus the 6 R twins (re-run `r3-R.txt`).
+- Passing shapes at risk: EVERY trap that returns a VALID result now passes
+  through a validator — `built-ins/Proxy/` currently 184 pass: run all 311
+  rows (8 batches of ≤40) on the branch; **zero pass→non-pass**, listing any
+  by name. `language/expressions/instanceof/` (37 pass) and
+  `built-ins/Function/prototype/Symbol.hasInstance/` on both trees for the
+  `__isPrototypeOf` seed. The A8a compare touches `Object.getPrototypeOf` only
+  inside the proxy dispatch, but re-run `built-ins/Object/getPrototypeOf/` and
+  `Object/create/` (320 pass) anyway — the proto-view helpers are shared.
+- Byte-identity: a standalone program with no `Proxy` must hash-equal base
+  (the module is registered from `ensureProxyRuntime` only).
+
+### Step R3-2 — Reflect arms and call-site booleans (C1–C6, C8a; 22 rows) — `r3-C.txt`
+
+All arms live in `compileNamespaceStaticCall`
+(`src/codegen/expressions/call-namespace-static.ts`; line numbers below are
+current). The #2046 receiver refusal (`:887-920`) and the #3371 `construct`
+arms (`:1568-1740`) are NOT edited. Sub-steps ordered by rows/risk; each is
+independently shippable.
+
+- **C2 (5) — `setPrototypeOf` booleans.** (i) Reflect arm `:1221-1320`: after
+  `local.tee spoProtoLocal`, call `__object_setPrototypeOf_status`
+  (`object-runtime-prototype.ts:708`, `ensureLateImport` it BEFORE compiling
+  the operands — the `Object.setPrototypeOf` site `call-builtin-static.ts:1949-1962`
+  shows the reservation order) — status 0 → push `i32 0` without calling the
+  writer; else call `__object_setPrototypeOf`, `local.tee res`; if the target
+  is a `$Proxy` (`any.convert_extern` + `ref.test`) push `__is_truthy(res)`
+  else `drop; i32 1`. Keep the #5268 `immutable` branch as is. (ii)
+  `buildProtoDispatch` forward arm (`:534-544`): when `ptarget` is itself a
+  `$Proxy`, push the inner `__object_setPrototypeOf` result instead of
+  `drop; local.get 0` (the inner front-guard returns the inner dispatch's
+  booleanish), keep the token for ordinary targets. (iii)
+  `Object.setPrototypeOf` site `call-builtin-static.ts:2056-2058`: after
+  `call resolvedSpoIdx`, for a `$Proxy` receiver `__is_truthy` the result and
+  throw the existing `throwRefused` TypeError on 0, then push `objLocal` (the
+  spec return is `O`); ordinary receivers keep the current result push.
+  Rows: `Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js`,
+  `…-if-target-and-proto-are-the-same.js`, `…-if-target-is-prototype-of-proto.js`,
+  `Proxy/setPrototypeOf/toboolean-trap-result-false.js`,
+  `…/trap-is-missing-target-is-proxy.js`.
+- **C3 (3) — `preventExtensions` booleans.** Reflect arm `:1362-1414`: replace
+  `drop; i32.const 1` after `call nativeIdx` by `call __is_truthy` (an ordinary
+  `$Object` result is the object itself → truthy → 1, so the ordinary answer is
+  unchanged; a proxy answers the trap's booleanish). `buildExt1Dispatch`
+  forward arm for `TRAP_PREVEXT` (`:606+`): same "push inner result when the
+  target is a `$Proxy`" change as C2(ii). `Object.preventExtensions` site
+  (`call-builtin-static.ts:1786-1830`, `method === "preventExtensions"` ONLY —
+  the branch is shared with freeze/seal): for a `$Proxy` receiver
+  `__is_truthy` the `hostIdx` result, TypeError on 0 (§20.1.2.19 2.b), push
+  `objLocal`. Rows: `Reflect/preventExtensions/return-boolean-from-proxy-object.js`,
+  `Proxy/preventExtensions/return-false.js`, `…/trap-is-missing-target-is-proxy.js`.
+- **C1 (2) — `Reflect.set` bypasses the proxy.** In `ensureProxyRuntime`,
+  after the `setBody` patch (`:1760-1840`), `findBody("__reflect_set")`
+  (`object-runtime.ts:4226`) and `unshift` the same `ref.test $Proxy` guard
+  shape as `hasBody` (`:1845-1865`): `call __proxy_set_dispatch(p, key, value)`
+  → `__is_truthy` → `return`. Rows: `set/return-true-target-property-is-not-configurable.js`,
+  `set/trap-is-undefined-target-is-proxy.js` (the latter also needs its later
+  array assertions — F; count it only if it flips).
+- **C4 (4) — non-object / non-callable guards.** `get` (`:818`) and `has`
+  (`:934`) arms: after `emitReflectArgumentLocals()` call the existing local
+  `guardNativeReflectTarget(targetLocal, "Reflect.get called on non-object")`
+  (`:777`, the helper the ownKeys/isExtensible arms already use — it admits
+  closure carriers positively). `apply` arm (`:1416-1452`): (a) add to the
+  brand ladder a positive-`$Object`-non-callable rejection
+  (`__typeof_object(t) && !__typeof_function(t)`); (b) before `call applyIdx`,
+  reject an `argumentsList` that is missing (`argLocals[2] === undefined`) or
+  runtime null/undefined/primitive with the §7.3.19 TypeError. Rows:
+  `Reflect/get/target-is-not-object-throws.js`, `Reflect/has/target-is-not-object-throws.js`,
+  `Reflect/apply/target-is-not-callable-throws.js` (only the `{}` case fails
+  today), `Reflect/apply/arguments-list-is-not-array-like.js` — its FIRST
+  assertion needs `__extern_length` to invoke a `length` getter; probe
+  `Reflect.apply(fn, null, {get length(){throw new Test262Error()}})` first;
+  if it does not throw, leave the row open and say so in Results.
+- **C5 (4) — ToPropertyKey abrupt.** Insert `call __to_property_key`
+  (`object-runtime.ts:1533`) on the key local AFTER the target guard and
+  BEFORE the native call in the `get` (`:818`), `set` 3-arg non-receiver path
+  (`:887`), `getOwnPropertyDescriptor` (`:1049`) arms; `defineProperty`
+  (`:1101`): accept `arguments.length >= 2`, pad the missing descriptor with
+  the undefined singleton (`undefinedExternInstrs`, `any-helpers.ts:138`) so
+  the key coercion throws first and `__obj_define_from_desc` raises the
+  ToPropertyDescriptor TypeError otherwise. Rows: the four
+  `Reflect/*/return-abrupt-from-property-key.js`.
+- **C6 (3) — `Reflect.ownKeys` symbols + order.** Mint
+  `__own_property_keys(obj) -> externref($ObjVec)` in
+  `buildObjectDescriptorHelpers` right after `__getOwnPropertySymbols`
+  (`object-runtime-descriptors.ts:3385`), guarded by
+  `if (ctx.funcMap.has("__own_property_keys")) return` (the #5268 Step 2.5
+  twin name), = names ++ symbols in ONE vec (copy `appendAll` from
+  `object-integrity-proxy.ts:187`); route the arm (`:1008`) to it. FIRST
+  reproduce r2's p7 null-deref (`Reflect.ownKeys({p1:1, [Symbol()]:1, 2:1,
+  0:1})` in `__module_init`) — the suspect is the `__getOwnPropertyNames` walk
+  casting a `$Symbol` key to `$AnyString` (`:3262+`); the fix there is a
+  `ref.test` skip. Rows: `Reflect/ownKeys/return-on-corresponding-order.js`,
+  `…-large-index.js`, `order-after-define-property.js`.
+- **C8a (1) — `Reflect.hasOwnProperty("enumerate")`.** In the Phase-C refusal
+  branch (`:1738`), when `reflectMethod === "hasOwnProperty"` and
+  `expr.arguments.length === 1`: `emitBuiltinNamespaceObject(ctx, fctx, "Reflect")`,
+  compile the key, `call __hasOwnProperty`, return i32. Row:
+  `Reflect/enumerate/undefined.js` (its second assertion `Reflect.enumerate ===
+  undefined` is a member read of the carrier — verify it already answers
+  undefined; if it throws, the row stays open).
+
+**Growth grant.** `call-namespace-static.ts` (+~150, `compileNamespaceStaticCall`
+granted), `call-builtin-static.ts` (+~40, `compileBuiltinStaticCall` granted),
+`object-runtime-proxy.ts` (+~40), `object-runtime-descriptors.ts` (+~60,
+`buildObjectDescriptorHelpers` granted).
+
+**Order-preservation.** Spec order inside each arm is target-guard → key
+coercion → native call; `ArgumentListEvaluation` (all operands compiled by
+`emitReflectArgumentLocals`) stays BEFORE every guard. `__object_setPrototypeOf_status`
+must be consulted before the writer, and a 0 status must not call the writer
+(the writer is a silent no-op today, so double-calling is invisible — keep it
+single anyway). The `Object.preventExtensions` compile-away tracking
+(`:1724`) must not change.
+
+**Acceptance.**
+- Claimed: `r3-C.txt` 22 rows; expected floor 18 (C4's getter row and C8a
+  are conditional, `set/trap-is-undefined-target-is-proxy` needs F).
+- Passing shapes at risk: these arms are edited for ALL receivers, so no
+  byte-identity claim — behavioural controls on BOTH trees:
+  `built-ins/Reflect/{set,setPrototypeOf,preventExtensions,get,has,
+  getOwnPropertyDescriptor,defineProperty,ownKeys,apply}/` (current pass
+  10/10/9/9/9/12/10/10/7), `built-ins/Object/setPrototypeOf/` (11),
+  `Object/preventExtensions/` (39), `Object/freeze/` (51, incl. the #5268
+  `proxy-*` rows), `Object/prototype/__proto__/` (8, the #5268 Step 1 branch
+  in the same arm), `Object/getOwnPropertyNames/` (42) and
+  `Object/getOwnPropertySymbols/` (7) for C6. `r3-controls.txt` 70/70.
+- `imports-of.mts` on `Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js` → `[]`.
+
+### Step R3-3 — define/gOPD routing through the proxy (E, 3 rows) — `r3-E.txt`
+
+**Root cause.** `compileObjectDefineProperty` (`object-ops.ts:979-1010`)
+reroutes to `__obj_define_from_desc` only for a SYNTACTIC `new Proxy` binding
+(its own `isNewProxy` + `ctx.checker.getSymbolAtLocation`, `:1006`), so
+`r.proxy`, aliases and `any` receivers take the `__defineProperty_value` fast
+path that stores on the proxy externref. `Object.getOwnPropertyDescriptor(p)`
+with ONE argument falls past the `arguments.length >= 2` gate
+(`call-builtin-static.ts:2739`) into the `__get_builtin` compile error.
+
+**Edits.**
+1. **E-1 runtime guard (complete fix).** In `ensureProxyRuntime`, next to the
+   `objDefineBody` patch (`:2280`), `findBody("__defineProperty_value")`
+   (`object-runtime-descriptors.ts:717`, params `obj, key, value, f64 flags`;
+   flag word bits 0/1/2 = w/e/c, 3/4/5 = "specified", 7 = has value —
+   `object-ops.ts:777`) and `findBody("__defineProperty_accessor")` (`:1188`),
+   and `unshift` a `ref.test $Proxy` arm that rebuilds a descriptor `$Object`
+   holding ONLY the specified fields (`__new_plain_object` + `__extern_set`
+   per set bit; `call-parameters.js` counts the exact keys) and tail-calls
+   `__proxy_define_dispatch(p, key, desc)`, returning its result. The
+   syntactic gate at `object-ops.ts:1000` becomes redundant — leave it (its
+   emitted bytes are unchanged for non-proxies). Do NOT widen the gate with
+   `ctx.checker`; if a compile-time widening is wanted, use
+   `tracesToProxyValue` (`proxy-value-provenance.ts:69`, oracle-based).
+2. **E-2 1-arg gOPD.** `call-builtin-static.ts:2739`: under `ctx.standalone`
+   accept `arguments.length >= 1`; pad the key with `undefinedExternInstrs`
+   (the native coerces it to `"undefined"`; the revoked front-guard throws
+   first). Row: `getOwnPropertyDescriptor/null-handler.js`.
+
+**Growth grant.** `object-runtime-proxy.ts` (+~70), `call-builtin-static.ts`
+(+~10).
+
+**Order-preservation.** The guard is a FRONT test on param 0; the ordinary
+body's `ref.cast $Object` and every later arm keep their order. A revoked
+proxy must throw from the dispatch, not from the rebuild.
+
+**Acceptance.**
+- Claimed: `defineProperty/null-handler.js`, `defineProperty/call-parameters.js`,
+  `getOwnPropertyDescriptor/null-handler.js`; plus the `pD` probe must print
+  the trap firing.
+- Passing shapes at risk: `__defineProperty_value` is the store behind EVERY
+  `Object.defineProperty`, `Object.defineProperties`, `Object.create(p, descs)`
+  and the namespace seeding (`emitBuiltinNamespaceObject`): run
+  `built-ins/Object/defineProperty/` (1128 pass — 29 batches of 40; permitted
+  to sample 200 spread across `15.2.3.6-4-*` if time-boxed, and say so),
+  `Object/defineProperties/`, `Object/create/` (320), `Object/getOwnPropertyDescriptor/`
+  (310) on the branch: zero pass→non-pass. Byte-identity for a standalone
+  program that defines properties but never mentions `Proxy` (the guard is
+  installed only by `ensureProxyRuntime`).
+
+### Step R3-4 — first-class revoker (D, 4 rows) — `r3-D.txt`
+
+**Root cause.** `__proxy_revoker` (`object-runtime-proxy.ts:1638`) is a 1-field
+struct known only to `fillApplyClosure` (`object-runtime.ts:7694`) and
+`__typeof_function`; `gOPD(revoke,"length")` is undefined, `hasOwnProperty`
+false, `isConstructor(revoke)` throws "invoked with a non-function value".
+
+**Edits.** Each native below already has a NON-`$Object` head for builtin-
+function metadata (the #2896 `bfn…` arm — `buildNonObjectDeleteArms` in
+`__delete_property` shows the shape); add a `ref.test __proxy_revoker` arm
+IMMEDIATELY AFTER that existing arm in: (a) `__getOwnPropertyDescriptor`
+(`object-runtime-descriptors.ts:2909`): `"length"` → `__create_descriptor(box 0,
+FLAG_CONFIGURABLE)` (`:2998`), `"name"` → `{value:"", configurable}`, else
+undefined singleton; (b) `__getOwnPropertyNames` (`:3262`): `["length","name"]`
+in that order; (c) `emitHasOwn` (`object-runtime.ts:4545`): `length`/`name`
+only; (d) `fillReflectIsConstructor` (`reflect-construct-native.ts:212`):
+revoker → 0 — `isConstructor` in the harness is `Reflect.construct(function(){},
+[], f)` and the arm at `call-namespace-static.ts:1611-1617` already throws
+"newTarget is not a constructor" on 0; (e) `new revoke()`: check what the
+construct driver does with a callee that is neither `$Proxy` nor `$Object`
+(`native-construct.ts` ordinary tail) — add the revoker to its
+"not a constructor" TypeError arm. `__typeof_function` already answers 1.
+
+**Growth grant.** `object-runtime-descriptors.ts` (+~50), `object-runtime.ts`
+(+~15, `ensureObjectRuntime` — NEW grant below), `reflect-construct-native.ts`
+(+~10, `fillReflectIsConstructor` granted), `native-construct.ts` (+~15).
+
+**Order-preservation.** The arm goes AFTER the #2896 builtin-fn arm and BEFORE
+the `$Object` cast; it must not change what the builtin-fn arm answers for
+closures and bound functions. `property-order.js` needs `length` before
+`name`.
+
+**Acceptance.**
+- Claimed: `revocable/revocation-function-{length,name,property-order,
+  not-a-constructor}.js`.
+- Passing shapes at risk: `gOPD`/`getOwnPropertyNames`/`hasOwnProperty` on
+  functions, bound functions and builtins: run `built-ins/Function/prototype/bind/`
+  (93 pass), `built-ins/Function/length/`, `built-ins/Function/prototype/name*`,
+  `built-ins/Object/prototype/hasOwnProperty/` (62), `Proxy/revocable/` (13)
+  on both trees; `r3-controls.txt` 70/70. Byte-identity for a proxy-free
+  program (all arms gated on `ctx.structMap.get("__proxy_revoker")`).
+
+### Step R3-5 — open representation for a proxy TARGET literal (G, 5 rows) — `r3-G.txt`
+
+**Root cause.** `pA`: with `var target = {attr:1}; var p = new Proxy(target, {})`,
+`delete p.attr` forwards `__delete_property` onto a carrier that is not a
+`$Object` (silent `return 1`), so the target still owns `attr`;
+`gOPD(target,"attr")` and `"attr" in p` keep answering from the literal.
+`proxyBindingIsTarget` (`analysis/proxy-binding-escape.ts:284`) already marks
+the TARGET binding for externref storage (`proxyBindingNeedsExternref`,
+`:290`), but the INITIALIZER is still compiled as a closed struct and boxed.
+
+**Edits.** Find where `proxyBindingNeedsExternref` is consulted in the
+variable-declaration paths (grep; both the module-global and the function-local
+declaration compile) and, when it answers true AND the initializer is an
+object literal, compile the initializer with `compileObjectLiteralAsExternref`
+(the open `$Object` path the HANDLER already takes — `call-builtin-static.ts:3920`)
+instead of the closed-struct path. The `in` fold (`compileInOperator`,
+`binary-ops-in.ts:208-260`) already bypasses itself for externref-slot
+receivers — verify, do not edit unless `has/return-false-target-prop-exists.js`
+still folds. Verify with `pA` first, then the list.
+
+**Growth grant.** The declaration site file(s) the grep finds — expected
+`src/codegen/statements.ts` and/or `src/codegen/index.ts` (+~20 each; add the
+file to `loc-budget-allow` with a dated line if the gate names it —
+`index.ts::generateModule` is already granted), `binary-ops-in.ts` (+~10 if
+needed, `compileInOperator` — NEW grant below).
+
+**Order-preservation.** Only bindings for which `proxyBindingNeedsExternref`
+is ALREADY true change representation; every other literal keeps its closed
+struct. Static reads `target.attr` on such a binding already go through the
+externref accessor path (`ctx.externrefAccessorVars`).
+
+**Acceptance.**
+- Claimed: `deleteProperty/trap-is-undefined-{strict,not-strict}.js`,
+  `has/return-false-target-prop-exists.js`, `getOwnPropertyDescriptor/trap-is-undefined.js`,
+  `setPrototypeOf/not-extensible-target-same-target-prototype.js` (its second
+  half — `Object.setPrototypeOf(outro, p)` with `outro = {}` — also needs the
+  literal open; if it stays red, name the assertion).
+- Passing shapes at risk: every `var t = {…}; new Proxy(t, h)` row that passes
+  today because static reads of `t` fold (the 184 Proxy passes are the
+  population): run all `built-ins/Proxy/` again on the branch, zero
+  pass→non-pass; `language/expressions/delete/` (62), `language/expressions/in/`
+  (28), `r3-controls.txt` 70/70. Byte-identity for a program whose object
+  literals are never proxy targets.
+
+### DEFERRED (36 in-scope rows + 31 owned elsewhere) — do not start in this pass
+
+| id | rows | why deferred | pointer |
+|---|---:|---|---|
+| B — proxy as `[[Prototype]]` + receiver-threaded `[[Set]]` | 12 | needs a new `$Object` field or reserved key and a per-hop arm in `__extern_get` / `__extern_has` / `__extern_set_decide` / `__isPrototypeOf` / for-in — the hottest walkers in the runtime; the blast radius is every property read in every standalone module, which no control list can cover. Own issue, with `pnpm run test:equivalence:gate` + a full `built-ins/Object/` re-run as its floor. | r2 Step 4 (representation + walker arms + `__proxy_set_dispatch_recv` + `__ordinary_set_receiver`) is the design; the receiver primitive is also what #2046 (X2) needs — build it once, there. |
+| F — exotic targets under the trap-absent forward | 18 | each row's first failure is the carrier's MOP (array `length = 0`, String-wrapper deref, RegExp `lastIndex` brand check, bound-function `__apply_closure`), not the proxy layer; owners: array lane (#5268 N), #4491, #5198, `construct-bound.ts`. After R3-0…R3-5 re-run `proxy-cl-F.txt` and record the residue by carrier in Results; fix only a proxy-layer defect found (a dropped result, a `ref.cast $Object` on `ptarget`). | r2 Step 6 |
+| C7 `Reflect.defineProperty` → `false` | 1 | a mutable global threaded through nine throw sites of the #2042 S4 preflight, for one row | r2 C7 |
+| C8b `Object.getPrototypeOf(Reflect/Proxy)` | 2 | needs `%Object.prototype%` / `%Function.prototype%` as storable `$Object`s — measure first (`emitEs5IntrinsicPrototype` is not exported under that name; see `expressions/object-get-prototype-of.ts:177/259` `tryCompileEs5GetPrototypeOf{Early,Value}`); if either is a `$NativeProto`, it cannot be stored in `$Object.proto` | r2 C8(b) |
+| C8c `Reflect.getPrototypeOf({})` | 1 | reuse `tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr)` (`object-get-prototype-of.ts:259`, inspects `arguments[0]` only) in the `getPrototypeOf` arm (`:1185`); cheap but untested against the arm's non-object guard order — do it only if R3-2 finishes under budget | r2 C8(c) |
+| C8d `defineProperty/desc-realm.js` | 1 | changes `__getPrototypeOf` for every ordinary object with a null `$proto` | r2 C8(0) |
+| E-3 lazy GetMethod (`setPrototypeOf/return-abrupt-from-get-trap.js`) | 1 | 13 eager read sites in `__proxy_create` become per-operation handler reads | r2 E-3 |
+| X1 #3371 (14), X2 #2046 (7), X3 realm harness (3), X4 misc (7: `Object.prototype.hasOwnProperty` value #5268-area, gOPS proxy arm = #5268 2.5, `enumerate` trap #1320, module-namespace exotic, two closed-struct Reflect receivers #2949/#2580, generator host imports #680/#2961) | 31 | owned elsewhere | r2 "Out of scope" table; `r3-owned-elsewhere.txt` |
+
+### r3 acceptance criteria (whole pass)
+
+- Floor **+80**, ceiling **+90** of the 126 in-scope rows: R 27, A 29, C 18–22,
+  E 3, D 4, G 3–5. Every row NOT flipped is named in Results with its first
+  failing assertion and owner.
+- `r3-controls.txt` 70/70 after every step; the per-step directory controls
+  above run on BOTH trees with zero pass→non-pass; the full `built-ins/Proxy/`
+  311 re-run after R3-1 and after R3-5.
+- Standalone modules host-import-free on one claimed row per step.
+- Gates chained (protocol §5); growth outside the frontmatter grants gets a
+  dated line in this file, never a baseline edit.
+- `tests/issue-5196-es2015-proxy-r2.test.ts` extended with one host +
+  standalone control per step (the `pA`/`pC`/`pD` shapes, r2's `p1`/`p4`/`p10`/
+  `p11`) asserting `WebAssembly.Module.imports(module).length === 0`, plus the
+  exact test262 rows via `runTest262File`; `node scripts/update-issues.mjs --check`,
+  `check-issue-ids.mjs`, `check-issue-spec-coverage.mjs` green.

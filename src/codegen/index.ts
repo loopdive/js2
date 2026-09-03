@@ -6,6 +6,7 @@ import { emitToBoolean } from "./coercion-engine.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
+  fillErrorStructMessageOwnPropArms,
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -659,6 +660,7 @@ import {
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
+import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -6498,6 +6500,10 @@ export function generateModule(
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
+    // (#5269 L) …and the one intrinsic `$Error_struct` field that is a spec OWN
+    // data property, so `hasOwnProperty(err, "message")` stops disagreeing with
+    // `err.message`. Deliberately narrow — see the fill's doc.
+    fillErrorStructMessageOwnPropArms(ctx);
     emitNativeErrorBoundaryBridge(ctx);
 
     // (#4160) Prototype-index store: fill the reserved `__protoidx_*` helper
@@ -11056,6 +11062,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // splice the native Error reader and publish the optional JS-boundary
     // adapter after native Error/string types are complete.
     profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
+    // (#5269 L) Multi-source parity with the single-source call above.
+    profilePhase("fill-error-struct-hasown-message", () => fillErrorStructMessageOwnPropArms(ctx));
     profilePhase("emit-native-error-boundary-bridge", () => emitNativeErrorBoundaryBridge(ctx));
     // (#4160) Prototype-index store — multi-source parity with the
     // generateModule call above (same after-the-shape-probing-fills ordering;
@@ -12494,6 +12502,20 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       tsType.getCallSignatures().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)
     ) {
+      return { kind: "externref" };
+    }
+
+    // (#5269 R3-2) An object-literal type carrying `[Symbol.toPrimitive]`.
+    // `objectLiteralForcesHostPath`'s H-1 arm builds that literal as an open
+    // `$Object`; this is where every consumer of the value learns the same
+    // fact. Without it only the three syntactic lockstep callers agreed, so an
+    // alias / property slot / array element / parameter kept the inferred
+    // closed struct and the open object null-cast into it. Standalone-only, in
+    // lockstep with the value-side gate. See `typeTakesToPrimitiveOpenPath` —
+    // it answers for BOTH producer arms: the H-1 member the checker propagates
+    // into every derived type, and the H-2 mutation case, which leaves no
+    // member and is carried by the literal type's own identity.
+    if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
 
