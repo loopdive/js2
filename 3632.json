@@ -1,8 +1,11 @@
 {
   "id": "3632",
   "assignee": "ttraenkler/codex-3632-eval-early-errors",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3632-eval-early-errors",
   "claimed_at": "2026-07-28T14:52:41Z",
-  "updated_at": "2026-07-28T14:52:41Z"
+  "updated_at": "2026-09-03T09:41:08Z",
+  "write_id": "2528-1p9d4846",
+  "released_at": "2026-09-03T09:41:08Z"
 }
