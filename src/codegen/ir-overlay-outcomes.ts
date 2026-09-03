@@ -11,6 +11,7 @@ import type {
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
 import { nonExecutableOutcomeDefect } from "../ir/outcomes.js";
+import type { IrObservedOutcomeWithBodyAccountingNote } from "../ir/body-accounting-note.js";
 import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
@@ -355,12 +356,16 @@ function functionBodyAccountingFailure(input: {
       `${input.unit.unitId} fell back to direct emission with ${input.accounting.irBodyEmissions} terminal IR patch receipts`,
     );
   }
-  if (input.outcome.kind === "invariant" && input.accounting.directBodyEmissions !== 0) {
-    return bodyEmissionInvariant(
-      `${input.unit.unitId} reached an R2 invariant after ${input.accounting.directBodyEmissions} direct body receipts; ` +
-        "a fatal prepared owner may retain only zero or one exact IR patch receipt",
-    );
-  }
+  // (#5262) There is deliberately NO arm for `outcome.kind === "invariant"`.
+  // The one that used to live here fired on `directBodyEmissions !== 0`, but its
+  // own message described a bound on IR PATCH receipts ("may retain only zero or
+  // one exact IR patch receipt") — a different quantity, and one already
+  // enforced upstream in `reconcileR2FunctionBodyEmissionAccounting`, which
+  // turns `irBodyEmissions > 1` into a `receiptFailure`. Meanwhile any unit that
+  // reached an invariant after legitimately falling back to the direct route
+  // carries `directBodyEmissions === 1`, so the arm fired on the NORMAL shape
+  // and its only effect was to overwrite the root cause with
+  // `body-emission-evidence`. It added no coverage; deleting it loses no red.
   return undefined;
 }
 
@@ -982,6 +987,7 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
     }
 
     let accountingFailure: IrPreparationFailure | undefined;
+    let accountingApplied = false;
     if (bodyAccounting) {
       accountingFailure = functionBodyAccountingFailure({
         unit,
@@ -989,17 +995,42 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
         accounting: bodyAccounting,
         outcome,
       });
-      if (accountingFailure) outcome = observedFailure(base, accountingFailure);
+      if (accountingFailure && outcome.kind !== "invariant") {
+        // (#5262) An `emitted` or `unsupported` row that fails accounting took
+        // neither body route or both. These arms are the ONLY detector for that
+        // corruption, so they still REPLACE the outcome — demoting them to a
+        // note would leave the row `unsupported`, drop it out of the invariant
+        // diagnostic push below, and turn a real red into silence.
+        outcome = observedFailure(base, accountingFailure);
+        accountingApplied = true;
+      } else if (accountingFailure) {
+        // (#5262) Root cause wins the `code` slot. The accounting evidence rides
+        // alongside by spread, exactly like `r2Withdrawal` (#3521 R2-T1):
+        // `IrObservedOutcome` is unchanged and no emitter reads the field. The
+        // asymmetry with the branch above is load-bearing — do NOT simplify this
+        // to "attach, never replace".
+        const noted: IrObservedOutcomeWithBodyAccountingNote = {
+          ...outcome,
+          bodyAccountingFailure: accountingFailure,
+        };
+        outcome = noted;
+      }
     }
 
     outcomes.push(outcome);
     const unchangedReportVisibleInvariant =
-      accountingFailure === undefined &&
+      !accountingApplied &&
       evidence?.kind === "failed" &&
       evidence.diagnosticVisibility === "report" &&
       sameInvariantFailure(outcome, evidence.error.outcome);
     if (outcome.kind === "invariant" && !unchangedReportVisibleInvariant) {
       diagnostics.push(`IR outcome invariant [${outcome.code}] for ${unit.matchName}: ${outcome.detail}`);
+    }
+    // (#5262) An accounting failure that lost the `code` slot must not vanish
+    // from the diagnostic channel too — the evidence is still real, it is just
+    // no longer the headline.
+    if (accountingFailure && !accountingApplied) {
+      diagnostics.push(`IR body-emission accounting note for ${unit.matchName}: ${accountingFailure.detail}`);
     }
   }
   return { outcomes, diagnostics };

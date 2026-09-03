@@ -1,10 +1,11 @@
 ---
 id: 5262
 title: "R2 body-emission accounting OVERWRITES the root-cause outcome code — an injected internal throw is reported as `body-emission-evidence`, not `unexpected-internal-throw` (5 tests skipped in issue-3519)"
-status: ready
+status: done
+completed: 2026-09-03
 sprint: current
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-03
 priority: high
 horizon: m
 complexity: M
@@ -299,3 +300,105 @@ touch the same 20 lines of `reconcileIrOverlayOutcomes` and the same block of
    `issue-3525` tests are green **because reconcile no longer owns those rows**,
    not because the accounting arm stopped upgrading `unsupported` rows — prove it
    by keeping one hand-built `unsupported`-with-zero-receipts fixture red.
+
+---
+
+## Resolution
+
+Landed 2026-09-03 with #5263 in one PR, applied second. The plan's premise
+correction (4 of 5, not 5) was confirmed independently; one of its predictions
+was **not** confirmed and is corrected below.
+
+### What changed
+
+1. **Deleted** the accounting arm that fired on
+   `outcome.kind === "invariant" && directBodyEmissions !== 0`, with a comment in
+   its place naming #5262 and recording that the `irBodyEmissions` bound its
+   message described is enforced upstream in
+   `reconcileR2FunctionBodyEmissionAccounting`.
+2. **Made the write asymmetric**: an accounting failure REPLACES the outcome only
+   when the root cause is not already an invariant; otherwise it is attached by
+   spread as `bodyAccountingFailure`, following the `r2Withdrawal` precedent
+   (#3521 R2-T1) — new sibling `src/ir/body-accounting-note.ts` carries the
+   widened type and its single reader; `src/ir/outcomes.ts` is untouched.
+3. The `unchangedReportVisibleInvariant` dedup guard now keys on
+   `!accountingApplied` rather than on the failure merely existing.
+4. An attached-but-not-applied failure still pushes
+   `IR body-emission accounting note for <unit>: <detail>` into `diagnostics`, so
+   the evidence keeps a channel after losing the `code` slot.
+
+### Measured
+
+| measurement | before | after |
+| --- | --- | --- |
+| `tests/issue-3519-…` (four masked tests un-skipped) | 5 failed / 25 passed | **29 passed / 1 skipped** |
+| the four root-cause codes | all `body-emission-evidence` | `missing-terminal-outcome`, `unexpected-internal-throw` ×3 |
+| `check:ir-only` verdict | READY | READY |
+| `scripts/ir-only-baseline.json` | — | unchanged |
+| published outcome rows, 34-case corpus | 188 | 188, **zero row deltas beyond #5263's** |
+| `check:ir-kind-neutrality` verdict table | 55 neutral · 27 js · 3 unresolved | **identical** (accounting-only change moved nothing) |
+
+### Correction to the plan's non-vacuity prediction (measured)
+
+The plan expected that reverting change (1) alone would return the four tests to
+red. **It does not — they stay green.** The converse also holds: reverting
+change (2) alone leaves them green too. The two changes are *independently
+sufficient* for this population, because once precedence is asymmetric the arm's
+return value is only ever attached as a note, and once the arm is gone there is
+nothing to attach. Non-vacuity is therefore a property of the pair: reverting
+**both** restores the base red (measured — 5 failed on pristine `origin/main`).
+
+That makes change (1) look optional, so it was justified separately rather than
+assumed. **Measured**: with the arm restored and change (2) in place, every
+normal fall-back-then-invariant row gains an extra, *false* diagnostic —
+
+```
+IR body-emission accounting note for delay: … reached an R2 invariant after 1
+direct body receipts; a fatal prepared owner may retain only zero or one exact
+IR patch receipt
+```
+
+on a row whose `irBodyEmissions` is `0`. Non-warning diagnostics went 2 → 3
+(`missing-terminal.ts`) and 1 → 2 (`iterator-registration.ts`). `(1, 0)` with an
+invariant root cause is the NORMAL fall-back shape, so keeping the arm converts
+the old masking bug into a diagnostic-noise bug. Deleting it also resolves the
+condition/message mismatch this issue asked about (acceptance criterion 2), in
+the direction the plan named: the message described `irBodyEmissions`, which is
+already bounded upstream, so the arm added no coverage and lost no red.
+
+### Fifth test — NOT fixed, and no longer blamed on this issue
+
+`counts only executable overload implementations and ignores ambient signatures`
+stays skipped. Re-measured 2026-09-03 with this fix applied, it fails on:
+
+```
+ir/from-ast: direct call to "overloaded" has no exact AST-site plan in run
+IR-first (#2138): run failed after its legacy body was skipped [unpatched-slot]
+IR outcome invariant [unpatched-slot] for run
+```
+
+`run` calls an overloaded function; the IR from-AST lowering cannot resolve the
+call site to the implementation signature. Nothing in
+`functionBodyAccountingFailure` participates. Its skip comment was rewritten in
+place to say exactly this, so the next reader is not sent back here.
+
+**It has no issue id yet** — `claim-issue.mjs --allocate` reported its open-PR
+scan DEGRADED (gh unauthenticated in this container), and an id reserved off a
+degraded scan must not be handed out as clean. Filing needs one `--allocate`
+from an authenticated lane.
+
+### Pins added
+
+`tests/issue-5262-accounting-precedence.test.ts` (3 tests) drives
+`reconcileIrOverlayOutcomes` directly and pins:
+
+- (#5263) a unit in `ownedElsewhereUnitIds` yields neither row nor diagnostic,
+  with the same call **without** the set asserted to yield both — the control and
+  the treatment in one test.
+- (#5262) a non-invariant row that fails accounting is still REPLACED — the
+  asymmetry guard. This is the anti-greenwash fixture #5263 required.
+- (#5262) an invariant row with a duplicate direct receipt keeps its root-cause
+  `code`, carries the note, and still surfaces it in `diagnostics`.
+
+The third pin is measurably non-vacuous: restoring the destructive write turns it
+red on its own.
