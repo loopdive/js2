@@ -105,6 +105,22 @@ loc-budget-allow:
   # (#4195) dedupe mark in its historic position on the default route — both of
   # them exist BECAUSE the default flipped off, see the gap-6a v2 repair record.
   - src/codegen/declarations.ts
+  # 2026-09-03 (R4-M1, string module-binding storage): +51 lines in
+  # `src/ir/module-bindings.ts` and +28 in `src/ir/integration.ts`. The slice
+  # adds ONE storage kind, and both edits sit beside the arm they mirror:
+  # `isModuleStringStorageType` + the `inspectDirectBinding` arm next to
+  # `isNativeMapStorageType` + the `native-map` arm (#4461), and the
+  # `resolveModuleBindingGlobal` case immediately after `native-map`'s. The two
+  # arms are the SAME decision taken for two builtin carriers, and a reviewer
+  # checking that the new one is as conservative as the established one has to
+  # read them together; splitting the string half into a subsystem module would
+  # remove exactly that comparison. Roughly two thirds of both diffs is the
+  # comment stating why `var` and unions are refused — the reasoning a later
+  # widening slice needs and cannot re-derive from the code. Measured payoff:
+  # byte-neutral on 66/66 playground + dogfood compiles across both lanes, with
+  # 3 dogfood rows moving off the storage blocker.
+  - src/ir/module-bindings.ts
+  - src/ir/integration.ts
 func-budget-allow:
   # 2026-09-01 (gap 1b): the same +11 comment lines land inside
   # `compileDeclarations`, which is where the pass-2 gate lives; the gate cannot
@@ -4321,3 +4337,166 @@ representable, and no dogfood file's rejections are string-only.
 sites in `inspectDirectBinding` with the declaration kind, declared type and
 `const`/`let`/`var`, gate on an env var, run the corpus through
 `observeSingleHostLane`, then restore from a copy taken before the first edit.
+
+---
+
+## 2026-09-03 R4-M1 landing record — string module-binding storage (Opus implementation lane)
+
+**Result: implemented, both backends, byte-neutral.** The dual-backend storage
+decision (#679) fitted in one slice and did not need an ABI decision record —
+because `IrType` already has the backend-agnostic `string` marker whose physical
+carrier `IrLowerResolver.resolveString` picks, so the module binding could adopt
+the SAME deferral instead of inventing a second one. What the slice had to add
+was the legacy-slot half: naming the ACTIVE backend's carrier so the existing
+storage-agreement check in `resolveModuleBindingGlobal` is a real test.
+
+### Brief claims re-verified on `0946527` (origin/main), and one that did not hold
+
+| Claim (brief) | Verdict |
+| --- | --- |
+| `scripts/check-ir-only.ts:14-20` runs against 5 hardcoded entry files | holds |
+| `scalarKind` (`module-bindings.ts:923`) has no `StringLike` branch | holds |
+| the `unsupported` return at `module-bindings.ts:2029` is the module-init blocker | holds |
+| `select.ts` ~`:5655` requires every direct declaration to map to an allocated legacy slot | holds |
+| the census is already in this file under "Root cause, established by instrumentation" | **not yet true at `0946527`** — the section landed on main afterwards (merged in from `c4e811acd` as part of this branch's catch-up), so every number below was measured fresh rather than quoted. Where the two overlap they agree: all rejections from the one `no-value-kind` arm, `scalarKind` carrying no `StringLike` branch, and no dogfood file's rejections being string-only |
+| the corpus counts will not move | holds (see below) |
+
+### What legacy actually allocates for a string module global (measured, not inferred)
+
+Compiled `const greeting = "plain"` with the binding READ from a function, and
+read the `(global $__mod_greeting …)` line out of the emitted WAT:
+
+| lane | slot |
+| --- | --- |
+| `target: "gc"` (host strings) | `(mut externref)` |
+| `target: "standalone"` / `nativeStrings` | `(mut (ref null $AnyString))` |
+
+Two carriers, one source fact — the #679 shape. A third state matters and is
+easy to miss: when the binding is **never read**, standalone allocates **no
+`__mod_` global at all** (the const is folded), so a probe that does not read
+the binding measures the wrong thing and reports the standalone lane as already
+working.
+
+### The design
+
+- `IrModuleBindingValueKind` gains ONE arm, `{ kind: "string" }` — deliberately
+  not one arm per backend. The source-level fact is "this slot holds a JS
+  string"; which carrier that is belongs to the backend.
+- `resolveModuleBindingGlobal` resolves the ACTIVE backend's carrier
+  (`externref`, or `(ref null $AnyString)` from `ctx.anyStrTypeIdx`) and hands
+  it to the existing `storageMatches` check. A lane whose slot was widened for
+  some other reason therefore disagrees loudly instead of being reinterpreted —
+  the failure mode `select.ts`'s comment warns about.
+- The IR `type` stays the backend-agnostic `{ kind: "string" }`, so module-init
+  value flow keeps real string semantics. `attachIrStringCarrier` supplies the
+  Program-ABI `carrierRef` at preparation, exactly as for any other string SSA
+  value; no new preparation seam.
+- `isIrModuleReferenceValueKind` **includes** the new kind. Both carriers are
+  reference-shaped and opaque to the shape-only selector, so string bindings
+  inherit the conservative extern discipline rather than the f64/boolean scalar
+  arms. A site that later earns a proven string lowering tests the kind there
+  rather than widening the predicate.
+
+### Two refusals that are deliberate
+
+- **`var` is refused** (`let`/`const` only). Every legacy arm in
+  `moduleGlobalWasmType` that widens a STRING-typed declaration's slot away from
+  the checker-inferred type is `var`-specific — `with`-body hoisting
+  (`withBodyHoistedModuleVarNames`) and an observed pre-initialization
+  `undefined` (`moduleVarDirectPreInitValueIsObserved`). Both widen to
+  `externref`, which on the native lane is **not** the string carrier, and that
+  disagreement is only reportable as a hard `IrInvariantError`, never as a
+  demote. Excluding `var` removes the arms by construction instead of
+  re-deriving them.
+- **Unions are refused**, `string | undefined` included: the slot holds exactly
+  one carrier and the IR has no null-carrying string value.
+
+**Literal widening is load-bearing.** `const s = "plain"` has the declared type
+`"plain"`, so `isModuleStringStorageType` widens with
+`getBaseTypeOfLiteralType` before testing. Template-literal and string-mapping
+types survive widening with their own flags and are refused — a storage decision
+this slice did not measure.
+
+### Evidence
+
+- **Byte neutrality: 66/66 identical.** Every `website/playground/examples/**.ts`
+  and `tests/dogfood/corpus/**.js` compiled on both lanes, sha256 of the binary
+  compared against a base run executed in this worktree on `0946527` before the
+  first edit. Zero binaries changed; zero outcome rows changed.
+- **The storage blocker moved on 3 dogfood rows** (`JS2WASM_IR_SHAPE_DIAG=1`,
+  A/B by file copy). `vardecl-module-storage-unrepresentable` 20 → 17 rows;
+  `tests/dogfood/corpus/templates.js` (both lanes) and `regex.js` (standalone)
+  now report a SHAPE gap (`template-substitution-unsupported`,
+  `string-method-unsupported`) instead of a storage gap.
+- **No corpus file crossed to `emitted`, as predicted.** Granularity is
+  all-or-nothing per file, and no dogfood file's rejections were string-only.
+  This is the expected outcome, not a failure of the slice.
+- **Claim ⇔ lowering parity.** `tests/issue-3523-r4m1-string-module-storage.test.ts`
+  (17 cases) compiles, instantiates and RUNS on both lanes: literal and
+  annotated const, a reassigned top-level `let`, a non-BMP/escape-bearing
+  literal, and the two refusals. One test asserts the two carriers DIFFER, so a
+  future change that quietly unifies them fails here.
+- **No behaviour change on wider use shapes.** A/B over ten shapes that read,
+  return, concatenate, compare, template-substitute, method-call and pass a
+  string module binding: every observed runtime value identical base-vs-new;
+  only the claim kind moves. (The standalone lane returning `undefined` for a
+  string-typed export is pre-existing on both sides — a `(ref $AnyString)` is
+  not marshalled across the JS boundary — and is not touched here.)
+- Gates: `check:loc-budget` (with the grant above), `check:func-budget`,
+  `check:coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+  `check:ir-fallbacks`, `check:ir-dialect`, `check:ir-layering`, `typecheck`,
+  `lint` all green. `check:ir-kind-neutrality` needed a 1-line baseline refresh:
+  its `forof.string` evidence cites `src/ir/integration.ts:7213`, which this
+  slice's insertion moves to `:7241`. Nothing grew; the counts are unchanged.
+
+### Test-fixture corrections this slice forced
+
+Two existing tests used a **string const as their "unsupported module-init"
+fixture**. Now that string storage is representable those fixtures assert the
+opposite of their own names, so they were repointed rather than relaxed:
+
+- `tests/issue-3523-ir-module-init-compile-once.test.ts` — the `UNSUPPORTED`
+  fixture becomes an object literal.
+- `tests/issue-3523-module-init-single-pass.test.ts` — `string-const` and
+  `string-method-call` move from the direct-path families to the file's own
+  "IR-owned … 0/0" family (their measured new census, and their runtime values
+  are unchanged); the `const greeting = "hi"` filler in "scans the compile
+  inputs" becomes an object literal. While there, two positional lookups
+  (`CALL_BEARING_SHAPES[10]`, `[0]`) became name lookups — the index silently
+  read `undefined` the moment an earlier entry was removed.
+
+### Pre-existing, NOT caused by this slice
+
+A targeted sweep of the 108 test files mentioning module-init / module-binding
+found a red set on `0946527` **itself**. Every one of these was A/B'd by
+`git checkout origin/main -- src/ir/{module-bindings,module-binding-value-kinds,integration}.ts`
+and re-running: the failure sets are **character-identical** base vs. new.
+
+| file | state on main |
+| --- | --- |
+| `tests/issue-2856-calendar-residuals.test.ts` | 16 failed / 12 passed |
+| `tests/issue-2856-module-bindings.test.ts` | 10 failed / 45 passed |
+| `tests/issue-2856-builtins-component.test.ts` | 3 failed / 9 passed |
+| `tests/issue-2900.test.ts` | 2 failed / 1 passed |
+| `tests/issue-3142.test.ts` | 2 failed / 13 passed |
+| `tests/issue-3324.test.ts` | does not load at all |
+
+They are stale expectations of the same shape — the IR now claims more than the
+test was written against (e.g. "shares one slot from a legacy writer to an IR
+reader" asserts `writer` is NOT IR-compiled, and it now is). `issue-3324` is
+different: it fails at import with `TypeError: Cannot read properties of
+undefined (reading 'MAP')` in `src/codegen/collections-brand.ts:100`, reached
+from `src/codegen/expressions/calls.ts:36` — a module-initialization cycle in
+the compiler source, not a test expectation.
+
+Out of scope here; recorded so the next lane does not attribute them to R4-M1.
+None of these files is in the `equivalence-gate` population, which is why the
+required checks do not see them.
+
+### Still out of scope after this slice
+
+The other declared types the module-init population rejects remain separate
+storage decisions and were not touched: `any` (4 declarations on the dogfood
+census), arrow functions (2), a class instance (1), `any[]` (1), bigint (1).
+Reaching an `emitted` module-init on a dogfood file needs whichever of those a
+given file also carries, plus the shape gaps now surfaced above.
