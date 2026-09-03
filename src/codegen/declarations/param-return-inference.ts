@@ -959,6 +959,26 @@ export function inferParamTypeFromBody(
       }
     }
 
+    // (1b) `typeof x` — the same unrepresentable distinction as `??`, one
+    // operator over. An f64 slot cannot carry `undefined`: a call that omits
+    // the argument pads the slot with `0`, so `typeof size` answers `"number"`
+    // where the program requires `"undefined"`. Worse than a wrong answer, the
+    // `typeof` lowering takes an **externref**, so an f64-narrowed parameter
+    // emits an INVALID module — `call[0] expected type externref, found
+    // local.get of type f64`. Measured on webpack's `formatSize`:
+    //
+    //   function f(size) {
+    //     if (typeof size !== "number") return "unknown size";
+    //     if (size <= 0) return "0 bytes";   // ← the numeric use that narrowed
+    //     …
+    //   }
+    //
+    // The arrow-function spelling of the same body already stayed dynamic and
+    // answered correctly, so this only aligns the declaration form with it.
+    if (ts.isTypeOfExpression(node) && isReferenceTo(node.expression, param)) {
+      foundNullishSensitiveUse = true;
+    }
+
     // (2) param used in a numeric binary expression
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
