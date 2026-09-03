@@ -1,12 +1,11 @@
 {
   "id": "5109",
   "assignee": "ttraenkler/codex/es6-next-lane-e",
-  "requested_by": "ttraenkler/codex/es6-next-lane-e",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/es6-next-lane-e",
-  "reserved_at": "2026-08-28T00:52:42Z",
   "claimed_at": "2026-08-28T00:52:42Z",
-  "updated_at": "2026-08-28T00:52:42Z",
-  "write_id": "10817-7q0yaszx",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:52:12Z",
+  "write_id": "22557-y8pxaiw9",
+  "released_at": "2026-09-03T09:52:12Z"
 }
