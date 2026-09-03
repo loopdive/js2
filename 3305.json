@@ -1,10 +1,11 @@
 {
   "id": "3305",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3305-parsefloat-plan",
   "claimed_at": "2026-08-26T05:09:34Z",
-  "updated_at": "2026-08-26T05:09:34Z",
-  "write_id": "63599-tav0i6k8"
+  "updated_at": "2026-09-03T09:38:24Z",
+  "write_id": "12668-obb722z8",
+  "released_at": "2026-09-03T09:38:24Z"
 }
