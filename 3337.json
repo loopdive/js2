@@ -1,9 +1,11 @@
 {
   "id": "3337",
   "assignee": "codex/product-owner",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/audit-current-main-gaps",
-  "reserved_at": "2026-07-17T05:48:16Z",
   "claimed_at": "2026-07-17T05:48:16Z",
-  "updated_at": "2026-07-17T05:48:16Z"
+  "updated_at": "2026-09-03T09:38:34Z",
+  "write_id": "12885-ybhzmwdj",
+  "released_at": "2026-09-03T09:38:34Z"
 }
