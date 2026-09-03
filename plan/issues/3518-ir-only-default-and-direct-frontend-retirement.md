@@ -2312,3 +2312,58 @@ flagged as unchecked. Grouping correctly does not rescue a sample of one. The
 standing instruction should be: **name the corpus in the claim, and do not
 promote a per-corpus finding to a ladder dependency until a second corpus
 agrees.**
+
+### The standalone half is a target/corpus mismatch, not compiler work — third correction
+
+The correction above concluded that R4 and "the standalone host surface (R6)"
+**both** gate R9, on the strength of `host-surface-unavailable` being 12 of the
+playground-uncovered standalone lane's 14 rejections. Measuring what those 12
+actually name weakens the second half considerably.
+
+All 12 are **DOM**, and `document` is the *only* host global named anywhere in
+those eight files — 18 occurrences, and zero `window`, `navigator`, `fetch`,
+`localStorage` or `console`. Concretely they are `document.body`,
+`document.createElement`, `.innerHTML`, `.style.cssText` and `.appendChild`.
+Even `benchmarks/fib.ts` — an otherwise pure-math file — has its `main`
+rejected, because `main` renders its result into the page:
+
+```ts
+export function main(): void {
+  const host = document.body;          // ← the rejection
+  host.innerHTML = "";
+  …
+}
+```
+
+`main` is 7 of the 12; the rest are `bench_dom`, `bench_style` and `el`.
+
+**Why this is not R6 work in the ordinary sense.** These are browser demo
+programs whose entire purpose is to render to the page, compiled for the
+**standalone** target, which by definition has no JS host and therefore no DOM.
+A standalone build of a DOM-rendering demo is close to a contradiction in terms;
+`select.ts:203-204` already says this reason is owned by "the target's
+capability policy, not by IR shape coverage". The compiler is not failing to
+lower something it should lower — the corpus is asking a host-free target for a
+host surface. Note the machinery for the tractable part already exists: #4576's
+`standaloneDomOperation` certifies `document.body` and a registered
+`document.createElement(tag)`; these 12 are the uses outside that certified
+slice.
+
+**Consequence, and it is a correction to the section above.** The playground's
+uncovered eight are a **poor standalone denominator**, not evidence of an R6
+gap of comparable weight to R4. Two things follow for whoever defines the real
+R9 denominator:
+
+1. Standalone conformance should be measured on programs that could plausibly
+   *be* standalone. Counting DOM demos against the standalone lane inflates the
+   apparent gap with work nobody intends to do.
+2. R4 therefore looks stronger, not weaker, as the leading dependency — but
+   note this is now the **third** framing of that question in one session, and
+   the honest summary is that the ordering is only as good as the corpus. The
+   dogfood corpus (module-bearing, host-free) is the better standalone
+   population of the two measured here, and its blocker is R4.
+
+**What is still unmeasured:** neither corpus was chosen to represent the R9
+target population, and #4522's `retire-at-R9` table has still not been
+cross-checked against either. Until that is done, every weight in this section
+is a floor on one sample, not an apportionment.
