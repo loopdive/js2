@@ -1,10 +1,11 @@
 {
   "id": "1691",
   "assignee": "ttraenkler/codex-es6-yieldstar-throw",
-  "requested_by": "ttraenkler/codex-es6-yieldstar-throw",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/1691-yieldstar-throw",
   "claimed_at": "2026-08-27T11:18:22Z",
-  "updated_at": "2026-08-27T11:18:22Z",
-  "write_id": "50395-c5axpf75"
+  "updated_at": "2026-09-03T09:37:50Z",
+  "write_id": "1301-7qqlm21c",
+  "released_at": "2026-09-03T09:37:50Z"
 }
