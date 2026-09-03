@@ -1,12 +1,11 @@
 {
   "id": "4373",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/npm-compat-audit-20260811",
-  "reserved_at": "2026-08-11T21:43:35Z",
   "claimed_at": "2026-08-11T21:43:35Z",
-  "updated_at": "2026-08-11T21:43:35Z",
-  "write_id": "250-g9v366f3",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:46:37Z",
+  "write_id": "9471-0nzpcdum",
+  "released_at": "2026-09-03T09:46:37Z"
 }
