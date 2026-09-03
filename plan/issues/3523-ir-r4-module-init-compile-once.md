@@ -4271,3 +4271,53 @@ precondition for scoping this slice.
 **Do not size this slice from the "one condition at one site" framing.** That
 described where the *rejection* is observed. Where the *cause* is has not been
 established, and both cheap explanations are now excluded.
+
+### Root cause, established by instrumentation: module-binding storage is scalars-only
+
+The step named above was taken. `makeIrLegacyModuleBindingResolver`
+(`src/ir/module-bindings.ts:1969`) was temporarily instrumented at all five of
+its `unsupported` arms, the dogfood corpus re-run, and the instrumentation
+reverted from a copy captured before the first edit. The result is unambiguous:
+
+**All 11 rejections come from a single arm — `no-value-kind`
+(`module-bindings.ts:2029`).** The other four arms (ambient/`declare`,
+write-to-immutable, heterogeneous-assignment retype, write-value mismatch) fire
+**zero** times on this corpus. The declarations that reach it:
+
+| declared type | initializer | n |
+| --- | --- | --- |
+| `any` | PropertyAccessExpression | 2 |
+| `any` | ParenthesizedExpression / ObjectLiteralExpression | 2 |
+| `(x: any) => any`, `(x: any) => Promise<any>` | ArrowFunction | 2 |
+| `"plain"`, `"😀é\n\t\\"` | template / string literal | 2 |
+| `Ctor` | NewExpression | 1 |
+| `any[]` | ArrayLiteralExpression | 1 |
+| `9007199254740993n` | BigIntLiteral | 1 |
+
+**And the cause is visible in `scalarKind` (`module-bindings.ts:923`): it has
+no `StringLike` branch at all.** It returns a value kind for exactly three
+things — an `f64` alias, `BooleanLike`, and `NumberLike` (the last only when
+`numberStorage === "f64"`). Everything else returns `undefined` and reaches
+`:2029` unless it matches the `externClassNameForType` or native-`Map`
+fallbacks, which are `!isModuleVar` host-extern paths, not general storage.
+
+So the blocker is not a narrow gap or an edge case. **Module-binding storage
+covers scalars only**, and a module-level `const` of a string, object, array,
+function, class instance or bigint is unrepresentable by construction. That is
+most real top-level code, which is why 11 of 20 files fail and why the
+playground's uncovered eight — whose module-inits are all non-executable — never
+exercise it.
+
+**This resizes the slice again, downward in tractability.** "Widen the resolver
+to represent these declarations" is not a one-site change: each type above needs
+a storage decision (a string module global is an externref under host strings
+and a WasmGC `i16` array under `nativeStrings` — the #679 dual-backend question,
+so it is an R4×R6 intersection, not R4 alone). The two string-typed rows are the
+most self-contained candidate, but note the all-or-nothing granularity recorded
+above: unlocking a file needs **every** top-level declaration in it
+representable, and no dogfood file's rejections are string-only.
+
+**Reproduce:** instrument the five `return { kind: "unsupported", declaration }`
+sites in `inspectDirectBinding` with the declaration kind, declared type and
+`const`/`let`/`var`, gate on an env var, run the corpus through
+`observeSingleHostLane`, then restore from a copy taken before the first edit.
