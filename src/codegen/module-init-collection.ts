@@ -233,6 +233,105 @@ export function createsGlobalObjectBinding(
  * discarded. The sole exception is the synchronous top-level-await recovery
  * shape described by `isSynchronousTopLevelAwaitRecovery`.
  */
+/**
+ * (#5270 step 8) Binary operators whose evaluation reaches ToPrimitive
+ * (§7.1.1) and can therefore run a user `valueOf` / `toString` /
+ * `@@toPrimitive` method. `===`/`!==` are absent on purpose: strict equality
+ * never coerces. So are `&&`/`||`/`??`/`,` (no coercion of their own) and the
+ * bitwise/shift operators, which reach ToNumeric on an object — those are a
+ * larger surface and no row in this wave needs them.
+ *
+ * `==`/`!=` are here but are NOT sufficient on their own — see
+ * `looseEqualityCoercesAnOperand`, which the caller ANDs in (#5270 review R3-F1).
+ */
+function binaryOperatorReachesToPrimitive(kind: ts.SyntaxKind): boolean {
+  switch (kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * (#5270 review R3-F1) §7.2.15 IsLooselyEqual performs NO coercion when BOTH
+ * operands are Objects — it compares references and returns. This compiler's
+ * `==` lowering calls ToPrimitive on both regardless (a PRE-EXISTING defect:
+ * base coerces too once the same statement is wrapped in `if (true) { … }`), so
+ * retaining a bare `objA == objB;` statement newly EXPOSED it — with a poisoned
+ * `valueOf` the throw killed `__module_init` and every later top-level statement
+ * where base ran on. Same shape for `null`/`undefined`, which §7.2.15 answers
+ * without coercing either.
+ *
+ * So a bare loose-equality statement is retained only when one operand is a
+ * LITERAL non-nullish primitive — the `0 == y;` shape the wave actually needs
+ * (`expressions/equals/coerce-symbol-to-prim-invocation`), where ToPrimitive on
+ * the object operand is exactly what the spec requires. Everything else keeps
+ * base's drop. `statements.ts` carries the identical guard for the lowering
+ * half; the two must agree or the statement is retained and then compiled on a
+ * carrier that never coerces.
+ *
+ * Remove this guard only when the loose-equality lowering itself grows
+ * §7.2.15's Object-vs-Object early exit — tracked in the R3-F1 follow-up note
+ * in plan/issues/5270-es2015-standalone-expressions-r2.md.
+ */
+export function looseEqualityCoercesAnOperand(expr: ts.BinaryExpression): boolean {
+  const kind = expr.operatorToken.kind;
+  if (kind !== ts.SyntaxKind.EqualsEqualsToken && kind !== ts.SyntaxKind.ExclamationEqualsToken) return true;
+  return isNonNullishPrimitiveLiteral(expr.left) || isNonNullishPrimitiveLiteral(expr.right);
+}
+
+/** Syntactically a primitive that is neither `null` nor `undefined`. */
+function isNonNullishPrimitiveLiteral(operand: ts.Expression): boolean {
+  switch (operand.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.BigIntLiteral:
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.TypeOfExpression:
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * (#5270 step 8) SYNTACTIC "this operand is not provably a primitive". Used
+ * only to keep `1 + 2;`-shaped statements on their existing drop; this module
+ * runs before any type information is available, so anything that is not a
+ * literal primitive counts as possibly-object.
+ */
+function operandMayBeObject(operand: ts.Expression): boolean {
+  switch (operand.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.BigIntLiteral:
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.NullKeyword:
+      return false;
+    case ts.SyntaxKind.TypeOfExpression:
+    case ts.SyntaxKind.VoidExpression:
+      return false;
+    default:
+      return true;
+  }
+}
+
 export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -266,7 +365,18 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
       // dropping it made every `Proxy/has/call-*` test a vacuous pass.
       (ts.isBinaryExpression(node) &&
         (node.operatorToken.kind === ts.SyntaxKind.InKeyword ||
-          node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword))
+          node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) ||
+      // (#5270 step 8) The SAME argument for the ToPrimitive-reaching
+      // operators. `left + right;` and `0 == y;` run `valueOf` / `toString` /
+      // `@@toPrimitive` on any object operand (§7.1.1), so a bare statement of
+      // that shape is observable — measured on HEAD, both were dropped whole
+      // and the two `coerce-symbol-to-prim-invocation` rows counted ZERO
+      // invocations. Restricted to operands that are not SYNTACTICALLY
+      // primitive, so `1 + 2;` keeps its previous drop.
+      (ts.isBinaryExpression(node) &&
+        binaryOperatorReachesToPrimitive(node.operatorToken.kind) &&
+        looseEqualityCoercesAnOperand(node) &&
+        (operandMayBeObject(node.left) || operandMayBeObject(node.right)))
     ) {
       found = true;
       return;
