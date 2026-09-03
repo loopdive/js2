@@ -38,6 +38,7 @@ import {
   STRING_CONCAT_MANY_RUNTIME_FEATURES,
   STRING_CONST_RUNTIME_FEATURES,
   HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
+  FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
@@ -650,6 +651,49 @@ export function preparedHostCallbackWrapProvider(prepared: PreparedIrRuntimeMani
   throw new Error(`IR host-callback-wrap provider ${provider.id} is not a callback-boundary implementation`);
 }
 
+/** The one `%Function.prototype%` feature row; named once so no caller spells it. */
+const FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE = FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES[0];
+
+/**
+ * (#3526 F3-S3) Which arm of the `%Function.prototype%.[[Call]]` seam the
+ * frozen manifest selected, or `undefined` when no manifest carries the row.
+ *
+ * The arm is returned as a `runtime` reference, not an `import` one, and that
+ * is F1-S3's MEASURED constraint rather than a preference: the callable
+ * observation path (`resolveAndObserveCallableProvider`) admits only `runtime`
+ * and `intrinsic` references. The symbol names a real, compiler-defined Wasm
+ * function on the only lane that has one, so there is nothing an import
+ * reference could point at.
+ *
+ * Read POST-FREEZE only — `preregisterDynamicSupport`'s admission. from-ast
+ * runs in Phase 1, before `freeze()`, and projects the resolved POLICY value
+ * instead (see `integrationFunctionPrototypeCallPolicy`).
+ *
+ * **The row is requested on BOTH the demand and the resolved policy, and the
+ * policy half is load-bearing rather than redundant.** In-tree the two are
+ * inseparable — the resolver arm mints the call only under `call: "native"`, so
+ * a demand always arrives with an admitting policy. What the conjunction
+ * decides is WHERE a hand-built `unsupported` policy fed a program that already
+ * contains the call is refused. Requesting the feature on the demand alone
+ * would refuse it inside `freeze()` with `provider-target-unavailable`, which
+ * escapes as a GLOBAL preparation failure (`runGlobalPreparation`'s
+ * `failEveryOwner`); leaving the row out instead routes that case to the
+ * resolve-time admission, which names the seam and the arm. That admission is
+ * the backstop this slice was specified to provide.
+ */
+export function preparedFunctionPrototypeCallProvider(
+  prepared: PreparedIrRuntimeManifest | undefined,
+): { readonly arm: "native"; readonly target: IrFuncRef } | undefined {
+  const provider: RuntimeProviderDefinition | undefined = prepared?.manifest.providers.find(
+    (candidate) => candidate.feature === FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE,
+  );
+  if (!provider) return undefined;
+  if (provider.implementation.kind === "runtime-callable") {
+    return { arm: "native", target: irRuntimeFuncRef(provider.implementation.symbol) };
+  }
+  throw new Error(`IR function-prototype-call provider ${provider.id} is not a runtime callable implementation`);
+}
+
 function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === "backend-op" && right.kind === "backend-op") return left.opcode === right.opcode;
@@ -807,6 +851,14 @@ export function prepareIrRuntimeManifest(input: {
    * selected arm disagrees with the population it was frozen for.
    */
   readonly hostCallbackWrapDemand?: { readonly host: boolean; readonly nativeDispatch: boolean };
+  /**
+   * (#3526 F3-S3) True when some function in `functions` calls the
+   * `%Function.prototype%` entry point, read off the emitted-call population —
+   * the SAME predicate `preregisterDynamicSupport`'s admission scans, and
+   * deliberately a superset of it (this one also walks async state bodies), so
+   * a call the admission can see can never be one the freeze did not cover.
+   */
+  readonly functionPrototypeCallDemand?: boolean;
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
@@ -839,9 +891,14 @@ export function prepareIrRuntimeManifest(input: {
     for (const block of fn.blocks) collectBuffer(block.instrs);
     for (const state of fn.asyncPlan?.states ?? []) collectBuffer(state.body);
   }
+  // (#3526 F3-S3) Demand AND policy — see `preparedFunctionPrototypeCallProvider`
+  // for why the policy half is load-bearing rather than redundant.
+  const functionPrototypeCallRow =
+    input.functionPrototypeCallDemand === true && input.policy.functionPrototypeCall?.call === "native";
   if (
     uses.length === 0 &&
     asyncPlans.size === 0 &&
+    !functionPrototypeCallRow &&
     !input.generatorNumberBoxDemand &&
     !input.stringCompareDemand &&
     !input.stringEqDemand &&
@@ -877,6 +934,7 @@ export function prepareIrRuntimeManifest(input: {
   if (input.hostCallbackWrapDemand?.host || input.hostCallbackWrapDemand?.nativeDispatch) {
     builder.requestFeature(HOST_CALLBACK_WRAP_RUNTIME_FEATURE);
   }
+  if (functionPrototypeCallRow) builder.requestFeature(FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURE);
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {

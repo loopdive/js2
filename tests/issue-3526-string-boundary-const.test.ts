@@ -74,6 +74,8 @@ import {
   type IrType,
 } from "../src/ir/nodes.js";
 import {
+  // (#3526 F3-S3) The second empty-parameter family — see the signature test below.
+  FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
   projectRuntimeBackendRequirements,
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
@@ -206,18 +208,24 @@ describe("#3526 F2-S8 string-const contract", () => {
     expect(stringConstFeatureFor(true)).toBe("js.string.const.utf16");
   });
 
-  it("mints ONE signature, and it is the catalogue's only empty-parameter one", () => {
+  it("mints ONE signature, and it is the catalogue's only STORAGE empty-parameter one", () => {
     expect(EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE).toEqual({
       version: INTRINSIC_SIGNATURE_VERSION,
       params: [],
       result: irVal({ kind: "externref" }),
     });
-    // The whole point of the signature: it describes a VALUE. Nothing else in
-    // the catalogue does, so an empty-params row can only be a storage row.
+    // The whole point of the signature: it describes a VALUE. That WAS the only
+    // way to be empty-params — until #3526 F3-S3, whose
+    // `%Function.prototype%.[[Call]]` row is a genuine NULLARY CALL: the ES5
+    // §15.3.4 entry point ignores every argument, so its helper takes none. So
+    // empty-params no longer implies "storage row"; the storage rows are still
+    // the only empty-params ones that are not that call.
     const emptyParamRows = (RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]).filter(
       (provider) => provider.signature !== undefined && provider.signature.params.length === 0,
     );
-    expect(emptyParamRows.map((provider) => provider.id).sort()).toEqual([...STRING_CONST_RUNTIME_PROVIDER_IDS].sort());
+    expect(emptyParamRows.map((provider) => provider.id).sort()).toEqual(
+      [...STRING_CONST_RUNTIME_PROVIDER_IDS, ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS].sort(),
+    );
   });
 
   it("is FOUR-armed — two authorities × two namespaces", () => {

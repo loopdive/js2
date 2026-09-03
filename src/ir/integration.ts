@@ -323,6 +323,7 @@ import { verifyIrFunction } from "./verify.js";
 import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
 import {
   prepareIrRuntimeManifest,
+  preparedFunctionPrototypeCallProvider,
   preparedGeneratorNumberBoxProvider,
   preparedHostCallbackWrapProvider,
   preparedStringCharCodeAtProvider,
@@ -354,6 +355,7 @@ import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtim
 import type {
   BooleanBoundaryPolicy,
   ExternIsUndefinedPolicy,
+  FunctionPrototypeCallPolicy,
   GeneratorNumberBoxPolicy,
   HostCallbackWrapPolicy,
   NumberBoundaryPolicy,
@@ -1125,6 +1127,56 @@ function integrationHostCallbackWrapPolicy(ctx: CodegenContext): HostCallbackWra
 }
 
 /**
+ * (#3526 F3-S3) Which authority answers `%Function.prototype%.[[Call]]` on this
+ * lane, resolved ONCE before the freeze.
+ *
+ * The truth table is the exact one the `functionPrototypeCallTarget` resolver
+ * arm read live until this slice — `ctx.standalone && !ctx.wasi` — and it is
+ * the same lane predicate the selector's `standalone-function-prototype-call`
+ * backend capability already applies one stage earlier
+ * (`backend/legality.ts`: `target === "standalone" && !allowHostImports`).
+ *
+ * **Settled at BUILD, not at resolve (census open question 4).** The consumer
+ * (`from-ast.ts:7554`) runs in Phase 1, before the freeze and before any owner
+ * is claimed, so moving the decision post-freeze the way F3-S1 did would turn a
+ * clean pre-claim demote into a post-claim one — the `unpatched-slot` failure
+ * class #5300 measured. F3-S1 could take the post-freeze side only because its
+ * owner-local partition demotes the owner before the freeze; this seam has no
+ * such partition, so the resolved POLICY value is what from-ast projects and
+ * the frozen row is the resolve-time backstop behind it.
+ */
+function integrationFunctionPrototypeCallPolicy(ctx: CodegenContext): FunctionPrototypeCallPolicy {
+  return Object.freeze({ call: ctx.standalone && !ctx.wasi ? ("native" as const) : ("unsupported" as const) });
+}
+
+/**
+ * (#3526 F3-S3) True when any of `fns` calls the `%Function.prototype%` entry
+ * point.
+ *
+ * The same predicate `preregisterDynamicSupport`'s admission scans, and
+ * deliberately a SUPERSET of it: this one also walks async state bodies, which
+ * that scan does not. A demand wider than the admission is safe (an unused row);
+ * the reverse would let an admitted call meet a manifest that froze no row for
+ * it, so the direction is load-bearing rather than incidental.
+ */
+function irFunctionPrototypeCallDemand(fns: readonly IrFunction[]): boolean {
+  let found = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (found || instr.kind !== "call" || instr.target.binding.kind !== "runtime") return;
+          if (instr.target.binding.symbol === FUNCTION_PROTOTYPE_CALL_HELPER) found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return found;
+}
+
+/**
  * (#3526 F3-S1) Which host callback MAKER arms any of `fns` crosses.
  *
  * Read off `closure.new`, which is the ONLY lane-free place both arms are
@@ -1374,6 +1426,9 @@ function prepareBuiltFnRuntimeManifest(
       stringConcatMany: integrationStringConcatManyPolicy(ctx),
       stringConst: integrationStringConstPolicy(ctx),
       hostCallbackWrap: integrationHostCallbackWrapPolicy(ctx),
+      // (#3526 F3-S3) Resolved here, BEFORE the freeze, so the from-ast
+      // resolver arm below can project it instead of reading the mode live.
+      functionPrototypeCall: integrationFunctionPrototypeCallPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1418,6 +1473,11 @@ function prepareBuiltFnRuntimeManifest(
     // (which emits no maker call at all) would freeze no row and the manifest
     // would not be the authority that admits its dispatcher.
     hostCallbackWrapDemand: irHostCallbackWrapDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F3-S3) Same predicate the preregister admission scans, so a call
+    // that reaches the admission can never be one the freeze did not cover.
+    // The freeze pairs it with the resolved policy before requesting the row —
+    // see `prepareIrRuntimeManifest`'s `functionPrototypeCallRow`.
+    functionPrototypeCallDemand: irFunctionPrototypeCallDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -6514,6 +6574,11 @@ function makeFromAstResolver(
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }), capability);
+  // (#3526 F3-S3) Settled ONCE here, with the resolver's other pre-freeze
+  // inputs, and by the SAME projection the manifest freeze carries — so the
+  // arm below projects a resolved policy instead of re-deriving the lane, and
+  // the two can never disagree about who owns `%Function.prototype%.[[Call]]`.
+  const functionPrototypeCallPolicy = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
     hostIndirectEvalTarget() {
@@ -6596,7 +6661,7 @@ function makeFromAstResolver(
       return irImportFuncRef("env", "__defineProperty_desc");
     },
     functionPrototypeCallTarget() {
-      if (!ctx.standalone || ctx.wasi) return null;
+      if (functionPrototypeCallPolicy.call !== "native") return null;
       return ensureFunctionPrototypeCallHelper(ctx) === undefined
         ? null
         : irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER);
@@ -8680,6 +8745,49 @@ function admitAttachedHostCallbackMaker(
   );
 }
 
+/**
+ * (#3526 F3-S3) Admit — or refuse — one emitted `%Function.prototype%` call.
+ *
+ * Like {@link admitAttachedHostCallbackMaker} it sets no flag and runs no
+ * materializer: `ensureFunctionPrototypeCallHelper` already minted the defined
+ * function during Phase-1 build, so registering anything here would move
+ * defined-func indices on the one lane this slice must keep byte-identical.
+ *
+ * What it does is ADMIT. The call is recognised by the FROZEN provider's own
+ * runtime symbol, never by a name written at this seam, and a call that reaches
+ * emission without a `native` arm behind it is refused rather than lowered.
+ * In-tree that refusal is unreachable — from-ast mints the call only when the
+ * resolved policy is `native`, and the freeze requests the row on exactly that
+ * pair — so this is the invariant backstop for a hand-built policy or an
+ * adapter that froze no row. `observeNativeRuntimeProvider` then binds the
+ * admitted symbol through the observation path (F1-S3's measured constraint:
+ * `runtime` refs only).
+ *
+ * **Exported for the invariant test, deliberately.** `preregisterDynamicSupport`
+ * is internal and there is no injection point for a hand-built policy, so an
+ * in-tree-unreachable refusal can otherwise only be pinned by matching source
+ * text. Exporting the predicate lets the test invoke the PRODUCTION refusal with
+ * the exact `arm` a frozen manifest produces; the scan's call site stays pinned
+ * separately, so removing it still fails.
+ */
+export function admitEmittedFunctionPrototypeCall(
+  instr: IrInstr,
+  arm: ReturnType<typeof preparedFunctionPrototypeCallProvider>,
+): boolean {
+  if (instr.kind !== "call" || instr.target.binding.kind !== "runtime") return false;
+  const { symbol } = instr.target.binding;
+  if (symbol !== FUNCTION_PROTOTYPE_CALL_HELPER) return false;
+  if (arm?.arm === "native" && arm.target.binding.kind === "runtime" && arm.target.binding.symbol === symbol) {
+    return true;
+  }
+  throw new IrInvariantError(
+    "selection-preparation-mismatch",
+    "resolve",
+    `ir/integration: %Function.prototype% call ${symbol} has no native arm in the frozen manifest ` +
+      `(arm=${arm?.arm ?? "none"})`,
+  );
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -8687,6 +8795,10 @@ function preregisterDynamicSupport(
 ): void {
   // (#3526 F3-S1) The frozen maker arm, read ONCE — see `admitAttachedHostCallbackMaker`.
   const hostCallbackWrapArm = preparedHostCallbackWrapProvider(prepared);
+  // (#3526 F3-S3) The frozen `%Function.prototype%` arm, read ONCE — see
+  // `admitEmittedFunctionPrototypeCall`.
+  const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
+  let usesFunctionPrototypeCall = false;
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
@@ -8776,6 +8888,9 @@ function preregisterDynamicSupport(
             // (#3526 F3-S1) The maker's own arm — see `admitAttachedHostCallbackMaker`.
             else admitAttachedHostCallbackMaker(i, hostCallbackWrapArm);
           }
+          // (#3526 F3-S3) The `%Function.prototype%` entry point's own arm —
+          // see `admitEmittedFunctionPrototypeCall`.
+          if (admitEmittedFunctionPrototypeCall(i, functionPrototypeCallArm)) usesFunctionPrototypeCall = true;
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {
               case "__new_plain_object":
@@ -8909,6 +9024,10 @@ function preregisterDynamicSupport(
     addUnionImports(ctx);
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
   }
+  // (#3526 F3-S3) OBSERVE only — the helper is a Phase-1 defined func. Placed
+  // after every import registration above (an import batch shifts defined-func
+  // indices) and before the early return below, which such a module takes.
+  if (usesFunctionPrototypeCall) observeNativeRuntimeProvider(ctx, FUNCTION_PROTOTYPE_CALL_HELPER);
   if (!usesDynamicOps) return;
   if (usesToNumber && ctx.standalone) {
     // The canonical standalone ToNumber sequence performs

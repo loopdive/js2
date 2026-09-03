@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: in-progress
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-09-02
+updated: 2026-09-03
 assignee: ttraenkler/fable-ir-takeover
 branch: claude/issue-3526-f2s5-string-concat
 priority: critical
@@ -419,6 +419,32 @@ loc-budget-allow:
   - src/codegen/ir-overlay-finalize.ts
   - src/codegen/native-batched-concat.ts
   - src/ir/async-plan.ts
+  # 2026-09-03 F3-S3 (`functionPrototypeCall` policy — family 3's second slice;
+  # +306 net src LOC measured against origin/main 37087534). NO NEW PATH: all
+  # three files already carry an F1-S1..F3-S1 grant. Breakdown:
+  #
+  # * `runtime-manifest.ts` (+129, 2977 -> 3106): the `FunctionPrototypeCall`
+  #   policy and its disabled twin, the `js.function.prototype.call` feature and
+  #   `native.js.function.prototype.call` provider id, ONE `runtime-callable`
+  #   row reusing `EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE` (`() -> externref`),
+  #   the `RUNTIME_FEATURE_SIGNATURES` entry that makes the freeze verify it,
+  #   the policy-driven selection arm and the builder's resolve+freeze of the
+  #   arm. The helper's symbol is SPELLED here rather than imported, because
+  #   `check:ir-layering` forbids `src/ir/` importing `src/codegen/` — the same
+  #   reason `GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS` spells `__box_number`.
+  # * `intrinsic-support.ts` (+58, 986 -> 1044): the
+  #   `functionPrototypeCallDemand` freeze input, the demand-AND-policy gate
+  #   (with the rationale for why the policy half is load-bearing), and
+  #   `preparedFunctionPrototypeCallProvider`.
+  # * `integration.ts` (+119, 9957 -> 10076): the caller policy projection, the
+  #   demand enumeration, the resolver arm's switch from a live mode read to the
+  #   settled policy, the `admitEmittedFunctionPrototypeCall` admission and its
+  #   two lines in the shared preregister scan.
+  #
+  # Byte-neutral: 105/105 corpus + playground + fixture cells identical on
+  # gc/standalone/wasi (sha256 and length), and the five-cell
+  # `Function.prototype()` census identical on outcome, stage, helper presence
+  # AND binary sha256.
 func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/lower.ts::lowerIrFunctionBody
@@ -518,7 +544,37 @@ func-budget-allow:
   # `assertGlobalCapabilityRecord`, so the widening adds functions rather than
   # growing one. `assertFuncFamilyCapabilityRecord` grows by the `leading`
   # admit-and-compare and stays well under 300.
+  #
+  # 2026-09-03 F3-S3 (`functionPrototypeCall` policy). TWO grants, both
+  # measured against origin/main 37087534:
+  #
+  # * `integration.ts::makeFromAstResolver` 511 -> 516. Net +5 for a slice that
+  #   REMOVES a decision from this function: the arm's two live mode reads
+  #   (`ctx.standalone` / `ctx.wasi`) are gone — 14 -> 12 by exact count — and
+  #   what replaces them is one settled `const` plus the comment naming the
+  #   projection it shares with the freeze. Any addition to this function needs
+  #   a grant (its ceiling is its current size), so trimming the comment would
+  #   buy nothing.
+  # * `integration.ts::preregisterDynamicSupport` 299 -> 310, crossing the
+  #   300-LOC threshold. NOT avoidable the way F3-S1 avoided it: the recognition
+  #   is ALREADY extracted (`admitEmittedFunctionPrototypeCall`, the same shape
+  #   as F3-S1's `admitAttachedHostCallbackMaker` and F1-S4's
+  #   `attachedExternIsUndefinedArm`), and what remains inside the function is
+  #   three irreducible statements — the once-read frozen arm, the flag the
+  #   shared instruction walk sets, and the post-registration observation. The
+  #   observation cannot move into the walk: `observeNativeRuntimeProvider`
+  #   records a funcMap INDEX, and every import batch registered later in this
+  #   function shifts defined-func indices, so observing mid-scan would record a
+  #   stale one. Measured floor with all three comments deleted is 302 — still
+  #   over. Splitting the scan is #3399's work, not this slice's.
+  #
+  # `intrinsic-support.ts::prepareIrRuntimeManifest` was measured at 302 on a
+  # first cut and is NOT granted: the demand/policy rationale moved to
+  # `preparedFunctionPrototypeCallProvider`'s doc comment, which leaves the
+  # function at 291.
   - src/ir/integration.ts::resolveAndObserveCallableProvider
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::preregisterDynamicSupport
 ---
 
 # #3526 — IR-only R6: typed semantic runtime contract and frozen feature manifest
@@ -10479,3 +10535,106 @@ rationale, `LOC_GATE_BASE` re-checked). **Sequence behind #5297** (W2-A holds
 (#3521 `:953-956`): line-scoped edit at `:6598-6603` only, the same shape
 F1/F2 took — record the R2 lane's acknowledgement in the PR body as F3-S1 did.
 Claim slug `3526:f3-s3`, never the bare id.
+
+## 2026-09-03 F3-S3 implementation checkpoint — Opus lane
+
+Branch `claude/issue-3526-f3-s3-function-prototype-call`, base `origin/main`
+37087534 (after PR #5540/#5541). Shipped as planned; five divergences, each
+forced by a measurement, are recorded below.
+
+### What landed
+
+1. **`runtime-manifest.ts`** — `FunctionPrototypeCallPolicy { call: "native" |
+   "unsupported" }` + `FUNCTION_PROTOTYPE_CALL_POLICY_DISABLED`; the optional
+   `RuntimeManifestPolicy.functionPrototypeCall` and its required frozen twin;
+   feature `js.function.prototype.call`; ONE provider row
+   `native.js.function.prototype.call` =
+   `{ kind: "runtime-callable", symbol: "__function_prototype_call" }` with the
+   `() -> externref` signature; the `RUNTIME_FEATURE_SIGNATURES` entry that makes
+   the freeze verify that ABI; the policy-driven selection arm, whose refusal
+   names `function-prototype-call policy call=<arm>`.
+2. **`intrinsic-support.ts`** — the `functionPrototypeCallDemand` freeze input,
+   the demand-AND-policy request gate, and
+   `preparedFunctionPrototypeCallProvider`, shaped like
+   `preparedGeneratorNumberBoxProvider` and returning a `runtime` reference for
+   F1-S3's measured reason.
+3. **`integration.ts`** — `integrationFunctionPrototypeCallPolicy(ctx)`
+   (`ctx.standalone && !ctx.wasi`), settled once in the freeze's policy literal
+   AND once in `makeFromAstResolver`'s prologue; the resolver arm now reads that
+   settled value; `irFunctionPrototypeCallDemand`; and
+   `admitEmittedFunctionPrototypeCall`, the resolve-time backstop wired into the
+   shared `preregisterDynamicSupport` instruction scan, plus the post-registration
+   `observeNativeRuntimeProvider`.
+4. **Unchanged, as specified**: `from-ast.ts:7554-7566` and
+   `src/codegen/function-prototype-callable.ts`.
+
+### Open question 4 — settled as the plan proposed, for a second reason
+
+Build-time projection with a resolve-time backstop. The plan's argument (the
+consumer is pre-claim, so a post-freeze refusal would convert a clean build
+demote into a post-claim one) holds. Measurement added a second: on gc and wasi
+the *selector* already refuses the whole call shape, so the from-ast `null` arm
+is not merely unreachable-in-practice, it is unreachable **one stage earlier**
+than the plan assumed.
+
+### Divergences from the plan (each with the measurement that forced it)
+
+1. **The demote is `call-resolution-unsupported`@select, not
+   `method-call-unsupported`@build.** The plan predicted the from-ast arm's
+   refusal. Measured on base, all four non-native cells report
+   `call-resolution-unsupported`@select: `select.ts:9633` gates the shape on the
+   `standalone-function-prototype-call` backend capability
+   (`backend/legality.ts:81` — `target === "standalone" && !allowHostImports`),
+   which is the same lane predicate, applied first. `from-ast.ts:7554`'s
+   `!target` branch is therefore dead on every in-tree lane, before and after.
+2. **`wasi` carries the helper in its module (`helper=true`) even though the IR
+   arm is `unsupported`.** `ensureFunctionPrototypeCallHelper` admits
+   `standalone || wasi`, and the LEGACY arm
+   (`codegen/expressions/call-builtin-static.ts:381`) mints it there. The census
+   pins this rather than "fixing" it: it is base behaviour and out of scope.
+3. **The freeze requests the row on the demand AND the resolved policy.** The
+   plan described the row and the backstop but not the request gate. Requesting
+   on the demand alone would refuse a hand-built `unsupported` policy inside
+   `freeze()` with `provider-target-unavailable` — a GLOBAL preparation failure
+   via `runGlobalPreparation`'s `failEveryOwner` — which is precisely the
+   failure class the plan chose the resolve-time backstop to avoid. The gate is
+   what routes that case to `selection-preparation-mismatch`@resolve. In-tree
+   the two halves are inseparable (from-ast mints the call only under `native`),
+   so no lane's behaviour depends on it.
+4. **The resolved policy is built in `makeFromAstResolver`'s prologue, not
+   passed as a parameter.** The plan said "passed in with the resolver's other
+   pre-freeze inputs"; `supportsBackendCapability` — the resolver's other
+   pre-freeze input — is *constructed* in that same prologue. Constructing it
+   there keeps the R2-locked edit line-scoped: the resolver's signature and its
+   single call site are untouched.
+5. **One assertion in another slice's test had to move.**
+   `tests/issue-3526-string-boundary-const.test.ts:209` asserted that the
+   string-const rows are the catalogue's ONLY empty-parameter provider rows,
+   because "an empty-params row can only be a storage row". That implication is
+   now false: `%Function.prototype%.[[Call]]` ignores every argument (ES5
+   §15.3.4), so its helper is a genuine NULLARY CALL. The assertion was widened
+   to both families and the claim reworded; the F2-S8 signature identity checks
+   are untouched.
+
+### Measurements
+
+| Bar | Result |
+| --- | --- |
+| Census, 5 cells × {outcome, stage, helper presence, binary sha256} | identical base vs branch |
+| Corpus byte matrix (20 dogfood + 13 playground + 2 fixtures) × {gc, standalone, wasi} | 105 / 105 rows identical |
+| Mode reads (`ctx.standalone` / `ctx.wasi`) in `makeFromAstResolver` | 14 → 12 (−2, exactly the arm's pair) |
+| Tests (a)/(c)/(d) on base | red (the file cannot even collect — the new exports do not exist) |
+| Test (b) on base | 5 / 5 green — the census-unchanged guard |
+| Non-vacuity: revert the preregister scan alone | (c) goes red |
+| `tests/issue-3526-*`, `issue-3519-*`, `issue-5297-*`, `issue-5300-*` | 475 / 475 pass, 22 / 22 files |
+
+Budget: `+306` net src LOC and two `func-budget-allow` grants
+(`makeFromAstResolver` 511→516, `preregisterDynamicSupport` 299→310), both with
+dated rationales in this file's frontmatter.
+`intrinsic-support.ts::prepareIrRuntimeManifest` was measured at 302 on a first
+cut and is NOT granted — the rationale moved to a doc comment outside the
+function, leaving it at 291.
+
+R2 lock (#3521): the `integration.ts` edit is line-scoped — the policy literal,
+the resolver arm, `makeFromAstResolver`'s prologue, and the preregister scan —
+the same shape F3-S1 took.

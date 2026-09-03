@@ -84,7 +84,8 @@ export type RuntimeFeature =
   | StringCharCodeAtRuntimeFeature
   | StringConcatManyRuntimeFeature
   | StringConstRuntimeFeature
-  | HostCallbackWrapRuntimeFeature;
+  | HostCallbackWrapRuntimeFeature
+  | FunctionPrototypeCallRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -432,6 +433,40 @@ export const HOST_CALLBACK_WRAP_POLICY_DISABLED: HostCallbackWrapPolicy = Object
   wrap: "unsupported",
 });
 
+/**
+ * (#3526 F3-S3) The exact, already-resolved `%Function.prototype%.[[Call]]`
+ * policy of one preparation caller — family 3's second policy, and the first in
+ * the whole issue with exactly ONE admitting arm.
+ *
+ * `%Function.prototype%` is a callable intrinsic object whose `[[Call]]`
+ * discards every argument and returns `undefined` (ES5 §15.3.4). On a JS-host
+ * lane the host object is real and answers the call itself, so there is no seam
+ * to govern and no host arm to name: `call: "native"` — the compiler-owned
+ * zero-parameter `__function_prototype_call` helper — is the only value that
+ * admits anything. Everywhere else the seam is `unsupported`, and that is not a
+ * refusal of live traffic: the selector's `standalone-function-prototype-call`
+ * backend capability already declines the whole call shape on those lanes
+ * (measured: `call-resolution-unsupported`@select on gc and wasi), so no
+ * front-end arm ever asks.
+ *
+ * The policy therefore decides WHETHER the compiler owns the crossing, never
+ * how the helper is spelled or emitted: `ensureFunctionPrototypeCallHelper`
+ * stays the sole minter and `src/codegen/function-prototype-callable.ts` is
+ * untouched, which is why the migration moves no bytes.
+ */
+export interface FunctionPrototypeCallPolicy {
+  /**
+   * `native` admits the compiler-owned `__function_prototype_call` helper as
+   * the entry point. There is deliberately no `host` arm — see above.
+   */
+  readonly call: "native" | "unsupported";
+}
+
+/** Adapters that do not own the `%Function.prototype%` entry point resolve the arm to this. */
+export const FUNCTION_PROTOTYPE_CALL_POLICY_DISABLED: FunctionPrototypeCallPolicy = Object.freeze({
+  call: "unsupported",
+});
+
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
   readonly backend: RuntimeBackend;
@@ -495,6 +530,11 @@ export interface RuntimeManifestPolicy {
    * the frozen twin below always carries a concrete arm.
    */
   readonly hostCallbackWrap?: HostCallbackWrapPolicy;
+  /**
+   * (#3526 F3-S3) Omission resolves to {@link FUNCTION_PROTOTYPE_CALL_POLICY_DISABLED};
+   * the frozen twin below always carries a concrete arm.
+   */
+  readonly functionPrototypeCall?: FunctionPrototypeCallPolicy;
 }
 
 /** The frozen manifest's policy always carries an explicit resolved decision. */
@@ -511,6 +551,7 @@ export type FrozenRuntimeManifestPolicy = RuntimeManifestPolicy & {
   readonly stringConcatMany: StringConcatManyPolicy;
   readonly stringConst: StringConstPolicy;
   readonly hostCallbackWrap: HostCallbackWrapPolicy;
+  readonly functionPrototypeCall: FunctionPrototypeCallPolicy;
 };
 
 export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -770,6 +811,24 @@ export const HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type HostCallbackWrapRuntimeProviderId = (typeof HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS)[number];
 
+/**
+ * (#3526 F3-S3) Family 3's second feature. Like its F3-S1 sibling it carries no
+ * intrinsic instruction: the crossing is a plain `call` to a compiler-owned
+ * helper, so the demand arrives through `requestFeature` off the emitted-call
+ * population rather than off an instruction the manifest could resolve.
+ */
+export const FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES = Object.freeze(["js.function.prototype.call"] as const);
+export type FunctionPrototypeCallRuntimeFeature = (typeof FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES)[number];
+
+/**
+ * (#3526 F3-S3) ONE provider — the only admitting arm the seam has. A JS-host
+ * lane needs no row because the real host `%Function.prototype%` answers there.
+ */
+export const FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.js.function.prototype.call",
+] as const);
+export type FunctionPrototypeCallRuntimeProviderId = (typeof FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -785,6 +844,7 @@ export type RuntimeProviderId =
   | StringConcatManyRuntimeProviderId
   | StringConstRuntimeProviderId
   | HostCallbackWrapRuntimeProviderId
+  | FunctionPrototypeCallRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -1083,6 +1143,9 @@ export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature,
   "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "js.number.unbox": EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
   "js.generator.number-box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+  // (#3526 F3-S3) `%Function.prototype%.[[Call]]` ignores every argument, so
+  // the helper is zero-parameter and returns the `undefined` externref.
+  "js.function.prototype.call": EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acos": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.acosh": F64_UNARY_INTRINSIC_SIGNATURE,
@@ -1158,7 +1221,8 @@ function numberBoundaryProvider(
     | StringCharCodeAtRuntimeProviderId
     | StringConcatManyRuntimeProviderId
     | StringConstRuntimeProviderId
-    | HostCallbackWrapRuntimeProviderId,
+    | HostCallbackWrapRuntimeProviderId
+    | FunctionPrototypeCallRuntimeProviderId,
   feature:
     | NumberBoundaryRuntimeFeature
     | BooleanBoundaryRuntimeFeature
@@ -1171,7 +1235,8 @@ function numberBoundaryProvider(
     | StringCharCodeAtRuntimeFeature
     | StringConcatManyRuntimeFeature
     | StringConstRuntimeFeature
-    | HostCallbackWrapRuntimeFeature,
+    | HostCallbackWrapRuntimeFeature
+    | FunctionPrototypeCallRuntimeFeature,
   // (#3526 F2-S6) Optional: the batched many-arity family answers a free-form
   // intrinsic SYMBOL rather than a closed `IntrinsicId`, and `IntrinsicSignature`
   // is fixed-arity, so its two rows deliberately carry none.
@@ -1991,6 +2056,42 @@ function isHostCallbackWrapFeature(feature: RuntimeFeature): feature is HostCall
   return HOST_CALLBACK_WRAP_FEATURE_SET.has(feature);
 }
 
+/**
+ * (#3526 F3-S3) The `%Function.prototype%.[[Call]]` entry point's single arm.
+ *
+ * The symbol is spelled here rather than imported from
+ * `src/codegen/function-prototype-callable.ts` because `src/ir/` may not import
+ * `src/codegen/` (the `check:ir-layering` gate) — the same reason
+ * `GENERATOR_NUMBER_BOX_RUNTIME_PROVIDERS` spells `__box_number`. The helper
+ * itself is still minted by exactly one function
+ * (`ensureFunctionPrototypeCallHelper`), so the row NAMES the entry point and
+ * introduces no second registration path, no import and no new spelling — which
+ * is why the migration is byte-neutral on every lane.
+ */
+export const FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  numberBoundaryProvider(
+    "native.js.function.prototype.call",
+    "js.function.prototype.call",
+    EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+    { kind: "runtime-callable", symbol: "__function_prototype_call" },
+    [],
+  ),
+]);
+
+/** The exact provider the admitted `%Function.prototype%` arm selects, or
+ * `null` when the caller resolved it to unsupported. */
+function functionPrototypeCallProviderId(
+  policy: FunctionPrototypeCallPolicy,
+): FunctionPrototypeCallRuntimeProviderId | null {
+  return policy.call === "native" ? "native.js.function.prototype.call" : null;
+}
+
+const FUNCTION_PROTOTYPE_CALL_FEATURE_SET: ReadonlySet<string> = new Set(FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES);
+
+function isFunctionPrototypeCallFeature(feature: RuntimeFeature): feature is FunctionPrototypeCallRuntimeFeature {
+  return FUNCTION_PROTOTYPE_CALL_FEATURE_SET.has(feature);
+}
+
 /** Closed, canonically ordered catalogue used by production manifest builders. */
 export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   [
@@ -2008,6 +2109,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...STRING_CONCAT_MANY_RUNTIME_PROVIDERS,
     ...STRING_CONST_RUNTIME_PROVIDERS,
     ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,
+    ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -2026,6 +2128,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...STRING_CONCAT_MANY_RUNTIME_FEATURES,
   ...STRING_CONST_RUNTIME_FEATURES,
   ...HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
+  ...FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -2044,6 +2147,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS,
   ...STRING_CONST_RUNTIME_PROVIDER_IDS,
   ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS,
+  ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -2257,6 +2361,7 @@ export class RuntimeManifestBuilder {
     const stringConcatMany = policy.stringConcatMany ?? STRING_CONCAT_MANY_POLICY_DISABLED;
     const stringConst = policy.stringConst ?? STRING_CONST_POLICY_DISABLED;
     const hostCallbackWrap = policy.hostCallbackWrap ?? HOST_CALLBACK_WRAP_POLICY_DISABLED;
+    const functionPrototypeCall = policy.functionPrototypeCall ?? FUNCTION_PROTOTYPE_CALL_POLICY_DISABLED;
     // (#3526 F2-S6) The two concat policies are not independent: whatever the
     // pass fuses is lowered through the CONCATENATION authority, so a running
     // pass whose batch authority disagrees with `stringConcat.concat` would
@@ -2286,6 +2391,7 @@ export class RuntimeManifestBuilder {
       stringConcatMany: Object.freeze({ batch: stringConcatMany.batch }),
       stringConst: Object.freeze({ storage: stringConst.storage }),
       hostCallbackWrap: Object.freeze({ wrap: hostCallbackWrap.wrap }),
+      functionPrototypeCall: Object.freeze({ call: functionPrototypeCall.call }),
     });
     this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
     this.#hostCapabilityRecords = options.hostCapabilityRecords ?? RUNTIME_HOST_CAPABILITY_RECORDS;
@@ -2921,7 +3027,30 @@ export class RuntimeManifestBuilder {
                                 }
                                 return candidates.filter((candidate) => candidate.id === selectedId);
                               })()
-                            : candidates;
+                            : // (#3526 F3-S3) Family 3's second policy, and the
+                              // first in the issue with exactly ONE admitting
+                              // arm: `native` names the compiler-owned
+                              // `%Function.prototype%` entry point, and there is
+                              // no host arm because a JS-host lane's real
+                              // `Function.prototype` answers the call itself.
+                              // The refusal names `function-prototype-call` so
+                              // an operator can tell WHICH callable seam a
+                              // disabled adapter refused.
+                              isFunctionPrototypeCallFeature(feature)
+                              ? ((): readonly RuntimeProviderDefinition[] => {
+                                  const selectedId = functionPrototypeCallProviderId(
+                                    this.#policy.functionPrototypeCall,
+                                  );
+                                  if (selectedId === null) {
+                                    throw new RuntimeManifestInvariantError(
+                                      "provider-target-unavailable",
+                                      `runtime feature ${feature} is unavailable under function-prototype-call policy ` +
+                                        `call=${this.#policy.functionPrototypeCall.call}`,
+                                    );
+                                  }
+                                  return candidates.filter((candidate) => candidate.id === selectedId);
+                                })()
+                              : candidates;
     if (policyCandidates.length === 0) {
       throw new RuntimeManifestInvariantError(
         "missing-runtime-provider",
