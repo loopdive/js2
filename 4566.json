@@ -1,10 +1,11 @@
 {
   "id": "4566",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4566-standalone-module-init",
   "claimed_at": "2026-08-20T03:57:29Z",
-  "updated_at": "2026-08-20T03:57:29Z",
-  "write_id": "34514-pc2gvh60"
+  "updated_at": "2026-09-03T09:48:23Z",
+  "write_id": "15176-go3b49zo",
+  "released_at": "2026-09-03T09:48:23Z"
 }
