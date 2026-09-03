@@ -6,6 +6,7 @@ import { emitToBoolean } from "./coercion-engine.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
+  fillErrorStructMessageOwnPropArms,
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -28,6 +29,7 @@ import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -121,6 +123,7 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  privateMemberMangledName,
   type IrNestedClassFieldCallAdmission,
   type IrSourceId,
   type IrUnitKind,
@@ -366,6 +369,7 @@ import {
   unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
@@ -660,6 +664,7 @@ import {
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
+import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -1758,9 +1763,13 @@ function buildIrClassShapes(
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
-      if (!ts.isIdentifier(member.name)) continue; // computed names → defer
+      // (#3522 W1-A) `#priv()` is admitted under the SAME mangling the legacy
+      // side already uses (`resolveClassMemberName`, and the field
+      // re-derivation above). Computed names still defer: their key is not a
+      // compile-time constant, so no stable descriptor name exists.
+      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) continue;
       if (member.asteriskToken) continue; // generators → defer
-      const methodName = member.name.text;
+      const methodName = ts.isPrivateIdentifier(member.name) ? privateMemberMangledName(member.name) : member.name.text;
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
@@ -2518,6 +2527,16 @@ function recordObservedIrOutcomes(
     ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
     : ctx.irOutcomes;
   const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
+  // (#5263) Units the prepared-callable publication path already owns. Reconcile
+  // cannot see that preparation, so it reached `late-preparation-unsupported`
+  // and then upgraded it to a `body-emission-evidence` invariant over zero
+  // direct receipts — a row the filters below already discarded, while its
+  // diagnostic was reported unconditionally. Excluding the unit up front is
+  // what stops the diagnostic; the filters stay as the row-level guard.
+  const ownedElsewhereUnitIds = new Set<IrUnitId>([
+    ...(ctx.irProgramCallablePreparedUnitIds ?? []),
+    ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+  ]);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2528,6 +2547,7 @@ function recordObservedIrOutcomes(
     ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
     ...(ctx.irR2WithdrawalsByUnitId ? { r2WithdrawalsByUnitId: ctx.irR2WithdrawalsByUnitId } : {}),
     ...(ctx.irR2NotAttemptedReason ? { r2NotAttemptedReason: ctx.irR2NotAttemptedReason } : {}),
+    ...(ownedElsewhereUnitIds.size ? { ownedElsewhereUnitIds } : {}),
     report,
     existingOutcomes,
     target,
@@ -6494,6 +6514,10 @@ export function generateModule(
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
+    // (#5269 L) …and the one intrinsic `$Error_struct` field that is a spec OWN
+    // data property, so `hasOwnProperty(err, "message")` stops disagreeing with
+    // `err.message`. Deliberately narrow — see the fill's doc.
+    fillErrorStructMessageOwnPropArms(ctx);
     emitNativeErrorBoundaryBridge(ctx);
 
     // (#4160) Prototype-index store: fill the reserved `__protoidx_*` helper
@@ -6616,6 +6640,12 @@ export function generateModule(
     // install the identity-guarded standalone view after all competing MOP
     // prefixes have been finalized.
     fillClassObjectNameArms(ctx);
+
+    // (#5270 step 2) Fill the reserved `%Object.prototype%` carrier helper —
+    // `__getPrototypeOf` bakes a `call` to it for a null-`$proto` ordinary
+    // object, and the brand's lazy `$NativeProto` global only exists once the
+    // native-proto glue has been registered.
+    fillObjectProtoSingleton(ctx);
 
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
@@ -6771,6 +6801,9 @@ export function generateModule(
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
     profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
+    // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
+    // types. Nothing after this retypes a function or edits a body.
+    promoteTrampolineTailCalls(ctx);
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
@@ -11053,6 +11086,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // splice the native Error reader and publish the optional JS-boundary
     // adapter after native Error/string types are complete.
     profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
+    // (#5269 L) Multi-source parity with the single-source call above.
+    profilePhase("fill-error-struct-hasown-message", () => fillErrorStructMessageOwnPropArms(ctx));
     profilePhase("emit-native-error-boundary-bridge", () => emitNativeErrorBoundaryBridge(ctx));
     // (#4160) Prototype-index store — multi-source parity with the
     // generateModule call above (same after-the-shape-probing-fills ordering;
@@ -11236,6 +11271,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4770) Multi-source parity for the dynamic class-constructor `name`
     // property view; see the single-source placement above.
     profilePhase("fill-class-object-name-arms", () => fillClassObjectNameArms(ctx));
+
+    // (#5270 step 2) Multi-source parity for the `%Object.prototype%` carrier;
+    // see the single-source placement above.
+    profilePhase("fill-object-proto-singleton", () => fillObjectProtoSingleton(ctx));
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /
@@ -12491,6 +12530,20 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       tsType.getCallSignatures().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)
     ) {
+      return { kind: "externref" };
+    }
+
+    // (#5269 R3-2) An object-literal type carrying `[Symbol.toPrimitive]`.
+    // `objectLiteralForcesHostPath`'s H-1 arm builds that literal as an open
+    // `$Object`; this is where every consumer of the value learns the same
+    // fact. Without it only the three syntactic lockstep callers agreed, so an
+    // alias / property slot / array element / parameter kept the inferred
+    // closed struct and the open object null-cast into it. Standalone-only, in
+    // lockstep with the value-side gate. See `typeTakesToPrimitiveOpenPath` —
+    // it answers for BOTH producer arms: the H-1 member the checker propagates
+    // into every derived type, and the H-2 mutation case, which leaves no
+    // member and is carried by the literal type's own identity.
+    if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
 

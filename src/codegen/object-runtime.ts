@@ -5305,7 +5305,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "call", funcIdx: objVecNewIdx },
                 { op: "local.set", index: L_ARGS },
                 { op: "local.get", index: L_ARGS },
+                // (#5270 step 8) §7.1.1.1 step 2.b passes the HINT STRING, and
+                // an absent PreferredType is the string `"default"` (step 1),
+                // never the null the internal hint slot uses to encode it.
+                // Passing local 1 raw made a user `@@toPrimitive` method see
+                // `null` where the spec mandates `"default"` (probe p02 logged
+                // `LnullRnull`).
                 { op: "local.get", index: 1 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: stringExtern("default"),
+                  else: [{ op: "local.get", index: 1 }],
+                },
                 { op: "call", funcIdx: objVecPushIdx },
                 { op: "local.get", index: L_METHOD },
                 { op: "local.get", index: 0 },

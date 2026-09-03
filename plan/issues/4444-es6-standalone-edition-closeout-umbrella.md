@@ -18,6 +18,76 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-03 census — 9,948 / 11,704 (85.0%), full residual coverage
+
+Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched
+2026-09-03 08:13 UTC (row timestamps 09:07 UTC, `oracle_lane: "honest"`, i.e.
+post-#5461 so every number is leak-checked), edition map
+`website/public/benchmarks/results/test262-file-editions.json` (`ES2015`).
+Reproduce with `.tmp/census0903/census.mjs`; per-cluster TSVs (path, status,
+truncated error) land in `.tmp/census0903/`.
+
+**ES2015 standalone: 9,948 pass / 11,704 (85.0%) — 1,756 non-pass**
+(1,364 fail · 391 compile_error · 1 compile_timeout), up from **9,905 / 11,704
+(84.6%)** at the 2026-09-02 census: **+43 rows**, from PR #5505 (statements +
+language semantics r2, #5271) and the other lanes that landed overnight.
+
+Note the clustering here is the one in `.tmp/census0903/census.mjs`, which
+differs from the 09-02 census: `class` and `generators` are pulled out of
+`language/expressions` and `language/statements` first, so `expressions` here
+collects what is left of `language/expressions/*`. Compare cluster *sizes*
+across censuses only via that script, not against the 09-02 table.
+
+| Cluster | rows | fail | CE | owner / state |
+| --- | ---: | ---: | ---: | --- |
+| expressions | 244 | 147 | 96 | #5270 — lane complete, in validation |
+| typedarray | 244 | 226 | 18 | #5194 — r2 landed (#5479), r3 planned 09-03 |
+| other built-ins | 197 | 178 | 19 | #5269 — lane complete, in round-3 review |
+| class | 191 | 135 | 56 | #5195 — r2 landed (#5489), r3 planned 09-03 |
+| proxy + reflect | 157 | 133 | 24 | #5196 — **never dispatched**, r3 planned 09-03 |
+| regexp | 140 | 130 | 10 | #5198 codex lane (checkpoint PR #5393) |
+| array + object | 137 | 127 | 10 | #5268 — r2 partial (#5494), r3 planned 09-03 |
+| generators | 121 | 75 | 46 | #680 / #2864 / #1691 codex lane (PR #5063 held) |
+| promise | 118 | 68 | 50 | #5197 — slices B–D landed (#5454), r3 planned 09-03 |
+| for-of + collections | 101 | 65 | 36 | #5267 — r2 landed (#5458), r3 planned 09-03 |
+| statements + lang | 75 | 55 | 20 | #5271 r2 landed (#5505) — residual unowned |
+| module-code | 25 | 19 | 6 | #4759 codex closeout lane |
+| rest | 6 | 6 | 0 | unowned |
+
+The cluster sizes sum to exactly 1,756, so **every non-pass row is accounted
+for**: 948 in the six lanes planned on 09-03, 441 in the two waves in flight,
+286 in codex lanes, and 81 (statements + lang residual, rest) still unowned.
+
+**The 391 compile_errors are the harder half.** They are not spread evenly —
+`expressions` (96), `class` (56), `promise` (50), `generators` (46) and
+`for-of + collections` (36) hold 71% of them, and a compile_error is a refusal
+to emit rather than a wrong answer, so it needs a feature, not a fix. Any plan
+that counts rows without splitting fail from CE is over-promising.
+
+### Cross-cutting blockers — 281 rows no cluster lane can fix
+
+Three defects are not clusters at all: they are single missing capabilities
+whose rows are scattered across other lanes' residual lists. A cluster plan
+that counts them is promising rows it cannot deliver.
+
+| blocker | issue | rows | where they sit |
+| --- | --- | ---: | --- |
+| standalone native generator lowering | #2864 (claimed, live) | 233 | expressions 91 · generators 46 · class 45 · for-of 35 · statements 13 · module-code 2 · proxy 1 |
+| `Reflect.construct` with a distinct NewTarget | #3371 (design checkpoint PR #5400) | 33 | proxy+reflect 11 · typedarray 11 · other built-ins 6 · expressions 2 · promise 2 · array+object 1 |
+| `Reflect.set` with an explicit receiver | #2046 (design checkpoint PR #5397) | 15 | proxy+reflect 7 · typedarray 6 · statements 2 |
+
+**281 rows, 16% of the residual.** Net of them, the six lanes planned today can
+claim at most: typedarray 227, class 146, proxy+reflect 138, array+object 136,
+promise 116, for-of+collections 66. Two caveats on that arithmetic — the 44
+`env::Promise_*` leaks inside the promise cluster and the 3 RegExp-engine
+refusals inside the regexp cluster are *those lanes' own scope*, so they are
+not subtracted; and #3371/#2046 are the proxy+reflect lane's own subject
+matter, held at design checkpoints rather than blocked elsewhere, so #5196's
+plan should treat its 18 as dependent-on-design rather than out of scope.
+
+Reproduce the split with the predicate in the commit that added this section;
+the generator rows are isolated in `.tmp/census0903/_gen.tsv`.
+
 ## 2026-09-02 post-wave census — 9,905 / 11,704 (84.6%), +232 rows in one day
 
 Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched

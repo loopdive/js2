@@ -63,6 +63,12 @@ loc-budget-allow:
   # refusal-minted native-proto meta types) and its 11-line docstring in the
   # context type; the field is read at finalize by the dyn-view walk.
   - src/codegen/context/types.ts
+  # 2026-09-03 r3 plan — dyn-view method resolution + per-method native
+  # helpers (see "Implementation Plan — r3 (2026-09-03)" → "Budget rationale").
+  # Two NEW files carry the mechanism so dataview-native.ts / call-receiver-
+  # method.ts do not absorb ~1,000 lines; the rest are splices into existing
+  # ladders (prototype walk, closure bodies, one finalize call, species /
+  # re-validate / ctor arms, 2-arg mapper, Symbol pre-test, $IterRec proto arm).
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -104,6 +110,19 @@ func-budget-allow:
   # consult now hands the accessor the explicit receiver (4 lines: the call
   # moved below `explicitReceiverLocal` and gained that argument).
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  # 2026-09-03 r3 plan — wasm-body emitters in the two new files exceed the
+  # 300-line ceiling the way ensureTaDynSetHelper does; the existing functions
+  # below gain one spliced arm each (rationale per step in the r3 section).
+  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynHofHelper
+  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynSortHelper
+  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynIteratorHelper
+  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynJoinHelper
+  - src/codegen/dataview-native.ts::emitTaDynSpeciesCreate
+  - src/codegen/dataview-native.ts::ensureTaDynFillHelper
+  - src/codegen/dataview-native.ts::ensureTaDynCopyWithinHelper
+  - src/codegen/dataview-native.ts::ensureTaFromArrayLikeHelper
+  - src/codegen/expressions/call-receiver-method.ts::tryEmitTaStaticOfFrom
+  - src/codegen/iterator-native.ts::ensureNativeArrayFromMapped
 ---
 
 # #5194 — typedarray r2: cluster and fix the 461 residual failures

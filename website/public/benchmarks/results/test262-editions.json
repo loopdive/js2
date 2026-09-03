@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7946,
-    "fail": 1056,
+    "pass": 7947,
+    "fail": 1055,
     "ce": 27,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9906,
-    "fail": 1737,
+    "pass": 9910,
+    "fail": 1733,
     "ce": 61,
     "skip": 0,
     "total": 11704,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 501,
-        "fail": 107,
+        "pass": 505,
+        "fail": 103,
         "ce": 1,
         "skip": 0,
         "total": 609,
-        "pct": 82
+        "pct": 83
       },
       {
         "name": "arrow-function",

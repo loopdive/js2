@@ -349,11 +349,14 @@ describe("#3522 dormant nested-class field-call planning", () => {
       },
     ],
     [
-      "overloaded target",
+      // (#5300) A COMPATIBLE overload set is now an admissible target — see the
+      // dedicated proof test below. A set whose signatures diverge still is not.
+      "divergently overloaded target",
       {
         "/repo/entry.ts": POSITIVE_SOURCE.replace(
-          "function seed(value: number): number",
-          "function seed(value: number): number; function seed(value: number): number",
+          "function seed(value: number): number { return value + 2; }",
+          "function seed(value: number): number; function seed(value: number, extra: number): number;" +
+            " function seed(value: number, extra?: number): number { return value + 2 + (extra ?? 0); }",
         ),
       },
     ],
@@ -380,5 +383,23 @@ describe("#3522 dormant nested-class field-call planning", () => {
     expect(
       planIrNestedClassFieldCalls({ identityContext: graph.context, resolver: graph.resolver }).entries,
     ).toHaveLength(0);
+  });
+
+  // (#5300) The resolver used to refuse EVERY overload set, so a compatible one
+  // was listed above as a rejected proof. It is admissible now: the set has one
+  // bodied implementation and every signature has the same lowering shape, so
+  // the field call resolves to the same single physical callable a
+  // non-overloaded `seed` would.
+  it("proves a field call against a compatible overload set", () => {
+    const graph = fixture({
+      "/repo/entry.ts": POSITIVE_SOURCE.replace(
+        "function seed(value: number): number",
+        "function seed(value: number): number; function seed(value: number): number",
+      ),
+    });
+    expect(getIrNestedClassFieldCallInventoryCandidates(graph.context.inventory)).toHaveLength(1);
+    expect(
+      planIrNestedClassFieldCalls({ identityContext: graph.context, resolver: graph.resolver }).entries,
+    ).toHaveLength(1);
   });
 });

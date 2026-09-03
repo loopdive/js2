@@ -325,6 +325,7 @@ import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
   preparedHostCallbackWrapProvider,
+  preparedFunctionPrototypeCallProvider,
   preparedStringCharCodeAtProvider,
   preparedStringCompareProvider,
   preparedStringConcatManyProvider,
@@ -354,6 +355,7 @@ import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtim
 import type {
   BooleanBoundaryPolicy,
   ExternIsUndefinedPolicy,
+  FunctionPrototypeCallPolicy,
   GeneratorNumberBoxPolicy,
   HostCallbackWrapPolicy,
   NumberBoundaryPolicy,
@@ -1125,6 +1127,34 @@ function integrationHostCallbackWrapPolicy(ctx: CodegenContext): HostCallbackWra
 }
 
 /**
+ * (#3526 F3-S3) Resolve the `%Function.prototype%` CALL seam's policy, once,
+ * before the freeze.
+ *
+ * The truth table is the resolver arm's own and is reproduced EXACTLY:
+ * `ctx.standalone && !ctx.wasi`. Two neighbouring tables look like it and are
+ * deliberately not folded in:
+ *
+ *  - `ensureFunctionPrototypeCallHelper` mints the helper under the WIDER
+ *    `standalone || wasi`, because the LEGACY direct-AST path emits this call
+ *    on the WASI lane too. Helper presence is therefore not evidence of IR
+ *    support — inferring support from a minted symbol is exactly what F1-S1
+ *    refused — and the measured base census confirms the split: WASI carries
+ *    `__function_prototype_call` while its IR unit is refused.
+ *  - the selector's `standalone-function-prototype-call` backend capability
+ *    (`ir/backend/legality.ts`) answers a DIFFERENT question one stage earlier
+ *    — may Phase 1 select this call shape at all — and on every in-tree lane it
+ *    refuses first, which is why this arm's `unsupported` value is unreachable
+ *    in production and the preregister admission below is an invariant
+ *    backstop rather than a live refusal.
+ *
+ * `ctx.fast` is NOT read here and must not be: it is a different axis, and the
+ * census is identical across `{compat, fast}` in both target cells.
+ */
+function integrationFunctionPrototypeCallPolicy(ctx: CodegenContext): FunctionPrototypeCallPolicy {
+  return Object.freeze({ call: ctx.standalone && !ctx.wasi ? ("native" as const) : ("unsupported" as const) });
+}
+
+/**
  * (#3526 F3-S1) Which host callback MAKER arms any of `fns` crosses.
  *
  * Read off `closure.new`, which is the ONLY lane-free place both arms are
@@ -1159,6 +1189,32 @@ function irHostCallbackWrapDemand(fns: readonly IrFunction[]): {
     for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
   }
   return { host, nativeDispatch };
+}
+
+/**
+ * (#3526 F3-S3) Whether any of `fns` calls the `%Function.prototype%` helper.
+ *
+ * Exactly the enumeration the preregister scan below repeats, so a demand the
+ * freeze requests can never be one the admission then refuses. The seam carries
+ * no intrinsic instruction — from-ast emits a plain zero-arg `call` on the
+ * runtime symbol — so this is read off `call`, the only place the use is
+ * visible before the freeze.
+ */
+function irFunctionPrototypeCallDemand(fns: readonly IrFunction[]): boolean {
+  let used = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "call" || instr.target.binding.kind !== "runtime") return;
+          if (instr.target.binding.symbol === FUNCTION_PROTOTYPE_CALL_HELPER) used = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return used;
 }
 
 /**
@@ -1374,6 +1430,7 @@ function prepareBuiltFnRuntimeManifest(
       stringConcatMany: integrationStringConcatManyPolicy(ctx),
       stringConst: integrationStringConstPolicy(ctx),
       hostCallbackWrap: integrationHostCallbackWrapPolicy(ctx),
+      functionPrototypeCall: integrationFunctionPrototypeCallPolicy(ctx),
     },
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
@@ -1418,6 +1475,9 @@ function prepareBuiltFnRuntimeManifest(
     // (which emits no maker call at all) would freeze no row and the manifest
     // would not be the authority that admits its dispatcher.
     hostCallbackWrapDemand: irHostCallbackWrapDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F3-S3) Same scan the preregister admission repeats — see
+    // `irFunctionPrototypeCallDemand`.
+    functionPrototypeCallDemand: irFunctionPrototypeCallDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -5736,6 +5796,20 @@ function resolveModuleBindingGlobal(
       storageType = { kind: "i32" };
       break;
     case "dynamic":
+      // (#4208 S2 / #5289) The dual-LANE arm, and the exact counterpart of the
+      // `string` arm below. The IR type stays the lane-AGNOSTIC `dynamic`; what
+      // differs per lane is only the legacy GLOBAL's ValType, and BOTH sides of
+      // that boundary derive it from `ctx.fast` alone:
+      //   compatibility → `(mut externref)`
+      //   fast          → `(mut (ref null $AnyValue))`
+      // `resolveWasmType`'s `Any | Unknown` branch allocates the slot;
+      // `resolveIrDynamicCarrierType` resolves the IR one. Measured agreement,
+      // 2026-09-03, `(global $__mod_a …)` out of the emitted WAT with the same
+      // type index on both sides: gc 34/34, standalone 45/45. Naming the ACTIVE
+      // lane's carrier keeps `storageMatches` below a real agreement test — a
+      // lane whose slot was widened for some other reason (a module `var`, which
+      // the admission arm excludes by construction) disagrees loudly instead of
+      // being reinterpreted.
       type = irDynamic();
       storageType = resolveIrDynamicCarrierType(ctx);
       break;
@@ -6500,6 +6574,8 @@ function makeFromAstResolver(
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }), capability);
+  // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
+  const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
     hostIndirectEvalTarget() {
@@ -6582,7 +6658,7 @@ function makeFromAstResolver(
       return irImportFuncRef("env", "__defineProperty_desc");
     },
     functionPrototypeCallTarget() {
-      if (!ctx.standalone || ctx.wasi) return null;
+      if (functionPrototypeCall.call !== "native") return null;
       return ensureFunctionPrototypeCallHelper(ctx) === undefined
         ? null
         : irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER);
@@ -8666,6 +8742,36 @@ function admitAttachedHostCallbackMaker(
   );
 }
 
+/**
+ * (#3526 F3-S3) Admit a scanned `%Function.prototype%` helper call against the
+ * frozen arm, and bind the symbol the arm names.
+ *
+ * A call that reaches emission without a `native` arm behind it is refused
+ * rather than lowered. In-tree that refusal is UNREACHABLE — the selector's
+ * `standalone-function-prototype-call` backend capability already demoted the
+ * unit at Phase-1 SELECT, one stage before the from-ast arm even asks — so this
+ * is the invariant backstop for a hand-built policy or an adapter that froze the
+ * seam off, exactly like `admitAttachedHostCallbackMaker` above.
+ */
+function admitFunctionPrototypeCall(
+  ctx: CodegenContext,
+  used: boolean,
+  arm: ReturnType<typeof preparedFunctionPrototypeCallProvider>,
+): void {
+  if (!used) return;
+  if (arm?.arm !== "native") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `ir/integration: ${FUNCTION_PROTOTYPE_CALL_HELPER} has no native arm in the frozen manifest ` +
+        `(arm=${arm?.arm ?? "none"})`,
+    );
+  }
+  // (#3526 F1-S3) Bind the symbol through the observation path, which admits
+  // `runtime` refs only.
+  observeNativeRuntimeProvider(ctx, arm.symbol);
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -8673,6 +8779,9 @@ function preregisterDynamicSupport(
 ): void {
   // (#3526 F3-S1) The frozen maker arm, read ONCE — see `admitAttachedHostCallbackMaker`.
   const hostCallbackWrapArm = preparedHostCallbackWrapProvider(prepared);
+  // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
+  const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
+  let usesFunctionPrototypeCall = false;
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
@@ -8781,6 +8890,11 @@ function preregisterDynamicSupport(
               case "__extern_is_undefined":
                 usesNativeExternIsUndefined = true;
                 break;
+              // (#3526 F3-S3) The `%Function.prototype%` seam's own use — see
+              // the admission after this scan.
+              case FUNCTION_PROTOTYPE_CALL_HELPER:
+                usesFunctionPrototypeCall = true;
+                break;
               case "__new_Boolean":
                 primitiveWrapperConstructors.add("Boolean");
                 break;
@@ -8849,6 +8963,7 @@ function preregisterDynamicSupport(
       flushLateImportShifts(ctx, null);
     }
   }
+  admitFunctionPrototypeCall(ctx, usesFunctionPrototypeCall, functionPrototypeCallArm);
   if (usesRuntimeUnboxNumber) addUnionImports(ctx);
   // (#4461) Reserve the native undefined predicate and the `$Map` adapters
   // BEFORE Phase 3. `ensureObjectRuntime` / `ensureIrNativeMapAdapters` are
