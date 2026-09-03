@@ -1,10 +1,11 @@
 {
   "id": "5131",
   "assignee": "ttraenkler/codex-es2015-strict-spread-iterator",
-  "requested_by": "ttraenkler/codex-es2015-strict-spread-iterator",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/5131-es2015-strict-spread-iterator",
   "claimed_at": "2026-08-28T10:06:33Z",
-  "updated_at": "2026-08-28T10:06:33Z",
-  "write_id": "2883-5p5539do"
+  "updated_at": "2026-09-03T09:52:45Z",
+  "write_id": "22952-ki2renuz",
+  "released_at": "2026-09-03T09:52:45Z"
 }
