@@ -262,7 +262,15 @@ export function readSeed(): number { return seed; }
   // tests are named "does not demote ..." — asserting the masked code would turn
   // a red flag into a green lie. They are left stating what they want, visibly
   // not running, so the rot stays findable. See the #3523 checkpoint note.
-  it.skip("counts only executable overload implementations and ignores ambient signatures", async () => {
+  //
+  // The four still-skipped members of that group are below. The overload test
+  // that follows is NOT one of them: re-measured for #5300 its cause was a
+  // different one — the direct call to an overloaded callee got no AST-site
+  // lowering plan, because the resolver refused every overload set
+  // (`imported-functions.ts` `targetForSymbol`, `functions.length !== 1`), so
+  // the already-claimed caller demoted post-claim and the compile FAILED with
+  // `unpatched-slot`. #5300 admits the set; the test runs again.
+  it("counts only executable overload implementations and ignores ambient signatures", async () => {
     const result = await compile(
       `
 declare function ambient(value: number): number;
