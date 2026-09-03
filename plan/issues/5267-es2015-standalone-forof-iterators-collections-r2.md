@@ -4,7 +4,7 @@ title: "ES2015 standalone: for-of + iterator prototypes + collections — r2 res
 status: in-progress
 sprint: current
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
@@ -48,6 +48,17 @@ loc-budget-allow:
   - src/codegen/array-methods.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+  # 2026-09-03 r3 plan (files not already granted above): R3-8 adds a
+  # boxed-number arm to the standalone strict-eq helper; R3-2 seeds own `next`
+  # closures on the Map/Set iterator prototypes (new brands, own-props arms);
+  # R3-4(d) touches the finally re-inline; R3-6 exports the deleted-@@iterator
+  # guard for the for-of array path. Growth, not refactor — this change-set only.
+  - src/codegen/any-eq-helpers.ts
+  - src/codegen/native-proto-own-props.ts
+  - src/codegen/builtin-brands.ts
+  - src/codegen/statements/exceptions.ts
+  - src/codegen/statements/destructuring.ts
+  - src/codegen/set-runtime.ts
 func-budget-allow:
   # 2026-09-01: each is a kind-dispatch / arm-ladder function that gains one
   # more arm in the shape its existing arms already have (see the step that
@@ -68,6 +79,21 @@ func-budget-allow:
   - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
   - src/codegen/statements/for-of-destructuring.ts::compileForOfIteratorAssignDestructuring
   - src/codegen/index.ts::generateModule
+  # 2026-09-03 r3 plan: each gains one arm / one guard in the shape its existing
+  # arms already have (the R3 step that names it says which). `ensureMapHelpers`
+  # owns the `__map_iter_next` body (sticky exhaustion, R3-1c);
+  # `emitNativeCollectionCtorIterableDrive` gains the null→undefined normalize +
+  # the adder-branch move (R3-3); `compileForOfArray` gains the deleted-flag
+  # guard (R3-6); `getOrRegisterIterRecType` gains the `nextMethod` field
+  # (R3-4b); `registerAnyStrictEqAndComparisonHelpers` gains the boxed-number
+  # arm (R3-8); `makeCollectionGlue` gains the `@@1` alias (R3-7a).
+  - src/codegen/map-runtime.ts::ensureMapHelpers
+  - src/codegen/map-runtime.ts::tryCompileNativeMapMethodCall
+  - src/codegen/expressions/new-super.ts::emitNativeCollectionCtorIterableDrive
+  - src/codegen/statements/loops.ts::compileForOfArray
+  - src/codegen/iterator-native.ts::getOrRegisterIterRecType
+  - src/codegen/any-eq-helpers.ts::registerAnyStrictEqAndComparisonHelpers
+  - src/codegen/array-object-proto.ts::makeCollectionGlue
 ---
 
 # #5267 — ES2015 standalone: for-of + iterator prototypes + collections (r2)
@@ -930,3 +956,743 @@ keeping `Map/iterator-item-*-entry-returns-abrupt.js` from wedging a shard.
 
 **Steps C, D, E, F, G are untouched** — the plan above is unchanged and still
 accurate for them; only cluster B's residual count moved (17 → 5).
+
+## Implementation Plan — r3 (2026-09-03)
+
+Planner: Fable lane, read-only pass over main `bee5ddd535` (= origin/main at
+09:00 UTC). Implementer: an Opus agent in its own worktree, from this text.
+
+### Census and root-cause groups (101 residual rows)
+
+Source: `.tmp/census0903/for-of+collections.tsv` (standalone baseline rows
+stamped 2026-09-03 09:07 UTC × `test262-file-editions.json` ES2015). Grouped by
+the ERROR column, not by path:
+
+| # | Root cause | Rows | Error signature | Verdict |
+|---|---|---|---|---|
+| G1 | generator carrier: `env::__create_generator …` host imports | 23 | `standalone target emitted host imports: env::__create_generator, …` | OUT (#680 / #2864) |
+| G2 | generator carrier: native lowering refuses non-numeric yields | 12 | `native generator lowering currently supports only sequential numeric yields` | OUT (#680) |
+| G3 | `%Map/SetIteratorPrototype%.next` not materialised: `iterator.next` reads `undefined` | 10 | `Cannot read properties of undefined (reading 'call')` | **R3-2** |
+| G4 | same defect, metadata form (`MapIteratorProto.next` is `undefined` → gOPD of undefined) | 4 | `Cannot convert undefined or null to object` (`*IteratorPrototype/next/{name,length}.js`) | **R3-2** |
+| G5 | `map[Symbol.iterator]()` yields a record whose `.next()` is **null** (`map.keys()/entries()` work) | 4 | `Cannot access property on null or undefined at 33x:18` (`*IteratorPrototype/next/iteration{,-mutable}.js`) | **R3-1** |
+| G6 | exhausted `$MapIter` revived by a later `add` | 1 | `Exhausted result value (repeated request) … «4» … «undefined»` | **R3-1c** |
+| G7 | ctor drive: `Get(entry,"0")` on an entry without index `0` yields a NULL key → trap in the adder | 2 | `dereferencing a null pointer [in __closure_75() …]` | **R3-3a** |
+| G8 | ctor drive: CanBeHeldWeakly TypeError fires BEFORE a user-patched `set`/`add` | 2 | `Expected a Test262Error but got a TypeError` (`*-close-after-{set,add}-failure.js`) | **R3-3b** |
+| G9 | module-scope array loses identity when stored into a property → the accessor overlay is not seen → 4M-step ceiling TypeError (Map) / string-key TypeError (WeakMap) | 4 | `Expected a Test262Error but got a TypeError` (`iterator-item-{first,second}-entry-returns-abrupt.js` ×2 kinds) | DEFERRED (pre-existing identity gap, see r2 "Hang trap") |
+| G10 | for-of statement protocol (close on next/value abrupt; `next` re-read; non-Object result; finally re-inline; overlay accessor) | 6 | mixed (`Iterator is not closed`, `Should not access the next method after the iteration prologue`, `Expected a TypeError…no exception`, `«2» «1»`) | **R3-4** |
+| G11 | assignment-pattern head drive is eager (`__array_from_iter_n` up front) | 12 | `Expected SameValue(«1», «0»)` / `(«11», «0/1»)` (nextCount/returnCount), `«[object Object]», «12»`, elision/computed-key no-throw | **R3-5** |
+| G12 | `delete Array.prototype[Symbol.iterator]` not honoured by the for-of ARRAY fast path | 3 | `Expected a TypeError to be thrown but no exception was thrown at all` (`*-ary-init-iter-get-err-array-prototype.js`) | **R3-6** |
+| G13 | collection reflection: `@@iterator` own-ness on Map/Set proto (2), `size` gOPD (2), mixed-union `map.get` (1) | 5 | `Symbol() should be an own property` / `Cannot convert undefined or null to object` / `«NaN», «"valid"»` | **R3-7** |
+| G14 | `Ctor[Symbol.species]` write/delete/gOPD on a builtin ctor | 2 | `Expected obj[5] NOT to be writable, but was.` | DEFERRED (family: `Array/Symbol.species/symbol-species.js` fails identically — one owner for the species family) |
+| G15 | two boxed numbers from different producers are `!==` under `assert.sameValue` | 3 | `Expected SameValue(«0», «0») to be true` (`for-of/map{,-expand,-contract-expand}.js`) | **R3-8** |
+| G16 | anonymous `class` default in an OBJECT assignment pattern has no own `name` | 1 | `name should be an own property` (`dstr/obj-id-init-fn-name-class.js`) | **R3-9** |
+| G17 | realms (`$262.createRealm`) | 5 | `Cannot access property on null or undefined at 345:44` / `330:35` (4× `proto-from-ctor-realm.js`, `Symbol/iterator/cross-realm.js`) | OUT (#3371) |
+| G18 | parser: `[ x = 'x' in {} ]` in a for-of head | 1 | `',' expected.` | OUT (parser) |
+| G19 | well-known symbols are not own properties of the `Symbol` ctor | 1 | `iterator should be an own property` (`Symbol/iterator/prop-desc.js`) | OUT — the same defect fails all 12 `Symbol/*/prop-desc.js` rows in `.tmp/census0903/other-builtins.tsv`; one owner there |
+
+Totals: **53 claimed** (R3-1 5, R3-2 14, R3-3 4, R3-4 6 [4 firm + 2 stretch],
+R3-5 12, R3-6 3, R3-7 5, R3-8 3, R3-9 1) · **48 deferred / out of scope**
+(35 generator, 5 realm, 1 parser, 1 Symbol family, 2 species, 4 identity).
+
+### Verified on main (2026-09-03, load 1.2–3.1, in-process)
+
+```
+npx tsx scripts/run-test262-paths.mts .tmp/r3-5267/sample.txt --standalone
+=== counts ===  { fail: 14 }
+```
+
+14 rows, one per group (G3 `MapIteratorPrototype/next/this-not-object-throw-keys.js`,
+G4 `SetIteratorPrototype/next/length.js`, G5 `MapIteratorPrototype/next/iteration.js`,
+G7 `Map/iterator-items-are-not-object.js`, G8 `WeakMap/iterator-close-after-set-failure.js`,
+G10 `for-of/iterator-next-error.js` + `iterator-next-reference.js`, G11
+`dstr/array-elem-iter-thrw-close.js` + `array-rest-lref-err.js`, G13
+`Map/prototype/Symbol.iterator.js` + `Map/prototype/size/size.js`, G15
+`for-of/map.js`, G16 `dstr/obj-id-init-fn-name-class.js`, G19
+`Symbol/iterator/prop-desc.js`) — every one still fails with the baseline's
+error text (full output: `.tmp/r3-5267/sample.out`). Nothing in this cluster
+was fixed by what merged since the baseline; no group is dropped.
+
+Minimised repros, one compile each via `npx tsx .tmp/probe-one.mts <file>`
+(`.tmp/r3-5267/probes/`, results in `run1.out`):
+
+| probe | finding |
+|---|---|
+| `b1.js` | `map.keys().next()` → object; `map[Symbol.iterator]()` → non-null record; **its `.next()` → `null`** |
+| `b2.js` | `var f = map[Symbol.iterator]; f.call(map)` → **`null` record** (the `__mapset_symbol_iterator` closure route is broken too) |
+| `b3.js` | inline `map[Symbol.iterator]().next()` → `null` — so the STATIC `@@iterator` arm's product (`__iterator(map)`) is the bad producer, not the variable |
+| `a1.js` | `var z = [['a',1], 2]; z.length` OK; **`new Map([{}, 2])` traps** (`dereferencing a null pointer`) before the TypeError for `2` — an entry object WITHOUT index 0 yields a null key |
+| `f4.js` | **`[0,'a'][0] === a[0]` is FALSE at module scope** with `var a = [0,'a']` — G15 is not for-of specific; it is `===` on two `$BoxedNumber`s from different producers |
+| `f3.js` | array-pattern default `[ c2 = class {} ]` → `c2.name === 'c2'` OK; object-pattern default `{ cls = class {} }` → **`cls.name === undefined`** |
+| `g1.js` | `Object.getOwnPropertyDescriptor(Map.prototype,'size')` → object, `typeof d.get === 'function'` OK; **`typeof d.set` throws `Cannot convert undefined or null to object`** |
+
+### Method rules for every step
+
+- Type queries through `ctx.oracle` (`src/checker/oracle.ts`) — never
+  `ctx.checker.getTypeAtLocation` in NEW code (the oracle-ratchet gate). Where
+  a step needs the receiver's TS symbol name (Map/Set), use the oracle's
+  symbol/name query; where it needs the compiled `ValType` (a `$Map` struct
+  check), read the compiled result, not the checker.
+- Fresh `Instr` objects per arm (#2169b); reserve-then-fill for anything filled
+  at finalize (#1719/#2043); `ensureLateImport` + `flushLateImportShifts`
+  BEFORE resolving any funcIdx that will be baked.
+- Every step below is a separate commit, gates chained before each
+  (`node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet && npm run -s check:dead-exports`,
+  also with `LOC_GATE_BASE=$(git rev-parse origin/main)`).
+- **Base-tree copies before the first edit** (`git show HEAD:<file> > .tmp/r3-5267/base/<file>`)
+  so every "byte-identical" acceptance below is a `cp` + recompile, not a claim.
+- Measurement: `npx tsx scripts/run-test262-paths.mts <list> --standalone`
+  (paths exactly as in the TSV, no `test/` prefix); `--isolate` for R3-6.
+  Row lists per step: write them to `.tmp/r3-5267/rows-R3-N.txt` from the
+  path globs given in each step. Controls (all currently passing, verify
+  before starting): `.tmp/es2015/forof-controls.txt` (28 rows; on the js-host
+  lane 5 of them fail on main already — `Map/map.js`,
+  `chunks/chunks-evenly-divisible.js`, `windows/windows-basic.js`,
+  `for-of/Array.prototype.Symbol.iterator.js`,
+  `for-of/dstr/array-elem-trlg-iter-list-nrml-close.js` — compare against
+  that baseline, not against 28) plus the per-step controls named below.
+- Box rules: one compile process at a time; probe batches ≤ 15 paths; never
+  a full sweep; a compile timeout under load is an artifact.
+
+### R3-1 — `map[Symbol.iterator]()` must yield the SAME live record `map.entries()` yields (5 rows)
+
+**Root cause.** `map.keys()/entries()` go through
+`compileNativeCollectionIterator` → `emitLiveCollectionIterRec`
+(`src/codegen/map-runtime.ts:2151-2166`), which builds the
+`$__IterRec{ITER_KIND_MAPSET}` inline. `map[Symbol.iterator]()` goes through
+the `@@iterator` arm of `compileTailDispatch`
+(`src/codegen/expressions/call-tail-dispatch.ts:754-815`): `resolveArrayInfo`
+is false for a Map, so it calls the dynamic ladder `__iterator(recv)`
+(`:807-810`). That ladder's `$Map` arm is SPLICED at finalize by
+`fillMapSetDynDispatchArms` (2) (`map-runtime.ts:2804-2856`) — and the probes
+show the product of `__iterator(map)` is a record whose `.next()` answers
+`null` (b3), and the closure route (`__mapset_symbol_iterator`,
+`map-runtime.ts:3070-3101`, body = `__iterator(this)`) answers a null RECORD
+(b2). Both point at `__iterator`'s `$Map` arm being absent or shadowed in the
+final body. Prime suspect: `fillNativeIteratorLateArms`
+(`src/codegen/iterator-native.ts:2389`) REBUILDS `__iterator`'s body
+(`index.ts:6030` / `:11110`), and `fillMapSetDynDispatchArms` (`index.ts:6480`
+/ `:11195`) refuses a second splice via the `__mapset_dyn_arms_filled` flag
+(`map-runtime.ts:2763`) — so any re-arm of the ladder after the first splice
+loses the `$Map` arm for good. Second suspect: the spliced arm sits AFTER
+`prependIterRecIdentityArm`'s rewrite (`iterator-native.ts:1692-1711`,
+`fn.body = [...]`) only by call order, which the two finalize paths do not
+guarantee identically.
+
+**Edits, in order.**
+
+1. **(a) static reroute — deterministic, independent of the root cause.** In
+   `compileTailDispatch`, inside the `methodName === "@@iterator"` arm and
+   BEFORE the `resolveArrayInfo` array arm (`call-tail-dispatch.ts:765`):
+   when `ctx.nativeStrings` and the receiver's TS symbol name (via
+   `ctx.oracle`) is `Map` or `Set`, snapshot-compile the receiver
+   (`snapshotSpeculative`/`rollbackSpeculative`, the `compileForOfNativeCollection`
+   pattern at `src/codegen/statements/loops.ts:1188-1192`) to confirm it lowers
+   to `ctx.mapTypeIdx`, then `return emitLiveCollectionIterRec(ctx, fctx, elemAccess.expression, isSet ? "values" : "entries", isSet)`
+   (export it from `map-runtime.ts` if it is module-private; it is the function
+   `compileNativeCollectionIterator` calls first). Extra call arguments:
+   evaluate + drop (spec ignores them). §24.1.3.12 / §24.2.3.11:
+   `Map.prototype[@@iterator]` IS `entries`, `Set.prototype[@@iterator]` IS
+   `values`, so the product is by definition the same record.
+2. **(b) dynamic ladder root cause.** Compile `.tmp/r3-5267/probes/b2.js` and
+   dump `__iterator`'s body (a WAT dump of the module — `scripts/` has no
+   flag for that on the runner path, so add a temporary `console.error` of
+   `definedFuncAt(ctx, ctx.funcMap.get("__iterator")).body.slice(0, 12)` at
+   the END of the second finalize path, or use `.tmp/es2015/probes5267/imports-of.mts`'
+   `compile()` call and `WebAssembly.Module` inspection). If the first arm is
+   NOT `ref.test $Map` (`mapTypeIdx`): make the `$Map` arm part of the
+   ladder's own build instead of a post-splice — in `buildIteratorBody`
+   (`iterator-native.ts:3473`) add the arm where `iterRecIdentityArm` is
+   applied (`:3431`), reading `ctx.mapTypeIdx` / `ctx.mapHelpers.get("__map_iter_new")`
+   at build time (they exist whenever a Map/Set was compiled before finalize;
+   when they do not, emit nothing — byte-identical for Map-free modules). Keep
+   the `fillMapSetDynDispatchArms` splice but make its idempotence key the
+   TARGET body (`iterFn.body` identity or a marker instr), not a global flag,
+   so a rebuilt ladder is re-armed. Then `b2.js` `closure-route-*` must pass.
+3. **(c) sticky exhaustion (`Set/prototype/values/values-iteration-mutable.js`).**
+   In `ensureMapHelpers`' `__map_iter_next` body (`map-runtime.ts:1115-1290`):
+   the done branch (`:1274-1277`, reached when `idx >= entryCount`) must first
+   `struct.set $MapIter.IT_INDEX := 0x7fffffff` (locals: `0` = it) so the
+   `i32.ge_s` test at `:1162` stays true after a later `add` grows
+   `M_ENTRYCOUNT`. `__map_iter_new` (`:1112`) starts at 0 — untouched.
+
+**Rows claimed (5).** `built-ins/MapIteratorPrototype/next/iteration.js`,
+`built-ins/MapIteratorPrototype/next/iteration-mutable.js`,
+`built-ins/SetIteratorPrototype/next/iteration.js`,
+`built-ins/SetIteratorPrototype/next/iteration-mutable.js`,
+`built-ins/Set/prototype/values/values-iteration-mutable.js`. Also unblocks
+the trailing `iterator.next.call(map[Symbol.iterator]())` line of 10 R3-2 rows.
+
+**Growth.** `call-tail-dispatch.ts` +30 (`compileTailDispatch`, one arm);
+`map-runtime.ts` +25 (`ensureMapHelpers` +6, `fillMapSetDynDispatchArms` re-key);
+`iterator-native.ts` +40 if (b) moves the arm into `buildIteratorBody`.
+
+**Order constraints.** (a) must evaluate the receiver exactly once and before
+the extra arguments; the record must be LIVE (no `emitCollectionIteratorVec`
+snapshot). (c) must not touch the non-done path (mutation rows depend on the
+tombstone-skipping walk exactly as it is).
+
+**Passing shapes at risk + how to check.**
+- `for (x of map)` / `for ([k, v] of map)` / `for (x of set)` /
+  `[...map]` / `Array.from(set)` / `new Set(map.keys())` — all consume the
+  MAPSET record or the vec projection: run the 6 Map/Set rows of
+  `forof-controls.txt` plus `built-ins/Map/prototype/entries/returns-iterator.js`,
+  `built-ins/Set/prototype/values/returns-iterator.js`,
+  `built-ins/Map/prototype/delete/does-not-break-iterators.js`,
+  `built-ins/SetIteratorPrototype/next/does-not-have-mapiterator-internal-slots-set.js`
+  (pass today).
+- Array receivers of `[Symbol.iterator]()` must be byte-identical: compile
+  `.tmp/es2015/probes5267/p2-array-symiter-next.js` on base and new tree and
+  `cmp` the `.wasm` (the reroute is gated on Map/Set symbol names).
+- js-host lane: the reroute is under `ctx.nativeStrings`; confirm with the
+  host-lane run of `forof-controls.txt` (23/28 baseline).
+- Any module with a Set-typed `values()` loop that exhausts and then `add`s
+  again expects `done` to stay true — the equivalence gate corpus is the
+  detector: `pnpm run test:equivalence:gate` must stay at its baseline.
+
+### R3-2 — own `next` on `%MapIteratorPrototype%` / `%SetIteratorPrototype%`, and `iterator.next` as a VALUE (14 rows)
+
+**Root cause.** `emitIteratorPrototypeSingleton`
+(`src/codegen/array-object-proto.ts:3799-3880`) seeds an own `next` only for
+`kind === "String"` (`:3856-3873`, a refusal body). For Map/Set the singleton
+has `@@toStringTag` only, so `MapIteratorProto.next` is `undefined` (G4), and a
+property READ `iterator.next` on an `$__IterRec` externref has no `__extern_get`
+arm at all — `fillMapSetDynDispatchArms` (4) only handles the CALL form via
+`__extern_method_call` (`map-runtime.ts:2992-3061`) — so `iterator.next` is
+`undefined` and `.call` on it throws (G3).
+
+**Edits, in order.**
+
+1. **Brands.** `src/codegen/builtin-brands.ts` `BUILTIN_BRAND_TABLE` has `Map`
+   (+25), `Iterator` (+32) but no iterator-kind brands: APPEND `MapIterator`,
+   `SetIterator`, `ArrayIterator` after the current last entry (append-only
+   contract stated in the file; never renumber).
+2. **Glues.** In `array-object-proto.ts` next to `ensureIteratorNativeProtoGlue`
+   (`:2676`): `ensureMapIteratorNativeProtoGlue` / `ensureSetIteratorNativeProtoGlue`
+   (and `ensureArrayIteratorNativeProtoGlue`, optional — see below) =
+   `registerNativeProtoBuiltin(ctx, { ...makeGlue(ctx, brand, "MapIterator", ["next"]), memberLength: () => 0, emitMemberBody: (c, f, m) => emitIterRecNextBody(c, f, "Map") })`.
+   `makeGlue` is at `:2348`; `emitMemberBody`'s closure ABI is local 0 = self,
+   local 1 = externref `this` (see `emitCollectionSizeGetterBody`, `:1893-1930`,
+   which is the model for a brand-checked body).
+3. **Body `emitIterRecNextBody(ctx, fctx, kind: "Map"|"Set"|"Array")`** (new,
+   `array-object-proto.ts`): `ensureNativeIteratorRuntime(ctx)`;
+   `ensureNativeIterResultObject(ctx)` (registers `__iter_next_result`,
+   `iterator-native.ts:1553-1590`); flush; then
+   `local.get 1; any.convert_extern; ref.test $__IterRec` → else
+   `emitBrandCheckTypeError(ctx, fctx.body, "…next called on incompatible receiver")`
+   (`native-proto.ts:1154`); then the kind test — Map/Set:
+   `struct.get $__IterRec.kind == ITER_KIND_MAPSET (9)` AND
+   `struct.get $__IterRec.userIter → any.convert_extern → ref.cast $MapIter → struct.get IT_MAP → struct.get $Map.M_KIND == 0 (Map) | 1 (Set)`
+   (`MAP_LAYOUT.M_KIND`, `map-runtime.ts:76`); Array: `kind == ITER_KIND_VEC (3)`
+   (or the LIVEVEC kind if D-1b ever lands) — mismatch → the same TypeError
+   (`does-not-have-mapiterator-internal-slots.js` throws in BOTH directions).
+   Then `local.get 1; call __iter_next_result; return externref`.
+4. **Seed on the singleton.** In `emitIteratorPrototypeSingleton`, generalise
+   the `kind === "String"` block (`:3856-3873`) to a per-kind table:
+   `{ String: [ensureStringNativeProtoGlue, refusalBodyFallback:true], Map: [ensureMapIteratorNativeProtoGlue], Set: […], Array: […] }`
+   — same `__defineProperty_value` recipe, bits `0x01|0x04`
+   (writable, non-enumerable, configurable). Mint the closure via
+   `ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method")`
+   (`native-proto.ts:948`) WITHOUT `refusalBodyFallback` for the three
+   behavioural kinds. `name: "next"` / `length: 0` come from `nativeClosureMeta`
+   (the #5099 machinery the String branch already relies on).
+5. **`iterator.next` as a value.** Splice into `__extern_get` a `$__IterRec`
+   arm — the model is `fillMapSetDynDispatchArms` (1) (`map-runtime.ts:2930-2990`,
+   the `$Map` "size" / `@@iterator` arms; `keyEqualsStr("next", 1)` already
+   exists at `:2998`): `local.get 0; any.convert_extern; ref.test $__IterRec` →
+   key == "next" → select the closure by kind (MAPSET + M_KIND 0 → Map's
+   `next` singleton, M_KIND 1 → Set's, VEC → Array's if seeded) →
+   `pushBuiltinFnSingletonValueInstrs(ctx, closure); extern.convert_any; return`.
+   The closures must exist before this splice: mint them in the same fill
+   (`ensureStandaloneNativeMethodClosure` appends DEFINED funcs — allowed at
+   finalize, as `ensureMapSetIteratorClosureSingleton` does at `:3075`), but
+   only when `ctx.mapTypeIdx >= 0` (Map/Set) — for Array-only modules the
+   arm is emitted from the same place `emitArrayIteratorPrototypeSingleton`
+   is reached, or not at all (then the 3 `ArrayIteratorPrototype/next/*`
+   metadata rows in other-builtins stay as they are; they are NOT claimed
+   here).
+6. **`fn.call(recv)` on the closure.** `iterator.next.call(false)` reaches the
+   native method closure through the generic `__call_fn_method_*` path with
+   `this = false` (boxed). The body's `ref.test $__IterRec` on a boxed
+   primitive fails → TypeError — that is the whole `this-not-object-throw-*`
+   family. Verify once with the first row; if `.call` on a `__fn_wrap`-shaped
+   native closure declines (returns null instead of invoking), the fix is in
+   the `.call` arm of `closed-method-dispatch.ts` / `call-receiver-method.ts`
+   (grep `methodName === "call"`), not in the body.
+
+**Rows claimed (14).** `built-ins/MapIteratorPrototype/next/{length,name,this-not-object-throw-entries,this-not-object-throw-keys,this-not-object-throw-values,this-not-object-throw-prototype-iterator,does-not-have-mapiterator-internal-slots}.js`
+and the same 7 under `built-ins/SetIteratorPrototype/next/`. 10 of them end
+with `iterator.next.call(map[Symbol.iterator]())` ("does not throw") — R3-1(a)
+must land first.
+
+**Growth.** `array-object-proto.ts` +90 (`emitIteratorPrototypeSingleton` +25,
+new `emitIterRecNextBody` ~45, two glue registrars ~20); `map-runtime.ts` +45
+(`fillMapSetDynDispatchArms`, one more `__extern_get` arm);
+`builtin-brands.ts` +3; `native-proto-own-props.ts` +15 only if the new brands
+need an own-props arm for `hasOwnProperty(proto, "next")` (the
+`property-descriptor.js` rows are other-builtins; `name.js`/`length.js` read
+the value only).
+
+**Order constraints.** The prototype singleton's init order is observable only
+through `Object.getOwnPropertyNames` (`@@toStringTag` is a symbol, `next`
+must be the only string key). The `__extern_get` arm must come AFTER the
+`$Map` arm (a `$Map` is not an `$__IterRec`, so order is not semantic — keep
+`$Map` first for byte stability of Map-only modules).
+
+**Passing shapes at risk + how to check.**
+- `SetIteratorPrototype/next/does-not-have-mapiterator-internal-slots-set.js`
+  (passes today: `iterator.next.call(new Set()[...])`-style cross-kind throw)
+  and `Iterator/prototype/chunks/*` / `windows/*` rows (8 passing in
+  `forof-controls.txt`) — they read `.next` on `$LazyIterHelper` and
+  `$__IterRec` values; the new `__extern_get` arm must NOT intercept a
+  `$LazyIterHelper` (`ref.test` is exact).
+- `Object.getPrototypeOf([][Symbol.iterator]())` reflective rows
+  (`ArrayIteratorPrototype/Symbol.toStringTag.js`, `StringIteratorPrototype/next/{name,length}.js`
+  — the String branch stays byte-identical: `cmp` the `.wasm` of
+  `built-ins/StringIteratorPrototype/next/name.js` on base vs new).
+- Any program that reads `it.next` as a value on a generator (host `__gen_*`
+  records are not `$__IterRec`) — `tests/issue-5267-es2015-forof-iterators-r2.test.ts`
+  17/17 plus the 31-file collection/iterator vitest set the r2 record names.
+
+### R3-3 — constructor drive: null key normalisation + adder-branch CanBeHeldWeakly (4 rows)
+
+**Root cause.** `emitNativeCollectionCtorIterableDrive`
+(`src/codegen/expressions/new-super.ts:4338-4552`): (a) `Get(entry,"0")` /
+`Get(entry,"1")` via `__extern_get_idx` (`:4422-4434`) answer `ref.null.extern`
+for an absent index, and `any.convert_extern` turns that into a NULL anyref
+key that the native adder (`__map_set` → `__hash_anyref`,
+`map-runtime.ts:404-560`) dereferences (probe a1: `new Map([{}, 2])` traps
+before reaching `2`; the real rows trap on `[['a', 1], 2]` the same way once
+the nested literal's carrier is not indexable by `__extern_get_idx` — verify
+which of the two it is with a1 + `new Map([['a',1]])` alone). (b) the
+CanBeHeldWeakly test (`:4445-4462`) runs BEFORE the adder dispatch, so a
+user-patched `WeakMap.prototype.set` / `WeakSet.prototype.add` never gets the
+call it must observe (spec: the test lives INSIDE the intrinsic adder,
+§24.3.3.5 / §24.4.3.1).
+
+**Edits.**
+1. After each `call __extern_get_idx` in `entryBody` (`:4425`, `:4431`):
+   `local.tee kExt; ref.is_null; if → <canonicalUndefinedExternInstrs(ctx)> ; local.set kExt` (
+   `src/codegen/any-helpers.ts:167`), then the existing `any.convert_extern`.
+   Do the same for the value. Fresh instrs per site.
+2. Move the `isWeak` holdable block (`:4445-4462`) INTO `directAdd`
+   (`:4463-4469`) — i.e. the `else` branch of the `dispatch.modeLocal` `if`
+   (`:4470-4478`) and the no-dispatch fallback — so it runs only when the
+   INTRINSIC adder is about to be called. `modeLocal` = 1 means the proto
+   companion holds a user override (`prepareNativeSetAdderDispatch` doc).
+3. If a1's trap survives edit 1: the next suspect is `__hash_anyref` on a
+   null anyref — add a `ref.is_null → hash 0` arm there and note it in the PR.
+
+**Rows claimed (4).** `built-ins/Map/iterator-items-are-not-object.js`,
+`built-ins/WeakMap/iterator-items-keys-cannot-be-held-weakly.js`,
+`built-ins/WeakMap/iterator-close-after-set-failure.js`,
+`built-ins/WeakSet/iterator-close-after-add-failure.js`.
+
+**Deferred (4).** `Map/iterator-item-{first,second}-entry-returns-abrupt.js`,
+`WeakMap/iterator-item-{first,second}-entry-returns-abrupt.js` — module-scope
+array identity (`({v: a}).v === a` is false; r2 "Hang trap"). Do NOT lift the
+4M-step ceiling (`:4484-4520`) until that is fixed — it is what keeps the two
+Map rows from wedging a shard.
+
+**Growth.** `new-super.ts` +20 in `emitNativeCollectionCtorIterableDrive`.
+
+**Order constraints.** Spec order in the drive (adder Get → iterable →
+GetIterator → per step: next → Object test → Get 0 → Get 1 → Call adder) is
+unchanged; the holdable test now sits between "Get 1" and the intrinsic
+`__map_set`, exactly where §24.3.3.5 step 4 puts it. A throwing `get 0()` must
+still close the iterator (inside `wrapWithIteratorClose`).
+
+**Passing shapes at risk + how to check.** `new Map([[k, v], …])` literal
+pairs (the `seedablePairs` path, `:5504-5560`, untouched — `cmp` the `.wasm` of
+`built-ins/Map/iterable-calls-set.js` compiled on base vs new must be
+IDENTICAL only if that row uses the literal path; otherwise run it), plus the
+r2 lists `.tmp/es2015/forof-cl-A-ctor-iterable-drive.txt` and
+`forof-cl-A2-symbol-keys.txt` (19 rows flipped in r2 — every one must still
+pass), `built-ins/WeakMap/iterable-with-symbol-keys.js`,
+`built-ins/WeakSet/iterable-with-symbol-values.js`,
+`built-ins/Map/iterator-is-undefined-throws.js`.
+
+### R3-6 — `delete Array.prototype[Symbol.iterator]` honoured by the for-of ARRAY fast path (3 rows, `--isolate`)
+
+**Root cause.** The flag global exists (`__array_proto_iterator_deleted`,
+`src/codegen/expressions/proto-override.ts:132-159`, raised by
+`tryEmitArrayProtoIteratorDelete`, `:225-233`) and is read by ONE consumer —
+`emitArrayIteratorDeletedGuard` in `src/codegen/destructuring-params.ts:1664-1670`
+(binding patterns). `compileForOfArray` (`src/codegen/statements/loops.ts:1897`)
+never reads it, so `for (let [x, y, z] of [[1, 2, 3]])` after the delete
+iterates the OUTER array natively instead of throwing at GetIterator.
+
+**Edits.** Export `emitArrayIteratorDeletedGuard` (or move it to
+`proto-override.ts` next to `arrayIteratorDeletedGlobalIdx`) and call it in
+`compileForOfArray` right after the vec type is confirmed (`loops.ts:1953`,
+before the head-binding/loop emission) — it emits ZERO bytes when the source
+has no such delete (the global is only rooted by the pre-scan). Also
+`compileForOfArrayFromLocal` (`:1835`) if the `preVec` callers can be reached
+from a user array (they come from Map/Set projections — not arrays — so no).
+Check `maybeCaptureArrayProtoOverride` resets the flag to 0 when the source
+later ASSIGNS `Array.prototype[Symbol.iterator] = …` (no reader exists today,
+so this was never needed); add `i32.const 0; global.set` there if absent.
+
+**Rows claimed (3).** `language/statements/for-of/dstr/{let,const,var}-ary-init-iter-get-err-array-prototype.js`
+— measure with `--isolate` only (they poison the runner's realm).
+
+**Growth.** `loops.ts` +8 in `compileForOfArray`; `destructuring-params.ts` +2
+(export).
+
+**Passing shapes at risk + how to check.** Every for-of over an array in a
+module WITHOUT the delete is byte-identical (guard emits nothing): `cmp` the
+`.wasm` of `language/statements/for-of/array-key-get-error.js` (any array
+for-of row) on base vs new. Modules WITH the delete that later reinstall:
+`language/statements/for-of/dstr/*-ary-ptrn-elem-id-iter-val-array-prototype.js`
+are generator rows (out of scope) — but run the 3 `class/dstr/*-array-prototype.js`
+rows that pass today under `--isolate` (find them: `grep array-prototype .test262-cache/test262-standalone-current.jsonl | grep '"pass"'`).
+
+### R3-7 — collection reflection residue (5 rows; species DEFERRED)
+
+**(a) `Map.prototype[Symbol.iterator]` / `Set.prototype[Symbol.iterator]` own property (2).**
+Root cause: the value read already aliases the right closure (the test's
+`assert.sameValue(Map.prototype[Symbol.iterator], Map.prototype.entries)`
+passes; failure is `verifyProperty`'s `hasOwnProperty`). The own-props ladder
+only knows members listed in the glue CSV; `seededSymbolMembers`
+(`src/codegen/native-proto-own-props.ts:335-360`) already handles `@@<id>`
+CSV sentinels by symbol identity. Edit: add `"@@1"` to `MAP_PROTO_METHODS`
+and `SET_PROTO_METHODS` (`array-object-proto.ts:406-437`) and extend
+`makeCollectionGlue`'s `memberAliasOf` (`:1950`) with
+`member === "@@1" ? (name === "Map" ? "entries" : "values")` — exactly the
+Array pattern (`:138` + `:2400-2402`). The `@@` filter for string enumeration
+exists (`native-proto.ts:560`, `:604`). Descriptor: `{w:T, e:F, c:T}` as the
+Array `@@1` seeding. Rows: `built-ins/Map/prototype/Symbol.iterator.js`,
+`built-ins/Set/prototype/Symbol.iterator.js`. Risk check:
+`Object.getOwnPropertyNames(Map.prototype)` must not gain a `"@@1"` string;
+`Map.prototype[Symbol.iterator] === Map.prototype.entries` must stay true
+(identity through `memberAliasOf`, `native-proto.ts:989`); run
+`built-ins/Map/prototype/entries/{name,length}.js`,
+`built-ins/Set/prototype/keys/keys.js` (Set `keys`→`values` alias, same
+mechanism), `built-ins/Map/prototype/Symbol.toStringTag.js`.
+
+**(b) `size` gOPD (2).** Probe g1: the descriptor comes back with a working
+`get`; reading `d.set` throws `Cannot convert undefined or null to object`.
+`PropertyDescriptor.set` is a METHOD signature in lib.d.ts (`set?(v: any): void`),
+so `d.set` is compiled as a method-valued read on an externref receiver — find
+the site by bisecting `typeof d.set` / `d["set"]` / `var s = d.set` in
+`g1.js`; candidates are the method-reference read path in
+`src/codegen/property-access-dispatch.ts` (grep the `PropertyDescriptor` /
+method-signature branch) and the getter-descriptor synthesis for glue members
+of `memberKind: "getter"` (`native-proto-own-props.ts`, reached from
+`call-builtin-static.ts:3158`-area gOPD). Fix whichever it is so a synthesised
+accessor descriptor carries an explicit `set: undefined` data key AND a
+method-signature read on a plain `$Object` degrades to `__extern_get`. Rows:
+`built-ins/Map/prototype/size/size.js`, `built-ins/Set/prototype/size/size.js`.
+Risk check: `built-ins/Object/getOwnPropertyDescriptor/*` rows that pass today
+touching accessor descriptors (`15.2.3.3-4-{2,3}.js`-style; pick 5 from the
+baseline), `built-ins/Map/prototype/size/returns-count-of-present-values-*.js`.
+
+**(c) `append-new-values.js` (1).** `map.get(1)` answers `NaN` because
+`tryCompileNativeMapMethodCall`'s `get` arm (`map-runtime.ts:1699-1740`)
+returns `anyref` and the caller unboxes to the STATICALLY resolved value type
+(f64) although the map's value union is `number | string | symbol`. Edit: when
+the oracle's value type is not exactly number/boolean, return
+`extern.convert_any` → `{ kind: "externref" }` and let the dynamic reader
+unbox per tag. Row: `built-ins/Map/prototype/set/append-new-values.js`.
+Risk check: numeric maps stay unboxed (`built-ins/Map/prototype/get/returns-value.js`,
+the playground `map` examples via `pnpm run check:ir-fallbacks` unchanged,
+and the equivalence gate).
+
+**DEFERRED — species (2).** `Map/Set/Symbol.species/symbol-species.js` need
+the builtin-ctor `Ctor[Symbol.species] = v` write to be a silent no-op, the
+`delete` to flip a per-ctor flag that the static gOPD arm
+(`tryEmitStandaloneBuiltinSpeciesGopd`, `builtin-static-gopd.ts:444`) and
+`hasOwnProperty` consult; `Array/Symbol.species/symbol-species.js` fails
+identically on main, so this is the species FAMILY, not a collection row —
+one owner, not this pass.
+
+**Growth.** `array-object-proto.ts` +6; `map-runtime.ts` +15
+(`tryCompileNativeMapMethodCall`); the (b) site +25 wherever it lands
+(`property-access-dispatch.ts` or `native-proto-own-props.ts`).
+
+### R3-9 — anonymous `class` default in an OBJECT assignment pattern (1 row)
+
+Probe f3: the array-pattern default (`compileForOfAssignDestructuringExternref`,
+`for-of-destructuring.ts:2421-2440` → `emitDefaultValueCheck(ctx, fctx, externref, local, init, externref)`)
+yields a class value with an own `name`; the object-pattern identifier arm
+(`compileForOfIteratorAssignDestructuring`, `:2716-2735`) calls
+`emitDefaultValueCheck(…, targetTypeI ?? undefined, /* objectPropertySemantics */ true)`
+and the class value's `.name` reads `undefined`. The display name itself is
+right (`classObjectDisplayName` → `fnInstanceNameOf`,
+`function-instance-meta.ts:363` handles the shorthand's
+`objectAssignmentInitializer`), so the loss is in how the default VALUE is
+produced/coerced on that arm. Bisect by (i) passing `{ kind: "externref" }`
+as `targetType` for a class-expression initializer, (ii) the
+`objectPropertySemantics` flag. Whichever restores `cls.name === 'cls'` in
+`f3.js` is the fix; keep the `undefined`-only default trigger (§13.15.5.4
+step 4 — a `null` read must NOT take the default).
+Row: `language/statements/for-of/dstr/obj-id-init-fn-name-class.js`.
+Growth: `for-of-destructuring.ts` +10. Risk check: the 4 `dstr` binding rows
+in `forof-controls.txt`, `language/statements/for-of/dstr/obj-id-init-fn-name-{fn,arrow,cover,gen}.js`
+(pass today), and `f3.js` in full.
+
+### R3-4 — for-of statement protocol (6 rows: 4 firm, 2 stretch)
+
+All in `compileForOfIterator` (`src/codegen/statements/loops.ts:2988-3412`)
+and the OBJ step of `buildIteratorNextBody` (`src/codegen/iterator-native.ts:4372+`).
+
+**(a) IteratorStep/IteratorValue abrupt must NOT close (2 rows).** The #1347
+`try_table`/`try` wrapper (`loops.ts:3322-3392`) encloses
+`call __iterator_next` (`:3255-3258`), so a throwing `next()` or `value`
+getter runs `closeOnThrowBody` (`:3352-3361`). Edit: allocate an i32 local
+`__forof_in_next`; `i32.const 1; local.set` immediately before `:3255`,
+`i32.const 0; local.set` immediately after the done-check `if` (`:3272`);
+gate `closeOnThrowBody`'s condition to
+`doneFlag == 0 && in_next == 0` (fresh instrs; both lanes — the `try` and the
+`try_table` branch). The finallyStack entry (`:3212-3235`) handles
+return/break, never a throw — leave it. Apply the same gate to
+`compileForOfDirectIterator` (`:2514`-area) if it carries its own wrapper.
+Rows: `language/statements/for-of/iterator-next-error.js`,
+`language/statements/for-of/iterator-next-result-value-attr-error.js`.
+
+**(b) `next` read ONCE at GetIterator (1 row).** The OBJ step re-reads
+`Get(rec.userIter, "next")` every poll (`iterator-native.ts:4572-4598` and the
+strict twin `:4650-4674`). Edit: add a 5th field
+`nextMethod (mut externref)` to `$__IterRec` in `getOrRegisterIterRecType`
+(`:416-438`; field order is load-bearing, append at index 4); every
+`struct.new $__IterRec` site pushes one more `ref.null.extern` — **16 sites**
+(`grep -rn 'struct.new", typeIdx: iterRecTypeIdx\|struct.new", typeIdx: types.iterRecTypeIdx' src/codegen`),
+including `fillMapSetDynDispatchArms` (2) and `emitLiveCollectionIterRec`.
+In `buildIteratorBody`'s OBJ arm (the #3146 admission that already reads
+`next`, `:3699`), `struct.set` the read value; in both OBJ steps use
+`struct.get fieldIdx 4` when non-null, else the existing read (USER/closed
+records keep null and their `__sget_next` route). Row:
+`language/statements/for-of/iterator-next-reference.js`. This is the riskiest
+sub-step (every record producer changes); land it as its own commit and
+re-run the full R3 row set + controls after it.
+
+**(c) §7.4.2 non-Object `next()` result → TypeError (1 row).** In the OBJ
+step, a result that is neither an `$Object` (`objCarrierTest`, `:4620`) nor a
+closed struct with `__sget_done` is degraded to `done` (`readStructArm` /
+the falsy check at `:4605-4618`). Under `ctx.standalone || ctx.wasi` throw
+`notAnObjectThrowInstrs(ctx, scratch)` (`:2167`-area; deps
+`ensureNotAnObjectThrowDeps`, `:3391`) for a NON-NULL, non-object result of a
+REAL call; keep the degrade for a null/falsy `next` (ladder-internal
+carriers — the #5144 collision). Row:
+`language/statements/for-of/iterator-next-result-type.js`. Run
+`pnpm run test:equivalence:gate` — it is the consumer of the degrade.
+
+**(d) STRETCH `throw-from-finally.js` (1 row).** `i` increments twice: the
+`finally` body is inlined at its own inner `throw` on top of the for-of
+iterator-close finallyStack entry (`src/codegen/statements/exceptions.ts:440-470`,
+`cloneFinallyAtDepth`). Reproduce with `[1]` as the iterable first; a `throw`
+INSIDE a finally block must not re-inline that same finally. If it only
+reproduces with the `function*` source → it is G1/G2 territory, report and drop.
+
+**(e) STRETCH `array-key-get-error.js` (1 row).** An accessor installed by
+`Object.defineProperty(array, '0', {get})` is invisible to `compileForOfArray`
+(`loops.ts:1897`, reads `vec.data[i]`). `ctx.vecAccessorDescriptorDirty`
+(the #4159 pre-scan) is exactly the module-level signal: when it is true and
+the subject is a plain array, route through `compileForOfIterator` and check
+that `__iterator`'s VEC arm reads through the overlay. If the overlay is
+also invisible there, leave it un-root-caused in the PR body.
+
+**Growth.** `loops.ts` +30 (`compileForOfIterator`); `iterator-native.ts` +70
+(`getOrRegisterIterRecType` +3, `buildIteratorBody` +15, `buildIteratorNextBody` +25,
+plus 16 one-line operand additions); `exceptions.ts` +20 (stretch).
+
+**Order constraints.** §14.7.5.7 ForIn/OfBodyEvaluation: `next()` abrupt →
+return WITHOUT close; binding/body abrupt → IteratorClose (its own abrupt
+suppressed, the throw completion wins); `break` → IteratorClose (post-loop
+check, `:3399-3411`, untouched). The `next` read happens ONCE in GetIterator
+(step (b)) and must happen AFTER the `@@iterator` call and BEFORE the first
+`next()`.
+
+**Passing shapes at risk + how to check.**
+- Every for-of over a custom `{ next() }` iterable, a generator, a Map/Set
+  record, a lazy helper: `forof-controls.txt` (both lanes),
+  `language/statements/for-of/{break,break-from-catch,break-from-finally,break-label,continue,continue-from-catch,continue-label,return,return-from-catch,return-from-finally,throw,throw-from-catch}.js`
+  (all pass today — the close-on-abrupt matrix), `iterator-close-*` and
+  `iterator-next-result-*` rows that already pass, the 8 `chunks`/`windows`
+  rows, and `tests/issue-5267-es2015-forof-iterators-r2.test.ts` 17/17.
+- Host lane bytes: (a) changes the `try/catchAll` branch too — the host-lane
+  run of `forof-controls.txt` must equal its 23/28 baseline and the
+  equivalence gate its baseline.
+- (b) changes every producer: `cmp` is impossible; instead run the r2 lists
+  `forof-cl-B-live-collection-iterators.txt` and `forof-cl-A-ctor-iterable-drive.txt`
+  (their pass sets must not shrink) and the D/E rows in
+  `.tmp/census0903/other-builtins.tsv` that pass today (`ArrayIteratorPrototype/next/iteration.js`
+  is a fail; pick `built-ins/Array/from/iter-*.js` ×5 passing rows as the
+  spread/`Array.from` control).
+
+### R3-5 — interleaved assignment-pattern drive for `for ([…] of iter)` (12 rows)
+
+**Root cause.** `compileForOfAssignDestructuringExternref`
+(`src/codegen/statements/for-of-destructuring.ts:2239-2460`) materialises the
+whole source with `__array_from_iter_n(src, n | -1)` (`:2250-2267`) before any
+target is evaluated, so `nextCount`/`returnCount` are wrong, lref evaluation
+order is wrong, and no IteratorClose fires on a target/initializer abrupt.
+NOTE for the implementer: r2's suggestion to copy `destructureParamArray`'s
+stepping is WRONG — that path ALSO materialises through `__array_from_iter_n`
+(`src/codegen/destructuring-params.ts:1955-1992`); there is no interleaved
+drive on main to reuse. Write it here, gated on `ctx.standalone || ctx.wasi`
+so the js-host lane stays byte-identical (it keeps the import-based
+materialisation).
+
+**Emit, per §13.15.5.5 IteratorDestructuringAssignmentEvaluation** (locals:
+`iter` externref, `done` i32, `val` externref, `inNext` i32; the R3-4(a) gate
+applies here too):
+0. `GetIterator(elem)`: `local.get elemLocal; call __iterator` (native ladder,
+   `ensureNativeIteratorRuntime` first, flush) → `iter`; `done := 0`.
+1. For each element, in source order:
+   - **Elision** → step 2 only (no target). An elision-only pattern
+     `for ([,] of [Symbol()])` MUST still run step 0 (today the empty-pattern
+     shortcut `emitEmptyForOfArrayPatternRequirement`, `:257`, is the only
+     one that does): `array-elision-val-symbol.js`.
+   - **Non-pattern target**: evaluate the **lref FIRST** — for a member target
+     compile receiver + key into temps BEFORE step 2 (`[ {}[thrower()] ]`
+     throws here with `nextCount 0`); for an identifier target nothing to
+     evaluate.
+   - 2. if `!done`: `inNext := 1; call __iterator_next(iter)` → pop value then
+     done (`loops.ts:3252-3258` shape); `inNext := 0`; on `done` set
+     `val := undefined` (`canonicalUndefinedExternInstrs`).
+   - 3. initializer when `val === undefined` (NamedEvaluation for anonymous
+     fn/class — R3-9's arm) — `emitDefaultValueCheck` with the hole→undefined
+     mapping FIRST: an in-bounds hole in `[2, null, , undefined]` is the
+     #2001 S1 sentinel (`emitHoleSentinel` / `f64HoleTestInstrs`,
+     `src/codegen/array-holes.ts`, `vec-f64-hole-presence.ts`) —
+     `array-elem-init-assignment.js` expects the default for the hole and
+     for `undefined`, NOT for `null`.
+   - 4. PutValue to the temps (member) / local / global / boxed capture
+     (reuse the existing arms `:2369-2460` with the value in a temp instead of
+     `pushElemRead(i)`), or recurse into a nested pattern with
+     `destructureNestedExternrefPattern` (`:2359`).
+   - **Rest `[...t]`**: lref first (member target), then drain: loop
+     `__iterator_next` into a fresh `$Vec` (`__vec_externref` via the
+     `ensureNativeArrayFromIterN` geometry, `iterator-native.ts:1778`) until
+     `done`; then PutValue via `emitForOfRestAssignment` (`:2334`) over the
+     drained vec. `array-rest-lref-err.js`: `nextCount 0, returnCount 1`.
+2. Wrap steps 1.lref/3/4 (NOT step 2) in the close-on-throw shape of
+   `wrapWithIteratorClose` (`new-super.ts:4529`, reuse it) so a target /
+   initializer / nested-pattern abrupt calls `__iterator_return` once with its
+   own abrupt SUPPRESSED (`*-close-err.js` rows: the original throw wins),
+   then rethrows. `next()` abrupt propagates WITHOUT close (`done := 1` first).
+3. After the last element: `if (!done) call __iterator_return` (normal
+   completion; keep the #5144 C "close result must be an Object" check).
+4. **Object patterns** (`compileForOfIteratorAssignDestructuring`, `:2567+`):
+   a computed key (`{ [a.b]: x }`) is skipped today (`propName` undefined →
+   `continue`, `:2591-2598`). Evaluate the key expression (ToPropertyKey)
+   unconditionally BEFORE the Get, even when the key cannot be resolved
+   statically — then read via `__extern_get` with the runtime key.
+   `obj-prop-name-evaluation-error.js` expects the key's throw.
+
+**Rows claimed (12).** `language/statements/for-of/dstr/array-elem-iter-thrw-close.js`,
+`array-elem-iter-thrw-close-err.js`, `array-elem-trlg-iter-list-thrw-close.js`,
+`array-elem-trlg-iter-list-thrw-close-err.js`, `array-elem-trlg-iter-rest-thrw-close.js`,
+`array-elem-trlg-iter-rest-thrw-close-err.js`, `array-rest-iter-thrw-close.js`,
+`array-rest-iter-thrw-close-err.js`, `array-rest-lref-err.js`,
+`array-elem-init-assignment.js`, `array-elision-val-symbol.js`,
+`obj-prop-name-evaluation-error.js`.
+
+**Growth.** `for-of-destructuring.ts` +220 (a new
+`emitInterleavedArrayAssignmentDrive` ≤ 120 lines + per-target write helpers
+factored out of the existing arms; `compileForOfAssignDestructuringExternref`
+becomes a dispatcher); `statements/destructuring.ts` +15 if
+`emitDefaultValueCheck`'s hole mapping lands there.
+
+**Order constraints.** lref → next → default → PutValue per element; rest lref
+before its drain; no close on `next()` abrupt; exactly one `return()` on any
+other abrupt or on normal completion with `!done`; elision runs `next()`;
+the SOURCE's `@@iterator` is called exactly once per element of the OUTER loop.
+
+**Passing shapes at risk + how to check.**
+- Host lane: gated — `cmp` the `.wasm` of
+  `language/statements/for-of/dstr/array-elem-trlg-iter-list-nrml-close.js`
+  compiled WITHOUT `--standalone` on base vs new: must be identical.
+- Standalone: every `for ([a, b] of …)`, `for ([x, ...r] of …)`,
+  `for ([[x]] of …)`, `for ([x.y] of …)`, `for ([x = d] of …)` that passes
+  today — the 4 `dstr` rows in `forof-controls.txt` plus ALL currently-passing
+  `language/statements/for-of/dstr/array-*.js` rows (list them from the
+  baseline: `grep 'for-of/dstr/array-' .test262-cache/test262-standalone-current.jsonl | grep '"pass"'`
+  — ~120 rows; run in batches of 15, one process at a time) and the
+  `language/expressions/assignment/dstr/array-*.js` rows are NOT touched
+  (different lowering) — run 10 of them as a negative control.
+- `tests/issue-4447-*.test.ts` (for-of destructuring residual) and the
+  equivalence gate.
+
+### R3-8 — `===` between two `$BoxedNumber`s from different producers (3 rows) — LAST, own commit
+
+**Root cause.** Probe f4: `[0,'a'][0] === a[0]` is FALSE at module scope. The
+harness's `assert._isSameValue(a, b)` compiles to `__any_strict_eq` over two
+`$AnyValue`s; the operands reach it under different tags (one side tag-6
+`refval`, the other tag-5 `externval`, or tag-3 f64 vs a boxed ref — confirm
+with a WAT read of the `__any_box_*` calls at the `a === b` site in `f4.js`).
+The different-tag arm (`src/codegen/any-eq-helpers.ts:396-455`, #2175 V2-S3)
+recovers both payloads to `eqref` and answers `ref.eq` — two distinct
+`$BoxedNumber` structs holding `0` are unequal. The same-tag-5 arm already
+classifies Number×Number numerically (`tag5ValueEqThen`,
+`src/codegen/any-helpers.ts:1290+`, default-ON since 2026-07-16).
+
+**Edit.** In `registerAnyStrictEqAndComparisonHelpers`' different-tag arm,
+after `recoverRefPayload(0, 4)` / `(1, 5)` (`:434-435`) and BEFORE the
+`ref.eq` identity test: if both locals 4/5 `ref.test $BoxedNumber` (the type
+`addUnionImports` registers — find its typeIdx the way `__any_to_f64`'s #1888
+recovery arm does, `any-helpers.ts` grep `BoxedNumber`) → unbox both
+(`struct.get` the f64 field) → `f64.eq` (NaN self-unequal preserved). Also
+cover "tag ∈ {2,3} on one side, `$BoxedNumber` payload on the other": route
+through `__any_to_f64` on both and `f64.eq`. Keep the `ctx.standalone || ctx.wasi`
+gate — host bytes unchanged. Mirror in `__any_eq`'s different-tag arm ONLY if
+a probe shows `==` is affected too (do not touch otherwise).
+
+**Rows claimed (3).** `language/statements/for-of/map.js`,
+`language/statements/for-of/map-expand.js`,
+`language/statements/for-of/map-contract-expand.js`. Likely cross-cluster
+upside (every `«N» «N»` SameValue failure in the census) — report the delta,
+do not claim it.
+
+**Growth.** `any-eq-helpers.ts` +40 in `registerAnyStrictEqAndComparisonHelpers`.
+
+**Why last and why its own commit.** This helper is under every `===` on
+`any`-typed operands in standalone. #1888's first attempt at exactly this
+classifier ejected at −162 rows (`any-helpers.ts:1225-1250` history) —
+that mask has since been removed, but the blast radius has not. Ship it as
+the final commit so it can be reverted alone.
+
+**Passing shapes at risk + how to check.** `pnpm run test:equivalence:gate`
+at baseline; `forof-controls.txt` both lanes; a 15-row sample from the
+`class` and `dstr` families that pass today (the −162 victims were there:
+`language/statements/class/dstr/*-ary-ptrn-elem-id-init-undef.js` ×5,
+`*-ary-ptrn-elem-id-iter-val.js` ×5, `language/expressions/assignment/dstr/array-elem-init-undef.js`
+and 4 siblings); `built-ins/Object/is/*` ×3 and
+`language/expressions/strict-equals/*.js` ×5 (all pass today per the baseline).
+`undefined === undefined`, `NaN === NaN` (false), `0 === -0` (true) must be
+checked with a 6-line probe through `probe-one.mts` before and after.
+
+### Out of scope in r3 (48 rows) — do not touch
+
+- **Generator carrier (35):** every row whose error is
+  `standalone target emitted host imports: env::__create_generator …` (23,
+  incl. the 3 `*-ary-ptrn-elem-id-iter-val-array-prototype.js` rows that
+  override `Array.prototype[@@iterator]` with a `function*`) or `native
+  generator lowering currently supports only sequential numeric yields`
+  (12, the `*-rtrn-close*.js` family). Owner: #680 / #2864.
+- **Realms (5):** 4× `proto-from-ctor-realm.js`, `Symbol/iterator/cross-realm.js`
+  — #3371.
+- **Parser (1):** `dstr/array-elem-init-in.js`.
+- **`Symbol/iterator/prop-desc.js` (1):** the 12-row `Symbol/*/prop-desc.js`
+  family in `other-builtins.tsv` (well-known symbols are not own properties of
+  the `Symbol` ctor) — one fix, one owner, not here.
+- **Species (2), accessor identity (4):** see R3-7 / R3-3.
+
+### Acceptance (whole pass)
+
+- Row lists green per step (R3-6 with `--isolate`); expected flips
+  **53 max, ≥ 40 is the bar** (R3-4's 2 stretch singles, R3-7(b)'s
+  hypothesis-level 2, R3-8's 3 and R3-1(b)'s dynamic-route rows are the
+  uncertain part). Report every unflipped row with its residual error.
+- Every "passing shapes at risk" check above executed and quoted in the PR
+  body — the byte-identity ones as `cmp` results on the named files, the
+  control ones as pass counts against the stated baselines. A step whose
+  checks were not run is not shippable.
+- `imports-of.mts` on `Map/iterator-items-are-not-object.js`,
+  `WeakMap/iterator-close-after-set-failure.js`,
+  `MapIteratorPrototype/next/iteration.js` → `[]` (no `env::*` leak).
+- Gates chained before every commit (also with `LOC_GATE_BASE` = upstream
+  main tip); `pnpm run test:equivalence:gate` at baseline after R3-4(c),
+  R3-5 and R3-8; `tests/issue-5267-es2015-forof-iterators-r2.test.ts` 17/17.
+- No edits to `tests/test262-runner.ts`, skip lists, `scripts/*baseline*.json`;
+  no new host imports; no `--no-verify`.
