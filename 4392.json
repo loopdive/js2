@@ -1,10 +1,11 @@
 {
   "id": "4392",
   "assignee": "ttraenkler/codex-es5-defineproperty",
-  "requested_by": "ttraenkler/codex-es5-defineproperty",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4392-accessor-underapplication",
   "claimed_at": "2026-08-12T21:42:16Z",
-  "updated_at": "2026-08-12T21:42:16Z",
-  "write_id": "80754-gzdgkitq"
+  "updated_at": "2026-09-03T09:47:36Z",
+  "write_id": "14585-kcdf41pn",
+  "released_at": "2026-09-03T09:47:36Z"
 }
