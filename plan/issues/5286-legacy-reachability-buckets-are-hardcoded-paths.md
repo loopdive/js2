@@ -1,10 +1,9 @@
 ---
 id: 5286
 title: "R10's deletion scope is set by hardcoded file paths, not by the reachability analysis it reports alongside"
-status: done
+status: in-review
 created: 2026-09-03
 updated: 2026-09-03
-completed: 2026-09-03
 sprint: current
 priority: high
 horizon: s
@@ -183,3 +182,42 @@ set here rather than `in-review` per the lifecycle rule — the implementing PR 
 released and green-path, and `in-review` is what orphans issues in this repo. If
 #5513 fails to land, this status is wrong and should be reverted rather than
 left.
+
+### Status reverted to `in-review` — the coverage gate caught a real gap in this plan
+
+I flipped this to `done` when PR #5513 was released. CI (`quality` →
+**Issue→probe coverage gate (#2093)**) failed my own docs PR for it:
+
+```
+✖ FAIL  #5286 flipped to done with NO probe/test reference (created 2026-09-03).
+```
+
+**The gate is right and the plan above is what is wrong.** Acceptance criterion
+2 requires the conflict flag to name `closures.ts` and
+`statements/nested-declarations.ts` on today's tree — but it never asked for a
+**committed test** asserting it. #5513 is `scripts/`-only and its regression
+proof is a byte-identity comparison run by hand, which is exactly the kind of
+evidence that evaporates the moment the session ends.
+
+So this issue has no permanent artifact, and `done` was premature by the
+project's own standard. Status back to `in-review` until one exists.
+
+**What the missing test should be** (`tests/issue-5286-audit-bucket-provenance.test.ts`):
+
+1. Run the audit's classification over the repo and assert `bucketConflict` is
+   true for `src/codegen/closures.ts` and `src/codegen/statements/nested-declarations.ts`
+   — the non-vacuity check, so a flag that never fires cannot pass.
+2. Assert `bucketBasis` is `"named"` for `closures.ts` and `"prefix"` for
+   `statements/nested-declarations.ts`, which is the distinction the whole issue
+   is about.
+3. Assert the four zero-`legacyLoc` files are flagged, since "provably wrong
+   membership" is the finding most likely to be silently lost in a refactor.
+
+Pin by *property*, not by count: asserting "12 conflicts" would go red the day
+someone legitimately re-buckets a file, which is the outcome this issue is meant
+to enable.
+
+**Generalisable, and it is the same shape as tonight's other corrections:** a
+plan that specifies a measurement without specifying the artifact that survives
+it has not specified acceptance. The gate encodes that rule; I wrote the plan
+without it and the gate caught me.
