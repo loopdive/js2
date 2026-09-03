@@ -2060,3 +2060,28 @@ Get happens at all and the row's expected first log line never appears —
 
 Pin: `tests/issue-5268-r3-concat.test.ts` (2 cases) — both verified to FAIL on
 the base tree (`.tmp/basetree`).
+
+## 2026-09-03 implementation (Opus) — step R3-9 S (`hasOwnProperty` key order)
+
+`tryBorrowedPrototypeNullishThisThrow` (`builtin-prototype-brand.ts`) compiled
+the call's arguments and DROPPED them before throwing the nullish-receiver
+TypeError. Compiling evaluates the expression but performs no coercion, so
+§20.1.3.2 step 1 (`? ToPropertyKey(V)`, which precedes step 2's
+`ToObject(this)`) never ran. Argument 1 of `hasOwnProperty` /
+`propertyIsEnumerable` now goes through `__to_property_key` and THAT result is
+dropped.
+
+`built-ins/Object/prototype/{hasOwnProperty,propertyIsEnumerable}/**`, all 79
+rows, base vs branch on the same tree: **78 pass → 79 pass**, the flipped row
+being `hasOwnProperty/topropertykey_before_toobject.js`, with zero new
+non-pass.
+
+Behaviour A/B (`.tmp/p/h1.js`, standalone, both trees): five `.call(nullish,
+…)` shapes plus two ordinary calls. Only the intended line moved — base
+"threw TypeError" / `hint=none`, branch "threw RangeError" / `hint=string`
+(node's answer). The other seven lines are byte-identical, including the
+pre-existing base defect `hasOwnProperty.call("ab", "0") === false` (node says
+true), which this change does not touch. The whole arm is behind
+`noJsHost(ctx) || ctx.strictNoHostImports`, so the JS-host lane is untouched.
+
+Pin: `tests/issue-5268-r3-topropertykey.test.ts` (2 cases).
