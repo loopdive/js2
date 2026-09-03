@@ -1,12 +1,11 @@
 {
   "id": "4114",
   "assignee": "ttraenkler/codex-ir-inventory-gate",
-  "requested_by": "ttraenkler/codex-ir-inventory-gate",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/ir-optimization-inventory-gate",
-  "reserved_at": "2026-08-02T21:23:36Z",
   "claimed_at": "2026-08-02T21:23:36Z",
-  "updated_at": "2026-08-02T21:23:36Z",
-  "write_id": "97797-ts87xzq3",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:44:45Z",
+  "write_id": "8116-jt4ht9nq",
+  "released_at": "2026-09-03T09:44:45Z"
 }
