@@ -1,10 +1,11 @@
 {
   "id": "5299",
   "assignee": "ttraenkler/opus-5299",
-  "requested_by": "ttraenkler/opus-5299",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5299-prepared-callable-receipt-triple",
   "claimed_at": "2026-09-03T17:42:31Z",
-  "updated_at": "2026-09-03T17:42:31Z",
-  "write_id": "29068-6hdhajxk"
+  "updated_at": "2026-09-03T21:59:54Z",
+  "write_id": "20284-0efj8bpr",
+  "released_at": "2026-09-03T21:59:54Z"
 }
