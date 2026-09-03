@@ -1,8 +1,11 @@
 {
   "id": "3499",
   "assignee": "ttraenkler/codex-senior-3499",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3499-porffor-typed-bitwise-composites",
   "claimed_at": "2026-07-20T15:25:01Z",
-  "updated_at": "2026-07-20T15:25:01Z"
+  "updated_at": "2026-09-03T09:39:40Z",
+  "write_id": "20535-i59nmbwx",
+  "released_at": "2026-09-03T09:39:40Z"
 }
