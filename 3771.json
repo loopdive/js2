@@ -1,8 +1,11 @@
 {
   "id": "3771",
   "assignee": "ttraenkler/codex-json-rawjson-symbol",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3771-json-rawjson-symbol",
   "claimed_at": "2026-07-28T18:30:39Z",
-  "updated_at": "2026-07-28T18:30:39Z"
+  "updated_at": "2026-09-03T09:42:49Z",
+  "write_id": "20412-zzut8qhh",
+  "released_at": "2026-09-03T09:42:49Z"
 }
