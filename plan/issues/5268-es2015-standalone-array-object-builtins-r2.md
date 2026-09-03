@@ -111,7 +111,15 @@ coercion-sites-allow:
   # the coercion engine's own entry, never a hand-rolled matrix.
   - src/codegen/array-from-native.ts
   - src/codegen/object-runtime-proxy.ts
+# 2026-09-03 (Opus, r3 step R3-5c): `emitToPrimitiveMethodExports` grows by the
+# IsCallable guard OrdinaryToPrimitive step 5.b.i requires — the two closure
+# dispatch modes read a method FIELD and `ref.cast` it unguarded, so a
+# `valueOf: null` slot TRAPPED ("illegal cast in __call_valueOf") instead of
+# being treated as an absent method. The guard is one `ref.test` per mode plus
+# the shared `guardedThen` wrapper; it cannot be lifted out of the recursive
+# `buildDispatch` closure, which is what the +39 lines are.
 func-budget-allow:
+  - src/codegen/index.ts::emitToPrimitiveMethodExports
   - src/codegen/object-ops.ts::compileObjectKeysOrValues
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -1985,3 +1993,70 @@ standalone"; `iter-map-fn-args` measured `args[0].length` 3).
 
 Gates: all five green, and green again with
 `LOC_GATE_BASE=$(git rev-parse origin/main)`. TS7 typecheck clean.
+
+## 2026-09-03 implementation (Opus) — step R3-5 (concat residuals, partial)
+
+Two of the plan's six concat sub-items landed; the rest are named below with
+what stopped them.
+
+### (d) §23.1.3.1.1 step 3 — a PRESENT falsy `@@isConcatSpreadable`
+
+`array-concat-spec.ts`: the absence test accepted a wasm `ref.null` as
+"absent" and fell back to `IsArray`, so `item[@@isConcatSpreadable] = null`
+spread a two-element array. Step 3 keys on UNDEFINED only. Measured before
+removing the term (`.tmp/p/e1.js`, standalone): `__extern_get` answers the
+UNDEFINED singleton for a key it does not find — on a `$Vec`
+(`[3,4][@@isConcatSpreadable]` prints "undefined") as well as an `$Object` —
+while a stored `null` prints "null", so the null term was pure over-reach.
+Row: `is-concat-spreadable-val-falsey.js`.
+
+### (c, half) OrdinaryToPrimitive step 5.b.i `IsCallable`
+
+`src/codegen/index.ts` `emitToPrimitiveMethodExports`: the `closure-extern`
+and `closure` dispatch modes read the method FIELD and `ref.cast` it to the
+closure struct type unguarded, so a `valueOf: null` slot TRAPPED. Base:
+`illegal cast … at __call_valueOf ← __class_to_primitive ← __to_primitive ←
+__extern_length`. Now `ref.test`-guarded; a non-closure slot takes the same
+`else` an absent entry takes, i.e. the next candidate. Row:
+`Array.prototype.concat_array-like-length-to-string-throws.js`.
+
+**Not done, same item:** `{valueOf: null, toString: null}` must throw a
+TypeError (`concat_array-like-to-length-throws.js`); today `__class_to_primitive`'s
+tail returns the OBJECT unchanged and `__extern_length` reads it as 0. Adding
+the throw there changes every silent ToPrimitive fall-through in the compiler,
+not just this row — it needs its own measurement pass.
+
+### Measurement
+
+`built-ins/Array/prototype/concat/**`, the whole directory, 69 rows, base and
+branch on the same tree in five batches:
+
+| 69 rows | pass | non-pass |
+| --- | ---: | ---: |
+| base `5c8a182901` | 43 | 26 |
+| this change-set | 45 | 24 |
+
+**2 rows flipped, ZERO new non-pass.** `.tmp/es2015/arrobj-controls.txt`
+20 / 20.
+
+The `index.ts` guard is NOT standalone-gated, so the JS-host lane was checked
+directly: a ToPrimitive program (`valueOf` / `toString` / a `valueOf: null`
+length) compiles to a sha-IDENTICAL host module on both trees
+(`43575a2c0a…`, 6666 bytes) and prints identical output on both lanes. Six
+ToPrimitive-adjacent vitest suites A/B'd: 35 passed / 1 failed on this tree,
+and that one failure (`es5-standalone-callable-tostring` — "a function
+declaration does not stringify as [object Object]") is STANDING RED on the
+base tree with the same name.
+
+### Not started in this step
+
+(a) the `arguments` carrier's `__extern_has_idx` vs its `length` override
+(3 rows), (b) the `$Hole` escape, (e) `is-concat-spreadable-get-order` — the
+species prologue already precedes the receiver's spreadable Get in
+`compileArrayConcatNativeSpecFromExprs`, but `ctx.arraySpeciesDirty` is not
+armed by `Object.defineProperty(arr, "constructor", …)`, so no `constructor`
+Get happens at all and the row's expected first log line never appears —
+(f) the two TypedArray rows, (g) `is-concat-spreadable-proxy`.
+
+Pin: `tests/issue-5268-r3-concat.test.ts` (2 cases) — both verified to FAIL on
+the base tree (`.tmp/basetree`).
