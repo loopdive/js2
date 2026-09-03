@@ -1,11 +1,10 @@
 {
   "id": "5262",
-  "assignee": "",
-  "requested_by": "ttraenkler/claude-opus",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-01T18:01:22Z",
-  "updated_at": "2026-09-01T18:01:22Z",
-  "write_id": "2469-d33gyxg7",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/opus-5263",
+  "requested_by": "ttraenkler/opus-5263",
+  "status": "in-progress",
+  "branch": "claude/issue-5263-5262-reconciler",
+  "claimed_at": "2026-09-03T08:45:41Z",
+  "updated_at": "2026-09-03T08:45:41Z",
+  "write_id": "11652-y7lsrfi1"
 }
