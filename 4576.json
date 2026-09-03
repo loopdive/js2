@@ -1,12 +1,11 @@
 {
   "id": "4576",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/standalone-dom-builtins",
-  "reserved_at": "2026-08-20T09:06:00Z",
   "claimed_at": "2026-08-20T09:06:00Z",
-  "updated_at": "2026-08-20T09:06:00Z",
-  "write_id": "58710-gwityfie",
-  "pr_scan": "ok"
+  "updated_at": "2026-09-03T09:48:39Z",
+  "write_id": "15409-kkiy4ari",
+  "released_at": "2026-09-03T09:48:39Z"
 }
