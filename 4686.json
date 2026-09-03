@@ -1,10 +1,11 @@
 {
   "id": "4686",
   "assignee": "codex/es6-builtin-tail-wave4",
-  "requested_by": "codex/es6-builtin-tail-wave4",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4686-expando-inline-carrier",
   "claimed_at": "2026-08-25T06:59:49Z",
-  "updated_at": "2026-08-25T06:59:49Z",
-  "write_id": "7823-mj1at88m"
+  "updated_at": "2026-09-03T09:50:36Z",
+  "write_id": "21631-oi5d1qq4",
+  "released_at": "2026-09-03T09:50:36Z"
 }
