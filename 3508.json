@@ -1,8 +1,11 @@
 {
   "id": "3508",
   "assignee": "ttraenkler/codex-senior-3508",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3508-porffor-prealpha9-pin",
   "claimed_at": "2026-07-20T22:49:03Z",
-  "updated_at": "2026-07-20T22:49:03Z"
+  "updated_at": "2026-09-03T09:40:01Z",
+  "write_id": "22895-hlq5ghnm",
+  "released_at": "2026-09-03T09:40:01Z"
 }
