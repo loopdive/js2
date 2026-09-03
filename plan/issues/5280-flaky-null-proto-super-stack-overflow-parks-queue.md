@@ -134,3 +134,45 @@ issue.
 Re-admitted once, per the auto-park rules, with a note that a second park on
 this signature escalates rather than repeating. #5506 is in the queue; once it
 lands, both halves of this issue close.
+
+## How to tell this flake from a REAL failure on the same test
+
+`class-definition-null-proto-super.js` is not exclusively a flake row. On
+2026-09-01 it parked PR #5412 and that **was** a genuine, PR-caused regression:
+the diff changed generator/IR lowering and the test's **wasm hash moved**, which
+is what identified it. Anyone hitting this test needs to separate the two cases,
+and neither signal alone is sufficient:
+
+| signal | flake (tonight ×4) | real (#5412) |
+| --- | --- | --- |
+| bucket signature `96690aa5e0efb4ff` | yes | yes |
+| same message, `range_error` | yes | yes |
+| wasm hash changed | **sometimes yes** (see below) | yes |
+| the PR's diff can reach the failing file | **no** | yes |
+
+**The bucket signature is necessary but not sufficient**, and — the trap —
+**`Regressions with wasm-hash change: 1` does not settle it either.** #5498's
+park printed exactly that line while being collateral, because the merge group
+tests the *merged* state and main's other landed changes move bytes too.
+
+**The decisive question is whether the PR's diff can execute while compiling the
+failing file.** For #5498 it provably cannot: the test contains no `for`
+statement at all (`grep -cE '^\s*for\s*\(\s*var '` → 0), and that PR's only
+source change lives inside `compileForStatement`'s module-global for-head `var`
+arm, behind `if (moduleGlobalIdx !== undefined)`. For #5412 the diff changed
+lowering reachable from any class body, so it could.
+
+**Recommended order when this parks your PR:**
+
+1. Check whether your diff's changed code paths can be reached while compiling
+   `class-definition-null-proto-super.js`. Read the test — it is 20 lines. If
+   the answer is no, it is collateral regardless of the wasm-hash line.
+2. Only if it *can* reach: reproduce locally on the merged state and byte-compare
+   against a clean `origin/main` build, per the #5412 procedure.
+3. Cross-check the signature against other open PRs' runs. Four disjoint diffs
+   with one signature is strong corroboration — but it is corroboration, not the
+   primary test.
+
+This ordering is the useful output of four manual diagnoses. Building it into
+the cross-PR signature check (this issue's second work item) is what stops the
+fifth person re-deriving it.
