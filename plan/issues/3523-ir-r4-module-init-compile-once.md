@@ -4144,6 +4144,200 @@ byte-neutrality evidence is `routes-fixdefault.jsonl` alone, whose 10 shas match
 and `.tmp/r4-gap6b/rev/ca-bytes.mts` (item 4b, the executed Family-A run, and the phase timings).
 Read-only worktree `.claude/worktrees/r4-gap6b-main` detached at `4abfe80e`, clean. No tracked file
 was modified.
+## 2026-09-02 — R4 is what gates R9's coverage closure (measured)
+
+This issue was already `priority: critical`. What was missing was evidence of
+*how much* downstream work waits on it, and that evidence now exists — measured
+against `tests/dogfood/corpus` (20 real programs) using the `check:ir-only`
+gate's own lane observers, which take an entry-list override.
+
+| | dogfood single-host | dogfood standalone |
+| --- | --- | --- |
+| module-init units | 20 | 20 |
+| of those, **emitted** | **0** | **0** |
+| of those, unsupported | 19 | 16 |
+| non-module-init unsupported | 14 | 14 |
+
+**Module-init adoption on that corpus is zero.** `<module-init>` accounts for
+17 of the 19 `body-shape-rejected` units and 19 of the 33 single-host
+rejections overall — roughly 58% of the whole gap on that lane, ~45% on
+standalone. The class family (#3522) is 7 of 33: real, but a third the size.
+
+Two things this implies for how R4 is scheduled:
+
+1. **R9's fail-closed flip cannot be scheduled ahead of this issue.** Widening
+   the IR-only corpus past the five playground files without module-init
+   compile-once converts the majority of the gap into permanent red rather than
+   a ratchet that can close.
+2. **The current green gate does not measure this issue's subject matter.**
+   `check:ir-only`'s five entries hold five module-init units: 2 emitted, **3
+   non-executable**, 0 unsupported. A non-executable module-init has no body by
+   construction, so the gate exercises module-init on exactly two files. That is
+   why R4 can be this far from done while the gate reports READY.
+
+Recorded on `#3518` in full, including the correction that produced it: reading
+the rejection histogram by reason alone pointed at R3, and only grouping by
+`unitKind` — a field already present in the telemetry — moved it to R4.
+`body-shape-rejected` is emitted from ~20 sites in `src/ir/from-ast.ts` spanning
+unrelated constructs, so it names a demote path, not a feature area.
+
+This does not change the gap-6b verdict recorded above: that slice stays gated
+on its stated preconditions (P1, P4 and #5276). It raises the value of clearing
+them, it does not remove them.
+
+### The 17 rejected module-inits, by reject arm — a first slice falls out
+
+The section above establishes that module-init is what gates R9. This names the
+work. `src/ir/select.ts` already carries an opt-in reject-arm recorder for the
+`body-shape-rejected` bucket (#2856 Step-1), enabled with
+`JS2WASM_IR_SHAPE_DIAG=1`; no source edit is needed to get the breakdown. On
+`tests/dogfood/corpus`, single-host:
+
+| reject arm | count | site |
+| --- | --- | --- |
+| `vardecl-module-storage-unrepresentable` | **11** | `select.ts:5664` |
+| `expr-ident-not-in-scope` | 2 | `select.ts:9264` |
+| `vardecl-modifier` | 2 | `select.ts:5587` |
+| `vardecl-module-destructuring` | 1 | `select.ts:5597` |
+| `vardecl-module-value-flow` | 1 | `select.ts:5669` |
+
+**Four of the five arms are `vardecl-*`, and they are 15 of the 17.** The whole
+module-init blocker is, to 88%, module-level variable-declaration handling —
+not a diffuse "body shape" problem.
+
+The dominant arm is a single condition (`select.ts:5658-5665`): the subject is a
+module-init, the declaration is direct (`ts.isSourceFile(declarationStatement.parent)`),
+and `currentModuleBindingResolver?.(d.name)` returns `undefined`. Its own comment
+states the constraint — *"The synthetic module-init builder must map every direct
+declaration to an already-allocated legacy slot"* — so the rejection is the
+resolver failing to represent the binding, not the IR failing to lower a shape.
+
+**Suggested first slice, for whoever picks R4 up:** widen the module-binding
+resolver to represent the declarations behind `vardecl-module-storage-unrepresentable`.
+It is 11 of 17 module-init rejections and ~1/3 of the entire single-host gap on
+this corpus, it is one condition at one site, and the remaining four arms are
+independent of it. The three singleton arms
+(`vardecl-module-destructuring`, `vardecl-module-value-flow`,
+`expr-ident-not-in-scope`) are separately scopeable follow-ups.
+
+Not yet checked, and worth doing before committing to that slice: whether these
+same arms dominate on the playground's own uncovered eight (measured only as
+`body-shape-rejected` there, not split by arm), and whether the standalone lane's
+14 split the same way. Both are one probe each with the same env var.
+
+### Scope correction to the two sections above (same day)
+
+Both sections above were measured on `tests/dogfood/corpus` alone, and the
+second promoted that to "R4 is what gates R9". Measuring the playground's own
+uncovered eight refutes the promotion: **all 8 of their module-init units are
+non-executable**, so module-init blocks nothing there, and their standalone
+blocker is `host-surface-unavailable` (12 of 14), which is R6 territory.
+
+What survives, and it is still substantial: **on module-bearing sources R4 is a
+severe blocker** — zero of twenty executable module-init units emit on dogfood,
+on both lanes — and the `vardecl-module-storage-unrepresentable` slice is 11 of
+17 there. What does not survive is the claim that R4 is R9's universal first
+dependency. The corpora differ structurally in exactly the dimension the claim
+keyed on: playground examples are browser scripts with no executable
+module-init; dogfood files are modules with real top-level code.
+
+So the first-slice recommendation stands **for module-bearing sources** and
+should be read with that qualifier attached. Which population the real R9
+denominator resembles is still the open question.
+
+Full correction, including the method failure that produced it, on `#3518`.
+
+### What `vardecl-module-storage-unrepresentable` actually is — two wrong guesses, and the step that would settle it
+
+Two precisions on the count first, because both change how the slice should be
+scoped:
+
+1. **The count is files, not declarations.** There is one `<module-init>` unit
+   per source file, and the arm rejects that unit. So "11" means *11 of the 20
+   dogfood files have at least one top-level declaration the module-binding
+   resolver cannot represent* — not 11 declarations.
+2. **The granularity is therefore all-or-nothing per file.** A single
+   unrepresentable declaration rejects the whole module-init. That cuts both
+   ways: fixing one declaration kind may unlock entire files at once, and
+   partial coverage of a file's declarations yields exactly zero.
+
+**Two hypotheses about the cause, both tested and both wrong.** Worth recording
+so nobody spends the same time:
+
+- *"It is function-valued module bindings"* (`const a = (x) => x + 1`). The
+  first failing file inspected, `arrow-params.js`, is 8 top-level declarations
+  and all 8 are arrows, which makes this very inviting. It does not hold across
+  the corpus: `literals.js` has 11 top-level declarations and **zero**
+  function-valued, `templates.js` 6 and zero, `optional-nullish.js` 7 and zero,
+  `escapes-unicode.js` 6 and zero. All are rejected anyway.
+- *"It is untyped `.js` losing type resolution"* — refuted earlier in this
+  census: exactly 1 of 33 rejections corpus-wide is a type-resolution reason.
+
+**What would settle it, concretely.** The arm fires at `select.ts:5664` when
+`currentModuleBindingResolver?.(d.name)` returns `undefined` for a direct
+module-level declaration. The resolver is
+`makeIrModuleBindingResolver` (`src/ir/module-bindings.ts:2227`), wired in
+`src/codegen/index.ts:2863-2880` with `numberStorage`, `allowHostExterns`,
+`allowBuiltinMapExtern`, `allowNativeMapStorage` and the capability-extern hook.
+The next step is to instrument that resolver's `undefined` returns with the
+declaration node kind and the option that gated it, then re-run the corpus. That
+is a source change and a measurement, not a guess, and it is the honest
+precondition for scoping this slice.
+
+**Do not size this slice from the "one condition at one site" framing.** That
+described where the *rejection* is observed. Where the *cause* is has not been
+established, and both cheap explanations are now excluded.
+
+### Root cause, established by instrumentation: module-binding storage is scalars-only
+
+The step named above was taken. `makeIrLegacyModuleBindingResolver`
+(`src/ir/module-bindings.ts:1969`) was temporarily instrumented at all five of
+its `unsupported` arms, the dogfood corpus re-run, and the instrumentation
+reverted from a copy captured before the first edit. The result is unambiguous:
+
+**All 11 rejections come from a single arm — `no-value-kind`
+(`module-bindings.ts:2029`).** The other four arms (ambient/`declare`,
+write-to-immutable, heterogeneous-assignment retype, write-value mismatch) fire
+**zero** times on this corpus. The declarations that reach it:
+
+| declared type | initializer | n |
+| --- | --- | --- |
+| `any` | PropertyAccessExpression | 2 |
+| `any` | ParenthesizedExpression / ObjectLiteralExpression | 2 |
+| `(x: any) => any`, `(x: any) => Promise<any>` | ArrowFunction | 2 |
+| `"plain"`, `"😀é\n\t\\"` | template / string literal | 2 |
+| `Ctor` | NewExpression | 1 |
+| `any[]` | ArrayLiteralExpression | 1 |
+| `9007199254740993n` | BigIntLiteral | 1 |
+
+**And the cause is visible in `scalarKind` (`module-bindings.ts:923`): it has
+no `StringLike` branch at all.** It returns a value kind for exactly three
+things — an `f64` alias, `BooleanLike`, and `NumberLike` (the last only when
+`numberStorage === "f64"`). Everything else returns `undefined` and reaches
+`:2029` unless it matches the `externClassNameForType` or native-`Map`
+fallbacks, which are `!isModuleVar` host-extern paths, not general storage.
+
+So the blocker is not a narrow gap or an edge case. **Module-binding storage
+covers scalars only**, and a module-level `const` of a string, object, array,
+function, class instance or bigint is unrepresentable by construction. That is
+most real top-level code, which is why 11 of 20 files fail and why the
+playground's uncovered eight — whose module-inits are all non-executable — never
+exercise it.
+
+**This resizes the slice again, downward in tractability.** "Widen the resolver
+to represent these declarations" is not a one-site change: each type above needs
+a storage decision (a string module global is an externref under host strings
+and a WasmGC `i16` array under `nativeStrings` — the #679 dual-backend question,
+so it is an R4×R6 intersection, not R4 alone). The two string-typed rows are the
+most self-contained candidate, but note the all-or-nothing granularity recorded
+above: unlocking a file needs **every** top-level declaration in it
+representable, and no dogfood file's rejections are string-only.
+
+**Reproduce:** instrument the five `return { kind: "unsupported", declaration }`
+sites in `inspectDirectBinding` with the declaration kind, declared type and
+`const`/`let`/`var`, gate on an env var, run the corpus through
+`observeSingleHostLane`, then restore from a copy taken before the first edit.
+
 ---
 
 ## 2026-09-03 R4-M1 landing record — string module-binding storage (Opus implementation lane)
@@ -4164,7 +4358,7 @@ storage-agreement check in `resolveModuleBindingGlobal` is a real test.
 | `scalarKind` (`module-bindings.ts:923`) has no `StringLike` branch | holds |
 | the `unsupported` return at `module-bindings.ts:2029` is the module-init blocker | holds |
 | `select.ts` ~`:5655` requires every direct declaration to map to an allocated legacy slot | holds |
-| the census is already in this file under "Root cause, established by instrumentation" | **does not hold** — no such text exists on main, so every number below was measured fresh rather than quoted |
+| the census is already in this file under "Root cause, established by instrumentation" | **not yet true at `0946527`** — the section landed on main afterwards (merged in from `c4e811acd` as part of this branch's catch-up), so every number below was measured fresh rather than quoted. Where the two overlap they agree: all rejections from the one `no-value-kind` arm, `scalarKind` carrying no `StringLike` branch, and no dogfood file's rejections being string-only |
 | the corpus counts will not move | holds (see below) |
 
 ### What legacy actually allocates for a string module global (measured, not inferred)
