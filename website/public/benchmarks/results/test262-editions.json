@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9915,
-    "fail": 1728,
-    "ce": 61,
+    "pass": 9920,
+    "fail": 1725,
+    "ce": 59,
     "skip": 0,
     "total": 11704,
     "pct": 85,
@@ -93,8 +93,8 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 539,
-        "fail": 222,
+        "pass": 541,
+        "fail": 220,
         "ce": 34,
         "skip": 0,
         "total": 795,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 505,
-        "fail": 103,
+        "pass": 506,
+        "fail": 102,
         "ce": 1,
         "skip": 0,
         "total": 609,
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 397,
-        "fail": 43,
+        "pass": 398,
+        "fail": 42,
         "ce": 0,
         "skip": 0,
         "total": 440,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 283,
-        "fail": 148,
+        "pass": 286,
+        "fail": 145,
         "ce": 0,
         "skip": 0,
         "total": 431,
@@ -129,8 +129,8 @@
       },
       {
         "name": "Reflect.construct",
-        "pass": 370,
-        "fail": 45,
+        "pass": 371,
+        "fail": 44,
         "ce": 0,
         "skip": 0,
         "total": 415,
@@ -139,8 +139,8 @@
       {
         "name": "class",
         "pass": 309,
-        "fail": 89,
-        "ce": 12,
+        "fail": 91,
+        "ce": 10,
         "skip": 0,
         "total": 410,
         "pct": 75
@@ -183,12 +183,12 @@
       },
       {
         "name": "cross-realm",
-        "pass": 28,
-        "fail": 100,
+        "pass": 30,
+        "fail": 98,
         "ce": 0,
         "skip": 0,
         "total": 128,
-        "pct": 22
+        "pct": 23
       },
       {
         "name": "Symbol.toPrimitive",
