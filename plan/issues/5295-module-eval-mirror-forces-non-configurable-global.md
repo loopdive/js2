@@ -65,8 +65,9 @@ test reports `module init: TypeError: Cannot redefine property: beforeEach`.
 
 Two parts, both scoped to the module path so script behaviour is byte-identical:
 
-1. Keep the script rule for scripts; mirror a module's binding as an ordinary
-   writable, configurable global so user code keeps ownership of the name:
+1. Keep the script rule for scripts; on the **JS host lane only**, mirror a
+   module's binding as an ordinary writable, configurable global so user code
+   keeps ownership of the name:
 
    ```ts
    const attributes = isScriptBinding ? (ctx.sourceIsModule ? 0x2d : 0x23) : 0x05;
@@ -109,3 +110,19 @@ Two parts, both scoped to the module path so script behaviour is byte-identical:
 mirrored value is not yet SameValue with the existing global when the define
 runs. That predates this change and is a separate defect; the carve-out keeps
 it exactly as it was rather than making it worse.
+
+## Why the JS host lane only
+
+The first cut applied the new attributes on every lane and **broke the quickjs
+eval-provider's build-time canary**: `membraneProbe() returned -1, expected
+4321` — the #4245 inward-membrane probe threw instead of reading its four
+digits. That canary compiles `target: "standalone"`, and it is a non-required
+CI check, so the PR sat `UNSTABLE` and `auto-enqueue` would never have taken it.
+
+The narrowing is not a workaround, it is the correct scope. On the JS host the
+global environment object **is** the real `globalThis`, so the program's own
+`Object.defineProperty(globalThis, name, …)` competes with the mirror — that is
+the conflict being fixed, and it is the only lane where it exists. Standalone
+and WASI mirror onto a synthesized carrier the program never defines properties
+on, and the canary is direct evidence that the existing attributes are
+load-bearing there. Those lanes stay byte-identical.

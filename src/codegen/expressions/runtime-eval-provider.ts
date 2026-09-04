@@ -504,7 +504,18 @@ function emitRuntimeEvalGlobalBindingPushBody(
       // then throws `Cannot redefine property`, inside `__module_init`, so
       // nothing in the module runs. The upstream-suite shim installs
       // `beforeEach`/`beforeAll`/`afterEach`/`afterAll` in exactly that shape.
-      const moduleOwnsTheName = ctx.sourceIsModule && !IMMUTABLE_GLOBAL_PROPERTY_NAMES.has(name);
+      // HOST LANE ONLY. On the JS host the global environment object IS the
+      // real `globalThis`, so the program's own
+      // `Object.defineProperty(globalThis, name, …)` competes with the mirror —
+      // that is the conflict being fixed. Standalone/WASI mirror onto a
+      // synthesized carrier the program never defines properties on, and the
+      // quickjs eval-provider's build-time canary proves the existing
+      // attributes are load-bearing there: widening them made its inward
+      // membrane probe throw (`membraneProbe() returned -1, expected 4321`).
+      // Leaving those lanes byte-identical keeps the fix to the lane whose
+      // defect is actually observed.
+      const moduleOwnsTheName =
+        ctx.sourceIsModule && !ctx.standalone && !ctx.wasi && !IMMUTABLE_GLOBAL_PROPERTY_NAMES.has(name);
       const attributes = isScriptBinding ? (moduleOwnsTheName ? 0x2d : 0x23) : 0x05;
       fctx.body.push(
         { op: "f64.const", value: 0x80 | attributes },
