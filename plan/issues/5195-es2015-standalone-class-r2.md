@@ -2662,3 +2662,49 @@ dead-exports all green bare and chained; both budget gates green again with
 `LOC_GATE_BASE=$(git rev-parse origin/main)` (`333360b90031`). No new
 allowance was needed — `src/codegen/class-static-metadata.ts` is already in
 `loc-budget-allow` for this issue and no function crossed its ceiling.
+
+## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
+
+**State.** r3 pass implemented by an Opus-medium lane in
+`.claude/worktrees/wf_16f0b7f5-bf0-5` (branch `worktree-wf_16f0b7f5-bf0-5`,
+merge-base `91d4999050`), then put through **three adversarial review
+rounds** (reviewer + independent skeptics, lane vs a git-archive base, node as
+oracle) and three Opus-medium fix rounds — `047864e3d7`, `d69d1a8e8c`,
+`4f36fe57c2`. Steps kept: r3-2, r3-4, r3-5, r3-7; **r3-3 reverted** in round
+1 (routing an assignment-shaped computed key through the runtime-key lane made
+the member unreachable by its static name). 19 rows kept, 3 given up (two
+`bind()` heritage rows that need the §15.7.14 `prototype` lookup, and r3-3's
+row). 783-row `class` directory sweep vs the merge-base: 289 → 270 non-pass,
+zero new non-pass (round 2; round 3 re-ran the review probes, not the sweep).
+
+**What every review round found, and the rule that fell out of it.** All ten
+confirmed findings were of ONE shape: a "provable" predicate (heritage is not
+a constructor; the chain is all classes; the receiver is the class object)
+that resolved by NAME or by declaration shape, so a working program threw a
+spurious TypeError under shadowing, reassignment, destructuring, loop heads,
+parameters, mixin factories or inline class expressions. The predicates now
+resolve through `ctx.oracle.valueDeclarationOf`, require
+`bindingIsUniqueAndNeverWritten` (whole-file, every write spelling incl.
+destructuring/loop heads, declines on any `eval`/`with`), and decline to
+base otherwise. **Cost of that conservatism**: a genuine `A.caller` declines
+where the name `A` is reused anywhere in the file; an inline parent that
+declares `static caller` yields base's `null`/`NaN` rather than node's value.
+Scope-aware resolution is the way to take those wins back — not loosening the
+identity check.
+
+**Recorded, not fixed.** The r3-5 check has call sites only for
+function-scope classes (top-level `class D extends 42 {}` never throws, same
+as main). `classMemberLegacyName` names a static `constructor` `<Class>_new`,
+colliding with the implicit allocator's legacy name when user statics are
+named `new`/`init` (identical failure on main). A `static constructor` beside
+a real one plus reflection on the class object now compiles where main
+compile-failed, then needs the `js2wasm:runtime-eval` import on standalone
+(failure → failure; the only import leak seen in the runs). r3-2's collected
+class expressions request `env.__to_property_key` on WASI (warning only,
+pre-existing allowlist gap). Rows gated on #2864 (generators) are not this
+issue's.
+
+**Validation** is on the combined session-branch tree (see the PR): typecheck,
+five gates on both bases, the seven `issue-5195` / `issue-5309` suites at the
+CI fork heap, 8 equivalence shards, and the 1,200-row baseline sample with A/B.
+
